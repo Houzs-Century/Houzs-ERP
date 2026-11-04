@@ -837,7 +837,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Breakdown &amp; incidents</h3>
-                <span className="text-[10.5px] text-ink-muted">a critical, unresolved case grounds the lorry</span>
+                <span className="text-[10.5px] text-ink-muted">a lorry that cannot be driven is off the road until the case is resolved</span>
               </div>
               <BreakdownSection vehicleId={v.id} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
             </div>
@@ -1541,7 +1541,7 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
       {/* Severity is not cosmetic: CRITICAL + unresolved is what grounds the
           lorry, so changing it here can put a lorry back on the road. */}
       <p className="mt-2 text-[10.5px] text-ink-muted">
-        A CRITICAL case that is not resolved grounds the lorry, so severity changes what dispatch can use.
+        Not drivable, or Critical, takes the lorry off the road until the case is resolved.
       </p>
       {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
       <div className="mt-3 flex gap-2">

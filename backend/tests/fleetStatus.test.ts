@@ -384,21 +384,27 @@ describe("canDispatch", () => {
 // ── Phase 3: breakdown cases → status effect ─────────────────────────────────
 
 describe("isCaseGrounding / isBreakdownActive", () => {
+  test("a lorry that cannot be driven is grounded at any severity until resolved", () => {
+    for (const severity of ["MINOR", "MAJOR"]) {
+      expect(isCaseGrounding({ severity, status: "IN_WORKSHOP", stillDrivable: false })).toBe(true);
+      expect(isCaseGrounding({ severity, status: "RESOLVED", stillDrivable: false })).toBe(false);
+    }
+  });
   test("a CRITICAL unresolved case grounds the lorry", () => {
-    expect(isCaseGrounding({ severity: "CRITICAL", status: "OPEN" })).toBe(true);
-    expect(isCaseGrounding({ severity: "CRITICAL", status: "TOWING" })).toBe(true);
-    expect(isCaseGrounding({ severity: "CRITICAL", status: "IN_WORKSHOP" })).toBe(true);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "OPEN", stillDrivable: true })).toBe(true);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "TOWING", stillDrivable: true })).toBe(true);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "IN_WORKSHOP", stillDrivable: true })).toBe(true);
   });
   test("a resolved critical case no longer grounds", () => {
-    expect(isCaseGrounding({ severity: "CRITICAL", status: "RESOLVED" })).toBe(false);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "RESOLVED", stillDrivable: true })).toBe(false);
   });
   test("MINOR / MAJOR cases do not, on their own, ground the lorry", () => {
-    expect(isCaseGrounding({ severity: "MINOR", status: "OPEN" })).toBe(false);
-    expect(isCaseGrounding({ severity: "MAJOR", status: "OPEN" })).toBe(false);
+    expect(isCaseGrounding({ severity: "MINOR", status: "OPEN", stillDrivable: true })).toBe(false);
+    expect(isCaseGrounding({ severity: "MAJOR", status: "OPEN", stillDrivable: true })).toBe(false);
   });
   test("isBreakdownActive is true when ANY case grounds", () => {
-    expect(isBreakdownActive([{ severity: "MINOR", status: "OPEN" }, { severity: "CRITICAL", status: "OPEN" }])).toBe(true);
-    expect(isBreakdownActive([{ severity: "MAJOR", status: "OPEN" }])).toBe(false);
+    expect(isBreakdownActive([{ severity: "MINOR", status: "OPEN", stillDrivable: true }, { severity: "CRITICAL", status: "OPEN", stillDrivable: true }])).toBe(true);
+    expect(isBreakdownActive([{ severity: "MAJOR", status: "OPEN", stillDrivable: true }])).toBe(false);
     expect(isBreakdownActive([])).toBe(false);
     expect(isBreakdownActive(undefined)).toBe(false);
   });
@@ -410,7 +416,7 @@ describe("deriveVehicleStatus consumes a critical breakdown", () => {
     const status = deriveVehicleStatus({
       today: TODAY,
       currentDocs: okDocs,
-      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "OPEN" }]),
+      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "OPEN", stillDrivable: true }]),
     });
     expect(status).toBe("BREAKDOWN");
     expect(canDispatch(status)).toBe(false);
@@ -419,7 +425,7 @@ describe("deriveVehicleStatus consumes a critical breakdown", () => {
     const status = deriveVehicleStatus({
       today: TODAY,
       currentDocs: okDocs,
-      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "RESOLVED" }]),
+      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "RESOLVED", stillDrivable: true }]),
     });
     expect(status).toBe("AVAILABLE");
   });

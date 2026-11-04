@@ -8,8 +8,10 @@
    whenever the crew forgets to close the DO (that gap is shown on its own).
    The lorry is the one recorded on the DO's crew, else the lorry run it was
    placed on; a DO with neither counts in the money, not in the lorry figures.
-   Each lorry's days out, revenue and occupancy (days out over working days,
-   Sundays off) show whether the fixed-cost fleet is kept busy. */
+   Each lorry's delivery days, revenue and occupancy show whether the fixed-cost
+   fleet is kept busy. A delivery day is a day it carried at least one DO: Setup,
+   Transfer item and the other board jobs are not DOs and carry no revenue, so
+   they stay out of the average (owner 2026-11-04). */
 
 export interface PeriodDo {
   id: string; doDate: string; status: string; amountSen: number; state: string | null;
@@ -45,7 +47,7 @@ export function workingDays(from: string, to: string): number {
   return n;
 }
 
-export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string) {
+export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string, downDaysOf: ReadonlyMap<string, number>) {
   const out = dos.filter((d) => d.doDate >= from && d.doDate <= to);
 
   const days: Array<{ date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null }> = [];
@@ -89,9 +91,10 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     return { category, orders: m.size, amountSen: sen, avgSen: m.size ? Math.round(sen / m.size) : null };
   }).sort((x, y) => y.amountSen - x.amountSen);
 
-  /* Per lorry: each day it went out, what it carried; occupancy = days out ÷
-     working days so far in the period. Our own lorries are listed even on no
-     day out, since an idle own lorry still costs its crew and instalment. */
+  /* Per lorry: each delivery day, what it carried; occupancy = delivery days ÷ the
+     working days so far it could work, so a day in the workshop is not held
+     against it. Our own lorries are listed even on no delivery day, since an idle
+     own lorry still costs its crew and instalment. */
   const work = workingDays(from, to < today ? to : today);
   const perDay = new Map<string, { date: string; lorry: string; orders: number; amountSen: number }>();
   for (const d of out) {
@@ -106,9 +109,11 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
   const byLorry = [...plates].map((plate) => {
     const ds = lorryDayList.filter((x) => x.lorry === plate);
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
+    const downDays = Math.min(work, downDaysOf.get(plate) ?? 0);
+    const available = work - downDays;
     return {
-      lorry: plate, internal: internal.has(plate), daysOut: ds.length, workingDays: work,
-      occupancyPct: work ? Math.round((ds.length / work) * 1000) / 10 : null,
+      lorry: plate, internal: internal.has(plate), daysOut: ds.length, workingDays: available, downDays,
+      occupancyPct: available ? Math.round((ds.length / available) * 1000) / 10 : null,
       orders: ds.reduce((a, x) => a + x.orders, 0), amountSen,
       perDayOutSen: ds.length ? Math.round(amountSen / ds.length) : null,
     };

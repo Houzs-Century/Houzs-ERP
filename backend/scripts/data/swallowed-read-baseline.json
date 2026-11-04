@@ -294,7 +294,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/lorry-capacity.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/routes/lorry-service-records.ts": {
