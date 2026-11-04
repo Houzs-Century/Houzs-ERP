@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
-import { useDeliveryPlanning, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { useDeliveryPlanning, DELIVERY_STATES, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
@@ -25,13 +25,13 @@ import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawe
 import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { deliveryProgressBreakdown, messageStatusBreakdown, NO_MESSAGE_STATUS } from "./logisticStatus";
 
-/* The progress slice colours mirror the state tabs on Delivery Planning. */
-const PROGRESS_COLOR: Record<string, string> = {
-  PENDING_DELIVERY: PALETTE[0]!,
-  PENDING_SCHEDULE: TONE.warn,
-  OVERDUE: TONE.bad,
-  DELIVERED: TONE.good,
-};
+/* Progress slice colours track the Delivery Planning state tabs, derived FROM
+   DELIVERY_STATES (in its order: pending-delivery, pending-schedule, overdue,
+   delivered) so the state vocabulary keeps its single home and cannot drift. */
+const PROGRESS_PALETTE = [PALETTE[0]!, TONE.warn, TONE.bad, TONE.good];
+const PROGRESS_COLOR: Record<string, string> = Object.fromEntries(
+  DELIVERY_STATES.map((s, i) => [s, PROGRESS_PALETTE[i] ?? "#9aa39a"]),
+);
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
