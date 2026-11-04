@@ -82,7 +82,7 @@ OUTPUT: valid JSON only, this exact shape:
   "supplierName": string | null,
   "poNo": string | null,
   "doNo": string | null,
-  "deliveryDate": string | null,   // ISO "YYYY-MM-DD" if you can read a date, else null
+  "deliveryDate": string | null,   // ISO "YYYY-MM-DD" if you can read a date, else null. Malaysian documents print DAY first: 03/11/2026 is 3 November 2026, never 11 March
   "lines": [
     {
       "itemCode": string | null,   // the item/product/Article No code as printed; prefer a code that looks like a SKU (letters+digits) over a free-text name

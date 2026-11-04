@@ -1,6 +1,6 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
-import { blockedReason, buildReview, cleanReview, duplicateOf, giftsOf, picksOf, type GrnReview } from './grn-scan-check';
+import { blockedReason, buildReview, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
 const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryDate: '2026-11-03', lines: [
@@ -21,11 +21,18 @@ describe('grn scan check', () => {
   });
   test('the saved edit keeps known fields only, drops a bad date and a negative qty', () => {
     const r = cleanReview({ supplierId: 's1', doNo: ' DO 77 ', deliveryDate: '03/11/2026', lines: [{ key: 'k', poItemId: 'pi-1', qty: -3, evil: 1 }], extra: 'x' });
-    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', gift: null, qty: 0, read: null }] });
+    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', poNumber: null, gift: null, qty: 0, read: null }] });
   });
   test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
     const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }]);
     expect(r.lines[1]).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
+  });
+  test('the same delivery order twice in the waiting list: the later copy names the first', () => {
+    const doc = (id: string, doNo: string | null) => ({ id, fileName: `${id}.pdf`, review: { supplierId: 's1', doNo } as GrnReview });
+    expect([...repeatsInList([doc('a', 'DO 1'), doc('b', 'do1'), doc('c', 'DO 2'), doc('d', null)])]).toEqual([['b', 'a.pdf']]);
+  });
+  test('the database look-up tries the spellings the comparison treats as one', () => {
+    expect(refVariants('Do 77')).toEqual(['Do 77', 'DO 77', 'do 77', 'Do77', 'DO77']);
   });
   test('a free gift is never also a PO line, and adds up per product with its printed code', () => {
     const r = cleanReview({ lines: [
@@ -47,8 +54,9 @@ describe('grn scan check', () => {
     expect(blockedReason({ lines: [{ poItemId: 'pi-1', qty: 2 }] } as GrnReview, open)).toBeNull();
   });
   test('already received: the same D.O. no of the same supplier, spacing and case aside', () => {
-    const existing = [{ grnNumber: 'HC-GRN-1', supplierId: 's1', deliveryNoteRef: 'do77' }, { grnNumber: 'HC-GRN-2', supplierId: 's2', deliveryNoteRef: 'DO 88' }];
-    expect(duplicateOf({ supplierId: 's1', doNo: 'DO 77' } as GrnReview, existing)).toBe('HC-GRN-1');
+    const grn = (grnNumber: string, supplierId: string, deliveryNoteRef: string): ExistingGrn => ({ id: grnNumber, grnNumber, supplierId, deliveryNoteRef, status: 'DRAFT', receivedAt: null });
+    const existing = [grn('HC-GRN-1', 's1', 'do77'), grn('HC-GRN-2', 's2', 'DO 88')];
+    expect(duplicateOf({ supplierId: 's1', doNo: 'DO 77' } as GrnReview, existing)?.grnNumber).toBe('HC-GRN-1');
     expect(duplicateOf({ supplierId: 's1', doNo: 'DO 88' } as GrnReview, existing)).toBeNull();
     expect(duplicateOf({ supplierId: 's1', doNo: null } as GrnReview, existing)).toBeNull();
   });
