@@ -55,7 +55,7 @@ import {
   BREAKDOWN_STATUSES,
   type BreakdownStatus,
   isBreakdownActive,
-  isCaseGrounding,
+  isCaseGrounding, groundingInput,
   breakdownDowntimeHours,
   WORK_ORDER_STATES,
   WORK_ORDER_STATE_LABELS,
@@ -339,8 +339,6 @@ type BreakdownRow = {
   status: string;
   notes: string | null;
 };
-
-const groundingInput = (b: BreakdownRow) => ({ severity: b.severity, status: b.status, stillDrivable: b.still_drivable ?? true });
 
 function shapeBreakdown(row: BreakdownRow, nowIso: string) {
   return {

@@ -547,6 +547,10 @@ export function isCaseGrounding(c: BreakdownCaseInput): boolean {
   return c.status !== "RESOLVED" && (c.severity === "CRITICAL" || !c.stillDrivable);
 }
 
+/** A stored case row as the rule reads it; a row with no drivable answer counts as drivable. */
+export const groundingInput = (b: { severity: string; status: string; still_drivable: boolean | null }): BreakdownCaseInput =>
+  ({ severity: b.severity, status: b.status, stillDrivable: b.still_drivable ?? true });
+
 /** Does ANY open case ground the lorry? This is what feeds breakdownActive. */
 export function isBreakdownActive(cases: readonly BreakdownCaseInput[] | undefined): boolean {
   return (cases ?? []).some(isCaseGrounding);
