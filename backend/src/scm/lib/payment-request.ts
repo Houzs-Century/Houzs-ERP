@@ -245,6 +245,54 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: An
   return { request: req };
 }
 
+/* Several requests answered by ONE voucher (owner 2026-11-04: combine payment
+   request 做一张pv — 不同人也可以). Each id passes the one-request guard above;
+   duplicates count once. `rawIds` is the body's list, or its single id. */
+export const MAX_REQUESTS_PER_VOUCHER = 30;
+export async function paymentRequestsLinkGuard(c: any, rawIds: unknown, answer: AnswerDraft): Promise<{ requests: Row[] } | { resp: Response }> {
+  const list: unknown[] = Array.isArray(rawIds) ? rawIds : [rawIds];
+  const ids = [...new Set(list.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean))];
+  if (ids.length > MAX_REQUESTS_PER_VOUCHER) {
+    return { resp: c.json({ error: 'too_many_requests', message: `One voucher answers at most ${MAX_REQUESTS_PER_VOUCHER} requests.` }, 400) };
+  }
+  const requests: Row[] = [];
+  for (const id of ids) {
+    const g = await paymentRequestLinkGuard(c, id, answer);
+    if ('resp' in g) return g;
+    if (g.request) requests.push(g.request);
+  }
+  return { requests };
+}
+
+/** Claim every request for the document; if one cannot be claimed, the ones
+    already claimed go back to how they were, and the caller rolls the document
+    back as for one request. */
+export async function linkPaymentRequests(
+  c: any,
+  reqs: Row[],
+  doc: { kind: AnswerKind; id: string; number: string },
+): Promise<{ ok: true; filesCopied: number } | { ok: false; status: 409 | 500; body: Record<string, unknown> }> {
+  const claimed: Row[] = [];
+  let filesCopied = 0;
+  for (const req of reqs) {
+    const linked = await linkPaymentRequest(c, req, doc);
+    if (!linked.ok) {
+      const sb = c.get('supabase');
+      const co = requireActiveCompanyId(c);
+      for (const back of claimed) {
+        if (!co.ok) break;
+        await sb.from('acc_payment_requests')
+          .update({ status: back.status, pv_id: back.pv_id ?? null, ap_invoice_id: back.ap_invoice_id ?? null, updated_at: new Date().toISOString() })
+          .eq('company_id', co.companyId).eq('id', back.id).eq(doc.kind === 'PV' ? 'pv_id' : 'ap_invoice_id', doc.id);
+      }
+      return linked;
+    }
+    claimed.push(req);
+    filesCopied += linked.filesCopied;
+  }
+  return { ok: true, filesCopied };
+}
+
 /** AFTER the document's header and lines are in: claim the request for it
     (only if nobody claimed it in between — else the caller rolls the document
     back), pointing at this document alone, then copy the request's files onto

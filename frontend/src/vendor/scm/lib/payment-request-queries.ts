@@ -7,7 +7,7 @@
 // document by the server on every read — never stored on the request.
 // ----------------------------------------------------------------------------
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
@@ -276,6 +276,20 @@ export const usePaymentRequest = (id: string | null) => useQuery({
   queryFn: () => authedFetch<{ request: PaymentRequest; finance: boolean }>(`/payment-requests/${id}`),
   enabled: !!id,
 });
+
+/** Several requests at once — one voucher answering them all (owner 2026-11-04).
+    `requests` is null until every one has loaded; `error` names the first that failed. */
+export const usePaymentRequestsByIds = (ids: string[]): { requests: PaymentRequest[] | null; error: unknown } => {
+  const qs = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['payment-request', id],
+      queryFn: () => authedFetch<{ request: PaymentRequest; finance: boolean }>(`/payment-requests/${id}`),
+    })),
+  });
+  const error = qs.find((q) => q.error)?.error ?? null;
+  const all = qs.map((q) => q.data?.request);
+  return { requests: ids.length > 0 && all.every(Boolean) ? (all as PaymentRequest[]) : null, error };
+};
 
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['payment-requests'] });

@@ -121,6 +121,7 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   /payment-requests/bill-matches`) is said on the voucher form, beside each
   read bill in the pile, and on the AP invoice form — a warning, never a block;
   an AP invoice being edited is never its own match (`excludeApInvoice`).
+- One voucher may answer several waiting payment requests (Payment requests To do: tick, **Make ONE voucher**; `?fromRequests=`, body `paymentRequestIds`): one line per request, the payee only when all name the same one; every request is claimed for the voucher or none is (`linkPaymentRequests`). Refund requests and balances on an AP invoice cannot be ticked.
 - A payment request raised from a PMS row (owner 2026-10-08) keeps the row
   (`acc_payment_requests.checklist_item_id`,
   `backend/src/scm/lib/pms-checklist-source.ts`): only an event's CONTRACT row,

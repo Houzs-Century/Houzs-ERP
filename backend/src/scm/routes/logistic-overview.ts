@@ -16,6 +16,7 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { serveSwr, type SwrBuild } from '../lib/kv-swr';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
+import { downDates, loadDownWindows } from '../lib/lorry-down-days';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
@@ -183,12 +184,17 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     const fee = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
     return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : PROCUREMENT_CATEGORY_LABEL[procurementCategory(raw, str(l.item_group))], sen: num(l.line_total_sen) };
   });
+  /* A day in the workshop is not a day the lorry could have gone out. */
+  const pEnd = pTo < today ? pTo : today;
+  const down = await loadDownWindows(sb, pFrom, pEnd, today);
+  if (down.error) return fail('lorry down days', { message: down.error });
+  const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
   const period = {
     from: pFrom, to: pTo,
     doCount: pDos.length,
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
-    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today),
+    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate),
     /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),

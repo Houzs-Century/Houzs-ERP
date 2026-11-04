@@ -14,8 +14,8 @@ const line = { key: 'k1', poItemId: null, poNumber: null, gift: null, qty: 2, ra
 const review: GrnReview = { v: 2, supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO-1', deliveryDate: '2026-11-03', notes: null, lines: [line] };
 const doc = { id: 'a', batchId: 'b', fileName: 'do.pdf', pages: null, state: 'pending', note: null, review, createdAt: '', hasFile: false, canGold: false, gold: false, duplicateOf: null, repeatOf: null, blocked: null } as CheckDoc;
 const poLines = [
-  { poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', name: 'Mattress Q', remaining: 1, warehouse: 'KL' },
-  { poItemId: 'pi-2', poNumber: 'HC-PO-2', supplierId: 's1', itemCode: 'A2', name: 'Mattress K', remaining: 3, warehouse: 'PG' },
+  { poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', supplierSku: null, itemCode: 'A1', name: 'Mattress Q', remaining: 1, warehouse: 'KL' },
+  { poItemId: 'pi-2', poNumber: 'HC-PO-2', supplierId: 's1', supplierSku: null, itemCode: 'A2', name: 'Mattress K', remaining: 3, warehouse: 'PG' },
 ];
 const mount = (over: Partial<CheckDoc> = {}, onChange = vi.fn()) => {
   render(
@@ -33,7 +33,7 @@ describe('ScanGrnCheckCard', () => {
     fireEvent.change(screen.getByLabelText('Delivery order number'), { target: { value: 'DO-2' } });
     expect(onChange.mock.calls[0][0].doNo).toBe('DO-2');
     fireEvent.click(screen.getByLabelText('Show the lines'));
-    await waitFor(() => expect(screen.getByText(/Printed: T1MA · Mattress/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Paper: T1MA · Mattress/)).toBeTruthy());
     expect(screen.getAllByLabelText('Delivery order number')).toHaveLength(1);
     expect((screen.getByLabelText('Rack for row 1') as HTMLInputElement).value).toBe('R11-2');
   });

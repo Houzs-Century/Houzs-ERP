@@ -42,7 +42,7 @@ export type PiCheckDoc = {
   repeatOf: string | null;
   blocked: string | null;
 };
-export type BillLine = { grnItemId: string; grnNumber: string; supplierId: string | null; poNumber: string | null; itemCode: string; description: string | null; remaining: number; unitPriceSen: number };
+export type BillLine = { grnItemId: string; grnNumber: string; supplierId: string | null; poNumber: string | null; itemCode: string; supplierSku: string | null; description: string | null; remaining: number; unitPriceSen: number };
 export type PiPending = { documents: PiCheckDoc[]; suppliers: CheckSupplier[]; billLines: BillLine[] };
 export type PiCreateResult = { id: string; ok: boolean; docNumbers?: string[]; reason?: string };
 
@@ -87,10 +87,10 @@ export function billSkuOptions(lines: ReadonlyArray<BillLine>, grnNumber: string
   const on = grnNumber ? lines.filter((l) => l.grnNumber === grnNumber) : lines;
   return on.map((l) => ({
     value: l.grnItemId,
-    label: l.itemCode,
-    detail: grnNumber ? `left ${l.remaining}` : `${l.grnNumber} · left ${l.remaining}`,
+    label: l.supplierSku || l.itemCode,
+    detail: [l.supplierSku ? l.itemCode : null, grnNumber ? null : l.grnNumber, `left ${l.remaining}`].filter(Boolean).join(' · '),
     group: grnNumber ? `Left to bill on ${grnNumber}` : 'Left to bill',
-    search: `${l.itemCode} ${l.description ?? ''} ${l.grnNumber} ${l.poNumber ?? ''}`,
+    search: `${l.supplierSku ?? ''} ${l.itemCode} ${l.description ?? ''} ${l.grnNumber} ${l.poNumber ?? ''}`,
   }));
 }
 

@@ -9,12 +9,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, FileText, Loader2, Star, X } from 'lucide-react';
 import { DateField } from './DateField';
+import { useGrnRackOptions } from '../lib/grn-line-rack';
 import { SearchableSelect } from './SearchableSelect';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, todayMY } from '../../shared/format';
 import {
-  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, skuValue, swappedDate,
+  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, printedText, skuValue, swappedDate,
   type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
@@ -36,6 +37,14 @@ type Props = {
 
 /** In the open list an option also says its PO and what is owed. */
 export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail}` : o.label);
+
+/** The racks of the row's warehouse, as on the GRN page. A rack read off the paper
+ *  stays shown until it is changed, even if it is not one of them. */
+function RackCell({ warehouseId, value, onChange, label }: { warehouseId: string | null; value: string | null; onChange: (rack: string | null) => void; label: string }) {
+  const { racks } = useGrnRackOptions(warehouseId ?? undefined);
+  const options = [...new Set([...(value ? [value] : []), ...racks.map((r) => r.rack)])].map((r) => ({ value: r, label: r }));
+  return <SearchableSelect value={value ?? ''} onChange={(v) => onChange(v || null)} options={options} placeholder="Rack" className={styles.cell} ariaLabel={label} />;
+}
 
 export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry, onGold, onOpenGrn }: Props) {
   const [open, setOpen] = useState(false);
@@ -65,7 +74,10 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
   const mine = poLines.filter((l) => l.supplierId === review.supplierId);
   const tied = review.lines.flatMap((l) => (l.poItemId && byId.get(l.poItemId) ? [byId.get(l.poItemId) as CheckPoLine] : []));
   const warehouses = [...new Set(tied.map((l) => l.warehouse).filter(Boolean))].join(', ');
-  const pos = [...new Set(tied.map((l) => l.poNumber))].join(', ');
+  const poList = [...new Set(tied.map((l) => l.poNumber))];
+  const pos = poList.join(', ');
+  const firstPo = poList[0];
+  const morePos = poList.length - 1;
   const repeat = doc.duplicateOf ?? null;
   const today = todayMY();
   const oddDate = isOddDate(review.deliveryDate, today);
@@ -117,7 +129,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
         </div>
         <div className={styles.meta}>
           <div className={styles.metaLine}>{warehouses || '—'}</div>
-          <div className={`${styles.metaLine} ${styles.metaPo} ${styles.mono}`}>{pos || 'No PO line yet'}</div>
+          <div className={`${styles.metaLine} ${styles.metaPo} ${styles.mono}`} title={pos}>{firstPo || 'No PO line yet'}{morePos > 0 && ` +${morePos}`}</div>
         </div>
         <div className={styles.icons}>
           {doc.canGold && (
@@ -169,7 +181,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           {review.lines.map((l, i) => {
             const line = l.poItemId ? byId.get(l.poItemId) : undefined;
             const po = l.poNumber ?? line?.poNumber ?? '';
-            const printed = l.read ? [l.read.itemCode, l.read.description, l.read.poNo ? `PO ${l.read.poNo}` : null].filter(Boolean).join(' · ') : '';
+            const printed = l.read ? printedText(l.read) : '';
             return (
               <div key={l.key} className={styles.row}>
                 <span className={styles.num}>{i + 1}</span>
@@ -189,9 +201,10 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{l.gift?.name ?? line?.name ?? '—'}</div>
-                  {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
+                  {line?.spec && <div className={styles.metaLine} title={line.spec}>{line.spec}</div>}
+                  {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
                 </div>
-                <input className={styles.cell} value={l.rack ?? ''} onChange={(e) => setLine(l.key, { rack: e.target.value || null })} placeholder="Rack" aria-label={`Rack for row ${i + 1}`} />
+                <RackCell warehouseId={line?.warehouseId ?? null} value={l.rack} onChange={(rack) => setLine(l.key, { rack })} label={`Rack for row ${i + 1}`} />
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
                 <button type="button" className={`${styles.icon} ${styles.caret}`} onClick={() => set({ lines: review.lines.filter((x) => x.key !== l.key) })} aria-label={`Remove row ${i + 1}`}><X size={13} /></button>
