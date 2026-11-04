@@ -221,7 +221,7 @@ const NOT_OPENED: BillMatch = {
   unlinked: false,
 };
 
-function orderAmountSen(o: OrderRow): number {
+export function orderAmountSen(o: OrderRow): number {
   const rev = Number(o.total_revenue_sen ?? 0);
   return rev > 0 ? rev : Number(o.local_total_sen ?? 0);
 }

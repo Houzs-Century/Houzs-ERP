@@ -34,6 +34,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "scan-so-warm": DAY,
   "push-reminders": DAY,
   "fair-reconcile": DAY,
+  "fair-claim": DAY,
   sla: DAY,
   "do-mirror": DAY,
   "po-docs-pull": DAY,
