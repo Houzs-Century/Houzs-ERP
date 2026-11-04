@@ -57,7 +57,7 @@ import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../ve
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
-import { compareByDeliveryDate } from '../../vendor/scm/lib/delivery-date-group';
+import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -110,16 +110,17 @@ export const DeliveryPlanning = () => {
      sort is active; a drag persists the new order of the displayed rows. The
      DEFAULT beneath it (owner follow-up 2026-10-23) is EFFECTIVE delivery date,
      earliest first — so a board nobody has dragged opens date-ordered, and
-     within each All-view month bucket the rows stay date-ordered. A manual drag
-     still wins for the rows it placed (orderComparator ranks them first; the
-     rest, and a board with no saved order, fall through to the date sort), and a
-     clicked column header overrides both as always. */
+     within each All-view month bucket the rows stay date-ordered. Inside a day
+     each lorry reads earliest Time Slot first. A manual drag still wins for the
+     rows it placed (orderComparator ranks them first; the rest, and a board with
+     no saved order, fall through to the date sort), and a clicked column header
+     overrides both as always. */
   const rowOrder = useDeliveryRowOrder().data;
   const setRowOrder = useSetRowOrder();
   const orderSort = useMemo(() => {
     const cmp = orderComparator(rowOrder ?? []);
     return (a: PlanningOrder, b: PlanningOrder) =>
-      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliveryDate(a, b);
+      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliverySlot(a, b);
   }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
