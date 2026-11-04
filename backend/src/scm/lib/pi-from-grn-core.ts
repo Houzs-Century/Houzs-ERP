@@ -72,8 +72,16 @@ export type CreateDraftPisFromGrnItemsResult =
   | { ok: true; created: DraftPiFromGrnItems[] }
   | { ok: false; status: ContentfulStatusCode; body: Record<string, unknown> };
 
+/** A line billed by hand keeps the receipt's price. */
+export const RECEIPT_PRICES: ReadonlyMap<string, number> = new Map();
+
+/** `invoicePriceSen` is what the supplier printed, by GRN line: the scan's read
+ *  (owner 2026-11-04: the invoice bills the supplier's price). It is a parameter,
+ *  not a body field, so no request can set a price through the HTTP route, which
+ *  posts what it creates. */
 export async function createDraftPisFromGrnItemsCore(
   c: PiFromGrnItemsContext,
+  invoicePriceSen: ReadonlyMap<string, number>,
 ): Promise<CreateDraftPisFromGrnItemsResult> {
   /* company-scope: the only by-id write here is the ROLLBACK of the header this
      core just inserted, so that id is not caller-supplied. */
@@ -229,12 +237,13 @@ export async function createDraftPisFromGrnItemsCore(
      from line_total + subtotal.) */
   const discFor = (row: ItemRow, qty: number) =>
     Math.round(Number(row.discount_sen ?? 0) * qty / (Number(row.qty_accepted) || 1));
+  const priceOf = (row: ItemRow) => invoicePriceSen.get(row.id) ?? row.unit_price_sen;
 
   for (const bucket of buckets.values()) {
     counter += 1;
     // Audit (ported from 2990 b30f0bb1) — clamp each line before summing so a
     // discount > qty×price can't drive the PI subtotal negative.
-    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * row.unit_price_sen - discFor(row, qty)), 0);
+    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * priceOf(row) - discFor(row, qty)), 0);
     const piPayload = {
       company_id: activeCompanyId(c), // multi-company: stamp the active company
       supplier_invoice_ref: body.supplierInvoiceNumber ?? null,
@@ -287,9 +296,9 @@ export async function createDraftPisFromGrnItemsCore(
       item_code: row.item_code,
       material_name: row.material_name,
       qty,
-      unit_price_sen: row.unit_price_sen,
+      unit_price_sen: priceOf(row),
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-      line_total_sen: Math.max(0, qty * row.unit_price_sen - discFor(row, qty)),
+      line_total_sen: Math.max(0, qty * priceOf(row) - discFor(row, qty)),
       item_group: row.item_group,
       description: row.description,
       description2: row.description2,
@@ -372,7 +381,8 @@ export async function createDraftPiFromGrnItems(
     /** MUST be the company CODE string, never the company row — companyDocPrefix
      *  stringifies whatever it is handed (the "[object Object]-..." scar). */
     companyCode?: string | null;
-    picks: Array<{ grnItemId: string; qty: number }>;
+    /** unitPriceSen: the supplier's printed price; null keeps the receipt's. */
+    picks: Array<{ grnItemId: string; qty: number; unitPriceSen: number | null }>;
     supplierInvoiceNumber?: string | null;
     invoiceDate?: string | null;
     dueDate?: string | null;
@@ -392,14 +402,14 @@ export async function createDraftPiFromGrnItems(
   };
   const res = await createDraftPisFromGrnItemsCore({
     req: { json: async () => ({
-      picks: opts.picks,
+      picks: opts.picks.map(({ grnItemId, qty }) => ({ grnItemId, qty })),
       supplierInvoiceNumber: opts.supplierInvoiceNumber ?? undefined,
       invoiceDate: opts.invoiceDate ?? undefined,
       dueDate: opts.dueDate ?? undefined,
       notes: opts.notes ?? undefined,
     }) },
     get: syntheticGet as unknown as PiFromGrnItemsContext['get'],
-  });
+  }, new Map(opts.picks.flatMap((p) => (p.unitPriceSen == null ? [] : [[p.grnItemId, p.unitPriceSen] as const]))));
   /* Record CREATE per draft, at the moment it becomes final (there is no post
      here — it stays DRAFT). Uses the houzsUser captured at enqueue as the WHO;
      degrades to an unattributed row when absent, like recordPiCreate itself. */

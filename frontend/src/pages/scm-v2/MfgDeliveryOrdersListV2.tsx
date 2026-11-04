@@ -43,6 +43,7 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
 import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
+import { compareDoPrintOrder, type DoPrintHeader } from "../../vendor/scm/lib/delivery-date-group";
 import type { DoDateBy } from "../../vendor/scm/lib/delivery-order-queries";
 import { DoDateFilter } from "./DoDateFilter";
 import { doChargeColumns, doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
@@ -1100,6 +1101,7 @@ export function MfgDeliveryOrdersListV2() {
       setExporting(true);
       const bundles: Array<{ header: unknown; items: unknown[] }> = [];
       for (const r of chosen) bundles.push(await fetchDoBundle(r));
+      bundles.sort((a, b) => compareDoPrintOrder(a.header as DoPrintHeader, b.header as DoPrintHeader));
       if (how === "one") {
         await generateCombinedDeliveryOrderPdf(bundles as never, {
           fileName: `delivery-orders-${new Date().toISOString().slice(0, 10)}.pdf`,

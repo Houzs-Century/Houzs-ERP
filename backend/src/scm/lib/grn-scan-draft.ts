@@ -10,10 +10,10 @@ import type { Env } from '../env';
 import { companyCodeById } from './doc-no';
 import { createDraftGrnFromPoItems } from './grn-from-po-core';
 import type { GrnExtracted } from './grn-scan-extract';
-import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from './grn-scan-load';
+import { loadCompanies, loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from './grn-scan-load';
 import { loadScanCodes } from './grn-scan-codes';
 import { applyScanRacks, scanRackNote } from './grn-scan-racks';
-import { scopeToCompanyIdOrOpen } from './companyScope';
+import { docPrefixForCode, scopeToCompanyIdOrOpen } from './companyScope';
 import {
   describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, printedPoWhy, resolveScannedSupplier,
   type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine,
@@ -65,26 +65,43 @@ function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult, allPo
   return `We could not match ${po}${doRef} to an open purchase order automatically. Please open the PO and create the goods receipt from it.`;
 }
 
+export type CompanyRef = { id: number; code: string | null; name: string | null };
+
+/** The PO printed on the paper is another company's: our numbers carry the company
+ *  in front (2990-PO-2609-046), and a scan only sees the POs of the company it was
+ *  uploaded under, so nothing can match until it is scanned there. */
+export function otherCompanyNote(printed: ReadonlyArray<string | null>, companyId: number | null, companies: ReadonlyArray<CompanyRef>): string | null {
+  const here = companies.find((co) => co.id === companyId);
+  for (const po of printed) {
+    const number = (po ?? '').trim().toUpperCase();
+    const owner = companies.find((co) => co.id !== companyId && co.code && number.startsWith(`${docPrefixForCode(co.code)}PO-`));
+    if (owner) return `${number} is a ${owner.name ?? owner.code} purchase order, but this scan is under ${here?.name ?? 'another company'}. Switch to ${owner.name ?? owner.code} and scan it there.`;
+  }
+  return null;
+}
+
 export type ScanMatchContext = {
   supplierId: string | null;
   openLines: OpenPoLine[];
   allPos: PoStatusRef[];
+  otherCompany: string | null;
   match: GrnMatchResult;
 };
 
 // Load everything the matcher needs for this company and run it. Codes taught
 // for the resolved supplier (scm.supplier_scan_codes) join the bindings.
 export async function matchScan(svc: SupabaseClient, companyId: number | null, parsed: GrnExtracted): Promise<ScanMatchContext> {
-  const [openLines, bindings, suppliers, allPos] = await Promise.all([
+  const [openLines, bindings, suppliers, allPos, companies] = await Promise.all([
     loadOpenPoLines(svc, companyId),
     loadSupplierBindings(svc, companyId),
     loadSuppliers(svc, companyId),
     loadPoStatuses(svc, companyId),
+    loadCompanies(svc),
   ]);
   const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
   const taught = supplierId !== null ? await loadScanCodes(svc, companyId, supplierId) : [];
   const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, [...bindings, ...taught], supplierId);
-  return { supplierId, openLines, allPos, match };
+  return { supplierId, openLines, allPos, match, otherCompany: otherCompanyNote([parsed.poNo, ...parsed.lines.map((l) => l.poNo)], companyId, companies) };
 }
 
 export type ScanDraftOutcome =
@@ -97,10 +114,10 @@ export async function draftFromScan(
   job: { uploaderStaffId: string; houzsUserId: number | null; companyId: number | null; id: string },
   parsed: GrnExtracted,
 ): Promise<ScanDraftOutcome> {
-  const { match, allPos, supplierId } = await matchScan(svc, job.companyId, parsed);
+  const { match, allPos, supplierId, otherCompany } = await matchScan(svc, job.companyId, parsed);
   if (match.picks.length === 0) {
     // No confident PO line — never fabricate a standalone GRN or a wrong link.
-    return { kind: 'needs_review', note: buildNeedsReviewNote(parsed, match, allPos, supplierId) };
+    return { kind: 'needs_review', note: otherCompany ?? buildNeedsReviewNote(parsed, match, allPos, supplierId) };
   }
 
   // Resolve the company doc prefix from the captured company (headless — no

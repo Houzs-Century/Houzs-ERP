@@ -4,6 +4,7 @@
 // keep delivery-planning.ts under its file-size ceiling; imported back by the
 // route and by delivery-planning.fields.test.ts / delivery-planning-fields.test.ts.
 import { z } from 'zod';
+import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 
 export const HC_SUBSTATUS_VALUES = [
   'Pending Pickup', 'Done Shipout', 'Arrives EM Warehouse',
@@ -49,6 +50,7 @@ export const fieldsSchema = z.object({
   amendedDeliveryDate: z.string().nullable().optional(),    // YYYY-MM-DD (we confirm)
   // DO-execution (→ delivery_orders)
   timeRange: z.string().nullable().optional(),
+  jobKind: z.enum(ASSR_BOARD_LEGS).optional(),  // service-case leg the write targets
   timeConfirmed: z.boolean().nullable().optional(),
   arrivalAt: z.string().nullable().optional(),            // ISO datetime
   departureAt: z.string().nullable().optional(),

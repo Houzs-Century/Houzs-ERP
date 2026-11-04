@@ -24,6 +24,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { POS_COMBO_COLUMNS, posOwnsSellingCombos, type PosComboRow } from '../lib/pos-sofa-combos';
 import { comboSlotsKey, parseDefaultFreeGifts, type SofaPriceTier } from '../shared';
 import { validateComboModules, validatePricesByHeight } from './sofa-combos';
+import { validateComboAccessories, comboAccessoriesKey } from '../lib/sofa-saved-layout';
 
 // pos_sofa_combos.tier has its own CHECK (PRICE_1..PRICE_3); PRICE_4 is cost-side only.
 const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
@@ -37,6 +38,7 @@ export function posComboToWire(r: PosComboRow) {
     id: r.id,
     baseModel: r.base_model,
     modules: r.modules,
+    accessories: r.accessories ?? [],
     tier: r.tier,
     customerId: null,
     supplierId: null,
@@ -97,12 +99,13 @@ export async function listPosCombos(c: AppContext, companyId: number): Promise<R
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
+  const includeAccessories = c.req.query('includeAccessories') === '1';
   const today = todayMyt();
   const seen = new Set<string>();
   const rules: ReturnType<typeof posComboToWire>[] = [];
   for (const r of data as unknown as PosComboRow[]) {
-    if (r.effective_from > today) continue;
-    const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules), r.tier]);
+    if (r.effective_from > today || (!includeAccessories && r.accessories?.length)) continue;
+    const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules), comboAccessoriesKey(r.accessories), r.tier]);
     if (seen.has(key)) continue;
     seen.add(key);
     rules.push(posComboToWire(r));
@@ -126,6 +129,11 @@ export const posSofaCombosHistoryHandler = async (c: AppContext) => {
   } catch {
     parsed = modulesRaw.split(',');
   }
+  let accessoriesRaw: unknown = [];
+  try { accessoriesRaw = JSON.parse(c.req.query('accessories') ?? '[]'); } catch { return c.json({ error: 'accessories_invalid' }, 400); }
+  const accessories = validateComboAccessories(accessoriesRaw);
+  if (!accessories) return c.json({ error: 'accessories_invalid' }, 400);
+  const wantedAccessoriesKey = comboAccessoriesKey(accessories);
   const wantedKey = comboSlotsKey(Array.isArray(parsed) ? (parsed as (string | string[])[]) : modulesRaw.split(','));
   const tier = TIERS.has(tierRaw) ? (tierRaw as SofaPriceTier) : null;
 
@@ -141,7 +149,7 @@ export const posSofaCombosHistoryHandler = async (c: AppContext) => {
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rules = (data as unknown as PosComboRow[])
-    .filter((r) => comboSlotsKey(r.modules) === wantedKey)
+    .filter((r) => comboSlotsKey(r.modules) === wantedKey && comboAccessoriesKey(r.accessories) === wantedAccessoriesKey)
     .map(posComboToWire);
   return c.json({ rules });
 };
@@ -149,6 +157,7 @@ export const posSofaCombosHistoryHandler = async (c: AppContext) => {
 type WriteBody = {
   baseModel?: string;
   modules?: unknown;
+  accessories?: unknown;
   tier?: string | null;
   sellingPricesByHeight?: unknown;
   pwpPricesByHeight?: unknown;
@@ -189,6 +198,8 @@ export const posSofaCombosCreateHandler = async (c: AppContext) => {
   if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
   const modules = validateComboModules(body.modules);
   if (!modules) return c.json({ error: 'modules_required' }, 400);
+  const accessories = validateComboAccessories(body.accessories);
+  if (!accessories) return c.json({ error: 'accessories_invalid' }, 400);
   const tier = body.tier != null && TIERS.has(body.tier) ? body.tier : null;
 
   const selling = validatePricesByHeight(body.sellingPricesByHeight);
@@ -205,6 +216,7 @@ export const posSofaCombosCreateHandler = async (c: AppContext) => {
   return insertVersion(c, co.companyId, {
     base_model: baseModel,
     modules,
+    accessories,
     tier,
     selling_prices_by_height: selling,
     pwp_prices_by_height: pwp,
@@ -253,6 +265,7 @@ export const posSofaCombosEditHandler = async (c: AppContext) => {
   return insertVersion(c, co.companyId, {
     base_model: o.base_model,
     modules: o.modules,
+    accessories: o.accessories ?? [],
     tier: o.tier,
     selling_prices_by_height: selling,
     pwp_prices_by_height: pwp,

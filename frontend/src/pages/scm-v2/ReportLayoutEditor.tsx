@@ -13,34 +13,34 @@
 // In or Out, a line is In / Out / Net so one account may sit on both sides, a
 // category names its own subtotal line, a subtotal row sums everything above
 // it, and the spares are offered per side.
+//
+// The owner's redesign (batch 6 §5.12, Finance-1a-Reports template 174–195):
+// the editor stands IN PLACE of the report while it is open (InPlaceOfReport —
+// the report and its header buttons step aside), its head carries Fold all ·
+// Unfold all · Reset to chart · Save · Close with an "Unsaved changes" tag, a
+// category is renamed in place with its subtotal line beside it, and Close
+// asks before it drops unsaved changes.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { Button } from '@2990s/design-system';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Layers, PenLine, Plus, X } from 'lucide-react';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
-  REPORT_TITLES, accountKey, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
+  REPORT_TITLES, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
   setAccountFlow, setCategoryFlow, setCategoryTick, setTotalLabel, unplaceAccount, unplacedAccounts, useReportLayout, useResetReportLayout, useSaveReportLayout,
   type DropTarget, type Flow, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutCompany, type LayoutItem, type ReportKey, type Side,
 } from '../../vendor/scm/lib/report-layout';
-import styles from './SalesOrderDetail.module.css';
+import { InPlaceOfReport } from './reports/reportParts';
+import tokens from './finance/finance-ui.module.css';
+import s from './ReportLayoutEditor.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
-const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
-const iconBtn: React.CSSProperties = {
-  background: 'transparent', border: 0, padding: '2px 4px', cursor: 'pointer', color: 'inherit', display: 'inline-flex', alignItems: 'center',
-};
-const cell: React.CSSProperties = { padding: '3px 8px', verticalAlign: 'middle' };
-/* Account No. and Name are their own columns, the drag handle beside the number
-   (owner 2026-09-18: 拖动应该在 account number 旁边; number 和 name 各自一个 column). */
-const codeCell: React.CSSProperties = { ...cell, whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' };
-const grip: React.CSSProperties = { ...soft, marginRight: 6, cursor: 'grab', display: 'inline-flex', verticalAlign: 'middle' };
-const select: React.CSSProperties = { fontSize: 'var(--fs-13)', padding: '1px 4px' };
 const sideWord = (side: Side): string => (side === 'in' ? 'In' : 'Out');
 
-type Drag = { block: string; item: LayoutItem };
+type Drag = { block: string; item: LayoutItem; key: string };
+/** A rename in progress: the name, and the subtotal line's name where the category has one (Cash flow's sides). */
+type Rename = { id: string; label: string; total: string | null };
 
 type Props = { report: ReportKey; onClose: () => void };
 
@@ -53,10 +53,12 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const [draft, setDraft] = useState<Layout | null>(null);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editLabel, setEditLabel] = useState('');
+  const [rename, setRename] = useState<Rename | null>(null);
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  /* Close with unsaved changes asks first (the design's banner under the head). */
+  const [asking, setAsking] = useState(false);
 
   const data = q.data;
   /* The server's tree is the draft until the first edit; after a save or a
@@ -67,32 +69,54 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const companies: LayoutCompany[] = data?.companies ?? [];
   /* The Cash Flow carries directions — one more column, spares per side. */
   const cashFlow = report === 'rp';
-  const span = 3 + companies.length + (cashFlow ? 1 : 0);
+  const span = 4 + companies.length + (cashFlow ? 1 : 0);
+  const title = `Layout · ${REPORT_TITLES[report]}`;
 
   const apply = (next: Layout) => {
     if (!draft || next === draft) return;
     setDraft(next);
     setDirty(true);
     setError(null);
+    setAsking(false);
   };
 
-  const startRename = (id: string, label: string) => { setEditingId(id); setEditLabel(label); };
+  const startRename = (id: string, label: string, total: string | null) => setRename({ id, label, total });
   const commitRename = () => {
-    if (!draft || !editingId) return;
-    const label = editLabel.trim();
-    if (label) apply(renameCategory(draft, editingId, label));
-    setEditingId(null);
+    if (!draft || !rename) return;
+    let next = draft;
+    const label = rename.label.trim();
+    if (label) next = renameCategory(next, rename.id, label);
+    if (rename.total !== null) next = setTotalLabel(next, rename.id, rename.total);
+    apply(next);
+    setRename(null);
+  };
+  const renameKeys = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') commitRename();
+    if (e.key === 'Escape') setRename(null);
   };
 
   const drop = (target: DropTarget, block: string) => {
     if (!draft || !drag || drag.block !== block) return;
     apply(placeItem(draft, block, drag.item, target));
     setDrag(null);
+    setOver(null);
   };
-  const dragProps = (block: string, target: DropTarget) => ({
-    onDragOver: (e: React.DragEvent) => { if (drag && drag.block === block) e.preventDefault(); },
+  const dragProps = (block: string, target: DropTarget, key: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!drag || drag.block !== block) return;
+      e.preventDefault();
+      if (over !== key) setOver(key);
+    },
+    onDragLeave: () => { if (over === key) setOver(null); },
     onDrop: (e: React.DragEvent) => { e.preventDefault(); drop(target, block); },
   });
+  const startDrag = (block: string, item: LayoutItem, key: string) => ({
+    draggable: true,
+    onDragStart: () => setDrag({ block, item, key }),
+    onDragEnd: () => { setDrag(null); setOver(null); },
+  });
+  const rowClass = (base: string, key: string): string =>
+    [base, drag?.key === key ? s.dragging : '', over === key && drag?.key !== key ? s.dropOn : ''].filter(Boolean).join(' ');
 
   const onSave = async () => {
     if (!draft) return;
@@ -100,6 +124,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     try {
       await save.mutateAsync(draft);
       setDirty(false);
+      setAsking(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The layout was not saved.');
     }
@@ -115,10 +140,12 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     try {
       await reset.mutateAsync();
       setDirty(false);
+      setAsking(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The layout was not reset.');
     }
   };
+  const close = () => { if (dirty) setAsking(true); else onClose(); };
 
   const toggleFold = (id: string) => setFolded((prev) => {
     const next = new Set(prev);
@@ -131,29 +158,61 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const unfoldAll = () => setFolded(new Set());
 
   const nameOf = (code: string): string => names.get(code)?.name ?? '(not on the chart)';
+  const indentOf = (depth: number): React.CSSProperties => ({ paddingLeft: 16 * (depth - 1) });
+
+  const order = (block: string, key: string, label: string) => (
+    <span className={s.icons}>
+      <button type="button" className={s.iconBtn} aria-label={`Move ${label} up`} title="Move up"
+        onClick={() => draft && apply(moveWithinSiblings(draft, block, key, -1))}><ArrowUp {...ICON} /></button>
+      <button type="button" className={s.iconBtn} aria-label={`Move ${label} down`} title="Move down"
+        onClick={() => draft && apply(moveWithinSiblings(draft, block, key, 1))}><ArrowDown {...ICON} /></button>
+    </span>
+  );
+  const noTicks = companies.map((co) => <td key={co.id} />);
+
+  /* The name typed in place, and the subtotal line beside it where the category has one. */
+  const renameBox = (it: { id: string; label: string }) => rename && (
+    <span className={s.rename} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commitRename(); }}>
+      <input
+        autoFocus
+        className={s.renName}
+        aria-label={`Rename ${it.label}`}
+        placeholder="Category name"
+        value={rename.label}
+        onChange={(e) => setRename({ ...rename, label: e.target.value })}
+        onKeyDown={renameKeys}
+      />
+      {rename.total !== null && (
+        <input
+          className={s.renTotal}
+          aria-label={`Subtotal name of ${it.label}`}
+          title="Its subtotal line"
+          placeholder={`Total ${rename.label.trim() || it.label}`}
+          value={rename.total}
+          onChange={(e) => setRename({ ...rename, total: e.target.value })}
+          onKeyDown={renameKeys}
+        />
+      )}
+      <button type="button" className={s.done} onClick={commitRename}>Done</button>
+    </span>
+  );
 
   const renderItems = (block: string, items: LayoutItem[], depth: number): React.ReactNode => items.map((it) => {
     const key = itemKey(it);
-    const indent = 8 + 16 * (depth - 1);
-    const arrows = (
-      <>
-        <button type="button" style={iconBtn} aria-label={`Move ${it.kind === 'account' ? it.code : it.label} up`}
-          onClick={() => draft && apply(moveWithinSiblings(draft, block, key, -1))}><ArrowUp {...ICON} /></button>
-        <button type="button" style={iconBtn} aria-label={`Move ${it.kind === 'account' ? it.code : it.label} down`}
-          onClick={() => draft && apply(moveWithinSiblings(draft, block, key, 1))}><ArrowDown {...ICON} /></button>
-      </>
-    );
     if (it.kind === 'account') {
       return (
-        <tr key={key} data-kind="account" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'before', key })}>
-          <td style={{ ...codeCell, paddingLeft: indent }}>
-            <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
-            {it.code}
+        <tr key={key} data-kind="account" className={rowClass('', key)} {...startDrag(block, it, key)} {...dragProps(block, { kind: 'before', key }, key)}>
+          <td className={s.shrink}>
+            <span className={s.codeCell} style={indentOf(depth)}>
+              <span className={s.chevGap} aria-hidden />
+              <span className={s.grip} title="Drag to move" aria-hidden><GripVertical {...ICON} /></span>
+              <span className={s.code}>{it.code}</span>
+            </span>
           </td>
-          <td style={cell}>{nameOf(it.code)}</td>
+          <td>{nameOf(it.code)}</td>
           {cashFlow && (
-            <td style={cell}>
-              <select aria-label={`Direction of ${it.code}`} style={select} value={it.flow ?? 'in'}
+            <td>
+              <select aria-label={`Direction of ${it.code}`} className={s.select} value={it.flow ?? 'in'}
                 onChange={(e) => draft && apply(setAccountFlow(draft, block, key, e.target.value as Flow))}>
                 <option value="in">In</option>
                 <option value="out">Out</option>
@@ -161,92 +220,73 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               </select>
             </td>
           )}
-          {companies.map((co) => <td key={co.id} style={cell} />)}
-          <td style={{ ...cell, whiteSpace: 'nowrap', textAlign: 'right' }}>
-            {arrows}
-            <button type="button" style={iconBtn} aria-label={`Unplace ${it.code}`} title="Back to Unassigned"
-              onClick={() => draft && apply(unplaceAccount(draft, block, it.code, it.flow))}><X {...ICON} /></button>
+          {noTicks}
+          <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.code)}</td>
+          <td className={`${s.shrink} ${s.right}`}>
+            <span className={s.icons}>
+              <button type="button" className={s.iconBtn} aria-label={`Unplace ${it.code}`} title="Back to Unassigned"
+                onClick={() => draft && apply(unplaceAccount(draft, block, it.code, it.flow))}><X {...ICON} /></button>
+            </span>
           </td>
         </tr>
       );
     }
     if (it.kind === 'subtotal') {
       return (
-        <tr key={key} data-kind="subtotal" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'before', key })}>
-          <td style={{ ...codeCell, paddingLeft: indent }}><span style={grip} aria-hidden><GripVertical {...ICON} /></span></td>
-          <td style={{ ...cell, fontWeight: 600 }}>
-            {editingId === it.id ? (
-              <input
-                autoFocus
-                aria-label={`Rename ${it.label}`}
-                value={editLabel}
-                onChange={(e) => setEditLabel(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingId(null); }}
-                style={{ fontSize: 'var(--fs-13)', padding: '1px 4px', minWidth: 180 }}
-              />
-            ) : (
-              <>
-                <span>{it.label}</span>
-                <button type="button" style={iconBtn} aria-label={`Rename ${it.label}`} onClick={() => startRename(it.id, it.label)}><Pencil {...ICON} /></button>
-              </>
+        <tr key={key} data-kind="subtotal" className={rowClass(s.subtotal, key)} {...startDrag(block, it, key)} {...dragProps(block, { kind: 'before', key }, key)}>
+          <td className={s.shrink}>
+            <span className={s.codeCell} style={indentOf(depth)}>
+              <span className={s.chevGap} aria-hidden />
+              <span className={s.grip} title="Drag to move" aria-hidden><GripVertical {...ICON} /></span>
+            </span>
+          </td>
+          <td>
+            {rename?.id === it.id ? renameBox(it) : (
+              <span className={s.name}><span>{it.label}</span><span className={s.subText}>subtotal of everything above</span></span>
             )}
           </td>
-          {cashFlow && <td style={{ ...cell, ...soft }}>subtotal of everything above</td>}
-          {companies.map((co) => <td key={co.id} style={cell} />)}
-          <td style={{ ...cell, whiteSpace: 'nowrap', textAlign: 'right' }}>
-            {arrows}
-            <button type="button" style={iconBtn} aria-label={`Delete ${it.label}`} title="Delete the subtotal line"
-              onClick={() => draft && apply(removeSubtotal(draft, it.id))}><Trash2 {...ICON} /></button>
+          {cashFlow && <td />}
+          {noTicks}
+          <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.label)}</td>
+          <td className={`${s.shrink} ${s.right}`}>
+            <span className={s.icons}>
+              {rename?.id !== it.id && (
+                <button type="button" className={s.iconBtn} aria-label={`Rename ${it.label}`} title="Rename" onClick={() => startRename(it.id, it.label, null)}><PenLine {...ICON} /></button>
+              )}
+              <button type="button" className={`${s.iconBtn} ${s.iconBtnDanger}`} aria-label={`Delete ${it.label}`} title="Delete the subtotal line"
+                onClick={() => draft && apply(removeSubtotal(draft, it.id))}><X {...ICON} /></button>
+            </span>
           </td>
         </tr>
       );
     }
     const open = !folded.has(it.id);
+    /* Cash flow's sides (its top categories) name their own subtotal line. */
+    const side = cashFlow && depth === 1;
     return (
       <Fragment key={key}>
-        <tr data-kind="category" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'into', categoryId: it.id })}>
-          <td style={{ ...codeCell, paddingLeft: indent, fontWeight: 600 }}>
-            <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
-            <button type="button" style={iconBtn} aria-label={open ? `Fold ${it.label}` : `Unfold ${it.label}`} onClick={() => toggleFold(it.id)}>
-              {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
-            </button>
-            {it.code ?? ''}
+        <tr data-kind="category" className={rowClass(s.category, key)} {...startDrag(block, it, key)} {...dragProps(block, { kind: 'into', categoryId: it.id }, key)}>
+          <td className={s.shrink}>
+            <span className={s.codeCell} style={indentOf(depth)}>
+              <button type="button" className={s.chev} aria-label={open ? `Fold ${it.label}` : `Unfold ${it.label}`} onClick={() => toggleFold(it.id)}>
+                {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
+              </button>
+              <span className={s.grip} title="Drag to move" aria-hidden><GripVertical {...ICON} /></span>
+              <span className={s.code}>{it.code ?? ''}</span>
+            </span>
           </td>
-          <td style={{ ...cell, fontWeight: 600 }}>
-            {editingId === it.id ? (
-              <input
-                autoFocus
-                aria-label={`Rename ${it.label}`}
-                value={editLabel}
-                onChange={(e) => setEditLabel(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingId(null); }}
-                style={{ fontSize: 'var(--fs-13)', padding: '1px 4px', minWidth: 180 }}
-              />
-            ) : (
-              <>
+          <td>
+            {rename?.id === it.id ? renameBox(it) : (
+              <span className={s.name}>
                 <span>{it.label}</span>
-                <button type="button" style={iconBtn} aria-label={`Rename ${it.label}`} onClick={() => startRename(it.id, it.label)}><Pencil {...ICON} /></button>
-              </>
-            )}
-            {cashFlow && depth === 1 && (
-              <div style={{ marginTop: 2, fontWeight: 400 }}>
-                <span style={soft}>Subtotal line </span>
-                <input
-                  aria-label={`Subtotal name of ${it.label}`}
-                  placeholder={`Total ${it.label}`}
-                  value={it.totalLabel ?? ''}
-                  onChange={(e) => draft && apply(setTotalLabel(draft, it.id, e.target.value))}
-                  style={{ fontSize: 'var(--fs-12)', padding: '1px 4px', minWidth: 160 }}
-                />
-              </div>
+                {side && <span className={s.subText}>{`Subtotal line: ${it.totalLabel || `Total ${it.label}`}`}</span>}
+              </span>
             )}
           </td>
           {cashFlow && (
-            <td style={cell}>
-              {depth === 1 && (
-                <select aria-label={`Side of ${it.label}`} style={select} value={it.flow ?? 'in'}
+            <td>
+              {side && (
+                <select aria-label={`Side of ${it.label}`} className={s.select} value={it.flow ?? 'in'}
                   onChange={(e) => draft && apply(setCategoryFlow(draft, it.id, e.target.value as Side))}>
                   <option value="in">In</option>
                   <option value="out">Out</option>
@@ -255,21 +295,29 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             </td>
           )}
           {companies.map((co) => (
-            <td key={co.id} style={{ ...cell, textAlign: 'center' }}>
+            <td key={co.id} className={s.center}>
               <input
                 type="checkbox"
+                className={s.tick}
                 aria-label={`${it.label} for ${co.code}`}
+                title={`${co.code} shows ${it.label}; unticked, its accounts print under Unassigned there`}
                 checked={!(it.hiddenFor ?? []).includes(co.id)}
                 onChange={(e) => draft && apply(setCategoryTick(draft, it.id, co.id, e.target.checked))}
               />
             </td>
           ))}
-          <td style={{ ...cell, whiteSpace: 'nowrap', textAlign: 'right' }}>
-            {arrows}
-            <button type="button" style={iconBtn} aria-label={`Add a category under ${it.label}`} title="Sub-category"
-              onClick={() => draft && apply(addCategory(draft, block, it.id, 'New category', newCategoryId()))}><Plus {...ICON} /></button>
-            <button type="button" style={iconBtn} aria-label={`Delete ${it.label}`} title="Delete — what it holds moves up a level"
-              onClick={() => draft && apply(removeCategory(draft, it.id))}><Trash2 {...ICON} /></button>
+          <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.label)}</td>
+          <td className={`${s.shrink} ${s.right}`}>
+            <span className={s.icons}>
+              {rename?.id !== it.id && (
+                <button type="button" className={s.iconBtn} aria-label={`Rename ${it.label}`} title="Rename"
+                  onClick={() => startRename(it.id, it.label, side ? (it.totalLabel ?? '') : null)}><PenLine {...ICON} /></button>
+              )}
+              <button type="button" className={s.iconBtn} aria-label={`Add a category under ${it.label}`} title="Add a category under it"
+                onClick={() => draft && apply(addCategory(draft, block, it.id, 'New category', newCategoryId()))}><Plus {...ICON} /></button>
+              <button type="button" className={`${s.iconBtn} ${s.iconBtnDanger}`} aria-label={`Delete ${it.label}`} title="Delete · what it holds moves up a level"
+                onClick={() => draft && apply(removeCategory(draft, it.id))}><X {...ICON} /></button>
+            </span>
           </td>
         </tr>
         {open && renderItems(block, it.children, depth + 1)}
@@ -293,56 +341,65 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
       const into = sideCategory(side);
       if (into) apply(placeItem(draft, block.key, { kind: 'account', code, flow: side }, { kind: 'into', categoryId: into }));
     };
+    const blockKey = `block:${block.key}`;
     return (
       <Fragment key={block.key}>
-        <tr data-block={block.key} {...dragProps(block.key, { kind: 'end' })}>
-          <td colSpan={cashFlow ? 3 : 2} style={{ ...cell, paddingTop: 10, fontWeight: 700 }}>{block.title}</td>
-          {companies.map((co) => <td key={co.id} style={cell} />)}
-          <td style={{ ...cell, textAlign: 'right', paddingTop: 10, whiteSpace: 'nowrap' }}>
-            <Button variant="ghost" size="sm" aria-label={`Add a category to ${block.title}`}
-              onClick={() => apply(addCategory(draft, block.key, null, 'New category', newCategoryId()))}>
-              <Plus {...ICON} /> Category
-            </Button>
-            {cashFlow && (
-              <Button variant="ghost" size="sm" aria-label={`Add a subtotal to ${block.title}`} title="A running subtotal of everything above it, In less Out"
-                onClick={() => apply(addSubtotal(draft, block.key, 'New subtotal', newSubtotalId()))}>
-                <Plus {...ICON} /> Subtotal
-              </Button>
-            )}
+        <tr data-block={block.key} className={rowClass(s.block, blockKey)} {...dragProps(block.key, { kind: 'end' }, blockKey)}>
+          <td colSpan={2}>
+            <span className={s.name}>
+              <span>{block.title}</span>
+              <span className={s.blockTools}>
+                <button type="button" className={s.addLink} aria-label={`Add a category to ${block.title}`}
+                  onClick={() => apply(addCategory(draft, block.key, null, 'New category', newCategoryId()))}>+ Add category</button>
+                {cashFlow && (
+                  <button type="button" className={s.addLink} aria-label={`Add a subtotal to ${block.title}`} title="A running subtotal of everything above it, In less Out"
+                    onClick={() => apply(addSubtotal(draft, block.key, 'New subtotal', newSubtotalId()))}>+ Subtotal</button>
+                )}
+              </span>
+            </span>
           </td>
+          <td colSpan={span - 2} />
         </tr>
         {renderItems(block.key, items, 1)}
         {items.length === 0 && spares.every((sp) => sp.rows.length === 0) && (
-          <tr><td colSpan={span} style={{ ...cell, paddingLeft: 24, ...soft }}>No accounts in this block.</td></tr>
+          <tr className={s.empty}><td colSpan={span}>No accounts in this block.</td></tr>
         )}
         {spares.map(({ side, rows }) => rows.length > 0 && (
           <Fragment key={side ?? 'all'}>
-            <tr data-unassigned={side ? `${block.key}:${side}` : block.key}>
-              <td colSpan={span} style={{ ...cell, paddingLeft: 24, fontStyle: 'italic', ...soft }}>
+            <tr className={s.spareHead} data-unassigned={side ? `${block.key}:${side}` : block.key}>
+              <td colSpan={span}>
                 {side
                   ? `Unassigned ${side === 'in' ? 'receipts' : 'payments'} — printed as their own group at the foot until placed on the ${sideWord(side)} side`
                   : `Unassigned — printed at the foot of ${block.title} until placed`}
               </td>
             </tr>
-            {rows.map((a) => (
-              <tr key={a.code} data-kind="spare" draggable onDragStart={() => setDrag({ block: block.key, item: side ? { kind: 'account', code: a.code, flow: side } : { kind: 'account', code: a.code } })}>
-                <td style={{ ...codeCell, paddingLeft: 40 }}>
-                  <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
-                  {a.code}
-                </td>
-                <td style={cell}>{a.name}</td>
-                {cashFlow && <td style={{ ...cell, ...soft }}>{side ? sideWord(side) : ''}</td>}
-                {companies.map((co) => <td key={co.id} style={cell} />)}
-                <td style={{ ...cell, textAlign: 'right' }}>
-                  <Button variant="ghost" size="sm" aria-label={side ? `Place ${a.code} as ${sideWord(side)}` : `Place ${a.code}`}
-                    disabled={side !== null && sideCategory(side) === null}
-                    title={side !== null && sideCategory(side) === null ? `Add an ${sideWord(side)} category first` : undefined}
-                    onClick={() => placeSpare(a.code, side)}>
-                    Place
-                  </Button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((a) => {
+              const item: LayoutItem = side ? { kind: 'account', code: a.code, flow: side } : { kind: 'account', code: a.code };
+              const key = `spare:${side ?? 'all'}:${a.code}`;
+              const noSide = side !== null && sideCategory(side) === null;
+              return (
+                <tr key={a.code} data-kind="spare" className={rowClass(s.spare, key)} {...startDrag(block.key, item, key)}>
+                  <td className={s.shrink}>
+                    <span className={s.codeCell} style={indentOf(2)}>
+                      <span className={s.chevGap} aria-hidden />
+                      <span className={s.grip} title="Drag to move" aria-hidden><GripVertical {...ICON} /></span>
+                      <span className={s.code}>{a.code}</span>
+                    </span>
+                  </td>
+                  <td>{a.name}</td>
+                  {cashFlow && <td><span className={s.dirText}>{side ? sideWord(side) : ''}</span></td>}
+                  {noTicks}
+                  <td />
+                  <td className={`${s.shrink} ${s.right}`}>
+                    <button type="button" className={s.place} aria-label={side ? `Place ${a.code} as ${sideWord(side)}` : `Place ${a.code}`}
+                      disabled={noSide} title={noSide ? `Add an ${sideWord(side)} category first` : undefined}
+                      onClick={() => placeSpare(a.code, side)}>
+                      Place
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </Fragment>
         ))}
       </Fragment>
@@ -350,57 +407,76 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   };
 
   return (
-    <section role="dialog" aria-label={`Layout · ${REPORT_TITLES[report]}`} className={styles.card}>
-      <div className={styles.cardHeader} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <h2 className={styles.cardTitle} style={{ marginRight: 'auto' }}>Layout · {REPORT_TITLES[report]}</h2>
-        {data && (
-          <span style={soft}>
-            {data.stored
-              ? `Saved by ${data.updatedBy ?? '—'} on ${fmtDateOrDash(data.updatedAt)} · shared by every company`
-              : 'The chart\'s own tree — nothing saved yet · shared by every company'}
-          </span>
+    <InPlaceOfReport>
+      <section role="dialog" aria-label={title} className={`${tokens.root} ${s.card}`}>
+        <div className={s.head}>
+          <div className={s.headText}>
+            <h2 className={s.title}>
+              <Layers size={16} strokeWidth={1.75} className={s.titleIcon} aria-hidden />
+              {title}
+              {dirty && <span className={s.tag}>Unsaved changes</span>}
+            </h2>
+            {data && (
+              <div className={s.sub}>
+                {data.stored
+                  ? `Saved by ${data.updatedBy ?? '—'} on ${fmtDateOrDash(data.updatedAt)} · shared by every company`
+                  : 'The chart\'s own tree — nothing saved yet · shared by every company'}
+              </div>
+            )}
+          </div>
+          <div className={s.actions}>
+            <button type="button" className={s.btn} onClick={foldAll} disabled={!draft}>Fold all</button>
+            <button type="button" className={s.btn} onClick={unfoldAll} disabled={!draft}>Unfold all</button>
+            <button type="button" className={s.btn} onClick={() => void onReset()} disabled={reset.isPending || save.isPending}>Reset to chart</button>
+            <button type="button" className={`${s.btn} ${s.btnSolid}`} onClick={() => void onSave()} disabled={!dirty || save.isPending || reset.isPending}>
+              {save.isPending ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className={s.btn} onClick={close} aria-label="Close the layout editor">Close</button>
+          </div>
+        </div>
+        {asking && (
+          <div className={s.ask}>
+            <AlertTriangle size={16} strokeWidth={1.75} className={s.askIcon} aria-hidden />
+            <span className={s.askText}>This layout has changes that are not saved. Close it without them, or keep editing and Save.</span>
+            <button type="button" className={s.btn} onClick={() => setAsking(false)}>Keep editing</button>
+            <button type="button" className={`${s.btn} ${s.btnDanger}`} onClick={onClose}>Close without saving</button>
+          </div>
         )}
-        <Button variant="ghost" size="sm" onClick={foldAll} disabled={!draft}>Fold all</Button>
-        <Button variant="ghost" size="sm" onClick={unfoldAll} disabled={!draft}>Unfold all</Button>
-        <Button variant="ghost" size="sm" onClick={() => void onReset()} disabled={reset.isPending || save.isPending}>Reset to chart</Button>
-        <Button variant="primary" size="sm" onClick={() => void onSave()} disabled={!dirty || save.isPending || reset.isPending}>
-          {save.isPending ? 'Saving…' : 'Save'}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close the layout editor">Close</Button>
-      </div>
-      <div className={styles.cardBody} style={{ fontSize: 'var(--fs-13)', overflowX: 'auto' }}>
-        {q.isLoading && <div style={soft}>Reading the layout…</div>}
-        {q.isError && <div style={{ color: 'var(--c-danger, #a33)' }}>The layout did not load — close and open it again.</div>}
-        {error && <div role="alert" style={{ color: 'var(--c-danger, #a33)', marginBottom: 8 }}>{error}</div>}
+        {error && <div role="alert" className={s.problem}>{error}</div>}
+        {q.isLoading && <div className={s.status}>Reading the layout…</div>}
+        {q.isError && <div className={s.problem}>The layout did not load — close and open it again.</div>}
         {data && draft && (
           <>
-            <div style={{ ...soft, marginBottom: 8 }}>
+            <div className={s.note}>
               Drag a row onto a category to put it inside, onto an account to put it above, or use ↑ ↓. A tick means that
               company shows the category; unticked, its accounts print under Unassigned there. The block an account belongs
               to follows its section on the chart of accounts.
               {cashFlow && (
                 <>
-                  {' '}On the Cash Flow every top category is In or Out — that decides the sign of its lines and which total they
+                  {' '}On the Cash flow every top category is In or Out — that decides the sign of its lines and which total they
                   feed; a line's own direction (In, Out, or Net = in − out) may differ, so one account can sit on both sides; a
-                  category's subtotal line can carry its own name; a subtotal row sums everything above it, In less Out.
+                  side names its own subtotal line (Rename); a subtotal row sums everything above it, In less Out.
                 </>
               )}
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ ...cell, textAlign: 'left', ...soft }}>Account No.</th>
-                  <th style={{ ...cell, textAlign: 'left', ...soft }}>Name</th>
-                  {cashFlow && <th style={{ ...cell, textAlign: 'left', ...soft }}>Direction</th>}
-                  {companies.map((co) => <th key={co.id} style={{ ...cell, textAlign: 'center', ...soft }}>{co.code}</th>)}
-                  <th style={{ ...cell, textAlign: 'right', ...soft }}>Order</th>
-                </tr>
-              </thead>
-              <tbody>{data.blocks.map(renderBlock)}</tbody>
-            </table>
+            <div className={s.scroll}>
+              <table className={s.table}>
+                <thead>
+                  <tr>
+                    <th>Account No.</th>
+                    <th>Name</th>
+                    {cashFlow && <th>Direction</th>}
+                    {companies.map((co) => <th key={co.id} className={s.center}>{co.code}</th>)}
+                    <th className={s.center}>Order</th>
+                    <th className={s.right}><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>{data.blocks.map(renderBlock)}</tbody>
+              </table>
+            </div>
           </>
         )}
-      </div>
-    </section>
+      </section>
+    </InPlaceOfReport>
   );
 };

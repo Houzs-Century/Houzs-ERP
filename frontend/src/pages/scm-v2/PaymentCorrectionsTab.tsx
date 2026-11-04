@@ -12,23 +12,28 @@
    key is not here on purpose (owner: 靠权限改的来决定); the SO's own audit
    history still shows those.
 
-   Prints the way the bank reconciliation does: the document is built by
-   `correctionsDocument` from exactly what is on the screen. */
+   In the owner's Claude Design (batch 6 step 13, §5.9): the report shell — a
+   Month (the last twelve) and Done by, no date range — the three tiles, the
+   Finance-Table `payment-corrections`, Excel from what is on screen, and PDF /
+   Print through the report's own document builder (`correctionsDocument`,
+   kept: it prints the way the bank reconciliation does). */
 
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Printer } from 'lucide-react';
-import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
-import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { fmtDate, fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import type { ReportSheet, SheetColumn } from '../../vendor/scm/lib/report-sheet';
 import { usePaymentCorrections, type PaymentCorrectionRow } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
-import { emptyText, ledgerText, monthText, whatChanged } from '../../vendor/scm/lib/payment-corrections-pdf';
-
-const cardStyle = {
-  background: 'var(--c-paper, #fff)', border: '1px solid var(--c-line, rgba(34,31,32,0.18))',
-  borderRadius: 10, padding: 'var(--space-4, 16px)',
-} as const;
+/* The page already reads the document's own sentences from this module, so
+   its builder costs nothing more imported here. */
+import { emptyText, generatePaymentCorrectionsPdf, ledgerText, whatChanged } from '../../vendor/scm/lib/payment-corrections-pdf';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { Tag, type Tone } from './finance/SetupParts';
+import {
+  ReportExports, ReportHeaderActions, ReportMessage, ReportTiles, ReportTool, ReportToolbar, useReportSubtitle,
+  type ReportTile,
+} from './reports/reportParts';
+import css from './reports/Corrections.module.css';
 
 /** The last twelve months, this one first, as YYYY-MM. */
 export const recentMonths = (today: Date = new Date(), count = 12): string[] => {
@@ -43,178 +48,152 @@ export const recentMonths = (today: Date = new Date(), count = 12): string[] => 
   return out;
 };
 
+/** "October 2026" — a month as the select and the grey line name it. */
+const monthLong = (ym: string): string =>
+  new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const signed = (sen: number) => (sen < 0 ? `−${fmt(-sen)}` : sen > 0 ? `+${fmt(sen)}` : fmt(0));
 
+/* The tag each kind wears (the design's tones): money that came in info, an
+   edit calm, money that went late, a proof calm. */
+const KIND: Record<PaymentCorrectionRow['kind'], { text: string; tone: Tone; dot?: boolean }> = {
+  added: { text: 'Added', tone: 'info' },
+  edited: { text: 'Edited', tone: 'calm' },
+  deleted: { text: 'Deleted', tone: 'late', dot: true },
+  proof: { text: 'Proof', tone: 'calm' },
+};
+
+const reasonOf = (r: PaymentCorrectionRow): string => r.reason || (r.beforeRule ? 'Before the rule' : '');
+const recordedOf = (r: PaymentCorrectionRow): string =>
+  (r.recordedBy || r.recordedOn ? `${r.recordedBy ?? '—'}${r.recordedOn ? ` · ${fmtDateOrDash(r.recordedOn)}` : ''}` : '');
+
+/** The table as the screen shows it, for Excel. */
+export function correctionsSheet(month: string, rows: readonly PaymentCorrectionRow[], who: string, subtitle: string): ReportSheet {
+  const text = (label: string): SheetColumn => ({ label, kind: 'text' });
+  return {
+    title: 'Payment corrections',
+    subtitle,
+    meta: [{ label: 'Month', value: monthLong(month) }, { label: 'Done by', value: who || 'Everyone' }],
+    tables: [{
+      columns: [text('Done by'), text('Sales order'), text('Customer'), text('What'), text('Change'), text('First recorded by'), text('Reason'), text('Ledger')],
+      rows: rows.map((r) => ({
+        kind: 'row' as const, depth: 0, label: fmtDate(r.at),
+        cells: [r.by, r.docNo, r.customer ?? '', KIND[r.kind].text, whatChanged(r), recordedOf(r), reasonOf(r), ledgerText(r)],
+      })),
+    }],
+  };
+}
+
 export const PaymentCorrectionsTab = () => {
   const months = useMemo(() => recentMonths(), []);
-  const [month, setMonth] = useState(months[0]);
+  const [month, setMonth] = useState(months[0]!);
   const [who, setWho] = useState<string>('');
   const q = usePaymentCorrections(month);
+  const notify = useNotify();
 
-  const rows = q.data?.rows ?? [];
+  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const people = useMemo(() => [...new Set(rows.map((r) => r.by))].sort(), [rows]);
   const shown = who ? rows.filter((r) => r.by === who) : rows;
   const summary = q.data?.summary;
 
-  const notify = useNotify();
-  const print = usePrintPreview(async (action) => {
+  const subtitle = `${monthLong(month)} · every payment action taken with the payment-correction right, with the reason given and who first recorded the payment`;
+  useReportSubtitle(subtitle);
+
+  const pdf = async (action: 'preview' | 'print') => {
     if (!q.data) return;
     try {
-      const { generatePaymentCorrectionsPdf } = await import('../../vendor/scm/lib/payment-corrections-pdf');
       await generatePaymentCorrectionsPdf({ month: q.data.month, rows: shown, summary: q.data.summary }, { action });
     } catch (e) {
       void notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
-  });
+  };
+
+  const tiles: ReportTile[] = [
+    {
+      key: 'actions', label: 'Payment actions', value: summary ? String(summary.corrections) : '',
+      sub: summary ? `${summary.edited} edited · ${summary.added} added · ${summary.deleted} deleted${summary.proof > 0 ? ` · ${summary.proof} proof` : ''}` : '',
+    },
+    { key: 'by', label: 'Done by', value: summary ? who || 'Everyone' : '', sub: summary ? `${people.length} ${people.length === 1 ? 'person' : 'people'}` : '' },
+    {
+      key: 'net', label: 'Money received, net effect', value: summary ? signed(summary.netMovedSen) : '',
+      sub: 'Added, removed and edited amounts together', tone: summary && summary.netMovedSen < 0 ? 'late' : 'plain',
+    },
+  ];
 
   return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>Payment corrections</b>
-        <select value={month} onChange={(e) => { setMonth(e.target.value); setWho(''); }} aria-label="Month">
-          {months.map((m) => <option key={m} value={m}>{monthText(m)}</option>)}
-        </select>
-        <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Done by">
-          <option value="">Everyone</option>
-          {people.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <span style={{ flex: 1 }} />
-        {q.data && (
-          <button type="button" onClick={print.openPreview}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--c-line, rgba(34,31,32,0.3))', background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600 }}>
-            <Printer size={14} /> Print
-          </button>
-        )}
-      </div>
-      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
-        Every payment recorded, changed, removed or given its proof by a role that holds the
-        payment-correction right, with the reason given and who first recorded the payment.
-      </div>
+    <>
+      <ReportHeaderActions>
+        <ReportExports sheet={() => (q.data ? correctionsSheet(month, shown, who, subtitle) : null)} fileBase={`payment-corrections-${month}`} onPdf={pdf} />
+      </ReportHeaderActions>
+      <ReportToolbar>
+        <ReportTool label="Month">
+          <select className={css.select} value={month} onChange={(e) => { setMonth(e.target.value); setWho(''); }} aria-label="Month">
+            {months.map((m) => <option key={m} value={m}>{monthLong(m)}</option>)}
+          </select>
+        </ReportTool>
+        <ReportTool label="Done by">
+          <select className={css.select} value={who} onChange={(e) => setWho(e.target.value)} aria-label="Done by">
+            <option value="">Everyone</option>
+            {people.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </ReportTool>
+      </ReportToolbar>
 
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Reading the month…</div>}
       {q.isError && (
-        <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-festive-b, #B8331F)' }}>
-          The report could not be read: {q.error instanceof Error ? q.error.message : String(q.error)}
-        </div>
+        <ReportMessage tone="error">The report could not be read: {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>
       )}
-
-      {summary && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Payment actions in {monthText(month)}</div>
-            <div style={{ fontSize: 'var(--fs-22, 22px)', fontWeight: 700 }}>{summary.corrections}</div>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
-              {summary.added} added · {summary.edited} edited · {summary.deleted} deleted · {summary.proof} proof
-            </div>
-          </div>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Money received, net effect</div>
-            <div style={{ fontSize: 'var(--fs-22, 22px)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{signed(summary.netMovedSen)}</div>
-          </div>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Deleted</div>
-            <div style={{ fontSize: 'var(--fs-22, 22px)', fontWeight: 700 }}>{summary.deleted}{summary.deleted > 0 ? ` · ${fmt(summary.deletedSen)}` : ''}</div>
-          </div>
-        </div>
-      )}
+      {!q.isError && <ReportTiles label="Payment corrections figures" tiles={tiles} pending={!summary} />}
 
       {q.data && rows.length === 0 && (
-        <div style={{ ...cardStyle, fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #777)' }}>
+        <ReportMessage>
           {emptyText(month)}{' '}
           Actions by roles without the right are on each order's audit history, not here.
-        </div>
+        </ReportMessage>
       )}
 
-      {rows.length > 0 && (
+      {(q.isLoading || rows.length > 0) && (
         <DataTable<PaymentCorrectionRow>
           tableId="payment-corrections"
           exportName={`payment-corrections-${month}`}
           exportXlsx
           columns={CORRECTION_COLUMNS}
-          rows={shown}
-          emptyLabel="Nobody else did anything here this month."
+          rows={q.isLoading ? null : shown}
+          loading={q.isLoading}
+          emptyLabel={`No payment action by ${who || 'anyone'} in ${monthLong(month)}.`}
           getRowKey={(r) => r.id}
         />
       )}
-
-      {q.data && print.open && (
-        <PrintPreviewModal
-          open={print.open}
-          onClose={print.close}
-          docTitle="Payment Corrections"
-          docNo={monthText(month)}
-          rows={[
-            { label: 'Payment actions', value: String(shown.length) },
-            { label: 'Done by', value: who || 'Everyone' },
-            { label: 'Money received, net effect', value: signed(summary?.netMovedSen ?? 0) },
-          ]}
-          {...print.handlers}
-        />
-      )}
-    </div>
+    </>
   );
 };
 
-/* The pill each kind wears: green for money that came in, red for money that
-   went, the house secondary for an edit, plain ink for a proof. */
-const PILL: Record<PaymentCorrectionRow['kind'], { text: string; bg: string; color: string }> = {
-  added: { text: 'Added', bg: 'rgba(47, 93, 79, 0.12)', color: 'var(--c-secondary-a, #2F5D4F)' },
-  edited: { text: 'Edited', bg: 'rgba(34, 31, 32, 0.08)', color: 'var(--c-ink, #221F20)' },
-  deleted: { text: 'Deleted', bg: 'rgba(184, 51, 31, 0.12)', color: 'var(--c-festive-b, #B8331F)' },
-  proof: { text: 'Proof', bg: 'rgba(34, 31, 32, 0.08)', color: 'var(--c-ink-soft, #777)' },
-};
-
-const soft = 'var(--c-ink-soft, #777)';
-const sub = (text: React.ReactNode) => <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{text}</div>;
-
 const CORRECTION_COLUMNS: Column<PaymentCorrectionRow>[] = [
+  { key: 'done', label: 'Done', getValue: (r) => r.at, exportValue: (r) => r.at.slice(0, 10), exportFormat: 'date', render: (r) => fmtDateOrDash(r.at) },
+  { key: 'doneBy', label: 'Done by', render: (r) => r.by, getValue: (r) => r.by },
   {
-    key: 'done', label: 'Done',
-    render: (r) => <>{fmtDateOrDash(r.at)}{sub(r.by)}</>,
-    getValue: (r) => r.at, exportValue: (r) => r.at.slice(0, 10), exportFormat: 'date',
+    key: 'order', label: 'Sales order', getValue: (r) => r.docNo,
+    render: (r) => <FinanceDocLink to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</FinanceDocLink>,
   },
-  { key: 'doneBy', label: 'Done By', defaultHidden: true, render: (r) => r.by, getValue: (r) => r.by },
+  { key: 'customer', label: 'Customer', getValue: (r) => r.customer ?? '', render: (r) => r.customer ?? '—' },
   {
-    key: 'order', label: 'Sales order',
-    render: (r) => <><Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</Link>{r.customer && sub(r.customer)}</>,
-    getValue: (r) => r.docNo,
+    key: 'what', label: 'What', getValue: (r) => KIND[r.kind].text,
+    render: (r) => <Tag tone={KIND[r.kind].tone} dot={KIND[r.kind].dot}>{KIND[r.kind].text}</Tag>,
   },
+  { key: 'change', label: 'Change', getValue: (r) => whatChanged(r), render: (r) => whatChanged(r) },
   {
-    key: 'what', label: 'What',
-    render: (r) => {
-      const pill = PILL[r.kind];
-      return (
-        <>
-          <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: 'var(--fs-12)', fontWeight: 600, background: pill.bg, color: pill.color }}>
-            {pill.text}
-          </span>
-          <div style={{ marginTop: 4 }}>{whatChanged(r)}</div>
-        </>
-      );
-    },
-    getValue: (r) => PILL[r.kind].text,
-    exportValue: (r) => `${PILL[r.kind].text}: ${whatChanged(r)}`,
-  },
-  {
-    key: 'recorded', label: 'First recorded by',
+    key: 'recorded', label: 'First recorded by', getValue: (r) => r.recordedBy ?? '',
     render: (r) => (r.recordedBy || r.recordedOn
-      ? <>{r.recordedBy ?? '—'}{r.recordedOn && sub(fmtDateOrDash(r.recordedOn))}</>
+      ? <><span>{r.recordedBy ?? '—'}</span>{r.recordedOn && <span className={css.sub}> · {fmtDateOrDash(r.recordedOn)}</span>}</>
       : '—'),
-    getValue: (r) => r.recordedBy ?? '',
   },
   {
-    key: 'reason', label: 'Reason',
+    key: 'reason', label: 'Reason', getValue: (r) => reasonOf(r),
     render: (r) => (r.reason
       ? r.reason
       : r.beforeRule
-        ? <i style={{ color: soft }} title="Made before every payment action on the right asked for a reason (2026-09-14)">Before the rule</i>
+        ? <span className={css.sub} title="Made before every payment action on the right asked for a reason (2026-09-14)">Before the rule</span>
         : '—'),
-    getValue: (r) => r.reason || (r.beforeRule ? 'Before the rule' : ''),
   },
-  {
-    key: 'ledger', label: 'Ledger',
-    render: (r) => <span style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 'var(--fs-12)' }}>{ledgerText(r)}</span>,
-    getValue: (r) => ledgerText(r),
-  },
+  { key: 'ledger', label: 'Ledger', getValue: (r) => ledgerText(r), render: (r) => ledgerText(r) },
 ];

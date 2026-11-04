@@ -31,6 +31,7 @@ const ROOTS = ['pages/scm-v2', 'mobile', 'vendor/scm/components'];
 const NOT_AN_ADDRESS_FORM = new Map<string, string>([
   ['pages/scm-v2/SalesOrderMaintenance.tsx', 'the CRUD screen that EDITS the locality lists themselves'],
   ['vendor/scm/components/NewDpOrderDrawer.tsx', 'shows a carried address read-only; nothing is typed'],
+  ['vendor/scm/components/EditDpOrderDrawer.tsx', 'edits a delivery-planning JOB address (venue / workshop / warehouse / outsourced 3PL / ad-hoc), free text like NewDpOrderDrawer — not the customer-address cascade, which would wrongly constrain an outsourced or cross-border drop-off'],
 ]);
 
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {

@@ -45,7 +45,12 @@
    bare Hono app over a fake PostgREST builder, because the supabaseAuth bridge
    cannot run here. */
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
+const { mrpRefresh } = vi.hoisted(() => ({ mrpRefresh: vi.fn() }));
+vi.mock('../src/scm/lib/mrp-snapshot', () => ({
+  deferMrpSnapshotRefresh: (_c: unknown, _sb: unknown, companyId: number, where: string) => mrpRefresh(companyId, where),
+}));
 import { patchMfgSalesOrderStatusHandler } from '../src/scm/routes/mfg-sales-orders';
 import { cancelPurchaseOrderHandler } from '../src/scm/routes/mfg-purchase-orders';
 import { cancelPurchaseConsignmentOrderHandler } from '../src/scm/routes/purchase-consignment-orders';
@@ -226,6 +231,21 @@ describe('PO cancel is a single ACTIVE->CANCELLED transition', () => {
     expect(res.status).toBe(200);
     expect(t.purchase_orders[0].status).toBe('CANCELLED');
     expect(h.log).toContain('purchase_orders.update:neq:status');
+  });
+
+  test("a landed cancel refreshes the company's stored MRP plan (2990-0034)", async () => {
+    mrpRefresh.mockClear();
+    const t = { purchase_orders: pos() };
+    await jsonPatch(harness(t, CO_A).app, '/purchase-orders/po-a/cancel');
+    expect(mrpRefresh).toHaveBeenCalledTimes(1);
+    expect(mrpRefresh).toHaveBeenCalledWith(CO_A, 'po-cancel');
+  });
+
+  test('an already-cancelled PO refreshes nothing', async () => {
+    mrpRefresh.mockClear();
+    const t = { purchase_orders: pos().map((p) => ({ ...p, status: 'CANCELLED' })) };
+    await jsonPatch(harness(t, CO_A).app, '/purchase-orders/po-a/cancel');
+    expect(mrpRefresh).not.toHaveBeenCalled();
   });
 
   test('losing the race is an idempotent echo, and writes no second audit row', async () => {

@@ -1,497 +1,544 @@
 // ----------------------------------------------------------------------------
-// Receipts — /scm/receipts (owner 2026-09-03): 这个月收了什么钱, one page.
+// Receipts — /scm/receipts, every ringgit that came in, on one page (owner
+// 2026-09-03: 这个月收了什么钱; the owner's Claude Design, batch 5 §2).
 //
-// Three kinds in one table: GENERAL (raised HERE — 就我只想开 receipt 罢了:
-// payer typed free, money account, lines pick their own credit accounts,
-// posts directly, 错就 void), DEBTOR (read-only mirror of the Other Debtors
-// receipts, raised and four-layered over there), CUSTOMER (read-only mirror
-// of the sales payments — 顾客的钱 keeps its own flow).
+// Two pages became one. The OFFICIAL RECEIPTS — the paper a customer holds for
+// one payment, born with the payment, a draft until the money is confirmed,
+// numbered in its channel's series then (acc/receipts.ts) — were their own
+// page at /scm/official-receipts, which now opens this one on their kind. The
+// MONEY-IN list — sundry income (raised here, posts on save, 错就 void), an
+// other debtor's receipts (the four layers; posted at once from here) and a
+// read-only mirror of the customer payments — was this page.
 //
-// The list is the voucher list's grid (owner 2026-09-08, pointing at that
-// header: Filter 我要这样的 filter function): every column sorts, every funnel
-// filters, the search box finds a number, a payer, a bank; the month picker,
-// the count and the total ride in the grid's toolbar and the total follows
-// whatever is filtered. New / Edit open in the pop-out over the list — the
-// form used to be pushed in ABOVE the table, which sent the operator to the
-// top of a long list (如果我在下面我要滑到很上面).
+// The design's list: kind segments with counts (the customer payments after a
+// divider, never in All — they are the same money as the official receipts),
+// status chips per kind, the month nav (the page opens on this month; Any
+// month is one click), the search; above the table, while a month is picked,
+// the month's CHECK of payments against official receipts with each row
+// behind a difference and its step. The row's next step is its button and the
+// rest sits under ⋯ (or a right-click); ticks gather a batch — Confirm money
+// in payment-date order, Print. The receipt form opens in place of the list
+// (`?form=new|copy|edit`), Back and reload included.
 //
-// The same New receipt takes an OTHER DEBTOR's money too (owner 2026-09-08:
-// 不可能链接起来吗? 想 pv 也可以付 AP invoice, expense — receipt 页我也希望这样;
-// then 用这个方式 for posting on Post): a kind switch, Sundry income or Other
-// Debtor; the debtor's open bills list with an amount each, exactly the
-// Other Debtors page's picker; Post raises the ODR through that module's own
-// route with postNow, which books Dr bank / Cr 305 and knocks the bills off in
-// the same call — no four layers on this door. The bill itself (记它欠多少) is
-// raised on the AR Invoices page (owner 2026-09-29: the Other Debtors page is
-// the registry alone), and a POSTED Other Debtor receipt is VOIDED from here
-// — the ODR contra, the ticked bills take their money back — so this page is
-// the one door for that money in and out again.
+// Nothing posts differently: Confirm money is the formalise door (no journal),
+// Issue receipt the ensure door, the forms POST /receipts, PATCH /receipts/:id
+// and POST /other-debtors/:id/receipts {postNow} as before, Void the RCT and
+// ODR contras, the four layers their own routes. Each kind shows to whoever
+// saw its old Sidebar entry; the server's checks are unchanged.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Ban, Pencil, Plus } from 'lucide-react';
-import { Button } from '@2990s/design-system';
+import { useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { CheckCheck, Plus, Printer } from 'lucide-react';
 import {
-  useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
-  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt, useVoidDebtorReceipt,
-  postableAccounts,
-  type Account, type ReceiptRow, type DebtorBill,
+  postableAccounts, useAccounts, useCreateDebtorReceipt, useCreateReceipt, useReceiptDetail, useReceipts,
+  useUpdateReceipt, useVoidReceipt, type ReceiptDetail,
 } from '../../vendor/scm/lib/accounting-queries';
-import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
-import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
-import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
-import { Modal } from '../../vendor/scm/components/Modal';
-import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
-import { DateField } from '../../vendor/scm/components/DateField';
-import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
-import { todayMyt } from '../../vendor/scm/lib/dates';
-import { soRefOfCamelStamp } from '../../lib/so-ref-search';
-import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import styles from './SalesOrderDetail.module.css';
+import { generateReceiptsPdf } from '../../vendor/scm/lib/receipt-pdf';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { generateA4ReceiptsPdf, type A4ReceiptPaper } from '../../vendor/scm/lib/receipt-a4-pdf';
+import { sundryReceiptPaper } from '../../vendor/scm/lib/sundry-receipt-pdf';
+import { debtorReceiptPaper } from '../../vendor/scm/lib/debtor-receipt-pdf';
+import { batchTitle, useMoneyInPrint, type Paper } from './money-in/moneyInPrint';
+import type { DebtorReceiptDetail } from './money-in/moneyInDocQueries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
+import { useToastOptional } from '../../hooks/useToast';
+import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { AskBanner, type Ask } from './money-in/AskBanner';
+import { DebtorReceiptFormPage } from './money-in/DebtorReceiptFormPage';
+import { DocFormShell } from './money-in/MoneyInDocPage';
+import { BatchBar, Chips, MonthNav, SearchBox, Segments, StatusTag, tidyMenu, useRowMenu, type MenuItem } from './money-in/MoneyInParts';
+import { ReceiptForm, blankReceipt, receiptValuesOf, type DebtorSubmit, type SundrySubmit } from './money-in/ReceiptForm';
+import { ReceiptsCheck } from './money-in/ReceiptsCheck';
+import { formaliseReceiptRequest, liveJournal, useDocJournals, useEnsureReceipt, useOfficialReceipts, useReceiptsCheck } from './money-in/moneyInDocQueries';
+import { moneyInDocHref } from './money-in/moneyInDocs';
+import {
+  chipsOf, inChip, inKind, inMonth, kindLabel, kindTag, matchesReceipt, newestFirst, officialItem, readChip, readKind,
+  receiptHref, receiptItem, shiftMonth, thisMonth, type KindPick, type OfficialListRow, type ReceiptItem,
+} from './money-in/receiptsModel';
+import { useDebtorReceiptSteps, type DebtorStepRow } from './money-in/useDebtorReceiptSteps';
+import { useMoneyInGates } from './money-in/moneyInGates';
+import ui from './MoneyIn.module.css';
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
-
-const KIND_LABEL: Record<ReceiptRow['kind'], string> = {
-  GENERAL: 'Receipt', DEBTOR: 'Other Debtor', CUSTOMER: 'Customer',
-};
-
-const RECEIPTS_STORAGE_KEY = 'receipts-list.layout.v1';
-/* Newest first, the voucher list's order. Module-level on purpose: the grid
-   re-derives its visible rows whenever a prop like this changes identity and
-   reports them back — an inline comparator would report on every render. */
-const NEWEST_FIRST = (a: ReceiptRow, b: ReceiptRow): number => b.date.localeCompare(a.date) || b.number.localeCompare(a.number);
-const NO_ROWS: ReceiptRow[] = [];
-
-const iconButton = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 } as const;
-
-/* The grid's columns — the voucher list's shape: a cell, what search and the
-   funnel see of it, how it sorts. Edit / Void live in a last column so the
-   row tests (and the operator) find them by the receipt's number. */
-const buildReceiptColumns = (h: {
-  canEdit: boolean; canCancel: boolean;
-  onEdit: (r: ReceiptRow) => void; onVoid: (r: ReceiptRow) => void;
-}): GridColumn<ReceiptRow>[] => [
-  {
-    key: 'kind', label: 'Kind', width: 110, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>,
-    searchValue: (r) => KIND_LABEL[r.kind],
-    filterValue: (r) => KIND_LABEL[r.kind],
-    groupValue: (r) => KIND_LABEL[r.kind],
-    sortFn: (a, b) => KIND_LABEL[a.kind].localeCompare(KIND_LABEL[b.kind]),
-  },
-  {
-    key: 'number', label: 'No.', width: 180, sortable: true,
-    accessor: (r) => (
-      <span className={cancelledDocNoClass(r.status)} style={{ fontFamily: 'var(--font-mono)' }}>
-        {r.kind === 'DEBTOR'
-          ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
-          : r.kind === 'CUSTOMER'
-            ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
-            : r.number}
-      </span>
-    ),
-    /* A customer receipt is also found by its order's reference. */
-    searchValue: (r) => `${r.number} ${soRefOfCamelStamp(r)}`,
-    filterValue: (r) => r.number,
-    exportValue: (r) => r.number,
-    filterType: 'numbering',
-    sortFn: (a, b) => a.number.localeCompare(b.number),
-  },
-  {
-    key: 'date', label: 'Date', width: 120, sortable: true,
-    accessor: (r) => fmtDate(r.date),
-    searchValue: (r) => r.date,
-    filterType: 'date', dateValue: (r) => r.date,
-    sortFn: (a, b) => a.date.localeCompare(b.date),
-  },
-  {
-    key: 'payer', label: 'From', width: 260, sortable: true, groupable: true,
-    accessor: (r) => r.payer,
-    searchValue: (r) => r.payer,
-    groupValue: (r) => r.payer || '(none)',
-    sortFn: (a, b) => a.payer.localeCompare(b.payer),
-  },
-  {
-    key: 'moneyAccount', label: 'Into', width: 200, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{r.moneyAccount}</span>,
-    searchValue: (r) => r.moneyAccount,
-    groupValue: (r) => r.moneyAccount || '(none)',
-    sortFn: (a, b) => a.moneyAccount.localeCompare(b.moneyAccount),
-  },
-  {
-    key: 'totalSen', label: 'Amount', width: 140, sortable: true, align: 'right',
-    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</span>,
-    searchValue: (r) => fmtRm(r.totalSen),
-    exportValue: (r) => r.totalSen / 100,
-    exportFormat: 'money',
-    filterType: 'number', numberValue: (r) => r.totalSen / 100,
-    sortFn: (a, b) => a.totalSen - b.totalSen,
-  },
-  {
-    key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>,
-    searchValue: (r) => r.status,
-    filterValue: (r) => r.status,
-    groupValue: (r) => r.status,
-    sortFn: (a, b) => a.status.localeCompare(b.status),
-  },
-  {
-    key: 'actions', label: '', exportLabel: 'Actions', width: 80, align: 'right',
-    accessor: (r) => (
-      <span style={{ whiteSpace: 'nowrap' }}>
-        {r.kind === 'GENERAL' && r.status === 'POSTED' && h.canEdit && (
-          <button type="button" aria-label={`Edit ${r.number}`} style={{ ...iconButton, marginRight: 4 }}
-            onClick={(e) => { e.stopPropagation(); h.onEdit(r); }}>
-            <Pencil size={14} strokeWidth={1.75} />
-          </button>
-        )}
-        {(r.kind === 'GENERAL' || r.kind === 'DEBTOR') && r.status === 'POSTED' && h.canCancel && (
-          <button type="button" aria-label={`Void ${r.number}`} style={iconButton}
-            onClick={(e) => { e.stopPropagation(); h.onVoid(r); }}>
-            <Ban size={14} strokeWidth={1.75} />
-          </button>
-        )}
-      </span>
-    ),
-    searchValue: () => '',
-    exportValue: () => '',
-  },
-];
-
-type Line = { rid: number; description: string; creditAccountCode: string; amountSen: number };
+const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
+const DIVIDER: MenuItem = { label: '', onClick: () => undefined, divider: true };
+const isCard = (method: string | null | undefined): boolean => method === 'merchant' || method === 'installment';
 
 export const Receipts = () => {
-  const askConfirm = useConfirm();
-  const notify = useNotify();
+  const [params, setParams] = useSearchParams();
+  const openInTab = useOpenDocInTab();
+  const qc = useQueryClient();
+  const toast = useToastOptional();
   const { can } = useHouzsAuth();
+  /* Each kind shows to whoever saw its old Sidebar entry (batch 5 §1): the
+     official receipts to Official receipts' keys, the rest to Receipts'. */
+  const { paperKeys, createKeys } = useMoneyInGates();
+  const gates = { official: paperKeys, others: createKeys };
   const canCreate = can('scm.payment_voucher.create');
-  const canCancel = can('scm.payment_voucher.cancel');
   const canEdit = can('scm.payment_voucher.write') || canCreate;
+  const canCancel = can('scm.payment_voucher.cancel');
 
-  /* Every month by default; the month is a FILTER (owner 2026-09-08: 月份只是
-     筛选 — the page used to open on this month alone). '' = all. */
-  const [month, setMonth] = useState<string>('');
+  const now = thisMonth();
+  const kind = readKind(params.get('kind'));
+  const chip = readChip(kind, params.get('status'));
+  const rawMonth = params.get('month');
+  /* f6: the page opens on this month; `month=all` is Any month. */
+  const month = rawMonth === 'all' ? '' : rawMonth && /^\d{4}-\d{2}$/.test(rawMonth) ? rawMonth : now;
+  const form = params.get('form');
+  const setUrl = (patch: Record<string, string | null>, push = false) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(patch)) { if (v == null || v === '') next.delete(k); else next.set(k, v); }
+    return next;
+  }, { replace: !push });
+
+  const [q, setQ] = useState('');
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [shown, setShown] = useState<ReceiptItem[] | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [issuing, setIssuing] = useState<string | null>(null);
+
+  const officialQ = useOfficialReceipts<OfficialListRow>(month, gates.official);
+  const checkQ = useReceiptsCheck(month, gates.official);
   const listQ = useReceipts(month || undefined);
   const accountsQ = useAccounts();
-  /* The whole chart goes in: a header whose children are all retired is still
-     a header (docs/bugs/0693). */
-  const accounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
-  const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
+  const ensure = useEnsureReceipt();
+  const steps = useDebtorReceiptSteps();
+  const voidIt = useVoidReceipt();
+  const [voiding, setVoiding] = useState<ReceiptItem | null>(null);
+  const [voidError, setVoidError] = useState<string | null>(null);
+  const voidJournals = useDocJournals('RCT', voiding?.no);
 
-  const createReceipt = useCreateReceipt();
-  const voidReceipt = useVoidReceipt();
-  const voidDebtorReceipt = useVoidDebtorReceipt();
-  const updateReceipt = useUpdateReceipt();
+  const accountName = useMemo(() => {
+    const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
+    return (code: string): string | null => names.get(code) ?? null;
+  }, [accountsQ.data]);
 
-  const [adding, setAdding] = useState(false);
-  /* Which money this New receipt takes: sundry income (lines pick their own
-     credit accounts) or an Other Debtor's (bills ticked, control credited). */
-  const [kind, setKind] = useState<'GENERAL' | 'DEBTOR'>('GENERAL');
-  const [debtorId, setDebtorId] = useState('');
-  const [debtorAllocs, setDebtorAllocs] = useState<Record<string, number>>({});
-  const debtorsQ = useOtherDebtors();
-  const debtorDetailQ = useDebtorDetail(adding && kind === 'DEBTOR' && debtorId ? debtorId : null);
-  const createDebtorReceipt = useCreateDebtorReceipt();
-  const openBills = useMemo<DebtorBill[]>(
-    () => (debtorDetailQ.data?.bills ?? []).filter((b) => b.status !== 'CANCELLED' && b.total_sen - b.received_sen > 0),
-    [debtorDetailQ.data],
-  );
-  const debtorTotal = Object.values(debtorAllocs).reduce((s, v) => s + (v > 0 ? v : 0), 0);
-  const [payer, setPayer] = useState('');
-  const [bank, setBank] = useState('');
-  /* The receipt's own date — the number's month follows it (docMonthTag on
-     the server), so a receipt keyed today for last week's money lands in
-     last week's series. Blank is refused by the button, never defaulted here
-     and sent as nothing. */
-  const [receiptDate, setReceiptDate] = useState<string>(() => todayMyt());
-  const [lines, setLines] = useState<Line[]>([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
-  const total = lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
-  /* Editing a POSTED general receipt (owner 2026-09-07: 收钱的日期错了 → 做 b):
-     the same form, seeded from the receipt, saved through PATCH — the server
-     reverses the old RCT entry as it was dated and books a fresh one on the
-     new date; the number stays. */
-  const [editing, setEditing] = useState<ReceiptRow | null>(null);
-  const detailQ = useReceiptDetail(editing?.id ?? null);
-  /* Seed ONCE per receipt opened — the operator's edits must not be overwritten
-     by a refetch, and a hook that hands back a fresh object must not loop. */
-  const seededFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!editing || !detailQ.data || seededFor.current === editing.id) return;
-    seededFor.current = editing.id;
-    const { receipt, lines: rows } = detailQ.data;
-    setPayer(receipt.payer_name);
-    setBank(receipt.bank_account_code);
-    setReceiptDate(String(receipt.receipt_date).slice(0, 10));
-    setLines(rows.length > 0
-      ? rows.map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code, amountSen: Number(l.amount_sen) }))
-      : [{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
-    setAdding(true);
-  }, [editing, detailQ.data]);
-  const closeForm = () => {
-    setAdding(false); setEditing(null); seededFor.current = null;
-    setPayer(''); setBank(''); setReceiptDate(todayMyt());
-    setLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
-    setKind('GENERAL'); setDebtorId(''); setDebtorAllocs({});
+  const officialRows = useMemo(() => (gates.official ? officialQ.data?.receipts ?? [] : []), [gates.official, officialQ.data]);
+  const items = useMemo<ReceiptItem[]>(() => [
+    ...officialRows.map(officialItem),
+    ...(gates.others ? (listQ.data?.receipts ?? []).map((r) => receiptItem(r, (code) => accountName(code) ?? code)) : []),
+  ], [officialRows, gates.others, listQ.data, accountName]);
+
+  /* Counts follow the month and the search, not the chip (the design). */
+  const pool = useMemo(() => items.filter((x) => inMonth(x, month) && matchesReceipt(x, q)), [items, month, q]);
+  const list = useMemo(() => pool.filter((x) => inKind(x, kind) && inChip(x, kind, chip)).sort(newestFirst), [pool, kind, chip]);
+
+  const refreshAll = () => {
+    void qc.invalidateQueries({ queryKey: ['receipts'] });
+    void qc.invalidateQueries({ queryKey: ['official-receipts'] });
+    void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
+    void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   };
-  const patchLine = (rid: number, patch: Partial<Line>) =>
-    setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
-  const save = async () => {
-    const sendLines = lines
-      .filter((l) => l.creditAccountCode && l.amountSen > 0)
-      .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen }));
+  /* Confirm money (one or a batch): each draft turns formal and takes its
+     official number — the formalise door, one by one in payment-date order so
+     the numbers follow the days; the first refusal stops the run, verbatim. */
+  const confirmMoney = async (rows: OfficialListRow[]) => {
+    const drafts = rows.filter((r) => String(r.status).toUpperCase() === 'DRAFT')
+      .sort((a, b) => String(a.paid_at ?? '').localeCompare(String(b.paid_at ?? '')) || a.or_number.localeCompare(b.or_number));
+    if (drafts.length === 0 || confirming) return;
+    setConfirming(true); setFailure(null);
+    const done: Array<{ key: string; from: string; to: string }> = [];
     try {
-      if (!editing && kind === 'DEBTOR') {
-        const res = await createDebtorReceipt.mutateAsync({
-          debtorId, receiptDate, bankAccountCode: bank, postNow: true,
-          allocations: Object.entries(debtorAllocs).filter(([, v]) => v > 0).map(([billId, amountSen]) => ({ billId, amountSen })),
-        });
-        closeForm();
-        void notify({ title: `${res.receipt.receiptNumber} posted`, body: `${fmtRm(res.receipt.totalSen ?? debtorTotal)} booked into the ledger — the ticked bills are knocked off.`, tone: 'info' });
-        return;
+      for (const r of drafts) {
+        const res = await formaliseReceiptRequest(r.id);
+        done.push({ key: `official:${r.id}`, from: r.or_number, to: res.orNumber });
       }
-      if (editing) {
-        const res = await updateReceipt.mutateAsync({ id: editing.id, payerName: payer.trim(), receiptDate, bankAccountCode: bank, lines: sendLines });
-        closeForm();
-        void notify({ title: `${res.receipt.receiptNumber} re-posted`, body: `${fmtRm(res.receipt.totalSen)} now booked on ${res.receipt.receiptDate} — the old entry is reversed, the number stays.`, tone: 'info' });
-        return;
-      }
-      const res = await createReceipt.mutateAsync({
-        payerName: payer.trim(),
-        receiptDate,
-        bankAccountCode: bank,
-        lines: sendLines,
-      });
-      closeForm();
-      void notify({ title: `${res.receipt.receiptNumber} posted`, body: `${fmtRm(res.receipt.totalSen)} booked into the ledger.`, tone: 'info' });
     } catch (e) {
-      void notify({ title: editing ? 'Re-post failed' : 'Receipt failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      setFailure(errText(e));
+    } finally {
+      setConfirming(false);
+      refreshAll();
+      if (done.length > 0) {
+        setTicked((p) => { const n = new Set(p); for (const d of done) n.delete(d.key); return n; });
+        toast?.success(done.length === 1 ? `${done[0]!.from} is formal · ${done[0]!.to}` : `${done.length} receipts formal · ${done[0]!.to} – ${done.at(-1)!.to}`);
+      }
     }
   };
 
-  const onVoid = async (r: ReceiptRow) => {
-    const ok = await askConfirm({
-      title: `Void ${r.number}?`,
-      body: r.kind === 'DEBTOR'
-        ? 'The ODR journal is reversed, the ticked bills take their money back and the receipt turns CANCELLED — the ledger keeps both sides.'
-        : 'The RCT journal is reversed and the receipt turns CANCELLED — the ledger keeps both sides.',
-      confirmLabel: 'Void', danger: true,
+  /* Print (batch 5 §9.3): through the print dialog — the official receipts as
+     ONE A5 file, a receipt a page; the sundry and other-debtor receipts as ONE
+     A4 file after it, each read whole for its lines; list order kept. */
+  const printer = useMoneyInPrint((e) => setFailure(errText(e)));
+  const paperOf = async (x: ReceiptItem): Promise<A4ReceiptPaper> => {
+    if (x.kind === 'sundry') {
+      const d = await authedFetch<ReceiptDetail>(`/receipts/${encodeURIComponent(x.id)}`);
+      return sundryReceiptPaper({ receipt: d.receipt, lines: d.lines, accountName });
+    }
+    const d = await authedFetch<DebtorReceiptDetail>(`/other-debtors/receipts/${encodeURIComponent(x.id)}`);
+    return debtorReceiptPaper({
+      receipt: d.receipt, debtor: d.debtor, accountName,
+      bills: d.allocations.map((a) => ({ billNumber: a.billNumber, description: a.description, amountSen: a.amountSen })),
     });
-    if (!ok) return;
-    try {
-      if (r.kind === 'DEBTOR') await voidDebtorReceipt.mutateAsync(r.id);
-      else await voidReceipt.mutateAsync(r.id);
-    } catch (e) {
-      void notify({ title: 'Void failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+  };
+  const printReceipts = (items: ReceiptItem[]) => {
+    const officials = items.flatMap((x) => (x.kind === 'official' && x.official ? [x.official] : []));
+    const others = items.filter((x) => x.kind === 'sundry' || x.kind === 'debtor');
+    const n = officials.length + others.length;
+    if (n === 0) return;
+    setFailure(null);
+    const papers: Paper[] = [...(officials.length > 0 ? ['A5' as const] : []), ...(others.length > 0 ? ['A4' as const] : [])];
+    printer.open({
+      title: n > 1 ? batchTitle(n, true) : officials.length > 0 ? 'Official receipt' : 'Receipt',
+      /* One receipt names itself; a batch says how many. */
+      docNo: n > 1 ? `${n} ticked` : [...officials.map((o) => o.or_number), ...others.map((x) => x.no)].join(''),
+      papers,
+      rows: [
+        ...(officials.length > 0 ? [{ label: 'Official receipts', value: String(officials.length) }] : []),
+        ...(others.length > 0 ? [{ label: 'Other receipts', value: String(others.length) }] : []),
+      ],
+      deliver: async (action) => {
+        setPrinting(true);
+        try {
+          if (officials.length > 0) await generateReceiptsPdf(officials, { action });
+          if (others.length > 0) await generateA4ReceiptsPdf(await Promise.all(others.map(paperOf)), { action });
+        } finally { setPrinting(false); }
+      },
+    });
+  };
+
+  const issue = (p: { source: string; paymentId: string; docNo: string | null; amountSen: number }) => {
+    setIssuing(`${p.source}:${p.paymentId}`); setFailure(null);
+    ensure.mutate({ source: p.source, paymentId: p.paymentId }, {
+      onSuccess: (res) => {
+        const r = res.receipt;
+        toast?.success(`${r.or_number} issued for ${p.docNo ?? 'the payment'} · ${fmtSen(p.amountSen)}${String(r.status).toUpperCase() === 'FORMAL' ? ' · formal at once' : ''}`);
+      },
+      onError: (e) => setFailure(errText(e)),
+      onSettled: () => setIssuing(null),
+    });
+  };
+
+  const openRow = (x: ReceiptItem) => { const href = receiptHref(x); if (href) openInTab(href); };
+  const stepRowOf = (x: ReceiptItem): DebtorStepRow => ({
+    id: x.id, no: x.no, stage: x.stage ?? 'Draft', totalSen: x.amountSen,
+    bankCode: x.receipt?.moneyAccount ?? '', bankName: accountName(x.receipt?.moneyAccount ?? ''),
+    bills: (x.receipt?.bills ?? []).map((b) => b.no ?? '').filter(Boolean),
+  });
+  const openForm = (mode: 'new' | 'copy' | 'edit', id?: string) => setUrl({ form: mode, id: id ?? null, type: mode === 'new' ? 'sundry' : null }, true);
+  const askVoid = (x: ReceiptItem) => { setVoidError(null); setVoiding(x); };
+
+  const menuOf = (x: ReceiptItem): MenuItem[] => {
+    const open: MenuItem = { label: 'Open', onClick: () => openRow(x) };
+    switch (x.kind) {
+      case 'official': {
+        const r = x.official!;
+        return tidyMenu([
+          open,
+          ...(x.status === 'draft' ? [{ label: 'Confirm money', onClick: () => { void confirmMoney([r]); } }] : []),
+          ...(x.forHref ? [{ label: `Open ${x.forText}`, onClick: () => openInTab(x.forHref!) }] : []),
+          DIVIDER,
+          { label: 'Print', onClick: () => printReceipts([x]) },
+        ]);
+      }
+      case 'sundry':
+        return tidyMenu([
+          open,
+          ...(x.status === 'posted' && canEdit ? [{ label: 'Edit', onClick: () => openForm('edit', x.id) }] : []),
+          ...(canCreate ? [{ label: 'Copy as new', onClick: () => openForm('copy', x.id) }] : []),
+          DIVIDER,
+          { label: 'Print', onClick: () => printReceipts([x]) },
+          DIVIDER,
+          ...(x.status === 'posted' && canCancel ? [{ label: 'Void…', danger: true, onClick: () => askVoid(x) }] : []),
+        ]);
+      case 'debtor': {
+        const m = steps.menuOf(stepRowOf(x));
+        /* A Draft or a Prepared one changes in place and keeps its stage (batch 5 step 6, c5). */
+        const edit: MenuItem[] = (x.stage === 'Draft' || x.stage === 'Prepared') && canEdit
+          ? [{ label: 'Edit', onClick: () => setUrl({ form: 'edit', id: x.id, type: 'debtor' }, true) }] : [];
+        return tidyMenu([open, ...edit, ...m.steps, DIVIDER, { label: 'Print', onClick: () => printReceipts([x]) }, DIVIDER, ...m.undo]);
+      }
+      case 'customer':
+        return x.forHref ? [{ label: `Open ${x.no}`, onClick: () => openInTab(x.forHref!) }] : [];
     }
   };
-  /* The columns are built once; the void handler closes over dialogs and
-     mutations that change identity every render, so it is reached by ref. */
-  const voidRef = useRef(onVoid);
-  voidRef.current = onVoid;
-  const columns = useMemo(() => buildReceiptColumns({
-    canEdit, canCancel,
-    onEdit: (r) => setEditing(r),
-    onVoid: (r) => { void voidRef.current(r); },
-  }), [canEdit, canCancel]);
+  const rowMenu = useRowMenu<ReceiptItem>(menuOf, (x) => x.no);
 
-  /* The one "may post" for the button and the key alike. */
-  const debtorMode = !editing && kind === 'DEBTOR';
-  const canPost = debtorMode
-    ? debtorTotal > 0 && !!debtorId && !!bank && !!receiptDate
-    : total > 0 && !!payer.trim() && !!bank && !!receiptDate && !lines.some((l) => l.amountSen > 0 && !l.creditAccountCode);
-  const saving = createReceipt.isPending || updateReceipt.isPending || createDebtorReceipt.isPending;
-  /* F3 / Ctrl+S posts the open form (owner 2026-09-08: 像 autocount 按 f3). */
-  useSaveHotkey(() => { if (canPost) void save(); }, adding && !saving);
+  /* The row's next step (the design's rowAct), ⋯ last. */
+  const actionsOf = (x: ReceiptItem): ReactNode => {
+    let main: ReactNode = null;
+    if (x.kind === 'official') {
+      main = x.status === 'draft'
+        ? (
+          <button type="button" className={ui.act} disabled={confirming} onClick={(e) => { e.stopPropagation(); void confirmMoney([x.official!]); }}
+            title={isCard(x.official?.method) ? 'Card money usually turns formal when its merchant report is confirmed' : 'You have seen the money arrive'}>
+            Confirm money
+          </button>
+        )
+        : <button type="button" className={ui.actLink} disabled={printing} onClick={(e) => { e.stopPropagation(); printReceipts([x]); }}>Print</button>;
+    } else if (x.kind === 'sundry') {
+      main = <button type="button" className={ui.actLink} disabled={printing} onClick={(e) => { e.stopPropagation(); printReceipts([x]); }}>Print</button>;
+    } else if (x.kind === 'debtor') {
+      const next = steps.nextOf(stepRowOf(x));
+      if (next.button) {
+        const b = next.button;
+        main = <button type="button" className={ui.act} disabled={steps.busy} onClick={(e) => { e.stopPropagation(); b.onClick(); }}>{b.label}</button>;
+      } else if (next.waiting) {
+        main = <span className={ui.waiting}>Waiting for approval</span>;
+      }
+    }
+    return <span className={ui.acts}>{main}{rowMenu.button(x)}</span>;
+  };
 
-  /* One identity per load: a fresh `[]` per render would have the grid
-     re-derive and report its rows every render, and the report re-renders. */
-  const rows = listQ.data?.receipts ?? NO_ROWS;
-  /* What the grid currently shows after its search and funnels — the count
-     and the total below follow it, so a filtered list totals itself. */
-  const [visible, setVisible] = useState<ReceiptRow[] | null>(null);
-  const shown = visible ?? rows;
-  const listTotal = shown.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
+  const columns: Column<ReceiptItem>[] = [
+    { key: 'kind', label: 'Kind', render: (x) => <StatusTag tag={kindTag(x.kind)} />, getValue: (x) => kindTag(x.kind).text },
+    {
+      key: 'no', label: 'No.',
+      render: (x) => <FinanceDocLink to={receiptHref(x)} className={cancelledDocNoClass(x.cancelled ? 'CANCELLED' : x.status)}>{x.no}</FinanceDocLink>,
+      getValue: (x) => x.no,
+    },
+    { key: 'date', label: 'Date', render: (x) => <span className={ui.muted}>{fmtDate(x.date)}</span>, getValue: (x) => x.date, exportFormat: 'date' },
+    { key: 'from', label: 'From', render: (x) => x.from, getValue: (x) => x.from },
+    {
+      key: 'for', label: 'For',
+      render: (x) => (x.forHref && x.forText !== '—' ? <FinanceDocLink to={x.forHref}>{x.forText}</FinanceDocLink> : <span className={ui.muted}>{x.forText}</span>),
+      getValue: (x) => x.forText,
+    },
+    { key: 'via', label: 'Method / into', render: (x) => <span className={ui.muted}>{x.via}</span>, getValue: (x) => x.via },
+    {
+      key: 'amount', label: 'Amount', align: 'right',
+      render: (x) => (x.cancelled ? <span className={ui.muted}>—</span> : <span className={ui.money}>{fmtSen(x.amountSen)}</span>),
+      getValue: (x) => (x.cancelled ? null : x.amountSen), exportValue: (x) => (x.cancelled ? null : x.amountSen / 100), exportFormat: 'money',
+      total: (rows) => fmtSen(rows.filter((x) => !x.cancelled).reduce((s, x) => s + x.amountSen, 0)),
+    },
+    {
+      key: 'status', label: 'Status',
+      render: (x) => (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+          <StatusTag tag={x.tag} />
+          {x.note && <span className={ui.under}>{x.note}</span>}
+        </span>
+      ),
+      getValue: (x) => x.tag.text,
+    },
+    { key: 'actions', label: '', align: 'right', width: '190px', disableSort: true, disableFilter: true, render: actionsOf },
+  ];
+
+  /* An other debtor's receipt not yet checked, changed in place (c5): the
+     Debtor maintenance form — it keeps its stage; nothing posts. */
+  if (form === 'edit' && params.get('type') === 'debtor') {
+    return (
+      <DebtorReceiptFormPage id={params.get('id')} debtorId="" backLabel="Receipts"
+        onClose={() => setUrl({ form: null, id: null, type: null }, true)} openDoc={(href) => openInTab(href)} />
+    );
+  }
+  if (form === 'new' || form === 'copy' || form === 'edit') {
+    return (
+      <ReceiptFormPage
+        mode={form} id={params.get('id')} type={params.get('type') === 'debtor' ? 'debtor' : 'sundry'}
+        onType={(t) => setUrl({ type: t })}
+        onClose={() => setUrl({ form: null, id: null, type: null }, true)}
+        onSaved={() => refreshAll()}
+        openDoc={(href) => openInTab(href)}
+      />
+    );
+  }
+
+  /* The kinds this person may see, with their counts. */
+  const kinds: KindPick[] = [
+    ...(gates.official || gates.others ? ['all' as const] : []),
+    ...(gates.official ? ['official' as const] : []),
+    ...(gates.others ? ['sundry' as const, 'debtor' as const, 'customer' as const] : []),
+  ];
+  const segments = kinds.map((k) => ({ value: k, label: kindLabel(k), count: pool.filter((x) => inKind(x, k)).length, ruleBefore: k === 'customer' }));
+  const chips = chipsOf(kind).map(([key, label]) => ({ value: key, label, count: pool.filter((x) => inKind(x, kind) && inChip(x, kind, key)).length }));
+
+  const onScreen = shown ?? list;
+  const tickedShown = onScreen.filter((x) => ticked.has(x.key));
+  const hidden = items.filter((x) => ticked.has(x.key)).length - tickedShown.length;
+  const tickedDrafts = tickedShown.filter((x) => x.kind === 'official' && x.status === 'draft').map((x) => x.official!);
+  /* What a batch Print takes: the receipts — a customer payment is not one. */
+  const tickedPrintable = tickedShown.filter((x) => x.kind !== 'customer');
+  const tickedSum = tickedShown.filter((x) => !x.cancelled).reduce((s, x) => s + x.amountSen, 0);
+  const cancelledShown = onScreen.filter((x) => x.cancelled).length;
+
+  const readFailures = [
+    gates.official && officialQ.isError ? `The official receipts did not load — ${errText(officialQ.error)}` : null,
+    gates.others && listQ.isError ? `The receipts did not load — ${errText(listQ.error)}` : null,
+  ].filter((t): t is string => t != null);
+  const loading = (gates.official && officialQ.isLoading) || (gates.others && listQ.isLoading);
+  const live = liveJournal(voidJournals.data);
+  const voidAsk: Ask | null = voiding ? {
+    title: `Void ${voiding.no}?`,
+    body: `Its journal ${live ? `${live.je_no} ` : ''}is reversed by a contra dated today. The receipt stays on file as voided.`,
+    tone: 'undo', goLabel: 'Void receipt',
+    onGo: () => {
+      setVoidError(null);
+      const no = voiding.no;
+      voidIt.mutate(voiding.id, {
+        onSuccess: () => { refreshAll(); void qc.invalidateQueries({ queryKey: ['journal-entries'] }); setVoiding(null); toast?.success(`${no} voided · journal reversed`); },
+        onError: (e) => setVoidError(errText(e)),
+      });
+    },
+  } : null;
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        eyebrow="Finance"
-        title="Receipts"
+    <div className={ui.page}>
+      <PageHeader eyebrow="Finance · Money in" title="Receipts"
         actions={canCreate ? (
-          <button type="button" onClick={() => { closeForm(); setAdding(true); }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
-            <Plus {...ICON} /> New receipt
-          </button>
-        ) : undefined}
-      />
+          <button type="button" className={`${ui.btn} ${ui.btnPrimary}`} onClick={() => openForm('new')}><Plus size={14} /> New receipt</button>
+        ) : undefined} />
 
-      {adding && (
-        <Modal
-          title={editing ? `Edit ${editing.number} — 改了会重新过账` : debtorMode ? 'New receipt — Other Debtor — 录入即过账' : 'New receipt — 录入即过账'}
-          onClose={closeForm}
-          width="min(980px, 100%)"
-          ariaLabel={editing ? 'Edit receipt' : 'New receipt'}
-        >
-          {/* Every control wears the same field dress (styles.fieldInput — the
-              PV form's), on a grid: Date | Received from | Received into, then
-              Description | Account | Amount per line. Owner 2026-09-07: 没办法
-              输入日期, 格子等等不整齐, 有些有格子有些没有. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-            {!editing && (
-              <div role="radiogroup" aria-label="Receipt kind" style={{ display: 'flex', gap: 6 }}>
-                {([['GENERAL', 'Sundry income'], ['DEBTOR', 'Other Debtor']] as const).map(([k, label]) => (
-                  <button key={k} type="button" role="radio" aria-checked={kind === k}
-                    onClick={() => { setKind(k); setDebtorAllocs({}); }}
-                    style={{
-                      padding: '4px 12px', borderRadius: 999, cursor: 'pointer', fontSize: 'var(--fs-13)',
-                      border: `1px solid ${kind === k ? 'var(--c-orange)' : 'var(--border-weak, #d8d5cd)'}`,
-                      background: kind === k ? 'var(--c-orange)' : 'none', color: kind === k ? '#fff' : 'inherit', fontWeight: kind === k ? 600 : 400,
-                    }}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 180px) minmax(220px, 1fr) minmax(240px, 1fr)', gap: 'var(--space-3)', alignItems: 'end' }}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Date</span>
-                <DateField fullWidth value={receiptDate} onChange={(iso) => setReceiptDate(iso)} className={styles.fieldInput} aria-label="Receipt date" />
-              </label>
-              {debtorMode ? (
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Debtor</span>
-                  <select aria-label="Debtor" value={debtorId} className={styles.fieldInput}
-                    onChange={(e) => { setDebtorId(e.target.value); setDebtorAllocs({}); }}>
-                    <option value="">— pick the debtor —</option>
-                    {(debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === debtorId).map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}{d.outstanding_sen > 0 ? ` — owes ${fmtRm(d.outstanding_sen)}` : ''}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Received from (打字就行)</span>
-                  <input value={payer} onChange={(e) => setPayer(e.target.value)} className={styles.fieldInput} />
-                </label>
-              )}
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Received into</span>
-                <AccountSelect accounts={moneyAccounts} value={bank} onChange={setBank} placeholder="— bank / cash —" className={styles.fieldInput} />
-              </label>
-            </div>
-            {debtorMode && (
-              /* The Other Debtors page's own picker: tick pays a bill in full,
-                 type for a partial; nothing above the bill's outstanding. */
-              !debtorId ? (
-                <div style={{ color: 'var(--fg-muted)' }}>Pick the debtor to list what they still owe.</div>
-              ) : debtorDetailQ.isLoading ? (
-                <div style={{ color: 'var(--fg-muted)' }}>Loading their bills…</div>
-              ) : openBills.length === 0 ? (
-                <div style={{ color: 'var(--fg-muted)' }}>This debtor has no open bill — raise the bill on Other Debtors first.</div>
-              ) : (
-                <table style={{ borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-                  <thead>
-                    <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      <th style={{ padding: '4px 8px' }} aria-label="collect in full" />
-                      <th style={{ padding: '4px 8px' }}>Bill</th>
-                      <th style={{ padding: '4px 8px' }}>Date</th>
-                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Outstanding</th>
-                      <th style={{ padding: '4px 8px' }}>Receive</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {openBills.map((b) => {
-                      const out = b.total_sen - b.received_sen;
-                      const v = debtorAllocs[b.id] ?? 0;
-                      return (
-                        <tr key={b.id} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
-                          <td style={{ padding: '4px 8px' }}>
-                            <input type="checkbox" aria-label={`Collect ${b.bill_number} in full`}
-                              checked={v === out && out > 0}
-                              onChange={(e) => setDebtorAllocs((prev) => ({ ...prev, [b.id]: e.target.checked ? out : 0 }))} />
-                          </td>
-                          <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{b.bill_number}</td>
-                          <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{b.bill_date}</td>
-                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>{fmtRm(out)}</td>
-                          <td style={{ padding: '4px 8px', width: 160 }}>
-                            <MoneyInput bare valueSen={v > 0 ? v : null} allowBlank inputClassName={styles.fieldInput} selectOnFocus aria-label={`amount for ${b.bill_number}`}
-                              placeholder="0.00" style={{ width: '100%' }}
-                              onCommit={(sen) => setDebtorAllocs((prev) => ({ ...prev, [b.id]: Math.min(out, Math.max(0, sen ?? 0)) }))} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )
-            )}
-            {!debtorMode && lines.map((l) => (
-              <div key={l.rid} style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(240px, 1fr) 160px', gap: 'var(--space-2)', alignItems: 'center' }}>
-                <input placeholder="Description" value={l.description} className={styles.fieldInput}
-                  onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
-                <AccountSelect accounts={accounts} value={l.creditAccountCode} className={styles.fieldInput}
-                  onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} />
-                <MoneyInput bare valueSen={l.amountSen > 0 ? l.amountSen : null} allowBlank placeholder="Amount (RM)"
-                  aria-label={`line ${l.rid} amount`} inputClassName={styles.fieldInput}
-                  onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })} />
-              </div>
-            ))}
-            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              {!debtorMode && (
-                <Button variant="ghost" size="sm" onClick={() => setLines((p) => [...p, { rid: Math.max(...p.map((x) => x.rid)) + 1, description: '', creditAccountCode: '', amountSen: 0 }])}>
-                  <Plus {...ICON} /> Line
-                </Button>
-              )}
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(debtorMode ? debtorTotal : total)}</span>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
-              <Button variant="primary" size="sm" onClick={() => void save()}
-                disabled={saving || !canPost}>
-                {editing ? (updateReceipt.isPending ? 'Re-posting…' : 'Save & re-post') : saving ? 'Posting…' : 'Post receipt'}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={closeForm}>Close</Button>
-            </div>
-          </div>
-        </Modal>
+      {gates.official && month && (
+        <ReceiptsCheck month={month} check={checkQ.data} loading={checkQ.isLoading} error={checkQ.isError ? errText(checkQ.error) : null}
+          issuing={issuing} onIssue={issue}
+          openOf={(no) => { const r = officialRows.find((x) => x.or_number === no); return r ? String(r.id) : null; }}
+          onOpen={(id) => openInTab(moneyInDocHref('official', id))} />
+      )}
+      {gates.official && (kind === 'all' || kind === 'official') && (
+        <span className={ui.hint}>Cash turns formal at the counter; card when its merchant line is confirmed; transfers when you confirm the money.</span>
       )}
 
-      <DataGridCompat<ReceiptRow>
-        rows={rows}
-        columns={columns}
-        storageKey={RECEIPTS_STORAGE_KEY}
-        exportName="Receipts"
-        rowKey={(r) => `${r.kind}-${r.id}`}
-        searchPlaceholder="Search no., payer, bank…"
-        isLoading={listQ.isLoading}
-        emptyMessage={`Nothing came in ${month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).`}
-        onFilteredRowsChange={setVisible}
-        defaultSort={NEWEST_FIRST}
-        getRowClassName={(r) => cancelledRowClass(r.status)}
-        rowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
-        groupBanner={false}
-        toolbar={(
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)' }}>
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month"
-              style={{ padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-            {month !== '' && (
-              <button type="button" onClick={() => setMonth('')}
-                style={{ padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-                All months
+      <div className={ui.stack}>
+        <div className={ui.toolbar}>
+          {segments.length > 1 && (
+            <Segments label="Kind of receipt" value={kind} options={segments}
+              onChange={(k) => { setUrl({ kind: k === 'all' ? null : k, status: null }); setTicked(new Set()); }} />
+          )}
+          <span className={ui.grow} />
+          <MonthNav month={month} thisMonth={now} shift={shiftMonth}
+            onChange={(m) => { setUrl({ month: m || 'all' }); setTicked(new Set()); }} />
+          <SearchBox value={q} onChange={(v) => { setQ(v); setTicked(new Set()); }} placeholder="Find a receipt · no., payer, order, amount" />
+        </div>
+        {chips.length > 0 && (
+          <Chips label="Status" value={chip} options={chips}
+            onChange={(c) => { setUrl({ status: c === 'all' ? null : c }); setTicked(new Set()); }} />
+        )}
+        {voidAsk && <AskBanner key={voidAsk.title} ask={voidAsk} busy={voidIt.isPending} error={voidError} onKeep={() => setVoiding(null)} />}
+        {steps.banner}
+        {failure && <div role="alert" className={`${ui.hint} ${ui.checkBad}`}>{failure}</div>}
+        {readFailures.map((t) => <div key={t} role="alert" className={`${ui.hint} ${ui.checkBad}`}>{t}</div>)}
+
+        <DataTable<ReceiptItem>
+          tableId="mi-receipts-all"
+          exportName="receipts"
+          exportXlsx
+          columns={columns}
+          rows={loading ? null : list}
+          loading={loading}
+          error={readFailures.length > 0 && items.length === 0 ? readFailures.join(' ') : null}
+          emptyLabel="No receipt here."
+          getRowKey={(x) => x.key}
+          getRowClassName={(x) => cancelledRowClass(x.cancelled ? 'CANCELLED' : x.status)}
+          onRowDoubleClick={openRow}
+          contextMenu={menuOf}
+          onFilteredRowsChange={setShown}
+          selection={{
+            selectedIds: ticked,
+            onToggle: (k) => setTicked((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
+            onToggleAll: (keys, all) => setTicked((p) => { const n = new Set(p); for (const k of keys) { if (all) n.delete(k); else n.add(k); } return n; }),
+            rowLabel: (x) => `Tick ${x.no}`,
+          }}
+        />
+        {cancelledShown > 0 && <span className={ui.hint}>{cancelledShown} cancelled, not counted</span>}
+
+        {tickedShown.length > 0 && (
+          <BatchBar count={tickedShown.length} sum={fmtSen(tickedSum)} hidden={hidden} onClear={() => setTicked(new Set())}
+            notes={tickedDrafts.length > 0 ? ['Confirming turns each draft formal and gives it its official number, in payment-date order.'] : []}>
+            {tickedDrafts.length > 0 && (
+              <button type="button" className={`${ui.btn} ${ui.btnPrimary}`} disabled={confirming} onClick={() => { void confirmMoney(tickedDrafts); }}>
+                <CheckCheck size={14} /> {confirming ? 'Confirming…' : `Confirm money · ${tickedDrafts.length}`}
               </button>
             )}
-            <span style={{ color: 'var(--fg-muted)' }}>{shown.length} receipt(s)</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtRm(listTotal)}</span>
-          </div>
+            {tickedPrintable.length > 0 && (
+              <button type="button" className={ui.btn} disabled={printing} onClick={() => printReceipts(tickedPrintable)}>
+                <Printer size={14} /> {printing ? 'Preparing…' : `Print ${tickedPrintable.length}`}
+              </button>
+            )}
+          </BatchBar>
         )}
-      />
+      </div>
+      {rowMenu.popup}
+      {printer.modal}
     </div>
   );
 };
+
+/* ── The receipt form, in place of the list (`?form=new|copy|edit`) ─────────
+   New receipt picks Sundry income or Other debtor; Copy as new and Edit start
+   from a sundry receipt. The same doors as before: POST /receipts, PATCH
+   /receipts/:id (re-posts), POST /other-debtors/:id/receipts {postNow} — an
+   other debtor's money from this page posts at once and knocks the bills off. */
+function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: {
+  mode: 'new' | 'copy' | 'edit';
+  id: string | null;
+  type: 'sundry' | 'debtor';
+  onType: (t: 'sundry' | 'debtor') => void;
+  onClose: () => void;
+  onSaved: () => void;
+  openDoc: (href: string) => void;
+}) {
+  const toast = useToastOptional();
+  const accountsQ = useAccounts();
+  const detailQ = useReceiptDetail(mode === 'new' ? null : id);
+  const create = useCreateReceipt();
+  const update = useUpdateReceipt();
+  const createDebtor = useCreateDebtorReceipt();
+  const [error, setError] = useState<string | null>(null);
+  const accounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
+  const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
+  const accountName = useMemo(() => {
+    const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
+    return (code: string): string | null => names.get(code) ?? null;
+  }, [accountsQ.data]);
+
+  const d = detailQ.data;
+  const no = d?.receipt.receipt_number ?? '';
+  const kind = mode === 'new' ? type : 'sundry';
+  const title = mode === 'edit' ? `Edit ${no}` : mode === 'copy' ? `New receipt · copy of ${no}` : kind === 'debtor' ? 'New receipt · Other debtor' : 'New receipt';
+  const typeSwitch = mode === 'new' ? (
+    <Segments label="Kind of receipt" value={type} onChange={onType}
+      options={[{ value: 'sundry' as const, label: 'Sundry income' }, { value: 'debtor' as const, label: 'Other debtor' }]} />
+  ) : null;
+
+  const onSundry = (v: SundrySubmit) => {
+    setError(null);
+    if (mode === 'edit' && d) {
+      update.mutate({ id: d.receipt.id, ...v }, {
+        onSuccess: (res) => { onSaved(); toast?.success(`${res.receipt.receiptNumber} saved and re-posted`); onClose(); },
+        onError: (e) => setError(errText(e)),
+      });
+      return;
+    }
+    create.mutate(v, {
+      onSuccess: (res) => {
+        onSaved();
+        toast?.success(`${res.receipt.receiptNumber} posted · ${fmtSen(res.receipt.totalSen)}`);
+        onClose();
+        if (res.receipt.id) openDoc(moneyInDocHref('sundry', res.receipt.id));
+      },
+      onError: (e) => setError(errText(e)),
+    });
+  };
+  const onDebtor = (v: DebtorSubmit) => {
+    setError(null);
+    createDebtor.mutate({ ...v, postNow: true }, {
+      onSuccess: (res) => { onSaved(); toast?.success(`${res.receipt.receiptNumber} posted · bills knocked off`); onClose(); },
+      onError: (e) => setError(errText(e)),
+    });
+  };
+
+  const waiting = mode !== 'new' && !d;
+  return (
+    <DocFormShell title={waiting ? 'Receipt' : title} backLabel="Receipts" onBack={onClose} titleExtra={typeSwitch} bare>
+      {error && <div role="alert" className={`${ui.hint} ${ui.checkBad}`}>{error}</div>}
+      {waiting
+        ? <div className={ui.hint} role={detailQ.isError ? 'alert' : undefined}>{detailQ.isError ? `The receipt did not load — ${errText(detailQ.error)}` : 'Loading the receipt…'}</div>
+        : (
+          <ReceiptForm key={`${mode}-${kind}-${id ?? ''}`} kind={kind} mode={mode} door="receipts"
+            initial={d ? receiptValuesOf(d, mode === 'copy') : blankReceipt(todayMY())}
+            accounts={accounts} moneyAccounts={moneyAccounts} accountName={accountName}
+            saving={create.isPending || update.isPending || createDebtor.isPending}
+            onSundry={onSundry} onDebtor={(v) => onDebtor(v)} onCancel={onClose} />
+        )}
+    </DocFormShell>
+  );
+}

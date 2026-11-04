@@ -1005,8 +1005,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     // Field/sales cohort: whole tasklist sections removed (kept: OPERATION etc.).
     // Owner 2026-07-16 (2nd pass): sales executives/managers must still get
     // their OWN deliverables — anything badged SALES PIC (Setup Image, Defect
-    // List, Event Complete Image, Filled Floorplan) stays visible for them in
-    // every section; the rest of the simplified view is unchanged.
+    // List, Filled Floorplan) stays visible for them in every section; the rest
+    // of the simplified view is unchanged.
     if (cohort5 && cohortHiddenSection(sectionNameById.get(it.section_id ?? -1) ?? "")) {
       if (!(isSalesExecMgr && label === "SALES PIC")) return true;
     }
@@ -1055,7 +1055,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
       { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
       { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     ]),
-    { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
   // Purchaser view (Sim, Farra): Defect tiles to consult + their two docs.
@@ -1090,7 +1089,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: !canBdEdit },
     { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: !canBdEdit },
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
-    { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
     // Owner 2026-07-31: HALF tile (8 tiles = even count), beside Dismantle Image.
     { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit },
@@ -2173,7 +2171,7 @@ export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: b
 }
 
 // Item-level remark box (owner 2026-07-16, relocated same evening): the sales
-// PIC's photo tasks — Setup Image, Defect List, Event Complete Image — carry a
+// PIC's photo tasks — Setup Image, Defect List — carry a
 // standalone remark fillable WITHOUT uploading a file. Saved to the item's
 // `notes` via PATCH /checklist/:id. (Was on Weekend Activity/Deco earlier that
 // day; owner moved it here.)

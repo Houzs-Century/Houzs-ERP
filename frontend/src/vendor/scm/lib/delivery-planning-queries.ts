@@ -69,6 +69,40 @@ export const MESSAGE_STATUSES = [
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
+/* Chip colours copied from the HC Delivery sheet's dropdown (HC-0188, Syu
+   2026-10-30) so the board reads the same at a glance. Sheet rule: "To Send ..."
+   light yellow, "Done ..." dark brown, Pending Reschedule dark red, Not Sent light
+   red, To Remind light purple. Statuses the sheet screenshot did not show follow
+   the same rule. A Record so a new status cannot ship without a colour. */
+type Chip = { bg: string; fg: string };
+const BLUE: Chip = { bg: '#bfe1f6', fg: '#0a53a8' };
+const TEAL: Chip = { bg: '#c6dbe1', fg: '#215a6c' };
+const YELLOW: Chip = { bg: '#ffe5a0', fg: '#473822' };
+const BROWN: Chip = { bg: '#473822', fg: '#ffe5a0' };
+const RED: Chip = { bg: '#b10202', fg: '#ffcfc9' };
+const PINK: Chip = { bg: '#ffcfc9', fg: '#b10202' };
+const PURPLE: Chip = { bg: '#e6cff2', fg: '#5a3286' };
+const RUST: Chip = { bg: '#753800', fg: '#ffc8aa' };
+const ORANGE: Chip = { bg: '#ffc8aa', fg: '#753800' };
+const GREEN: Chip = { bg: '#d4edbc', fg: '#11734b' };
+export const MESSAGE_STATUS_CHIP: Record<MessageStatus, Chip> = {
+  'To Send Delivery Date': BLUE, 'Done Send': BROWN,
+  'To Send Driver Info': YELLOW, 'Done Driver Information': BROWN,
+  'To Send Collect Balance': YELLOW, 'Done Balance Collection': BROWN,
+  'To Send Postpone Reason': YELLOW, 'Done Postpone Reason': BROWN,
+  'To Send Postage': YELLOW, 'Done Postage': BROWN,
+  'Done Amend': BROWN, 'Done Delivered': BROWN,
+  'To Remind Customer Reply (1)': PURPLE, 'To Remind Customer Reply (2)': PURPLE,
+  'To Remind Customer Reply (3)': PURPLE,
+  'Done Remind (1)': TEAL, 'Done Remind (2)': TEAL, 'Done Remind (3)': TEAL,
+  'Done Scheduling': BROWN, 'Pending Reschedule (D)': RED,
+  'Not Sent (D)': PINK, 'Not Sent (A)': PINK, 'Invalid Data': RUST,
+  'Done Shipout': BROWN, 'Pending Delivery (EM)': ORANGE, 'Customer Confirm Shipment': GREEN,
+  'Pending Reschedule (A)': RED, 'Pending Customer Reply (D)': TEAL,
+};
+export const messageStatusChip = (s: string | null | undefined): Chip | undefined =>
+  s ? MESSAGE_STATUS_CHIP[s as MessageStatus] : undefined;
+
 /* Preset amend / reschedule reasons (owner 2026-09-22) — the reason the amend
    message gives the customer. Picked from a dropdown; free text still allowed. */
 export const AMEND_REASONS = [
@@ -242,6 +276,8 @@ export type PlanningOrder = {
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
+  /* A project row of a company the caller is not granted: listed (shared fleet), but its Remarks cannot be saved. */
+  remark_locked?: boolean;
   region: RegionCode;   // the order's primary bucket (from customer_state)
   regions: RegionCode[];  // primary + any leg buckets
   warehouse_id: string | null;
@@ -454,6 +490,7 @@ export type HcFieldsPatch = {
   amendReason?: string | null;
   // DO-execution (→ delivery_orders, when a DO exists)
   timeRange?: string | null;
+  jobKind?: AssrJobKind;  // service-case leg a timeRange write targets
   timeConfirmed?: boolean | null;
   arrivalAt?: string | null;
   departureAt?: string | null;
@@ -540,8 +577,8 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do'; id: string } & HcFieldsPatch) =>
-      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr' | 'project'; id: string } & HcFieldsPatch) =>
+      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${encodeURIComponent(id)}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     /* HC-0175: without this the inline select snapped back to the old status and
@@ -707,6 +744,21 @@ export type DpOrderCreate = {
      transfer, or enter an ad-hoc move with no document. */
   stockTransferId?: string;
   warehouseId?: string;
+  /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+     3PL company we don't own, picked from the carrier master instead of our own
+     warehouses. Mutually exclusive with warehouseId. */
+  threeplCompanyId?: string;
+  /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
+     方案2). Mutually exclusive with warehouseId / threeplCompanyId. */
+  savedLocationId?: string;
+  /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1): the pickup point — our
+     warehouse, an outsourced 3PL, or a saved location (方案2). fromOverrides use
+     snapshot keys (party_name, address1, address2, city, postcode, state) and win
+     over the auto-fill. */
+  fromWarehouseId?: string;
+  fromThreeplCompanyId?: string;
+  fromSavedLocationId?: string;
+  fromOverrides?: Record<string, string | null>;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -716,6 +768,44 @@ export function useCreateDpOrder() {
   return useMutation({
     mutationFn: (body: DpOrderCreate) =>
       authedFetch<{ dpOrder: unknown }>(`/dp-orders`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* Edit an unscheduled DP order's party / address / date / remark (PATCH
+   /dp-orders/:id). The backend edits only PENDING_SCHEDULE rows — a scheduled job
+   sits on a manifest a driver may hold, so it must be cancelled and re-raised. A
+   field sent as null CLEARS it (the backend refuses a change that leaves the job
+   with no address). Invalidates the board prefix the list query extends, so both
+   refresh. First UI of the endpoint (owner 2026-11-02: "DP order maintenance"). */
+export type DpOrderPatch = {
+  partyName?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  address3?: string | null;
+  address4?: string | null;
+  city?: string | null;
+  postcode?: string | null;
+  state?: string | null;
+  // Origin ("from") fields — TRANSFER only (owner 2026-11-02 方案1).
+  fromName?: string | null;
+  fromAddress1?: string | null;
+  fromAddress2?: string | null;
+  fromCity?: string | null;
+  fromPostcode?: string | null;
+  fromState?: string | null;
+  requestedDate?: string | null;
+  remark?: string | null;
+};
+export function useUpdateDpOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: DpOrderPatch & { id: string }) =>
+      authedFetch<{ dpOrder: unknown }>(`/dp-orders/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
   });
 }
@@ -747,7 +837,7 @@ export function useCancelDpOrder() {
    never attached" from a clean success — a wiring failure must never look like a
    plain success (the #720 lesson the endpoint documents). A header-only schedule
    (no tripId) is valid: the number is minted, no stop is written. */
-export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string };
+export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string; driverId?: string };
 export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
@@ -762,16 +852,41 @@ export type ScheduleDpOrderResult = {
 export function useScheduleDpOrder() {
   const qc = useQueryClient();
   return useMutation<ScheduleDpOrderResult, Error, ScheduleDpOrderVars>({
-    mutationFn: ({ id, lorryId, tripDate, tripId }) =>
+    mutationFn: ({ id, lorryId, tripDate, tripId, driverId }) =>
       authedFetch<ScheduleDpOrderResult>(`/dp-orders/${id}/schedule`, {
         method: 'POST',
-        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}) }),
+        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}), ...(driverId ? { driverId } : {}) }),
       }),
     onSuccess: () => {
       // Refresh the board AND the trips views — a new stop landed on a trip.
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
+    },
+  });
+}
+
+/* ── Inline crew edit on a DP (manual job) row (owner 2026-10-31) ──────────────
+   The board's Driver / Lorry / Helper cells on a DP row POST one seat here. A DP
+   job's crew is its RUN's crew, so the endpoint puts the job on a run (its confirmed
+   date — creating the run if there is none) before setting the seat, and mints the
+   DP number once a lorry is on the run. So Driver / Lorry / Trip No. / the number
+   all fill from one pick, like an SO row, with no "Schedule…" drawer. tripStop.failed
+   is surfaced so the caller can tell "crew saved but the stop never attached" from a
+   clean success (the #720 rule the endpoint documents). */
+export type DpCrewVars = { id: string; driverId?: string | null; helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null };
+export type DpCrewResult = { ok: true; trip_id: string | null; dp_no: string | null; tripStop: { id: string | null; failed: boolean; reason?: string } };
+export function useDpCrew() {
+  const qc = useQueryClient();
+  return useMutation<DpCrewResult, Error, DpCrewVars>({
+    mutationFn: ({ id, ...seat }) =>
+      authedFetch<DpCrewResult>(`/dp-orders/${id}/crew`, {
+        method: 'POST', body: JSON.stringify(seat),
+      }),
+    onSuccess: () => {
+      // The run + its number may have changed — reconcile the board and the trips
+      // views (coalesced, like the other inline crew edits).
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['scm-trips'], ['scm-trip'], ['fleet-day']]);
     },
   });
 }
@@ -796,6 +911,9 @@ export type DpOrderRow = {
   assr_case_id: number | null;
   supplier_id: string | null;
   project_id: number | null;
+  /* Outsourced (3PL) transfer destination (owner 2026-11-02). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  threepl_company_id?: string | null;
   party_name: string | null;
   contact_name: string | null;
   contact_phone: string | null;
@@ -806,6 +924,19 @@ export type DpOrderRow = {
   city: string | null;
   postcode: string | null;
   state: string | null;
+  /* Origin ("from") — TRANSFER only (owner 2026-11-02 方案1). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  from_name?: string | null;
+  from_address1?: string | null;
+  from_address2?: string | null;
+  from_city?: string | null;
+  from_postcode?: string | null;
+  from_state?: string | null;
+  from_warehouse_id?: string | null;
+  from_threepl_company_id?: string | null;
+  /* Saved-location refs (owner 2026-11-02 方案2), destination + origin. */
+  saved_location_id?: string | null;
+  from_saved_location_id?: string | null;
   requested_date: string | null;
   trip_id: string | null;
   trip_stop_id: string | null;
@@ -848,13 +979,15 @@ export type SendDeliveryMessagesResult = {
 export type SendMessageKind =
   | 'delivery' | 'amend'
   | 'reminder_1' | 'reminder_2' | 'reminder_3'
-  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'postage'
+  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'overdue_order' | 'postage'
   | 'assr_arrangement';
 export type SendDeliveryMessagesBody = {
   docNos: string[];
   kind?: SendMessageKind;
   driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
 };
+/* An ASSR leg's board row key, `<assr_no>#<leg>` (backend parseAssrRowKey). */
+const ASSR_ROW_KEY_RE = /#(customer_pickup|inspection|delivery)$/;
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
   return useMutation<SendDeliveryMessagesResult, Error, SendDeliveryMessagesBody>({
@@ -864,10 +997,47 @@ export function useSendDeliveryMessages() {
       }),
     // The send moved each sent order's Delivery Message Status server-side;
     // re-read just those rows so the board shows it.
-    onSuccess: (res) => {
+    onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
-      scheduleRowRefresh(qc, res.sent.flatMap((s) => s.docNos));
+      const sent = res.sent.flatMap((s) => s.docNos);
+      const assrStatus = body.kind === 'assr_arrangement' ? 'Done Send' : body.kind === 'driver_info' ? 'Done Driver Information' : null;
+      const assrSent = sent.filter((d) => ASSR_ROW_KEY_RE.test(d));
+      if (body.kind !== 'assr_arrangement' && assrSent.length === 0) { scheduleRowRefresh(qc, sent); return; }
+      /* HC-0197: a Service Case leg's status after a send comes from the full
+         board read (overlayAssrChatState), and the row refresh is SO-only. Show
+         it now, then re-read the board (which re-reads any SO sent with it). */
+      if (sent.length === 0) return;
+      const keys = new Set(assrSent);
+      for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
+        if (!prev || !Array.isArray(prev.orders)) continue;
+        qc.setQueryData<PlanningResponse>(key, {
+          ...prev,
+          orders: prev.orders.map((o) => (o.row_type === 'assr' && keys.has(o.so_doc_no)
+            ? { ...o, delivery_message_status: assrStatus, amend_date_from_customer: null, amend_reason_from_customer: null }
+            : o)),
+        });
+      }
+      scheduleBoardRefresh(qc, [['delivery-planning']]);
     },
+  });
+}
+
+/* Sync to Connect — push the selected orders' FULL field set into each customer's
+   Connect contact (Reference No. / Brand / Purchase Venue / Sales Person / House
+   Type / …) WITHOUT sending a WhatsApp. The contact panel only ever filled the
+   fields a prior message used; this fills the rest. One Connect upsert per (phone,
+   company); `synced` mirrors a send's `sent`. */
+export type SyncContactsResult = {
+  synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+};
+export function useSyncDeliveryContacts() {
+  return useMutation<SyncContactsResult, Error, { docNos: string[] }>({
+    mutationFn: (body) =>
+      authedFetch<SyncContactsResult>(`/delivery-messages/sync`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
   });
 }
 
@@ -910,8 +1080,10 @@ export function useDeliveryMessageStatuses(docNos: string[]) {
 export type ScheduleDeliveryVars = {
   /* 'so' | 'do' are the original SO/DO schedule paths. 'assr' schedules a
      service-case job (Delivery Planning ASSR rows) — the backend now accepts it;
-     for ASSR the id is the service case's id and jobKind carries the row's kind. */
-  type: 'so' | 'do' | 'assr';
+     for ASSR the id is the service case's id and jobKind carries the row's kind.
+     'dp' writes a DP (manual job) row's date (scm.dp_orders.requested_date, and
+     the trip's date when it rides one); its id is the dp_order's id. */
+  type: 'so' | 'do' | 'assr' | 'dp';
   id: string;
   scheduleDate?: string | null;
   deliveryState?: DeliveryState | null;
@@ -999,10 +1171,14 @@ export function useScheduleDelivery() {
           ...prev,
           orders: prev.orders.map((o) => {
             /* Match by the row's identity: ASSR rows key on the numeric case id
-               (vars.id is that id as a string); SO/DO rows key on so_doc_no. */
+               (vars.id is that id as a string); DP rows key on their bare
+               dp_order id (the board row's so_doc_no is `DP:<id>`); SO/DO rows
+               key on so_doc_no. */
             const matches = vars.type === 'assr'
               ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id
-              : o.so_doc_no === vars.id;
+              : vars.type === 'dp'
+                ? o.row_type === 'dp' && o.so_doc_no === `DP:${vars.id}`
+                : o.so_doc_no === vars.id;
             if (!matches) return o;
             const next: PlanningOrder = { ...o };
             if (vars.deliveryState !== undefined && vars.deliveryState !== null) next.delivery_state = vars.deliveryState;

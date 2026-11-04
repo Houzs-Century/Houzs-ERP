@@ -43,8 +43,10 @@ const COMPANY_CODE = /^[A-Z0-9]{2,12}$/;
 const TYPES = new Set(["bug", "development"]);
 const PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
 // What the browser may set on a new request. Every reporter_* field and
-// user_agent are filled in here from the session and the request.
-const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url", "occurred_at"] as const;
+// user_agent are filled in here from the session and the request. `module` is
+// the part of the ERP it is about (named as the sidebar names it); the hub's
+// Reports group requests by it.
+const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url", "module", "occurred_at"] as const;
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_KINDS = /^(image\/|video\/mp4$|video\/quicktime$|application\/pdf$)/;

@@ -1,21 +1,17 @@
 // UnbilledDeliveriesV2 — goods that left the warehouse and were never charged
-// for, aged. Read-only; no writes, no drawer. Same PageHeader + StatCard +
-// FilterPills + Table/Cards template as StockTakesListV2 (see the DO V2 file for
-// the deep dive on primitives + Theme C conventions).
+// for, aged. Read-only; no writes, no drawer. In the owner's Claude Design
+// redesign (Finance › Money in › Not yet billed, batch 5): four cards, age
+// chips with their counts, then the deliveries as a table or as cards.
 //
 // Route: /scm/unbilled-deliveries. Reads GET /api/scm/unbilled-deliveries —
 // see the header note in backend/src/scm/routes/unbilled-deliveries.ts for why
-// this is line-level and why the Outstanding page's DO tab (a header-status flag
-// with no money column) cannot answer this question.
-//
-// FRAMING: money that should have come IN and never did — so the chrome leans on
-// the error tone, like the Delivery Returns V2 refund framing rather than the
-// DO/SI green-when-good idiom.
+// this is line-level and why the Outstanding page's DO list (a header-status
+// flag with no money column) cannot answer this question.
 //
 // THE AGE IS THE POINT. Steady-state un-invoiced runs 1–3%/month, but the
 // CURRENT month legitimately runs ~2/3 un-invoiced — that is billing lag, not
 // leakage, and a report that opens on it is a report nobody reads twice. So the
-// default pill is "Aged 31+", NOT "All": the page opens past the noise. The
+// default chip is "Aged 31+", NOT "All": the page opens past the noise. The
 // endpoint stays honest (it returns every age; `minAgeDays` is its param) and
 // the opinion about where to look lives here, in the view.
 //
@@ -24,24 +20,22 @@
 // this report is Houzs-native, not vendored from 2990, so it adds nothing to the
 // vendored tree.
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Phone, LayoutGrid, Table as TableIcon } from "lucide-react";
+import { Clock, Hourglass, Layers, LayoutGrid, Phone, Table as TableIcon, Truck } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
-import { StatCard } from "../../components/StatCard";
-import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
-import { Badge } from "../../components/Badge";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import { fmtDate } from "../../vendor/shared/format";
 import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { matchesSearch, soRefOfStamp, type SoRefStamp } from "../../lib/so-ref-search";
+import { Chips, DocLink, FigureCard, Segments, StatusTag } from "./money-in/MoneyInParts";
+import { unbilledAgeTone } from "./money-in/moneyInStatus";
+import s from "./MoneyIn.module.css";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 
@@ -79,18 +73,15 @@ type UnbilledResponse = {
   };
 };
 
-// Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
+const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* Age → tone. Nothing under 3 months is coloured: it is not yet a finding, and
-   colouring it would spend the reader's alarm on normal billing lag. */
-const ageTone = (days: number): "error" | "warning" | "neutral" =>
-  days > 365 ? "error" : days > 90 ? "warning" : "neutral";
+const ageTag = (days: number) => ({ text: `${days.toLocaleString("en-MY")} days`, tone: unbilledAgeTone(days) });
+const deliveriesWord = (n: number): string => (n === 1 ? "1 delivery" : `${n.toLocaleString("en-MY")} deliveries`);
 
 /* Ageing THRESHOLDS, not the endpoint's disjoint buckets. The owner's question
-   is "how far back does this go" ("111 DOs older than 12 months"), so the pills
+   is "how far back does this go" ("111 DOs older than 12 months"), so the chips
    are cumulative severity steps he can think in, and each row still carries its
-   exact bucket badge. `minAge` is INCLUSIVE. */
+   exact age tag. `minAge` is INCLUSIVE. */
 type AgeTab = "all" | "aged" | "over90" | "over365";
 const AGE_TABS: Array<{ value: AgeTab; label: string; minAge: number }> = [
   { value: "all",     label: "All ages",       minAge: 0 },
@@ -101,52 +92,26 @@ const AGE_TABS: Array<{ value: AgeTab; label: string; minAge: number }> = [
 const DEFAULT_AGE_TAB: AgeTab = "aged";
 const minAgeOf = (t: AgeTab): number => AGE_TABS.find((x) => x.value === t)?.minAge ?? 0;
 
-function ViewToggle({ value, onChange }: { value: "table" | "cards"; onChange: (v: "table" | "cards") => void }) {
-  const btn = (which: "table" | "cards", label: string, Icon: typeof TableIcon) => {
-    const active = value === which;
+const VIEW_OPTIONS: Array<{ value: "table" | "cards"; label: string; icon: ReactNode }> = [
+  { value: "table", label: "Table", icon: <TableIcon size={13} aria-hidden /> },
+  { value: "cards", label: "Cards", icon: <LayoutGrid size={13} aria-hidden /> },
+];
+
+const EMPTY_TEXT = "Nothing delivered and unbilled in this filter.";
+
+function CardsGrid({ rows, onOpen, loading, failed }: {
+  rows: UnbilledRow[];
+  onOpen: (r: UnbilledRow) => void;
+  loading: boolean;
+  failed: boolean;
+}) {
+  if (loading || failed || rows.length === 0) {
     return (
-      <button
-        type="button"
-        onClick={() => onChange(which)}
-        aria-pressed={active}
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-          active ? "bg-primary text-white shadow-sm" : "text-ink-secondary hover:bg-primary-soft hover:text-primary"
-        )}
-      >
-        <Icon size={13} />
-        {label}
-      </button>
+      <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center text-[13px] text-ink-muted shadow-stone">
+        {loading ? "Loading…" : failed ? "Could not load this report" : EMPTY_TEXT}
+      </div>
     );
-  };
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-md border border-border bg-surface p-1 shadow-stone">
-      {btn("table", "Table", TableIcon)}
-      {btn("cards", "Cards", LayoutGrid)}
-    </div>
-  );
-}
-
-/* Plain language, no jargon — the reader is the business owner, not an
-   engineer. "Un-invoiced", "outstanding", "DO" and "ageing bucket" are all
-   words this empty state deliberately does not use. */
-function EmptyBlock({ filtered }: { filtered: boolean }) {
-  return (
-    <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center shadow-stone">
-      <div className="text-[13px] font-semibold text-ink">
-        {filtered ? "Nothing this old is waiting to be billed" : "Everything delivered has been billed"}
-      </div>
-      <div className="mx-auto mt-1 max-w-md text-[12px] text-ink-muted">
-        {filtered
-          ? "Try a shorter time range to see deliveries that are still waiting."
-          : "Every delivery that has left the warehouse has an invoice against it."}
-      </div>
-    </div>
-  );
-}
-
-function CardsGrid({ rows, onOpen }: { rows: UnbilledRow[]; onOpen: (r: UnbilledRow) => void }) {
-  if (rows.length === 0) return <EmptyBlock filtered />;
+  }
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       {rows.map((r) => (
@@ -157,8 +122,8 @@ function CardsGrid({ rows, onOpen }: { rows: UnbilledRow[]; onOpen: (r: Unbilled
           className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
         >
           <div className="flex items-center justify-between gap-2">
-            <span className="font-mono text-[12.5px] font-semibold text-ink">{r.do_number}</span>
-            <Badge tone={ageTone(r.age_days)} size="xs">{r.age_days} days</Badge>
+            <span className="text-[13px] font-semibold tabular-nums text-ink">{r.do_number}</span>
+            <StatusTag tag={ageTag(r.age_days)} />
           </div>
           <div className="mt-2 truncate text-[13.5px] font-semibold text-ink">{r.debtor_name ?? "—"}</div>
           <div className="mt-0.5 text-[11.5px] text-ink-muted">
@@ -173,11 +138,11 @@ function CardsGrid({ rows, onOpen }: { rows: UnbilledRow[]; onOpen: (r: Unbilled
           )}
           <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
             <div>
-              {r.partly_invoiced && <Badge tone="warning" size="xs">Partly billed</Badge>}
+              {r.partly_invoiced && <StatusTag tag={{ text: "Partly billed", tone: "warn" }} />}
             </div>
             <div className="text-right">
-              <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Not billed</div>
-              <div className="mt-0.5 font-money text-[15px] font-bold text-err">{fmtRm(r.unbilled_sen)}</div>
+              <div className="text-[11px] font-semibold text-ink-muted">Not billed</div>
+              <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-ink">{fmtSen(r.unbilled_sen)}</div>
             </div>
           </div>
         </button>
@@ -191,12 +156,13 @@ export function UnbilledDeliveriesV2() {
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const age = (params.get("age") ?? DEFAULT_AGE_TAB) as AgeTab;
+  const ageParam = params.get("age");
+  const age: AgeTab = AGE_TABS.find((t) => t.value === ageParam)?.value ?? DEFAULT_AGE_TAB;
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
 
   /* Fetch EVERY age once (minAgeDays defaults to 0 server-side) and threshold on
-     the client. The pills then need no refetch, and the "All ages" count stays
+     the client. The chips then need no refetch, and the "All ages" count stays
      honest — the current-month lag is present in the data, just not on screen by
      default. The list is a tail of stale documents, so 30s staleTime + the
      shared 1-retry idiom (vendor/scm/lib/outstanding-queries baseQuery) is
@@ -211,31 +177,34 @@ export function UnbilledDeliveriesV2() {
 
   const allRows = useMemo<UnbilledRow[]>(() => data?.rows ?? [], [data]);
 
-  const scopedByAge = useMemo(() => {
-    const min = minAgeOf(age);
-    return min <= 0 ? allRows : allRows.filter((r) => r.age_days >= min);
-  }, [allRows, age]);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return scopedByAge;
-    return scopedByAge.filter((r) =>
+  /* The search first, then the age: each chip then counts what it would show
+     under the search typed (the design's counts). */
+  const searched = useMemo(() => {
+    if (!search.trim()) return allRows;
+    return allRows.filter((r) =>
       matchesSearch([r.do_number, r.debtor_name, r.debtor_code, r.so_doc_no, soRefOfStamp(r), r.salesperson, r.phone], search)
     );
-  }, [scopedByAge, search]);
+  }, [allRows, search]);
 
-  /* Stat cards follow the ROWS ON SCREEN, so the headline can never disagree
+  const filtered = useMemo(() => {
+    const min = minAgeOf(age);
+    return min <= 0 ? searched : searched.filter((r) => r.age_days >= min);
+  }, [searched, age]);
+
+  /* The cards follow the ROWS ON SCREEN, so the headline can never disagree
      with the list under it — except "Over 12 months", which is deliberately
-     absolute (it is THE number, and it should not move when he filters). */
+     absolute (it is THE number, and it should not move when he filters; owner
+     spec A3 keeps it so). */
   const stats = useMemo(() => {
-    const unbilled = filtered.reduce((s, r) => s + r.unbilled_sen, 0);
-    const oldest = filtered.reduce((m, r) => Math.max(m, r.age_days), 0);
+    const oldestRow = filtered.reduce<UnbilledRow | null>((m, r) => (m == null || r.age_days > m.age_days ? r : m), null);
     const partly = filtered.filter((r) => r.partly_invoiced);
     return {
       count: filtered.length,
-      unbilled,
-      oldest,
+      unbilled: filtered.reduce((sum, r) => sum + r.unbilled_sen, 0),
+      oldest: oldestRow?.age_days ?? 0,
+      oldestDate: oldestRow?.do_date ?? null,
       partlyCount: partly.length,
-      partlyValue: partly.reduce((s, r) => s + r.unbilled_sen, 0),
+      partlyValue: partly.reduce((sum, r) => sum + r.unbilled_sen, 0),
       over365Count: data?.totals.over_365.rows ?? 0,
       over365Value: data?.totals.over_365.unbilled_sen ?? 0,
     };
@@ -243,9 +212,9 @@ export function UnbilledDeliveriesV2() {
 
   const ageCounts = useMemo(() => {
     const acc: Record<AgeTab, number> = { all: 0, aged: 0, over90: 0, over365: 0 };
-    for (const t of AGE_TABS) acc[t.value] = allRows.filter((r) => r.age_days >= t.minAge).length;
+    for (const t of AGE_TABS) acc[t.value] = searched.filter((r) => r.age_days >= t.minAge).length;
     return acc;
-  }, [allRows]);
+  }, [searched]);
 
   const setAgeChip = (a: AgeTab) => {
     const next = new URLSearchParams(params);
@@ -273,33 +242,50 @@ export function UnbilledDeliveriesV2() {
   // "convert to invoice" path starts.
   const goDetail = (r: UnbilledRow) => navigate(`/scm/delivery-orders/${r.delivery_order_id}`);
 
+  const moneyColumn = (key: "unbilled_sen" | "delivered_sen" | "invoiced_sen", label: string, muted: boolean): Column<UnbilledRow> => ({
+    key,
+    label,
+    width: key === "unbilled_sen" ? "120px" : key === "delivered_sen" ? "132px" : "124px",
+    align: "right",
+    getValue: (r) => r[key],
+    exportValue: (r) => r[key] / 100,
+    exportFormat: "money",
+    total: (rows) => fmtSen(rows.reduce((sum, r) => sum + r[key], 0)),
+    render: (r) => (key === "unbilled_sen" ? (
+      <div className="flex flex-col items-end gap-1">
+        <span className={s.strong}>{fmtSen(r.unbilled_sen)}</span>
+        {/* The expensive case, and the one a header-status report cannot see:
+            part of this DO was billed and the rest was quietly left behind. */}
+        {r.partly_invoiced && <StatusTag tag={{ text: `${r.lines_pending} of ${r.lines_total} lines`, tone: "warn" }} />}
+      </div>
+    ) : (
+      <span className={muted ? s.muted : undefined}>{fmtSen(r[key])}</span>
+    )),
+  });
+
   const columns: Column<UnbilledRow>[] = [
     {
       key: "do_number",
       label: "DO No.",
-      width: "150px",
+      width: "132px",
       alwaysVisible: true,
       getValue: (r) => r.do_number,
-      render: (r) => <span className="font-mono text-[12.5px] font-semibold text-ink">{r.do_number}</span>,
+      render: (r) => <DocLink to={`/scm/delivery-orders/${r.delivery_order_id}`}>{r.do_number}</DocLink>,
     },
     {
       key: "do_date",
       label: "Delivered",
-      width: "108px",
+      width: "100px",
       getValue: (r) => r.do_date,
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.do_date)}</span>,
+      render: (r) => <span className={s.muted}>{fmtDate(r.do_date)}</span>,
     },
     {
       key: "age_days",
       label: "Age",
-      width: "132px",
+      width: "100px",
       // Sort + CSV export on the NUMBER, so "Over 12 months" never sorts as text.
       getValue: (r) => r.age_days,
-      render: (r) => (
-        <div className="flex items-center gap-1.5">
-          <Badge tone={ageTone(r.age_days)} size="xs">{r.age_days.toLocaleString("en-MY")} days</Badge>
-        </div>
-      ),
+      render: (r) => <StatusTag tag={ageTag(r.age_days)} />,
     },
     {
       key: "debtor_name",
@@ -307,8 +293,8 @@ export function UnbilledDeliveriesV2() {
       getValue: (r) => r.debtor_name ?? "",
       render: (r) => (
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold text-ink">{r.debtor_name ?? "—"}</div>
-          {r.debtor_code && <div className="truncate font-mono text-[11px] text-ink-muted">{r.debtor_code}</div>}
+          <div className="truncate">{r.debtor_name ?? "—"}</div>
+          {r.debtor_code && <span className={`${s.under} truncate`}>{r.debtor_code}</span>}
         </div>
       ),
     },
@@ -316,184 +302,159 @@ export function UnbilledDeliveriesV2() {
       key: "phone",
       label: "Phone",
       width: "130px",
+      defaultHidden: true,
       getValue: (r) => r.phone ?? "",
       render: (r) =>
         r.phone ? (
           <div className="flex items-center gap-1.5">
             <Phone size={11} className="shrink-0 text-ink-muted" />
-            <span className="truncate text-[12.5px] text-ink-secondary">{formatPhone(r.phone)}</span>
+            <span className={`${s.muted} truncate`}>{formatPhone(r.phone)}</span>
           </div>
         ) : (
-          <span className="text-[12.5px] text-ink-muted">—</span>
+          <span className={s.muted}>—</span>
         ),
     },
     {
       key: "salesperson",
       label: "Salesperson",
-      width: "150px",
+      width: "110px",
       getValue: (r) => r.salesperson ?? "",
-      render: (r) => <span className="truncate text-[12.5px] text-ink-secondary">{r.salesperson ?? "—"}</span>,
+      render: (r) => <span className={`${s.muted} truncate`}>{r.salesperson ?? "—"}</span>,
     },
     {
       key: "so_doc_no",
       label: "SO No.",
-      width: "150px",
+      width: "128px",
       getValue: (r) => r.so_doc_no ?? "",
-      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.so_doc_no ?? "—"}</span>,
+      render: (r) => (r.so_doc_no ? <DocLink to={`/scm/sales-orders/${r.so_doc_no}`}>{r.so_doc_no}</DocLink> : "—"),
     },
-    {
-      key: "unbilled_sen",
-      label: "Not billed",
-      width: "158px",
-      align: "right",
-      getValue: (r) => r.unbilled_sen,
-      render: (r) => (
-        <div className="flex flex-col items-end gap-1">
-          <span className="font-money text-[13px] font-bold text-err">{fmtRm(r.unbilled_sen)}</span>
-          {/* The expensive case, and the one a header-status report cannot see:
-              part of this DO was billed and the rest was quietly left behind. */}
-          {r.partly_invoiced && <Badge tone="warning" size="xs">{r.lines_pending} of {r.lines_total} lines</Badge>}
-        </div>
-      ),
-    },
-    {
-      key: "delivered_sen",
-      label: "Delivered value",
-      width: "140px",
-      align: "right",
-      defaultHidden: true,
-      getValue: (r) => r.delivered_sen,
-      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.delivered_sen)}</span>,
-    },
-    {
-      key: "invoiced_sen",
-      label: "Already billed",
-      width: "140px",
-      align: "right",
-      defaultHidden: true,
-      getValue: (r) => r.invoiced_sen,
-      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.invoiced_sen)}</span>,
-    },
+    moneyColumn("unbilled_sen", "Not billed", false),
+    moneyColumn("delivered_sen", "Delivered value", true),
+    moneyColumn("invoiced_sen", "Already billed", true),
     {
       key: "status",
       label: "DO Status",
-      width: "120px",
+      width: "100px",
+      /* Off by default, as before the redesign (Columns turns it on): with it
+         the design's columns overflow a laptop screen and squeeze the ages. */
       defaultHidden: true,
-      getValue: (r) => r.status,
-      render: (r) => <Badge tone="neutral" size="xs">{statusLabel("do", r.status)}</Badge>,
+      getValue: (r) => statusLabel("do", r.status),
+      render: (r) => <span className={s.muted}>{statusLabel("do", r.status)}</span>,
     },
   ];
 
-  const agePillOptions = AGE_TABS.map((t) => ({ value: t.value, label: t.label, count: ageCounts[t.value] }));
-
-  /* Every tile below is a reduce over `filtered`, which is [] until the query
+  /* Every card below is a reduce over `filtered`, which is [] until the query
      lands and stays [] when it fails. On this page that renders as "Not billed
      RM 0.00" — read on a finance screen as "nobody is owed anything", which is
      the opposite of what an unloaded list means. Unknown until it is known. */
   const statsPending = isLoading || Boolean(error);
+  const pendingSub = error ? "Could not read" : "Loading…";
+  const subOf = (text: string) => (statsPending ? pendingSub : text);
+  const loadError = error ? (error instanceof Error && error.message ? error.message : "Could not load this report") : null;
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
-      <div className="mb-3 flex items-start justify-between gap-3 md:hidden">
-        <div className="min-w-0">
-          <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">Not Yet Billed</h1>
-          <div className="mt-0.5 text-[12.5px] text-ink-muted">
-            {statsPending ? (
-              "Loading…"
-            ) : (
-              <>
-                {stats.count} deliver{stats.count === 1 ? "y" : "ies"} · {fmtRm(stats.unbilled)}
-              </>
-            )}
+      <div className={s.page}>
+        <div className="flex items-start justify-between gap-3 md:hidden">
+          <div className="min-w-0">
+            <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">Not yet billed</h1>
+            <div className="mt-0.5 text-[12.5px] text-ink-muted">
+              {statsPending ? pendingSub : `${deliveriesWord(stats.count)} · ${fmtSen(stats.unbilled)}`}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="hidden md:block">
-        <PageHeader
-          eyebrow="Finance"
-          title="Delivered, Not Yet Billed"
-          description="Goods that have left the warehouse with no invoice against them. Counted line by line, so a delivery that was only partly invoiced still shows the part nobody charged for. The newest month is normal billing lag — the money is in the old rows."
-        />
-      </div>
+        <div className="hidden md:block">
+          <PageHeader eyebrow="Finance · Money in" title="Not yet billed" />
+        </div>
 
-      <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
-        {/* THE headline — absolute, not filter-scoped (see stats memo). */}
-        <StatCard
-          label="Over 12 months"
-          value={fmtRm(stats.over365Value)}
-          subtitle={`${stats.over365Count.toLocaleString("en-MY")} deliveries never billed`}
-          tone={stats.over365Value > 0 ? "error" : undefined}
-          rail="bg-err"
-          active
-          pending={statsPending}
-        />
-        <StatCard
-          label="Not billed"
-          value={fmtRm(stats.unbilled)}
-          subtitle="Scoped to current filter"
-          rail="bg-primary"
-          pending={statsPending}
-        />
-        <StatCard
-          label="Partly billed"
-          value={fmtRm(stats.partlyValue)}
-          subtitle={`${stats.partlyCount.toLocaleString("en-MY")} part-invoiced deliveries`}
-          tone={stats.partlyValue > 0 ? "warning" : undefined}
-          rail="bg-accent-bright"
-          pending={statsPending}
-        />
-        <StatCard
-          label="Oldest"
-          value={stats.oldest > 0 ? `${stats.oldest.toLocaleString("en-MY")} days` : "—"}
-          subtitle={data?.as_of ? `As at ${fmtDate(data.as_of)}` : "Scoped to current filter"}
-          rail="bg-accent"
-          pending={statsPending}
-        />
-      </div>
+        <div className={`${s.cardsWrap} hidden md:block`}>
+          <div className={s.cards}>
+            {/* THE headline — absolute, not filter-scoped (see stats memo). */}
+            <FigureCard
+              icon={<Clock {...ICON} />}
+              label="Over 12 months"
+              value={stats.over365Count.toLocaleString("en-MY")}
+              zero={stats.over365Count === 0}
+              sub={subOf(`${fmtSen(stats.over365Value)} not billed`)}
+              subBad={Boolean(error)}
+              pending={statsPending}
+            />
+            <FigureCard
+              icon={<Truck {...ICON} />}
+              label="Not billed"
+              value={fmtSen(stats.unbilled)}
+              sub={subOf(`Scoped to the filter · ${deliveriesWord(stats.count)}`)}
+              subBad={Boolean(error)}
+              pending={statsPending}
+            />
+            <FigureCard
+              icon={<Layers {...ICON} />}
+              label="Partly billed"
+              value={stats.partlyCount.toLocaleString("en-MY")}
+              zero={stats.partlyCount === 0}
+              sub={subOf("Invoiced in part, the rest not")}
+              subBad={Boolean(error)}
+              title={statsPending ? undefined : `${fmtSen(stats.partlyValue)} not billed on these`}
+              pending={statsPending}
+            />
+            <FigureCard
+              icon={<Hourglass {...ICON} />}
+              label="Oldest"
+              value={stats.oldest > 0 ? `${stats.oldest.toLocaleString("en-MY")} days` : "—"}
+              sub={subOf(stats.oldestDate ? `Delivered ${fmtDate(stats.oldestDate)}` : "Nothing in this filter")}
+              subBad={Boolean(error)}
+              pending={statsPending}
+            />
+          </div>
+        </div>
 
-      <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search DO, customer, salesperson…"
-          className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
-        />
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <FilterPills options={agePillOptions} value={age} onChange={(v) => setAgeChip(v)} />
-        <div className="flex-1" />
-        <div className="hidden md:block"><ViewToggle value={view} onChange={setView} /></div>
-      </div>
-
-      <div className="md:hidden">
-        <CardsGrid rows={filtered} onOpen={goDetail} />
-      </div>
-
-      <div className="hidden md:block">
-        {view === "table" ? (
-          <DataTable<UnbilledRow>
-            tableId="unbilled-deliveries-v2"
-            rows={filtered}
-            loading={isLoading}
-            error={error ? (error as Error).message ?? "Could not load this report" : null}
-            columns={columns}
-            getRowKey={(r) => r.delivery_order_id}
-            onRowClick={goDetail}
-            exportName="delivered-not-billed"
-            emptyLabel={
-              filtersActive
-                ? "Nothing this old is waiting to be billed — try a shorter time range."
-                : "Every delivery that has left the warehouse has an invoice against it."
-            }
-            search={{ value: search, onChange: setSearch, placeholder: "Search DO, customer, salesperson, phone…", scope: "server", totalRecords: filtered.length }}
-            resetFilters={{ active: filtersActive, onReset: resetLayout, label: "Reset layout" }}
+        <div className="sticky top-0 z-10 -mx-4 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search DO, customer, salesperson…"
+            className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
-        ) : (
-          <CardsGrid rows={filtered} onOpen={goDetail} />
-        )}
+        </div>
+
+        <div className={s.toolbar}>
+          <Chips
+            label="Age"
+            options={AGE_TABS.map((t) => ({ value: t.value, label: t.label, count: statsPending ? undefined : ageCounts[t.value] }))}
+            value={age}
+            onChange={setAgeChip}
+          />
+          <span className={s.grow} />
+          <div className="hidden md:block">
+            <Segments label="View" options={VIEW_OPTIONS} value={view} onChange={setView} />
+          </div>
+        </div>
+
+        <div className="md:hidden">
+          <CardsGrid rows={filtered} onOpen={goDetail} loading={isLoading} failed={Boolean(error)} />
+        </div>
+
+        <div className="hidden md:block">
+          {view === "table" ? (
+            <DataTable<UnbilledRow>
+              tableId="unbilled-deliveries-v2"
+              rows={filtered}
+              loading={isLoading}
+              error={loadError}
+              columns={columns}
+              getRowKey={(r) => r.delivery_order_id}
+              onRowDoubleClick={goDetail}
+              exportName="delivered-not-billed"
+              emptyLabel={EMPTY_TEXT}
+              search={{ value: search, onChange: setSearch, placeholder: "Search DO, customer, salesperson…", scope: "server", totalRecords: filtered.length }}
+              resetFilters={{ active: filtersActive, onReset: resetLayout, label: "Reset layout" }}
+            />
+          ) : (
+            <CardsGrid rows={filtered} onOpen={goDetail} loading={isLoading} failed={Boolean(error)} />
+          )}
+        </div>
       </div>
     </PullToRefresh>
   );

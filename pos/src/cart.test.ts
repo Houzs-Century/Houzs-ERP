@@ -80,6 +80,8 @@ describe("cart", () => {
     expect(findByBarcode(items, "bs-qn")?.id).toBe(2);
     expect(findByBarcode(items, "nope")).toBeNull();
     expect(searchItems(items, "p")).toEqual([]);
+    expect(searchItems(items, "").map((i) => i.id)).toEqual([...items].sort((a, b) => a.code.localeCompare(b.code)).map((i) => i.id));
+    expect(searchItems(items, "  ")).toHaveLength(items.length);
     expect(searchItems(items, "pl").map((i) => i.id)).toEqual([3]);
     expect(searchItems(items, "pil").map((i) => i.id)).toEqual([1, 3]);
     expect(searchItems(items, "queen").map((i) => i.id)).toEqual([2]);

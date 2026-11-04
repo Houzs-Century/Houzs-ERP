@@ -19,7 +19,7 @@ import { CONVERTED_METHOD, postSoPayment, reverseSoPayment, type SoPaymentRow } 
 import { afterConvertedRowBooked, afterConvertedRowRemoved } from './so-money';
 import { mytDateOf, todayMyt } from './my-time';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
-import { createReceiptForPayment, removeDraftReceiptForPayment } from '../../acc/receipts';
+import { createReceiptForPayment, followPaymentEdit, followPaymentRemoval, type ReceiptTouch } from '../../acc/receipts';
 import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
@@ -219,8 +219,10 @@ export async function repostSoPaymentBestEffort(
   p: {
     id: string; docNo: string; companyId: number | null;
     before: Partial<SoPaymentEditable>; next: SoPaymentEditable;
+    /** Who changed it — named on a receipt the change cancels. */
+    actor?: string | null;
   },
-): Promise<LedgerTouch> {
+): Promise<LedgerTouch & { receipt: ReceiptTouch | null }> {
   const after: SoPaymentRow = {
     id: p.id,
     so_doc_no: p.docNo,
@@ -237,14 +239,50 @@ export async function repostSoPaymentBestEffort(
   await reissueDepositInvoiceBestEffort(sb, {
     paymentId: p.id, docNo: p.docNo, paidAt: p.next.paid_at, amountSen: p.next.amount_sen, method: p.next.method,
   });
+  /* The receipt follows too (owner 2026-10-29: 收据跟着付款改或作废) — a draft in
+     place, a formal one cancelled and re-issued, as the invoice above is. */
+  const companyId = p.companyId;
+  const receipt = companyId == null ? null : await followReceiptBestEffort(() => followPaymentEdit(sb, {
+    source: 'SOPAY', paymentId: p.id, companyId,
+    next: { amountSen: p.next.amount_sen, paidAt: p.next.paid_at, method: p.next.method },
+    why: `Payment on ${p.docNo} changed`, actor: p.actor ?? null,
+  }), p.id);
   if (!out.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
-    return { originalJeNo: null, contraJeNo: null, jeNo: null };
+    return { originalJeNo: null, contraJeNo: null, jeNo: null, receipt };
   }
   return out.status === 'reposted'
-    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo }
-    : { originalJeNo: null, contraJeNo: null, jeNo: null };
+    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo, receipt }
+    : { originalJeNo: null, contraJeNo: null, jeNo: null, receipt };
+}
+
+/** A receipt that failed to follow its payment is logged, never thrown — the
+    payment's change has committed, and the month's receipts check names the
+    gap until ensure or a hand fixes it. */
+async function followReceiptBestEffort(
+  run: () => Promise<{ ok: true; touch: ReceiptTouch | null } | { ok: false; reason: string }>,
+  paymentId: string,
+): Promise<ReceiptTouch | null> {
+  try {
+    const out = await run();
+    if (out.ok) return out.touch;
+    // eslint-disable-next-line no-console
+    console.error('[receipts] receipt did not follow its payment:', paymentId, out.reason);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] receipt hook threw:', paymentId, e);
+  }
+  return null;
+}
+
+/** The audit's line for what the payment's receipt did: a draft removed with
+    its payment reads `draftReceipt` X → none, as it always has; a formal one
+    cancelled reads `receipt` X → its replacement, or → none when the payment
+    went. */
+export function receiptFieldChange(touch: ReceiptTouch | null | undefined): FieldChange[] {
+  if (!touch) return [];
+  return [{ field: touch.draft ? 'draftReceipt' : 'receipt', from: touch.from, to: touch.to }];
 }
 
 /** What a correction did to the ledger, for the audit row to carry: the entry
@@ -425,13 +463,14 @@ export async function recordSoPaymentRow(
  * `neverHappened` — Finance removing a payment from a CANCELLED order (owner
  * 2026-09-29, 1a 2a): the row should never have been recorded (the same swipe
  * keyed on two orders), so its contra is dated on the original entry's own
- * day, like a correction (acc/payment-repost.ts), and its DRAFT receipt goes
- * with it. Every other delete is an event of today, as before.
+ * day, like a correction (acc/payment-repost.ts). Every other delete is an
+ * event of today, as before. The receipt goes with EVERY delete (owner
+ * 2026-10-29) — a draft removed, a formal one cancelled and kept.
  */
 export async function afterSoPaymentRemoved(
   sb: any,
-  p: { paymentId: string; docNo: string; companyId: number | null; neverHappened: boolean },
-): Promise<LedgerTouch & { draftReceipt: string | null }> {
+  p: { paymentId: string; docNo: string; companyId: number | null; neverHappened: boolean; actor?: string | null },
+): Promise<LedgerTouch & { receipt: ReceiptTouch | null }> {
   /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
      deleted payment's ledger entry. A row that never booked no-ops. */
   const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo, { onOriginalDate: p.neverHappened });
@@ -451,14 +490,10 @@ export async function afterSoPaymentRemoved(
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
-  let draftReceipt: string | null = null;
-  if (p.neverHappened) {
-    const gone = await removeDraftReceiptForPayment(sb, { source: 'SOPAY', paymentId: p.paymentId, companyId: p.companyId });
-    if (gone.ok) draftReceipt = gone.orNumber;
-    /* eslint-disable-next-line no-console */
-    else console.error('[acc] draft receipt not removed with its payment:', p.paymentId, gone.reason);
-  }
-  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null, draftReceipt };
+  const receipt = await followReceiptBestEffort(() => followPaymentRemoval(sb, {
+    source: 'SOPAY', paymentId: p.paymentId, companyId: p.companyId, why: `Payment on ${p.docNo} deleted`, actor: p.actor ?? null,
+  }), p.paymentId);
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null, receipt };
 }
 
 /* ── Mirror rows — the money that LEFT an order (owner 2026-09-16) ──────────

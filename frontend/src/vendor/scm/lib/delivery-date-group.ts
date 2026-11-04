@@ -14,6 +14,7 @@
 // read the same key; pinned by delivery-date-group.test.ts.
 // ----------------------------------------------------------------------------
 import type { PlanningOrder } from './delivery-planning-queries';
+import { runSheetTieBreak, type RunStopOrder } from '../../../mobile/runSheetOrder';
 
 /** The comparator / bucketers read only these two fields, so tests (and any
  *  future caller) can build rows without the full PlanningOrder shape. */
@@ -39,6 +40,46 @@ export function compareByDeliveryDate(a: DeliveryDateRow, b: DeliveryDateRow): n
   if (!av) return 1;
   if (!bv) return -1;
   return av < bv ? -1 : av > bv ? 1 : 0;
+}
+
+/** The comparator below also reads the lorry and the driver's run-sheet keys. */
+export type DeliverySlotRow = DeliveryDateRow & RunStopOrder & {
+  crew?: { lorry_plate: string | null } | null;
+};
+
+/* Reporter 2026-11-04: drivers lost track of which bill comes first, so each
+   lorry's day reads earliest Time Slot first, the same order as the driver's
+   phone run-sheet. Lorry sits above the slot so two lorries never interleave;
+   rows with no lorry yet sink to the end of their day. */
+export function compareByDeliverySlot(a: DeliverySlotRow, b: DeliverySlotRow): number {
+  const la = (a.crew?.lorry_plate ?? '').trim();
+  const lb = (b.crew?.lorry_plate ?? '').trim();
+  const byLorry = !la || !lb ? Number(!la) - Number(!lb) : la.localeCompare(lb);
+  return compareByDeliveryDate(a, b) || byLorry || runSheetTieBreak(a, b);
+}
+
+/** A DO print bundle's header, as the DO detail read returns it. */
+export type DoPrintHeader = {
+  expected_delivery_at?: string | null;
+  customer_delivery_date?: string | null;
+  so_doc_no?: string | null;
+  time_range?: string | null;
+  vehicle?: string | null;
+  crew?: { lorry_plate: string | null } | null;
+};
+
+/** The same order for a printed DO stack, so the driver's paper reads like the
+ *  board. The date is the one the DO prints; the crew lorry falls back to the
+ *  header's Vehicle. */
+export function compareDoPrintOrder(a: DoPrintHeader, b: DoPrintHeader): number {
+  const row = (h: DoPrintHeader): DeliverySlotRow => ({
+    amended_delivery_date: h.expected_delivery_at ?? null,
+    customer_delivery_date: h.customer_delivery_date ?? null,
+    so_doc_no: h.so_doc_no,
+    time_range: h.time_range,
+    crew: { lorry_plate: h.crew?.lorry_plate ?? h.vehicle ?? null },
+  });
+  return compareByDeliverySlot(row(a), row(b));
 }
 
 /** The row's month bucket key: 'YYYY-MM', or '' when it has no delivery date

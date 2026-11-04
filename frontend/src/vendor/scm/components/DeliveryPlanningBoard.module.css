@@ -150,6 +150,18 @@
 }
 .inlineEdit:disabled { opacity: 0.6; cursor: default; }
 
+/* Coloured Delivery Message Status, sheet-style pill (HC-0188). */
+.messageChip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 2px 1px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Bulk-edit bar (compact single row above the grid) ─────────────────────── */
 /* Floats at the bottom of the screen while rows are ticked: the board scrolls its
    toolbar away (grid fills the screen), and a bar up there looked like a tick

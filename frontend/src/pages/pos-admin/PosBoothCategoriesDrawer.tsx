@@ -1,8 +1,9 @@
 /* POS Items > Add by category: tick the inventory categories the booth sells.
  * "Add" tags every product of a ticked category that has a selling price and
- * is not a POS item yet; "Keep only ticked" switches off the POS items in the
- * unticked categories (the same as the trash on a row). Counts come from the
- * dry run, so the owner sees what each button will do before pressing it. */
+ * is not a POS item yet, and turns the category's switched-off items back on;
+ * "Keep only ticked" switches off the POS items in the unticked categories
+ * (the same as the trash on a row). Counts come from the dry run, so the
+ * owner sees what each button will do before pressing it. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
@@ -44,8 +45,8 @@ export function PosBoothCategoriesDrawer({ onClose, onChanged }: { onClose: () =
     if (categories.length === 0) { toast.info("Tick at least one category."); return; }
     setBusy(true);
     try {
-      const r = await api.post<{ added: number }>(`${POS_ADMIN}/items/add-all`, { categories });
-      toast.success(`${r.added} POS item(s) added. Press Refresh catalog on the devices.`);
+      const r = await api.post<{ added: number; turned_on: number }>(`${POS_ADMIN}/items/add-all`, { categories });
+      toast.success(`${r.added} POS item(s) added, ${r.turned_on} turned back on. Press Refresh catalog on the devices.`);
       onChanged();
       await load();
     } catch (e) {
@@ -110,14 +111,14 @@ export function PosBoothCategoriesDrawer({ onClose, onChanged }: { onClose: () =
                   <td className={cn(td, "font-semibold", !on && "text-ink-muted")}>{categoryTitle(c.category)}</td>
                   <td className={cn(td, "text-right font-mono")}>{c.active}</td>
                   <td className={cn(td, "text-right font-mono", on && c.to_add > 0 && "text-accent")}>{c.to_add}</td>
-                  <td className={cn(td, "text-right font-mono text-ink-muted")}>{c.off}</td>
+                  <td className={cn(td, "text-right font-mono", on && c.off > 0 ? "text-accent" : "text-ink-muted")}>{c.off}</td>
                   <td className={cn(td, "text-right font-mono text-ink-muted")} title="No selling price in the inventory; never added">{c.no_price}</td>
                 </tr>
               );
             })}
           </Table>
         )}
-        <p className="text-[11px] text-ink-muted">In POS = items already on. To add = products with a selling price not in the POS yet. Off = items removed by hand; they stay off.</p>
+        <p className="text-[11px] text-ink-muted">In POS = items already on. To add = products with a selling price not in the POS yet. Off = items switched off earlier; a tick turns them back on.</p>
       </div>
     </ResizableDrawer>
   );

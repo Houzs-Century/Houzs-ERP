@@ -80,13 +80,21 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/opening-balance",
   "/scm/other-debtors",
   "/scm/receipts",
-  "/scm/official-receipts",
+  "/scm/receipts/official/:id",
+  "/scm/receipts/debtor/:id",
+  "/scm/receipts/sundry/:id",
+  "/scm/other-debtors/:id",
   "/scm/ap-invoices",
   "/scm/ap-invoices/scan",
+  "/scm/ap-invoices/:id",
   "/scm/credit-notes",
+  "/scm/credit-notes/:id",
   "/scm/supplier-notes",
-  "/scm/deposit-invoices",
+  "/scm/supplier-notes/:id",
   "/scm/ar-invoices",
+  "/scm/ar-invoices/deposit/:id",
+  "/scm/ar-invoices/bills/:id",
+  "/scm/ar-invoices/sales/:id",
   "/scm/payment-requests",
   "/scm/product-requests",
   "/scm/official-docs",
@@ -126,6 +134,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/auto-schedule",
   "/scm/driver-leave",
   "/scm/threepl-companies",
+  "/scm/saved-locations",
   "/scm/fleet",
   "/scm/delivery-maintenance",
   "/scm/fleet-day",
@@ -139,6 +148,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/transportation",
   "/scm/warehouse",
   "/scm/finance",
+  "/scm/finance/rules",
+  "/scm/finance/deposit-invoices",
   "/scm/sales-orders",
   "/scm/amendments",
   "/scm/amendments/:id",
@@ -194,8 +205,10 @@ export const STAFF_ROUTE_PATTERNS = [
   "/profile",
 ] as const;
 
-/** Live compatibility route, not a page of its own. */
-export const STAFF_LEGACY_REDIRECT_PATTERNS = ["/roles"] as const;
+/** Live compatibility routes, not pages of their own: the Team page's Roles
+ *  tab; Official receipts folded into Money in › Receipts and Deposit invoices
+ *  into Money in › Invoices (batch 5 §1). */
+export const STAFF_LEGACY_REDIRECT_PATTERNS = ["/roles", "/scm/official-receipts", "/scm/deposit-invoices"] as const;
 
 export const PUBLIC_ROUTE_PATTERNS = [
   "/survey/:token",

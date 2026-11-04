@@ -31,6 +31,7 @@ import { activeCompanyId, stampCompany, scopeToCompany,
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS } from '../lib/finance-keys';
 import { todayMyt } from '../lib/my-time';
+import { chunkIn } from '../lib/paginate-all';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
@@ -170,6 +171,12 @@ const CreateBody = z.object({
 });
 
 const MODEL_CODE_MAX = 32;
+const MODEL_CODE_REFUSALS: Record<string, string> = {
+  empty_code: 'The model code cannot be empty.',
+  code_taken: 'Another model, SKU, combo or quick pick already uses that code.',
+  code_shared: 'Another model still uses the old code, so its SKUs cannot be moved safely.',
+  pos_combos_in_use: 'The 2990 POS still has live combos under the old code. Retire them on the POS first.',
+};
 
 const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
@@ -223,11 +230,12 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   // a single id column is cheaper than a per-model count roundtrip.
   const counts = new Map<string, number>();
   if (rows.length > 0) {
-    let cq = supabase.from('mfg_products').select('model_id').not('model_id', 'is', null);
-    // Scope to the models we're returning so a category filter doesn't pull
-    // the whole table (and so the count query stays bounded).
-    cq = cq.in('model_id', rows.map((m) => m.id));
-    const { data: skuRows } = await cq;
+    // Paged and chunked: one bare request is cut at 1000 rows by PostgREST, which
+    // showed "0 SKUs" on every model whose SKUs fell past the cut (2990-0022).
+    const { data: skuRows, error: cntErr } = await chunkIn(rows.map((m) => m.id), (batch, from, to) =>
+      scopeToCompany(supabase.from('mfg_products').select('model_id').in('model_id', batch).order('id'), c)
+        .range(from, to));
+    if (cntErr) return c.json({ error: 'load_failed', reason: cntErr.message }, 500);
     for (const r of (skuRows ?? []) as Array<{ model_id: string | null }>) {
       if (r.model_id) counts.set(r.model_id, (counts.get(r.model_id) ?? 0) + 1);
     }
@@ -556,6 +564,22 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       return c.json({ error: 'default_not_allowed', message: `The default for ${bad} is not one of this Model's allowed options.` }, 400);
     }
   }
+  // A changed code moves with its SKUs' base_model and the combo / quick-pick rows keyed on it,
+  // in one transaction inside scm.rename_model_code; the function writes model_code itself.
+  let codeRenamed = false;
+  if (u.model_code !== undefined && u.model_code !== beforeCode) {
+    const { data: ren, error: renErr } = await supabase.rpc('rename_model_code', {
+      p_company_id: co.companyId, p_model_id: String(id), p_new_code: String(u.model_code),
+    });
+    if (renErr) return c.json({ error: 'rename_failed', reason: renErr.message }, 500);
+    const r = (ren ?? {}) as { renamed?: boolean; refused?: string };
+    if (!r.renamed) {
+      if (r.refused === 'not_found') return c.json(NOT_THIS_COMPANY, 404);
+      return c.json({ error: r.refused ?? 'rename_refused', message: MODEL_CODE_REFUSALS[r.refused ?? ''] ?? 'The model code could not be changed.' }, 409);
+    }
+    codeRenamed = true;
+  }
+  delete u.model_code;
   // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
   const newCategory = u.category === undefined ? undefined : String(u.category);
   delete u.category;
@@ -575,6 +599,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     }
     if (!updated) return c.json(NOT_THIS_COMPANY, 404);
     data = updated as Record<string, unknown>;
+  }
+
+  if (codeRenamed && !data && newCategory === undefined) {
+    const { data: reread, error: rereadErr } = await scopeToCompanyId(supabase
+      .from('product_models')
+      .select(COLS)
+      .eq('id', id), co.companyId)
+      .maybeSingle();
+    if (rereadErr) return c.json({ error: 'load_failed', reason: rereadErr.message }, 500);
+    data = reread as Record<string, unknown> | null;
   }
 
   if (newCategory !== undefined) {

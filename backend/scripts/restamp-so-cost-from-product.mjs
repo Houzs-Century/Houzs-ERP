@@ -18,8 +18,9 @@
    recomputed as the SUM of its line costs (the invariant already true for
    189/190 costed 2990 orders), so an order's existing correct lines are left as
    they are and only the newly-stamped cost is added. Per line the cost is:
-     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight)
-            -> base_price_sen -> cost_price_sen
+     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), or with
+            no height the one cost all heights share, else the height the SKU or model
+            sells at most -> base_price_sen -> cost_price_sen
      other  base_price_sen -> cost_price_sen
    line_cost = unit x qty; then the header's category aggregates + total_cost +
    margin (revenue - cost) are recomputed. This mirrors restamp-imported-so-costs
@@ -44,6 +45,7 @@
    RE-RUN: idempotent — value-guarded on unit_cost_sen = 0, so a second run
    stamps nothing (every gap the products can fill is already filled). */
 import postgres from 'postgres';
+import { unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -66,24 +68,6 @@ const CAT_COL = {
   ACCESSORY: 'accessories', SERVICE: 'service',
 };
 
-/** The product cost for one line, current (not as-of). SOFA reads the seat grid
- *  PRICE_2 cost at the ordered height; everything else the flat cost lane. */
-function unitCostSen(p, variants) {
-  if (!p) return 0;
-  const cat = String(p.category || '').toUpperCase();
-  if (cat === 'SOFA' && Array.isArray(p.seat_height_prices)) {
-    const h = variants?.seatHeight ?? variants?.seat_height ?? null;
-    if (h != null) {
-      const hh = String(h).replace(/"/g, '');
-      const hit = p.seat_height_prices.find(
-        (e) => String(e.height) === hh && (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0,
-      );
-      if (hit) return Number(hit.priceSen);
-    }
-  }
-  return Number(p.base_price_sen) || Number(p.cost_price_sen) || 0;
-}
-
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
 async function main() {
@@ -99,6 +83,11 @@ async function main() {
     const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
                             FROM scm.mfg_products WHERE company_id = ${co}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
+    const heightCounts = await sql`SELECT item_code, coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') AS height, count(*)::int AS n
+                                   FROM scm.mfg_sales_order_items
+                                   WHERE company_id = ${co} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
+                                   GROUP BY 1, 2`;
+    const usual = usualHeights(heightCounts);
 
     // Every order that has at least one zero-cost line — a fully-zero order OR a
     // partly-costed one with a few kosong lines. Both show a gap in the report.
@@ -141,7 +130,7 @@ async function main() {
         let uc = Number(l.unit_cost_sen) || 0;
         if (uc === 0) {
           const p = prodBy.get(l.item_code);
-          uc = unitCostSen(p, l.variants);
+          uc = unitCostSen(p, l.variants, usual);
           if (uc > 0) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: l.id, uc, qty: l.qty || 1 }); }
           else noCost++;
         }
@@ -214,9 +203,14 @@ async function main() {
     const prods = await check`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
                               FROM scm.mfg_products WHERE company_id = ${co}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
+    const heightCounts = await check`SELECT item_code, coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') AS height, count(*)::int AS n
+                                   FROM scm.mfg_sales_order_items
+                                   WHERE company_id = ${co} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
+                                   GROUP BY 1, 2`;
+    const usual = usualHeights(heightCounts);
     const zeros = await check`SELECT id, item_code, variants FROM scm.mfg_sales_order_items
                               WHERE company_id = ${co} AND coalesce(unit_cost_sen,0) = 0`;
-    for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants) > 0) remaining++;
+    for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants, usual) > 0) remaining++;
   }
   await check.end();
   if (remaining > 0) { bad(`INVARIANT FAILED: ${remaining} line(s) still read 0 though their product has a cost.`); process.exit(1); }

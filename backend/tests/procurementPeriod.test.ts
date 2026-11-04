@@ -55,6 +55,10 @@ describe('procurement period', () => {
     ], '2026-10-01', '2026-10-17', '2026-10-17', '2026-10-17', 'original');
     expect(r.lines).toEqual([expect.objectContaining({ poId: 'a', raised: true, due: false, receivedQty: 4, receivedSen: 400_00, openQty: 6, openSen: 600_00 })]);
   });
+  test('a drill-down line names its item and sales order, for the full PO list under the breakdown', () => {
+    const r = procurementPeriod([line({ itemDesc: 'Bed frame queen', soDocNo: 'SO-1' })], '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-25', 'original');
+    expect(r.lines[0]).toMatchObject({ itemDesc: 'Bed frame queen', soDocNo: 'SO-1', openQty: 10, daysLate: 5 });
+  });
 
   test('location scope: all, leave out display / display and service, or one kind', () => {
     expect(['warehouse', 'display', 'service', 'others'].filter((k) => stockScopeKeeps('all', k))).toEqual(['warehouse', 'display', 'service', 'others']);

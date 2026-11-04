@@ -18,7 +18,6 @@ const readyEventItems = [
   done("3D Design"),
   approved("Stock Out Transfer Record"),
   done("Filled Floorplan"),
-  done("Event Complete Image"),
   pending("Stock In Transfer Record"),
 ];
 
@@ -61,18 +60,17 @@ describe("projectStage — Driver Info tracks the keyed crew", () => {
     // Driver Info + Setup/Dismantle are satisfied by the crew; the only thing
     // left incomplete is the goods-return doc, now its own late step.
     expect(st.currentIdx).toBe(idxOf("Stock In"));
-    expect(idxOf("Stock In")).toBeGreaterThan(idxOf("Event Complete"));
+    expect(idxOf("Stock In")).toBeGreaterThan(idxOf("Filled Floorplan"));
   });
 
   it("moves a real MID VALLEY event (Filled Floorplan still pending) off Driver Info to Filled Floorplan", () => {
-    // Floorplan/3D/Stock-Out done; Filled Floorplan, Event Complete, Stock In
-    // all pending — the actual shape of the 3 MID VALLEY events on 2026-10-28.
+    // Floorplan/3D/Stock-Out done; Filled Floorplan, Stock In still pending —
+    // the actual shape of the 3 MID VALLEY events on 2026-10-28.
     const items = [
       done("Blank Floorplan"),
       approved("3D Design"),
       approved("Stock Out Transfer Record"),
       pending("Filled Floorplan"),
-      pending("Event Complete Image"),
       pending("Stock In Transfer Record"),
     ];
     const crew = '{"drivers":[{"name":"ABD KHALID"}],"helpers":[{"name":"JAMSED"}]}';

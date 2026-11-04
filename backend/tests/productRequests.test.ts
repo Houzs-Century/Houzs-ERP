@@ -26,7 +26,7 @@ import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { requireScmAccess } from '../src/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { productRequests } from '../src/scm/routes/product-requests';
-import { loadRequestForPco, markRequestPcoIssued } from '../src/scm/lib/product-request-link';
+import { loadRequestForPco, markRequestPcoIssued, releaseRequestFromCancelledPo } from '../src/scm/lib/product-request-link';
 
 const notified = vi.fn((_event: string, _opts: Record<string, unknown>) => undefined);
 vi.mock('../src/services/productRequestNotify', () => ({
@@ -382,6 +382,23 @@ describe('product request — the new Models, then the PC Order', () => {
     if (!pco.ok) expect(pco.body).toMatchObject({ error: 'request_already_issued', message: expect.stringContaining('already has a Purchase Order') });
     expect((await purchaser(`/product-requests/${id}/close`, 'POST', {})).status).toBe(200);
     expect(sb.tables.product_requests[0].status).toBe('CLOSED');
+  });
+
+  test('a cancelled Purchase Order lets go of its request (2990-0027): APPROVED again, and a new PO may claim it', async () => {
+    const sb = world();
+    const id = String(((await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_5530] })).body.request as Row).id);
+    const purchaser = as(sb, PURCHASER);
+    expect((await purchaser(`/product-requests/${id}/approve`, 'POST', {})).status).toBe(200);
+    expect((await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' })).status).toBe(200);
+    /* A different PO's cancel leaves it alone. */
+    await releaseRequestFromCancelledPo(sb as never, CO, { id: 'po-other', po_number: 'OT-PO-2610-001' }, null);
+    expect(sb.tables.product_requests[0]).toMatchObject({ status: 'PO_ISSUED', po_id: 'po-1' });
+    await releaseRequestFromCancelledPo(sb as never, CO, { id: 'po-1', po_number: 'HC-PO-2610-001' }, null);
+    const after = (await purchaser(`/product-requests/${id}`)).body.request as Row;
+    expect(after).toMatchObject({ status: 'APPROVED', po_id: null, po: null });
+    expect(sb.tables.entity_audit_log.some((a) => a.entity_type === 'PRODUCT_REQUEST' && a.status_snapshot === 'APPROVED' && a.note === 'HC-PO-2610-001 cancelled')).toBe(true);
+    const again = await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
   });
 
   test('a request in another company is not a request at all', async () => {

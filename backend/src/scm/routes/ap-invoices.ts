@@ -29,6 +29,12 @@
 // vendor memory (mig 0341) the supplier → first-line account, so the OCR
 // (POST /payment-vouchers/extract, shared) pre-fills the next same-vendor
 // bill here as it does on a voucher.
+//
+// A supplier's DEBIT NOTE (owner 2026-10-28: Supplier & Other Creditor CN / DN —
+// 再加 supplier DN) is this same bill with doc_kind 'DN': it raises what we owe,
+// as AutoCount's A/P Debit Note does, so it posts, ages and is paid by the AP
+// Payment exactly as an AP invoice (source API). Its own series {co}SDN-YYMM-NNN
+// and its own name in the journal; GET /?docKind=DN lists the debit notes alone.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -38,12 +44,16 @@ import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apInvoiceLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, apInvoiceLines, resolveRoles, type RoleCodes } from '../../acc/rules';
+import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { billPayments } from './ap-invoice-payments';
+import { billPlans, putBillPlanHandler } from './ap-bill-plans';
 import { requireLeafAccount } from './accounting-chart';
 import { learnVendorMemory } from './payment-vouchers';
 import {
   uploadApInvoiceFileHandler, listApInvoiceFilesHandler, streamApInvoiceFileHandler, deleteApInvoiceFileHandler,
 } from './ap-invoice-files';
+import { printApBillsBundleHandler } from './ap-bill-print';
 import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
@@ -56,8 +66,11 @@ type Row = Record<string, any>;
 
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
 
-const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by, opening';
+const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by, opening, doc_kind';
 const LINE = 'id, line_no, description, debit_account_code, amount_sen, project_id';
+
+/** What the paper is called in its journal: a supplier's debit note, or an AP invoice. */
+const paperOf = (inv: Row): string => (inv.doc_kind === 'DN' ? 'Supplier debit note' : 'AP invoice');
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a; lib/event-tags.ts). */
 type CleanLine = { description: string | null; code: string; amountSen: number; projectId: number | null };
@@ -105,37 +118,53 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const kind = String(c.req.query('kind') ?? 'ALL').toUpperCase();
+  /* docKind=DN: the supplier debit notes alone (the CN / DN page's tab) — a
+     purchase invoice is never one; docKind=INV: the bills without them. */
+  const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
+  /* The control each bill sits on (the redesign's Control column and its
+     Trade / Other filter): the server's own rule, the roles read once. */
+  const roles = await resolveRoles(sb, co.companyId);
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
-    const { data, error } = await scopeToCompany(
-      sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c,
-    ).order('invoice_date', { ascending: false }).limit(500);
+    let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
+    if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
+    const { data, error } = await q.order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
-  if (kind === 'ALL' || kind === 'PI') {
+  if ((kind === 'ALL' || kind === 'PI') && docKind !== 'DN') {
     /* The operational invoices, read-only here: the Procurement page raises
        and edits them; this list only SHOWS them beside the AP invoices so
        the Finance side sees a supplier's whole debt. */
     const { data, error } = await scopeToCompany(
       sb.from('purchase_invoices')
-        .select('id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, supplier:suppliers(id, code, name)')
+        .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
     ).order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
   rows.sort((a, b) => String(b.invoiceDate ?? '').localeCompare(String(a.invoiceDate ?? '')) || String(b.invoiceNumber).localeCompare(String(a.invoiceNumber)));
+  /* When Finance plans to pay each bill (step 7) — beside its due date, never instead of it. */
+  const plans = await billPlans(sb, co.companyId);
+  if (!plans.ok) return c.json({ error: 'load_failed', reason: plans.reason }, 500);
+  for (const r of rows) r.plannedOn = plans.byBill.get(`${r.kind}:${r.id}`) ?? null;
   return c.json({ rows });
 };
 
-function shape(kind: 'API' | 'PI', r: Row): Row {
+function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   const sup = Array.isArray(r.supplier) ? r.supplier[0] : r.supplier;
   const total = Number(r.total_sen ?? 0);
   const paid = Number(r.paid_sen ?? 0);
+  const controlRole = apControlRole(sup?.code ?? null);
+  /* A purchase invoice held in Procurement: every voucher path refuses it
+     (payment-vouchers.ts), so the list says so before anyone tries. */
+  const held = kind === 'PI' && isDocumentHeld(r);
   return {
     kind,
+    /* 'DN' for a supplier's debit note; a purchase invoice is always an invoice. */
+    docKind: kind === 'API' && r.doc_kind === 'DN' ? 'DN' : 'INV',
     id: r.id,
     invoiceNumber: r.invoice_number,
     supplierId: r.supplier_id ?? null,
@@ -152,10 +181,16 @@ function shape(kind: 'API' | 'PI', r: Row): Row {
     paidSen: paid,
     outstandingSen: Math.max(0, total - paid),
     status: String(r.status ?? ''),
+    /* Trade creditors (AP, 400) or Other creditors (AP_OTHER, 405) — by the supplier's code. */
+    controlRole,
+    controlCode: roles[controlRole],
+    held,
+    holdReason: held ? (r.hold_reason ?? null) : null,
   };
 }
 
-/* ── GET /:id — an AP invoice with its lines ─────────────────────────────── */
+/* ── GET /:id — an AP invoice with its lines, what paid it, its journal and
+   the control it sits on (the bill page, batch 4 step 6) ───────────────── */
 export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
@@ -166,7 +201,13 @@ export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   ]);
   if (lines.error) return c.json({ error: 'load_failed', reason: lines.error.message }, 500);
   if (sup.error) return c.json({ error: 'load_failed', reason: sup.error.message }, 500);
-  return c.json({ invoice: found.inv, lines: lines.data ?? [], supplier: sup.data ?? null });
+  const pay = await billPayments(sb, c, found.inv);
+  if (!pay.ok) return c.json({ error: 'load_failed', reason: pay.reason }, 500);
+  const plan = await scopeToCompany(sb.from('acc_bill_plans').select('planned_on').eq('bill_kind', 'API').eq('bill_id', found.inv.id), c).maybeSingle();
+  if (plan.error) return c.json({ error: 'load_failed', reason: plan.error.message }, 500);
+  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
+  const controlCode = roles[apControlRole((sup.data as { code?: string | null } | null)?.code ?? null)];
+  return c.json({ invoice: { ...found.inv, je_no: pay.jeNo, planned_on: (plan.data as { planned_on?: string } | null)?.planned_on ?? null }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
 };
 
 /* ── POST / — raise a DRAFT ──────────────────────────────────────────────── */
@@ -181,6 +222,10 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
 
   const supplierId = String(body.supplierId ?? '').trim();
   if (!supplierId) return c.json({ error: 'supplier_required', message: 'Pick the supplier this bill is from.' }, 400);
+  /* A supplier's debit note is raised as this bill (2026-10-28); anything else is an invoice. */
+  const docKindRaw = String(body.docKind ?? 'INV').trim().toUpperCase();
+  if (docKindRaw !== 'INV' && docKindRaw !== 'DN') return c.json({ error: 'bad_doc_kind', message: 'docKind is INV (an AP invoice) or DN (a supplier debit note).' }, 400);
+  const docKind: 'INV' | 'DN' = docKindRaw;
   const currency = String(body.currency ?? 'MYR').trim().toUpperCase() || 'MYR';
   if (currency !== 'MYR') {
     return c.json({ error: 'currency_unsupported', message: 'AP invoices are MYR in this first cut — a foreign bill goes through a purchase invoice, which carries the rate.' }, 400);
@@ -207,10 +252,11 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');
-  const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}API-${docMonthTag(invoiceDate)}`);
+  const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'SDN' : 'API'}-${docMonthTag(invoiceDate)}`);
   const { data: inv, error: insErr } = await sb.from('ap_invoices').insert({
     company_id: co.companyId,
     invoice_number: invoiceNumber,
+    doc_kind: docKind,
     supplier_id: sup.supplier.id,
     supplier_invoice_ref: body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null,
     ...officialOwedFields(body, officialActor(c)), // 欠正式单 — booked on a proforma (lib/official-doc.ts)
@@ -345,7 +391,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     sourceType: 'API',
     sourceDocNo: String(inv.invoice_number),
     companyId: co.companyId,
-    narration: (orig) => `Reversal of ${orig.je_no} — AP invoice ${inv.invoice_number} edited`,
+    narration: (orig) => `Reversal of ${orig.je_no} — ${paperOf(inv)} ${inv.invoice_number} edited`,
     entryDate: oldDate,
   });
   if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
@@ -360,7 +406,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     entryDate: String(after.invoice_date),
     sourceType: 'API',
     sourceDocNo: String(inv.invoice_number),
-    narration: `AP invoice ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
+    narration: `${paperOf(inv)} ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
     lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
       lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
   });
@@ -395,7 +441,7 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
     entryDate: String(inv.invoice_date),
     sourceType: 'API',
     sourceDocNo: String(inv.invoice_number),
-    narration: `AP invoice ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${inv.supplier_invoice_ref ? ` (${inv.supplier_invoice_ref})` : ''}`,
+    narration: `${paperOf(inv)} ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${inv.supplier_invoice_ref ? ` (${inv.supplier_invoice_ref})` : ''}`,
     lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
       lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
   });
@@ -429,7 +475,7 @@ export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
       sourceType: 'API',
       sourceDocNo: String(inv.invoice_number),
       companyId: co.companyId,
-      narration: (orig) => `Reversal of ${orig.je_no} — AP invoice ${inv.invoice_number} cancelled`,
+      narration: (orig) => `Reversal of ${orig.je_no} — ${paperOf(inv)} ${inv.invoice_number} cancelled`,
       entryDate: todayMyt(),
     });
     if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
@@ -448,12 +494,16 @@ export const apInvoices = new Hono();
 apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
 apInvoices.post('/', createApInvoiceHandler);
+/* Supplier bills printed together, each followed by its files (batch 4,
+   step 8; routes/ap-bill-print.ts) — a literal path, before '/:id'. */
+apInvoices.post('/print-bundle', printApBillsBundleHandler);
 /* Files before /:id, as the PV mounts them — the evidence paths never fall
    into the detail matcher. */
 apInvoices.post('/:id/files', uploadApInvoiceFileHandler);
 apInvoices.get('/:id/files', listApInvoiceFilesHandler);
 apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
 apInvoices.delete('/:id/files/:fileId', deleteApInvoiceFileHandler);
+apInvoices.put('/plans', putBillPlanHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);
 apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);

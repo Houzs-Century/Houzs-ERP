@@ -35,6 +35,11 @@ describe('assrChatStateFromLog', () => {
     doc_no: 'A#inspection', source: 'chat-callback', success: true, created_at: '2026-10-28T09:00:00Z',
     payload: JSON.stringify({ event: 'amend', requested_delivery_date: '05/11/2026', reason: 'Date Unavailable' }),
   };
+  it('a Driver Info send reads Done Driver Information, newest wins', () => {
+    const driver = { ...send, payload: JSON.stringify({ automation: 'Driver Info' }), created_at: '2026-10-28T10:00:00Z' };
+    expect(assrChatStateFromLog([send, amend, driver]).get('A#inspection')?.delivery_message_status).toBe('Done Driver Information');
+    expect(assrChatStateFromLog([driver, { ...send, created_at: '2026-10-28T11:00:00Z' }]).get('A#inspection')?.delivery_message_status).toBe('Done Send');
+  });
   it('a send alone reads Done Send', () => {
     expect(assrChatStateFromLog([send]).get('A#inspection')).toEqual({
       delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null,

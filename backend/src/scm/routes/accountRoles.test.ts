@@ -34,7 +34,7 @@ const CALLER = {
   user_metadata: { name: 'Acct' }, aud: 'authenticated', created_at: '',
 } as unknown as User;
 
-const { accountRolesGet, accountRolesPutBankDefault, accounting } = await import('./accounting');
+const { accountRolesGet, accountRolesPutBankDefault, accountRolesPutBankPayDefault, accounting } = await import('./accounting');
 
 function app() {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -47,6 +47,7 @@ function app() {
   });
   a.get('/roles', accountRolesGet as never);
   a.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault as never);
+  a.put('/roles/BANK_PAY_DEFAULT', accountRolesPutBankPayDefault as never);
   a.route('/', accounting);
   return a;
 }
@@ -89,6 +90,26 @@ describe('the roles window', () => {
     /* And nothing above moved the role. */
     const body = await (await app().request('/roles')).json() as { roles: Record<string, string> };
     expect(body.roles.BANK_DEFAULT).toBe('310-0020');
+  });
+
+  /* Owner 2026-11-04: Houzs Century receives in Maybank and pays from Hong
+     Leong — the Paid From default is its own role, per company. */
+  it('the pay-from bank follows the receive bank until set, then stands apart', async () => {
+    const before = await (await app().request('/roles')).json() as { roles: Record<string, string> };
+    expect(before.roles.BANK_PAY_DEFAULT).toBe(before.roles.BANK_DEFAULT);
+
+    const putPay = (code: string) => app().request('/roles/BANK_PAY_DEFAULT', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accountCode: code }),
+    });
+    expect((await putPay('310-0010')).status).toBe(200);
+    expect((await put('310-0020')).status).toBe(200);
+    const after = await (await app().request('/roles')).json() as { roles: Record<string, string> };
+    expect(after.roles.BANK_DEFAULT).toBe('310-0020');
+    expect(after.roles.BANK_PAY_DEFAULT).toBe('310-0010');
+
+    /* The same guard: never an expense, never another company's bank. */
+    expect((await putPay('900-A002')).status).toBe(409);
+    expect((await putPay('360-0000')).status).toBe(404);
   });
 
   it('GET /accounts now carries acc_money, so pickers can offer only money', async () => {

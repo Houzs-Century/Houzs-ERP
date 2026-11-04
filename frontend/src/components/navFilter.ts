@@ -132,3 +132,48 @@ export function makeNavFilter(ctx: NavFilterCtx) {
     return to === t.to ? t : { ...t, to };
   };
 }
+
+/**
+ * Where a collapsed entry (`NavTab.collapsed`, Finance › Reports) goes, after
+ * the filter: the member opened last when the reader may still open it, else
+ * the first member they may open. Both surfaces call it, so the desktop rail
+ * and the phone's menu send the same reader to the same report.
+ */
+export function collapsedEntryTo(members: readonly NavTab[], last: string | null): string | undefined {
+  return (last ? members.find((m) => m.to === last)?.to : undefined) ?? members.find((m) => m.to)?.to;
+}
+
+/** Where the reader is, as the nav compares it. */
+export type NavLocation = { pathname: string; search: string };
+
+/**
+ * True when a nav entry's `to` is the current page: its path (a nested route
+ * too, unless `end`) and every query parameter it names — NavLink does not
+ * compare query strings, and Finance deep-links `/scm/accounting?tab=…`.
+ * `notWithParam`: the entry does not light while the address carries that
+ * parameter (Books' pages opened from the report list carry `in=reports`, and
+ * the Reports entry lights instead).
+ */
+export function navToIsActive(to: string, loc: NavLocation, end?: boolean, notWithParam?: string): boolean {
+  const [path, search] = to.split("?");
+  if (end ? loc.pathname !== path : !loc.pathname.startsWith(path)) {
+    // For non-end matches, allow startsWith for nested routes (e.g.
+    // /projects/123 still highlights /projects).
+    if (loc.pathname !== path) return false;
+  }
+  const have = new URLSearchParams(loc.search);
+  if (notWithParam && have.has(notWithParam)) return false;
+  if (!search) return true;
+  const wanted = new URLSearchParams(search);
+  for (const [k, v] of wanted.entries()) {
+    if (have.get(k) !== v) return false;
+  }
+  return true;
+}
+
+/** A collapsed entry (Finance › Reports) is lit on any of its members, or on
+ *  its `alsoActive` address. */
+export function collapsedEntryIsLit(tab: NavTab, loc: NavLocation): boolean {
+  return (tab.children ?? []).some((m) => (m.to ? navToIsActive(m.to, loc, m.end, m.notWithParam) : false))
+    || (tab.alsoActive ? navToIsActive(tab.alsoActive, loc) : false);
+}

@@ -27,7 +27,7 @@ import { normDate } from '../../services/agents/schedule-reconcile';
 import { fmtDate } from '../shared/format';
 import { normalizePhone } from '../shared/phone';
 import { ASSR_CONFIRMED_COL } from './assr-board-scope';
-import { KIND_AUTOMATION, templateDate } from './delivery-message-kinds';
+import { KIND_AFTER_STATUS, KIND_AUTOMATION, kindAttributes, templateDate, type DriverInfoInput } from './delivery-message-kinds';
 import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../../services/connect';
 
 export type AssrLeg = keyof typeof ASSR_CONFIRMED_COL;
@@ -67,12 +67,12 @@ export function isAssrLeg(v: unknown): v is AssrLeg {
 }
 
 type CaseRow = {
-  id: number; assr_no: string; company_id: number | null;
+  id: number; assr_no: string; doc_no: string | null; company_id: number | null;
   customer_name: string | null; phone: string | null;
   closed_at: string | null; archived_at: string | null;
 } & Partial<Record<string, string | null>>;
 
-const CASE_COLS = `id, assr_no, company_id, customer_name, phone, closed_at, archived_at,
+const CASE_COLS = `id, assr_no, doc_no, company_id, customer_name, phone, closed_at, archived_at,
   customer_pickup_at, inspection_visit_at, do_date,
   sched_pickup_date, sched_inspection_date, sched_delivery_date`;
 
@@ -93,13 +93,15 @@ export interface AssrSendResult {
   skipped: Array<{ docNo: string; reason: string }>;
 }
 
-/** Send the Service Arrangement message for each ASSR leg row key. Cases are
- *  read through the caller's granted companies (assrCompanySql) — the same
- *  scope the board showed the row under. One message per leg: the template
- *  names one case and one date. */
+/** Send the Service Arrangement message for each ASSR leg row key — or, with
+ *  `driverInfo`, the Driver Info message (the SO template, button-less: name,
+ *  the leg's date, time window, driver, lorry). Cases are read through the
+ *  caller's granted companies (assrCompanySql) — the same scope the board
+ *  showed the row under. One message per leg: both templates name one date. */
 export async function sendAssrArrangement(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   rowKeys: string[],
+  driverInfo?: DriverInfoInput,
 ): Promise<AssrSendResult> {
   const sent: AssrSendResult['sent'] = [];
   const failed: AssrSendResult['failed'] = [];
@@ -132,16 +134,24 @@ export async function sendAssrArrangement(
     const date = assrLegDate(row, leg);
     if (!date) { skipped.push({ docNo: key, reason: 'no_job_date' }); continue; }
 
+    const extra: Record<string, string> = { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo };
+    if (driverInfo) Object.assign(extra, kindAttributes('driver_info', {}, date, 0, { driverInfo }).attributes);
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),
+      // ref_1 stays the case number (assrNo): the flow's amend confirmation and
+      // the Confirm/Amend callback both key on it. The case number ALSO rides in
+      // assr_no (extra) so the template shows it from the dedicated ASSR No field,
+      // matching the Service Case Received ack; the Sales Order rides in ref_2.
       [{ ref: assrNo, orderRef: '', branding: '', deliveryDate: templateDate(date), balanceSen: null }],
       null,
       {
         callbackUrl,
-        automation: KIND_AUTOMATION.assr_arrangement,
-        extra: { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg },
-        resetConversation: true,
+        automation: driverInfo ? KIND_AUTOMATION.driver_info : KIND_AUTOMATION.assr_arrangement,
+        extra,
+        // Driver Info opens no Confirm / Amend, so a customer who already
+        // confirmed keeps their Delivery Lock (OPENER_KINDS).
+        resetConversation: !driverInfo,
       },
     );
     const result = await postConnectContact(c.env, contact);
@@ -166,7 +176,9 @@ export async function sendAssrArrangement(
     if (result.ok) {
       try {
         await logActivity(c.env, row.id, 'whatsapp_sent', null, date,
-          `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} on ${dmy(date)}, customer asked to Confirm or Amend the date.`,
+          driverInfo
+            ? `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} driver information for ${dmy(date)} (${driverInfo.deliveryTime}, driver ${driverInfo.driverName}${driverInfo.carPlate ? `, lorry ${driverInfo.carPlate}` : ''}).`
+            : `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} on ${dmy(date)}, customer asked to Confirm or Amend the date.`,
           userId, { category: 'service', source_channel: 'whatsapp' });
       } catch (e) {
         console.warn(`[assr-arrangement] activity insert failed: ${String((e as Error).message).slice(0, 120)}`);
@@ -276,13 +288,14 @@ export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState>
   const out = new Map<string, AssrChatState>();
   const sorted = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const r of sorted) {
+    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null; automation?: string } = {};
+    try { p = JSON.parse(r.payload ?? '{}'); } catch { p = {}; }
     if (r.source === 'delivery-planning') {
       if (!r.success) continue;
-      out.set(r.doc_no, { delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null });
+      const status = p.automation === KIND_AUTOMATION.driver_info ? KIND_AFTER_STATUS.driver_info : 'Done Send';
+      out.set(r.doc_no, { delivery_message_status: status, amend_date_from_customer: null, amend_reason_from_customer: null });
       continue;
     }
-    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null } = {};
-    try { p = JSON.parse(r.payload ?? '{}'); } catch { continue; }
     if (p.event === 'confirm') {
       out.set(r.doc_no, { delivery_message_status: 'Done Scheduling', amend_date_from_customer: null, amend_reason_from_customer: null });
     } else if (p.event === 'amend') {

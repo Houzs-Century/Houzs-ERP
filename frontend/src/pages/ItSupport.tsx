@@ -6,7 +6,9 @@ import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { DataTable, type Column } from "../components/DataTable";
 import { TabStrip } from "../components/TabStrip";
+import { NAV_TABS } from "../components/Sidebar";
 import { useRefreshItSupportUnread } from "../hooks/useAmendmentApprovals";
+import { itModuleIndex } from "../lib/itSupportModule";
 import { clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import {
@@ -155,8 +157,13 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
   );
 }
 
+// Built once: the sidebar does not change while the app runs.
+const MODULES = itModuleIndex(NAV_TABS);
+
 function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: string) => void; onCancel: () => void }) {
   const [title, setTitle] = useState("");
+  // Picked for them when they came from a page; they can change it or leave "Not sure".
+  const [module, setModule] = useState(() => (from ? MODULES.moduleFor(from) : ""));
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState("bug");
   const [urgency, setUrgency] = useState("medium");
@@ -177,6 +184,7 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
     form.set("priority", urgency);
     form.set("occurred_at", new Date().toISOString());
     if (from) form.set("page_url", from);
+    if (module) form.set("module", module);
     for (const f of files) form.append("files", f, f.name);
     try {
       const r = await api.postForm<{ code: string }>("/api/it-support/tickets", form);
@@ -215,6 +223,13 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
           </select>
         </label>
       </div>
+      <label className="flex flex-col gap-1.5">
+        <span className={LABEL}>Which part of the system</span>
+        <select className={CONTROL} value={module} onChange={(e) => setModule(e.target.value)}>
+          <option value="">Not sure</option>
+          {MODULES.options.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </label>
       <div className="flex flex-col gap-1.5">
         <span className={LABEL}>Screenshots</span>
         <Files files={files} onChange={setFiles} />

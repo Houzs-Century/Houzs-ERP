@@ -28,11 +28,39 @@ lists only what differs for GR.
 - **Known PO, unknown codes.** A row whose PO is known but whose code matches
   nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
   (`nameMatchItem`: every word only that item has on the PO must be printed; item-group words such as MATT / MATTRESS are not needed, and a hyphen suffix counts, so FLEXICARE-C is not FLEXICARE-S);
-  the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece on its PO raised for that SO (`setLinesBySo`, narrowed by a printed model number), at the remaining qty. A row no name matches is
+  the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece raised for that SO (`setLinesBySo`, narrowed by a printed model number against our code or the supplier's), at the remaining qty; with a known supplier the SO alone anchors it, since their header P.O. is often their own "S/O 1878". A row no name matches is
   "not on the PO" (free gifts). When no row lines up at all, the draft carries
   every line still owed on the named PO(s) (`poFallback`) only when the
   delivery order's qty equals what each owes; otherwise needs-review with the
   counts (`qtyMismatch`). Never with an unresolved supplier.
+
+## Desktop: scan, check, then create (`/scan-gr/check/*`, `routes/scan-gr-check.ts`)
+
+The desktop modal no longer drafts straight from the scan. `POST /check/upload` takes any
+number of files; a PDF of several pages is split into its documents (`lib/scan-split.ts`:
+a Haiku call says where each starts, `planChunks` keeps the file whole unless the answer
+covers every page once, in order). Each document is a `scan_jobs` row with `batch_id` and
+`review_state` `reading -> pending -> created | discarded`; the runner keeps the read +
+match as `review` (`lib/grn-scan-check.ts` `buildReview`) instead of drafting. `GET /pending`
+returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open PO lines,
+`duplicateOf` (a non-cancelled GRN of the same supplier with that `delivery_note_ref`, spacing and
+case aside), `repeatOf` (the same D.O. earlier in the waiting list) and `blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
+`createDraftGrnFromPoItems` (DRAFT only, company-scoped PO-line read, qty capped);
+`POST /discard {ids}` hides rows. A repeat starts unticked; the operator may still create it.
+Rows the matcher left untied are tied by name for the operator to check (`suggestByName`,
+"Matched by name"): every word of our item code printed, MATT aside, on a PO this delivery order is
+known to be for (printed, or the PO of its other rows), or one open line of the supplier; never a
+guess among POs. Racks written beside any row carry onto the card and the draft line
+(`applyScanRacks`). On Create, each printed code on a tied row is saved in `supplier_scan_codes`, so
+the next delivery order matches it. `REVIEW_VERSION`: older copies are rebuilt from the stored read.
+
+**Free gifts** (a row on no PO, e.g. DIGLANT's pillows): a row picks PO and SKU from dropdowns; the SKU list
+is what is owed on the chosen PO, else everything owed plus the supplier's other SKUs
+(`GET /check/supplier-skus`), which can only be free gifts. Create adds it to the
+first draft with no PO link at RM0, zero-cost acknowledged (`lib/grn-scan-gifts.ts`), so it never
+reaches AutoCount, and remembers the printed code in `scm.supplier_scan_codes`: the next delivery
+order arrives with that row already marked. A document needs at least one PO line to be created.
+Mobile (`MobileGrnScan`) still uses `/enqueue` (photos of one delivery order = one draft).
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 

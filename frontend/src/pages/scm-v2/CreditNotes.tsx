@@ -26,13 +26,21 @@
 // line on its account, knocking off the debtor's bills on the same table) and
 // Money out › Supplier & Other Creditor CN / DN (/scm/supplier-notes — SCN, its
 // scan and knock-off). One component; `side` says which page it is.
+//
+// The owner's Claude Design, batch 5 step 7: Money in's notes have their own
+// list (money-in/MoneyInNotes.tsx at /scm/credit-notes); it reuses this file's
+// note parts — the form (NoteForm, in place of the list with `inline`), the
+// note's reads and writes (useNoteDoc) and the note page (NotePage.tsx). A
+// customer note's blank account says the account it lands on (f1: the
+// SALES_RETURNS role, 510-0000 Return inwards).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useRef, useState } from 'react';
+import { lazy, useMemo, useRef, useState } from 'react';
 import { FileText, Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
+import { LazySlot } from '../../components/LazySlot';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -42,7 +50,7 @@ import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
-import { useAccounts, leafAccounts, useOtherDebtors } from '../../vendor/scm/lib/accounting-queries';
+import { useAccountRoles, useAccounts, leafAccounts, useOtherDebtors } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useCreditNotes, useCreditNoteDetail, useCreateCreditNote, useUpdateCreditNote, usePostCreditNote, useCancelCreditNote,
@@ -57,7 +65,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 
-const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
+export const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
 /* The kind as the tab and the form's picker say it. */
 const KIND_TAB: Record<NoteKind, string> = { CN: 'CN', DN: 'DN', SCN: 'SCN', OCN: 'Other debtor CN' };
 const KIND_OPTION: Record<NoteKind, string> = {
@@ -69,23 +77,39 @@ const KIND_OPTION: Record<NoteKind, string> = {
 
 /* The two pages (owner 2026-10-28): which kinds each holds — the list asks the
    server for the side's kinds, the tabs and the New note picker offer them. */
-const SIDES: Record<NoteSide, { title: string; description: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+const SIDES: Record<NoteSide, { title: string; description?: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+  /* Money in's page by the redesign's name, no description (owner's Claude Design, batch 5). */
   AR: {
-    title: 'Customer & Other Debtor CN / DN',
-    description: 'A credit or debit note to a customer, a credit note to an other debtor. Raised as a draft, posted to the ledger, cancelled by contra.',
+    title: 'Credit / debit notes',
     kinds: ['CN', 'DN', 'OCN'],
     hint: 'CN: the customer owes less. DN: the customer owes more. Other debtor CN: the debtor owes less — it knocks off their bills.',
     tableId: 'credit-notes',
   },
   AP: {
-    title: 'Supplier & Other Creditor CN / DN',
-    description: 'A credit note from a supplier or an other creditor — we owe them less. Raised as a draft, posted to the ledger, cancelled by contra.',
+    title: 'Supplier & other creditor CN / DN',
+    description: 'A credit note from a supplier or an other creditor — we owe them less; a debit note — we owe them more. A note is raised as a draft, posted to the ledger, cancelled by contra; a debit note is a bill of its own kind.',
     kinds: ['SCN'],
     hint: 'SCN: we owe the supplier less — it knocks off their invoices.',
     tableId: 'supplier-notes',
   },
 };
 const OPENING_HINT = 'AutoCount\'s supplier payments not knocked off at 31/08 — open one and tick the supplier\'s bills to knock it off. Amounts change on Finance › Opening Balance.';
+
+/* The debit notes (owner 2026-10-28: 再加 supplier DN; Customer & Other Debtor CN / DN):
+   each is a BILL of its own kind — a supplier's on the AP invoices (HC-SDN-), paid by an
+   AP Payment; an other debtor's on the debtor bills (HC-ODN-), received on Receipts — so
+   its tab shows that bills page narrowed to them, loaded only when the tab is opened. */
+const ApInvoicesPage = lazy(() => import('./ApInvoices').then((m) => ({ default: m.ApInvoices })));
+const ArInvoicesPage = lazy(() => import('./ArInvoices').then((m) => ({ default: m.ArInvoices })));
+type View = 'notes' | 'debit' | 'opening';
+const VIEW_TABS: Record<NoteSide, Array<{ key: View; text: string }>> = {
+  AR: [{ key: 'notes', text: 'Credit & debit notes' }, { key: 'debit', text: 'Other debtor DN' }],
+  AP: [{ key: 'notes', text: 'Credit notes' }, { key: 'debit', text: 'Debit notes' }, { key: 'opening', text: 'Opening 31/08' }],
+};
+const DEBIT_HINT: Record<NoteSide, string> = {
+  AR: 'Other debtor DN: the debtor owes more — a bill of its own kind, received on the Receipts page.',
+  AP: 'Supplier DN: we owe the supplier more — a bill of its own kind, paid through an AP Payment.',
+};
 
 /* The page's tab strip — the kind filter, and Money out's Credit notes / Opening 31/08. */
 function SegTabs<T extends string>({ label, tabs, value, onChange }: { label: string; tabs: Array<{ key: T; text: string }>; value: T; onChange: (key: T) => void }) {
@@ -118,14 +142,15 @@ const accountNamer = async (): Promise<(code: string) => string | null> => {
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
 const td: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
 
 /** projectId: a supplier note line's event (owner 2026-10-22) — null = none, or the AP invoice's at save. */
 type FormLine = { rid: number; description: string; accountCode: string; amountRm: string; projectId: number | null };
-type FormValues = {
+/** The note form's values — Supplier bills raises and edits a supplier's note with the same form. */
+export type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
   /** An other-debtor note's debtor (2026-10-28). */
   debtorId?: string;
@@ -136,7 +161,16 @@ type FormValues = {
   knockOff?: KnockOffPick;
 };
 const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '', projectId: null });
-const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+export const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+
+/** A draft note's form, filled from the note, its lines and its knock-off ticks (its pop-out's Edit). */
+export const noteEditValues = (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]): FormValues => ({
+  kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
+  sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
+  lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
+  creditedDoc: null,
+  knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
+});
 
 /** The invoice the paper names, ticked — as much of the credit as it owes. */
 const scanKnockOff = (r: ScnScan): KnockOffPick => {
@@ -195,7 +229,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
   /* Money out's opening credits apart (owner 2026-10-29: 期初那 85 张放在 "Opening
      31/08" 分页) — AutoCount's supplier payments not knocked off at 31/08 on their
      own tab, the real notes by default. */
-  const [view, setView] = useState<'notes' | 'opening'>('notes');
+  const [view, setView] = useState<View>('notes');
   const opening: OpeningFilter = side === 'AP' ? (view === 'opening' ? 'only' : 'exclude') : 'all';
   const [openId, setOpenId] = useState<string | null>(null);
   const [form, setForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: FormValues; scan?: ScnScan; files?: File[] } | null>(null);
@@ -238,9 +272,9 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title={page.title}
+      <PageHeader eyebrow={side === 'AP' ? 'Finance · Money out' : 'Finance · Money in'} title={page.title}
         description={page.description}
-        actions={side === 'AP' ? (
+        actions={side === 'AP' && view !== 'debit' ? (
           <>
             <input ref={scanRef} type="file" multiple accept={PV_FILE_ACCEPT} style={{ display: 'none' }} aria-label="Supplier credit note pages"
               onChange={(e) => { const picked = [...(e.target.files ?? [])]; e.target.value = ''; void scanFiles(picked); }} />
@@ -249,26 +283,30 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
             </Button>
           </>
         ) : undefined}
-        primaryAction={<Button size="sm" onClick={() => setForm({ mode: 'new', values: emptyForm(page.kinds[0]) })}><Plus size={16} strokeWidth={1.75} /> New note</Button>} />
+        primaryAction={view === 'debit' ? undefined : <Button size="sm" onClick={() => setForm({ mode: 'new', values: emptyForm(page.kinds[0]) })}><Plus size={16} strokeWidth={1.75} /> New note</Button>} />
       {scanError && <div role="alert" style={{ fontSize: 'var(--fs-13)', color: danger }}>The credit note was not read — {scanError}</div>}
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        {side === 'AP' && (
-          <SegTabs label="Notes or opening credits" value={view} onChange={(v) => { setView(v); setTicked(new Set()); }}
-            tabs={[{ key: 'notes', text: 'Credit notes' }, { key: 'opening', text: 'Opening 31/08' }]} />
-        )}
-        {page.kinds.length > 1 && (
+        <SegTabs label="Notes, debit notes or opening credits" value={view} onChange={(v) => { setView(v); setTicked(new Set()); }} tabs={VIEW_TABS[side]} />
+        {view !== 'debit' && page.kinds.length > 1 && (
           <SegTabs label="Note kind" value={kind} onChange={setKind} tabs={kindTabs.map((k) => ({ key: k, text: k === 'ALL' ? 'All' : KIND_TAB[k] }))} />
         )}
-        <select value={status} onChange={(e) => setStatus(e.target.value as NoteStatus | 'ALL')} aria-label="Note status" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}>
-          <option value="ALL">Any status</option>
-          <option value="DRAFT">Draft</option>
-          <option value="POSTED">Posted</option>
-          <option value="CANCELLED">Cancelled</option>
-        </select>
-        <span style={soft}>{view === 'opening' && side === 'AP' ? OPENING_HINT : page.hint}</span>
+        {view !== 'debit' && (
+          <select value={status} onChange={(e) => setStatus(e.target.value as NoteStatus | 'ALL')} aria-label="Note status" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}>
+            <option value="ALL">Any status</option>
+            <option value="DRAFT">Draft</option>
+            <option value="POSTED">Posted</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+        )}
+        <span style={soft}>{view === 'debit' ? DEBIT_HINT[side] : view === 'opening' ? OPENING_HINT : page.hint}</span>
       </div>
 
-      {ticked.size > 0 && (
+      {view === 'debit' && (
+        <LazySlot resetKey={`credit-notes-${side}-${view}`} fallback={<div style={soft}>Loading the debit notes…</div>}>
+          {side === 'AP' ? <ApInvoicesPage docKind="DN" /> : <ArInvoicesPage docKind="DN" />}
+        </LazySlot>
+      )}
+      {view !== 'debit' && ticked.size > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked notes">
           <span>{ticked.size} ticked</span>
           <Button size="sm" onClick={() => void printTicked('print')} disabled={printing}>{printing ? 'Preparing…' : `Print ${ticked.size}`}</Button>
@@ -277,39 +315,32 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
           {printError && <span style={{ color: danger }}>{printError}</span>}
         </div>
       )}
-      <DataTable<CreditNote>
-        tableId={page.tableId}
-        exportName={page.tableId}
-        exportXlsx
-        columns={NOTE_COLUMNS}
-        rows={listQ.data ? rows : null}
-        loading={listQ.isLoading}
-        error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
-        emptyLabel={opening === 'only' ? 'No opening credit.' : 'No note yet. New note raises one.'}
-        getRowKey={(n) => n.id}
-        getRowClassName={(n) => cancelledRowClass(n.status)}
-        onRowClick={(n) => setOpenId(n.id)}
-        selection={{
-          selectedIds: ticked,
-          onToggle: toggle,
-          onToggleAll: (keys, all) => setTicked(all ? new Set() : new Set(keys)),
-          rowLabel: (n) => `Tick ${n.note_number}`,
-        }}
-      />
+      {view !== 'debit' && (
+        <DataTable<CreditNote>
+          tableId={page.tableId}
+          exportName={page.tableId}
+          exportXlsx
+          columns={NOTE_COLUMNS}
+          rows={listQ.data ? rows : null}
+          loading={listQ.isLoading}
+          error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
+          emptyLabel={opening === 'only' ? 'No opening credit.' : 'No note yet. New note raises one.'}
+          getRowKey={(n) => n.id}
+          getRowClassName={(n) => cancelledRowClass(n.status)}
+          onRowClick={(n) => setOpenId(n.id)}
+          selection={{
+            selectedIds: ticked,
+            onToggle: toggle,
+            onToggleAll: (keys, all) => setTicked(all ? new Set() : new Set(keys)),
+            rowLabel: (n) => `Tick ${n.note_number}`,
+          }}
+        />
+      )}
 
       {openId && (
         <NoteDetail id={openId} onClose={() => setOpenId(null)}
           onEdit={(n, lines, allocations) => {
-            setForm({
-              mode: 'edit', id: n.id,
-              values: {
-                kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
-                sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
-                lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
-                creditedDoc: null,
-                knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
-              },
-            });
+            setForm({ mode: 'edit', id: n.id, values: noteEditValues(n, lines, allocations) });
             setOpenId(null);
           }} />
       )}
@@ -319,7 +350,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 };
 
 const NOTE_COLUMNS: Column<CreditNote>[] = [
-  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontVariantNumeric: 'tabular-nums' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
   { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
   { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
   { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },
@@ -333,7 +364,7 @@ const NOTE_COLUMNS: Column<CreditNote>[] = [
     getValue: (n) => n.total_sen, exportValue: (n) => n.total_sen / 100, exportFormat: 'money',
   },
   { key: 'status', label: 'Status', render: (n) => <StatusPill status={n.status} />, getValue: (n) => n.status },
-  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
+  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
 ];
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -343,7 +374,8 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
+/** One note's reads and its two writes — the pop-out and the page share them. */
+export function useNoteDoc(id: string) {
   const q = useCreditNoteDetail(id);
   const post = usePostCreditNote();
   const cancel = useCancelCreditNote();
@@ -365,69 +397,96 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
       await generateCreditNotePdf(n, lines, nameOf, { action: 'print' });
     } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
   };
+  const cancelNote = async () => {
+    if (!n) return;
+    const yes = await askConfirm({
+      title: `Cancel ${n.note_number}?`,
+      body: n.status === 'POSTED' ? 'Its journal is reversed by a contra dated today. The note stays on file as cancelled.' : 'The draft stays on file as cancelled.',
+      confirmLabel: 'Cancel note', danger: true,
+    });
+    if (yes) cancel.mutate(n.id);
+  };
+  return { q, n, lines, allocations: q.data?.allocations ?? [], post, cancel, eventLabelsQ, withEvents, busy, failed, printing, printError, printOne, cancelNote };
+}
+export type NoteDoc = ReturnType<typeof useNoteDoc>;
+
+/** The note's buttons: Print, Edit (draft), Post to ledger (draft), Cancel note. */
+export function NoteActions({ doc, onEdit }: { doc: NoteDoc; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) {
+  const { n, busy } = doc;
+  if (!n) return null;
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => void doc.printOne()} disabled={busy || doc.printing}>{doc.printing ? 'Preparing…' : 'Print'}</Button>
+      {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, doc.lines, doc.allocations)} disabled={busy}>Edit</Button>}
+      {n.status === 'DRAFT' && <Button size="sm" onClick={() => doc.post.mutate(n.id)} disabled={busy}>{doc.post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
+      {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
+      {n.status !== 'CANCELLED' && !n.opening && (
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doc.cancelNote()}>
+          Cancel note
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** The note itself: party, dates, reference, status, reason, lines, its knock-off, files, and what the last write said. */
+export function NoteBody({ doc }: { doc: NoteDoc }) {
+  const { n, lines, withEvents, eventLabelsQ, post, failed } = doc;
+  if (!n) return null;
+  return (
+    <div className="space-y-3">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
+        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
+        <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
+        <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
+        {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
+        <div><div style={soft}>Status</div><StatusPill status={n.status} />{n.je_no ? <span style={soft}> · {n.je_no}</span> : null}</div>
+        <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Reason</div>{n.reason ?? '—'}</div>
+      </div>
+      {n.opening && (
+        <div style={soft} aria-label="Opening balance">
+          Opening balance 31/08, from AutoCount — its amount is changed on Finance › Opening Balance. Tick the supplier&apos;s bills under Knock off to use it.
+        </div>
+      )}
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th>{withEvents && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={td}>{l.account_code}</td>
+              {withEvents && <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>}
+              <td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
+          ))}
+          <tr><td colSpan={withEvents ? 4 : 3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
+        </tbody>
+      </table>
+      {knocksOff(n.kind) && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} who={whoOf(n.kind)} />}
+      <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
+      {post.isSuccess && (
+        <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+          Posted as {post.data.jeNo}.
+          {(post.data.applied ?? []).map((a) => ` ${fmtSen(a.appliedSen)} came off ${a.number}.`).join('')}
+          {post.data.notApplied ? ` ${post.data.notApplied}` : ''}
+        </div>
+      )}
+      {doc.printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{doc.printError}</div>}
+      {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
+    </div>
+  );
+}
+
+/** A note in its pop-out — Print, Edit, Post, Cancel, Knock off, files. The note page (NotePage.tsx) shows the same parts. */
+export const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
+  const doc = useNoteDoc(id);
+  const n = doc.n;
   return (
     <Modal title={n ? `${KIND_WORD[n.kind]} ${n.note_number}` : 'Note'} onClose={onClose} width="min(820px, 100%)" ariaLabel="Credit or debit note"
       actions={n && (
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
-          {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, lines, q.data?.allocations ?? [])} disabled={busy}>Edit</Button>}
-          {n.status === 'DRAFT' && <Button size="sm" onClick={() => post.mutate(n.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-          {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
-          {n.status !== 'CANCELLED' && !n.opening && (
-            <Button variant="ghost" size="sm" disabled={busy}
-              onClick={async () => {
-                const yes = await askConfirm({
-                  title: `Cancel ${n.note_number}?`,
-                  body: n.status === 'POSTED' ? 'Its journal is reversed by a contra dated today. The note stays on file as cancelled.' : 'The draft stays on file as cancelled.',
-                  confirmLabel: 'Cancel note', danger: true,
-                });
-                if (yes) cancel.mutate(n.id);
-              }}>
-              Cancel note
-            </Button>
-          )}
+          <NoteActions doc={doc} onEdit={onEdit} />
         </div>
       )}>
-      {q.isLoading && <div style={soft}>Loading…</div>}
-      {n && (
-        <div className="space-y-3">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
-            <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
-            <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
-            {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
-            <div><div style={soft}>Status</div><StatusPill status={n.status} />{n.je_no ? <span style={soft}> · {n.je_no}</span> : null}</div>
-            <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Reason</div>{n.reason ?? '—'}</div>
-          </div>
-          {n.opening && (
-            <div style={soft} aria-label="Opening balance">
-              Opening balance 31/08, from AutoCount — its amount is changed on Finance › Opening Balance. Tick the supplier&apos;s bills under Knock off to use it.
-            </div>
-          )}
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th>{withEvents && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{l.account_code}</td>
-                  {withEvents && <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>}
-                  <td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
-              ))}
-              <tr><td colSpan={withEvents ? 4 : 3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
-            </tbody>
-          </table>
-          {knocksOff(n.kind) && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} who={whoOf(n.kind)} />}
-          <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
-          {post.isSuccess && (
-            <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-              Posted as {post.data.jeNo}.
-              {(post.data.applied ?? []).map((a) => ` ${fmtSen(a.appliedSen)} came off ${a.number}.`).join('')}
-              {post.data.notApplied ? ` ${post.data.notApplied}` : ''}
-            </div>
-          )}
-          {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
-          {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
-        </div>
-      )}
+      {doc.q.isLoading && <div style={soft}>Loading…</div>}
+      <NoteBody doc={doc} />
     </Modal>
   );
 };
@@ -456,12 +515,19 @@ const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (
   );
 };
 
-const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
+/** The note form — the pop-out by default; `inline` renders it in place of a
+ *  page (Money in's Credit / debit notes, batch 5 step 7), where the page's own
+ *  switch picks the kind. `onSaved` hears the note's id, its number when it
+ *  was raised here, and whether it was posted. */
+export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = false, onClose, onSaved }: {
+  mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; inline?: boolean;
+  onClose: () => void; onSaved: (id: string, done?: { number: string | null; posted: boolean }) => void;
+}) => {
   const [v, setV] = useState<FormValues>(initial);
   const uploadFile = useUploadCreditNoteFile();
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [postAfter, setPostAfter] = useState(false);
   const accountsQ = useAccounts();
+  const rolesQ = useAccountRoles();
   const create = useCreateCreditNote();
   const update = useUpdateCreditNote();
   const post = usePostCreditNote();
@@ -477,14 +543,27 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
     ? partyId !== '' && pickSen(v.knockOff ?? {}) <= totalSen
     : v.soDocNo.trim() !== '' || v.partyName.trim() !== '');
   const withEvents = knocksOff(v.kind);
+  /* What a blank account means (f1): a customer's note lands on the SALES_RETURNS
+     role (510-0000 Return inwards); a supplier's on its kind's default; an other
+     debtor's has none. */
+  const blankAccount = (() => {
+    if (v.kind === 'OCN') return '— pick the account —';
+    if (v.kind === 'SCN') return '— default for this kind —';
+    const code = rolesQ.data?.roles.SALES_RETURNS ?? '510-0000';
+    const name = (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name;
+    return `— Default · ${code}${name ? ` ${name}` : ''} —`;
+  })();
 
-  const save = async () => {
+  /* Save as draft, or Save & post (the redesign): the same save, then the post. */
+  const save = async (postAfter = false) => {
     try {
       const body = bodyOf(v);
       let noteId = id ?? '';
+      let number: string | null = null;
       if (mode === 'new') {
         const r = await create.mutateAsync(body);
         noteId = r.note.id;
+        number = r.note.note_number;
         /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
@@ -495,21 +574,23 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
         await update.mutateAsync({ id, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines, ...(body.allocations ? { allocations: body.allocations } : {}) });
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
-      onSaved(noteId);
+      onSaved(noteId, { number, posted: postAfter });
     } catch { /* the hook holds the error; it is shown below */ }
   };
 
-  return (
-    <Modal title={mode === 'new' ? (scan ? 'New note — from the scanned credit note' : 'New note') : `Edit ${initial.kind}`} onClose={onClose} width="min(900px, 100%)" ariaLabel="Note form">
-      <div className="space-y-3">
+  const body = (
+      <div className="space-y-3" aria-label={inline ? 'Note form' : undefined}>
         {scan && <ScanPanel scan={scan} />}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
-          <Field label="Kind">
-            {/* Switching kind drops the ticks — they were another party's documents. */}
-            <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
-              {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
-            </select>
-          </Field>
+          {/* In place of a page, the page's own switch picks the kind. */}
+          {!inline && (
+            <Field label="Kind">
+              {/* Switching kind drops the ticks — they were another party's documents. */}
+              <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
+                {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Date"><DateField value={v.noteDate} onChange={(d) => setV({ ...v, noteDate: d })} aria-label="Note date" /></Field>
           {v.kind === 'SCN' ? (
             <SupplierField value={v.supplierId} disabled={mode === 'edit'} onChange={(s) => setV({ ...v, supplierId: s, knockOff: s === v.supplierId ? v.knockOff : {} })} />
@@ -539,7 +620,7 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
             {v.lines.map((l) => (
               <tr key={l.rid}>
                 <td style={td}><input value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} aria-label={`Line ${l.rid} description`} style={{ ...input, minWidth: 220 }} /></td>
-                <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder={v.kind === 'OCN' ? '— pick the account —' : '— default for this kind —'} /></td>
+                <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder={blankAccount} /></td>
                 {/* The event the line's money is for (owner 2026-10-22). Credited
                     against an AP invoice, a blank line takes the invoice's. */}
                 {withEvents && (
@@ -573,17 +654,19 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
         {v.kind === 'OCN' && !accountsNamed && <div style={soft}>Pick an account on every line — an other debtor's credit note has no default account.</div>}
 
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={postAfter} onChange={(e) => setPostAfter(e.target.checked)} aria-label="Post to the ledger after saving" />
-            post to the ledger after saving
-          </label>
           <span style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Close</Button>
-          <Button size="sm" onClick={() => void save()} disabled={!canSave || busy}>{busy ? 'Saving…' : mode === 'new' ? 'Save note' : 'Save changes'}</Button>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>{inline ? 'Cancel' : 'Close'}</Button>
+          <Button variant="secondary" size="sm" onClick={() => void save()} disabled={!canSave || busy}>{busy ? 'Saving…' : mode === 'new' ? 'Save as draft' : 'Save changes'}</Button>
+          <Button size="sm" onClick={() => void save(true)} disabled={!canSave || busy}>Save & post</Button>
         </div>
         {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         {attachError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{attachError}</div>}
       </div>
+  );
+  if (inline) return body;
+  return (
+    <Modal title={mode === 'new' ? (scan ? 'New note — from the scanned credit note' : 'New note') : `Edit ${initial.kind}`} onClose={onClose} width="min(900px, 100%)" ariaLabel="Note form">
+      {body}
     </Modal>
   );
 };

@@ -55,7 +55,7 @@ import {
   BREAKDOWN_STATUSES,
   type BreakdownStatus,
   isBreakdownActive,
-  isCaseGrounding,
+  isCaseGrounding, groundingInput,
   breakdownDowntimeHours,
   WORK_ORDER_STATES,
   WORK_ORDER_STATE_LABELS,
@@ -359,7 +359,7 @@ function shapeBreakdown(row: BreakdownRow, nowIso: string) {
     recoveryTime: row.recovery_time,
     affectedTripId: row.affected_trip_id,
     status: row.status as BreakdownStatus,
-    grounding: isCaseGrounding({ severity: row.severity, status: row.status }),
+    grounding: isCaseGrounding(groundingInput(row)),
     downtimeHours: breakdownDowntimeHours(
       { breakdownStart: row.breakdown_start, occurredAt: row.occurred_at, recoveryTime: row.recovery_time },
       nowIso,
@@ -680,10 +680,10 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     const plansDueSoon = shapedPlans.filter((p) => p.dueSoon && !p.overdue).length;
     // The single most-urgent plan drives the board's "next service" cell.
     const nextPlan = shapedPlans.find((p) => p.nextDueKm !== null || p.nextDueDate !== null) ?? null;
-    // Phase 3 seams: an active CRITICAL breakdown grounds the lorry; an open work
+    // Phase 3 seams: a breakdown that took it off the road grounds the lorry; an open work
     // order in IN_REPAIR / WAITING_PARTS feeds the maintenance states.
     const lorryBreakdowns = breakdownByLorry.get(l.id) ?? [];
-    const breakdownActive = isBreakdownActive(lorryBreakdowns.map((b) => ({ severity: b.severity, status: b.status })));
+    const breakdownActive = isBreakdownActive(lorryBreakdowns.map(groundingInput));
     const lorryWos = woByLorry.get(l.id) ?? [];
     const openWos = lorryWos.filter((w) => isWorkOrderOpen(w.status as WorkOrderState));
     const openWorkOrder = workOrderSeam(lorryWos.map((w) => ({ status: w.status })));
@@ -792,8 +792,8 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
 /** The one-line "what is wrong right now" summary for the board's Open-problem
  *  column, derived from status + open breakdowns/work orders. */
 function openProblemFor(status: string, breakdowns: BreakdownRow[], openWos: WorkOrderRow[]): string | null {
-  const grounding = breakdowns.find((b) => isCaseGrounding({ severity: b.severity, status: b.status }));
-  if (grounding) return grounding.fault_type ? `Breakdown: ${grounding.fault_type}` : "Critical breakdown";
+  const grounding = breakdowns.find((b) => isCaseGrounding(groundingInput(b)));
+  if (grounding) return grounding.fault_type ? `Breakdown: ${grounding.fault_type}` : "Breakdown";
   const waiting = openWos.find((w) => w.status === "WAITING_PARTS");
   if (waiting) return waiting.problem ? `Waiting parts: ${waiting.problem}` : "Waiting parts";
   const inRepair = openWos.find((w) => w.status === "IN_REPAIR");
@@ -905,7 +905,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     list.push(e);
     eventsByComp.set(e.component_id, list);
   }
-  const breakdownActive = isBreakdownActive(breakdownRows.map((b) => ({ severity: b.severity, status: b.status })));
+  const breakdownActive = isBreakdownActive(breakdownRows.map(groundingInput));
   const openWorkOrder = workOrderSeam(woRows.map((w) => ({ status: w.status })));
 
   const status = deriveVehicleStatus({
@@ -1405,7 +1405,7 @@ async function lorryExists(sb: Variables["supabase"], lorryId: string): Promise<
 }
 
 // ── POST /vehicles/:id/breakdowns — driver/office logs a breakdown ───────────
-// A CRITICAL case grounds the lorry (feeds breakdownActive → BREAKDOWN). We find
+// A not-drivable or CRITICAL case grounds the lorry (feeds breakdownActive → BREAKDOWN). We find
 // the affected trip(s), suggest replacement lorries / 3PL, and notify the
 // reporter's reporting line through the EXISTING announcements mechanism.
 fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"), async (c) => {
@@ -1471,7 +1471,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
   }
 
   // If this case grounds the lorry, surface the dispatch impact + suggestions.
-  const grounding = isCaseGrounding({ severity, status: statusIn });
+  const grounding = isCaseGrounding({ severity, status: statusIn, stillDrivable: body.stillDrivable === undefined ? true : Boolean(body.stillDrivable) });
   let affectedTrips: Array<{ id: string; tripNo: string | null; tripDate: string | null; status: string | null }> = [];
   let replacementSuggestions: Array<{ id: string; plate: string; region: string | null }> = [];
   if (grounding) {

@@ -9,7 +9,7 @@ import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
 
 export type DayRow = { date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null };
 export type RegionRow = { region: string; orders: number; amountSen: number; avgOrderSen: number | null };
-export type LorryRow = { lorry: string; internal: boolean; daysOut: number; workingDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
+export type LorryRow = { lorry: string; internal: boolean; daysOut: number; workingDays: number; downDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
 export type LorryDay = { date: string; lorry: string; orders: number; amountSen: number };
 /** Open the delivery orders behind a figure (title, which DOs). */
 export type DoDrill = (title: string, keep: (d: { date: string; region: string; lorry: string | null }) => boolean) => void;
@@ -109,23 +109,22 @@ export function LorrySection({ lorries, days, recorded, total, onDrill }: { lorr
   const own = lorries.filter((l) => l.internal);
   const ownDays = own.reduce((a, l) => a + l.daysOut, 0);
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
-  const work = lorries[0]?.workingDays ?? 0;
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title="Lorries · revenue and occupancy" hint={`${work} working days so far in the period (Sundays off) · occupancy = days out ÷ working days`}>
+      <Panel title="Lorries · revenue and occupancy" hint="Delivery day = a day with at least one delivery order · occupancy = delivery days ÷ days it could work (Sundays and workshop days off)">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
-            Our own lorries went out on <b className="text-ink">{ownDays}</b> of <b className="text-ink">{ownPossible}</b> lorry working days
-            ({ownPossible ? Math.round((ownDays / ownPossible) * 100) : 0}% occupied); {ownPossible - ownDays} lorry-days stood idle.
+            Our own lorries delivered on <b className="text-ink">{ownDays}</b> of <b className="text-ink">{ownPossible}</b> lorry working days
+            ({ownPossible ? Math.round((ownDays / ownPossible) * 100) : 0}% occupied); {ownPossible - ownDays} lorry-days had no delivery.
           </p>
         )}
         <table className="w-full border-collapse">
-          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Days out</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per day out</Th></tr></thead>
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th></tr></thead>
           <tbody>{lorries.map((l) => (
             <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Carried by ${l.lorry}`, (d) => d.lorry === l.lorry)}>
               <Td left className="font-semibold">{l.lorry}</Td>
               <Td left className="text-[11px] text-ink-muted">{l.internal ? "own" : "3PL"}</Td>
-              <Td>{l.daysOut} / {l.workingDays}</Td>
+              <Td>{l.daysOut} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td>
               <Td left className="w-[22%]">
                 <div className="flex items-center gap-2">
                   <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: (l.occupancyPct ?? 0) >= 80 ? TONE.good : (l.occupancyPct ?? 0) >= 60 ? TONE.warn : TONE.bad }} /></div>

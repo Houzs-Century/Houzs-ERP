@@ -1,0 +1,39 @@
+/* Collection in the report shell (the owner's Claude Design, batch 6 §5.7): a
+   grid of rows on one track list (finance/useColumnWidths, fin-cod-cw and
+   fin-cob-cw — a set per view) — the header with its resize edges, a line per
+   salesman that opens to the orders, the total. */
+
+.card { min-width: 0; overflow-x: auto; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
+.grid { font-size: 13px; color: var(--fin-text); }
+.row { display: grid; column-gap: 8px; align-items: center; padding: 0 15px; border-bottom: 1px solid var(--fin-rule-soft); }
+.cell { min-width: 0; padding: 7px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.head {
+  position: sticky; top: 0; z-index: 1; background: var(--fin-row); border-bottom: 1px solid var(--fin-rule);
+  font-size: 11px; font-weight: 600; color: var(--fin-muted);
+}
+.headCell { position: relative; padding: 8px 0; white-space: nowrap; }
+.resize { position: absolute; top: 0; right: -6px; bottom: 0; width: 9px; cursor: col-resize; display: flex; justify-content: center; }
+.resizeLine { width: 1px; height: 100%; background: transparent; }
+.resize:hover .resizeLine { background: var(--fin-petrol-line); }
+.seller { color: var(--fin-ink); }
+.sellerOpen { background: var(--fin-row); }
+.toggle {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0; border: 0; background: none;
+  font: inherit; font-weight: 600; color: inherit; cursor: pointer; text-align: left;
+}
+.order { background: var(--fin-row); font-size: 12.5px; }
+.orderName { padding-left: 24px; }
+.sub { font-weight: 400; color: var(--fin-muted); }
+.under { color: var(--fin-late-fg); font-weight: 600; }
+.none { padding: 6px 15px 8px 39px; font-size: 12.5px; color: var(--fin-muted); background: var(--fin-row); border-bottom: 1px solid var(--fin-rule-soft); }
+.total { font-weight: 700; color: var(--fin-ink); border-top: 2px solid var(--fin-ink); border-bottom: 0; }
+.empty { margin: 0; padding: 14px 15px; font-size: 13px; color: var(--fin-muted); }
+.foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.reset { padding: 0; border: 0; background: none; font: 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol); cursor: pointer; text-decoration: underline; }
+.select {
+  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-input); border-radius: 8px;
+  background: var(--fin-surface); font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+.other { width: 64px; text-align: right; }

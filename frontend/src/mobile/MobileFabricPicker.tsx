@@ -3,6 +3,8 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
 import { useModelAllowedOptionsByCode } from "../vendor/scm/lib/mfg-products-queries";
 import { fabricAllowedByPool } from "../vendor/shared/fabric-pool";
+import { fabricColourMeta, fabricColourName } from "../vendor/scm/lib/fabric-colour-name";
+import { Field } from "./mobile-fields";
 
 /* MobileFabricPicker — the phone's server-typeahead fabric sheet (owner #1
    scaling pain 2026-07-14), moved out of MobileNewSO. The search box drives
@@ -91,11 +93,9 @@ export function MobileFabricPicker({ itemCode, fabricSeries, current, onPick, on
                   )}
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f" }}>{c.colourId}</span>
-                    {(c.label || series) && (
-                      <span style={{ display: "block", fontSize: 10.5, color: "#767b6e", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {[series, c.label].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
+                    <span style={{ display: "block", fontSize: 10.5, color: "#767b6e", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {fabricColourMeta(series, c.colourId, c.label)}
+                    </span>
                   </span>
                   {on && <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M20 6 9 17l-5-5" /></svg>}
                 </button>
@@ -105,5 +105,33 @@ export function MobileFabricPicker({ itemCode, fabricSeries, current, onPick, on
         </div>
       </div>
     </div>
+  );
+}
+
+/* FabricField — a tappable read-only row that opens the searchable FabricPicker
+   modal (native <select> with 700+ options is unusable per owner). Shows the
+   picked fabric code (+ colour label) or a "Select fabric" placeholder. */
+export function FabricField({ value, colourLabel, invalid, onOpen }: {
+  value: string; colourLabel: string; invalid: boolean; onOpen: () => void;
+}) {
+  const name = fabricColourName(value, colourLabel);
+  return (
+    <Field label="Fabric / colour *">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="fld-i"
+        style={{
+          textAlign: "left", fontFamily: "inherit", cursor: "pointer", display: "flex",
+          alignItems: "center", gap: 8, background: "#fff",
+          ...(invalid ? { borderColor: "#b23a3a", boxShadow: "0 0 0 2px rgba(178,58,58,.12)" } : null),
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: value ? "#11140f" : "#9aa093", fontWeight: value ? 700 : 400 }}>
+          {value ? (name ? `${value} — ${name}` : value) : "Select fabric…"}
+        </span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+      </button>
+    </Field>
   );
 }

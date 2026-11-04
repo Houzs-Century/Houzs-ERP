@@ -8,6 +8,8 @@
 // does not own — and it is the first member of a class the rest of the
 // write-back has not addressed yet (docs/bugs/0728).
 // ----------------------------------------------------------------------------
+import { canonicalizeMyState, isCanonicalMyState } from '../scm/lib/canonical-state';
+
 /**
  * HOW WIDE THE ACCOUNT BOOK'S ADDRESS LINES ARE — measured, not assumed.
  *
@@ -54,8 +56,9 @@ export function fitAddressLines(
 ): { lines: (string | null)[]; dropped: string | null } {
   const kept = lines.map((l) => (l == null ? null : l));
   /* THE COMMON CASE FIRST, and it returns the input by identity of value: no
-     address that already fits is ever re-flowed. */
-  if (kept.every((l) => (l ?? '').length <= AC_ADDRESS_LINE_MAX)) {
+     address that already fits is ever re-flowed. More lines than the book has
+     do not fit either, however short each one is. */
+  if (kept.length <= AC_ADDRESS_LINES && kept.every((l) => (l ?? '').length <= AC_ADDRESS_LINE_MAX)) {
     return { lines: kept, dropped: null };
   }
 
@@ -127,6 +130,9 @@ export const tidy = (s: unknown): string | null => {
  * | `InvAddr3` | `address3`, else `postcode` + `city` |
  * | `InvAddr4` | `address4`, else `customer_state` |
  *
+ * Unless `address3` / `address4` are the street running on (soStreetTail):
+ * then they follow `address2` and the town and state come after them.
+ *
  * `address3` / `address4` WIN when they are populated AND still name the stored
  * postcode (see soTownLines): only the cutover import ever wrote them, and that
  * text is AutoCount's own. An ERP-created order has
@@ -162,9 +168,34 @@ export function soTownLines(h: SoAddressHead): [string | null, string | null] {
   const named = [h.address1, h.address2, h.address3, h.address4]
     .flatMap((v) => (tidy(v) ?? '').match(/\b\d{5}\b/g) ?? []);
   const stale = postcode != null && named.length > 0 && !named.includes(postcode);
-  if (stale) return [town, state];
+  if (stale || soStreetTail(h).length > 0) return [town, state];
   return [tidy(h.address3) ?? town, tidy(h.address4) ?? state];
 }
+
+/**
+ * address3 / address4 when they carry the STREET on past line 2 rather than a
+ * town line.
+ *
+ * The POS sends the whole address as address1 and the save fit spills it into
+ * lines 3 and 4; the SO form types them directly too (2990-0036). Left to win
+ * as the town line, they pushed "47820 Petaling Jaya" off the account book and
+ * the delivery sheet.
+ *
+ * NARROW ON PURPOSE, because AutoCount-era rows put their own text there and
+ * the sheet keeps it (tests/deliverySheetSync.test.ts): a town line naming a
+ * postcode ("51200 Kuala Lumpur", "SINGAPORE 123456"), a hand-typed state
+ * ("Penang", "KL"), or anything on an order with no Malaysian state of its own.
+ * Only what is none of those is street.
+ */
+export function soStreetTail(h: SoAddressHead): string[] {
+  if (tidy(h.postcode) == null || !isMyState(tidy(h.customer_state))) return [];
+  const lines = [h.address1, h.address2, h.address3, h.address4].map(tidy);
+  if (lines.some((l) => /\b\d{5,6}\b/.test(l ?? ''))) return [];
+  const tail = [lines[2], lines[3]].filter((l): l is string => l != null);
+  return tail.some(isMyState) ? [] : tail;
+}
+
+const isMyState = (s: string | null): boolean => isCanonicalMyState(canonicalizeMyState(s));
 
 export function soInvoiceAddress(h: SoAddressHead): {
     InvAddr1: string | null;
@@ -173,22 +204,31 @@ export function soInvoiceAddress(h: SoAddressHead): {
     InvAddr4: string | null;
   } {
   const [line3, line4] = soTownLines(h);
+  const tail = soStreetTail(h);
   /* FITTED TO THE BOOK'S OWN WIDTH before it leaves. AutoCount's four address
      columns are 40 characters and it refuses the WHOLE document when one is
      over — see fitAddressLines, which returns an address that already fits
      untouched, so this changes nothing for the documents that were working. */
-  const { lines } = fitAddressLines([
-    tidy(h.address1),
-    tidy(h.address2),
-    line3,
-    line4,
-  ]);
+  const { lines } = fitAddressLines(tail.length > 0
+    ? streetThenTown([tidy(h.address1), tidy(h.address2), ...tail], [line3, line4])
+    : [tidy(h.address1), tidy(h.address2), line3, line4]);
   return {
     InvAddr1: lines[0] ?? null,
     InvAddr2: lines[1] ?? null,
     InvAddr3: lines[2] ?? null,
     InvAddr4: lines[3] ?? null,
   };
+}
+
+/** A street longer than two lines, then the town: town and state share the last
+ *  line when they must, and only past that is every word re-packed. */
+function streetThenTown(street: (string | null)[], town: (string | null)[]): (string | null)[] {
+  const s = street.filter((l): l is string => l != null);
+  const t = town.filter((l): l is string => l != null);
+  if (s.length + t.length <= AC_ADDRESS_LINES) return [...s, ...t];
+  const oneTown = t.join(' ');
+  if (s.length < AC_ADDRESS_LINES && oneTown.length <= AC_ADDRESS_LINE_MAX) return [...s, oneTown];
+  return [...s, ...t];
 }
 
 /**

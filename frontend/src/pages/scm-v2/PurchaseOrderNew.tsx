@@ -29,6 +29,7 @@ import {
   usePurchaseOrderDetail,
   useSuppliers,
   useSupplierDetail,
+  useSupplierPriceHistory,
   useSuppliersForMaterial,
   type BindingRow,
   type NewPoItem,
@@ -43,6 +44,7 @@ import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { activeOptions, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useSofaCombos } from '../../vendor/scm/lib/sofa-combos-queries';
+import { bindingAsOf } from './poBindingAsOf';
 import { applySupplierCombos } from './poComboCost';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
@@ -171,6 +173,7 @@ export const PurchaseOrderNew = () => {
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
+  const priceHistoryQ   = useSupplierPriceHistory(supplierId || null);
   const warehouses      = useWarehouses();
   const supplier        = supplierDetail.data?.supplier ?? null;
   const bindings        = useMemo(() => supplierDetail.data?.bindings ?? [], [supplierDetail.data?.bindings]);
@@ -598,10 +601,12 @@ export const PurchaseOrderNew = () => {
      re-spread across the matched lines by the effect below (2990-0013). */
   const recomputeLineCost = (line: DraftLine): number => {
     // Find the line's binding: by id when known, else by item_code.
-    const binding = line.bindingId
+    const current = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.item_code === line.itemCode);
-    if (!binding) return line.unitPriceSen;
+    if (!current) return line.unitPriceSen;
+    // The supplier price in force on the PO date; the current price when none is dated.
+    const binding = bindingAsOf(current, priceHistoryQ.data?.history ?? [], poDate || todayMyt());
     // No maint config loaded yet (or none seeded) → don't crash / zero out;
     // computeMfgPoUnitCost still returns the matrix/flat base with no
     // surcharges, which is the right fallback.
@@ -712,7 +717,7 @@ export const PurchaseOrderNew = () => {
     // recomputeLineCost closes over bindings / fabrics / maint; re-run when any
     // of those (or the lines' pricing-relevant fields) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindings, fabrics, maint, lines, supplierCombosQ.data, poDate]);
+  }, [bindings, fabrics, maint, lines, supplierCombosQ.data, poDate, priceHistoryQ.data]);
 
   const subtotalSen = useMemo(
     () => lines.reduce(

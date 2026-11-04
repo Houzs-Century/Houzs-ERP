@@ -16,8 +16,8 @@ describe("boothCategories", () => {
     const empty = counts.map((c) => ({ ...c, active: 0 }));
     expect([...defaultTicks(empty)]).toEqual(["ACCESSORY", "DIFFUSER"]);
   });
-  test("the plan adds the ticked categories and removes the POS items outside them", () => {
-    expect(planFor(counts, new Set(["ACCESSORY", "DIFFUSER"]))).toEqual({ to_add: 20, kept: 113, to_remove: 1000 });
+  test("the plan adds the ticked categories, turns their off items on, and removes the POS items outside them", () => {
+    expect(planFor(counts, new Set(["ACCESSORY", "DIFFUSER"]))).toEqual({ to_add: 22, kept: 113, to_remove: 1000 });
     expect(planFor(counts, new Set())).toEqual({ to_add: 0, kept: 0, to_remove: 1113 });
   });
   test("a category reads by its label; no category says so", () => {

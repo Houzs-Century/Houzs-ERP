@@ -22,6 +22,7 @@ import '../src/index.css';
 import '../src/vendor/design-system/tokens.css';
 import { ToastProvider } from '../src/hooks/useToast';
 import { DialogProvider } from '../src/hooks/useDialog';
+import { ConfirmProvider } from '../src/vendor/scm/components/ConfirmDialog';
 import { MerchantRecon } from '../src/pages/scm-v2/MerchantRecon';
 import { BankRecon } from '../src/pages/scm-v2/BankRecon';
 import { SettlementSetup } from '../src/pages/scm-v2/SettlementSetup';
@@ -165,7 +166,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <DialogProvider>
-          <Harness />
+          <ConfirmProvider>
+            <Harness />
+          </ConfirmProvider>
         </DialogProvider>
       </ToastProvider>
     </QueryClientProvider>

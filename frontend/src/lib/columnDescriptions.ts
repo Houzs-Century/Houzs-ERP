@@ -68,9 +68,17 @@ const DESCRIPTIONS: Partial<Record<string, Record<string, string>>> = {
     soCost: "Cost estimated when the order was placed.",
     doCost: "Cost frozen at delivery (FIFO).",
     siCost: "Landed cost once the supplier invoice is in.",
-    cogs: "The most advanced cost available: SI cost, else DO cost, else SO cost. The tag says which.",
+    cogs: "The most advanced cost available: SI cost, else DO cost, else SO cost. Cost Stage says which.",
+    stage: "Which document the COGS was taken from: SI (invoiced), DO (delivered) or SO (ordered).",
     gross: "Revenue minus COGS.",
     margin: FAIR_MARGIN,
+  },
+  "fair-report-fairs": {
+    cogs: "Each order's most advanced cost: SI cost, else DO cost, else SO cost.",
+    gpPct: "Gross profit ÷ the fair's revenue.",
+    overhead: "Transport + merchandise + commission on the fair's revenue, from its brand's cost-rate card (the boost rate when the fair qualifies). A dash: no card.",
+    net: "Gross profit minus overhead.",
+    netMargin: "Net profit ÷ the fair's revenue.",
   },
   "fair-report-invoice": {
     siCost: "Landed cost once the supplier invoice is in.",

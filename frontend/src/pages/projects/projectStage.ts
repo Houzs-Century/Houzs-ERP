@@ -29,7 +29,9 @@ export const PROJECT_STAGES: { label: string; offset: number; titles: string[]; 
   { label: "Setup/Dismantle", offset: -2, titles: [], kind: "crew" },
   { label: "Setup Image", offset: 0, titles: ["Setup Image"] },
   { label: "Filled Floorplan", offset: 3, titles: ["Filled Floorplan"] },
-  { label: "Event Complete", offset: 7, titles: ["Event Complete Image"] },
+  // "Event Complete" retired — the "Event Complete Image" item was removed from
+  // the templates and every project (mig 173), so the step is dropped from the
+  // tracker.
   // Stock In Transfer Record — goods returned to the warehouse after dismantle
   // (template due_offset +2). The last document; it cannot be done before the
   // event, so it is a post-event step at the end, not a pre-event gate.

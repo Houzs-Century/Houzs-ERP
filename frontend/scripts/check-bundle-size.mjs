@@ -257,7 +257,32 @@ const CEILINGS = {
   // Employees & Attendance (HC-0125, PR #4812) then added no eager module (a
   // lazy() route, one Sidebar entry, its route label, the phone Punch row):
   // 173.3 KB measured 2026-10-23, under this ceiling.
-  INITIAL_JS_GZIP: 174 * KB,
+  // 174 -> 175 on 2026-11-01: main sat at 173.6 and the SCM tab-label fix
+  // (PR #5097) added NO eager module — it fills lib/routeLabels.ts (the
+  // always-loaded workspace tab strip + breadcrumb) with every /scm section's
+  // title so no tab falls through to a bare "Scm", +0.4 KB gzip on the entry.
+  // Same shell-DATA mechanism as the notes above; the table was first compacted
+  // (a bare string when the list and detail labels match) to hold the growth to
+  // the minimum before this bump.
+  // 175 -> 176 on 2026-11-03: main sat at 174.9 and the Finance redesign's
+  // document pages (batch 4 step 6, PR #5167) added NO eager module — three
+  // lazy() routes in App.tsx (/scm/ap-invoices/:id, /scm/supplier-notes/:id,
+  // /scm/credit-notes/:id) whose entries in the route table and lazy-chunk map
+  // measured +0.2 KB gzip on the entry. Same shell-DATA mechanism as above.
+  // 176 -> 177 on 2026-11-03: that bump left main AT the ceiling (176.0 / 176),
+  // so the ASSR Driver Info fix (PR #5182) - no eager module, its strings are
+  // in no initial chunk - crossed it by ~10 bytes: initial-app 88.88 -> 88.89
+  // KB gzip, the renamed lazy-chunk hashes in the entry's map. Any PR touching
+  // a lazy page would trip the same way, so one more KB of headroom.
+  // 177 -> 178 on 2026-11-03: Finance › Reports became ONE sidebar entry (the
+  // owner's Claude Design, batch 6 step 0). The sidebar decides from the report
+  // catalog's members whether to show it and where it goes, so the catalog's
+  // names, addresses and gates (pages/scm-v2/reports-catalog.ts) and the
+  // Accounting tab titles moved from the report pages' lazy chunk into the
+  // entry: initial-app 89.05 -> 89.88 KB gzip (main 176.5 -> 177.3). The
+  // list's icons and one-line descriptions stayed lazy (reports/
+  // reportListLook.ts) — moving them too measured +1.9 KB.
+  INITIAL_JS_GZIP: 178 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

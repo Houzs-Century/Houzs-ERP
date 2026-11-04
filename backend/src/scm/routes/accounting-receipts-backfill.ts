@@ -45,7 +45,7 @@ async function loadMissing(sb: any, companyId: number): Promise<{ ok: true; rows
   if (pays.error) return { ok: false, reason: `payments: ${pays.error.message}` };
   const receipts = await paginateAll<Row>((from, to) => sb.from('acc_official_receipts')
     .select('payment_id')
-    .eq('company_id', companyId).eq('payment_source', 'SOPAY')
+    .eq('company_id', companyId).eq('payment_source', 'SOPAY').neq('status', 'CANCELLED')
     .order('id', { ascending: true })
     .range(from, to));
   if (receipts.error) return { ok: false, reason: `receipts: ${receipts.error.message}` };
@@ -160,6 +160,16 @@ async function planFor(sb: any, companyId: number, companyCode: string, rows: Mi
     months.push({ ym, payments: list.length, cash, confirmedCards: confirmed, unlettered, series });
   }
   return { ok: true, plan: { total: rows.length, months } };
+}
+
+/** The plan for one company, outside a request — Self-check's Run again and
+    the nightly self-check read it too (batch 6 c3). */
+export async function receiptsPlanFor(sb: any, companyId: number): Promise<{ ok: true; plan: BackfillPlan } | { ok: false; reason: string }> {
+  const code = await companyCodeById(sb, companyId);
+  if (!code) return { ok: false, reason: 'This company has no document prefix.' };
+  const missing = await loadMissing(sb, companyId);
+  if (!missing.ok) return missing;
+  return planFor(sb, companyId, code, missing.rows);
 }
 
 /** GET /accounting/receipts/backfill — the plan. */

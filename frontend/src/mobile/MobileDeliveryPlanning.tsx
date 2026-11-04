@@ -30,8 +30,10 @@ import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
+import { useLocalities, postcodeIndex, postcodeLabel } from "../vendor/scm/lib/localities-queries";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
+import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -232,21 +234,9 @@ const stopFlags = (
   return { started, arrived, done };
 };
 
-// Parse "HH:MM" → minutes; tolerant of the "09:00–10:00" window's end.
-const toMin = (t: string | null | undefined): number | null => {
-  if (!t) return null;
-  const p = t.split(":");
-  if (p.length < 2) return null;
-  const h = Number(p[0]);
-  const m = Number(p[1]);
-  if (isNaN(h) || isNaN(m)) return null;
-  return h * 60 + m;
-};
-const windowEndMin = (o: BoardRow): number | null => {
-  const w = o.time_range || "";
-  const end = w.split(/[–-]/)[1];
-  return toMin(end ? end.trim() : null);
-};
+// End of the delivery window in minutes, read from the office's free-text
+// time_range ("TIME AROUND 1:30PM TO 3:30PM" → 930) — drives the "late" pill.
+const windowEndMin = (o: BoardRow): number | null => timeSlotEndMin(o.time_range);
 // A today stop is "late" once we're past its delivery window and it isn't done.
 const isLate = (o: BoardRow, isToday: boolean): boolean => {
   if (!isToday) return false;
@@ -330,6 +320,19 @@ export function MobileDeliveryPlanning({
       customer_delivered_date: p.completed_at ?? o.customer_delivered_date } : o;
   }), [data, progressMap]);
 
+  /* HC-0192: office staff watch one driver's day. The choices are the drivers on
+     the rows the server already returned, so a driver (whose rows are only their
+     own jobs, resolveDeliveryScope) gets a single name and no filter. */
+  const [driverFilter, setDriverFilter] = useState("");
+  const driverNames = useMemo(
+    () => [...new Set(allOrders.filter(isDispatched).map((o) => o.crew?.driver).filter(Boolean) as string[])].sort(),
+    [allOrders],
+  );
+  const shownOrders = useMemo(
+    () => (driverFilter ? allOrders.filter((o) => o.crew?.driver === driverFilter) : allOrders),
+    [allOrders, driverFilter],
+  );
+
   // today / tomorrow local day keys.
   const { todayKey, tomorrowKey } = useMemo(() => {
     const now = new Date();
@@ -353,7 +356,7 @@ export function MobileDeliveryPlanning({
       d.setDate(1);
       return dayKey(d.toISOString());
     })();
-    for (const o of allOrders) {
+    for (const o of shownOrders) {
       // Only stops actually on a run — a cut DO or an assigned driver. An order
       // that merely carries today's customer date (no DO, no driver) is not yet
       // dispatched and stays on the desktop board. See runSheetDispatch.ts.
@@ -371,23 +374,22 @@ export function MobileDeliveryPlanning({
       }
       // else: further-out / undated → left off the run-sheet (desktop owns it).
     }
-    // Day, then the stop's place in its lorry run (Time Arrangement's sequence),
-    // then document number for stops not yet on a run.
+    // Day first; within a day, the stop's place in its lorry run (Time
+    // Arrangement's sequence), else the delivery time slot, else document number
+    // — see runSheetTieBreak. Trips are not being filled in, so the time slot is
+    // what actually orders the list today (owner 2026-11-01).
     const bySeq = (a: BoardRow, b: BoardRow) => {
       const ak = dayKey(runDateOf(a));
       const bk = dayKey(runDateOf(b));
       if (ak !== bk) return ak < bk ? -1 : 1;
-      const as = a.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
-      const bs = b.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
-      if (as !== bs) return as - bs;
-      return (a.so_doc_no || "").localeCompare(b.so_doc_no || "");
+      return runSheetTieBreak(a, b);
     };
     today.sort(bySeq);
     tomorrow.sort(bySeq);
     // History newest-first.
     history.sort((a, b) => -bySeq(a, b));
     return { today, tomorrow, history };
-  }, [allOrders, todayKey, tomorrowKey]);
+  }, [shownOrders, todayKey, tomorrowKey]);
 
   const advancedFor = useRef<string | null>(null);
   useEffect(() => {
@@ -652,6 +654,17 @@ export function MobileDeliveryPlanning({
             </button>
           ))}
         </div>
+        {driverNames.length > 1 && (
+          <select
+            aria-label="Filter by driver"
+            value={driverFilter}
+            onChange={(e) => setDriverFilter(e.target.value)}
+            style={{ marginTop: 9, width: "100%", height: 34, borderRadius: 8, border: "1px solid var(--line)", padding: "0 8px", fontSize: 13, background: "#fff" }}
+          >
+            <option value="">All drivers</option>
+            {driverNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
       </header>
 
       <div
@@ -1284,6 +1297,8 @@ function StopDetail({
   const qc = useQueryClient();
   const notify = useNotify();
   const confirm = useConfirm();
+  const localities = useLocalities().data;
+  const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
   /* Operating a DO — cutting one (/from-sos) AND advancing its status
      (/status: IN_TRANSIT / DELIVERED) — is the Office department's job (owner
      2026-07-17), and the backend 403s the Sales cohort on BOTH. Drivers and
@@ -1770,7 +1785,7 @@ function StopDetail({
           {pdRow("Address", order.address || EM, false)}
           {pdRow(
             "Postcode",
-            <span className="tnum">{order.postcode || EM}</span>,
+            <span className="tnum">{order.postcode ? postcodeLabel(pcIndex, order.postcode, order.customer_state) : EM}</span>,
             true,
           )}
           {pdRow(

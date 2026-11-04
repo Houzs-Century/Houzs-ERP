@@ -96,6 +96,7 @@ import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
 import deliverySheetSync from "./routes/deliverySheetSync";
 import chatCallback from "./routes/chatCallback";
+import connectPayments from "./routes/connect-payments";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -117,6 +118,7 @@ import {
   drainVenturePortalOutbox,
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
+import { runScheduledConnectSync } from "./scm/lib/connect-contact-sync";
 import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
@@ -160,6 +162,7 @@ import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runWeeklyServiceCaseStatus } from "./services/assrWeeklyStatus";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
@@ -172,6 +175,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
 import { todayMyt } from "./scm/lib/my-time";
 import { reapOnce } from "./scm/lib/reaper";
@@ -436,6 +440,14 @@ app.use("/api/*", companyContext);
 // can never replay another user's or another company's response. Bookkeeping
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
+
+// HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
+// payment onto its Sales Order through the one Payments writer. Mounted BELOW the
+// /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
+// user the auth middleware mints for Bearer <CONNECT_SERVICE_TOKEN> — the same
+// credential Connect's org sync uses — and the router itself gates to the service
+// tier with requirePermission("*"). See routes/connect-payments.ts.
+app.route("/api/connect/payments", connectPayments);
 
 // Inbox snapshot self-heal — the /api/inbox GET caches a per-user aggregate of
 // ASSR + Projects + Trips for ~60s. After the acting user makes a successful
@@ -928,6 +940,21 @@ export default {
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
       );
+      /* Houzs Connect contact sync (owner 2026-11-02): fill every customer's
+         Connect contact panel from their order, no message sent. Walks the
+         in-window orders a batch at a time by a cursor in app_config — the first
+         cycle backfills the ~1,099 existing contacts, then it wraps and keeps them
+         current (a new conversation contact is picked up on the next pass; an
+         explicit send fills instantly). Ships dark until CONNECT_WEBHOOK_* are set
+         (skipped:'not_configured'). Best-effort — a failed group is logged and
+         counted, never thrown. */
+      ctx.waitUntil(
+        track("connect-sync", () => runScheduledConnectSync(env))
+          .then((r) => {
+            if (r.synced || r.failed) console.log(`[cron connect-sync] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron connect-sync]", e))
+      );
       // Houzs POS watchdog (spec section 10): terminal alerts, their emails
       // (once, then daily), auto-resolve, and the once-per-event summary.
       ctx.waitUntil(
@@ -1138,6 +1165,20 @@ export default {
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
           .catch((e) => console.error("[cron assr-digest]", e))
       );
+      // Weekly Service Case status update to customers (owner 2026-11-02; moved
+      // Friday -> Monday 2026-11-03). This 02:00 UTC slot is 10:00 MYT; gate to
+      // Monday (getUTCDay 1) so it runs once a week at that hour without a
+      // dedicated cron trigger. Ships DARK — no-op unless scm.app_config
+      // 'scm.assr_weekly_status' is pilot/on. Best-effort.
+      if (new Date(event.scheduledTime).getUTCDay() === 1) {
+        ctx.waitUntil(
+          track("assr-weekly-status", () => runWeeklyServiceCaseStatus(env))
+            .then((r) => {
+              if (r.mode !== "off") console.log(`[cron assr-weekly-status] ${JSON.stringify(r)}`);
+            })
+            .catch((e) => console.error("[cron assr-weekly-status]", e))
+        );
+      }
       ctx.waitUntil(
         track("proj-reminders", () => runProjectDueReminders(env))
           .then((r) =>
@@ -1262,6 +1303,23 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // Books › Self-check summed for To do (batch 6 c3): the control check is
+      // too heavy for every To do read, so each night leaves one row per
+      // company in scm.acc_selfcheck_runs — reads only, nothing posts.
+      ctx.waitUntil(
+        track("self-check", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const runs = await sweepSelfCheck(sb, ids);
+          const failed = runs.filter((r) => !r.ok);
+          console.log(
+            `[cron self-check] ${runs.length} compan${runs.length === 1 ? "y" : "ies"}` +
+            (failed.length ? ` — failed: ${failed.map((r) => `${r.companyId}: ${r.reason}`).join("; ")}` : ""),
+          );
+        }).catch((e) => console.error("[cron self-check]", e)),
       );
       // Scheduled supplier prices whose effective date is today (BUG-32): onto
       // the flat binding POs read, then the derived product cost SOs read.

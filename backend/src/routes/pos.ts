@@ -38,6 +38,10 @@ import { posPinWriteRefusal, readPosPinStatus, setPosPinForUser } from "../servi
 import { getSupabaseService } from "../db/supabase";
 import { loadKpiUnitsByDoc } from "../scm/lib/kpi-units";
 import { kpiSenForDocs, splitScopeRevenue } from "../scm/lib/pos-kpi-split";
+import { readSalesPlace, salesPlaceFacet, salesPlaceSql, type SalesPlaceEntry } from "../scm/lib/pos-sales-place";
+import { loadFairsByIds, type FairDb } from "../scm/lib/fair-binding";
+import type { FairProjectRow } from "../scm/lib/fair-options";
+import { activeCompanySql } from "../scm/lib/companyScope";
 
 /* No `sessionOrigin` here on purpose. This router does not READ the origin of
    the caller's session anywhere — /exchange-web-session used to, and the ruling
@@ -231,7 +235,8 @@ pos.post("/verify-pin", auth, async (c) => {
 // = the caller; Showroom = the caller's showroom mates (or the whole company
 // when the caller has no showroom — admin/owner/coordinator). Period defaults to
 // the current MY calendar month; ?from=&to= (MY YYYY-MM-DD, `to` inclusive)
-// override, sharing the My-orders board window.
+// override, sharing the My-orders board window. ?project= / ?venue= narrow both
+// tiles to one roadshow event or one showroom (scm/lib/pos-sales-place.ts).
 //
 // companyContext runs here explicitly: /api/pos is pre-auth (mounted before the
 // global /api/* companyContext, which must stay off pin-login), so without it
@@ -340,12 +345,15 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   const monthLabel = fromYmd
     ? `${fromYmd}${toYmd ? ` – ${toYmd}` : ""}`
     : `${KPI_MONTHS[nowMy.getUTCMonth()]} ${nowMy.getUTCFullYear()}`;
+  // A showroom, or a roadshow event — narrows both tiles (pos-sales-place).
+  const place = readSalesPlace(c.req.query("project"), c.req.query("venue"));
 
   const empty = {
     monthLabel, monthStart, monthEnd, staffName: me?.name ?? "",
     showroomScope: me?.showroom_id ? "showroom" : "company",
     showroomTotal: 0, showroomCount: 0, showroomProducts: 0, showroomService: 0, showroomKpi: 0,
     personalTotal: 0, personalCount: 0, personalProducts: 0, personalService: 0, personalKpi: 0,
+    place, places: [] as SalesPlaceEntry[],
   };
   if (!me) return c.json(empty);
 
@@ -384,6 +392,32 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomWhere = `salesperson_id IN (${ids.map(() => "?").join(",")})`;
     showroomBinds.push(...ids);
   }
+
+  /* The picker's list: the Showroom card's orders, one entry per event they are
+     linked to and one per venue of the unlinked rest. Read BEFORE the pick
+     narrows `conds`, so picking one does not empty the list it came from. */
+  // company-scope: the same `conds` as aggSql below (company_id = ? at the top
+  // of this handler) plus the Showroom card's own scope.
+  const placeRows = await DB.prepare(
+    `SELECT project_id AS projectid, min(btrim(coalesce(venue, ''))) AS venuename, count(*)::int AS cnt
+       FROM scm.mfg_sales_orders
+      WHERE ${[...conds, showroomWhere].join(" AND ")}
+      GROUP BY project_id, CASE WHEN project_id IS NULL THEN lower(btrim(coalesce(venue, ''))) END`,
+  ).bind(...binds, ...showroomBinds).all<Record<string, unknown>>();
+  const placeRowList = placeRows.results;
+  /* Event names are labels only: a failed read leaves an event under its id
+     rather than blanking both tiles. */
+  let events = new Map<number, FairProjectRow>();
+  try {
+    events = await loadFairsByIds(
+      DB as unknown as FairDb,
+      activeCompanySql(c, "p.company_id"),
+      placeRowList.map((r) => Number(r.projectid)).filter(Number.isInteger),
+    );
+  } catch { /* labelled by id */ }
+  const places = salesPlaceFacet(placeRowList, events);
+  const placeClause = salesPlaceSql(place);
+  if (placeClause) { conds.push(placeClause.sql); binds.push(...placeClause.binds); }
 
   type Agg = { cnt: number; total_sen: number; goods_sen: number };
   // company-scope: `conds` carries `company_id = ?` (built at :366 from the
@@ -459,6 +493,9 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomProducts: s.products, showroomService: s.service, showroomKpi: s.kpi,
     personalTotal: p.total, personalCount: p.count,
     personalProducts: p.products, personalService: p.service, personalKpi: p.kpi,
+    /* The pick both tiles were narrowed to (null = every place), and the list
+       to pick from. The POS shows its picker only when `places` is present. */
+    place, places,
   });
 });
 

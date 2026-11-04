@@ -42,6 +42,8 @@ export type OpenPoLine = {
   // Code of the warehouse the line ships into (line, else PO header), e.g.
   // "SRW WAREHOUSE". Null when the PO names none.
   locationCode: string | null;
+  // That warehouse's id, to offer its racks on the check step.
+  warehouseId?: string | null;
   // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
   // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
   description2?: string | null;
@@ -135,7 +137,7 @@ export type GrnMatchResult = {
   // with the item code each matched.
   nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
   // Rows received as a whole set: every piece on their PO of the SO they print.
-  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string }>;
+  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string; poItemIds: string[] }>;
   // poItemId -> the rack handwritten on the row(s) that line was received from.
   // A line that two rows with different racks fed is left out.
   racks: Record<string, string>;
@@ -387,18 +389,26 @@ export function matchGrnScanToPoLines(
     }
 
     const hitList = [...hits.values()].filter((l) => anchorPo === null || l.poNumber === anchorPo);
+    if (hitList.length === 0) {
+      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
+      // our SO number, where our PO has one line per piece: take that SO's pieces.
+      // Our SO number anchors as surely as a PO number, so it needs no PO: their
+      // header P.O. is their own "S/O 1878". A known supplier only.
+      const pieces = anchorPo !== null ? supplierLines.filter((l) => l.poNumber === anchorPo) : supplierId !== null ? supplierLines : [];
+      const set = setLinesBySo(sl, pieces.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
+      if (set) {
+        for (const l of set.lines) {
+          anchoredPos.add(l.poNumber);
+          spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
+        }
+        soMatches.push({ line: sl, soDocNo: set.soDocNo, poItemIds: set.lines.map((l) => l.poItemId) });
+        continue;
+      }
+    }
     if (hitList.length === 0 && anchorPo !== null) {
       // The supplier's own code is unknown to us (DIGLANT prints T1MAMWA0MK for
       // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
       const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
-      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
-      // our SO number, where our PO has one line per piece: take that SO's pieces.
-      const set = setLinesBySo(sl, poLines.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
-      if (set) {
-        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
-        soMatches.push({ line: sl, soDocNo: set.soDocNo });
-        continue;
-      }
       const item = nameMatchItem(sl.description, poLines);
       const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
       const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
@@ -534,6 +544,9 @@ const nameWords = (s: string | null | undefined): string[] => {
     ...[...up.matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => `${m[1]}${m[2]}`),
   ];
 };
+// A joined word's base ("FLEXICAREC" -> "FLEXICARE"), only for the words nameWords joined.
+const joinedBase = (s: string | null | undefined): Map<string, string> =>
+  new Map([...(s ?? '').toUpperCase().matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => [`${m[1]}${m[2]}`, m[1]]));
 
 /**
  * The one item code on a known PO that a delivery-order row names by product,
@@ -541,31 +554,52 @@ const nameWords = (s: string | null | undefined): string[] => {
  * code and name that no other item on the PO has ("BULWARK"; "HAPPI SLEEP
  * SOLITUDE" when only one Happi Sleep item is ordered). The row must print
  * every one of them, a printed word counting when it starts with the model
- * word (MATT / MATTRESS); words of the line's item group are not model words.
- * A hyphen suffix counts ("FLEXICARE-C" is not "FLEXICARE-S"). Exactly one item must qualify; an item with no model
+ * word (MATT / MATTRESS). Words of the line's item group are not model words,
+ * unless that leaves no item with a model word (AKEMI BULWARK MATTRESS / PILLOW:
+ * the group word is then the only difference). A hyphen suffix ("FLEXICARE-C")
+ * is a model word only while another item has the same base without it
+ * ("FLEXICARE-S"); a lone ECOZONE-C matches a row that leaves the -C out.
+ * Exactly one item must qualify; an item with no model
  * word of its own (three MAYBATCH sofa pieces) never does. "Happi Sleep Easy
  * Sleep Pillow" lacks SOLITUDE, so it is not the Solitude mattress.
  */
 export function nameMatchItem(printed: string | null | undefined, poLines: OpenPoLine[]): string | null {
   const row = nameWords(printed);
   if (row.length === 0) return null;
+  const toks = (printed ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
   const items = [...new Set(poLines.map((l) => l.itemCode))];
-  const wordsOf = new Map(items.map((ic) => {
-    const lines = poLines.filter((l) => l.itemCode === ic);
-    const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
-    // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
-    const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
-    const generic = (w: string): boolean => group.some((g) => g.startsWith(w) || w.startsWith(g));
-    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w)))];
-  }));
-  const hits = items.filter((ic) => {
-    const model = [...wordsOf.get(ic)!].filter((w) => items.every((o) => o === ic || !wordsOf.get(o)!.has(w)));
-    return model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
-  });
-  return hits.length === 1 ? hits[0] : null;
+  const pick = (keepGroup: boolean): string | null => {
+    const parts = new Map(items.map((ic) => {
+      const lines = poLines.filter((l) => l.itemCode === ic);
+      const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
+      // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
+      const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
+      const generic = (w: string): boolean => !keepGroup && group.some((g) => g.startsWith(w) || w.startsWith(g));
+      const bases = joinedBase(names);
+      const words = nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w));
+      return [ic, { words: new Set(words), bases }];
+    }));
+    const hits = items.filter((ic) => {
+      const mine = parts.get(ic)!;
+      const model = [...mine.words].filter((w) => items.every((o) => o === ic || !parts.get(o)!.words.has(w)))
+        // a suffix word only tells items apart while another item has the base without it
+        .filter((w) => !mine.bases.has(w) || items.some((o) => o !== ic && parts.get(o)!.words.has(mine.bases.get(w)!)));
+      // a row printing another suffix after the base ("FLEXICARE-C" or "FLEXICARE C" for the -S item) is not this item
+      const clash = [...mine.bases].some(([w, base]) => toks.some((t, i) => t === base && (toks[i + 1] ?? '').length >= 1 && toks[i + 1].length <= 2 && base + toks[i + 1] !== w));
+      return !clash && model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
+    });
+    return hits.length === 1 ? hits[0] : null;
+  };
+  return pick(false) ?? pick(true);
 }
 
-const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b/i.exec(v ?? '')?.[1] ?? null;
+/** Our SO numbers in a text, keyed so a printed one meets ours: "*SO-011717" is
+ *  HC-SO-011717, and "2990-SO-2609-045" keeps its running number. Taking only the
+ *  month ("2609") would make every order of that month one order. */
+const soKeys = (v: string | null | undefined): string[] =>
+  [...(v ?? '').matchAll(/(?<![A-Z])SO-?(\d+(?:-\d+)*)/gi)]
+    .map((m) => m[1].replace(/-/g, '').replace(/^0+/, ''))
+    .filter((k) => k.length >= 4);
 
 /**
  * The PO lines a delivery-order row delivers as one set: the row prints one of
@@ -575,14 +609,14 @@ const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b
  * Null when the row names no SO, or none of `poLines` belongs to it.
  */
 export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDocNo: string; lines: OpenPoLine[] } | null {
-  const text = `${row.itemCode ?? ''} ${row.description ?? ''}`;
-  const keys = new Set([...text.matchAll(/SO-?0*(\d{4,})\b/gi)].map((m) => m[1]));
+  const keys = new Set(soKeys(`${row.itemCode ?? ''} ${row.description ?? ''}`));
   if (keys.size === 0) return null;
-  const ofSo = poLines.filter((l) => keys.has(soKey(l.soDocNo) ?? ''));
+  const ofSo = poLines.filter((l) => soKeys(l.soDocNo).some((k) => keys.has(k)));
   const docs = new Set(ofSo.map((l) => l.soDocNo));
   if (ofSo.length === 0 || docs.size !== 1) return null;
   const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
-  const ofModel = ofSo.filter((l) => models.has(/^(\d{4,})/.exec(l.itemCode)?.[1] ?? ''));
+  // Our code can name the model (BANGGAU-2A(LHF)) where the supplier's holds the number (DSL8075-2A(LHF)).
+  const ofModel = ofSo.filter((l) => [/^(\d{4,})/.exec(l.itemCode)?.[1], /(\d{4,})/.exec(l.supplierSku ?? '')?.[1]].some((n) => n !== undefined && models.has(n)));
   return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
 }
 

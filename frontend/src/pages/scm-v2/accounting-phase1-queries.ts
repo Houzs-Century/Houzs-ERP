@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import type { Account, JeLineIn, JournalEntry } from '../../vendor/scm/lib/accounting-queries';
+import type { Account, JeLineIn, JournalEntry, JournalEntryLine } from '../../vendor/scm/lib/accounting-queries';
 
 export const useCreateAccount = () => {
   const qc = useQueryClient();
@@ -70,6 +70,26 @@ export const useEditJournalEntry = () => {
   });
 };
 
+/** The document an entry was written from, read back to the id its page opens
+    by (backend acc/journal-document) — the card's "Open <document>". */
+export type JournalDocument = { kind: 'SI' | 'SO' | 'PI' | 'API' | 'PV' | 'NOTE' | 'SUPPLIER_NOTE'; id: string; number: string };
+export type JournalEntryCardData = {
+  journalEntry: JournalEntry;
+  lines: JournalEntryLine[];
+  document?: JournalDocument | null;
+  /** Only when the document could not be read; the entry still shows. */
+  documentError?: string;
+};
+/** One entry for its card — the detail read the post / edit / reverse hooks
+    already refresh (same key), with the entry's document beside it. */
+export const useJournalEntryCard = (id: string | null) => useQuery({
+  queryKey: ['journal-entry-detail', id],
+  queryFn: () => authedFetch<JournalEntryCardData>(`/accounting/journal-entries/${id}`),
+  enabled: Boolean(id),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
+
 /** The Journal page grouped per entry (docs/bugs/0935): every entry of the
     period with its lines in order and the references the GL page prints. */
 export type JournalLineLite = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
@@ -95,7 +115,13 @@ export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = tru
   });
 };
 
-export type ControlDrift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
+export type ControlDrift = {
+  docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string;
+  /** The customer or supplier, the document's date, its active entry, and the
+      id its page opens by — read with the check (batch 6 c2); absent before. */
+  party?: string | null; date?: string | null; jeNo?: string | null;
+  docKind?: 'SI' | 'PI' | 'API' | null; docId?: string | null;
+};
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
 export type ControlCheckRow =
   | { role: string; accountCode: string; glBalanceSen: number; driftDocs: ControlDrift[]; foreignLines: ControlForeign[]; ok: boolean }
@@ -106,7 +132,11 @@ export type ControlCheckRow =
     company ever booked one — and null means there is no period to check. */
 export type UnbookedPayments = {
   since: string | null;
-  rows: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string }>;
+  rows: Array<{
+    source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string;
+    /** The order's customer and salesperson (batch 6 c2); absent before. */
+    customer?: string | null; salesperson?: string | null;
+  }>;
   totalSen: number;
   ok: boolean;
   /** Only when the check itself could not run. */
@@ -202,6 +232,21 @@ export const usePaymentCorrections = (month: string) => useQuery({
   retryDelay: 800,
 });
 
+/** Self-check's Run again (batch 6 c3): the page's three reads, made on the
+    server in one go and summed into the row To do reads. */
+export type SelfCheckRunResult = {
+  control: { checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift };
+  cancelled: { orders: Array<Record<string, unknown>>; totalRemainingSen: number } | { error: string };
+  receipts: { total: number; months: unknown[] } | { error: string };
+  summary: { checks: number; findings: number; items: string[] };
+  ranAt: string;
+  /** Only when the summary could not be kept; the reads stand. */
+  recordError?: string;
+};
+export const useRunSelfCheck = () => useMutation({
+  mutationFn: () => authedFetch<SelfCheckRunResult>('/accounting/self-check/run', { method: 'POST' }),
+});
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
   queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),
@@ -221,6 +266,8 @@ export type DailyBankMovement = {
   /** Who paid or was paid; null when the entry names nobody. */
   party: string | null;
   note: string; amountSen: number;
+  /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
+  method?: string | null;
 };
 export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
@@ -255,7 +302,8 @@ export type DailyCloseRow = { bucket: string; systemSen: number; countedSen: num
 
 export const useDailyClose = (date: string) => useQuery({
   queryKey: ['daily-close', date],
-  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[] }>(`/accounting/daily-close?date=${date}`),
+  /* confirmedBy / confirmedAt / cashJeNo: who closed the day, when, and its cash over/short entry (if any). */
+  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[]; confirmedBy?: string | null; confirmedAt?: string | null; cashJeNo?: string | null }>(`/accounting/daily-close?date=${date}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
@@ -282,6 +330,7 @@ export const useConfirmDailyClose = () => {
       void qc.invalidateQueries({ queryKey: ['daily-close', v.date] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
       void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
     onError: writeFailedAs('Daily close not confirmed'),
   });
@@ -358,9 +407,27 @@ export type StockCloseRun = {
   note: string | null;
 };
 
+/** The five closing stocks (owner 2026-09-30): customer, display, service, showroom, others. */
+export type StockBucketValues = { customer: number; display: number; service: number; showroom: number; others: number };
+/** A month the close has booked (batch 6 c4): its active closing entry, split by bucket. */
+export type ClosedStockMonth = {
+  month: string; buckets: StockBucketValues; totalSen: number; action: 'posted' | 'reposted';
+  bookedOn: string | null; jeNo: string; revJeNo: string | null;
+};
+export type StockCloseStatus = {
+  liveValueSen: number;
+  liveBuckets?: StockBucketValues;
+  defaultMonth: string;
+  /** The months the nightly run re-checks: last month and the one before. */
+  sweepMonths?: string[];
+  /** The last 90 days of runs, newest first. */
+  runs: StockCloseRun[];
+  months?: ClosedStockMonth[];
+};
+
 export const useStockClose = () => useQuery({
   queryKey: ['stock-close'],
-  queryFn: () => authedFetch<{ liveValueSen: number; defaultMonth: string; runs: StockCloseRun[] }>(`/accounting/stock-close`),
+  queryFn: () => authedFetch<StockCloseStatus>(`/accounting/stock-close`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
@@ -370,9 +437,10 @@ export const useRunStockClose = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { month?: string }) =>
-      authedFetch<{ outcome: { action: string; jeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
+      authedFetch<{ outcome: { action: string; valueSen?: number; jeNo?: string; revJeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['stock-close'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['journal-entries'] });
       void qc.invalidateQueries({ queryKey: ['gl-entries'] });
       void qc.invalidateQueries({ queryKey: ['account-balances'] });

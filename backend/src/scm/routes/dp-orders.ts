@@ -25,11 +25,14 @@ import {
 } from '../lib/companyScope';
 import {
   partyTypeFor, emptySnapshot, snapshotFromSo, snapshotFromSupplier,
-  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
-  snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
+  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromThreepl,
+  snapshotFromSavedLocation, snapshotFromWorkshop, snapshotFromWorkshopName,
+  type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
+import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { setTripCrew } from '../lib/trip-crew-sync';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { dpLorryBlockReason } from '../lib/dp-lorry-block';
 import { normalizePhone } from '../shared/phone';
@@ -162,9 +165,26 @@ const createSchema = z.object({
   // going to, either picked directly or read off a work order. Columns: mig 0251.
   stockTransferId: z.string().uuid().optional(),
   warehouseId: z.string().uuid().optional(),
+  // TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+  // 3PL company we don't own, so it is picked from the carrier master instead of
+  // scm.warehouses. Mutually exclusive with warehouseId in the UI. Column: mig
+  // 20261102T1300.
+  threeplCompanyId: z.string().uuid().optional(),
+  // TRANSFER destination picked from the saved-locations address book (owner
+  // 2026-11-02 方案2). Mutually exclusive with warehouseId / threeplCompanyId in
+  // the UI. Column: mig 20261102T1700.
+  savedLocationId: z.string().uuid().optional(),
   lorryId: z.string().uuid().optional(),
   workshopId: z.string().uuid().optional(),
   workOrderId: z.string().uuid().optional(),
+  // TRANSFER ORIGIN ("from where", owner 2026-11-02 方案1): the pickup point the
+  // fleet loads from — our warehouse, an outsourced 3PL, or a saved location (方案2),
+  // picked the same way as the destination. Optional: only a move between two chosen
+  // points sets it. Columns: mig 20261102T1500 / 20261102T1700.
+  fromWarehouseId: z.string().uuid().optional(),
+  fromThreeplCompanyId: z.string().uuid().optional(),
+  fromSavedLocationId: z.string().uuid().optional(),
+  fromOverrides: z.record(z.string(), z.string().nullable()).optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
@@ -225,6 +245,30 @@ async function resolveSnapshot(
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
   }
+  /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
+     方案2). Checked first so a picked saved location wins; its structured address
+     fills the snapshot. Error bound, never swallowed. */
+  if (p.savedLocationId) {
+    const { data, error } = await sb.from('saved_locations')
+      .select('name, contact_name, contact_phone, address1, address2, city, postcode, state')
+      .eq('id', p.savedLocationId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromSavedLocation(data as Record<string, unknown>);
+  }
+  /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+     3PL company, not one of our warehouses. Checked before the warehouse branch
+     so a 3PL pick wins outright; its single free-text address fills the snapshot
+     and party_type stays WAREHOUSE. */
+  if (p.threeplCompanyId) {
+    // Bind the error: on a read failure we must not fall through to the empty
+    // snapshot and then refuse with "address_required" — a misleading answer when
+    // the operator did pick a carrier. Surface the real failure instead.
+    const { data, error } = await sb.from('threepl_companies')
+      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .eq('id', p.threeplCompanyId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromThreepl(data as Record<string, unknown>);
+  }
   /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
      operator picked where the fleet is going); otherwise resolve the transfer
      document's to_warehouse_id. A transfer whose destination row has been
@@ -268,6 +312,36 @@ async function resolveSnapshot(
   return emptySnapshot(jobType);
 }
 
+/** Resolve the ORIGIN ("from") snapshot for a TRANSFER (owner 2026-11-02 方案1) —
+ *  our warehouse or a 3PL carrier, the same two masters the destination draws on,
+ *  else an empty snapshot the operator types over. Errors are bound and surfaced,
+ *  never swallowed (a read blip must not silently drop the pickup point). */
+async function resolveOrigin(c: Ctx, p: z.infer<typeof createSchema>): Promise<DpPartySnapshot> {
+  const sb = c.get('supabase');
+  if (p.fromSavedLocationId) {
+    const { data, error } = await sb.from('saved_locations')
+      .select('name, contact_name, contact_phone, address1, address2, city, postcode, state')
+      .eq('id', p.fromSavedLocationId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromSavedLocation(data as Record<string, unknown>);
+  }
+  if (p.fromThreeplCompanyId) {
+    const { data, error } = await sb.from('threepl_companies')
+      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .eq('id', p.fromThreeplCompanyId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromThreepl(data as Record<string, unknown>);
+  }
+  if (p.fromWarehouseId) {
+    const { data, error } = await sb.from('warehouses')
+      .select('code, name, location, city, postcode, state')
+      .eq('id', p.fromWarehouseId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromWarehouse(data as Record<string, unknown>);
+  }
+  return emptySnapshot('TRANSFER');
+}
+
 /* ── POST /api/scm/dp-orders — create (type-aware auto-fill) ───────────────── */
 dpOrders.post('/', async (c) => {
   let body: unknown;
@@ -285,6 +359,14 @@ dpOrders.post('/', async (c) => {
   }
   if (!hasAddress(merged)) return c.json(ADDRESS_REQUIRED, 400);
 
+  // Origin ("from") — TRANSFER only, optional. Its own snapshot + overrides, kept
+  // apart from the destination party above so neither overwrites the other.
+  const fromSnap = jobType === 'TRANSFER' ? await resolveOrigin(c, p) : emptySnapshot('TRANSFER');
+  const fromMerged: Record<string, unknown> = { ...fromSnap };
+  for (const [k, v] of Object.entries(p.fromOverrides ?? {})) {
+    if (k in fromMerged) fromMerged[k] = v;
+  }
+
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
   const insert = {
@@ -299,6 +381,8 @@ dpOrders.post('/', async (c) => {
     project_id: p.projectId ?? null,
     stock_transfer_id: p.stockTransferId ?? null,
     warehouse_id: p.warehouseId ?? null,
+    threepl_company_id: p.threeplCompanyId ?? null,
+    saved_location_id: p.savedLocationId ?? null,
     lorry_id: p.lorryId ?? null,
     workshop_id: p.workshopId ?? null,
     work_order_id: p.workOrderId ?? null,
@@ -313,6 +397,13 @@ dpOrders.post('/', async (c) => {
     address1: merged.address1 ?? null, address2: merged.address2 ?? null,
     address3: merged.address3 ?? null, address4: merged.address4 ?? null,
     city: merged.city ?? null, postcode: merged.postcode ?? null, state: merged.state ?? null,
+    // Origin ("from") — party_name/address* of the fromSnap map to the from_* columns.
+    from_name: fromMerged.party_name ?? null,
+    from_address1: fromMerged.address1 ?? null, from_address2: fromMerged.address2 ?? null,
+    from_city: fromMerged.city ?? null, from_postcode: fromMerged.postcode ?? null, from_state: fromMerged.state ?? null,
+    from_warehouse_id: p.fromWarehouseId ?? null,
+    from_threepl_company_id: p.fromThreeplCompanyId ?? null,
+    from_saved_location_id: p.fromSavedLocationId ?? null,
     requested_date: dateOrNull(p.requestedDate),
     status: 'PENDING_SCHEDULE',
     remark: p.remark ?? null,
@@ -403,6 +494,15 @@ const patchSchema = z.object({
   city: z.string().nullable().optional(),
   postcode: z.string().nullable().optional(),
   state: z.string().nullable().optional(),
+  // Origin ("from") fields — TRANSFER only, editable like the destination (owner
+  // 2026-11-02 方案1). Null clears a line; the address-required check guards the
+  // DESTINATION only, so the origin may be blank.
+  fromName: z.string().nullable().optional(),
+  fromAddress1: z.string().nullable().optional(),
+  fromAddress2: z.string().nullable().optional(),
+  fromCity: z.string().nullable().optional(),
+  fromPostcode: z.string().nullable().optional(),
+  fromState: z.string().nullable().optional(),
   requestedDate: z.string().nullable().optional(),
   remark: z.string().nullable().optional(),
 });
@@ -420,6 +520,8 @@ const PATCH_COLS: Record<keyof z.infer<typeof patchSchema>, string> = {
   partyName: 'party_name', contactName: 'contact_name', contactPhone: 'contact_phone',
   address1: 'address1', address2: 'address2', address3: 'address3', address4: 'address4',
   city: 'city', postcode: 'postcode', state: 'state',
+  fromName: 'from_name', fromAddress1: 'from_address1', fromAddress2: 'from_address2',
+  fromCity: 'from_city', fromPostcode: 'from_postcode', fromState: 'from_state',
   requestedDate: 'requested_date', remark: 'remark',
 };
 
@@ -542,7 +644,93 @@ const scheduleSchema = z.object({
   lorryId: z.string().uuid(),
   tripDate: z.string(), // YYYY-MM-DD
   tripId: z.string().uuid().optional(),
+  // The driver for the run (owner 2026-10-30: pick the driver when scheduling, so
+  // Driver + Lorry fill in on the board). Optional — the run can be crewed later.
+  driverId: z.string().uuid().nullable().optional(),
 });
+
+/* Find the run a scheduled DP job rides, or create one. A specific trip may be
+   named (already company-checked by the caller); otherwise reuse the lorry's
+   non-cancelled run on that date, or mint a new PLANNED trip. Trips are the
+   cross-company shared queue — read scoped to the caller's allowed companies,
+   created under the active company. Returns the trip id, or an error string: the
+   DP is already claimed when this runs, so the caller reports the failure rather
+   than rolling the schedule back (the #720 rule). */
+async function resolveScheduleTrip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
+  c: any, sb: any, lorryId: string | null, tripDate: string, namedTripId: string | null,
+): Promise<{ tripId: string } | { error: string }> {
+  if (namedTripId) return { tripId: namedTripId };
+  // Reuse the lorry's run that day only when a lorry is known. A crew-first inline
+  // edit (driver / helper picked before a lorry) has none, so it always mints a new
+  // run; trips.lorry_id is nullable, and the lorry fills in when that cell is set.
+  if (lorryId) {
+    const { data: found, error: fErr } = await scopeToAllowedCompanies(
+      sb.from('trips').select('id').eq('lorry_id', lorryId).eq('trip_date', tripDate).neq('status', 'CANCELLED').limit(1), c,
+    );
+    if (fErr) return { error: fErr.message };
+    const hit = ((found ?? []) as Array<{ id: string }>)[0];
+    if (hit) return { tripId: hit.id };
+  }
+  const user = c.get('user') as { id?: string } | null;
+  let isOutsourced = false;
+  if (lorryId) {
+    const { data: lorryRow, error: lErr } = await sb.from('lorries').select('is_internal').eq('id', lorryId).maybeSingle();
+    isOutsourced = !lErr && (((lorryRow as { isInternal?: boolean | null; is_internal?: boolean | null } | null)?.isInternal
+      ?? (lorryRow as { is_internal?: boolean | null } | null)?.is_internal) === false);
+  }
+  const d = new Date();
+  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const { data: created, error: tErr } = await insertWithDocNoRetry<{ id: string }>(
+    () => mintMonthlyDocNo(sb, 'trips', 'trip_no', `TRIP-${yymm}`),
+    (tripNo) => sb.from('trips').insert({
+      company_id: activeCompanyId(c), trip_no: tripNo, trip_date: tripDate, lorry_id: lorryId,
+      trip_type: 'DELIVERY', status: 'PLANNED', is_outsourced: isOutsourced, created_by: user?.id ?? null,
+    }).select('id').single(),
+  );
+  if (tErr || !created) {
+    return { error: tErr ? String((tErr as { message?: string }).message ?? tErr).slice(0, 160) : 'trip insert returned no row' };
+  }
+  return { tripId: (created as { id: string }).id };
+}
+
+/* Put a DP job onto a run as a trip_stop (the form the trip view + route optimiser
+   read) and stamp the order with the stop id. Best-effort + REPORTED, never a
+   silent null: the caller's schedule/crew write already committed, so a stop
+   failure comes back as { failed }, it is not thrown (the #720 lesson). `dp` is the
+   just-written order row (its address + job_type + party_name shape the stop); dpNo
+   is the number the stop mirrors, or null when none is minted yet (a crew-first
+   edit with no lorry). */
+async function appendDpStop(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
+  c: any, sb: any, dp: Record<string, unknown>, tripId: string, dpNo: string | null,
+): Promise<{ id: string | null; failed: boolean; reason?: string }> {
+  try {
+    const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', tripId);
+    const nextStopNo = ((stops.data ?? []) as Array<{ stop_no?: number }>)
+      .reduce((m: number, r: { stop_no?: number }) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
+    const address = [dp.address1, dp.address2, dp.address3, dp.address4, dp.city, dp.postcode, dp.state]
+      .filter(Boolean).join(', ') || null;
+    const ins = await sb.from('trip_stops').insert({
+      company_id: activeCompanyId(c) ?? null,
+      trip_id: tripId,
+      stop_no: nextStopNo,
+      stop_type: dp.job_type,
+      customer_name: (dp.party_name as string | null) ?? null,
+      address,
+      revenue_sen: 0,
+      dp_no: dpNo,
+    }).select('id').maybeSingle();
+    const stopId = (ins.data as { id?: string } | null)?.id ?? null;
+    if (ins.error || !stopId) {
+      return { id: null, failed: true, reason: ins.error?.message ?? 'trip_stop insert returned no row' };
+    }
+    await sb.from('dp_orders').update({ trip_stop_id: stopId }).eq('id', dp.id);
+    return { id: stopId, failed: false };
+  } catch (e) {
+    return { id: null, failed: true, reason: `trip wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
+  }
+}
 
 /* ── POST /api/scm/dp-orders/:id/schedule — assign lorry+date, MINT the DP no ─ */
 dpOrders.post('/:id/schedule', async (c) => {
@@ -605,36 +793,26 @@ dpOrders.post('/:id/schedule', async (c) => {
      committed — but the outcome is REPORTED (tripStop.failed), never a silent
      null, per the #720 lesson. */
   let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
-  if (p.tripId) {
+  const d = data as Record<string, unknown>;
+  const trip = await resolveScheduleTrip(c, sb, p.lorryId, p.tripDate, p.tripId ?? null);
+  if ('error' in trip) {
+    tripStop = { id: null, failed: true, reason: `could not place the job on a trip: ${trip.error}` };
+  } else {
     try {
-      const d = data as Record<string, unknown>;
-      const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', p.tripId);
-      const nextStopNo = ((stops.data ?? []) as Array<{ stop_no?: number }>)
-        .reduce((m, r) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
-      const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
-        .filter(Boolean).join(', ') || null;
-      const ins = await sb.from('trip_stops').insert({
-        company_id: activeCompanyId(c) ?? null,
-        trip_id: p.tripId,
-        stop_no: nextStopNo,
-        stop_type: d.job_type,
-        customer_name: (d.party_name as string | null) ?? null,
-        address,
-        revenue_sen: 0,
-        /* The SAME number the order header carries — a mirror, not a second
-           identity. Writing it here is also what keeps trip_stops the complete
-           registry the minter scans. */
-        dp_no: dpNo,
-      }).select('id').maybeSingle();
-      const stopId = (ins.data as { id?: string } | null)?.id ?? null;
-      if (ins.error || !stopId) {
-        tripStop = { id: null, failed: true, reason: ins.error?.message ?? 'trip_stop insert returned no row' };
-      } else {
-        await sb.from('dp_orders').update({ trip_stop_id: stopId }).eq('id', id);
-        tripStop = { id: stopId, failed: false };
+      const effectiveTripId = trip.tripId;
+      // Link the resolved run when the first update didn't already (auto-created
+      // or reused a run instead of a named trip).
+      if (effectiveTripId !== (p.tripId ?? null)) {
+        await sb.from('dp_orders').update({ trip_id: effectiveTripId, updated_at: new Date().toISOString() }).eq('id', id);
       }
+      // The stop mirrors the order's dp_no — a mirror, not a second identity; it
+      // also keeps trip_stops the complete registry the minter scans.
+      tripStop = await appendDpStop(c, sb, d, effectiveTripId, dpNo);
+      // Set the driver the operator picked at schedule time (owner 2026-10-30), so
+      // Driver + Lorry show on the board without a second step. Best-effort.
+      if (p.driverId !== undefined) await setTripCrew(sb, effectiveTripId, { driverId: p.driverId });
     } catch (e) {
-      tripStop = { id: null, failed: true, reason: `trip_stop wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
+      tripStop = { id: null, failed: true, reason: `trip wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
     }
   }
 
@@ -675,6 +853,102 @@ dpOrders.post('/:id/schedule', async (c) => {
     }
   }
   return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
+});
+
+/* ── POST /:id/crew — inline crew edit on a DP row (owner 2026-10-31) ───────────
+   The board's Driver / Lorry / Helper cells write DP jobs the way they write SO
+   rows now, with no "Schedule…" drawer. A DP job's crew IS its RUN's crew
+   (scm.trips) — a DP has no delivery_order_crew — so this ensures the job rides a
+   run first (its confirmed date, the picked lorry or none yet), then sets the seat.
+   A run needs a date (trips.trip_date NOT NULL): a DP with no requested_date 409s
+   "set the delivery date first". When a lorry is on the run and the job has no
+   number yet, the number is minted and the job flips to SCHEDULED — the same end
+   state the drawer reached, so the board's "not scheduled" clears the moment a
+   lorry is picked (a DP number embeds the plate, so a crew-first job with no lorry
+   stays numberless, correctly, until one is set). */
+const crewSchema = z.object({
+  driverId: z.string().uuid().nullable().optional(),
+  helper1Id: z.string().uuid().nullable().optional(),
+  helper2Id: z.string().uuid().nullable().optional(),
+  lorryId: z.string().uuid().nullable().optional(),
+});
+
+dpOrders.post('/:id/crew', async (c) => {
+  const id = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = crewSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const p = parsed.data;
+  if (p.driverId === undefined && p.helper1Id === undefined && p.helper2Id === undefined && p.lorryId === undefined) {
+    return c.json({ error: 'no_changes' }, 400);
+  }
+  const sb = c.get('supabase');
+  // Same company + ownership class as PATCH / schedule / cancel.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const denied = await denyIfNotOwnDpJob(c, sb, id);
+  if (denied) return denied;
+
+  // The job (company-scoped): its date, run, number and address shape the rest.
+  const { data: dp, error: dpErr } = await scopeToCompanyId(
+    sb.from('dp_orders').select(
+      'id, requested_date, trip_id, trip_stop_id, dp_no, status, job_type, party_name, address1, address2, address3, address4, city, postcode, state',
+    ).eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (dpErr) return c.json({ error: 'lookup_failed', reason: dpErr.message }, 500);
+  if (!dp) return c.json({ error: 'not_found' }, 404);
+  const d = dp as Record<string, unknown>;
+  const requestedDate = (d.requested_date as string | null) ?? null;
+  let tripId = (d.trip_id as string | null) ?? null;
+
+  // A DP with no run yet: put it on one. A run needs a date, so a dateless job is
+  // refused with the one thing to fix first (the SO flow always has a date).
+  let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
+  if (!tripId) {
+    if (!requestedDate) {
+      return c.json({ error: 'no_date', reason: 'Set the delivery date first — the crew rides that day\'s run.' }, 409);
+    }
+    const trip = await resolveScheduleTrip(c, sb, p.lorryId ?? null, requestedDate, null);
+    if ('error' in trip) return c.json({ error: 'trip_failed', reason: trip.error }, 500);
+    tripId = trip.tripId;
+    await sb.from('dp_orders').update({ trip_id: tripId, updated_at: new Date().toISOString() }).eq('id', id);
+    tripStop = await appendDpStop(c, sb, d, tripId, (d.dp_no as string | null) ?? null);
+  }
+
+  // Write the picked seat(s) — the primary action, so a failure is reported, not
+  // swallowed. The lorry is set here too (setTripCrew leaves a null lorry alone).
+  try {
+    await setTripCrew(sb, tripId, {
+      ...(p.driverId !== undefined ? { driverId: p.driverId } : {}),
+      ...(p.helper1Id !== undefined ? { helper1Id: p.helper1Id } : {}),
+      ...(p.helper2Id !== undefined ? { helper2Id: p.helper2Id } : {}),
+      ...(p.lorryId != null ? { lorryId: p.lorryId } : {}),
+    });
+  } catch (e) {
+    return c.json({ error: 'crew_save_failed', reason: String((e as Error)?.message ?? e).slice(0, 200) }, 500);
+  }
+
+  // A lorry on the run and no number yet → mint it + flip to SCHEDULED (the drawer's
+  // end state), so "not scheduled" clears. Best-effort + reported via tripStop.
+  let dpNo = (d.dp_no as string | null) ?? null;
+  if (!dpNo && requestedDate) {
+    const { data: tripRow, error: tripRowErr } = await sb.from('trips').select('lorry_id').eq('id', tripId).maybeSingle();
+    const lorryOnRun = tripRowErr ? null : (((tripRow as { lorry_id?: string | null } | null)?.lorry_id) ?? null);
+    const plate = lorryOnRun ? await plateForLorry(sb, lorryOnRun) : null;
+    const minted = plate ? await mintNextDpNo(sb, { tripDate: requestedDate, plate }) : null;
+    if (minted) {
+      await scopeToCompanyId(
+        sb.from('dp_orders').update({ dp_no: minted, status: 'SCHEDULED', updated_at: new Date().toISOString() }).eq('id', id),
+        co.companyId,
+      );
+      const stopId = tripStop.id ?? (d.trip_stop_id as string | null) ?? null;
+      if (stopId) await sb.from('trip_stops').update({ dp_no: minted }).eq('id', stopId);
+      dpNo = minted;
+    }
+  }
+  return c.json({ ok: true, trip_id: tripId, dp_no: dpNo, tripStop });
 });
 
 export default dpOrders;

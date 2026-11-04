@@ -10,6 +10,7 @@ import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 import { earliestLorryDate } from "./earliest-lorry-date";
+import { applyProjectFleetDates } from "./project-fleet-dates";
 export { deriveProjectCode, deriveProjectName };
 // Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
 export { earliestLorryDate };
@@ -573,6 +574,14 @@ export async function patchProject(
     deltaDays = out.deltaDays;
   }
 
+  // Auto-fill the fleet window from the event dates on confirm (owner 2026-10-31),
+  // so a confirmed project reaches the Delivery Planning board without re-keying
+  // setup/dismantle. Fill-only + confirmed-only (see project-fleet-dates.ts); only
+  // when the patch could newly enable it.
+  if ("status" in body || "start_date" in body || "end_date" in body) {
+    await applyProjectFleetDates(env, id);
+  }
+
   return {
     ok: r.meta.changes > 0,
     shifted_tasks: shifted,
@@ -1063,7 +1072,7 @@ export function stripSetupDismantle<
 
   // Document rows are identified by their cloned section NAME. Owner
   // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
-  // "SALES PIC" (Setup Image / Defect List / Event Complete Image) — stay
+  // "SALES PIC" (Setup Image / Defect List) — stay
   // on the wire for the stripped caller (this strip only ever runs for
   // sales-role callers); the DRIVER / PURCHASER document rows and the crew
   // editor stay hidden. A Setup & Dismantle section is dropped outright
