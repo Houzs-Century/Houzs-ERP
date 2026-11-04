@@ -5,6 +5,9 @@ import { useState } from "react";
 import { formatCurrency, cn } from "../../lib/utils";
 import { PROJECT_STAGES, projectStage, setupArrangedOf, driverKeyedOf } from "./projectStage";
 import { useQuery } from "../../hooks/useQuery";
+import { useAuth } from "../../auth/AuthContext";
+import { canSaveSalesReport } from "../../auth/salesAccess";
+import { BillRefFix } from "./BillRefFix";
 import { api } from "../../api/client";
 
 // Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
@@ -41,6 +44,8 @@ interface NotDailyEvent { id: number; code: string; name: string; startDate: str
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
   const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; soNoCogs: SoNoCogs[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
   const [tab, setTab] = useState<BooksTab>("daily");
+  const { user } = useAuth();
+  const canFix = canSaveSalesReport(user);
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g) return null;
@@ -66,7 +71,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               return (
               <tr key={`${r.id}-${b.ref}-${i}`} className={cn("cursor-pointer hover:bg-surface-2/50", first && i > 0 && "border-t-2 border-border")} onClick={() => onOpen(r.id)}>
                 {first ? eventCell(r) : <Td left> </Td>}
-                <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+                <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="whitespace-nowrap font-mono">{b.ref}{canFix && <BillRefFix projectId={r.id} from={b.ref} onSaved={() => q.reload()} />}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
                 <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
                   {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
                 </Td>

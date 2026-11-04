@@ -33,6 +33,7 @@
 // order read is scopeToCompany.
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
+import { extractRefTokens } from "../scm/shared/sales-report-parse";
 import type { Context } from "hono";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env, Variables } from "../scm/env";
@@ -51,8 +52,7 @@ import {
   type AttendeeRow,
   type MatchedBill,
   type NoteRow,
-  type OrderRow,
-} from "./lib/sales-report-bills";
+  type OrderRow, renameRef } from "./lib/sales-report-bills";
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Db = ReturnType<typeof getDb>;
@@ -309,6 +309,40 @@ projectSalesBills.post("/:projectId/notify", async (c) => {
   } catch (e) {
     return c.json({ error: "load_failed", reason: e instanceof Error ? e.message : String(e) }, 500);
   }
+});
+
+/* Change one bill's reference (owner 2026-11-04: "我需要可以更改 reference 的, 让 SO
+   match 上来"). Bills are read out of the chat, so the message itself is corrected,
+   and a trail row records who changed what. */
+projectSalesBills.post("/:projectId/rename-ref", async (c) => {
+  const me = realUser(c);
+  const projectId = parseProjectId(c);
+  if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
+  let body: { from?: unknown; to?: unknown } | null;
+  try { body = await c.req.json() as { from?: unknown; to?: unknown }; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const from = String(body?.from ?? "").trim();
+  const to = String(body?.to ?? "").trim().toUpperCase();
+  if (!from || extractRefTokens(to).length !== 1) return c.json({ error: "invalid_reference", message: "Key the reference as printed, such as ZNT6767." }, 400);
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const db = getDb(c.env);
+  const project = await loadProject(db, projectId, company.companyId);
+  if (!project) return c.json({ error: "Not found" }, 404);
+  const attendeeEmails = await loadAttendeeEmails(db, project.id);
+  if (!me || !canSaveSalesReport(me, attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
+  const notes = await loadNotes(db, project.id);
+  const bill = collectReport(notes, project.start_date, attendeeEmails).bills.find((b) => b.ref_raw === from);
+  const source = bill ? notes.find((n) => n.id === bill.source_activity_id) : undefined;
+  const next = source?.note ? renameRef(source.note, from, to) : null;
+  if (!source || next === null) return c.json({ error: "Not found", message: `${from} is not on this event's sales report.` }, 404);
+  await db.update(project_activity).set({ note: next }).where(and(
+    eq(project_activity.id, source.id),
+    eq(project_activity.project_id, project.id),
+    eq(project_activity.action, "note"),
+    isNull(project_activity.archived_at),
+  ));
+  await db.insert(project_activity).values({ project_id: project.id, user_id: me.id, action: "sales_report_ref_changed", note: `${from} -> ${to}` });
+  return c.json({ ok: true });
 });
 
 /* Void a wrongly pasted message (owner 2026-10-14: "kalau wrong … void"). The

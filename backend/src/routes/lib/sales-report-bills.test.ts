@@ -8,6 +8,7 @@ import {
   indexOrdersByToken,
   matchBill,
   matchBills,
+  renameRef,
   resolveAttendee,
   summarizeBills,
   type AttendeeRow,
@@ -217,5 +218,28 @@ describe("matchBills + summarizeBills", () => {
     expect(persons).toEqual([]);
     expect(totals.count).toBe(0);
     expect(totals.not_opened_sen).toBe(0);
+  });
+});
+
+describe("a report posted again to fix a typo", () => {
+  const note = (id: number, text: string): NoteRow => ({ id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Owner" });
+  test("replaces the first, so the mistyped bill goes", () => {
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B", "3. ZNF6767 RM100 C"].join("\n");
+    const r = collectReport([note(1, first), note(2, first.replace("ZNF6767", "ZNT6767"))], "2026-09-11", null);
+    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["ZNT6730", "ZNT6766", "ZNT6767"]);
+  });
+  test("a later message of new bills for the day adds to it", () => {
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B"].join("\n");
+    const r = collectReport([note(1, first), note(2, ["13/9", "1. ZNT6800 RM100 C"].join("\n"))], "2026-09-11", null);
+    expect(r.bills).toHaveLength(3);
+  });
+});
+
+describe("renameRef", () => {
+  test("changes the reference as a whole word", () => {
+    expect(renameRef("3. ZNF6767 RM4300 ADRIAN", "ZNF6767", "ZNT6767")).toBe("3. ZNT6767 RM4300 ADRIAN");
+  });
+  test("a reference the message does not print changes nothing", () => {
+    expect(renameRef("3. ZNF67670 RM4300", "ZNF6767", "ZNT6767")).toBeNull();
   });
 });
