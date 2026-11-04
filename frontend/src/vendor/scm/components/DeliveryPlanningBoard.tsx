@@ -52,7 +52,7 @@ import {
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
-import { deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
+import { compareByDeliverySlot, deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
 import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
@@ -1476,7 +1476,8 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
+      key: 'time_range', label: 'Time Slot', width: 130, sortable: true, defaultHidden: true,
+      sortFn: compareByDeliverySlot,
       /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
          time_range via useUpdateDeliveryFields (no DO yet → the server saves
          nothing and returns no_do_hint, which we surface); a DP row (owner

@@ -14,6 +14,7 @@
 // read the same key; pinned by delivery-date-group.test.ts.
 // ----------------------------------------------------------------------------
 import type { PlanningOrder } from './delivery-planning-queries';
+import { runSheetTieBreak, type RunStopOrder } from '../../../mobile/runSheetOrder';
 
 /** The comparator / bucketers read only these two fields, so tests (and any
  *  future caller) can build rows without the full PlanningOrder shape. */
@@ -39,6 +40,22 @@ export function compareByDeliveryDate(a: DeliveryDateRow, b: DeliveryDateRow): n
   if (!av) return 1;
   if (!bv) return -1;
   return av < bv ? -1 : av > bv ? 1 : 0;
+}
+
+/** The comparator below also reads the lorry and the driver's run-sheet keys. */
+export type DeliverySlotRow = DeliveryDateRow & RunStopOrder & {
+  crew?: { lorry_plate: string | null } | null;
+};
+
+/* Reporter 2026-11-04: drivers lost track of which bill comes first, so each
+   lorry's day reads earliest Time Slot first, the same order as the driver's
+   phone run-sheet. Lorry sits above the slot so two lorries never interleave;
+   rows with no lorry yet sink to the end of their day. */
+export function compareByDeliverySlot(a: DeliverySlotRow, b: DeliverySlotRow): number {
+  const la = (a.crew?.lorry_plate ?? '').trim();
+  const lb = (b.crew?.lorry_plate ?? '').trim();
+  const byLorry = !la || !lb ? Number(!la) - Number(!lb) : la.localeCompare(lb);
+  return compareByDeliveryDate(a, b) || byLorry || runSheetTieBreak(a, b);
 }
 
 /** The row's month bucket key: 'YYYY-MM', or '' when it has no delivery date
