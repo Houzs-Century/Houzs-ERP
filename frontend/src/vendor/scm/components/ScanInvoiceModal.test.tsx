@@ -34,7 +34,7 @@ describe('ScanInvoiceModal', () => {
     mount();
     await waitFor(() => expect(screen.getAllByLabelText('Show the lines').length).toBe(2));
     fireEvent.click(screen.getAllByLabelText('Show the lines')[0]);
-    expect(screen.getByText(/The draft bills the receipt price/)).toBeTruthy();
+    expect(screen.getByText(/The draft bills the GRN price/)).toBeTruthy();
   });
 });
 
