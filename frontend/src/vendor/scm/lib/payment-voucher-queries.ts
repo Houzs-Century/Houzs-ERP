@@ -280,7 +280,10 @@ export const useRejectPaymentVoucher = () => {
 export type BillExtraction = {
   vendorName: string | null; vendorRegNo: string | null;
   /** proforma / quotation: not yet the real invoice — a payment on it owes the official one (item 3). */
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
+  /** payment_proof (a transfer slip) / summary (a claim listing): read, but not a bill — the pile sets them aside. */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'payment_proof' | 'summary' | 'unknown';
+  /** One page of several separate purchases — each line is one purchase. Absent from an older reader. */
+  severalReceipts?: boolean;
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;
