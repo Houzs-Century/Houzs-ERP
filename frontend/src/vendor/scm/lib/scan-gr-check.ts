@@ -41,7 +41,7 @@ export type CheckDoc = {
   repeatOf: string | null;
   blocked: string | null;
 };
-export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; name: string | null; remaining: number; warehouse: string | null };
+export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
 export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null };
@@ -93,6 +93,16 @@ export function poOptions(lines: ReadonlyArray<CheckPoLine>): SearchableSelectOp
   return [...count].map(([po, n]) => ({ value: po, label: po, search: `${po} ${n}` }));
 }
 
+/** What the paper printed, in one short line: the code only when the description
+ *  does not already start with it, and without the ***** filler or our own SO and
+ *  PO numbers, which the row shows anyway. */
+export function printedText(read: { itemCode: string | null; description: string | null }): string {
+  const squash = (s: string) => s.replace(/\s+/g, '').toUpperCase();
+  const desc = (read.description ?? '').replace(/\*{2,}/g, ' ').replace(/\*?\b[A-Z0-9]+-(?:SO|PO)-[\d-]+/gi, ' ').replace(/\s+/g, ' ').trim();
+  const code = read.itemCode?.trim() ?? '';
+  return !code || squash(desc).startsWith(squash(code)) ? desc : desc ? `${code} · ${desc}` : code;
+}
+
 export const skuValue = (l: ReviewLine): string => (l.gift ? `gift:${l.gift.itemCode}` : l.poItemId ? `line:${l.poItemId}` : '');
 
 /** The SKU dropdown of a row. With a PO chosen: what is still owed on that PO.
@@ -103,7 +113,7 @@ export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArra
   const out: SkuOption[] = onPo.map((l) => ({
     value: `line:${l.poItemId}`,
     label: l.supplierSku || l.itemCode,
-    detail: [l.supplierSku ? l.itemCode : null, poNumber ? null : l.poNumber, `owed ${l.remaining}`].filter(Boolean).join(' · '),
+    detail: [l.supplierSku ? l.itemCode : null, l.spec, poNumber ? null : l.poNumber, `owed ${l.remaining}`].filter(Boolean).join(' · '),
     group: poNumber ? `Still owed on ${poNumber}` : 'Still owed on open POs',
     search: `${l.supplierSku ?? ''} ${l.itemCode} ${l.name ?? ''} ${l.poNumber}`,
   }));
