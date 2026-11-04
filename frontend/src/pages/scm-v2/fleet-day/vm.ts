@@ -11,6 +11,7 @@ import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
+import type { MapRoute, MapRouteStop, MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
 import {
   slotKindOf, slotLabelOf, slotSortKey, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
@@ -334,6 +335,64 @@ export function buildLorryCards(
   });
   cards.sort((a, b) => (a.isInternal === b.isInternal ? a.plate.localeCompare(b.plate) : a.isInternal ? -1 : 1));
   return cards;
+}
+
+/** A drop the board could not put on the map: its code line + why, so the panel
+ *  shows "N of M stops couldn't be located" instead of silently dropping it. */
+export type UnlocatedStop = { ref: string; label: string; reason: string };
+
+/** The lorry cards -> per-lorry map routes (one coloured, numbered polyline per
+ *  lorry), in the SAME delivery-time order the cards show (run.docs is already
+ *  sorted). A drop with a geocoded address becomes a numbered stop; one without
+ *  joins `unlocated` (surfaced, never dropped) — an SO with no pin because its
+ *  address won't geocode, or a non-SO job the geo feed doesn't locate. A lorry
+ *  with no drops has no route. `allRefs` keeps EVERY drop (located or not) so the
+ *  by-lorry focus still filters the board to the whole run. PURE. */
+export function buildLorryRoutes(
+  runs: readonly LorryRunVM[],
+  pointByRef: ReadonlyMap<string, MapLatLng>,
+  depot: MapLatLng | null,
+  colorForPlate: (plateKey: string) => string,
+): { routes: MapRoute[]; unlocated: UnlocatedStop[] } {
+  const routes: MapRoute[] = [];
+  const unlocated: UnlocatedStop[] = [];
+  for (const run of runs) {
+    if (run.docs.length === 0) continue;
+    const key = platekey(run.plate);
+    const stops: MapRouteStop[] = [];
+    for (const d of run.docs) {
+      const pt = pointByRef.get(d.soDocNo);
+      const label = d.customer || d.codeLine || d.soDocNo;
+      if (!pt) {
+        unlocated.push({
+          ref: d.soDocNo,
+          label: d.codeLine || d.soDocNo,
+          reason: d.rowType === 'so' ? '地址定位不到' : '非送货作业，暂无定位',
+        });
+        continue;
+      }
+      stops.push({
+        ref: d.soDocNo,
+        lat: pt.lat,
+        lng: pt.lng,
+        order: stops.length + 1,
+        label,
+        windowLabel: d.slotLabel || null,
+      });
+    }
+    routes.push({
+      id: key,
+      color: colorForPlate(key),
+      title: run.plate,
+      crewLabel: run.driverName,
+      depot,
+      stops,
+      allRefs: run.docs.map((d) => d.soDocNo),
+      delivered: run.rollup.delivered,
+      total: run.rollup.drops,
+    });
+  }
+  return { routes, unlocated };
 }
 
 /* ── Filter row + search ──────────────────────────────────────────────────*/
