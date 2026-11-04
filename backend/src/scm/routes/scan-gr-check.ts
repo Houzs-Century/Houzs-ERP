@@ -24,7 +24,8 @@ import { IMAGE_MIMES, MAX_FILE_BYTES, sha256Hex } from '../lib/scan-ocr';
 import { askBoundaries, cutPdf, pdfPageCount, planChunks } from '../lib/scan-split';
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 import { loadOpenPoLines, loadSuppliers } from '../lib/grn-scan-load';
-import { blockedReason, cleanReview, duplicateOf, giftsOf, picksOf, type GrnReview } from '../lib/grn-scan-check';
+import { paginateAll } from '../lib/paginate-all';
+import { blockedReason, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from '../lib/grn-scan-check';
 import { saveScanCodes } from '../lib/grn-scan-codes';
 import { addGiftLines, giftNote, loadCatalogueProducts } from '../lib/grn-scan-gifts';
 import { runGrnJobFromRow } from './scan-gr';
@@ -145,15 +146,15 @@ scanGrCheck.get('/pending', async (c) => {
 
   const [suppliers, openLines] = await Promise.all([loadSuppliers(svc, companyId), loadOpenPoLines(svc, companyId)]);
   const open = new Map(openLines.map((l) => [l.poItemId, l]));
-  const refs = [...new Set(rows.map((r) => r.review?.doNo).filter((x): x is string => !!x))];
-  const existing: Array<{ grnNumber: string; supplierId: string | null; deliveryNoteRef: string | null }> = [];
+  const refs = [...new Set(rows.flatMap((r) => (r.review?.doNo ? refVariants(r.review.doNo) : [])))];
+  const existing: ExistingGrn[] = [];
   if (refs.length > 0) {
-    const { data: g, error: gErr } = await svc.from('grns').select('grn_number, supplier_id, delivery_note_ref')
+    const { data: g, error: gErr } = await svc.from('grns').select('id, grn_number, supplier_id, delivery_note_ref, status, received_at')
       .eq('company_id', companyId).neq('status', 'CANCELLED').in('delivery_note_ref', refs);
     // Without this read no repeat could be flagged, so the list is refused rather than shown clean.
     if (gErr) return c.json({ error: 'query_failed', reason: 'Could not check for delivery orders already received. Please try again.' }, 500);
-    for (const x of (g as Array<{ grn_number: string; supplier_id: string | null; delivery_note_ref: string | null }> | null) ?? []) {
-      existing.push({ grnNumber: x.grn_number, supplierId: x.supplier_id, deliveryNoteRef: x.delivery_note_ref });
+    for (const x of (g as Array<{ id: string; grn_number: string; supplier_id: string | null; delivery_note_ref: string | null; status: string; received_at: string | null }> | null) ?? []) {
+      existing.push({ id: x.id, grnNumber: x.grn_number, supplierId: x.supplier_id, deliveryNoteRef: x.delivery_note_ref, status: x.status, receivedAt: x.received_at });
     }
   }
   // Marked as gold = the read is a good example the scanner learns from (so_scan_samples ACCEPTED / CONFIRMED).
@@ -165,12 +166,14 @@ scanGrCheck.get('/pending', async (c) => {
     for (const x of (ss as Array<{ id: string; status: string }> | null) ?? []) if (x.status === 'ACCEPTED' || x.status === 'CONFIRMED') gold.add(x.id);
   }
   const supplierIds = new Set(rows.map((r) => r.review?.supplierId).filter(Boolean));
+  const repeats = repeatsInList(rows.map((r) => ({ id: r.id, fileName: r.file_name, review: r.review })));
   const documents = rows.map((r) => ({
     id: r.id, batchId: r.batch_id, fileName: r.file_name, pages: r.page_from != null ? [r.page_from, r.page_to] : null,
     state: r.status === 'error' ? 'failed' : r.review_state, note: r.error, review: r.review, createdAt: r.created_at,
     hasFile: (r.image_keys ?? []).length > 0,
     canGold: !!r.sample_id, gold: !!r.sample_id && gold.has(r.sample_id),
     duplicateOf: r.review ? duplicateOf(r.review, existing) : null,
+    repeatOf: repeats.get(r.id) ?? null,
     blocked: r.review ? blockedReason(r.review, open) : null,
   }));
   return c.json({ success: true, data: {
@@ -183,17 +186,20 @@ scanGrCheck.get('/pending', async (c) => {
   } });
 });
 
-/* GET /scan-gr/check/products?search= — ACTIVE products of this company, to say
-   which of ours a free gift is. Code or name contains, 20 at most. */
-scanGrCheck.get('/products', async (c) => {
-  const term = (c.req.query('search') ?? '').trim();
-  if (term.length < 2) return c.json({ success: true, data: { products: [] } });
-  const like = `%${term.replace(/[%_,()]/g, ' ')}%`;
-  const { data, error } = await svcOf(c.env).from('mfg_products').select('code, name')
-    .eq('company_id', activeCompanyId(c)).eq('status', 'ACTIVE')
-    .or(`code.ilike.${like},name.ilike.${like}`).order('code').limit(20);
-  if (error) return c.json({ error: 'query_failed', reason: 'Could not search products. Please try again.' }, 500);
-  return c.json({ success: true, data: { products: (data as Array<{ code: string; name: string | null }> | null) ?? [] } });
+/* GET /scan-gr/check/supplier-skus?supplierId= — the SKUs bound to one supplier
+   (owner 2026-11-04: what a supplier hands over is always under that supplier).
+   A row picks from these; one on no open PO can only be a free gift. */
+scanGrCheck.get('/supplier-skus', async (c) => {
+  const supplierId = c.req.query('supplierId') ?? '';
+  const companyId = activeCompanyId(c) ?? null;
+  const svc = svcOf(c.env);
+  const { data, error } = await paginateAll((from, to) => svc.from('supplier_material_bindings')
+    .select('item_code, material_name').eq('supplier_id', supplierId).eq('company_id', companyId).eq('material_kind', 'mfg_product')
+    .order('id').range(from, to));
+  if (error) return c.json({ error: 'query_failed', reason: 'Could not load this supplier\'s SKUs. Please try again.' }, 500);
+  const seen = new Map<string, string | null>();
+  for (const r of (data ?? []) as Array<{ item_code: string | null; material_name: string | null }>) if (r.item_code) seen.set(r.item_code, r.material_name);
+  return c.json({ success: true, data: { skus: [...seen].map(([code, name]) => ({ code, name })) } });
 });
 
 /* Open PO lines of one supplier, when the operator changes a document's supplier. */

@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Plus, Trash2, Upload, X } from 'lucide-react';
+import { CheckCircle2, Upload, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { compressForOcr } from '../../shared/image-compress';
 import { writeFailedAs } from '../lib/mutation-error';
@@ -28,6 +28,7 @@ import {
 import { DateField } from './DateField';
 import { ScanGrnCheckCard } from './ScanGrnCheckCard';
 import styles from './ScanOrderModal.module.css';
+import check from './ScanGrnCheck.module.css';
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf';
 const isAcceptedFile = (f: File): boolean =>
@@ -70,7 +71,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     setTicked((cur) => {
       const next = { ...cur };
-      for (const d of docs) if (d.state === 'pending' && next[d.id] === undefined) next[d.id] = !d.duplicateOf;
+      for (const d of docs) if (d.state === 'pending' && next[d.id] === undefined) next[d.id] = !d.duplicateOf && !d.repeatOf;
       return next;
     });
   }, [docs]);
@@ -161,21 +162,37 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   return (
     <div className={styles.modal} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className={styles.panel} style={{ maxWidth: 1240, width: '96vw' }}>
-        <div className={styles.head}>
-          <div>
-            <div className={styles.eyebrow}>Goods Receipt</div>
-            <h2 className={styles.title}>Scan Delivery Orders</h2>
-            <p className={styles.sub}>Drop the supplier delivery orders — one PDF with many, or many files. We read each one, you check it, then create the draft goods receipts. You can close this and come back; nothing is lost.</p>
+        <div className={styles.head} style={{ alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flex: 1, flexWrap: 'wrap' }}>
+            <h2 className={styles.title} style={{ margin: 0 }}>Scan delivery orders</h2>
+            <div className={check.steps}>
+              {['Upload', 'Check', 'Create'].map((s, i) => {
+                const at = showUpload ? 0 : results.length > 0 && pending.length === 0 ? 2 : 1;
+                return <span key={s} style={{ display: 'contents' }}>{i > 0 && <span className={check.stepLine} />}<span className={i === at ? check.stepOn : ''}>{s}</span></span>;
+              })}
+            </div>
           </div>
           <button type="button" className={styles.closeBtn} onClick={close} aria-label="Close"><X size={18} strokeWidth={1.75} /></button>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, padding: '0 24px 8px', fontSize: 12 }}>
-          {['1. Upload', '2. Check', '3. Create'].map((s, i) => {
-            const at = showUpload ? 0 : results.length > 0 && pending.length === 0 ? 2 : 1;
-            return <span key={s} className={`${styles.chip} ${i === at ? styles.chipTeal : i < at ? styles.chipGreen : styles.chipGrey}`}>{s}</span>;
-          })}
-        </div>
+        {!showUpload && docs.length > 0 && (
+          <div className={check.toolbar}>
+            <label className={check.selectAll}>
+              <input type="checkbox" checked={pending.length > 0 && selected.length === pending.length} onChange={(e) => setTicked(Object.fromEntries(pending.map((d) => [d.id, e.target.checked])))} />
+              {selected.length} of {pending.length} selected{reading > 0 ? ` · ${reading} still reading` : ''}
+            </label>
+            <span style={{ flex: 1 }} />
+            {selected.length > 1 && (
+              <>
+                <span>Received date for selected</span>
+                <DateField value={bulkDate} onChange={setBulkDate} aria-label="Received date for selected" />
+                <Button variant="secondary" size="sm" onClick={applyBulkDate} disabled={!bulkDate}>Apply</Button>
+              </>
+            )}
+            {selected.length > 0 && <Button variant="secondary" size="sm" onClick={() => void remove(selected.map((d) => d.id))}>Delete selected</Button>}
+            <Button variant="secondary" size="sm" onClick={() => void remove(docs.map((d) => d.id))}>Clear all</Button>
+          </div>
+        )}
 
         <div className={styles.body}>
           {q.error && <div className={styles.error}>Could not load your scans: {(q.error as Error).message}</div>}
@@ -227,28 +244,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{pending.length} delivery order{pending.length === 1 ? '' : 's'} to check{reading > 0 ? ` · ${reading} still reading` : ''}</div>
-                  <div className={styles.sub}>{selected.length} selected — open a card to edit it, then create.</div>
-                </div>
-                <span style={{ flex: 1 }} />
-                {selected.length > 1 && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className={styles.sub}>Received date for the selected</span>
-                    <DateField value={bulkDate} onChange={setBulkDate} aria-label="Received date for the selected" />
-                    <Button variant="secondary" size="sm" onClick={applyBulkDate} disabled={!bulkDate}>Apply</Button>
-                  </span>
-                )}
-                {pending.length > 0 && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                    <input type="checkbox" checked={selected.length === pending.length} onChange={(e) => setTicked(Object.fromEntries(pending.map((d) => [d.id, e.target.checked])))} /> All
-                  </label>
-                )}
-                {selected.length > 0 && <Button variant="secondary" size="sm" onClick={() => void remove(selected.map((d) => d.id))}><Trash2 size={13} /> Delete selected</Button>}
-                {docs.length > 0 && <Button variant="secondary" size="sm" onClick={() => void remove(docs.map((d) => d.id))}><Trash2 size={13} /> Clear all</Button>}
-              </div>
-
+              <div className={check.list}>
               {docs.map((d) => (
                 <ScanGrnCheckCard
                   key={d.id}
@@ -261,10 +257,12 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                   onToggle={() => setTicked((cur) => ({ ...cur, [d.id]: !cur[d.id] }))}
                   onChange={(r) => edit(d.id, r)}
                   onDelete={() => void remove([d.id])}
+                  onOpenGrn={(id) => { close(); navigate(`/scm/grns/${id}`); }}
                   onGold={() => { markGold(d.id).then(() => qc.invalidateQueries({ queryKey: PENDING_KEY })).catch(writeFailedAs('Could not mark it as gold')); }}
                   onRetry={() => { retryScan(d.id).then(() => qc.invalidateQueries({ queryKey: PENDING_KEY })).catch(writeFailedAs('Could not read it again')); }}
                 />
               ))}
+              </div>
               {docs.length === 0 && results.length > 0 && <p className={styles.sub}>Every scan you uploaded in the last 14 days has been created or deleted.</p>}
             </>
           )}
@@ -280,10 +278,10 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
             </>
           ) : (
             <>
-              <Button variant="secondary" size="sm" onClick={() => setAdding(true)}><Plus size={13} /> Add more files</Button>
+              <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>+ Add files</Button>
               {made.length > 0 && <Button variant="secondary" size="sm" onClick={() => { close(); navigate('/scm/grns'); }}>Go to Goods Receipts</Button>}
               <Button variant="primary" size="sm" onClick={() => void create()} disabled={creating || creatable.length === 0}>
-                {creating ? 'Creating…' : `Create ${creatable.length} goods receipt${creatable.length === 1 ? '' : 's'} as DRAFT`}
+                {creating ? 'Creating…' : `Create ${creatable.length} goods receipt${creatable.length === 1 ? '' : 's'} as draft`}
               </Button>
             </>
           )}

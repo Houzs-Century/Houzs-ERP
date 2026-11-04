@@ -43,12 +43,13 @@ covers every page once, in order). Each document is a `scan_jobs` row with `batc
 `review_state` `reading -> pending -> created | discarded`; the runner keeps the read +
 match as `review` (`lib/grn-scan-check.ts` `buildReview`) instead of drafting. `GET /pending`
 returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open PO lines,
-`duplicateOf` (a non-cancelled GRN of the same supplier with that `delivery_note_ref`) and
-`blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
+`duplicateOf` (a non-cancelled GRN of the same supplier with that `delivery_note_ref`, spacing and
+case aside), `repeatOf` (the same D.O. earlier in the waiting list) and `blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
 `createDraftGrnFromPoItems` (DRAFT only, company-scoped PO-line read, qty capped);
 `POST /discard {ids}` hides rows. A repeat starts unticked; the operator may still create it.
-**Free gifts** (a row on no PO, e.g. DIGLANT's pillows): the operator marks the row "Free gift:
-choose our product" (`GET /check/products`, ACTIVE products of the company). Create adds it to the
+**Free gifts** (a row on no PO, e.g. DIGLANT's pillows): a row picks PO and SKU from dropdowns; the SKU list
+is what is owed on the chosen PO, else everything owed plus the supplier's other SKUs
+(`GET /check/supplier-skus`), which can only be free gifts. Create adds it to the
 first draft with no PO link at RM0, zero-cost acknowledged (`lib/grn-scan-gifts.ts`), so it never
 reaches AutoCount, and remembers the printed code in `scm.supplier_scan_codes`: the next delivery
 order arrives with that row already marked. A document needs at least one PO line to be created.

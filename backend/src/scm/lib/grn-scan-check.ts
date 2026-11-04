@@ -19,6 +19,8 @@ import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 export type ReviewLine = {
   key: string;
   poItemId: string | null;
+  // The PO chosen on the row before its item is (the PO dropdown narrows the SKU one).
+  poNumber: string | null;
   gift: { itemCode: string; name: string } | null;
   qty: number;
   read: { itemCode: string | null; description: string | null; qty: number; poNo: string | null } | null;
@@ -45,18 +47,18 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
  *  what was printed, so nothing read is silently dropped. */
 export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>): GrnReview {
   const lines: ReviewLine[] = [];
-  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, gift: null, qty: p.qty, read: null });
+  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, poNumber: null, gift: null, qty: p.qty, read: null });
   for (const u of match?.unmatched ?? []) {
     if (u.line.qty <= 0) continue;
     // A printed code taught as a free gift arrives already marked as one.
     const taught = isGiftRow(u.line, gifts) ? gifts.find((g) => [u.line.itemCode, u.line.barcode].includes(g.printedCode)) : undefined;
     lines.push({
-      key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null,
+      key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null, poNumber: null,
       gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, read: readOf(u.line),
     });
   }
   // A read the matcher never saw (supplier unknown, nothing matched): keep every printed line.
-  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, gift: null, qty: l.qty, read: readOf(l) });
+  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, poNumber: null, gift: null, qty: l.qty, read: readOf(l) });
   return {
     supplierId,
     supplierRead: parsed?.supplierName ?? null,
@@ -87,6 +89,7 @@ export function cleanReview(input: unknown): GrnReview | null {
       key: str(l.key) ?? lineKey(),
       // A line is one or the other: a gift is on no PO.
       poItemId: giftCode ? null : str(l.poItemId),
+      poNumber: giftCode ? null : str(l.poNumber),
       gift: giftCode ? { itemCode: giftCode, name: str(g?.name) ?? giftCode } : null,
       qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
       read: read ? { itemCode: str(read.itemCode), description: str(read.description), qty: Number(read.qty) || 0, poNo: str(read.poNo) } : null,
@@ -136,11 +139,34 @@ export function blockedReason(review: GrnReview, open: ReadonlyMap<string, OpenP
   return null;
 }
 
+const refKey = (s: string | null | undefined) => s?.replace(/\s+/g, '').toUpperCase() ?? '';
+
+/** Spellings of a delivery order number to look for in the database, which
+ *  compares exactly; duplicateOf then compares ignoring spacing and case. */
+export const refVariants = (doNo: string): string[] => [...new Set([doNo, doNo.toUpperCase(), doNo.toLowerCase(), doNo.replace(/\s+/g, ''), refKey(doNo)])];
+
+export type ExistingGrn = { id: string; grnNumber: string; supplierId: string | null; deliveryNoteRef: string | null; status: string; receivedAt: string | null };
+
 /** "Already received" — a goods receipt of this supplier already carries this
  *  delivery order number. The operator still chooses: create anyway, or delete. */
-export function duplicateOf(review: GrnReview, existing: ReadonlyArray<{ grnNumber: string; supplierId: string | null; deliveryNoteRef: string | null }>): string | null {
-  const ref = review.doNo?.replace(/\s+/g, '').toUpperCase();
+export function duplicateOf(review: GrnReview, existing: ReadonlyArray<ExistingGrn>): ExistingGrn | null {
+  const ref = refKey(review.doNo);
   if (!ref) return null;
-  const hit = existing.find((g) => g.deliveryNoteRef?.replace(/\s+/g, '').toUpperCase() === ref && (!review.supplierId || !g.supplierId || g.supplierId === review.supplierId));
-  return hit?.grnNumber ?? null;
+  return existing.find((g) => refKey(g.deliveryNoteRef) === ref && (!review.supplierId || !g.supplierId || g.supplierId === review.supplierId)) ?? null;
+}
+
+/** The same delivery order twice in the waiting list, before any receipt exists:
+ *  each later copy names the first. Id of the later copy -> file of the first. */
+export function repeatsInList(docs: ReadonlyArray<{ id: string; fileName: string | null; review: GrnReview | null }>): Map<string, string> {
+  const first = new Map<string, string>();
+  const out = new Map<string, string>();
+  for (const d of docs) {
+    const ref = refKey(d.review?.doNo);
+    if (!ref) continue;
+    const key = `${d.review?.supplierId ?? ''}|${ref}`;
+    const seen = first.get(key);
+    if (seen === undefined) first.set(key, d.fileName ?? 'another scan');
+    else out.set(d.id, seen);
+  }
+  return out;
 }
