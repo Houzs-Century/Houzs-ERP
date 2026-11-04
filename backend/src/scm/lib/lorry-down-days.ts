@@ -26,8 +26,8 @@ export function breakdownWindows(cases: readonly DownCase[], today: string): Dow
   return out;
 }
 
-/** Working days (Mon to Sat) each lorry was down inside [from, to]. */
-export function downDays(windows: readonly DownWindow[], from: string, to: string): Map<string, number> {
+/** The working days (Mon to Sat) each lorry was down inside [from, to]. */
+export function downDates(windows: readonly DownWindow[], from: string, to: string): Map<string, Set<string>> {
   const days = new Map<string, Set<string>>();
   for (const w of windows) {
     const start = w.from > from ? w.from : from;
@@ -40,7 +40,12 @@ export function downDays(windows: readonly DownWindow[], from: string, to: strin
       days.set(w.lorryId, seen);
     }
   }
-  return new Map([...days].map(([id, s]) => [id, s.size]));
+  return days;
+}
+
+/** How many working days each lorry was down inside [from, to]. */
+export function downDays(windows: readonly DownWindow[], from: string, to: string): Map<string, number> {
+  return new Map([...downDates(windows, from, to)].map(([id, s]) => [id, s.size]));
 }
 
 type Res<T> = { data: T[] | null; error: { message: string } | null };

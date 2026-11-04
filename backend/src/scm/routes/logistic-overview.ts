@@ -16,7 +16,7 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { serveSwr, type SwrBuild } from '../lib/kv-swr';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
-import { downDays, loadDownWindows } from '../lib/lorry-down-days';
+import { downDates, loadDownWindows } from '../lib/lorry-down-days';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
@@ -188,7 +188,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const pEnd = pTo < today ? pTo : today;
   const down = await loadDownWindows(sb, pFrom, pEnd, today);
   if (down.error) return fail('lorry down days', { message: down.error });
-  const downByPlate = new Map([...downDays(down.windows, pFrom, pEnd)].map(([id, n]) => [plateOf.get(id) ?? id, n]));
+  const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
   const period = {
     from: pFrom, to: pTo,
     doCount: pDos.length,

@@ -41,7 +41,7 @@ export type CheckDoc = {
   repeatOf: string | null;
   blocked: string | null;
 };
-export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; name: string | null; remaining: number; warehouse: string | null };
+export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; warehouseId?: string | null; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
 export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null };
