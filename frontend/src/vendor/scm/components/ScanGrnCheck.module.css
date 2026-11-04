@@ -142,6 +142,9 @@
   .head > :nth-child(n + 4) { grid-column: 1 / -1; }
   .row { grid-template-columns: 1fr 72px 28px; }
   .rowHead, .num { display: none; }
-  .banner, .hint { margin-left: 12px; padding-left: 12px; }
+  .banner, .hint, .amounts { margin-left: 12px; padding-left: 12px; }
 }
-.rowPi { grid-template-columns: 28px 170px 230px minmax(0, 1fr) 56px 72px 28px; }
+.rowPi { grid-template-columns: 28px 150px 200px minmax(0, 1fr) 44px 60px 92px 92px 28px; }
+.amounts { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 0 12px 10px 66px; font-size: 12px; color: #767b6e; }
+.amounts strong { font-weight: 600; color: #2b2e28; }
+.amounts strong.priceOff, .priceOff { color: #b23a3a; }

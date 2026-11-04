@@ -121,7 +121,7 @@ describe('piPoPriceSummaryByInvoice — the list marker', () => {
       { purchase_invoice_id: 'B', qty: 3, unit_price_sen: 21_380, po_unit_price_sen: 0 },
       { purchase_invoice_id: 'B', qty: 1, unit_price_sen: 900, po_unit_price_sen: null },
     ]);
-    expect(out.get('A')).toEqual({ linesDiffering: 2, totalDiffSen: 8_000, comparableLines: 3, lines: 3 });
-    expect(out.get('B')).toEqual({ linesDiffering: 0, totalDiffSen: 0, comparableLines: 0, lines: 2 });
+    expect(out.get('A')).toEqual({ linesDiffering: 2, totalDiffSen: 8_000, comparableLines: 3, lines: 3, poAmountSen: 125_000 });
+    expect(out.get('B')).toEqual({ linesDiffering: 0, totalDiffSen: 0, comparableLines: 0, lines: 2, poAmountSen: 0 });
   });
 });

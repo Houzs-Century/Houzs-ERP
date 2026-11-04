@@ -220,7 +220,7 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
    HAD a PO price to compare at all — so the list can say "no PO price" rather
    than a reassuring "matches" for an invoice nothing could be compared on.
    Information only (owner 2026-09-14: 「这只是一个 reference 的」). */
-export type PiPoPriceSummary = { linesDiffering: number; totalDiffSen: number; comparableLines: number; lines: number };
+export type PiPoPriceSummary = { linesDiffering: number; totalDiffSen: number; comparableLines: number; lines: number; poAmountSen: number };
 
 export const piPoPriceSummaryByInvoice = (
   lines: ReadonlyArray<{ purchase_invoice_id: string; qty?: number | null; unit_price_sen?: number | null; po_unit_price_sen?: number | null }>,
@@ -234,8 +234,9 @@ export const piPoPriceSummaryByInvoice = (
   const out = new Map<string, PiPoPriceSummary>();
   for (const [id, arr] of grouped) {
     const { linesDiffering, totalDiffSen } = piPriceDifferenceSummary(arr);
-    const comparableLines = arr.filter((a) => a.poUnitPriceSen != null && a.poUnitPriceSen !== 0).length;
-    out.set(id, { linesDiffering, totalDiffSen, comparableLines, lines: arr.length });
+    const comparable = arr.filter((a) => a.poUnitPriceSen != null && a.poUnitPriceSen !== 0);
+    const poAmountSen = comparable.reduce((sum, a) => sum + Math.round(a.qty * (a.poUnitPriceSen ?? 0)), 0);
+    out.set(id, { linesDiffering, totalDiffSen, comparableLines: comparable.length, lines: arr.length, poAmountSen });
   }
   return out;
 };
