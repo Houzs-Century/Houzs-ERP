@@ -25,7 +25,10 @@ import { askBoundaries, cutPdf, pdfPageCount, planChunks } from '../lib/scan-spl
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 import { loadOpenPoLines, loadSuppliers } from '../lib/grn-scan-load';
 import { paginateAll } from '../lib/paginate-all';
-import { blockedReason, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from '../lib/grn-scan-check';
+import { REVIEW_VERSION, blockedReason, cleanReview, codesToTeach, duplicateOf, giftsOf, picksOf, racksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from '../lib/grn-scan-check';
+import { reviewOfRead } from '../lib/grn-scan-check-read';
+import type { GrnExtracted } from '../lib/grn-scan-extract';
+import { applyScanRacks, scanRackNote } from '../lib/grn-scan-racks';
 import { saveScanCodes } from '../lib/grn-scan-codes';
 import { addGiftLines, giftNote, loadCatalogueProducts } from '../lib/grn-scan-gifts';
 import { runGrnJobFromRow } from './scan-gr';
@@ -98,7 +101,9 @@ scanGrCheck.post('/upload', async (c) => {
       .eq('file_hash', fileHash).not('review', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
     // A failed look-up only costs a fresh read, never a wrong one.
     if (priorErr) console.warn('[scan-gr check] earlier-read look-up failed, reading afresh:', priorErr.message);
-    const seen = priorErr ? null : (prior as { review: unknown; error: string | null } | null);
+    const found = priorErr ? null : (prior as { review: { v?: number } | null; error: string | null } | null);
+    // A read kept in an older shape is read again rather than reused without racks.
+    const seen = found?.review?.v === REVIEW_VERSION ? found : null;
     const { data, error } = await svc.from('scan_jobs').insert({
       status: seen ? 'done' : 'queued', document_type: 'GR', review_state: seen ? 'pending' : 'reading', batch_id: batchId,
       review: seen?.review ?? null, error: seen ? seen.error : null, file_hash: fileHash,
@@ -129,6 +134,27 @@ scanGrCheck.post('/upload', async (c) => {
   return c.json({ success: true, data: { batchId, documents: ids.length + reused, reused } }, 202);
 });
 
+/* A working copy written before racks and name matching: rebuild it from the
+   stored read, once, keeping the head the operator may have edited and any row
+   they tied that the rebuild did not. */
+async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows: CheckRow[]): Promise<void> {
+  for (const r of rows) {
+    if (r.review_state !== 'pending' || !r.review || r.review.v === REVIEW_VERSION || !r.sample_id) continue;
+    const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
+    if (error) { console.warn('[scan-gr check] read not loaded, copy left as it is:', r.id, error.message); continue; }
+    const parsed = (data as { extracted: GrnExtracted | null } | null)?.extracted ?? null;
+    if (!parsed || !Array.isArray(parsed.lines)) continue;
+    const { review, note } = await reviewOfRead(svc, companyId, parsed);
+    const had = new Set(review.lines.map((l) => l.poItemId));
+    const kept = r.review.lines.filter((l) => l.poItemId && !had.has(l.poItemId)).map((l) => ({ ...l, rack: null, suggested: false }));
+    const next: GrnReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, doNo: r.review.doNo ?? review.doNo, deliveryDate: r.review.deliveryDate ?? review.deliveryDate, notes: r.review.notes, lines: [...review.lines, ...kept] };
+    const { error: upErr } = await svc.from('scan_jobs').update({ review: next, error: note }).eq('id', r.id).eq('company_id', companyId).eq('review_state', 'pending');
+    if (upErr) { console.warn('[scan-gr check] copy not upgraded:', r.id, upErr.message); continue; }
+    r.review = next;
+    r.error = note;
+  }
+}
+
 /* GET /scan-gr/check/pending — this user's documents still being read or
    waiting to be checked (last 14 days), with what the editor needs: the
    suppliers, the open PO lines of every supplier on them, and per document
@@ -143,6 +169,7 @@ scanGrCheck.get('/pending', async (c) => {
     .order('created_at', { ascending: true }).limit(200);
   if (error) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const rows = (data as CheckRow[] | null) ?? [];
+  await upgradeCopies(svc, companyId, rows);
 
   const [suppliers, openLines] = await Promise.all([loadSuppliers(svc, companyId), loadOpenPoLines(svc, companyId)]);
   const open = new Map(openLines.map((l) => [l.poItemId, l]));
@@ -250,6 +277,7 @@ scanGrCheck.post('/create', async (c) => {
   const houzsUserId = callerId(c);
   const userId = (await resolveCallerStaffId(svc, houzsUserId)) ?? c.get('user').id;
   const results: Array<{ id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null }> = [];
+  const itemOfLine = new Map((await loadOpenPoLines(svc, companyId)).map((l) => [l.poItemId, l.itemCode]));
   for (const r of rows) {
     const review = r.review as GrnReview;
     const picks = picksOf(review);
@@ -278,14 +306,20 @@ scanGrCheck.post('/create', async (c) => {
     const products = await loadCatalogueProducts(svc, companyId, wanted.map((g) => g.itemCode));
     const added = await addGiftLines(svc, companyId, res.created[0].id, wanted.filter((g) => products.has(g.itemCode)), userId);
     const skipped = wanted.length - added.length;
-    const teach = added.filter((g) => g.printedCode).map((g) => ({ printedCode: g.printedCode, itemCode: g.itemCode }));
+    const rackNote = scanRackNote(await applyScanRacks(svc, companyId, res.created.map((g) => g.id), racksOf(review)));
+    /* What the operator confirmed teaches the scanner: the printed code of each
+       row tied to a PO line, and of each gift. Next time it matches by itself. */
+    const teach = [
+      ...added.filter((g) => g.printedCode).map((g) => ({ printedCode: g.printedCode, itemCode: g.itemCode })),
+      ...codesToTeach(review, (id) => itemOfLine.get(id)),
+    ];
     if (teach.length > 0 && review.supplierId && companyId != null) {
       const saved = await saveScanCodes(svc, { companyId, supplierId: review.supplierId, userId: houzsUserId, pairs: teach });
       if (!saved.ok) console.warn('[scan-gr check] gift code not remembered:', saved.reason);
     }
     await svc.from('scan_jobs').update({ review_state: 'created', linked_doc_no: grnNumbers[0], updated_at: new Date().toISOString() })
       .eq('id', r.id).eq('company_id', companyId);
-    results.push({ id: r.id, ok: true, grnNumbers, giftNote: [giftNote(added), skipped > 0 ? `${skipped} free gift${skipped === 1 ? '' : 's'} could not be added; add them on the draft.` : null].filter(Boolean).join(' ') || null });
+    results.push({ id: r.id, ok: true, grnNumbers, giftNote: [giftNote(added), rackNote, skipped > 0 ? `${skipped} free gift${skipped === 1 ? '' : 's'} could not be added; add them on the draft.` : null].filter(Boolean).join(' ') || null });
   }
   return c.json({ success: true, data: { results } });
 });

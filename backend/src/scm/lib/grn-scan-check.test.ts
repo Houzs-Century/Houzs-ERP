@@ -1,30 +1,72 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
-import { blockedReason, buildReview, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
+import { REVIEW_VERSION, blockedReason, buildReview, codesToTeach, nameFits, racksOf, suggestByName, type ReviewLine, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
 const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryDate: '2026-11-03', lines: [
   { itemCode: 'A1', barcode: null, description: 'Mattress Q', qty: 2, poNo: null, rack: null },
   { itemCode: 'ZZ', barcode: null, description: 'Free pillow', qty: 1, poNo: null, rack: null },
 ] };
-const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
+const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], racks: { 'pi-1': 'R11-2' }, unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
 const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', materialName: null, supplierSku: null, remaining: 2, locationCode: 'KL' }]]);
 
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
-    const r = buildReview(parsed, 's1', match, []);
+    const r = buildReview(parsed, 's1', match, [], []);
     expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-03' });
-    expect(r.lines.map((l) => [l.poItemId, l.qty, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, null], [null, 1, 'ZZ']]);
+    expect(r.lines.map((l) => [l.poItemId, l.qty, l.rack, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, 'R11-2', null], [null, 1, null, 'ZZ']]);
   });
   test('a read the matcher never saw keeps every printed line', () => {
-    expect(buildReview(parsed, null, null, []).lines).toHaveLength(2);
+    expect(buildReview(parsed, null, null, [], []).lines).toHaveLength(2);
   });
   test('the saved edit keeps known fields only, drops a bad date and a negative qty', () => {
     const r = cleanReview({ supplierId: 's1', doNo: ' DO 77 ', deliveryDate: '03/11/2026', lines: [{ key: 'k', poItemId: 'pi-1', qty: -3, evil: 1 }], extra: 'x' });
-    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', poNumber: null, gift: null, qty: 0, read: null }] });
+    expect(r).toEqual({ v: REVIEW_VERSION, supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', poNumber: null, gift: null, qty: 0, rack: null, suggested: false, read: null }] });
+  });
+  describe('tying rows by the name printed (real DIGLANT rows, 2026-11-04)', () => {
+    const po = (poItemId: string, poNumber: string, itemCode: string, remaining: number): OpenPoLine => ({ poItemId, poId: poNumber, poNumber, supplierId: 's1', itemCode, materialName: null, supplierSku: null, remaining, locationCode: 'KL' });
+    const row = (description: string, qty: number): ReviewLine => ({ key: description, poItemId: null, poNumber: null, gift: null, qty, rack: null, suggested: false, read: { itemCode: 'T1', description, qty, poNo: null } });
+    test('the size must be a word of its own: (S) is not (SS)', () => {
+      expect(nameFits('Mattress Akemi Medi+Health Equinox K King 183x190x30cm', 'AKEMI EQUINOX MATT (K)')).toBe(true);
+      expect(nameFits('Mattress Akemi Medi+Health Ultimate SS Super Single', 'AKEMI ULTIMATE MATT (S)')).toBe(false);
+      expect(nameFits('Mattress Akemi Medi+Health Ultimate SS Super Single', 'AKEMI ULTIMATE MATT (SS)')).toBe(true);
+      expect(nameFits('Mattress Akemi Guardian Q Queen', 'AKEMI ULTIMATE MATT (Q)')).toBe(false);
+    });
+    test('a PO printed with its location finds our PO, and takes the row (DGSN26002432)', () => {
+      const lines = [row('Mattress Akemi Medi+Health Ultimate SS Super Single 107x190x36cm', 1)];
+      suggestByName(lines, [po('a', 'HC-PO-2610-358', 'AKEMI ULTIMATE MATT (SS)', 1)], ['HC-SBH-PO-2610-358']);
+      expect(lines[0]).toMatchObject({ poItemId: 'a', suggested: true });
+    });
+    test('the PO the other rows are on wins over the same SKU on other POs (DGSN26002439)', () => {
+      const lines: ReviewLine[] = [{ ...row('tied', 2), poItemId: 'other', read: null }, row('Mattress Akemi Medi+Health Equinox K King', 1)];
+      suggestByName(lines, [po('other', 'HC-PO-2610-359', 'AKEMI GUARDIAN MATT (Q)', 2), po('x', 'HC-PO-2610-356', 'AKEMI EQUINOX MATT (K)', 1), po('y', 'HC-PO-2610-359', 'AKEMI EQUINOX MATT (K)', 1)], []);
+      expect(lines[1].poItemId).toBe('y');
+    });
+    test('never a guess: the printed PO has no such line, or many POs fit and none is known', () => {
+      const a = [row('Mattress Akemi Guardian Q Queen', 3)];
+      suggestByName(a, [po('x', 'HC-PO-2', 'AKEMI GUARDIAN MATT (Q)', 5)], ['HC-PO-2610-311']);
+      expect(a[0].poItemId).toBeNull();
+      const b = [row('Mattress Akemi Guardian Q Queen', 1)];
+      suggestByName(b, [po('x', 'HC-PO-2', 'AKEMI GUARDIAN MATT (Q)', 5), po('y', 'HC-PO-3', 'AKEMI GUARDIAN MATT (Q)', 5)], []);
+      expect(b[0].poItemId).toBeNull();
+    });
+    test('two rows of one item do not both take the one line that owes', () => {
+      const lines = [row('Akemi Equinox K King', 1), row('Akemi Equinox K King', 1)];
+      suggestByName(lines, [po('x', 'HC-PO-1', 'AKEMI EQUINOX MATT (K)', 1)], ['HC-PO-1']);
+      expect(lines.map((l) => l.poItemId)).toEqual(['x', null]);
+    });
+  });
+  test('a rack goes to its PO line, whatever the product; a code confirmed is taught', () => {
+    const r = { lines: [
+      { poItemId: 'p1', rack: 'R11-2', read: { itemCode: 'T1', description: null, qty: 1, poNo: null } },
+      { poItemId: 'p2', rack: null, read: null },
+      { poItemId: null, rack: 'L1-1', read: { itemCode: 'T3', description: null, qty: 1, poNo: null } },
+    ] } as unknown as GrnReview;
+    expect(racksOf(r)).toEqual({ p1: 'R11-2' });
+    expect(codesToTeach(r, (id) => (id === 'p1' ? 'SOFA-1' : undefined))).toEqual([{ printedCode: 'T1', itemCode: 'SOFA-1' }]);
   });
   test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
-    const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }]);
+    const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }], []);
     expect(r.lines[1]).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
   });
   test('the same delivery order twice in the waiting list: the later copy names the first', () => {

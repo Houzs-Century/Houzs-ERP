@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-const review = (doNo: string, poItemId: string | null) => ({ supplierId: 's1', supplierRead: 'DIGLANT', doNo, deliveryDate: '2026-11-03', notes: null, lines: [{ key: `k-${doNo}`, poItemId, poNumber: null, gift: null, qty: 1, read: null }] });
+const review = (doNo: string, poItemId: string | null) => ({ v: 2, supplierId: 's1', supplierRead: 'DIGLANT', doNo, deliveryDate: '2026-11-03', notes: null, lines: [{ key: `k-${doNo}`, poItemId, poNumber: null, gift: null, qty: 1, rack: null, suggested: false, read: null }] });
 const pending = {
   success: true,
   data: {

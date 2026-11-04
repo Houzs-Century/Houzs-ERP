@@ -83,7 +83,7 @@
 .lines { border-top: 1px solid #e3e6e0; padding: 4px 12px 10px; }
 .row {
   display: grid;
-  grid-template-columns: 28px 170px 230px minmax(0, 1fr) 56px 72px 28px;
+  grid-template-columns: 28px 170px 230px minmax(0, 1fr) 84px 56px 72px 28px;
   gap: 10px;
   align-items: center;
   padding: 5px 0;

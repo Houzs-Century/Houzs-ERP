@@ -23,10 +23,18 @@ export type ReviewLine = {
   poNumber: string | null;
   gift: { itemCode: string; name: string } | null;
   qty: number;
+  // The rack the warehouse wrote beside the row, any product type; set on the draft line.
+  rack: string | null;
+  // Tied by the product name printed, not by a code: shown for the operator to check.
+  suggested: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; poNo: string | null } | null;
 };
 
+/** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
+export const REVIEW_VERSION = 2;
+
 export type GrnReview = {
+  v: number;
   supplierId: string | null;
   // The supplier name as printed, kept beside the resolved one.
   supplierRead: string | null;
@@ -45,21 +53,23 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
 /** The first working copy, from the read and the matcher. Matched lines arrive
  *  tied to their PO line; lines the matcher could not place arrive untied with
  *  what was printed, so nothing read is silently dropped. */
-export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>): GrnReview {
+export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>): GrnReview {
   const lines: ReviewLine[] = [];
-  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, poNumber: null, gift: null, qty: p.qty, read: null });
+  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, poNumber: null, gift: null, qty: p.qty, rack: match?.racks[p.poItemId] ?? null, suggested: false, read: null });
   for (const u of match?.unmatched ?? []) {
     if (u.line.qty <= 0) continue;
     // A printed code taught as a free gift arrives already marked as one.
     const taught = isGiftRow(u.line, gifts) ? gifts.find((g) => [u.line.itemCode, u.line.barcode].includes(g.printedCode)) : undefined;
     lines.push({
       key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null, poNumber: null,
-      gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, read: readOf(u.line),
+      gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, rack: u.line.rack ?? null, suggested: false, read: readOf(u.line),
     });
   }
   // A read the matcher never saw (supplier unknown, nothing matched): keep every printed line.
-  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, poNumber: null, gift: null, qty: l.qty, read: readOf(l) });
+  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, poNumber: null, gift: null, qty: l.qty, rack: l.rack, suggested: false, read: readOf(l) });
+  suggestByName(lines, open, [parsed?.poNo, match?.matchedPoNumberValue, ...(match?.matchedPoNumbers ?? []), ...(match?.qtyMismatch ?? []).map((m) => m.poNumber)]);
   return {
+    v: REVIEW_VERSION,
     supplierId,
     supplierRead: parsed?.supplierName ?? null,
     doNo: parsed?.doNo ?? null,
@@ -67,6 +77,41 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     notes: null,
     lines,
   };
+}
+
+// Our PO numbers with the location inside ("HC-SBH-PO-2610-358") and without it are one PO.
+const poKey = (s: string): string => s.toUpperCase().replace(/^HC-[A-Z]+-PO-/, 'HC-PO-');
+const words = (s: string | null | undefined): string[] => (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+
+/** Every word of our item code is printed on the row, MATT aside: AKEMI EQUINOX
+ *  MATT (K) is "Mattress Akemi Medi+Health Equinox K King 183x190x30cm". */
+export function nameFits(printed: string | null | undefined, itemCode: string): boolean {
+  const row = new Set(words(printed));
+  const need = words(itemCode).filter((w) => w !== 'MATT' && w !== 'MATTRESS');
+  return need.length > 0 && need.every((w) => row.has(w));
+}
+
+/** Tie rows the matcher left untied, by name. This fills a screen a person
+ *  checks, so it may go further than the automatic draft could, but never
+ *  guesses a PO: the row must fit a PO this delivery order is known to be for,
+ *  or, with no such PO, exactly one open line of the supplier. Each line takes
+ *  only what it still owes. */
+export function suggestByName(lines: ReviewLine[], open: ReadonlyArray<OpenPoLine>, printedPos: ReadonlyArray<string | null | undefined>): void {
+  const left = new Map(open.map((l) => [l.poItemId, l.remaining]));
+  for (const l of lines) if (l.poItemId) left.set(l.poItemId, (left.get(l.poItemId) ?? 0) - l.qty);
+  const onDoc = new Set(printedPos.filter((p): p is string => !!p).map(poKey));
+  for (const l of lines) { const hit = open.find((o) => o.poItemId === l.poItemId); if (hit) onDoc.add(poKey(hit.poNumber)); }
+  for (const l of lines) {
+    if (l.poItemId || l.gift || !l.read?.description) continue;
+    const rowPo = l.read.poNo ? poKey(l.read.poNo) : null;
+    const fits = open.filter((o) => nameFits(l.read?.description, o.itemCode) && (left.get(o.poItemId) ?? 0) > 0);
+    const scoped = rowPo ? fits.filter((o) => poKey(o.poNumber) === rowPo) : onDoc.size > 0 ? fits.filter((o) => onDoc.has(poKey(o.poNumber))) : fits;
+    if (scoped.length === 0 || (!rowPo && onDoc.size === 0 && scoped.length > 1)) continue;
+    const pick = scoped.find((o) => (left.get(o.poItemId) ?? 0) >= l.qty) ?? scoped[0];
+    l.poItemId = pick.poItemId;
+    l.suggested = true;
+    left.set(pick.poItemId, (left.get(pick.poItemId) ?? 0) - l.qty);
+  }
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
@@ -91,12 +136,15 @@ export function cleanReview(input: unknown): GrnReview | null {
       poItemId: giftCode ? null : str(l.poItemId),
       poNumber: giftCode ? null : str(l.poNumber),
       gift: giftCode ? { itemCode: giftCode, name: str(g?.name) ?? giftCode } : null,
+      rack: str(l.rack),
+      suggested: l.suggested === true,
       qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
       read: read ? { itemCode: str(read.itemCode), description: str(read.description), qty: Number(read.qty) || 0, poNo: str(read.poNo) } : null,
     };
   });
   const date = str(r.deliveryDate);
   return {
+    v: REVIEW_VERSION,
     supplierId: str(r.supplierId),
     supplierRead: str(r.supplierRead),
     doNo: str(r.doNo),
@@ -112,6 +160,20 @@ export function picksOf(review: GrnReview): Array<{ poItemId: string; qty: numbe
   const byLine = new Map<string, number>();
   for (const l of review.lines) if (l.poItemId && l.qty > 0) byLine.set(l.poItemId, (byLine.get(l.poItemId) ?? 0) + l.qty);
   return [...byLine].map(([poItemId, qty]) => ({ poItemId, qty }));
+}
+
+/** The rack written for each PO line, for applyScanRacks. */
+export function racksOf(review: GrnReview): Record<string, string> {
+  return Object.fromEntries(review.lines.flatMap((l) => (l.poItemId && l.rack ? [[l.poItemId, l.rack]] : [])));
+}
+
+/** Printed code -> our item, from rows tied to a PO line, so the next delivery
+ *  order of this supplier matches them without a person. */
+export function codesToTeach(review: GrnReview, itemOf: (poItemId: string) => string | undefined): Array<{ printedCode: string; itemCode: string }> {
+  return review.lines.flatMap((l) => {
+    const item = l.poItemId ? itemOf(l.poItemId) : undefined;
+    return item && l.read?.itemCode ? [{ printedCode: l.read.itemCode, itemCode: item }] : [];
+  });
 }
 
 /** The free gifts to add to the draft: one per product, qty summed, keeping the
