@@ -119,6 +119,7 @@ import { scanSo } from "./routes/scan-so";
 import { scanGr } from "./routes/scan-gr";
 import { scanGrCheck } from "./routes/scan-gr-check";
 import { scanPi } from "./routes/scan-pi";
+import { scanPiCheck } from "./routes/scan-pi-check";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
@@ -1030,7 +1031,9 @@ scm.route("/scan-gr", scanGr);
 // converting the matching GRN(s). Same view-level rationale as scan-so/scan-gr
 // (enqueue only stages a background OCR that lands a DRAFT the operator confirms),
 // gated to the PI area.
+scm.use("/scan-pi/check/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
 scm.use("/scan-pi/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
+scm.route("/scan-pi/check", scanPiCheck);
 scm.route("/scan-pi", scanPi);
 // Re-added 2026-06-23 — card-terminal / EPP receipt OCR for the Payments panel.
 // The receipt IS the payment row's slip (one upload, both uses): the frontend

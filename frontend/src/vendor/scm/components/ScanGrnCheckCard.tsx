@@ -15,7 +15,7 @@ import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, todayMY } from '../../shared/format';
 import {
   fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, skuValue, swappedDate,
-  type CheckDoc, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
+  type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
 
@@ -33,6 +33,9 @@ type Props = {
   onGold: () => void;
   onOpenGrn: (grnId: string) => void;
 };
+
+/** In the open list an option also says its PO and what is owed. */
+export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail}` : o.label);
 
 export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry, onGold, onOpenGrn }: Props) {
   const [open, setOpen] = useState(false);
@@ -182,6 +185,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                   placeholder={review.supplierId ? 'Choose SKU' : 'Choose the supplier first'}
                   className={styles.cell}
                   ariaLabel={`SKU for row ${i + 1}`}
+                  renderOption={skuOption}
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{l.gift?.name ?? line?.name ?? '—'}</div>

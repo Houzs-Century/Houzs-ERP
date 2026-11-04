@@ -43,3 +43,14 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - `frontend/src/pages/scm-v2/PurchaseInvoiceDetailV2.tsx`, `PurchaseInvoiceDetail.tsx`, `PurchaseInvoiceNew.tsx`, `PurchaseInvoiceFromGrn.tsx` — desktop surfaces.
 - `frontend/src/mobile/MobilePurchaseDocNew.tsx`, `MobileLinePoRef.tsx`, `MobileAddLine.tsx` — mobile surfaces.
 - `frontend/src/vendor/scm/lib/pi-payment-path.ts` — AP payment routing/permission rule.
+
+## Scan, check, then create (`/scan-pi/check/*`, `routes/scan-pi-check.ts`)
+
+The desktop scan works as for goods receipts (`docs/modules/scan-to-gr.md`; shared handlers in
+`routes/scan-check-shared.ts`, modal in `ScanCheckModal.tsx`): a PDF is split into its invoices, each is
+read in the background, and waits as an editable copy (`lib/pi-scan-check.ts`) until the operator creates
+the drafts or deletes it. Rows bill GRN lines; unplaced rows are tied by name on the anchored GRNs. Create
+is `createDraftPiFromGrnItems`: DRAFT only, from posted GRN lines, at the receipt's price, never over what
+is left to bill. A printed price that differs is shown on the row. `duplicateOf` = a non-cancelled PI of the
+supplier with that `supplier_invoice_ref`. Codes confirmed are saved in `supplier_scan_codes`, shared with
+the delivery-order scanner. Mobile (`MobileScanInvoice`) still uses `/enqueue`.

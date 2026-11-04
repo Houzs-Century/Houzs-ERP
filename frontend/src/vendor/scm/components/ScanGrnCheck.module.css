@@ -144,3 +144,4 @@
   .rowHead, .num { display: none; }
   .banner, .hint { margin-left: 12px; padding-left: 12px; }
 }
+.rowPi { grid-template-columns: 28px 170px 230px minmax(0, 1fr) 56px 72px 28px; }
