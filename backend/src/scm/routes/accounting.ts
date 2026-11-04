@@ -355,9 +355,11 @@ accounting.get('/accounts', async (c) => {
 /* ── Account roles — which account plays which part ─────────────────────────
    resolveRoles is what the posting rules read; this pair is the OWNER'S window
    onto it. GET answers "which bank is my default, which account is AP" per
-   company; PUT repoints ONE role. Only BANK_DEFAULT is repointable from here
-   for now (the owner: 默认银行我可以自己maintenance) — the control roles (AR /
-   AP) stay code-seeded until there is a reason to move them. */
+   company; PUT repoints ONE role. Only the two default banks are repointable
+   from here (the owner: 默认银行我可以自己maintenance) — BANK_DEFAULT, money
+   received INTO, and BANK_PAY_DEFAULT, the voucher's Paid From (2026-11-04:
+   收款和付款的 default bank 要分开, 也要分公司). The control roles (AR / AP)
+   stay code-seeded until there is a reason to move them. */
 export const accountRolesGet = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -371,7 +373,7 @@ export const accountRolesGet = async (c: any): Promise<Response> => {
 };
 accounting.get('/roles', accountRolesGet);
 
-export const accountRolesPutBankDefault = async (c: any): Promise<Response> => {
+const putDefaultBank = (role: 'BANK_DEFAULT' | 'BANK_PAY_DEFAULT') => async (c: any): Promise<Response> => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage account roles." }, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -396,11 +398,14 @@ export const accountRolesPutBankDefault = async (c: any): Promise<Response> => {
   }
 
   const { error: upErr } = await sb.from('acc_account_roles')
-    .upsert({ company_id: co.companyId, role: 'BANK_DEFAULT', account_code: code }, { onConflict: 'company_id,role' });
+    .upsert({ company_id: co.companyId, role, account_code: code }, { onConflict: 'company_id,role' });
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
-  return c.json({ ok: true, role: 'BANK_DEFAULT', accountCode: code });
+  return c.json({ ok: true, role, accountCode: code });
 };
+export const accountRolesPutBankDefault = putDefaultBank('BANK_DEFAULT');
+export const accountRolesPutBankPayDefault = putDefaultBank('BANK_PAY_DEFAULT');
 accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
+accounting.put('/roles/BANK_PAY_DEFAULT', accountRolesPutBankPayDefault);
 
 /* ════════════════════════════════════════════════════════════════════════
    Journal Entries

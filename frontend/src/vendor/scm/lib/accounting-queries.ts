@@ -68,22 +68,24 @@ export const useAccounts = () => baseQuery<{ accounts: Account[]; sections?: Acc
 );
 
 /* Which account plays which part for the ACTIVE company (resolveRoles server-
-   side: overrides first, seeded defaults where nothing is set). BANK_DEFAULT
-   pre-fills the PV "Paid From"; AP is the control account an AP Payment
-   debits. */
+   side: overrides first, seeded defaults where nothing is set). BANK_PAY_DEFAULT
+   pre-fills the PV "Paid From" (BANK_DEFAULT, where money is received, when
+   unset); AP is the control account an AP Payment debits. */
 export type AccountRoles = { roles: Record<string, string>; overridden: Record<string, string> };
 export const useAccountRoles = () => baseQuery<AccountRoles>(
   ['account-roles'], `/accounting/roles`,
 );
 
-/* The owner's own lever (默认银行我可以自己maintenance): repoint BANK_DEFAULT to
-   another money account. The server refuses non-money / inactive / other-
-   company accounts by name. */
-export const useSaveBankDefault = () => {
+/* The owner's own lever (默认银行我可以自己maintenance): repoint a default bank —
+   BANK_DEFAULT (received into) or BANK_PAY_DEFAULT (paid from) — to another
+   money account. The server refuses non-money / inactive / other-company
+   accounts by name. */
+export type DefaultBankRole = 'BANK_DEFAULT' | 'BANK_PAY_DEFAULT';
+export const useSaveBankDefault = (role: DefaultBankRole) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (accountCode: string) => authedFetch<{ ok: boolean; accountCode: string }>(
-      `/accounting/roles/BANK_DEFAULT`,
+      `/accounting/roles/${role}`,
       { method: 'PUT', body: JSON.stringify({ accountCode }) },
     ),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['account-roles'] }); },

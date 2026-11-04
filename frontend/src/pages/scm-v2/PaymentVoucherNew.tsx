@@ -152,10 +152,11 @@ export const PaymentVoucherNew = () => {
      plain cash-out. The old three-way dropdown is gone with the split. */
   const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
-  /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
-     the role the owner maintains in Recon Setup). Only while untouched. */
+  /* Pre-fill Paid From with the company's own pay-from bank (BANK_PAY_DEFAULT —
+     the role the owner maintains in Settlement Setup, apart from the bank money
+     is received into). Only while untouched. */
   useEffect(() => {
-    const dflt = rolesQ.data?.roles.BANK_DEFAULT;
+    const dflt = rolesQ.data?.roles.BANK_PAY_DEFAULT ?? rolesQ.data?.roles.BANK_DEFAULT;
     if (!dflt || creditAccountCode) return;
     if (moneyAccounts.some((a) => a.account_code === dflt)) setCreditAccountCode(dflt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
