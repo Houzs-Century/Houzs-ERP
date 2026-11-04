@@ -117,6 +117,7 @@ import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
 import { scanGr } from "./routes/scan-gr";
+import { scanGrCheck } from "./routes/scan-gr-check";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
@@ -1021,7 +1022,9 @@ scm.route("/scan-so", scanSo);
 // area at 'view' level for the same reason as scan-so: enqueue only stages an
 // upload + background OCR that lands a DRAFT the operator later posts; it never
 // posts stock. The real post (grns PATCH /:id/post) keeps its default gate.
+scm.use("/scan-gr/check/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
 scm.use("/scan-gr/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
+scm.route("/scan-gr/check", scanGrCheck);
 scm.route("/scan-gr", scanGr);
 // scan-pi (OCR slice 5): photo a supplier invoice -> DRAFT Purchase Invoice by
 // converting the matching GRN(s). Same view-level rationale as scan-so/scan-gr
