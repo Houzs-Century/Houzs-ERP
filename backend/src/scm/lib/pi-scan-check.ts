@@ -10,6 +10,7 @@
 import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
 import type { PiLineMatchResult } from './pi-scan-match';
+import { bestLines } from './scan-word-match';
 
 /** A posted GRN line with something left to bill. */
 export type BillableLine = {
@@ -40,7 +41,7 @@ export type PiReview = {
   lines: PiReviewLine[];
 };
 
-export const PI_REVIEW_VERSION = 1;
+export const PI_REVIEW_VERSION = 2;
 
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -56,7 +57,9 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   for (const l of lines) { const hit = open.find((o) => o.grnItemId === l.grnItemId); if (hit) anchored.add(hit.grnNumber); }
   for (const l of lines) {
     if (l.grnItemId || !l.read?.description) continue;
-    const fits = open.filter((o) => nameFits(l.read?.description, o.itemCode) && (left.get(o.grnItemId) ?? 0) > 0);
+    const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0);
+    const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode));
+    const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.description ?? ''}`);
     const scoped = anchored.size > 0 ? fits.filter((o) => anchored.has(o.grnNumber)) : fits;
     if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) continue;
     const pick = scoped.find((o) => (left.get(o.grnItemId) ?? 0) >= l.qty) ?? scoped[0];

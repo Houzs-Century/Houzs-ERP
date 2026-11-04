@@ -172,7 +172,8 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   pos: T[],
   allowTail: boolean,
 ): T | null {
-  const p = normalizeCode(printed);
+  // HC-PO-2610-257_R1: a supplier's copy of a revised PO is still that PO.
+  const p = normalizeCode((printed ?? '').replace(/[_\s-]*R\d+\s*$/i, ''));
   if (!p) return null;
   const unique = (hits: T[]): T | null => {
     const byNumber = new Map(hits.map((h) => [h.poNumber, h]));
@@ -188,7 +189,15 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   });
   if (labelled.length > 0) return unique(labelled);
   if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
-  return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
+  const tail = unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
+  if (tail) return tail;
+  // A misread lead digit ("102610-243" for 2610-243) still ends in our number.
+  if (/[A-Z]/.test(p)) return null;
+  const digits = p.replace(/\D/g, '');
+  return unique(pos.filter((r) => {
+    const own = /PO-?([\d-]+)$/i.exec(r.poNumber)?.[1]?.replace(/\D/g, '') ?? '';
+    return own.length >= 7 && digits.endsWith(own);
+  }));
 }
 
 /** Our own PO number on the paper names the supplier for certain, whatever name its
@@ -198,7 +207,7 @@ export function supplierOfPrintedPo(
   allPos: Array<{ poNumber: string; supplierId?: string | null }>,
 ): string | null {
   const ids = new Set([parsed.poNo, ...parsed.lines.map((l) => l.poNo)].flatMap((po) => {
-    const hit = resolvePrintedPo(po, allPos, false)?.supplierId;
+    const hit = (resolvePrintedPo(po, allPos, false) ?? resolvePrintedPo(splitInnerLocation(po)?.po, allPos, false))?.supplierId;
     return hit ? [hit] : [];
   }));
   return ids.size === 1 ? [...ids][0] : null;
