@@ -13,6 +13,7 @@ import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { postSoPayment, type SoPaymentRow } from './payments';
 import { rebankCandidates, rebankReceipts } from './receipt-rebank';
 
+const CO = 1;
 const HLB = '310-0020';
 const MBB = '310-0010';
 const CHART: Row[] = ['300-0000', '320-0000', MBB, HLB].flatMap((code) => [1, 2].map((company_id) => ({
@@ -46,7 +47,7 @@ async function world(extra: { matches?: Row[]; locks?: Row[] } = {}) {
     acc_bank_month_locks: extra.locks ?? [],
   });
   for (const p of pays) expect((await postSoPayment(sb, p as unknown as SoPaymentRow)).ok).toBe(true);
-  sb.tables.acc_account_roles.find((r: Row) => r.company_id === 1)!.account_code = MBB;
+  sb.tables.acc_account_roles.find((r: Row) => r.company_id === CO)!.account_code = MBB;
   return sb;
 }
 
