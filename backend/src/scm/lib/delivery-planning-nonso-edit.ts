@@ -11,10 +11,14 @@
                            the plane the ASSR board union reads). For a service
                            case the Service-Arrangement WhatsApp reply still
                            overlays its own value when the customer has answered,
-                           so a hand-set status shows until then (owner-accepted). */
-import { scopeToAllowedCompanies } from './companyScope';
+                           so a hand-set status shows until then (owner-accepted).
+     · a DP / ASSR / project row's REMARKS → scm.dp_orders.remark,
+                           public.assr_cases.<leg>_remark, or the project's one
+                           projects.delivery_remark (its own column, not the
+                           Projects team's schedule_remark). */
+import { scopeToAllowedCompanies, allowedCompaniesSql } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
+import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -54,23 +58,26 @@ export async function scheduleDpDate(c: Ctx, sb: Sb, id: string, scheduleDate: s
   return { status: 200, body: { ok: true, dp: { id, requested_date: newDate } } };
 }
 
-/* The board's inline NON-SO field edits on a DP or service-case row: the MESSAGE
-   status (dp + assr), and the Time Slot (dp: on the order, owner 2026-10-31; assr: one
-   column per leg, HC-0194). Each value present is whitelisted by
-   the caller (the route) before this runs; the board sends one cell at a time. */
+/* The board's inline NON-SO field edits on a DP, service-case or project row: the
+   MESSAGE status (dp + assr), the Time Slot (dp: on the order, owner 2026-10-31; assr:
+   one column per leg, HC-0194), and the Remarks (all three). Each value present is
+   whitelisted by the caller (the route) before this runs; the board sends one cell at a time. */
 export async function writeNonSoFields(
-  c: Ctx, sb: Sb, type: 'dp' | 'assr', id: string,
-  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null; jobKind?: keyof typeof ASSR_LEG_TIME_COL },
+  c: Ctx, sb: Sb, type: 'dp' | 'assr' | 'project', id: string,
+  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null; remark?: string | null; jobKind?: keyof typeof ASSR_LEG_TIME_COL },
 ): Promise<EditResult> {
-  const { deliveryMessageStatus, timeRange, jobKind } = fields;
-  if (deliveryMessageStatus === undefined && timeRange === undefined) {
-    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status and time slot are editable here.' } };
+  const { deliveryMessageStatus, timeRange, remark, jobKind } = fields;
+  if (type === 'project') return writeProjectRemark(c, id, remark);
+  if (deliveryMessageStatus === undefined && timeRange === undefined && remark === undefined) {
+    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status, time slot and remarks are editable here.' } };
   }
   const msg = deliveryMessageStatus === '' ? null : deliveryMessageStatus;
+  const note = remark === '' ? null : remark;
   if (type === 'dp') {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (deliveryMessageStatus !== undefined) patch.delivery_message_status = msg;
     if (timeRange !== undefined) patch.time_range = timeRange === '' ? null : timeRange;
+    if (remark !== undefined) patch.remark = note;
     const { data, error } = await scopeToAllowedCompanies(
       sb.from('dp_orders').update(patch).eq('id', id), c,
     ).select('id').maybeSingle();
@@ -80,7 +87,7 @@ export async function writeNonSoFields(
   }
   // A service case's message status and Time Slot are per leg (HC-0193, HC-0194), so the write names the leg.
   if (!jobKind) {
-    return { status: 400, body: { error: 'job_kind_required', reason: 'A service-case message status or time slot belongs to one job; send jobKind.' } };
+    return { status: 400, body: { error: 'job_kind_required', reason: 'A service-case message status, time slot or remark belongs to one job; send jobKind.' } };
   }
   // assr — public.assr_cases via c.env.DB; the open-case guard carries the
   // caller's granted-company predicate, so an out-of-scope case 404s here.
@@ -94,10 +101,32 @@ export async function writeNonSoFields(
     const sets: string[] = []; const binds: unknown[] = [];
     if (deliveryMessageStatus !== undefined) { sets.push(`${ASSR_LEG_MSG_COL[jobKind]} = ?`); binds.push(msg); }
     if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
+    if (remark !== undefined) { sets.push(`${ASSR_LEG_REMARK_COL[jobKind]} = ?`); binds.push(note); }
     const res = await c.env.DB.prepare(
       `UPDATE assr_cases SET ${sets.join(', ')}, updated_at = datetime('now')
         WHERE id = ? AND archived_at IS NULL`,
     ).bind(...binds, caseId).run();
+    if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
+  } catch (e) {
+    return { status: 500, body: { error: 'update_failed', reason: String((e as Error).message).slice(0, 200) } };
+  }
+  return { status: 200, body: { ...OK_FIELDS } };
+}
+
+/* A project row's Remarks: projects.delivery_remark, shared by its SETUP and
+   DISMANTLE rows. Only the remark is editable from the board; crew and dates stay
+   in Projects. Bounded to the caller's companies like the other writes here. */
+async function writeProjectRemark(c: Ctx, id: string, remark: string | null | undefined): Promise<EditResult> {
+  if (remark === undefined) {
+    return { status: 400, body: { error: 'no_changes', reason: 'Only the remarks are editable on a project row; edit the rest in Projects.' } };
+  }
+  const projectId = Number(id);
+  if (!Number.isInteger(projectId)) return { status: 400, body: { error: 'bad_id', reason: 'project id must be numeric' } };
+  try {
+    const res = await c.env.DB.prepare(
+      `UPDATE projects SET delivery_remark = ?, updated_at = datetime('now')
+        WHERE id = ? AND archived_at IS NULL${allowedCompaniesSql(c)}`,
+    ).bind(remark === '' ? null : remark, projectId).run();
     if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
   } catch (e) {
     return { status: 500, body: { error: 'update_failed', reason: String((e as Error).message).slice(0, 200) } };
