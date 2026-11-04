@@ -13,6 +13,7 @@ import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import {
   REBANK_PER_CALL, useRebankCandidates, useRebankMove, type RebankOutcome, type RebankRow,
 } from '../../vendor/scm/lib/accounting-queries';
+import { DateField } from '../../vendor/scm/components/DateField';
 import { SetupModal } from './finance/SetupParts';
 import sp from './finance/SetupParts.module.css';
 
@@ -81,8 +82,8 @@ export function RebankReceiptsDialog({ targetName, defaultFrom, today, onClose }
       onCancel={onClose}
     >
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', gridColumn: '1 / -1' }}>
-        <label className={sp.hint}>From <input className={sp.input} type="date" aria-label="Move from date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label className={sp.hint}>To <input className={sp.input} type="date" aria-label="Move to date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        <span className={sp.hint}>From</span> <DateField value={from} onChange={setFrom} aria-label="Move from date" />
+        <span className={sp.hint}>To</span> <DateField value={to} onChange={setTo} aria-label="Move to date" />
         <button type="button" className={sp.btn} onClick={find} disabled={busy || q.isFetching}>{q.isFetching ? 'Finding…' : 'Find'}</button>
       </div>
       {q.isError && <div className={sp.hint} style={{ gridColumn: '1 / -1', color: '#a3352a' }}>{q.error instanceof Error ? q.error.message : 'Could not list the receipts.'}</div>}
