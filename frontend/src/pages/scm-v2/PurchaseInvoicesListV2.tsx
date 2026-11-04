@@ -9,6 +9,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle2,
   Plus,
+  ScanLine,
   ChevronDown,
   Users,
   Package,
@@ -183,11 +184,9 @@ const statusFor = (
 function SplitDropdown({
   onFromGrn,
   onDuplicate,
-  onScan,
 }: {
   onFromGrn: () => void;
   onDuplicate: () => void;
-  onScan: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -207,9 +206,6 @@ function SplitDropdown({
           <div role="menu" className="absolute right-0 top-full z-[81] mt-1.5 min-w-[220px] rounded-md border border-border bg-surface py-1 shadow-slab">
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onFromGrn(); }}>
               New from GRN
-            </button>
-            <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onScan(); }}>
-              Scan invoice
             </button>
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onDuplicate(); }}>
               Duplicate last invoice
@@ -1204,11 +1200,12 @@ export function PurchaseInvoicesListV2() {
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">
                     New Purchase Invoice
                   </Button>
-                  <SplitDropdown onFromGrn={goFromGrn} onDuplicate={goDuplicate} onScan={() => setShowScan(true)} />
+                  <SplitDropdown onFromGrn={goFromGrn} onDuplicate={goDuplicate} />
                 </div>
               </div>
             }
             secondaryActions={[
+              { label: "Scan Invoice", icon: ScanLine, onClick: () => setShowScan(true) },
               { label: "Goods Received", icon: Package, onClick: goGrns },
               { label: "Suppliers", icon: Users, onClick: goSuppliers },
             ]}
