@@ -32,7 +32,7 @@ const empty = (p) => !(Number(p.base_price_sen) > 0) && !(Number(p.cost_price_se
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
 async function planFor(co) {
-  const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen FROM scm.mfg_products WHERE company_id = ${co} AND COALESCE(status, 'ACTIVE') <> 'DELETED'`;
+  const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen FROM scm.mfg_products WHERE company_id = ${co}`;
   const byCode = new Map(prods.map((p) => [p.code, p]));
   const writes = [];
   const skipped = [];
