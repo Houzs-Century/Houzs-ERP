@@ -38,6 +38,8 @@ import {
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
 import { ICON, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault, type DefaultBankRole } from '../../vendor/scm/lib/accounting-queries';
+import { RebankReceiptsDialog } from './RebankReceiptsDialog';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -461,6 +463,7 @@ const DefaultBankRow = ({ role, title, sub, hint }: { role: DefaultBankRole; tit
   const toast = useToastOptional();
   const [choice, setChoice] = useState<string>('');
   const [note, setNote] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
 
   const money = (accountsQ.data?.accounts ?? []).filter((a) => a.is_active && a.acc_money === true);
   const current = rolesQ.data?.roles[role] ?? '';
@@ -488,8 +491,23 @@ const DefaultBankRow = ({ role, title, sub, hint }: { role: DefaultBankRole; tit
           </button>
         )}
       </div>
-      <div className={sp.hint}>{hint}</div>
+      <div className={sp.hint}>
+        {hint}
+        {/* Receipts booked before this bank was chosen stay where they were
+            booked; this moves them (owner 2026-11-04: 做改记工具). */}
+        {role === 'BANK_DEFAULT' && current && !dirty && (
+          <> <button type="button" className={sp.link} onClick={() => setMoving(true)}>Move earlier transfers here…</button></>
+        )}
+      </div>
       {note && <div className={css.warn}>{note}</div>}
+      {moving && (
+        <RebankReceiptsDialog
+          targetName={money.find((a) => a.account_code === current)?.account_name ?? current}
+          defaultFrom={`${todayMyt().slice(0, 4)}-01-01`}
+          today={todayMyt()}
+          onClose={() => setMoving(false)}
+        />
+      )}
     </div>
   );
 };

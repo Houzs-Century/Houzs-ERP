@@ -32,6 +32,7 @@ import {
 } from '../src/scm/routes/accounting-bank';
 import { payoutUpload, payoutList } from '../src/scm/routes/accounting-payouts';
 import { accountRolesGet, accountRolesPutBankDefault, accountRolesPutBankPayDefault } from '../src/scm/routes/accounting';
+import { rebankListHandler, rebankMoveHandler } from '../src/scm/routes/accounting-rebank';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
 const CO = 1;
@@ -194,7 +195,10 @@ const seed = () => ({
     ...CHART.map((r) => ({ ...r })),
     ...CHART.map((r) => ({ ...r, company_id: 2 })),
   ],
-  acc_account_roles: [] as Row[],
+  /* Receive into starts on Hong Leong, so the seeded transfer below books
+     there and Setup's "Move earlier transfers here" has one to move. */
+  acc_account_roles: [{ company_id: CO, role: 'BANK_DEFAULT', account_code: '331-0000' }] as Row[],
+  acc_bank_month_locks: [] as Row[],
   acc_acquirer_config: ACQUIRER_CONFIG.map((r) => ({ ...r })),
   acc_company_acquirers: COMPANY_LINKS.map((r) => ({ ...r })),
   acc_acquirers: acquirerView(),
@@ -246,6 +250,8 @@ const seed = () => ({
     //    auto-matches; the one that did not waits for a human.
     soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, '615318040666', 'GHL'),
     soPay('g2', 'SO-2608-011', '2026-08-02T13:30:00', 45000, null, 'GHL'), // no id captured at the till - lands in NEEDS_CONFIRM
+    // A customer transfer, booked on Receive into (Hong Leong) — the rebank tool's case.
+    { ...soPay('t1', 'SO-2608-001', '2026-08-05T10:00:00', 150000, null, ''), method: 'transfer', merchant_provider: null },
   ],
   sales_invoice_payments: [
     {
@@ -380,6 +386,8 @@ app.get(`${R}/payouts`, payoutList as never);
 app.get('/api/scm/accounting/roles', accountRolesGet as never);
 app.put('/api/scm/accounting/roles/BANK_DEFAULT', accountRolesPutBankDefault as never);
 app.put('/api/scm/accounting/roles/BANK_PAY_DEFAULT', accountRolesPutBankPayDefault as never);
+app.get('/api/scm/accounting/receipts/rebank', rebankListHandler as never);
+app.post('/api/scm/accounting/receipts/rebank', rebankMoveHandler as never);
 app.get('/api/scm/accounting/accounts', async (c) => {
   const { data } = await client().from('accounts').select('*').eq('company_id', CO);
   return c.json({ accounts: data ?? [] });
