@@ -148,6 +148,8 @@ export const isProject = (o: PlanningOrder): boolean => o.row_type === 'project'
 /* A DP row's so_doc_no is the synthetic key `DP:<id>`; the backend date / fields
    endpoints want the bare dp_order id. Same shape ScheduleDpOrderDrawer uses. */
 export const dpIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^DP:/, '');
+/* A project row's key is `PRJ:<projectId>#SETUP|DISMANTLE`; the write needs the project id. */
+export const projectIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^PRJ:/, '').replace(/#.*$/, '');
 /* A friendly label for a DP job type — resolved from the SHARED canonical map
    (dpJobTypeLabel) so the board's Type chip and the New-DP-Order dropdown always
    read the same wording. Empty job_type falls back to a generic 'DP job'. */
@@ -447,11 +449,12 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
    Disposal Request, Remarks). SO rows only, EXCEPT when allowNonSo — the Time Slot
    is editable on DP rows too (owner 2026-10-31, scm.dp_orders.time_range) and on
-   service-case legs (HC-0194). Commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean;
+   service-case legs (HC-0194) — and allowProject (Remarks: the project's board
+   remark). Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false, allowProject = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean; allowProject?: boolean;
 }) {
-  if (isProject(order) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
+  if ((isProject(order) && !allowProject) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
       className={styles.inlineEdit}
@@ -1392,13 +1395,24 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'disposal_request', label: 'Disposal Request', width: 180,
-      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v })} placeholder="Disposal…" />,
+      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v }, { onError: fieldNotSaved })} placeholder="Disposal…" />,
       searchValue: (o) => o.disposal_request ?? '',
       exportValue: (o) => o.disposal_request ?? '',
     },
     {
       key: 'dp_remark', label: 'Remarks', width: 200, defaultHidden: true,
-      accessor: (o) => <TextEditCell order={o} value={o.dp_remark} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, dpRemark: v })} placeholder="Remarks…" />,
+      /* Every row type takes a remark, each on its own record: SO header, DP job,
+         the service-case leg, or the project's board remark. */
+      accessor: (o) => (
+        <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject
+          onCommit={(v) => updateFieldsMutate(
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), dpRemark: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, dpRemark: v }
+              : isProject(o) ? { type: 'project', id: projectIdOf(o), dpRemark: v }
+              : { type: 'so', id: o.so_doc_no, dpRemark: v },
+            { onError: fieldNotSaved },
+          )} />
+      ),
       searchValue: (o) => o.dp_remark ?? '',
       exportValue: (o) => o.dp_remark ?? '',
     },
@@ -1471,7 +1485,7 @@ export function DeliveryPlanningBoard({
             isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v }
               : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, timeRange: v }
               : { type: 'so', id: o.so_doc_no, timeRange: v },
-            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
+            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); }, onError: fieldNotSaved },
           )} />
       ),
       searchValue: (o) => o.time_range ?? '',

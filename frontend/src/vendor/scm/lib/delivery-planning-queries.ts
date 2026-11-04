@@ -575,8 +575,8 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr'; id: string } & HcFieldsPatch) =>
-      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr' | 'project'; id: string } & HcFieldsPatch) =>
+      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${encodeURIComponent(id)}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     /* HC-0175: without this the inline select snapped back to the old status and

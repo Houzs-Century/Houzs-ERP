@@ -89,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1138,7 +1138,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // Hand-set status; overlayAssrChatState overlays the WhatsApp reply when there is one (owner 2026-10-29).
           delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
-          dp_remark: null,
+          dp_remark: a[ASSR_LEG_REMARK_COL[leg.jobKind]] ?? null,
           time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,
           time_confirmed: null,
           arrival_at: null,
@@ -1264,7 +1264,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         referral: null,
         delivery_message_status: (d.delivery_message_status as string | null) ?? null,
         disposal_request: null,
-        dp_remark: null,
+        dp_remark: (d.remark as string | null) ?? null,
         time_range: (d.time_range as string | null) ?? null,
         time_confirmed: null,
         arrival_at: null,
@@ -1405,7 +1405,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           referral: null,
           delivery_message_status: null,
           disposal_request: null,
-          dp_remark: null,
+          dp_remark: p.delivery_remark ?? null, // the project's one board remark, on both its SETUP and DISMANTLE rows
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1889,8 +1889,8 @@ function emptyCounts(): Record<'ALL' | DeliveryState, number> {
 deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   const type = c.req.param('type').toLowerCase();
   const id = c.req.param('id');
-  if (type !== 'so' && type !== 'do' && type !== 'dp' && type !== 'assr') {
-    return c.json({ error: 'bad_type', reason: 'type must be so | do | dp | assr' }, 400);
+  if (type !== 'so' && type !== 'do' && type !== 'dp' && type !== 'assr' && type !== 'project') {
+    return c.json({ error: 'bad_type', reason: 'type must be so | do | dp | assr | project' }, 400);
   }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1912,13 +1912,15 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
 
   const sb = c.get('supabase');
 
-  /* DP / Service-Case rows carry ONE editable field here — the message status
-     (owner 2026-10-29). The rest of fieldsSchema is SO/DO-shaped, so these two
-     types write just that column and return (module keeps the router thin). */
-  if (type === 'dp' || type === 'assr') {
+  /* DP / Service-Case / project rows carry a few editable fields here — message
+     status, Time Slot, Remarks (writeNonSoFields says which type takes which).
+     The rest of fieldsSchema is SO/DO-shaped, so these types write their own
+     columns and return (module keeps the router thin). */
+  if (type === 'dp' || type === 'assr' || type === 'project') {
     const r = await writeNonSoFields(c, sb, type, id, {
       deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
       timeRange: p.timeRange as string | null | undefined,
+      remark: p.dpRemark as string | null | undefined,
       jobKind: p.jobKind as 'customer_pickup' | 'delivery' | 'inspection' | undefined,
     });
     return c.json(r.body, r.status);
