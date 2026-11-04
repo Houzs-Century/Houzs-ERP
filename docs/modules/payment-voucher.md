@@ -59,8 +59,9 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies
   to must be excluded/reduced in the picker (`pendingReservations`) — else two
   vouchers can apply the same invoice in full.
-- Paid From must be a money account (`acc_money`, company `BANK_DEFAULT`
-  role); server refuses any non-money credit account.
+- Paid From must be a money account (`acc_money`); server refuses any non-money
+  credit account. It pre-fills the company's `BANK_PAY_DEFAULT` (Settlement
+  Setup "Pay from"), which is `BANK_DEFAULT` (where transfers are received) until set.
 - Lines take only LEAF, non-control accounts (`requireLeafAccount`) — except
   the AP control debit (AP Payment) or AR debit (Customer Refund), which are
   the one exempted line each.

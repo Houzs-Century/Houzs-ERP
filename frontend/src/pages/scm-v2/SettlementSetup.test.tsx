@@ -127,8 +127,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
-  useSaveBankDefault: () => ({ mutate: saveBankDefault, isPending: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', BANK_PAY_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useSaveBankDefault: (role: string) => ({ mutate: (code: string, o?: unknown) => saveBankDefault(role, code, o), isPending: false }),
 }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
@@ -437,15 +437,22 @@ describe('voucher numbering', () => {
     expect(saveNumbering).not.toHaveBeenCalled();
   });
 
-  test('the default bank offers money accounts by name and saves a change', () => {
+  /* Owner 2026-11-04: 收款和付款的 default bank 要分开 — each its own role. */
+  test('the receive and pay-from banks each offer money accounts by name and save on their own', () => {
     saveBankDefault.mockClear();
     draw();
-    const pick = screen.getByLabelText('Default bank account') as HTMLSelectElement;
+    const pick = screen.getByLabelText('Default bank to receive into') as HTMLSelectElement;
     expect(pick.value).toBe('310-0010');
     expect([...pick.options].map((o) => o.textContent)).toEqual(['Bank — Maybank', 'Bank — Hong Leong']);
     fireEvent.change(pick, { target: { value: '310-0020' } });
-    fireEvent.click(within(pick.closest('section') as HTMLElement).getByText('Save'));
-    expect(saveBankDefault.mock.calls[0]![0]).toBe('310-0020');
+    fireEvent.click(within(pick.closest('div') as HTMLElement).getByText('Save'));
+    expect(saveBankDefault.mock.calls[0]!.slice(0, 2)).toEqual(['BANK_DEFAULT', '310-0020']);
+
+    const pay = screen.getByLabelText('Default bank to pay from') as HTMLSelectElement;
+    expect(pay.value).toBe('310-0010');
+    fireEvent.change(pay, { target: { value: '310-0020' } });
+    fireEvent.click(within(pay.closest('div') as HTMLElement).getByText('Save'));
+    expect(saveBankDefault.mock.calls[1]!.slice(0, 2)).toEqual(['BANK_PAY_DEFAULT', '310-0020']);
   });
 });
 

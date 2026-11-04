@@ -37,7 +37,7 @@ import {
   useSaveAcquirerSetup, useRematch,
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
 import { ICON, refusalText } from './settlement-ui';
-import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, useSaveBankDefault, type DefaultBankRole } from '../../vendor/scm/lib/accounting-queries';
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -438,30 +438,41 @@ const NumberingCard = ({ company }: { company: string | null }) => {
   );
 };
 
-/* ── The company's default bank (BANK_DEFAULT) ──────────────────────────────
-   The owner's own lever (2026-08-30: 默认银行我可以自己maintenance): where a
-   transfer payment lands, and what the PV / AP Payment "Paid From" pre-fills.
-   Per company — switch companies in the top bar to set the other one's. Only
+/* ── The company's default banks (BANK_DEFAULT / BANK_PAY_DEFAULT) ──────────
+   The owner's own lever (2026-08-30: 默认银行我可以自己maintenance), split in
+   two on 2026-11-04 (收款和付款的 default bank 要分开, 也要分公司 — Houzs
+   Century receives in Maybank and pays from Hong Leong): where a transfer
+   payment lands, and what the PV / AP Payment "Paid From" pre-fills. Per
+   company — switch companies in the top bar to set the other one's. Only
    money accounts are offered, and the server refuses anything else anyway. */
-const DefaultBankCard = () => {
+const DefaultBankCard = () => (
+  <section className={css.smallCard} aria-label="Default bank">
+    <DefaultBankRow role="BANK_DEFAULT" title="Receive into" sub="Transfer payments; a merchant that names no bank"
+      hint="Customer transfers land here." />
+    <DefaultBankRow role="BANK_PAY_DEFAULT" title="Pay from" sub="Pre-fills every voucher’s Paid from"
+      hint="Until set, the same bank as Receive into." />
+  </section>
+);
+
+const DefaultBankRow = ({ role, title, sub, hint }: { role: DefaultBankRole; title: string; sub: string; hint: string }) => {
   const rolesQ = useAccountRoles();
   const accountsQ = useAccounts();
-  const save = useSaveBankDefault();
+  const save = useSaveBankDefault(role);
   const toast = useToastOptional();
   const [choice, setChoice] = useState<string>('');
   const [note, setNote] = useState<string | null>(null);
 
   const money = (accountsQ.data?.accounts ?? []).filter((a) => a.is_active && a.acc_money === true);
-  const current = rolesQ.data?.roles.BANK_DEFAULT ?? '';
+  const current = rolesQ.data?.roles[role] ?? '';
   const value = choice || current;
   const dirty = !!choice && choice !== current;
 
   return (
-    <section className={css.smallCard} aria-label="Default bank">
+    <div>
       <div className={css.defaultRow}>
-        <span className={css.title}>Default bank</span>
-        <span className={`${sp.cardSub} ${sp.grow}`}>When a merchant names none</span>
-        <select className={`${sp.select} ${sp.compact}`} aria-label="Default bank account" value={value}
+        <span className={css.title}>{title}</span>
+        <span className={`${sp.cardSub} ${sp.grow}`}>{sub}</span>
+        <select className={`${sp.select} ${sp.compact}`} aria-label={`Default bank to ${title.toLowerCase()}`} value={value}
           onChange={(e) => { setChoice(e.target.value); setNote(null); }}
           disabled={rolesQ.isLoading || accountsQ.isLoading}>
           {!value && <option value="">{rolesQ.isLoading ? 'Loading…' : '— pick a bank / cash account —'}</option>}
@@ -470,16 +481,16 @@ const DefaultBankCard = () => {
         {dirty && (
           <button type="button" className={`${sp.btnPrimary} ${sp.small}`} disabled={save.isPending}
             onClick={() => save.mutate(choice, {
-              onSuccess: () => { setChoice(''); toast?.success(`Default bank set to ${choice}`); },
+              onSuccess: () => { setChoice(''); toast?.success(`${title} set to ${choice}`); },
               onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
             })}>
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
         )}
       </div>
-      <div className={sp.hint}>Pre-fills every voucher’s Paid from; transfer payments land here.</div>
+      <div className={sp.hint}>{hint}</div>
       {note && <div className={css.warn}>{note}</div>}
-    </section>
+    </div>
   );
 };
 

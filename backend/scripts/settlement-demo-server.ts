@@ -31,6 +31,7 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from '../src/scm/routes/accounting-bank';
 import { payoutUpload, payoutList } from '../src/scm/routes/accounting-payouts';
+import { accountRolesGet, accountRolesPutBankDefault, accountRolesPutBankPayDefault } from '../src/scm/routes/accounting';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
 const CO = 1;
@@ -373,6 +374,16 @@ app.get(`${R}/in-transit`, settlementInTransit as never);
 /* The acquirer's own payment advice — 几份 excel 对一份 pdf. */
 app.post(`${R}/payouts`, payoutUpload as never);
 app.get(`${R}/payouts`, payoutList as never);
+
+/* The setup page's default banks (receive into / pay from), on the real
+   handlers; the chart the pickers read is the seeded one. */
+app.get('/api/scm/accounting/roles', accountRolesGet as never);
+app.put('/api/scm/accounting/roles/BANK_DEFAULT', accountRolesPutBankDefault as never);
+app.put('/api/scm/accounting/roles/BANK_PAY_DEFAULT', accountRolesPutBankPayDefault as never);
+app.get('/api/scm/accounting/accounts', async (c) => {
+  const { data } = await client().from('accounts').select('*').eq('company_id', CO);
+  return c.json({ accounts: data ?? [] });
+});
 
 /* Layer 4 — the bank's own statement, on the same real handlers. */
 const B = '/api/scm/accounting/bank';

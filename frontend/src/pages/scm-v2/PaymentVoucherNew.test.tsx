@@ -55,18 +55,21 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
     { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
   ] }, isLoading: false }),
 }));
+/* The company's pay-from bank (BANK_PAY_DEFAULT); unset = the receive bank. */
+let payFromRole: string | null = null;
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '320-1000', account_name: 'Cash in hand', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
     { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', ...(payFromRole ? { BANK_PAY_DEFAULT: payFromRole } : {}), AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -356,6 +359,17 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
     expect(screen.queryByText(/900-A002/)).toBeNull();
     expect(screen.queryByText(/400-0000/)).toBeNull();
+  });
+
+  /* Owner 2026-11-04: Houzs Century receives in Maybank, pays from Hong Leong. */
+  test('Paid From pre-fills the pay-from bank when the company has one, not the receive bank', () => {
+    payFromRole = '310-0020';
+    try {
+      draw('/scm/payment-vouchers/new');
+      expect((screen.getByLabelText(/Pay from/) as HTMLInputElement).value).toBe('310-0020 · Bank — Hong Leong');
+    } finally {
+      payFromRole = null;
+    }
   });
 
   test('a scanned bill with vendor memory pre-fills payee AND account — 记忆自动帮我填', () => {
