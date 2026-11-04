@@ -31,7 +31,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 3;
+export const REVIEW_VERSION = 4;
 
 export type GrnReview = {
   v: number;
@@ -55,7 +55,9 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
  *  what was printed, so nothing read is silently dropped. */
 export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>): GrnReview {
   const lines: ReviewLine[] = [];
-  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, poNumber: null, gift: null, qty: p.qty, rack: match?.racks[p.poItemId] ?? null, suggested: false, read: null });
+  // Each piece of a set shows the one row that printed it.
+  const setRow = new Map((match?.soMatches ?? []).flatMap((m) => m.poItemIds.map((id) => [id, readOf(m.line)] as const)));
+  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, poNumber: null, gift: null, qty: p.qty, rack: match?.racks[p.poItemId] ?? null, suggested: false, read: setRow.get(p.poItemId) ?? null });
   for (const u of match?.unmatched ?? []) {
     if (u.line.qty <= 0) continue;
     // A printed code taught as a free gift arrives already marked as one.
@@ -75,7 +77,7 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     doNo: parsed?.doNo ?? null,
     deliveryDate: parsed?.deliveryDate ?? null,
     notes: null,
-    lines: inPrintedOrder(lines, parsed?.lines ?? [], open),
+    lines: inPrintedOrder(lines, parsed?.lines ?? [], open, new Set(setRow.keys())),
   };
 }
 
@@ -95,7 +97,7 @@ export function nameFits(printed: string | null | undefined, itemCode: string): 
  *  printed, so the card reads down beside the paper (owner 2026-11-04: "很难对账").
  *  A matched row knows only its PO line; it finds its printed row by name. A row
  *  matching nothing printed stays at the end. */
-export function inPrintedOrder(lines: ReviewLine[], printed: GrnExtracted['lines'], open: ReadonlyArray<OpenPoLine>): ReviewLine[] {
+export function inPrintedOrder(lines: ReviewLine[], printed: GrnExtracted['lines'], open: ReadonlyArray<OpenPoLine>, setPieces: ReadonlySet<string>): ReviewLine[] {
   const placed = new Map<number, ReviewLine[]>();
   const rest: ReviewLine[] = [];
   const used = new Set<number>();
@@ -103,7 +105,10 @@ export function inPrintedOrder(lines: ReviewLine[], printed: GrnExtracted['lines
   for (const l of lines) {
     const read = l.read;
     if (!read) continue;
-    const i = printed.findIndex((p, n) => !used.has(n) && p.itemCode === read.itemCode && p.description === read.description);
+    const same = (p: GrnExtracted['lines'][number]) => p.itemCode === read.itemCode && p.description === read.description;
+    // A set's pieces share their row, so a row already placed still takes the next piece.
+    const free = printed.findIndex((p, n) => !used.has(n) && same(p));
+    const i = free >= 0 || !setPieces.has(l.poItemId ?? '') ? free : printed.findIndex(same);
     if (i >= 0) put(i, l); else rest.push(l);
   }
   for (const l of lines) {
