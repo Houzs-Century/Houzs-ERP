@@ -10,8 +10,13 @@ const d = (o: Partial<PeriodDo>): PeriodDo => ({
 
 describe('a lorry in the workshop', () => {
   test('its down days come off the days it could work, so occupancy reads what it could do', () => {
-    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', 1]]));
+    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-02'])]]));
     expect(r.byLorry[0]).toMatchObject({ daysOut: 1, workingDays: 1, downDays: 1, occupancyPct: 100, perDayOutSen: 3000_00 });
+  });
+
+  test('the day it delivered and then broke down stays a day it worked; only the next is off', () => {
+    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-03', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-01', '2026-10-02'])]]));
+    expect(r.byLorry[0]).toMatchObject({ daysOut: 1, workingDays: 2, downDays: 1, occupancyPct: 50 });
   });
 });
 
