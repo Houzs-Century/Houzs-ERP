@@ -123,6 +123,7 @@ import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
+import { claimReportedOrders } from "./scm/lib/fair-claim";
 import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
@@ -1071,6 +1072,9 @@ export default {
               })
               .catch((e) => console.error("[cron fair-reconcile]", e))
           );
+          ctx.waitUntil(track("fair-claim", () => claimReportedOrders(env, new Date(event.scheduledTime + 8 * 3600_000).toISOString().slice(0, 10)))
+            .then((r) => { if (r.claimed > 0 || r.failed > 0) console.log(`[cron fair-claim] ${JSON.stringify(r)}`); })
+            .catch((e) => console.error("[cron fair-claim]", e)));
         }
       }
       // 3PL bills (owner 2026-10-24): an AP invoice from a transport supplier
