@@ -309,7 +309,7 @@ async function prepareSoAmendMirrorAudit(
 const HEADER =
   'id, do_number, so_doc_no, debtor_code, debtor_name, do_date, expected_delivery_at, ' +
   'customer_delivery_date, signed_at, delivered_at, dispatched_at, ' +
-  'driver_id, driver_name, vehicle, m3_total_milli, ' +
+  'driver_id, driver_name, vehicle, time_range, m3_total_milli, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
