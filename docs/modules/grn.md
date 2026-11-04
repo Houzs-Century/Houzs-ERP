@@ -10,6 +10,7 @@ go through `/api/scm/grns`.
 ## Statuses and flow
 
 - Vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets: `draft`=DRAFT,
+- The list ticks several drafts and Confirm (N) posts them in turn through the same `/:id/post`; a refused one stays a draft and the summary names it.
   `posted`=POSTED+CLOSED (a CLOSED GRN's stock IN still stands), `cancelled`=CANCELLED.
 - `DRAFT`: create with `asDraft:true`. Commits no stock and no PO rollup. Sending
   `status:'DRAFT'` directly in the body is rejected — `asDraft` is the only way in.

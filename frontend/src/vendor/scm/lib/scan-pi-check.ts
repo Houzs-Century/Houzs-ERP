@@ -100,5 +100,24 @@ export function priceDiffers(printed: number | null | undefined, unitPriceSen: n
   return printed != null && Math.abs(Math.round(printed * 100) - unitPriceSen) >= 1;
 }
 
+/** The two amounts to tie off: what the invoice charges for the rows it printed,
+ *  and what those rows come to at our price. A row tied to no receipt line has no
+ *  price of ours, so `ours` is null until every printed row is tied. */
+export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>): { invoiceSen: number | null; oursSen: number | null } {
+  const rows = review.lines.filter((l) => l.read);
+  const printed = rows.map((l) => {
+    const r = l.read;
+    if (r?.lineTotal != null) return Math.round(r.lineTotal * 100);
+    return r?.unitPrice != null ? Math.round(r.unitPrice * 100 * l.qty) : null;
+  });
+  const invoiceSen = rows.length > 0 && printed.every((v) => v != null) ? printed.reduce<number>((a, v) => a + v, 0) : null;
+  const ours = review.lines.map((l) => {
+    const line = l.grnItemId ? lines.get(l.grnItemId) : undefined;
+    return line ? Math.round(line.unitPriceSen * l.qty) : null;
+  });
+  const oursSen = ours.length > 0 && ours.every((v) => v != null) ? ours.reduce<number>((a, v) => a + v, 0) : null;
+  return { invoiceSen, oursSen };
+}
+
 let seq = 0;
 export const newPiLineKey = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
