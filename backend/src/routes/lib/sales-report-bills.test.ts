@@ -223,18 +223,13 @@ describe("matchBills + summarizeBills", () => {
 
 describe("a report posted again to fix a typo", () => {
   test("replaces the first, so the mistyped bill goes", () => {
-    const first = "13/9
-1. ZNT6730 RM100 A
-2. ZNT6766 RM100 B
-3. ZNF6767 RM100 C";
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B", "3. ZNF6767 RM100 C"].join("\n");
     const r = collectReport([note(1, first), note(2, first.replace("ZNF6767", "ZNT6767"))], "2026-09-11", null);
     expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["ZNT6730", "ZNT6766", "ZNT6767"]);
   });
   test("a later message of new bills for the day adds to it", () => {
-    const r = collectReport([note(1, "13/9
-1. ZNT6730 RM100 A
-2. ZNT6766 RM100 B"), note(2, "13/9
-1. ZNT6800 RM100 C")], "2026-09-11", null);
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B"].join("\n");
+    const r = collectReport([note(1, first), note(2, ["13/9", "1. ZNT6800 RM100 C"].join("\n"))], "2026-09-11", null);
     expect(r.bills).toHaveLength(3);
   });
 });
