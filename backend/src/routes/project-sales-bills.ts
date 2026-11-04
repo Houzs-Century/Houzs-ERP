@@ -318,7 +318,8 @@ projectSalesBills.post("/:projectId/rename-ref", async (c) => {
   const me = realUser(c);
   const projectId = parseProjectId(c);
   if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
-  const body = await c.req.json().catch(() => null) as { from?: unknown; to?: unknown } | null;
+  let body: { from?: unknown; to?: unknown } | null;
+  try { body = await c.req.json() as { from?: unknown; to?: unknown }; } catch { return c.json({ error: "invalid_json" }, 400); }
   const from = String(body?.from ?? "").trim();
   const to = String(body?.to ?? "").trim().toUpperCase();
   if (!from || extractRefTokens(to).length !== 1) return c.json({ error: "invalid_reference", message: "Key the reference as printed, such as ZNT6767." }, 400);
