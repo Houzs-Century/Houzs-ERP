@@ -222,6 +222,7 @@ describe("matchBills + summarizeBills", () => {
 });
 
 describe("a report posted again to fix a typo", () => {
+  const note = (id: number, text: string): NoteRow => ({ id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Owner" });
   test("replaces the first, so the mistyped bill goes", () => {
     const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B", "3. ZNF6767 RM100 C"].join("\n");
     const r = collectReport([note(1, first), note(2, first.replace("ZNF6767", "ZNT6767"))], "2026-09-11", null);
