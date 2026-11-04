@@ -18,8 +18,8 @@
    recomputed as the SUM of its line costs (the invariant already true for
    189/190 costed 2990 orders), so an order's existing correct lines are left as
    they are and only the newly-stamped cost is added. Per line the cost is:
-     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight)
-            -> base_price_sen -> cost_price_sen
+     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), or with
+            no height the one cost all heights share -> base_price_sen -> cost_price_sen
      other  base_price_sen -> cost_price_sen
    line_cost = unit x qty; then the header's category aggregates + total_cost +
    margin (revenue - cost) are recomputed. This mirrors restamp-imported-so-costs
@@ -44,6 +44,7 @@
    RE-RUN: idempotent — value-guarded on unit_cost_sen = 0, so a second run
    stamps nothing (every gap the products can fill is already filled). */
 import postgres from 'postgres';
+import { unitCostSen } from './lib/so-line-unit-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -65,24 +66,6 @@ const CAT_COL = {
   MATTRESS: 'mattress_sofa', SOFA: 'mattress_sofa', BEDFRAME: 'bedframe',
   ACCESSORY: 'accessories', SERVICE: 'service',
 };
-
-/** The product cost for one line, current (not as-of). SOFA reads the seat grid
- *  PRICE_2 cost at the ordered height; everything else the flat cost lane. */
-function unitCostSen(p, variants) {
-  if (!p) return 0;
-  const cat = String(p.category || '').toUpperCase();
-  if (cat === 'SOFA' && Array.isArray(p.seat_height_prices)) {
-    const h = variants?.seatHeight ?? variants?.seat_height ?? null;
-    if (h != null) {
-      const hh = String(h).replace(/"/g, '');
-      const hit = p.seat_height_prices.find(
-        (e) => String(e.height) === hh && (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0,
-      );
-      if (hit) return Number(hit.priceSen);
-    }
-  }
-  return Number(p.base_price_sen) || Number(p.cost_price_sen) || 0;
-}
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
