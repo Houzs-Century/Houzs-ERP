@@ -1308,7 +1308,7 @@ export function PurchaseInvoicesListV2() {
                   <div className="flex-1" />
                   {draftsPicked.length > 0 && (
                     <Button variant="primary" icon={<CheckCircle2 size={14} />} disabled={batchConfirm.confirming} onClick={() => void batchConfirm.confirm(draftsPicked)}>
-                      {batchConfirm.confirming ? "Confirming…" : `Confirm (${draftsPicked.length})`}
+                      {batchConfirm.confirming ? batchConfirm.progressLabel : `Confirm (${draftsPicked.length})`}
                     </Button>
                   )}
                   <Button
