@@ -33,7 +33,7 @@ describe('ScanGrnCheckCard', () => {
     fireEvent.change(screen.getByLabelText('Delivery order number'), { target: { value: 'DO-2' } });
     expect(onChange.mock.calls[0][0].doNo).toBe('DO-2');
     fireEvent.click(screen.getByLabelText('Show the lines'));
-    await waitFor(() => expect(screen.getByText(/Printed: T1MA · Mattress/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Paper: T1MA · Mattress/)).toBeTruthy());
     expect(screen.getAllByLabelText('Delivery order number')).toHaveLength(1);
     expect((screen.getByLabelText('Rack for row 1') as HTMLInputElement).value).toBe('R11-2');
   });

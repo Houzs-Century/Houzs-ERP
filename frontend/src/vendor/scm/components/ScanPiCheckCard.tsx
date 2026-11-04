@@ -12,7 +12,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
-import { isOddDate, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
+import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
 import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
@@ -143,7 +143,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
           {review.lines.map((l, i) => {
             const line = l.grnItemId ? byId.get(l.grnItemId) : undefined;
             const grn = l.grnNumber ?? line?.grnNumber ?? '';
-            const printed = l.read ? [l.read.itemCode, l.read.description].filter(Boolean).join(' · ') : '';
+            const printed = l.read ? printedText(l.read) : '';
             const off = line != null && priceDiffers(l.read?.unitPrice, line.unitPriceSen);
             return (
               <div key={l.key} className={`${styles.row} ${styles.rowPi}`}>
@@ -160,7 +160,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
-                  {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
+                  {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />

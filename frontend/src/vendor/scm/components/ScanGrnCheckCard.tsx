@@ -14,7 +14,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, todayMY } from '../../shared/format';
 import {
-  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, skuValue, swappedDate,
+  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, printedText, skuValue, swappedDate,
   type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
@@ -169,7 +169,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           {review.lines.map((l, i) => {
             const line = l.poItemId ? byId.get(l.poItemId) : undefined;
             const po = l.poNumber ?? line?.poNumber ?? '';
-            const printed = l.read ? [l.read.itemCode, l.read.description, l.read.poNo ? `PO ${l.read.poNo}` : null].filter(Boolean).join(' · ') : '';
+            const printed = l.read ? printedText(l.read) : '';
             return (
               <div key={l.key} className={styles.row}>
                 <span className={styles.num}>{i + 1}</span>
@@ -189,7 +189,8 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{l.gift?.name ?? line?.name ?? '—'}</div>
-                  {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
+                  {line?.spec && <div className={styles.metaLine} title={line.spec}>{line.spec}</div>}
+                  {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
                 </div>
                 <input className={styles.cell} value={l.rack ?? ''} onChange={(e) => setLine(l.key, { rack: e.target.value || null })} placeholder="Rack" aria-label={`Rack for row ${i + 1}`} />
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
