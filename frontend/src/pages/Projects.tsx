@@ -627,14 +627,11 @@ function ProjectsListView() {
   const [perPage, setPerPage] = useIdentityPreference("pp:projects", 50, pageSizePreference([10, 25, 50, 100, 200]));
   // List render mode — cards (P2 design) vs the full data table. Default cards.
   const [listMode, setListMode] = useIdentityPreference("projects:listMode", "cards", enumPreference(["cards", "table", "reminder"] as const));
-  // Reminder = the owner/admin chase list (Projects › Reminder). Only holders of
-  // projects.reminders (Owner + Super Admin via "*") see the toggle; if someone
-  // lands on a stored "reminder" pref without the grant, snap them back to cards
-  // so they never sit on a view whose data endpoint 403s.
-  const canReminders = can("projects.reminders");
+  // The Reminder view toggle was removed; snap any stored "reminder" preference
+  // back to cards so nobody lands on the now-unreachable view.
   useEffect(() => {
-    if (listMode === "reminder" && !canReminders) setListMode("cards");
-  }, [listMode, canReminders, setListMode]);
+    if (listMode === "reminder") setListMode("cards");
+  }, [listMode, setListMode]);
   const [showCreate, setShowCreate] = useState(false);
   // Deep-link: the global "+" quick-action FAB opens the New Project modal via
   // /projects?new=1. Consume the flag once and strip it so refresh/back don't reopen.
@@ -1504,15 +1501,6 @@ function ProjectsListView() {
           >
             Table
           </button>
-          {canReminders && (
-            <button
-              onClick={() => setListMode("reminder")}
-              className={cn("border-l border-border px-3 py-1.5 transition-colors", listMode === "reminder" ? "bg-primary text-white" : "text-ink-secondary hover:bg-surface-dim")}
-              title="Compile everyone's incomplete tasks and copy a reminder to paste into WhatsApp (owner/admin only)"
-            >
-              Reminder
-            </button>
-          )}
         </div>
       </div>
 
