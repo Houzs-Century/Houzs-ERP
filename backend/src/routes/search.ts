@@ -17,9 +17,10 @@ import { initialsLikes } from "../services/projects";
 function projectWordSearch(q: string): { sql: string; binds: string[] } {
   const binds: string[] = [];
   const arm = (like: string, cols: string[]) => cols.map((col) => { binds.push(like); return `${col} LIKE ?${binds.length}`; });
-  const arms = q.trim().split(/\s+/).filter(Boolean).map((word) => {
-    const like = `%${word}%`;
-    return `(${[...arm(like, ["code", "name", "venue", "organizer", "brand"]), ...initialsLikes(word).flatMap((p) => arm(p, ["venue"]))].join(" OR ")})`;
+  const arms = q.trim().split(/\s+/).filter(Boolean).flatMap((word) => {
+    const like = searchPattern(word);
+    if (like === null) return [];
+    return [`(${[...arm(like, ["code", "name", "venue", "organizer", "brand"]), ...initialsLikes(word).flatMap((p) => arm(p, ["venue"]))].join(" OR ")})`];
   });
   return { sql: arms.join(" AND "), binds };
 }
