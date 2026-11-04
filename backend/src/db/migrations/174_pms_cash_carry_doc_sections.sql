@@ -1,4 +1,4 @@
--- D1 / test-tree twin of migrations-pg/20261103T1800_pms_cash_carry_doc_sections.sql.
+-- D1 / test-tree twin of migrations-pg/20261104T1200_pms_cash_carry_doc_sections.sql.
 -- The prod tree is Postgres; this SQLite copy exists so the generated test
 -- schema carries the Cash & Carry checklist template that the project clone
 -- path (services/projects.ts::instantiateChecklistFromEventType) reads.
