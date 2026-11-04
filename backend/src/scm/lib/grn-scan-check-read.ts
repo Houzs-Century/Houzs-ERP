@@ -25,5 +25,5 @@ export async function reviewOfRead(svc: SupabaseClient, companyId: number | null
   const review = buildReview(parsed, ctx.supplierId, ctx.match, gifts, ctx.openLines.filter((l) => l.supplierId === ctx.supplierId));
   // Every row placed: the matcher's complaint is no longer the operator's problem.
   const placed = review.lines.length > 0 && review.lines.every((l) => l.poItemId || l.gift);
-  return { review, note: placed || ctx.match.picks.length > 0 ? null : buildNeedsReviewNote(parsed, ctx.match, ctx.allPos, ctx.supplierId) };
+  return { review, note: placed || ctx.match.picks.length > 0 ? null : ctx.otherCompany ?? buildNeedsReviewNote(parsed, ctx.match, ctx.allPos, ctx.supplierId) };
 }

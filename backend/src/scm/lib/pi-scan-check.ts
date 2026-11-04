@@ -14,7 +14,7 @@ import type { PiLineMatchResult } from './pi-scan-match';
 /** A posted GRN line with something left to bill. */
 export type BillableLine = {
   grnItemId: string; grnNumber: string; supplierId: string | null; poNumber: string | null;
-  itemCode: string; description: string | null; remaining: number; unitPriceSen: number;
+  itemCode: string; supplierSku: string | null; description: string | null; remaining: number; unitPriceSen: number;
 };
 
 export type PiReviewLine = {

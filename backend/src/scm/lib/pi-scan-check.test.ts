@@ -4,7 +4,7 @@ import { billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview,
 import type { PiScanExtract } from './pi-scan-extract';
 import type { PiLineMatchResult } from './pi-scan-match';
 
-const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, description: null, remaining, unitPriceSen: 100_00 });
+const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, supplierSku: null, description: null, remaining, unitPriceSen: 100_00 });
 const parsed: PiScanExtract = { supplierName: 'DIGLANT', supplierCode: null, invoiceNumber: 'INV 7', invoiceDate: '2026-11-03', poNo: null, doNo: 'DO-1', lines: [
   { itemCode: 'T1MAMJA0MK', articleNo: null, description: 'Mattress Akemi Equinox K King', qty: 2, unitPrice: 500, salesTax: null, lineTotal: 1000 },
   { itemCode: 'ZZ', articleNo: null, description: 'Mattress Akemi Guardian Q Queen', qty: 1, unitPrice: 300, salesTax: null, lineTotal: 300 },

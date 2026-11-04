@@ -31,7 +31,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 4;
+export const REVIEW_VERSION = 5;
 
 export type GrnReview = {
   v: number;
