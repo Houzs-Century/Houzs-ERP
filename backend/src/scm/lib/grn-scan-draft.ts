@@ -15,7 +15,7 @@ import { loadScanCodes } from './grn-scan-codes';
 import { applyScanRacks, scanRackNote } from './grn-scan-racks';
 import { docPrefixForCode, scopeToCompanyIdOrOpen } from './companyScope';
 import {
-  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, printedPoWhy, resolveScannedSupplier,
+  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, printedPoWhy, resolveScannedSupplier, supplierOfPrintedPo,
   type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine,
 } from './grn-scan-match';
 
@@ -98,7 +98,7 @@ export async function matchScan(svc: SupabaseClient, companyId: number | null, p
     loadPoStatuses(svc, companyId),
     loadCompanies(svc),
   ]);
-  const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
+  const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers) ?? supplierOfPrintedPo(parsed, allPos);
   const taught = supplierId !== null ? await loadScanCodes(svc, companyId, supplierId) : [];
   const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, [...bindings, ...taught], supplierId);
   return { supplierId, openLines, allPos, match, otherCompany: otherCompanyNote([parsed.poNo, ...parsed.lines.map((l) => l.poNo)], companyId, companies) };
