@@ -58,6 +58,30 @@ export function compareByDeliverySlot(a: DeliverySlotRow, b: DeliverySlotRow): n
   return compareByDeliveryDate(a, b) || byLorry || runSheetTieBreak(a, b);
 }
 
+/** A DO print bundle's header, as the DO detail read returns it. */
+export type DoPrintHeader = {
+  expected_delivery_at?: string | null;
+  customer_delivery_date?: string | null;
+  so_doc_no?: string | null;
+  time_range?: string | null;
+  vehicle?: string | null;
+  crew?: { lorry_plate: string | null } | null;
+};
+
+/** The same order for a printed DO stack, so the driver's paper reads like the
+ *  board. The date is the one the DO prints; the crew lorry falls back to the
+ *  header's Vehicle. */
+export function compareDoPrintOrder(a: DoPrintHeader, b: DoPrintHeader): number {
+  const row = (h: DoPrintHeader): DeliverySlotRow => ({
+    amended_delivery_date: h.expected_delivery_at ?? null,
+    customer_delivery_date: h.customer_delivery_date ?? null,
+    so_doc_no: h.so_doc_no,
+    time_range: h.time_range,
+    crew: { lorry_plate: h.crew?.lorry_plate ?? h.vehicle ?? null },
+  });
+  return compareByDeliverySlot(row(a), row(b));
+}
+
 /** The row's month bucket key: 'YYYY-MM', or '' when it has no delivery date
  *  (the empty key is the trailing "No date" group, and sorts after every real
  *  month because compareByDeliveryDate puts no-date rows last). */
