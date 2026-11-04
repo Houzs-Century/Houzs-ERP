@@ -12,9 +12,12 @@ export type ReviewLine = {
   poNumber: string | null;
   gift: { itemCode: string; name: string } | null;
   qty: number;
+  rack: string | null;
+  suggested: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; poNo: string | null } | null;
 };
 export type GrnReview = {
+  v: number;
   supplierId: string | null;
   supplierRead: string | null;
   doNo: string | null;
@@ -115,6 +118,20 @@ export function isOddDate(date: string | null, today: string): boolean {
   if (!date) return false;
   return Math.abs(Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) > 45 * 86_400_000;
 }
+
+/** The same date with day and month swapped, when that lands near today and
+ *  the date as read does not (03/11 read as 11 March). */
+export function swappedDate(date: string | null, today: string): string | null {
+  if (!date || !isOddDate(date, today)) return null;
+  const [y, m, d] = date.split('-');
+  if (Number(d) > 12) return null;
+  const next = `${y}-${d}-${m}`;
+  return isOddDate(next, today) ? null : next;
+}
+
+/** A matcher note's first sentence (P.O. and D.O. do not end one): the reason,
+ *  without the row-by-row recital the table already shows. */
+export const shortNote = (note: string | null): string | null => (note ? /^.*?[a-z0-9)]\.(?=\s+[A-Z]|$)/.exec(note)?.[0] ?? note : null);
 
 let seq = 0;
 export const newLineKey = () => `n${Date.now().toString(36)}${(seq++).toString(36)}`;

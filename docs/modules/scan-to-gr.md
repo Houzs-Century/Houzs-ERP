@@ -47,6 +47,13 @@ returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open
 case aside), `repeatOf` (the same D.O. earlier in the waiting list) and `blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
 `createDraftGrnFromPoItems` (DRAFT only, company-scoped PO-line read, qty capped);
 `POST /discard {ids}` hides rows. A repeat starts unticked; the operator may still create it.
+Rows the matcher left untied are tied by name for the operator to check (`suggestByName`,
+"Matched by name"): every word of our item code printed, MATT aside, on a PO this delivery order is
+known to be for (printed, or the PO of its other rows), or one open line of the supplier; never a
+guess among POs. Racks written beside any row carry onto the card and the draft line
+(`applyScanRacks`). On Create, each printed code on a tied row is saved in `supplier_scan_codes`, so
+the next delivery order matches it. `REVIEW_VERSION`: older copies are rebuilt from the stored read.
+
 **Free gifts** (a row on no PO, e.g. DIGLANT's pillows): a row picks PO and SKU from dropdowns; the SKU list
 is what is owed on the chosen PO, else everything owed plus the supplier's other SKUs
 (`GET /check/supplier-skus`), which can only be free gifts. Create adds it to the

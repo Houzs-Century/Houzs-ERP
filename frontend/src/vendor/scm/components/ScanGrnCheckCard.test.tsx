@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { isOddDate, localBlock, poOptions, skuOptions, type CheckDoc, type GrnReview } from '../lib/scan-gr-check';
+import { isOddDate, localBlock, poOptions, shortNote, skuOptions, swappedDate, type CheckDoc, type GrnReview } from '../lib/scan-gr-check';
 
 vi.mock('../lib/scan-gr-check', async (orig) => ({
   ...(await orig<typeof import('../lib/scan-gr-check')>()),
@@ -10,8 +10,8 @@ vi.mock('../lib/scan-gr-check', async (orig) => ({
 }));
 const { ScanGrnCheckCard } = await import('./ScanGrnCheckCard');
 
-const line = { key: 'k1', poItemId: null, poNumber: null, gift: null, qty: 2, read: { itemCode: 'T1MA', description: 'Mattress', qty: 2, poNo: null } };
-const review: GrnReview = { supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO-1', deliveryDate: '2026-11-03', notes: null, lines: [line] };
+const line = { key: 'k1', poItemId: null, poNumber: null, gift: null, qty: 2, rack: 'R11-2', suggested: false, read: { itemCode: 'T1MA', description: 'Mattress', qty: 2, poNo: null } };
+const review: GrnReview = { v: 2, supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO-1', deliveryDate: '2026-11-03', notes: null, lines: [line] };
 const doc = { id: 'a', batchId: 'b', fileName: 'do.pdf', pages: null, state: 'pending', note: null, review, createdAt: '', hasFile: false, canGold: false, gold: false, duplicateOf: null, repeatOf: null, blocked: null } as CheckDoc;
 const poLines = [
   { poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', name: 'Mattress Q', remaining: 1, warehouse: 'KL' },
@@ -35,6 +35,7 @@ describe('ScanGrnCheckCard', () => {
     fireEvent.click(screen.getByLabelText('Show the lines'));
     await waitFor(() => expect(screen.getByText(/Printed: T1MA · Mattress/)).toBeTruthy());
     expect(screen.getAllByLabelText('Delivery order number')).toHaveLength(1);
+    expect((screen.getByLabelText('Rack for row 1') as HTMLInputElement).value).toBe('R11-2');
   });
   it('a D.O. already received says where, and can still be created', () => {
     const onOpen = vi.fn();
@@ -67,6 +68,15 @@ describe('the row dropdowns', () => {
   it('blocks a row asking for more than the PO still owes', () => {
     const map = new Map(poLines.map((l) => [l.poItemId, l]));
     expect(localBlock({ ...review, lines: [{ ...line, poItemId: 'pi-1' }] }, map)).toMatch(/2 is more than the 1 still owed/);
+  });
+  it('offers the swap only when it lands near today (DGSN26002448)', () => {
+    expect(swappedDate('2026-03-11', '2026-11-04')).toBe('2026-11-03');
+    expect(swappedDate('2026-11-03', '2026-11-04')).toBeNull();
+    expect(swappedDate('2026-03-20', '2026-11-04')).toBeNull();
+  });
+  it('a matcher note is cut to its reason; a PO number with dots or a D.O. does not end it early', () => {
+    expect(shortNote('We read P.O. HC-1 (D.O. DG2), but PO HC-1 is marked Received, so no receipt was created. Please check.'))
+      .toBe('We read P.O. HC-1 (D.O. DG2), but PO HC-1 is marked Received, so no receipt was created.');
   });
   it('a date months away is flagged, a recent one is not', () => {
     expect(isOddDate('2026-03-11', '2026-11-04')).toBe(true);

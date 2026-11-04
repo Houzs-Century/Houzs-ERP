@@ -14,7 +14,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, todayMY } from '../../shared/format';
 import {
-  fetchSupplierSkus, isOddDate, newLineKey, poOptions, skuOptions, skuValue,
+  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, skuValue, swappedDate,
   type CheckDoc, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
@@ -64,7 +64,10 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
   const warehouses = [...new Set(tied.map((l) => l.warehouse).filter(Boolean))].join(', ');
   const pos = [...new Set(tied.map((l) => l.poNumber))].join(', ');
   const repeat = doc.duplicateOf ?? null;
-  const oddDate = isOddDate(review.deliveryDate, todayMY());
+  const today = todayMY();
+  const oddDate = isOddDate(review.deliveryDate, today);
+  const swapped = swappedDate(review.deliveryDate, today);
+  const anyTied = review.lines.some((l) => l.poItemId || l.gift);
 
   const set = (patch: Partial<GrnReview>) => onChange({ ...review, ...patch });
   const setLine = (key: string, patch: Partial<ReviewLine>) => set({ lines: review.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
@@ -77,15 +80,15 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
   };
   const pickPo = (key: string, v: string) => {
     const onPo = mine.filter((l) => l.poNumber === v);
-    setLine(key, { poNumber: v || null, gift: null, poItemId: onPo.length === 1 ? onPo[0].poItemId : null });
+    setLine(key, { poNumber: v || null, gift: null, suggested: false, poItemId: onPo.length === 1 ? onPo[0].poItemId : null });
   };
   const pickSku = (key: string, v: string) => {
     if (v.startsWith('gift:')) {
       const code = v.slice(5);
-      setLine(key, { poItemId: null, poNumber: null, gift: { itemCode: code, name: skus.data?.find((s) => s.code === code)?.name ?? code } });
+      setLine(key, { poItemId: null, poNumber: null, suggested: false, gift: { itemCode: code, name: skus.data?.find((s) => s.code === code)?.name ?? code } });
     } else {
       const id = v.slice(5);
-      setLine(key, { poItemId: id, poNumber: byId.get(id)?.poNumber ?? null, gift: null });
+      setLine(key, { poItemId: id, poNumber: byId.get(id)?.poNumber ?? null, gift: null, suggested: false });
     }
   };
 
@@ -146,14 +149,19 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           <button type="button" className={`${styles.bannerBtn} ${styles.bannerDanger}`} onClick={onDelete}>Delete this scan</button>
         </div>
       )}
-      {oddDate && <div className={styles.hint}>This date is far from today. Check the day and month were not read swapped.</div>}
-      {block && <div className={styles.hint}>{block}</div>}
-      {doc.note && open && <div className={styles.hint}>{doc.note}</div>}
+      {oddDate && (
+        <div className={styles.hint}>
+          This date is far from today.{' '}
+          {swapped && <button type="button" className={styles.bannerLink} onClick={() => set({ deliveryDate: swapped })}>Change to {fmtDate(swapped)}</button>}
+        </div>
+      )}
+      {!anyTied && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
+      {anyTied && block && <div className={styles.hint}>{block}</div>}
 
       {open && (
         <div className={styles.lines}>
           <div className={`${styles.row} ${styles.rowHead}`}>
-            <span>#</span><span>PO</span><span>SKU</span><span>Description</span><span className={styles.right}>Owed</span><span className={styles.right}>Qty</span><span />
+            <span>#</span><span>PO</span><span>SKU</span><span>Description</span><span>Rack</span><span className={styles.right}>Owed</span><span className={styles.right}>Qty</span><span />
           </div>
           {review.lines.map((l, i) => {
             const line = l.poItemId ? byId.get(l.poItemId) : undefined;
@@ -177,15 +185,16 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{l.gift?.name ?? line?.name ?? '—'}</div>
-                  {printed && <div className={styles.printed}>Printed: {printed}</div>}
+                  {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
                 </div>
+                <input className={styles.cell} value={l.rack ?? ''} onChange={(e) => setLine(l.key, { rack: e.target.value || null })} placeholder="Rack" aria-label={`Rack for row ${i + 1}`} />
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
                 <button type="button" className={`${styles.icon} ${styles.caret}`} onClick={() => set({ lines: review.lines.filter((x) => x.key !== l.key) })} aria-label={`Remove row ${i + 1}`}><X size={13} /></button>
               </div>
             );
           })}
-          <button type="button" className={styles.addLine} onClick={() => set({ lines: [...review.lines, { key: newLineKey(), poItemId: null, poNumber: null, gift: null, qty: 1, read: null }] })}>+ Add line</button>
+          <button type="button" className={styles.addLine} onClick={() => set({ lines: [...review.lines, { key: newLineKey(), poItemId: null, poNumber: null, gift: null, qty: 1, rack: null, suggested: false, read: null }] })}>+ Add line</button>
           {review.lines.some((l) => !l.poItemId && !l.gift) && <p className={styles.leftOut}>A row with no SKU chosen is left off the draft.</p>}
         </div>
       )}
