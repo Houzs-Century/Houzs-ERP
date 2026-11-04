@@ -16,6 +16,10 @@ import { matchGrnScanToPoLines, resolveScannedSupplier, supplierOfPrintedPo } fr
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const ONLY = process.env.COMPANY_ID ? Number(process.env.COMPANY_ID) : null;
+// ALL_OPEN=1 ignores what was received since: many scans were run on paper already
+// received by hand, so this asks only whether a row can find its line.
+const ALL_OPEN = process.env.ALL_OPEN === '1';
+const ONLY_SUPPLIER = process.env.SUPPLIER ? process.env.SUPPLIER.toUpperCase() : null;
 const LIST_LIMIT = Number(process.env.LIST_LIMIT) > 0 ? Number(process.env.LIST_LIMIT) : 8;
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
@@ -49,9 +53,9 @@ async function main() {
     const receipts = new Map();
     for (const r of received) receipts.set(r.id, [...(receipts.get(r.id) ?? []), r]);
     const openAt = (at) => lines.flatMap((r) => {
-      if (r.po_at > at) return [];
+      if (!ALL_OPEN && r.po_at > at) return [];
       const got = (receipts.get(r.id) ?? []).filter((x) => x.posted_at && x.posted_at < at).reduce((a, x) => a + (Number(x.qty_accepted) || 0), 0);
-      const remaining = (Number(r.qty) || 0) - got;
+      const remaining = ALL_OPEN ? Number(r.qty) || 0 : (Number(r.qty) || 0) - got;
       return remaining <= 0 ? [] : [{
         poItemId: r.id, poId: r.purchase_order_id, poNumber: r.po_number, supplierId: r.supplier_id, itemCode: r.item_code ?? '',
         materialName: r.material_name, supplierSku: r.supplier_sku, remaining, locationCode: r.wh_code,
@@ -75,13 +79,14 @@ async function main() {
       const review = buildReview(parsed, supplierId, match, [], open.filter((l) => l.supplierId === supplierId));
       const rows = review.lines.length;
       const tied = review.lines.filter((l) => l.poItemId).length;
+      if (ONLY_SUPPLIER && !name.toUpperCase().includes(ONLY_SUPPLIER)) continue;
       const g = bySupplier.get(name) ?? { docs: 0, full: 0, rows: 0, tied: 0, misses: [], why: {} };
       for (const u of match.unmatched) g.why[u.reason] = (g.why[u.reason] ?? 0) + 1;
       g.docs += 1; g.rows += rows; g.tied += tied;
       if (rows > 0 && tied === rows) g.full += 1;
       else if (g.misses.length < LIST_LIMIT) {
         const miss = review.lines.find((l) => !l.poItemId);
-        g.misses.push(`${parsed.doNo ?? r.file_name ?? '?'}: PO read ${parsed.poNo ?? '-'}; ${[miss?.read?.itemCode, miss?.read?.description].filter(Boolean).join(' / ').slice(0, 90)}`);
+        g.misses.push(`${parsed.doNo ?? r.file_name ?? '?'}: PO read ${parsed.poNo ?? '-'}; row PO ${miss?.read?.poNo ?? '-'}; ${[miss?.read?.itemCode, miss?.read?.description].filter(Boolean).join(' / ').slice(0, 110)}`);
       }
       bySupplier.set(name, g);
     }
