@@ -230,8 +230,38 @@ export function orderAmountSen(o: OrderRow): number {
  *  same booklet number typed on two orders), the one linked to THIS event
  *  wins, then an unlinked one, then any — so a wrong-fair duplicate can never
  *  hide a right one. Ties break on doc_no so the answer is stable. */
+/** One order, one booklet number that differs from the report by a single letter
+ *  of the prefix: the report's ZNF6767 is the order's ZNT6767. Several such orders
+ *  name nobody. */
+function typedWrong(token: string, index: Map<string, OrderRow[]>): OrderRow[] {
+  const m = /^([A-Z]+)(\d{4,})$/.exec(token);
+  if (!m) return [];
+  const near = [...index.entries()].filter(([t]) => {
+    const o = /^([A-Z]+)(\d{4,})$/.exec(t);
+    return !!o && o[2] === m[2] && o[1].length === m[1].length && o[1][0] === m[1][0];
+  }).flatMap(([, rows]) => rows);
+  return new Set(near.map((o) => o.doc_no)).size === 1 ? near : [];
+}
+
+/** An order carrying two booklet numbers (ZNT1234+HC1234) is one sale of two
+ *  brands: either event may hold it. */
+export function isBinding(o: Pick<OrderRow, "customer_so_no" | "ref">): boolean {
+  return new Set([...extractRefTokens(o.customer_so_no), ...extractRefTokens(o.ref)]).size > 1;
+}
+
+export type BoothRef = { venue: string | null; start: string | null; end: string | null };
+
+/** Two brands' booths of one fair: one venue, dates that overlap. A sale can sit
+ *  under either, so it is not "under another event". */
+export function sameFair(a: BoothRef | undefined, b: BoothRef | undefined): boolean {
+  if (!a?.venue || !b?.venue || !a.start || !b.start) return false;
+  const key = (v: string) => v.trim().toUpperCase();
+  return key(a.venue) === key(b.venue) && a.start.slice(0, 10) <= (b.end ?? b.start).slice(0, 10) && b.start.slice(0, 10) <= (a.end ?? a.start).slice(0, 10);
+}
+
 export function matchBill(token: string, projectId: number, index: Map<string, OrderRow[]>): BillMatch {
-  const candidates = index.get(token) ?? [];
+  const exact = index.get(token) ?? [];
+  const candidates = exact.length > 0 ? exact : typedWrong(token, index);
   if (candidates.length === 0) return NOT_OPENED;
   const rank = (o: OrderRow): number =>
     o.project_id === projectId ? 0 : o.project_id == null ? 1 : 2;
