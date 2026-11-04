@@ -42,6 +42,8 @@ export type OpenPoLine = {
   // Code of the warehouse the line ships into (line, else PO header), e.g.
   // "SRW WAREHOUSE". Null when the PO names none.
   locationCode: string | null;
+  // That warehouse's id, to offer its racks on the check step.
+  warehouseId?: string | null;
   // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
   // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
   description2?: string | null;

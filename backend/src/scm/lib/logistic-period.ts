@@ -47,7 +47,7 @@ export function workingDays(from: string, to: string): number {
   return n;
 }
 
-export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string, downDaysOf: ReadonlyMap<string, number>) {
+export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string, downDatesOf: ReadonlyMap<string, ReadonlySet<string>>) {
   const out = dos.filter((d) => d.doDate >= from && d.doDate <= to);
 
   const days: Array<{ date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null }> = [];
@@ -93,8 +93,9 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
 
   /* Per lorry: each delivery day, what it carried; occupancy = delivery days ÷ the
      working days so far it could work, so a day in the workshop is not held
-     against it. Our own lorries are listed even on no delivery day, since an idle
-     own lorry still costs its crew and instalment. */
+     against it. A day it broke down after delivering still counts: it went out
+     (owner 2026-11-04). Our own lorries are listed even on no delivery day, since
+     an idle own lorry still costs its crew and instalment. */
   const work = workingDays(from, to < today ? to : today);
   const perDay = new Map<string, { date: string; lorry: string; orders: number; amountSen: number }>();
   for (const d of out) {
@@ -109,7 +110,8 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
   const byLorry = [...plates].map((plate) => {
     const ds = lorryDayList.filter((x) => x.lorry === plate);
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
-    const downDays = Math.min(work, downDaysOf.get(plate) ?? 0);
+    const delivered = new Set(ds.map((x) => x.date));
+    const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !delivered.has(d)).length);
     const available = work - downDays;
     return {
       lorry: plate, internal: internal.has(plate), daysOut: ds.length, workingDays: available, downDays,

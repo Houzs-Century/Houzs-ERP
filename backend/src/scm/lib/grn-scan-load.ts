@@ -80,6 +80,7 @@ export async function loadOpenPoLines(
       supplierSku: r.supplier_sku ?? null,
       remaining,
       locationCode: codeById.get(whOf(r) ?? '') ?? null,
+      warehouseId: whOf(r),
       description2: lineExportDescription2(r.item_group, r.variants, r.description2),
       soDocNo: r.so_item_id ? soDocByItem.get(r.so_item_id) ?? null : null,
       itemGroup: r.item_group ?? null,
