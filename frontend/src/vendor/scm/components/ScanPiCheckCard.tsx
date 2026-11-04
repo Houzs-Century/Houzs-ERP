@@ -161,7 +161,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
                   {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
-                  {off && <div className={`${styles.printed} ${styles.priceOff}`}>The draft bills the PO price, not the invoice price.</div>}
+                  {off && <div className={`${styles.printed} ${styles.priceOff}`}>The draft bills the GRN price, not the invoice price.</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
