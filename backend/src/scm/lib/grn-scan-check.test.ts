@@ -66,7 +66,7 @@ describe('grn scan check', () => {
       { itemCode: 'T1U', barcode: null, description: 'Mattress Akemi Ultimate Q Queen', qty: 5, poNo: null, rack: null },
     ];
     const lines = [{ key: 'u', poItemId: 'u', poNumber: null, gift: null, qty: 5, rack: null, suggested: false, read: null }, { key: 'g', poItemId: 'g', poNumber: null, gift: null, qty: 3, rack: null, suggested: true, read: { itemCode: 'T1G', description: 'Mattress Akemi Guardian K King', qty: 3, poNo: null } }];
-    const out = inPrintedOrder(lines, printed, open);
+    const out = inPrintedOrder(lines, printed, open, new Set());
     expect(out.map((l) => l.key)).toEqual(['g', 'u']);
     expect(out[1].read?.itemCode).toBe('T1U');
   });
@@ -115,5 +115,15 @@ describe('grn scan check', () => {
     expect(duplicateOf({ supplierId: 's1', doNo: 'DO 77' } as GrnReview, existing)?.grnNumber).toBe('HC-GRN-1');
     expect(duplicateOf({ supplierId: 's1', doNo: 'DO 88' } as GrnReview, existing)).toBeNull();
     expect(duplicateOf({ supplierId: 's1', doNo: null } as GrnReview, existing)).toBeNull();
+  });
+});
+
+describe('a set row on the check screen (DO-2610-01)', () => {
+  test('both pieces show the one row that printed them, each on its own PO line', () => {
+    const printed = { itemCode: 'DSL 8075(28")-2+1', barcode: null, description: '*2990-SO-2609-045', qty: 1, poNo: null, rack: null };
+    const parsed = { supplierName: 'DORSETTLOFT', poNo: 'S/O 1878', doNo: 'DO-2610-01', deliveryDate: '2026-10-05', lines: [printed] };
+    const match = { picks: [{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }], unmatched: [], racks: {}, soMatches: [{ line: printed, soDocNo: '2990-SO-2609-045', poItemIds: ['a2', 'aL'] }] } as unknown as Parameters<typeof buildReview>[2];
+    const review = buildReview(parsed, 's1', match, [], []);
+    expect(review.lines.map((l) => [l.poItemId, l.read?.itemCode])).toEqual([['a2', 'DSL 8075(28")-2+1'], ['aL', 'DSL 8075(28")-2+1']]);
   });
 });
