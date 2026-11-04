@@ -1,6 +1,6 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
-import { REVIEW_VERSION, blockedReason, buildReview, codesToTeach, nameFits, racksOf, suggestByName, type ReviewLine, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
+import { REVIEW_VERSION, inPrintedOrder, blockedReason, buildReview, codesToTeach, nameFits, racksOf, suggestByName, type ReviewLine, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
 const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryDate: '2026-11-03', lines: [
@@ -12,9 +12,9 @@ const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p'
 
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
-    const r = buildReview(parsed, 's1', match, [], []);
+    const r = buildReview(parsed, 's1', match, [], [...open.values()]);
     expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-03' });
-    expect(r.lines.map((l) => [l.poItemId, l.qty, l.rack, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, 'R11-2', null], [null, 1, null, 'ZZ']]);
+    expect(r.lines.map((l) => [l.poItemId, l.qty, l.rack, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, 'R11-2', 'A1'], [null, 1, null, 'ZZ']]);
   });
   test('a read the matcher never saw keeps every printed line', () => {
     expect(buildReview(parsed, null, null, [], []).lines).toHaveLength(2);
@@ -56,6 +56,20 @@ describe('grn scan check', () => {
       expect(lines.map((l) => l.poItemId)).toEqual(['x', null]);
     });
   });
+  test('rows come in the order the paper prints them, matched ones with what they printed', () => {
+    const open = [
+      { poItemId: 'u', poId: 'p', poNumber: 'HC-PO-236', supplierId: 's1', itemCode: 'AKEMI ULTIMATE MATT (Q)', materialName: null, supplierSku: null, remaining: 5, locationCode: 'KL' },
+      { poItemId: 'g', poId: 'p', poNumber: 'HC-PO-236', supplierId: 's1', itemCode: 'AKEMI GUARDIAN MATT (K)', materialName: null, supplierSku: null, remaining: 3, locationCode: 'KL' },
+    ];
+    const printed = [
+      { itemCode: 'T1G', barcode: null, description: 'Mattress Akemi Guardian K King', qty: 3, poNo: null, rack: null },
+      { itemCode: 'T1U', barcode: null, description: 'Mattress Akemi Ultimate Q Queen', qty: 5, poNo: null, rack: null },
+    ];
+    const lines = [{ key: 'u', poItemId: 'u', poNumber: null, gift: null, qty: 5, rack: null, suggested: false, read: null }, { key: 'g', poItemId: 'g', poNumber: null, gift: null, qty: 3, rack: null, suggested: true, read: { itemCode: 'T1G', description: 'Mattress Akemi Guardian K King', qty: 3, poNo: null } }];
+    const out = inPrintedOrder(lines, printed, open);
+    expect(out.map((l) => l.key)).toEqual(['g', 'u']);
+    expect(out[1].read?.itemCode).toBe('T1U');
+  });
   test('a rack goes to its PO line, whatever the product; a code confirmed is taught', () => {
     const r = { lines: [
       { poItemId: 'p1', rack: 'R11-2', read: { itemCode: 'T1', description: null, qty: 1, poNo: null } },
@@ -67,7 +81,7 @@ describe('grn scan check', () => {
   });
   test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
     const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }], []);
-    expect(r.lines[1]).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
+    expect(r.lines.find((l) => l.gift)).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
   });
   test('the same delivery order twice in the waiting list: the later copy names the first', () => {
     const doc = (id: string, doNo: string | null) => ({ id, fileName: `${id}.pdf`, review: { supplierId: 's1', doNo } as GrnReview });

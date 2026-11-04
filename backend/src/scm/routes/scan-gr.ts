@@ -395,7 +395,7 @@ export async function processGrnScanQueueMessage(env: Env, jobId: string): Promi
 // Stale-job reaper for GR jobs, scoped to document_type='GR' so it and the SO
 // reaper never touch each other's rows. One automatic re-run (retry_count 0->1),
 // then terminal error — same policy as the SO reaper.
-async function reapStaleGrnScanJobs(
+export async function reapStaleGrnScanJobs(
   env: Env,
   svc: SupabaseClient,
   runInBackground: (p: Promise<unknown>) => void,
