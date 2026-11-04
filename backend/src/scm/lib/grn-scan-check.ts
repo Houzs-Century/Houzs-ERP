@@ -83,8 +83,12 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
 }
 
 // Our PO numbers with the location inside ("HC-SBH-PO-2610-358") and without it are one PO.
-// HC-SBH-PO-2610-358, SRW-2610-358, PO-2610-358 and HC-PO-2610-358_R1 are one PO: its running digits.
-const poKey = (s: string): string => s.toUpperCase().replace(/[_\s-]*R\d+\s*$/, '').replace(/\D/g, '').slice(-7);
+// HC-SBH-PO-2610-358, SRW-2610-358, PO-2610-358 and HC-PO-2610-358_R1 are one PO: its
+// running digits. KLPO10138-HC5324 is PO-010138 for sales order HC5324.
+const poKey = (s: string): string => {
+  const t = s.toUpperCase().replace(/[_\s-]*R\d+\s*$/, '');
+  return (/PO[-\s]*([\d-]+)/.exec(t)?.[1] ?? t).replace(/\D/g, '').replace(/^0+/, '').slice(-7);
+};
 const words = (s: string | null | undefined): string[] => (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
 
 /** Every word of our item code is printed on the row, MATT aside: AKEMI EQUINOX

@@ -9,8 +9,9 @@
 
 const NOISE = new Set(['SOFA', 'BEDFRAME', 'BED', 'DIVAN', 'MAT', 'MATT', 'MATTRESS', 'FABRIC', 'SIZE', 'COL', 'SEAT', 'LEG', 'THE', 'AND', 'WITH', 'PO', 'SO', 'NEW', 'BOX', 'UNIT', 'PCS', 'SET', 'FT', 'FTS', 'CM', 'KING', 'QUEEN', 'SINGLE', 'SUPER', 'LHF', 'RHF']);
 
+// "DSL 8075" and DSL8075 are one word.
 const wordsOf = (s: string | null | undefined): string[] =>
-  (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 2 && !NOISE.has(w) && !/^\d+$/.test(w));
+  (s ?? '').toUpperCase().replace(/\b([A-Z]{2,5})\s+(\d{3,})/g, '$1$2').split(/[^A-Z0-9]+/).filter((w) => w.length >= 2 && !NOISE.has(w) && !/^\d+$/.test(w));
 
 /** A word that names one model, not a kind of thing: letters and digits, SF9050. */
 const isModel = (w: string): boolean => w.length >= 4 && /[A-Z]/.test(w) && /\d/.test(w);

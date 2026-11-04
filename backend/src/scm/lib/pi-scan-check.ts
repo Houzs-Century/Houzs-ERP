@@ -47,6 +47,21 @@ let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
 const readOf = (l: PiScanLine) => ({ itemCode: l.itemCode ?? l.articleNo, description: l.description, qty: l.qty ?? 0, unitPrice: l.unitPrice, lineTotal: l.lineTotal });
 
+/** One invoice row for a set ("DSL 8075 - 2 + L" x1 at RM 1,950), which the receipt
+ *  holds piece by piece: when the pieces' prices add up to the row's within a fifth,
+ *  the row becomes one row per piece, its price shared as the pieces' prices share. */
+export function setPieces(row: PiReviewLine, lines: ReadonlyArray<BillableLine>): PiReviewLine[] | null {
+  const printed = row.read?.unitPrice;
+  if (!row.read || printed == null || printed <= 0 || row.qty !== 1 || lines.length < 2) return null;
+  const sum = lines.reduce((a, l) => a + l.unitPriceSen, 0);
+  const ratio = sum / (printed * 100);
+  if (sum <= 0 || ratio < 0.8 || ratio > 1.25) return null;
+  return lines.map((l) => {
+    const unitPrice = Math.round((printed * l.unitPriceSen) / sum * 100) / 100;
+    return { key: lineKey(), grnItemId: l.grnItemId, grnNumber: l.grnNumber, qty: 1, suggested: true, read: { ...(row.read as NonNullable<PiReviewLine['read']>), qty: 1, unitPrice, lineTotal: unitPrice } };
+  });
+}
+
 /** Tie rows the matcher left untied, by name: on the GRNs this invoice is
  *  anchored to, or, with none, only when exactly one line of the supplier fits.
  *  Each line takes only what is left to bill. */
@@ -55,13 +70,19 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   for (const l of lines) if (l.grnItemId) left.set(l.grnItemId, (left.get(l.grnItemId) ?? 0) - l.qty);
   const anchored = new Set(anchorGrns);
   for (const l of lines) { const hit = open.find((o) => o.grnItemId === l.grnItemId); if (hit) anchored.add(hit.grnNumber); }
-  for (const l of lines) {
+  for (const l of [...lines]) {
     if (l.grnItemId || !l.read?.description) continue;
     const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0);
     const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode));
     const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.description ?? ''}`);
     const scoped = anchored.size > 0 ? fits.filter((o) => anchored.has(o.grnNumber)) : fits;
     if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) continue;
+    const pieces = setPieces(l, scoped);
+    if (pieces) {
+      lines.splice(lines.indexOf(l), 1, ...pieces);
+      for (const p of pieces) if (p.grnItemId) left.set(p.grnItemId, (left.get(p.grnItemId) ?? 0) - p.qty);
+      continue;
+    }
     const pick = scoped.find((o) => (left.get(o.grnItemId) ?? 0) >= l.qty) ?? scoped[0];
     l.grnItemId = pick.grnItemId;
     l.suggested = true;
