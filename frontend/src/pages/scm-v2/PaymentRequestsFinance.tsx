@@ -152,6 +152,8 @@ const answerDoc = (r: PaymentRequest): { kind: 'invoice' | 'voucher'; no: string
    refund takes its own Customer Refund, a balance on an AP invoice is paid on
    that invoice. */
 export const combinable = (r: PaymentRequest): boolean => awaitsFinance(r) && !isRefundRequest(r) && !apBalanceOn(r);
+/** The tabs that tick: To do, and All (owner 2026-11-04) — a row that cannot combine shows its box disabled. */
+export const TICK_VIEWS: ReadonlySet<View> = new Set<View>(['todo', 'all']);
 export const oneVoucherHref = (ids: string[]): string => `/scm/payment-vouchers/new?fromRequests=${ids.map(encodeURIComponent).join(',')}`;
 
 const movesOf = (r: PaymentRequest, me: number) => ({
@@ -456,7 +458,7 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
           return Object.keys(style).length > 0 ? style : undefined;
         }}
         contextMenu={(r) => menuOf(r)}
-        selection={view === 'todo' ? {
+        selection={TICK_VIEWS.has(view) ? {
           selectedIds: ticked,
           onToggle: (k) => setTicked((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
           onToggleAll: (keys, all) => setTicked((p) => { const n = new Set(p); for (const k of keys) { if (all) n.delete(k); else n.add(k); } return n; }),
@@ -465,7 +467,7 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
         } : undefined}
       />
 
-      {view === 'todo' && tickedRows.length > 0 && (
+      {TICK_VIEWS.has(view) && tickedRows.length > 0 && (
         <BatchBar count={tickedRows.length} sum={fmtSen(tickedRows.reduce((s, r) => s + r.amount_sen, 0))} hidden={0}
           notes={tickedPayees.size > 1 ? ['Different payees — the voucher leaves the payee for you to type; each one\'s bank is in its notes.'] : []}
           onClear={() => setTicked(new Set())}>

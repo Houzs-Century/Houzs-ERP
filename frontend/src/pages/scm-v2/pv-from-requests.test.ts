@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { prefillFromRequests, requestIdsOf } from './pv-from-requests';
-import { combinable, oneVoucherHref } from './PaymentRequestsFinance';
+import { TICK_VIEWS, combinable, oneVoucherHref } from './PaymentRequestsFinance';
 
 const req = (over: Partial<PaymentRequest>): PaymentRequest => ({
   id: 'a', request_no: '2990-PRQ-2611-002', payee_name: 'CHOW WAI MAN', purpose: 'lalamove', amount_sen: 3320, project_id: null,
@@ -15,6 +15,10 @@ const req = (over: Partial<PaymentRequest>): PaymentRequest => ({
 } as PaymentRequest);
 
 describe('combining payment requests into one voucher', () => {
+  it('To do and All tick; the answered tabs do not', () => {
+    expect([...TICK_VIEWS].sort()).toEqual(['all', 'todo']);
+  });
+
   it('only a waiting, plain payment request can be ticked', () => {
     expect(combinable(req({}))).toBe(true);
     expect(combinable(req({ stage: 'PROCESSING' } as Partial<PaymentRequest>))).toBe(false);
