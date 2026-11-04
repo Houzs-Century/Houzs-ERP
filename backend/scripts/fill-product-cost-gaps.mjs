@@ -7,6 +7,7 @@
      LV1 = JAGER, LV2 = CODY, LV3 = REGAL (A), LV4 = TRION (A).
    MATTRESS and ACCESSORY products with no cost take the newest non-cancelled
    purchase invoice price of that code, as a reference.
+   NAMED_COSTS are the prices the owner gave for products with neither.
 
    MODE=plan (default) prints every write and changes nothing. MODE=apply needs
    CONFIRM="I HAVE REVIEWED THE DRY-RUN"; then it re-reads on a fresh connection
@@ -27,6 +28,8 @@ const PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 if (APPLY && process.env.CONFIRM !== PHRASE) { console.error(`MODE=apply requires CONFIRM="${PHRASE}"`); process.exit(2); }
 const ONLY = process.env.COMPANY ? Number(process.env.COMPANY) : null;
 
+const NAMED_COSTS = { 'DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (K)': 345500 };
+
 const rm = (sen) => (Number(sen) / 100).toFixed(2);
 const empty = (p) => !(Number(p.base_price_sen) > 0) && !(Number(p.cost_price_sen) > 0);
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
@@ -44,6 +47,10 @@ async function planFor(co) {
     if (sen > 0) writes.push({ code: p.code, sen, from: source });
     else skipped.push(`${p.code}: ${source} has no cost`);
   }
+  for (const p of prods) {
+    const sen = NAMED_COSTS[p.code];
+    if (sen && empty(p)) writes.push({ code: p.code, sen, from: 'owner 2026-11-05' });
+  }
   const prices = await sql`
     SELECT DISTINCT ON (i.item_code) i.item_code, i.unit_price_sen, h.invoice_number, h.invoice_date
     FROM scm.purchase_invoice_items i
@@ -52,7 +59,7 @@ async function planFor(co) {
     ORDER BY i.item_code, h.invoice_date DESC NULLS LAST, h.created_at DESC`;
   const lastPi = new Map(prices.map((r) => [r.item_code, r]));
   for (const p of prods) {
-    if (!empty(p) || !['MATTRESS', 'ACCESSORY'].includes(String(p.category).toUpperCase())) continue;
+    if (!empty(p) || NAMED_COSTS[p.code] || !['MATTRESS', 'ACCESSORY'].includes(String(p.category).toUpperCase())) continue;
     const hit = lastPi.get(p.code);
     if (hit) writes.push({ code: p.code, sen: Number(hit.unit_price_sen), from: hit.invoice_number });
   }
