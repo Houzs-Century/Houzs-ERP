@@ -47,6 +47,11 @@ returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open
 `blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
 `createDraftGrnFromPoItems` (DRAFT only, company-scoped PO-line read, qty capped);
 `POST /discard {ids}` hides rows. A repeat starts unticked; the operator may still create it.
+**Free gifts** (a row on no PO, e.g. DIGLANT's pillows): the operator marks the row "Free gift:
+choose our product" (`GET /check/products`, ACTIVE products of the company). Create adds it to the
+first draft with no PO link at RM0, zero-cost acknowledged (`lib/grn-scan-gifts.ts`), so it never
+reaches AutoCount, and remembers the printed code in `scm.supplier_scan_codes`: the next delivery
+order arrives with that row already marked. A document needs at least one PO line to be created.
 Mobile (`MobileGrnScan`) still uses `/enqueue` (photos of one delivery order = one draft).
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)

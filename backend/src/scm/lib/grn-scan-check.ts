@@ -9,13 +9,17 @@
 // ---------------------------------------------------------------------------
 
 import type { GrnExtracted } from './grn-scan-extract';
+import { isGiftRow, type GiftLine } from './grn-scan-gifts';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
 /** One line of the working copy. `poItemId` null = not yet tied to a PO line
- *  (the operator picks one, or deletes the line); `read` is what the paper said. */
+ *  (the operator picks one, marks it a free gift, or deletes the line); `gift`
+ *  = received at RM0 as this product of ours, on no PO; `read` is what the
+ *  paper said. */
 export type ReviewLine = {
   key: string;
   poItemId: string | null;
+  gift: { itemCode: string; name: string } | null;
   qty: number;
   read: { itemCode: string | null; description: string | null; qty: number; poNo: string | null } | null;
 };
@@ -39,15 +43,20 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
 /** The first working copy, from the read and the matcher. Matched lines arrive
  *  tied to their PO line; lines the matcher could not place arrive untied with
  *  what was printed, so nothing read is silently dropped. */
-export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null): GrnReview {
+export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>): GrnReview {
   const lines: ReviewLine[] = [];
-  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, qty: p.qty, read: null });
+  for (const p of match?.picks ?? []) lines.push({ key: lineKey(), poItemId: p.poItemId, gift: null, qty: p.qty, read: null });
   for (const u of match?.unmatched ?? []) {
     if (u.line.qty <= 0) continue;
-    lines.push({ key: lineKey(), poItemId: u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null, qty: u.line.qty, read: readOf(u.line) });
+    // A printed code taught as a free gift arrives already marked as one.
+    const taught = isGiftRow(u.line, gifts) ? gifts.find((g) => [u.line.itemCode, u.line.barcode].includes(g.printedCode)) : undefined;
+    lines.push({
+      key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null,
+      gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, read: readOf(u.line),
+    });
   }
   // A read the matcher never saw (supplier unknown, nothing matched): keep every printed line.
-  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, qty: l.qty, read: readOf(l) });
+  if (!match && parsed) for (const l of parsed.lines) if (l.qty > 0) lines.push({ key: lineKey(), poItemId: null, gift: null, qty: l.qty, read: readOf(l) });
   return {
     supplierId,
     supplierRead: parsed?.supplierName ?? null,
@@ -72,9 +81,13 @@ export function cleanReview(input: unknown): GrnReview | null {
     const l = (x ?? {}) as Record<string, unknown>;
     const qty = Number(l.qty);
     const read = l.read && typeof l.read === 'object' ? (l.read as Record<string, unknown>) : null;
+    const g = l.gift && typeof l.gift === 'object' ? (l.gift as Record<string, unknown>) : null;
+    const giftCode = str(g?.itemCode);
     return {
       key: str(l.key) ?? lineKey(),
-      poItemId: str(l.poItemId),
+      // A line is one or the other: a gift is on no PO.
+      poItemId: giftCode ? null : str(l.poItemId),
+      gift: giftCode ? { itemCode: giftCode, name: str(g?.name) ?? giftCode } : null,
       qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
       read: read ? { itemCode: str(read.itemCode), description: str(read.description), qty: Number(read.qty) || 0, poNo: str(read.poNo) } : null,
     };
@@ -96,6 +109,19 @@ export function picksOf(review: GrnReview): Array<{ poItemId: string; qty: numbe
   const byLine = new Map<string, number>();
   for (const l of review.lines) if (l.poItemId && l.qty > 0) byLine.set(l.poItemId, (byLine.get(l.poItemId) ?? 0) + l.qty);
   return [...byLine].map(([poItemId, qty]) => ({ poItemId, qty }));
+}
+
+/** The free gifts to add to the draft: one per product, qty summed, keeping the
+ *  code the supplier printed (the "teach once" key). */
+export function giftsOf(review: GrnReview): GiftLine[] {
+  const byItem = new Map<string, GiftLine>();
+  for (const l of review.lines) {
+    if (!l.gift || l.qty <= 0) continue;
+    const prev = byItem.get(l.gift.itemCode);
+    if (prev) prev.qty += l.qty;
+    else byItem.set(l.gift.itemCode, { printedCode: l.read?.itemCode ?? '', itemCode: l.gift.itemCode, name: l.gift.name, qty: l.qty });
+  }
+  return [...byItem.values()];
 }
 
 /** Why a document cannot be created yet, in plain words, or null when it can. */

@@ -3,12 +3,12 @@
 // Hookka's scan modal): collapsed, a summary line with its flags; open, the
 // fields and the lines to edit before it becomes a draft goods receipt.
 // ----------------------------------------------------------------------------
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Loader2, Plus, Star, X } from 'lucide-react';
 import { DateField } from './DateField';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
-import { newLineKey, type CheckDoc, type CheckPoLine, type CheckSupplier, type GrnReview } from '../lib/scan-gr-check';
+import { newLineKey, searchProducts, type CheckDoc, type CheckPoLine, type CheckSupplier, type GiftProduct, type GrnReview } from '../lib/scan-gr-check';
 import styles from './ScanOrderModal.module.css';
 
 type Props = {
@@ -26,6 +26,32 @@ type Props = {
 };
 
 const label = (l: CheckPoLine) => `${l.poNumber} · ${l.itemCode}${l.name ? ` · ${l.name}` : ''} · owed ${l.remaining}${l.warehouse ? ` · ${l.warehouse}` : ''}`;
+
+/* A row on no PO: say which of our products this free gift is (owner 2026-11-03,
+   Sim's rule from 2026-10-20). It is received at RM0, and the printed code is
+   remembered for this supplier. */
+function GiftPicker({ onPick }: { onPick: (p: GiftProduct) => void }) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState('');
+  const [found, setFound] = useState<GiftProduct[]>([]);
+  useEffect(() => {
+    if (term.trim().length < 2) { setFound([]); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      searchProducts(term.trim()).then((r) => { if (live) setFound(r); }).catch(writeFailedAs('Could not search products'));
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+  }, [term]);
+  if (!open) return <button type="button" className={styles.docLink} onClick={() => setOpen(true)}>Free gift: choose our product</button>;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <input className={styles.input} value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search our product, code or name" aria-label="Search our product" />
+      {found.map((p) => (
+        <button key={p.code} type="button" className={styles.docLink} style={{ display: 'block' }} onClick={() => onPick(p)}>{p.code}{p.name ? ` · ${p.name}` : ''}</button>
+      ))}
+    </div>
+  );
+}
 
 export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry, onGold }: Props) {
   const [open, setOpen] = useState(false);
@@ -127,11 +153,21 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                   <tr key={l.key} style={{ borderTop: '1px solid var(--border, #e3e6e0)' }}>
                     <td style={{ padding: '4px 6px', color: 'var(--fg-muted)' }}>{i + 1}</td>
                     <td style={{ padding: '4px 6px', minWidth: 280 }}>
-                      <select className={styles.input} value={l.poItemId ?? ''} onChange={(e) => setLine(l.key, { poItemId: e.target.value || null })} aria-label={`PO line for row ${i + 1}`}>
-                        <option value="">{review.supplierId ? 'Choose the PO line…' : 'Choose the supplier first'}</option>
-                        {l.poItemId && !mine.some((m) => m.poItemId === l.poItemId) && byId.get(l.poItemId) && <option value={l.poItemId}>{label(byId.get(l.poItemId) as CheckPoLine)}</option>}
-                        {mine.map((m) => <option key={m.poItemId} value={m.poItemId}>{label(m)}</option>)}
-                      </select>
+                      {l.gift ? (
+                        <span>
+                          <span className={`${styles.chip} ${styles.chipGreen}`}>Free gift · RM0</span> {l.gift.itemCode} · {l.gift.name}{' '}
+                          <button type="button" className={styles.docLink} onClick={() => setLine(l.key, { gift: null })}>Undo</button>
+                        </span>
+                      ) : (
+                        <>
+                          <select className={styles.input} value={l.poItemId ?? ''} onChange={(e) => setLine(l.key, { poItemId: e.target.value || null })} aria-label={`PO line for row ${i + 1}`}>
+                            <option value="">{review.supplierId ? 'Choose the PO line…' : 'Choose the supplier first'}</option>
+                            {l.poItemId && !mine.some((m) => m.poItemId === l.poItemId) && byId.get(l.poItemId) && <option value={l.poItemId}>{label(byId.get(l.poItemId) as CheckPoLine)}</option>}
+                            {mine.map((m) => <option key={m.poItemId} value={m.poItemId}>{label(m)}</option>)}
+                          </select>
+                          {!l.poItemId && <GiftPicker onPick={(p) => setLine(l.key, { poItemId: null, gift: { itemCode: p.code, name: p.name ?? p.code } })} />}
+                        </>
+                      )}
                     </td>
                     <td style={{ padding: '4px 6px' }}>
                       <input className={styles.input} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
@@ -146,9 +182,10 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
                 ))}
               </tbody>
             </table>
-            <button type="button" className={styles.docLink} style={{ marginTop: 6 }} onClick={() => set({ lines: [...review.lines, { key: newLineKey(), poItemId: null, qty: 1, read: null }] })}>
+            <button type="button" className={styles.docLink} style={{ marginTop: 6 }} onClick={() => set({ lines: [...review.lines, { key: newLineKey(), poItemId: null, gift: null, qty: 1, read: null }] })}>
               <Plus size={13} style={{ verticalAlign: '-2px' }} /> Add line
             </button>
+            {review.lines.some((l) => !l.poItemId && !l.gift) && <p className={styles.resultSub} style={{ marginTop: 4 }}>A row with no PO line and not marked a free gift is left off the draft.</p>}
           </div>
         </div>
       )}

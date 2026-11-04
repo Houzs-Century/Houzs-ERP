@@ -39,7 +39,8 @@ import {
 import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
 import { buildNeedsReviewNote, draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
 import { buildReview } from '../lib/grn-scan-check';
-import { buildTeachOptions, saveScanCodes } from '../lib/grn-scan-codes';
+import { giftLines, loadCatalogueProducts } from '../lib/grn-scan-gifts';
+import { buildTeachOptions, loadScanCodes, saveScanCodes } from '../lib/grn-scan-codes';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -224,7 +225,10 @@ async function runGrnScanJob(
       const ctx = parsed && parsed.lines.length > 0 ? await matchScan(svc, job.companyId, parsed) : null;
       const note = !parsed || parsed.lines.length === 0 ? emptyScanNote(parsed)
         : ctx && ctx.match.picks.length === 0 ? buildNeedsReviewNote(parsed, ctx.match, ctx.allPos, ctx.supplierId) : null;
-      await touch({ status: 'done', review_state: 'pending', review: buildReview(parsed, ctx?.supplierId ?? null, ctx?.match ?? null), error: note });
+      const taught = ctx?.supplierId ? await loadScanCodes(svc, job.companyId, ctx.supplierId) : [];
+      const products = await loadCatalogueProducts(svc, job.companyId, taught.map((t) => t.itemCode));
+      const gifts = ctx ? giftLines(ctx.match, taught, products) : [];
+      await touch({ status: 'done', review_state: 'pending', review: buildReview(parsed, ctx?.supplierId ?? null, ctx?.match ?? null, gifts), error: note });
       return;
     }
 

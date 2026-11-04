@@ -8,6 +8,7 @@ import { authedFetch } from './authed-fetch';
 export type ReviewLine = {
   key: string;
   poItemId: string | null;
+  gift: { itemCode: string; name: string } | null;
   qty: number;
   read: { itemCode: string | null; description: string | null; qty: number; poNo: string | null } | null;
 };
@@ -37,7 +38,8 @@ export type CheckDoc = {
 export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
-export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string };
+export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null };
+export type GiftProduct = { code: string; name: string | null };
 
 export const PENDING_KEY = ['scan-gr-check', 'pending'] as const;
 
@@ -53,6 +55,8 @@ export const saveReview = (id: string, review: GrnReview) =>
   authedFetch(`/scan-gr/check/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ review }) });
 export const createFromScans = (ids: string[]) =>
   authedFetch<{ data: { results: CreateResult[] } }>('/scan-gr/check/create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids }) }).then((r) => r.data.results);
+export const searchProducts = (term: string) =>
+  authedFetch<{ data: { products: GiftProduct[] } }>(`/scan-gr/check/products?search=${encodeURIComponent(term)}`).then((r) => r.data.products);
 export const markGold = (id: string) => authedFetch(`/scan-gr/check/${id}/gold`, { method: 'POST' });
 export const retryScan = (id: string) => authedFetch(`/scan-gr/check/${id}/retry`, { method: 'POST' });
 export const discardScans = (ids: string[]) =>
