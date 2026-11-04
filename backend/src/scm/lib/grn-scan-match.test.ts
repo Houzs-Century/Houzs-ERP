@@ -801,6 +801,19 @@ describe('set rows of one SO split by the model number they print (DO-2610-009)'
   });
 });
 
+// Our own PO scanned (2990-PO-2609-046): every row prints the supplier's code, which
+// the PO line carries, though our code says BANGGAU.
+describe('a row printing the supplier SKU of the PO line', () => {
+  test('lands on that line of that PO', () => {
+    const po = [
+      line({ poItemId: 'a', poNumber: '2990-PO-2609-046', itemCode: 'BANGGAU-2A(LHF)', supplierSku: 'DSL8075-2A(LHF)', remaining: 1 }),
+      line({ poItemId: 'b', poNumber: '2990-PO-2609-046', itemCode: 'BANGGAU-L(RHF)', supplierSku: 'DSL8075-L(RHF)', remaining: 1 }),
+    ];
+    const res = matchGrnScanToPoLines('2990-PO-2609-046', [scan({ itemCode: 'DSL8075-2A(LHF)', qty: 1 }), scan({ itemCode: 'DSL8075-L(RHF)', qty: 1 })], po, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'a', qty: 1 }, { poItemId: 'b', qty: 1 }]);
+  });
+});
+
 // Dorsettloft DO-2610-01 (2026-11-04): one "2 + L" row, our SO in the new numbering,
 // our PO in Remark 1, their own "S/O 1878" in the header. We call the model BANGGAU;
 // only the supplier's code holds 8075.

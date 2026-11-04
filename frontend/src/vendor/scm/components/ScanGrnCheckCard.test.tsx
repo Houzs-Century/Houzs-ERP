@@ -14,8 +14,8 @@ const line = { key: 'k1', poItemId: null, poNumber: null, gift: null, qty: 2, ra
 const review: GrnReview = { v: 2, supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO-1', deliveryDate: '2026-11-03', notes: null, lines: [line] };
 const doc = { id: 'a', batchId: 'b', fileName: 'do.pdf', pages: null, state: 'pending', note: null, review, createdAt: '', hasFile: false, canGold: false, gold: false, duplicateOf: null, repeatOf: null, blocked: null } as CheckDoc;
 const poLines = [
-  { poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', name: 'Mattress Q', remaining: 1, warehouse: 'KL' },
-  { poItemId: 'pi-2', poNumber: 'HC-PO-2', supplierId: 's1', itemCode: 'A2', name: 'Mattress K', remaining: 3, warehouse: 'PG' },
+  { poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', supplierSku: null, itemCode: 'A1', name: 'Mattress Q', remaining: 1, warehouse: 'KL' },
+  { poItemId: 'pi-2', poNumber: 'HC-PO-2', supplierId: 's1', supplierSku: null, itemCode: 'A2', name: 'Mattress K', remaining: 3, warehouse: 'PG' },
 ];
 const mount = (over: Partial<CheckDoc> = {}, onChange = vi.fn()) => {
   render(

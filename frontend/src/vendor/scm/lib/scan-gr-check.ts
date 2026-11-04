@@ -41,7 +41,7 @@ export type CheckDoc = {
   repeatOf: string | null;
   blocked: string | null;
 };
-export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; name: string | null; remaining: number; warehouse: string | null };
+export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
 export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null };
@@ -102,10 +102,10 @@ export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArra
   const onPo = poNumber ? lines.filter((l) => l.poNumber === poNumber) : lines;
   const out: SkuOption[] = onPo.map((l) => ({
     value: `line:${l.poItemId}`,
-    label: l.itemCode,
-    detail: poNumber ? `owed ${l.remaining}` : `${l.poNumber} · owed ${l.remaining}`,
+    label: l.supplierSku || l.itemCode,
+    detail: [l.supplierSku ? l.itemCode : null, poNumber ? null : l.poNumber, `owed ${l.remaining}`].filter(Boolean).join(' · '),
     group: poNumber ? `Still owed on ${poNumber}` : 'Still owed on open POs',
-    search: `${l.itemCode} ${l.name ?? ''} ${l.poNumber}`,
+    search: `${l.supplierSku ?? ''} ${l.itemCode} ${l.name ?? ''} ${l.poNumber}`,
   }));
   if (!poNumber) {
     const owed = new Set(lines.map((l) => l.itemCode));

@@ -211,7 +211,7 @@ export async function loadBillableLines(svc: SupabaseClient, companyId: number |
   if (res.error !== null) { console.error('[pi-scan-job] billable lines failed:', res.error); return null; }
   return res.items.map((l) => ({
     grnItemId: l.grnItemId, grnNumber: l.grnDocNo, supplierId: l.supplierId, poNumber: l.poDocNo,
-    itemCode: l.itemCode, description: l.description, remaining: l.remaining, unitPriceSen: l.unitPriceSen,
+    itemCode: l.itemCode, supplierSku: l.supplierSku, description: l.description, remaining: l.remaining, unitPriceSen: l.unitPriceSen,
   }));
 }
 

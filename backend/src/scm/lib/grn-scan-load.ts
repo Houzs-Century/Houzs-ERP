@@ -148,3 +148,11 @@ export async function loadPoStatuses(
       supplierId: r.supplier_id, supplierName: r.supplier?.name ?? null, onHold: r.on_hold === true,
     }));
 }
+
+/** Every company, to tell whose number a printed PO carries. The master is
+ *  public.companies; the SCM client is pinned to the scm schema. */
+export async function loadCompanies(svc: SupabaseClient): Promise<Array<{ id: number; code: string | null; name: string | null }>> {
+  const { data, error } = await svc.schema('public').from('companies').select('id, code, name');
+  if (error) throw new Error(`load companies failed: ${error.message}`);
+  return (data ?? []) as Array<{ id: number; code: string | null; name: string | null }>;
+}
