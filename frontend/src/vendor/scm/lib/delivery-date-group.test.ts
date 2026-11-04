@@ -9,6 +9,7 @@ import {
   effectiveDeliveryDay,
   compareByDeliveryDate,
   compareByDeliverySlot,
+  compareDoPrintOrder,
   deliveryMonthKey,
   deliveryMonthLabel,
   type DeliveryDateRow,
@@ -100,5 +101,25 @@ describe("compareByDeliverySlot — each lorry's day, earliest Time Slot first",
       stop('EARLY-BUT-SECOND', d, 'A', '9AM TO 11AM', { trip_stop_no: 2 }),
       stop('LATE-BUT-FIRST', d, 'A', '6PM TO 8PM', { trip_stop_no: 1 }),
     ])).toEqual(['LATE-BUT-FIRST', 'EARLY-BUT-SECOND']);
+  });
+});
+
+describe('compareDoPrintOrder — a printed DO stack reads like the board', () => {
+  const d = '2026-11-04';
+  const order = (rows: Array<Parameters<typeof compareDoPrintOrder>[0]>) =>
+    rows.slice().sort(compareDoPrintOrder).map((r) => r.so_doc_no);
+
+  test('earliest Time Slot first inside one lorry', () => {
+    expect(order([
+      { so_doc_no: '3PM', expected_delivery_at: d, time_range: '3:30PM TO 5:30PM', crew: { lorry_plate: 'VQE9058' } },
+      { so_doc_no: '9AM', expected_delivery_at: d, time_range: '9AM TO 11AM', crew: { lorry_plate: 'VQE9058' } },
+    ])).toEqual(['9AM', '3PM']);
+  });
+
+  test('the crew lorry wins, and Vehicle stands in when no crew is set', () => {
+    expect(order([
+      { so_doc_no: 'B', expected_delivery_at: d, time_range: '8AM TO 9AM', vehicle: 'B', crew: null },
+      { so_doc_no: 'A', expected_delivery_at: d, time_range: '2PM TO 4PM', vehicle: 'Z', crew: { lorry_plate: 'A' } },
+    ])).toEqual(['A', 'B']);
   });
 });
