@@ -42,6 +42,16 @@ describe('coerceBillJson', () => {
     expect(out.lines).toEqual([]);
   });
 
+  /* Owner 2026-11-03: a staff claim PDF split by page — its bank slips and
+     summary pages are not bills, and a Shopee screenshot held two orders. */
+  it('keeps the payment_proof / summary kinds and the several-receipts flag; anything else is false', () => {
+    expect(coerceBillJson({ documentKind: 'payment_proof' }).documentKind).toBe('payment_proof');
+    expect(coerceBillJson({ documentKind: 'summary' }).documentKind).toBe('summary');
+    expect(coerceBillJson({ severalReceipts: true }).severalReceipts).toBe(true);
+    expect(coerceBillJson({ severalReceipts: 'yes' }).severalReceipts).toBe(false);
+    expect(coerceBillJson({}).severalReceipts).toBe(false);
+  });
+
   /* Owner 2026-10-02 (upload 后很多资料都没有填): a payment request fills its
      "What is it for" and the payee's bank from the paper — read as printed. */
   it('reads the one-line summary and the printed bank account; nothing printed is null', () => {
