@@ -31,6 +31,7 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The "Bill a Goods-Received Note" picker's search only matches loaded rows — check the response's `truncated` flag rather than assuming the visible list is complete.
 - FOC (free) lines show in the Amount cell here (purchase documents have no Discount column) — unlike sales documents, where the same badge sits in the Discount cell. Don't move the badge to match the sales layout.
 - The desktop list's Export writes one row per LINE for every document matching the current tab/search/sort — not just the loaded page — in AutoCount's own column layout by default; a sofa line is one ERP piece per row even though AutoCount holds one set line, so quantities and totals differ from the book by design.
+- The list ticks several drafts and Confirm (N) posts them in turn through the same `/:id/post`; a refused one stays a draft and the summary names it. Invoice Amount and PO Amount sit side by side, PO Price and PI Price likewise; PO Amount counts only lines with a PO price and says how many. PO Price and PO Amount are screen-only, so the default export stays AutoCount's.
 - The mobile list has no export and no import — importing is desktop-only by design.
 
 ## Where the code is

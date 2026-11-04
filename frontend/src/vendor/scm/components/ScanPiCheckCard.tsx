@@ -13,7 +13,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
-import { billSkuOptions, grnOptions, newPiLineKey, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
+import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
 
@@ -47,6 +47,8 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
   const oddDate = isOddDate(review.invoiceDate, today);
   const swapped = swappedDate(review.invoiceDate, today);
   const anyTied = review.lines.some((l) => l.grnItemId);
+  const { invoiceSen, oursSen } = piAmounts(review, byId);
+  const amountsDiffer = invoiceSen != null && oursSen != null && invoiceSen !== oursSen;
 
   const set = (patch: Partial<PiReview>) => onChange({ ...review, ...patch });
   const setLine = (key: string, patch: Partial<PiReviewLine>) => set({ lines: review.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
@@ -97,6 +99,11 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
         </div>
       </div>
 
+      <div className={styles.amounts}>
+        <span>Invoice Amount <strong>{invoiceSen == null ? '—' : fmtSen(invoiceSen)}</strong></span>
+        <span>PO Amount <strong className={amountsDiffer ? styles.priceOff : ''}>{oursSen == null ? '—' : fmtSen(oursSen)}</strong></span>
+      </div>
+
       {repeat && (
         <div className={styles.banner}>
           <strong>Already billed</strong>
@@ -131,12 +138,13 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
       {open && (
         <div className={styles.lines}>
           <div className={`${styles.row} ${styles.rowPi} ${styles.rowHead}`}>
-            <span>#</span><span>GRN</span><span>SKU</span><span>Description</span><span className={styles.right}>Left</span><span className={styles.right}>Qty</span><span />
+            <span>#</span><span>GRN</span><span>SKU</span><span>Description</span><span className={styles.right}>Left</span><span className={styles.right}>Qty</span><span className={styles.right}>PO Price</span><span className={styles.right}>PI Price</span><span />
           </div>
           {review.lines.map((l, i) => {
             const line = l.grnItemId ? byId.get(l.grnItemId) : undefined;
             const grn = l.grnNumber ?? line?.grnNumber ?? '';
-            const printed = l.read ? [l.read.itemCode, l.read.description, l.read.unitPrice != null ? `RM ${l.read.unitPrice}` : null].filter(Boolean).join(' · ') : '';
+            const printed = l.read ? [l.read.itemCode, l.read.description].filter(Boolean).join(' · ') : '';
+            const off = line != null && priceDiffers(l.read?.unitPrice, line.unitPriceSen);
             return (
               <div key={l.key} className={`${styles.row} ${styles.rowPi}`}>
                 <span className={styles.num}>{i + 1}</span>
@@ -153,10 +161,12 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
                   {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
-                  {line && priceDiffers(l.read?.unitPrice, line.unitPriceSen) && <div className={styles.printed} style={{ color: '#b23a3a' }}>The draft bills the receipt price, {fmtSen(line.unitPriceSen)}, not the invoice price.</div>}
+                  {off && <div className={`${styles.printed} ${styles.priceOff}`}>The draft bills the PO price, not the invoice price.</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
+                <span className={styles.right}>{line ? fmtSen(line.unitPriceSen) : '—'}</span>
+                <span className={`${styles.right} ${off ? styles.priceOff : ''}`}>{l.read?.unitPrice != null ? fmtSen(Math.round(l.read.unitPrice * 100)) : '—'}</span>
                 <button type="button" className={`${styles.icon} ${styles.caret}`} onClick={() => set({ lines: review.lines.filter((x) => x.key !== l.key) })} aria-label={`Remove row ${i + 1}`}><X size={13} /></button>
               </div>
             );
