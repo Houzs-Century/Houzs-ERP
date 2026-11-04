@@ -174,7 +174,7 @@ export async function runGlobalSearch(
   // ── Public-schema sources (env.DB) ─────────────────────────
   // Fire all source queries in parallel — they share a Postgres client
   // anyway, so this just avoids serial round-trip latency.
-  const projectWords = projectWordSearch(q);
+  const projectWords = projectWordSearch(raw);
   const [projectRows, assrRows, userRows] = await Promise.all([
     env.DB.prepare(
       `SELECT id, code, name, stage, start_date
