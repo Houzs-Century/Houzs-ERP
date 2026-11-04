@@ -382,7 +382,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
-      "reads": 2,
+      "reads": 1,
       "catches": 1
     },
     "backend/src/scm/routes/scan-so.ts": {

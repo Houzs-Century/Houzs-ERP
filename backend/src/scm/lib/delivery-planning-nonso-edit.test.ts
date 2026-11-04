@@ -84,3 +84,53 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
     expect(r.status).toBe(404);
   });
 });
+
+// Remarks on non-SO rows: a service leg, a DP job and a project each save to their own record.
+describe('writeNonSoFields (remarks)', () => {
+  it('saves a service-case remark to the named leg column only', async () => {
+    const { c, runs } = fakeCtx();
+    const r = await writeNonSoFields(c, {}, 'assr', '7', { remark: 'call before', jobKind: 'inspection' });
+    expect(r.status).toBe(200);
+    expect(runs[0]!.sql).toContain('inspection_remark = ?');
+    expect(runs[0]!.sql).not.toContain('delivery_remark');
+    expect(runs[0]!.binds).toEqual(['call before', 7]);
+  });
+
+  it('saves a DP remark on the DP job, company-bounded', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const q = {
+      update: (patch: unknown) => { calls.push(['update', patch]); return q; },
+      eq: (col: string, v: unknown) => { calls.push([`eq:${col}`, v]); return q; },
+      in: (col: string, v: unknown) => { calls.push([`in:${col}`, v]); return q; },
+      select: () => q,
+      maybeSingle: async () => ({ data: { id: 'dp-1' }, error: null }),
+    };
+    const sb = { from: () => q };
+    const r = await writeNonSoFields({ get: () => undefined }, sb, 'dp', 'dp-1', { remark: '' });
+    expect(r.status).toBe(200);
+    expect(calls[0]![1]).toMatchObject({ remark: null });
+  });
+
+  it('saves a project remark on the project, and refuses anything else there', async () => {
+    const { c, runs } = fakeCtx();
+    const r = await writeNonSoFields(c, {}, 'project', '11', { remark: 'gate code 1234' });
+    expect(r.status).toBe(200);
+    expect(runs[0]!.sql).toContain('UPDATE projects SET delivery_remark = ?');
+    expect(runs[0]!.sql).toContain('archived_at IS NULL');
+    expect(runs[0]!.binds).toEqual(['gate code 1234', 11]);
+    expect((await writeNonSoFields(c, {}, 'project', '11', { timeRange: '2-4pm' })).status).toBe(400);
+    expect((await writeNonSoFields(c, {}, 'project', 'PRJ:11', { remark: 'x' })).status).toBe(400);
+  });
+
+  it('bounds the project write to the caller\'s companies, and 404s outside them', async () => {
+    const sqls: string[] = [];
+    const ctxFor = (allowed: number[]) => ({
+      env: { DB: { prepare: (sql: string) => { sqls.push(sql); return { bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }) }; } } },
+      get: (k: string) => (k === 'allowedCompanyIds' ? allowed : undefined),
+    });
+    expect((await writeNonSoFields(ctxFor([1]), {}, 'project', '11', { remark: 'x' })).status).toBe(404);
+    expect(sqls[0]).toContain('AND company_id IN (1)');
+    await writeNonSoFields(ctxFor([]), {}, 'project', '11', { remark: 'x' });
+    expect(sqls[1]).toContain('AND 1=0');
+  });
+});

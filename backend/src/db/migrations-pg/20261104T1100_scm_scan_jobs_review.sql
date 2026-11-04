@@ -1,4 +1,4 @@
--- 20261103T2000_scm_scan_jobs_review.sql
+-- 20261104T1100_scm_scan_jobs_review.sql
 -- REVERSAL:
 --   DROP INDEX IF EXISTS scm.scan_jobs_review_idx;
 --   DROP INDEX IF EXISTS scm.scan_jobs_file_hash_idx;

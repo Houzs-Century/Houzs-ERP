@@ -1,6 +1,16 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the eight-stage set by COMPLETED and VOIDED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the ASSR_SHEET_STATUS / ALL_STAGES D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
       "check": "D1",
       "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST|frontend/src/components/Sidebar.tsx frontend/src/pages/scm-v2/reports-catalog.ts",
       "why": "NOT one rule in two homes: the same three permission keys are the gate of several unrelated Finance entries, each its own decision — Bank & cards (Merchant reports, Bank statements, Unmatched payments) and Setup (Chart of accounts, Opening balance, Recon setup) in the sidebar, and the Forecast P&L and Dashboard, which moved with their gate into pages/scm-v2/reports-catalog.ts when Finance › Reports became one entry (owner Claude Design batch 6 §1.1: keep every member's own gate). Changing one entry's gate must not change the others; each is pinned by sidebarFinanceGroups / sidebarReportsEntry tests."

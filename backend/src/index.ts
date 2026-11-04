@@ -96,6 +96,7 @@ import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
 import deliverySheetSync from "./routes/deliverySheetSync";
 import chatCallback from "./routes/chatCallback";
+import connectPayments from "./routes/connect-payments";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -161,6 +162,7 @@ import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runWeeklyServiceCaseStatus } from "./services/assrWeeklyStatus";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
@@ -438,6 +440,14 @@ app.use("/api/*", companyContext);
 // can never replay another user's or another company's response. Bookkeeping
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
+
+// HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
+// payment onto its Sales Order through the one Payments writer. Mounted BELOW the
+// /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
+// user the auth middleware mints for Bearer <CONNECT_SERVICE_TOKEN> — the same
+// credential Connect's org sync uses — and the router itself gates to the service
+// tier with requirePermission("*"). See routes/connect-payments.ts.
+app.route("/api/connect/payments", connectPayments);
 
 // Inbox snapshot self-heal — the /api/inbox GET caches a per-user aggregate of
 // ASSR + Projects + Trips for ~60s. After the acting user makes a successful
@@ -1155,6 +1165,20 @@ export default {
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
           .catch((e) => console.error("[cron assr-digest]", e))
       );
+      // Weekly Service Case status update to customers (owner 2026-11-02; moved
+      // Friday -> Monday 2026-11-03). This 02:00 UTC slot is 10:00 MYT; gate to
+      // Monday (getUTCDay 1) so it runs once a week at that hour without a
+      // dedicated cron trigger. Ships DARK — no-op unless scm.app_config
+      // 'scm.assr_weekly_status' is pilot/on. Best-effort.
+      if (new Date(event.scheduledTime).getUTCDay() === 1) {
+        ctx.waitUntil(
+          track("assr-weekly-status", () => runWeeklyServiceCaseStatus(env))
+            .then((r) => {
+              if (r.mode !== "off") console.log(`[cron assr-weekly-status] ${JSON.stringify(r)}`);
+            })
+            .catch((e) => console.error("[cron assr-weekly-status]", e))
+        );
+      }
       ctx.waitUntil(
         track("proj-reminders", () => runProjectDueReminders(env))
           .then((r) =>

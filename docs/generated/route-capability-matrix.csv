@@ -198,6 +198,7 @@ POST,/api/chat-callback,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MU
 POST,/api/client-errors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/clientErrors.ts
 GET,/api/client-errors/summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/clientErrors.ts
 GET,/api/companies,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/companies.ts
+POST,/api/connect/payments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,requirePermission('*'),,,YES,DECLARED_GATE,backend/src/routes/connect-payments.ts
 GET,/api/delivery-sheet/assr-contacts,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/assr-legs,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/balance-collection,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts

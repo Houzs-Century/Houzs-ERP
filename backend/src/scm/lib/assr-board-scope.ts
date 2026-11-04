@@ -79,6 +79,11 @@ export const ASSR_LEG_MSG_COL = {
   customer_pickup: 'pickup_message_status', inspection: 'inspection_message_status', delivery: 'delivery_message_status',
 } as const;
 
+/** The board Remarks a Service Case keeps per leg, like the Time Slot. */
+export const ASSR_LEG_REMARK_COL = {
+  customer_pickup: 'pickup_remark', inspection: 'inspection_remark', delivery: 'delivery_remark',
+} as const;
+
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
@@ -165,6 +170,9 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_time_range AS pickup_time_range,
               assr_cases.inspection_time_range AS inspection_time_range,
               assr_cases.delivery_time_range AS delivery_time_range,
+              assr_cases.pickup_remark AS pickup_remark,
+              assr_cases.inspection_remark AS inspection_remark,
+              assr_cases.delivery_remark AS delivery_remark,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.delivery_message_status AS delivery_message_status,

@@ -276,6 +276,8 @@ export type PlanningOrder = {
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
+  /* A project row of a company the caller is not granted: listed (shared fleet), but its Remarks cannot be saved. */
+  remark_locked?: boolean;
   region: RegionCode;   // the order's primary bucket (from customer_state)
   regions: RegionCode[];  // primary + any leg buckets
   warehouse_id: string | null;
@@ -575,8 +577,8 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr'; id: string } & HcFieldsPatch) =>
-      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr' | 'project'; id: string } & HcFieldsPatch) =>
+      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${encodeURIComponent(id)}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     /* HC-0175: without this the inline select snapped back to the old status and
