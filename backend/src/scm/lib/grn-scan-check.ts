@@ -31,7 +31,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 2;
+export const REVIEW_VERSION = 3;
 
 export type GrnReview = {
   v: number;
@@ -75,7 +75,7 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     doNo: parsed?.doNo ?? null,
     deliveryDate: parsed?.deliveryDate ?? null,
     notes: null,
-    lines,
+    lines: inPrintedOrder(lines, parsed?.lines ?? [], open),
   };
 }
 
@@ -89,6 +89,30 @@ export function nameFits(printed: string | null | undefined, itemCode: string): 
   const row = new Set(words(printed));
   const need = words(itemCode).filter((w) => w !== 'MATT' && w !== 'MATTRESS');
   return need.length > 0 && need.every((w) => row.has(w));
+}
+
+/** The rows in the order the delivery order prints them, each with what it
+ *  printed, so the card reads down beside the paper (owner 2026-11-04: "很难对账").
+ *  A matched row knows only its PO line; it finds its printed row by name. A row
+ *  matching nothing printed stays at the end. */
+export function inPrintedOrder(lines: ReviewLine[], printed: GrnExtracted['lines'], open: ReadonlyArray<OpenPoLine>): ReviewLine[] {
+  const placed = new Map<number, ReviewLine[]>();
+  const rest: ReviewLine[] = [];
+  const used = new Set<number>();
+  const put = (i: number, l: ReviewLine) => { used.add(i); placed.set(i, [...(placed.get(i) ?? []), l]); };
+  for (const l of lines) {
+    const read = l.read;
+    if (!read) continue;
+    const i = printed.findIndex((p, n) => !used.has(n) && p.itemCode === read.itemCode && p.description === read.description);
+    if (i >= 0) put(i, l); else rest.push(l);
+  }
+  for (const l of lines) {
+    if (l.read) continue;
+    const code = open.find((o) => o.poItemId === l.poItemId)?.itemCode;
+    const i = code ? printed.findIndex((p, n) => !used.has(n) && (nameFits(p.description, code) || p.itemCode === code)) : -1;
+    if (i >= 0) put(i, { ...l, read: readOf(printed[i]) }); else rest.push(l);
+  }
+  return [...[...placed].sort(([a], [b]) => a - b).flatMap(([, ls]) => ls), ...rest];
 }
 
 /** Tie rows the matcher left untied, by name. This fills a screen a person

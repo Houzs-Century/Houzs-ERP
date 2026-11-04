@@ -82,6 +82,10 @@ export function localBlock(review: GrnReview, lines: ReadonlyMap<string, CheckPo
   return null;
 }
 
+/** An option's PO and what is owed show in the open list only: the closed cell is
+ *  the SKU, and the row's own PO and Owed columns say the rest. */
+export type SkuOption = SearchableSelectOption & { detail?: string };
+
 /** The PO dropdown of a row: each open PO of the supplier, with what is left on it. */
 export function poOptions(lines: ReadonlyArray<CheckPoLine>): SearchableSelectOption[] {
   const count = new Map<string, number>();
@@ -94,11 +98,12 @@ export const skuValue = (l: ReviewLine): string => (l.gift ? `gift:${l.gift.item
 /** The SKU dropdown of a row. With a PO chosen: what is still owed on that PO.
  *  Without: everything owed on the supplier's POs, then its other SKUs, which
  *  are on no open PO and so can only be free gifts at RM0. */
-export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArray<SupplierSku>, poNumber: string | null, row: ReviewLine): SearchableSelectOption[] {
+export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArray<SupplierSku>, poNumber: string | null, row: ReviewLine): SkuOption[] {
   const onPo = poNumber ? lines.filter((l) => l.poNumber === poNumber) : lines;
-  const out: SearchableSelectOption[] = onPo.map((l) => ({
+  const out: SkuOption[] = onPo.map((l) => ({
     value: `line:${l.poItemId}`,
-    label: poNumber ? `${l.itemCode} · owed ${l.remaining}` : `${l.itemCode} · ${l.poNumber} · owed ${l.remaining}`,
+    label: l.itemCode,
+    detail: poNumber ? `owed ${l.remaining}` : `${l.poNumber} · owed ${l.remaining}`,
     group: poNumber ? `Still owed on ${poNumber}` : 'Still owed on open POs',
     search: `${l.itemCode} ${l.name ?? ''} ${l.poNumber}`,
   }));
