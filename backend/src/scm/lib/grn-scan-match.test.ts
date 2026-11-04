@@ -802,11 +802,25 @@ describe('set rows of one SO split by the model number they print (DO-2610-009)'
   });
 });
 
+describe("a supplier's way of printing our PO", () => {
+  const pos = [{ poNumber: 'HC-PO-2610-257' }, { poNumber: 'HC-PO-2610-243' }];
+  test('a revision suffix is still that PO (Hookka)', () => {
+    expect(resolvePrintedPo('HC-PO-2610-257_R1', pos, true)?.poNumber).toBe('HC-PO-2610-257');
+  });
+  test('a misread lead digit still ends in our number (Dunlopillo)', () => {
+    expect(resolvePrintedPo('102610-243', pos, true)?.poNumber).toBe('HC-PO-2610-243');
+    expect(resolvePrintedPo('102610-243', pos, false)).toBeNull();
+  });
+});
+
 describe('supplierOfPrintedPo', () => {
   const pos = [{ poNumber: 'HC-PO-2610-084', supplierId: 'eadeco' }, { poNumber: 'HC-PO-2610-090', supplierId: 'hookka' }];
   test('our PO number names the supplier the letterhead did not', () => {
     expect(supplierOfPrintedPo({ poNo: 'HC-PO-2610-084', lines: [] }, pos)).toBe('eadeco');
     expect(supplierOfPrintedPo({ poNo: null, lines: [{ poNo: 'HC-PO-2610-090' }] }, pos)).toBe('hookka');
+  });
+  test('the location inside our number still names it (DIGLANT)', () => {
+    expect(supplierOfPrintedPo({ poNo: 'HC-SBH-PO-2610-084', lines: [] }, pos)).toBe('eadeco');
   });
   test('a foreign reference, or POs of two suppliers, names nobody', () => {
     expect(supplierOfPrintedPo({ poNo: 'S/O 1878', lines: [] }, pos)).toBeNull();

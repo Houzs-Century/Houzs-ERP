@@ -11,6 +11,7 @@
 import type { GrnExtracted } from './grn-scan-extract';
 import { isGiftRow, type GiftLine } from './grn-scan-gifts';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
+import { bestLines } from './scan-word-match';
 
 /** One line of the working copy. `poItemId` null = not yet tied to a PO line
  *  (the operator picks one, marks it a free gift, or deletes the line); `gift`
@@ -31,7 +32,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 6;
+export const REVIEW_VERSION = 7;
 
 export type GrnReview = {
   v: number;
@@ -82,7 +83,12 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
 }
 
 // Our PO numbers with the location inside ("HC-SBH-PO-2610-358") and without it are one PO.
-const poKey = (s: string): string => s.toUpperCase().replace(/^HC-[A-Z]+-PO-/, 'HC-PO-');
+// HC-SBH-PO-2610-358, SRW-2610-358, PO-2610-358 and HC-PO-2610-358_R1 are one PO: its
+// running digits. KLPO10138-HC5324 is PO-010138 for sales order HC5324.
+const poKey = (s: string): string => {
+  const t = s.toUpperCase().replace(/[_\s-]*R\d+\s*$/, '');
+  return (/PO[-\s]*([\d-]+)/.exec(t)?.[1] ?? t).replace(/\D/g, '').replace(/^0+/, '').slice(-7);
+};
 const words = (s: string | null | undefined): string[] => (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
 
 /** Every word of our item code is printed on the row, MATT aside: AKEMI EQUINOX
@@ -133,7 +139,9 @@ export function suggestByName(lines: ReviewLine[], open: ReadonlyArray<OpenPoLin
   for (const l of lines) {
     if (l.poItemId || l.gift || !l.read?.description) continue;
     const rowPo = l.read.poNo ? poKey(l.read.poNo) : null;
-    const fits = open.filter((o) => nameFits(l.read?.description, o.itemCode) && (left.get(o.poItemId) ?? 0) > 0);
+    const owing = open.filter((o) => (left.get(o.poItemId) ?? 0) > 0);
+    const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode));
+    const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.materialName ?? ''}`);
     const scoped = rowPo ? fits.filter((o) => poKey(o.poNumber) === rowPo) : onDoc.size > 0 ? fits.filter((o) => onDoc.has(poKey(o.poNumber))) : fits;
     if (scoped.length === 0 || (!rowPo && onDoc.size === 0 && scoped.length > 1)) continue;
     const pick = scoped.find((o) => (left.get(o.poItemId) ?? 0) >= l.qty) ?? scoped[0];

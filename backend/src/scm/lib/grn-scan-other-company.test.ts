@@ -14,6 +14,9 @@ describe('otherCompanyNote', () => {
   test('a Houzs PO printed on a row, scanned under 2990', () => {
     expect(otherCompanyNote([null, 'HC-PO-2610-108'], 2, companies)).toContain('Houzs Century');
   });
+  test('a consignment order says where it is received', () => {
+    expect(otherCompanyNote(['2990-PCO-2610-014'], 2, companies)).toContain('PC Receive');
+  });
   test('our own company, or a supplier reference, says nothing', () => {
     expect(otherCompanyNote(['HC-PO-2610-108'], 1, companies)).toBeNull();
     expect(otherCompanyNote(['S/O 1878', null], 1, companies)).toBeNull();
