@@ -35,11 +35,12 @@ async function main() {
   for (const co of companies) {
     const suppliers = (await sql`SELECT id, code, name FROM scm.suppliers WHERE company_id = ${co}`).map((r) => ({ id: r.id, code: r.code, name: r.name }));
     const lines = await sql`
-      SELECT i.id, i.purchase_order_id, i.item_code, i.material_name, i.supplier_sku, i.qty, i.item_group, i.description2,
+      SELECT i.id, i.purchase_order_id, i.item_code, i.material_name, i.supplier_sku, i.qty, i.item_group, i.description2, w.code AS wh_code,
              p.po_number, p.supplier_id, p.created_at AS po_at, so.doc_no AS so_doc_no
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
       LEFT JOIN scm.mfg_sales_order_items so ON so.id = i.so_item_id
+      LEFT JOIN scm.warehouses w ON w.id = coalesce(i.warehouse_id, p.purchase_location_id)
       WHERE p.company_id = ${co} AND p.status NOT IN ('CANCELLED', 'DRAFT')`;
     const received = await sql`
       SELECT gi.purchase_order_item_id AS id, gi.qty_accepted, g.posted_at
@@ -53,7 +54,7 @@ async function main() {
       const remaining = (Number(r.qty) || 0) - got;
       return remaining <= 0 ? [] : [{
         poItemId: r.id, poId: r.purchase_order_id, poNumber: r.po_number, supplierId: r.supplier_id, itemCode: r.item_code ?? '',
-        materialName: r.material_name, supplierSku: r.supplier_sku, remaining, locationCode: null,
+        materialName: r.material_name, supplierSku: r.supplier_sku, remaining, locationCode: r.wh_code,
         description2: r.description2, soDocNo: r.so_doc_no, itemGroup: r.item_group,
       }];
     });
