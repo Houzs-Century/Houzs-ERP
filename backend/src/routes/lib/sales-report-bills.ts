@@ -62,6 +62,7 @@ export function collectReport(
     const parsed = parseSalesReport(n.note);
     if (parsed.bills.length > 0) {
       const reportDate = reportDateFor(parsed.date, projectStartDate);
+      dropCorrected(byToken, new Set(parsed.bills.map((b) => b.ref_token)), reportDate);
       for (const b of parsed.bills) {
         byToken.set(b.ref_token, {
           key: `${n.id}:${b.line}`,
@@ -89,6 +90,29 @@ export function collectReport(
   );
   const live = new Set(bills.map((b) => b.source_activity_id));
   return { bills, report_activity_ids: [...contributing].filter((id) => live.has(id)), summary };
+}
+
+/** A report posted again to fix a typo replaces the first: same day, and at least
+ *  half of the earlier message's bills repeat, so the mistyped bill goes with it.
+ *  A later message of new bills for that day shares nothing and adds to it. */
+function dropCorrected(byToken: Map<string, BillRow>, tokens: ReadonlySet<string>, reportDate: string | null): void {
+  if (reportDate === null) return;
+  const bySource = new Map<number, BillRow[]>();
+  for (const b of byToken.values()) {
+    if (b.report_date === reportDate) bySource.set(b.source_activity_id, [...(bySource.get(b.source_activity_id) ?? []), b]);
+  }
+  for (const rows of bySource.values()) {
+    if (rows.filter((b) => tokens.has(b.ref_token)).length * 2 < rows.length) continue;
+    for (const b of rows) if (!tokens.has(b.ref_token)) byToken.delete(b.ref_token);
+  }
+}
+
+/** The message with one bill's reference changed, or null when it does not print
+ *  that reference as a whole word. */
+export function renameRef(note: string, from: string, to: string): string | null {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const whole = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`);
+  return whole.test(note) ? note.replace(whole, to) : null;
 }
 
 /** The Sales Order columns the match reads — see routes/project-sales-bills.ts. */
