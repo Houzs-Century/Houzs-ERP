@@ -11,6 +11,18 @@ import {
 // The ONE definition of ASSR's company scope — see the note above its use below.
 import { assrCompanySql } from "./assr";
 import { inArm, poIdsForSoDocNos, soDocNosByRef } from "../scm/lib/so-ref-search";
+import { initialsLikes } from "../services/projects";
+
+/** Each word on its own, in any field, as the project list searches ("mle sccc"). */
+function projectWordSearch(q: string): { sql: string; binds: string[] } {
+  const binds: string[] = [];
+  const arm = (like: string, cols: string[]) => cols.map((col) => { binds.push(like); return `${col} LIKE ?${binds.length}`; });
+  const arms = q.trim().split(/\s+/).filter(Boolean).map((word) => {
+    const like = `%${word}%`;
+    return `(${[...arm(like, ["code", "name", "venue", "organizer", "brand"]), ...initialsLikes(word).flatMap((p) => arm(p, ["venue"]))].join(" OR ")})`;
+  });
+  return { sql: arms.join(" AND "), binds };
+}
 
 /**
  * Global search across the workspace.
@@ -162,17 +174,17 @@ export async function runGlobalSearch(
   // ── Public-schema sources (env.DB) ─────────────────────────
   // Fire all source queries in parallel — they share a Postgres client
   // anyway, so this just avoids serial round-trip latency.
+  const projectWords = projectWordSearch(q);
   const [projectRows, assrRows, userRows] = await Promise.all([
     env.DB.prepare(
       `SELECT id, code, name, stage, start_date
          FROM projects
         WHERE archived_at IS NULL
-          AND (code LIKE ?1 OR name LIKE ?1 OR venue LIKE ?1 OR organizer LIKE ?1
-               OR brand LIKE ?1)${projectCoSql}
+          AND ${projectWords.sql}${projectCoSql}
         ORDER BY start_date DESC NULLS LAST, id DESC
         LIMIT ${PER_SOURCE_LIMIT}`
     )
-      .bind(pat)
+      .bind(...projectWords.binds)
       .all<{
         id: number;
         code: string;
