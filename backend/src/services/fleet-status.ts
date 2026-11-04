@@ -506,7 +506,7 @@ export function assessMileageReading(input: MileageGuardInput): MileageAssessmen
 // Three more pure, env-free, unit-tested concerns. Two of them finally FEED the
 // status seams deriveVehicleStatus() has carried since Phase 1:
 //
-//   5. isBreakdownActive()      — a CRITICAL, still-unresolved breakdown case
+//   5. isBreakdownActive()      — an unresolved case on a lorry that cannot be driven, or a CRITICAL one,
 //      grounds the lorry (feeds breakdownActive → BREAKDOWN status).
 //   6. work-order state machine — canTransitionWorkOrder() + workOrderSeam():
 //      an OPEN work order in IN_REPAIR feeds PLANNED_MAINTENANCE; one in
@@ -537,14 +537,14 @@ export const BREAKDOWN_STATUS_LABELS: Record<BreakdownStatus, string> = {
 export interface BreakdownCaseInput {
   severity: string;
   status: string;
+  stillDrivable: boolean;
 }
 
-/** A single case grounds the lorry when it is CRITICAL and not yet resolved.
- *  MINOR/MAJOR cases are logged (still-drivable incidents) but do not, on their
- *  own, take the lorry off the road — that stays the derived-status machine's
- *  precedence, not a per-case flag. */
+/** A single case grounds the lorry until it is resolved when the lorry cannot be
+ *  driven, or the case is CRITICAL (owner 2026-11-04: not drivable and in the
+ *  workshop is not Available, whatever the severity says). */
 export function isCaseGrounding(c: BreakdownCaseInput): boolean {
-  return c.severity === "CRITICAL" && c.status !== "RESOLVED";
+  return c.status !== "RESOLVED" && (c.severity === "CRITICAL" || !c.stillDrivable);
 }
 
 /** Does ANY open case ground the lorry? This is what feeds breakdownActive. */

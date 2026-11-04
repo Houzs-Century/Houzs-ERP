@@ -14,7 +14,7 @@ the existing `scm.lorries` vehicle master; used by fleet/transport admin
 
 `OUT_OF_SERVICE` (a current `lorry_maintenance` window) → `COMPLIANCE_BLOCKED`
 (an expired vault document, or a failed PUSPAKOM until a fresh PASS row is
-appended) → `BREAKDOWN` (a CRITICAL, non-RESOLVED breakdown case) →
+appended) → `BREAKDOWN` (a non-RESOLVED breakdown case on a lorry that cannot be driven, or a CRITICAL one) →
 `WAITING_PARTS` / `PLANNED_MAINTENANCE` (an open work order in that state) →
 `SERVICE_DUE` (mileage/date past a plan's or service record's target) →
 `AVAILABLE`.
@@ -26,7 +26,9 @@ appended) → `BREAKDOWN` (a CRITICAL, non-RESOLVED breakdown case) →
   edge for jobs too small to quote. Only `POST /work-orders/:woId/transition`
   may move it (409 `illegal_transition` on a jump the machine refuses).
 - **Breakdown case**: `OPEN → TOWING → IN_WORKSHOP → RESOLVED`. Only a
-  CRITICAL, non-RESOLVED case grounds the lorry; MINOR/MAJOR are logged only.
+  non-RESOLVED case grounds the lorry when it is not drivable or CRITICAL; a
+  still-drivable MINOR/MAJOR is logged only. Those days count as repair days on
+  Lorry Capacity and come off occupancy on the Logistic Overview.
 - **Component**: `ACTIVE → REMOVED`; at most one ACTIVE component per
   `(lorry, position)` (position `NA` excluded).
 

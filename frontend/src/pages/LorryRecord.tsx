@@ -160,7 +160,7 @@ export function LorryRecord() {
         <RepairSpend workOrders={detail.data?.workOrders ?? []} today={todayMY()} />
       </Section>
 
-      <Section title="Breakdown & incidents" hint="a critical, unresolved case grounds the lorry">
+      <Section title="Breakdown & incidents" hint="a lorry that cannot be driven is off the road until the case is resolved">
         <BreakdownSection vehicleId={v.id} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
       </Section>
 

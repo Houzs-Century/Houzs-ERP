@@ -8,6 +8,13 @@ const d = (o: Partial<PeriodDo>): PeriodDo => ({
   id: 'd1', doDate: '2026-10-02', status: 'LOADED', amountSen: 1000_00, state: 'SELANGOR', lorry: null, ...o,
 });
 
+describe('a lorry in the workshop', () => {
+  test('its down days come off the days it could work, so occupancy reads what it could do', () => {
+    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', 1]]));
+    expect(r.byLorry[0]).toMatchObject({ daysOut: 1, workingDays: 1, downDays: 1, occupancyPct: 100, perDayOutSen: 3000_00 });
+  });
+});
+
 describe('logistic period', () => {
   test('working days leave out Sundays', () => {
     /* 2026-10-01 is a Thursday; October 2026 has 4 Sundays. */
@@ -34,7 +41,7 @@ describe('logistic period', () => {
       { doId: 'a', category: 'Mattress', sen: 2000_00 }, { doId: 'a', category: 'Bedframe', sen: 1000_00 },
       { doId: 'b', category: 'Mattress', sen: 1000_00 }, { doId: 'b', category: 'Accessories', sen: 0 },
       { doId: 'b', category: 'Charges', sen: 150_00 }, { doId: 'c', category: 'Sofa', sen: 1000_00 },
-    ], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }, { plate: 'L9', internal: true }], '2026-10-17');
+    ], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }, { plate: 'L9', internal: true }], '2026-10-17', new Map());
     expect(r.days[0]).toMatchObject({ date: '2026-10-01', orders: 4, amountSen: 12000_00, avgOrderSen: 3000_00, lorries: 2, lorryOrders: 3, perLorrySen: 3000_00 });
     expect(r.days[1]).toMatchObject({ date: '2026-10-02', orders: 0, perLorrySen: null });
     expect(r.lorry).toEqual({ lorryDays: 2, recordedOrders: 3, perLorrySen: 3000_00, workingDays: 2 });
