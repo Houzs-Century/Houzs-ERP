@@ -123,6 +123,10 @@ type OverlayProps = {
   onMapTypeChange?: (mapTypeId: string) => void;
   /** Colour stops by where they are in the run (null = by trip). */
   statusByRef: Map<string, StopStatus> | null;
+  /** Last Mile per-lorry view: draw stops as RINGS — filled = delivered, open
+   *  ring = still to deliver, red ring = late — on the lorry's own colour, so the
+   *  run reads as a route at a glance. Off = the fill-by-status pin used elsewhere. */
+  ringStops: boolean;
   vehicles: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
 };
@@ -133,7 +137,7 @@ type OverlayProps = {
    direction arrows + the region fly-to). */
 function PanelOverlay({
   pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey,
-  onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, vehicles, onVehicleClick,
+  onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, ringStops, vehicles, onVehicleClick,
 }: OverlayProps) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -272,20 +276,36 @@ function PanelOverlay({
         extend(p, countsForFit);
         const isSel = selectedRef != null && s.ref === selectedRef;
         const st = statusOf(s.ref);
+        /* Ring convention (Last Mile per-lorry): the lorry colour identifies the
+           run; a FILLED dot is delivered, an OPEN ring is still to deliver, a RED
+           ring is late. Elsewhere the pre-existing fill-by-status pin stays. */
+        let fillColor: string; let strokeColor: string; let strokeWeight: number; let labelColor: string;
+        if (ringStops) {
+          const delivered = st === 'done';
+          const ring = st === 'overdue' ? STOP_STATUS_COLOR.overdue : route.color;
+          fillColor = delivered ? route.color : '#ffffff';
+          strokeColor = isSel ? '#111111' : ring;
+          strokeWeight = isSel || !delivered ? 3.5 : 2;
+          labelColor = delivered ? '#ffffff' : ring;
+        } else {
+          fillColor = st ? STOP_STATUS_COLOR[st] : route.color;
+          strokeColor = isSel ? '#111111' : st ? route.color : '#ffffff';
+          strokeWeight = isSel || st ? 3 : 2;
+          labelColor = '#ffffff';
+        }
         const marker = new google.maps.Marker({
           position: p,
           map,
           title: `${route.title} · ${s.order}. ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}`,
           zIndex: isSel ? 3000 : dimmed ? 1 : 500,
-          label: { text: String(s.order), color: '#ffffff', fontWeight: 'bold', fontSize: '12px' },
+          label: { text: String(s.order), color: labelColor, fontWeight: 'bold', fontSize: '12px' },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: isSel ? 15 : 12,
-            /* By status the fill says delivered / on its way / late; the ring keeps the trip colour. */
-            fillColor: st ? STOP_STATUS_COLOR[st] : route.color,
+            fillColor,
             fillOpacity: opacity,
-            strokeColor: isSel ? '#111111' : st ? route.color : '#ffffff',
-            strokeWeight: isSel || st ? 3 : 2,
+            strokeColor,
+            strokeWeight,
           },
         });
         objectsRef.current.push(marker);
@@ -475,8 +495,9 @@ export type DeliveryMapPanelProps = {
    *  never a lock). Absent → no pill (a page without narrowing). */
   compactColumns?: boolean | null;
   onCompactColumnsChange?: (on: boolean) => void;
-  /** Orders that could not be located ("N 张单定位不到 — 检查地址"). */
-  ungeocoded?: Array<{ ref: string; reason: string }>;
+  /** Orders that could not be located ("N 张单定位不到 — 检查地址"). `label` is a
+   *  friendlier identity line than the raw ref when present (e.g. a job's code). */
+  ungeocoded?: Array<{ ref: string; label?: string; reason: string }>;
   /** False = the SERVER has no maps key (geocoding off) — said out loud. */
   serverConfigured?: boolean;
   isLoading?: boolean;
@@ -485,6 +506,10 @@ export type DeliveryMapPanelProps = {
   children?: ReactNode;
   /** Where each stop is in its run — offers the Status colouring (Last Mile). */
   statusByRef?: Map<string, StopStatus> | null;
+  /** Last Mile: draw each lorry's stops as a numbered route of RINGS (filled =
+   *  delivered, open ring = to deliver, red ring = late) on the lorry's colour,
+   *  under the "By status" view. "By trip" keeps the solid lorry-colour dots. */
+  routeStopRings?: boolean;
   /** Lorries' current positions (vehicle-positions.ts). */
   vehicles?: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
@@ -521,12 +546,16 @@ export function DeliveryMapPanel({
   children,
   className,
   statusByRef = null,
+  routeStopRings = false,
   vehicles = NO_VEHICLES,
   onVehicleClick,
 }: DeliveryMapPanelProps) {
   /* Colour by status (the default when the page knows it) or by trip. */
   const [colorBy, setColorBy] = useState<'status' | 'trip'>('status');
   const activeStatus = statusByRef && colorBy === 'status' ? statusByRef : null;
+  /* Rings only under the status view (where the delivered/to-deliver/late split
+     is meaningful); "By trip" keeps the solid lorry-colour dots. */
+  const ringStops = routeStopRings && activeStatus != null;
   const statusCounts = useMemo(() => {
     const n: Record<StopStatus, number> = { done: 0, active: 0, overdue: 0, scheduled: 0 };
     for (const st of activeStatus?.values() ?? []) n[st] += 1;
@@ -679,6 +708,7 @@ export function DeliveryMapPanel({
                 onHoverRef={setHoverRef}
                 onMapTypeChange={setMapTypeId}
                 statusByRef={activeStatus}
+                ringStops={ringStops}
                 vehicles={vehicles}
                 onVehicleClick={onVehicleClick}
               />
@@ -732,7 +762,31 @@ export function DeliveryMapPanel({
       {/* Trip legend — one row per drawn trip: swatch, Trip N, stop count,
           time range, crew (Last Mile), per-stop windows. Hover dims the other
           trips; click is the existing focus behaviour. */}
-      {activeStatus && (
+      {/* Ring convention (Last Mile "By status"): the dot shape reads the state —
+          filled = delivered, open ring = still to deliver, red ring = late — on
+          the lorry's own colour, so the map reads as per-lorry routes. */}
+      {ringStops && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-ink-secondary" />
+            Delivered <span className="font-semibold tabular-nums text-ink">{statusCounts.done}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-ink-secondary bg-transparent" />
+            To deliver <span className="font-semibold tabular-nums text-ink">{statusCounts.active + statusCounts.scheduled}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2 bg-transparent" style={{ borderColor: STOP_STATUS_COLOR.overdue }} />
+            Late <span className="font-semibold tabular-nums text-ink">{statusCounts.overdue}</span>
+          </span>
+          {vehicles.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2.5 w-3.5 rounded-sm bg-[#111827]" /> Lorry now <span className="font-semibold tabular-nums text-ink">{vehicles.length}</span>
+            </span>
+          )}
+        </div>
+      )}
+      {activeStatus && !ringStops && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
           {(['done', 'active', 'overdue', 'scheduled'] as const).map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
@@ -773,9 +827,15 @@ export function DeliveryMapPanel({
                     style={{ background: row.color }}
                   />
                   <span className="text-[12px] font-semibold text-ink">{row.title}</span>
-                  <span className="text-[11.5px] text-ink-secondary">
-                    {row.stopCount} stop{row.stopCount === 1 ? '' : 's'}
-                  </span>
+                  {row.delivered != null && row.total != null ? (
+                    <span className="text-[11.5px] tabular-nums text-ink-secondary">
+                      <span className="font-semibold text-ink">{row.delivered}/{row.total}</span> delivered
+                    </span>
+                  ) : (
+                    <span className="text-[11.5px] text-ink-secondary">
+                      {row.stopCount} stop{row.stopCount === 1 ? '' : 's'}
+                    </span>
+                  )}
                   {row.timeRange && (
                     <span className="text-[11.5px] tabular-nums text-ink-secondary">{row.timeRange}</span>
                   )}
@@ -814,7 +874,7 @@ export function DeliveryMapPanel({
             <ul className="mt-0.5 list-disc pl-4">
               {ungeocoded.map((u) => (
                 <li key={u.ref}>
-                  <span className="font-mono">{u.ref}</span> — {u.reason}
+                  <span className="font-mono">{u.label ?? u.ref}</span> — {u.reason}
                 </li>
               ))}
             </ul>
