@@ -25,6 +25,7 @@ interface DataGaps {
    with no sales against it), and No chat sales report (per event). */
 interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
+  sizeSqm: number | null;
   id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
   hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
   /** The P&L's rental (Finance's books or a typed line), in RM. */
