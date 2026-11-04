@@ -133,7 +133,7 @@ projectDataGaps.get("/", async (c) => {
     const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null, attendeesOf.get(p.id) ?? null).bills : [];
     if (bills.length) billsOf.set(p.id, bills);
   }
-  type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event" | "cancelled"; soDocNo: string | null; otherEvent: string | null };
+  type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null };
   const problems = new Map<number, ProblemBill[]>();
   if (billsOf.size > 0) {
     const starts = [...eventsById.values()].filter((p) => billsOf.has(p.id)).map((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
@@ -142,8 +142,8 @@ projectDataGaps.get("/", async (c) => {
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
       .gte("so_date", since), c).order("doc_no").range(f, t));
     if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
-    /* A cancelled order is not the bill's order, but it is why a bill has none:
-       opened, then cancelled, is not the same as never opened (owner 2026-11-04). */
+    /* A refunded bill is opened and cancelled, so its SO is the record (owner
+       2026-11-04): with no live order, a cancelled one settles the bill. */
     const index = indexOrdersByToken((orders.data ?? []).filter((o) => o.status !== "CANCELLED"));
     const cancelled = indexOrdersByToken((orders.data ?? []).filter((o) => o.status === "CANCELLED"));
     const booths = await c.env.DB.prepare(
@@ -161,9 +161,9 @@ projectDataGaps.get("/", async (c) => {
         const held = index.get(b.ref_token)?.[0];
         if (m.other_event && ((held && isBinding(held)) || sameFair(boothOf(m.so_project_id), boothOf(pid)))) continue;
         if (m.other_event && m.so_project_id != null) otherIds.add(m.so_project_id);
-        const gone = m.status === "opened" ? undefined : cancelled.get(b.ref_token)?.[0];
+        if (m.status !== "opened" && cancelled.has(b.ref_token)) continue;
         list.push({ ref: b.ref_raw || b.ref_token, amountSen: Number(b.amount_sen), salesperson: b.salesperson_name ?? null,
-          problem: gone ? "cancelled" : m.other_event ? "other_event" : "not_opened", soDocNo: gone?.doc_no ?? m.so_doc_no, otherEvent: m.so_project_id != null ? String(m.so_project_id) : null });
+          problem: m.other_event ? "other_event" : "not_opened", soDocNo: m.so_doc_no, otherEvent: m.so_project_id != null ? String(m.so_project_id) : null });
       }
       if (list.length) problems.set(pid, list);
     }
