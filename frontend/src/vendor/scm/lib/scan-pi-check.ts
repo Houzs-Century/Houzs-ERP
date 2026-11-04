@@ -94,8 +94,8 @@ export function billSkuOptions(lines: ReadonlyArray<BillLine>, grnNumber: string
   }));
 }
 
-/** The invoice's price differs from what the receipt will bill: the draft keeps
- *  the receipt's price, so the operator must see the gap. */
+/** The supplier's price differs from ours: the draft bills the supplier's, so the
+ *  operator must see the gap. */
 export function priceDiffers(printed: number | null | undefined, unitPriceSen: number): boolean {
   return printed != null && Math.abs(Math.round(printed * 100) - unitPriceSen) >= 1;
 }

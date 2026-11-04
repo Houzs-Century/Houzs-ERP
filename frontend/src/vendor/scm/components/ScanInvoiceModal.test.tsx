@@ -30,11 +30,12 @@ describe('ScanInvoiceModal', () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(['a', 'b']));
     await waitFor(() => expect(screen.getByText(/HC-PI-a, HC-PI-b/)).toBeTruthy());
   });
-  it('a row shows the printed price against the receipt price when they differ', async () => {
+  it('a row marks a supplier price that differs from ours', async () => {
     mount();
     await waitFor(() => expect(screen.getAllByLabelText('Show the lines').length).toBe(2));
     fireEvent.click(screen.getAllByLabelText('Show the lines')[0]);
-    expect(screen.getByText(/The draft bills the GRN price/)).toBeTruthy();
+    expect(screen.getByText('PI Price')).toBeTruthy();
+    expect(document.querySelector('.priceOff, [class*="priceOff"]')).toBeTruthy();
   });
 });
 
