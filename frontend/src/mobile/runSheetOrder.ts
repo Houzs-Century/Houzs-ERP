@@ -50,12 +50,20 @@ const clockTokens = (timeRange: string | null | undefined): RegExpMatchArray[] =
  * Minutes-since-midnight of a delivery window's START, read from the office's
  * free-text time_range ("TIME AROUND 1:30PM TO 3:30PM" → 810, "...11AM TO 1PM"
  * → 660). Takes the FIRST clock time; understands 12-hour am/pm with optional
- * minutes and a bare 24-hour "13:30". Null when no time can be read.
+ * minutes and a bare 24-hour "13:30". A start with no am/pm takes the end's
+ * ("2-4pm" → 840) unless that would pass the end ("10-12pm" → 600). Null when no
+ * time can be read.
  */
 export function timeSlotStartMin(timeRange: string | null | undefined): number | null {
   const toks = clockTokens(timeRange);
   if (toks.length === 0) return null;
   const m = toks[0];
+  const last = toks[toks.length - 1];
+  if (!m[3] && last[3]) {
+    const borrowed = clockToMin(m[1], m[2], last[3]);
+    const end = clockToMin(last[1], last[2], last[3]);
+    if (borrowed != null && (end == null || borrowed <= end)) return borrowed;
+  }
   return clockToMin(m[1], m[2], m[3]);
 }
 

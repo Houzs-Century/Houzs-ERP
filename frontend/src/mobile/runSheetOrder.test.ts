@@ -21,6 +21,12 @@ describe("timeSlotStartMin", () => {
     expect(timeSlotStartMin("13:30-15:30")).toBe(13 * 60 + 30);
     expect(timeSlotStartMin("09:00")).toBe(9 * 60);
   });
+  test("a start with no am/pm takes the end's, unless that passes the end", () => {
+    expect(timeSlotStartMin("2-4pm")).toBe(14 * 60);
+    expect(timeSlotStartMin("12-2pm")).toBe(12 * 60);
+    expect(timeSlotStartMin("10-12pm")).toBe(10 * 60);
+    expect(timeSlotStartMin("11-1pm")).toBe(11 * 60);
+  });
   test("absent or timeless → null (sorts last)", () => {
     expect(timeSlotStartMin(null)).toBeNull();
     expect(timeSlotStartMin("")).toBeNull();
