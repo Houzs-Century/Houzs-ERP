@@ -23,7 +23,7 @@ interface DataGaps {
    Sales Orders not daily (per bill of the chat sales report: not opened, or
    opened under another event and to be moved), Rental (none keyed, or keyed
    with no sales against it), and No chat sales report (per event). */
-interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
+interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event" | "cancelled"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
   sizeSqm: number | null;
   id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
@@ -68,7 +68,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
                 {first ? eventCell(r) : <Td left> </Td>}
                 <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
                 <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
-                  {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
+                  {b.problem === "not_opened" ? "Not opened as a Sales Order" : b.problem === "cancelled" ? <>Sales Order cancelled · <span className="font-mono">{b.soDocNo}</span> — take it off the report, or open it again</> : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
                 </Td>
               </tr>
               );
