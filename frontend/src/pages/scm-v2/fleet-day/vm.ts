@@ -13,7 +13,7 @@ import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
 import type { MapRoute, MapRouteStop, MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
 import {
-  slotKindOf, slotLabelOf, slotSortKey, runStatusOf, rollupRun, isLate, lateReason,
+  slotKindOf, slotLabelOf, slotSortKey, condenseWindow, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
 } from '../../../vendor/scm/lib/fleet-day-cards';
 
@@ -377,7 +377,9 @@ export function buildLorryRoutes(
         lng: pt.lng,
         order: stops.length + 1,
         label,
-        windowLabel: d.slotLabel || null,
+        // Condensed for the day-map legend ("10:30AM to 12:30PM" -> "10:30–12:30");
+        // the lorry card keeps the full slotLabel.
+        windowLabel: condenseWindow(d.slotLabel) || null,
       });
     }
     routes.push({
