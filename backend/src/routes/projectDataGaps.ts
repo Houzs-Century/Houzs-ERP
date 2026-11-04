@@ -130,16 +130,19 @@ projectDataGaps.get("/", async (c) => {
     const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null, attendeesOf.get(p.id) ?? null).bills : [];
     if (bills.length) billsOf.set(p.id, bills);
   }
-  type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null };
+  type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event" | "cancelled"; soDocNo: string | null; otherEvent: string | null };
   const problems = new Map<number, ProblemBill[]>();
   if (billsOf.size > 0) {
     const starts = [...eventsById.values()].filter((p) => billsOf.has(p.id)).map((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
     const since = new Date(Date.parse(`${starts[0] ?? from}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
     const orders = await paginateAll<OrderRow>((f, t) => scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
-      .neq("status", "CANCELLED").gte("so_date", since), c).order("doc_no").range(f, t));
+      .gte("so_date", since), c).order("doc_no").range(f, t));
     if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
-    const index = indexOrdersByToken(orders.data ?? []);
+    /* A cancelled order is not the bill's order, but it is why a bill has none:
+       opened, then cancelled, is not the same as never opened (owner 2026-11-04). */
+    const index = indexOrdersByToken((orders.data ?? []).filter((o) => o.status !== "CANCELLED"));
+    const cancelled = indexOrdersByToken((orders.data ?? []).filter((o) => o.status === "CANCELLED"));
     const otherIds = new Set<number>();
     for (const [pid, bills] of billsOf) {
       const list: ProblemBill[] = [];
@@ -147,8 +150,9 @@ projectDataGaps.get("/", async (c) => {
         const m = matchBill(b.ref_token, pid, index);
         if (m.status === "opened" && !m.other_event) continue;
         if (m.other_event && m.so_project_id != null) otherIds.add(m.so_project_id);
+        const gone = m.status === "opened" ? undefined : cancelled.get(b.ref_token)?.[0];
         list.push({ ref: b.ref_raw || b.ref_token, amountSen: Number(b.amount_sen), salesperson: b.salesperson_name ?? null,
-          problem: m.other_event ? "other_event" : "not_opened", soDocNo: m.so_doc_no, otherEvent: m.so_project_id != null ? String(m.so_project_id) : null });
+          problem: gone ? "cancelled" : m.other_event ? "other_event" : "not_opened", soDocNo: gone?.doc_no ?? m.so_doc_no, otherEvent: m.so_project_id != null ? String(m.so_project_id) : null });
       }
       if (list.length) problems.set(pid, list);
     }
