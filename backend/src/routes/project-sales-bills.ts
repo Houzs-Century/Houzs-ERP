@@ -331,7 +331,10 @@ projectSalesBills.post("/:projectId/rename-ref", async (c) => {
   const attendeeEmails = await loadAttendeeEmails(db, project.id);
   if (!me || !canSaveSalesReport(me, attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
   const notes = await loadNotes(db, project.id);
-  const bill = collectReport(notes, project.start_date, attendeeEmails).bills.find((b) => b.ref_raw === from);
+  const { bills } = collectReport(notes, project.start_date, attendeeEmails);
+  /* A second press lands after the first changed it: the report already says so. */
+  if (!bills.some((b) => b.ref_raw === from) && bills.some((b) => extractRefTokens(to).includes(b.ref_token))) return c.json({ ok: true });
+  const bill = bills.find((b) => b.ref_raw === from);
   const source = bill ? notes.find((n) => n.id === bill.source_activity_id) : undefined;
   const next = source?.note ? renameRef(source.note, from, to) : null;
   if (!source || next === null) return c.json({ error: "Not found", message: `${from} is not on this event's sales report.` }, 404);

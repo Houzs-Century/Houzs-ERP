@@ -9,6 +9,7 @@ export function BillRefFix({ projectId, from, onSaved }: { projectId: number; fr
   const [err, setErr] = useState<string | null>(null);
 
   const save = async () => {
+    if (busy) return;
     const to = (value ?? "").trim();
     if (!to || to === from) { setValue(null); return; }
     setBusy(true); setErr(null);
