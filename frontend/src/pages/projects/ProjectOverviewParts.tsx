@@ -30,7 +30,7 @@ interface BookRow {
   /** The P&L's rental (Finance's books or a typed line), in RM. */
   rental: number;
 }
-type BooksTab = "daily" | "nocogs" | "rental" | "report";
+type BooksTab = "daily" | "nocogs" | "rental" | "report" | "size";
 /** A Sales Order of a recent event with a product line at no cost - its SKU has no cost in Product Maintenance. */
 interface SoNoCogs { docNo: string; projectId: number; event: string; code: string; startDate: string; endDate: string; amountSen: number; items: string[] }
 /** An event of the last 180 days whose chat report holds bills not opened under it. */
@@ -47,12 +47,14 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
   const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
   const noReport = g.books.filter((r) => !r.hasReport);
+  /* Venue rent per m² reads the booth size, so an event without one is left out of it. */
+  const noSize = g.books.filter((r) => !((r.sizeSqm ?? 0) > 0));
   /* One line per row (owner 2026-10-20: "不需要两排"): the event's name, its code on hover. */
   const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[320px] truncate"><span className="text-primary" title={r.code}>{r.name}</span></Td>;
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
       <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
-        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["nocogs", "SO no COGS", g.soNoCogs.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
+        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["nocogs", "SO no COGS", g.soNoCogs.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0], ["size", "No project size", noSize.length, 0]] as Array<[string, string, number, number]>} />
       <div className="max-h-[460px] overflow-auto">
         {tab === "daily" && (
           <table className="w-full border-collapse">
@@ -117,6 +119,18 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               </tr>
             ))}
               {noReport.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a chat sales report.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "size" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th></tr></thead>
+            <tbody>{noSize.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{r.rental > 0 ? money(r.rental) : "—"}</Td>
+              </tr>
+            ))}
+              {noSize.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a booth size.</Td></tr>}
             </tbody>
           </table>
         )}

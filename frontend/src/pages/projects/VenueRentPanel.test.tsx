@@ -33,4 +33,14 @@ describe("VenueRentPanel", () => {
     expect((screen.getByText("MYHOME").closest("tr") as HTMLElement).textContent).toContain("RM 215.28");
     expect((screen.getByText("BIGHOME").closest("tr") as HTMLElement).textContent).toContain("RM 107.64");
   });
+  it("ranks by organizer or state as well, each opening to its venues", () => {
+    const pnl = (rental: number) => ({ ...project({}).pnl!, rental });
+    render(<VenueRentPanel periodLabel="Oct" projects={[project({ id: 1, pnl: pnl(1000) }), project({ id: 2, venue: "IOI", pnl: pnl(1000) })]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Organizer" }));
+    const row = screen.getByText(/MYHOME/);
+    fireEvent.click(row);
+    expect(screen.getByText("IOI")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "State" }));
+    expect(screen.getByText(/KL/)).toBeTruthy();
+  });
 });
