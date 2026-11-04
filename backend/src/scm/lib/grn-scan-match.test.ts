@@ -11,6 +11,7 @@ import {
   printedPoWhy,
   splitInnerLocation,
   setLinesBySo,
+  supplierOfPrintedPo,
   normalizeCode,
   pickBySpec,
   normalizeSupplierName,
@@ -798,6 +799,18 @@ describe('set rows of one SO split by the model number they print (DO-2610-009)'
 
   test('a row naming no SO is not a set', () => {
     expect(setLinesBySo(scan({ itemCode: 'DSL9058', description: 'no order number here', qty: 1 }), po)).toBeNull();
+  });
+});
+
+describe('supplierOfPrintedPo', () => {
+  const pos = [{ poNumber: 'HC-PO-2610-084', supplierId: 'eadeco' }, { poNumber: 'HC-PO-2610-090', supplierId: 'hookka' }];
+  test('our PO number names the supplier the letterhead did not', () => {
+    expect(supplierOfPrintedPo({ poNo: 'HC-PO-2610-084', lines: [] }, pos)).toBe('eadeco');
+    expect(supplierOfPrintedPo({ poNo: null, lines: [{ poNo: 'HC-PO-2610-090' }] }, pos)).toBe('hookka');
+  });
+  test('a foreign reference, or POs of two suppliers, names nobody', () => {
+    expect(supplierOfPrintedPo({ poNo: 'S/O 1878', lines: [] }, pos)).toBeNull();
+    expect(supplierOfPrintedPo({ poNo: 'HC-PO-2610-084', lines: [{ poNo: 'HC-PO-2610-090' }] }, pos)).toBeNull();
   });
 });
 

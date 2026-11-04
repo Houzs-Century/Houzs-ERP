@@ -191,6 +191,19 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
 }
 
+/** Our own PO number on the paper names the supplier for certain, whatever name its
+ *  letterhead carries (DIGLANT MANUFACTURING delivers for EADECO REFORM). */
+export function supplierOfPrintedPo(
+  parsed: { poNo?: string | null; lines: ReadonlyArray<{ poNo?: string | null }> },
+  allPos: Array<{ poNumber: string; supplierId?: string | null }>,
+): string | null {
+  const ids = new Set([parsed.poNo, ...parsed.lines.map((l) => l.poNo)].flatMap((po) => {
+    const hit = resolvePrintedPo(po, allPos, false)?.supplierId;
+    return hit ? [hit] : [];
+  }));
+  return ids.size === 1 ? [...ids][0] : null;
+}
+
 /**
  * Resolve the supplier printed on a delivery order to ONE of our suppliers, or
  * null. Exact (normalised name or code) first; else a unique containment match
