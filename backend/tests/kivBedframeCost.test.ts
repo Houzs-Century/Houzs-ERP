@@ -8,8 +8,8 @@ describe('kivSourceCode', () => {
     expect(kivSourceCode('BEDFRAME KIV LV3-(SS)')).toBe('REGAL (A)-(SS)');
     expect(kivSourceCode('BEDFRAME KIV LV4-(SK)')).toBe('TRION (A)-(SK)');
   });
-  test('the bare level and other products have no source', () => {
-    expect(kivSourceCode('BEDFRAME KIV LV2')).toBeNull();
+  test('a bare level takes Queen; other products have no source', () => {
+    expect(kivSourceCode('BEDFRAME KIV LV2')).toBe('CODY-(Q)');
     expect(kivSourceCode('CODY-(Q)')).toBeNull();
   });
 });
