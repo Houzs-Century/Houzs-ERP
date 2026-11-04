@@ -122,9 +122,15 @@ describe('writeNonSoFields (remarks)', () => {
     expect((await writeNonSoFields(c, {}, 'project', 'PRJ:11', { remark: 'x' })).status).toBe(400);
   });
 
-  it('a project outside the caller\'s companies is not found', async () => {
-    const prepare = () => ({ bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }) });
-    const r = await writeNonSoFields({ env: { DB: { prepare } }, get: () => undefined }, {}, 'project', '11', { remark: 'x' });
-    expect(r.status).toBe(404);
+  it('bounds the project write to the caller\'s companies, and 404s outside them', async () => {
+    const sqls: string[] = [];
+    const ctxFor = (allowed: number[]) => ({
+      env: { DB: { prepare: (sql: string) => { sqls.push(sql); return { bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }) }; } } },
+      get: (k: string) => (k === 'allowedCompanyIds' ? allowed : undefined),
+    });
+    expect((await writeNonSoFields(ctxFor([1]), {}, 'project', '11', { remark: 'x' })).status).toBe(404);
+    expect(sqls[0]).toContain('AND company_id IN (1)');
+    await writeNonSoFields(ctxFor([]), {}, 'project', '11', { remark: 'x' });
+    expect(sqls[1]).toContain('AND 1=0');
   });
 });

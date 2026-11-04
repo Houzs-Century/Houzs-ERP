@@ -85,7 +85,7 @@ import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
-import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap, allowedCompanyIds } from '../lib/companyScope';
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
@@ -960,6 +960,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       delivery_message_status: r.deliveryMessageStatus ?? r.delivery_message_status ?? null,
       disposal_request: r.disposalRequest ?? r.disposal_request ?? null,
       dp_remark: r.dpRemark ?? r.dp_remark ?? null,
+      remark_locked: false,
       // HC DO-execution raw-data fields — from the latest DO, null when this SO
       // has no (non-DRAFT/CANCELLED) DO yet.
       time_range: doExecByDoc.get(docNo)?.time_range ?? null,
@@ -1139,6 +1140,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
           dp_remark: a[ASSR_LEG_REMARK_COL[leg.jobKind]] ?? null,
+          remark_locked: false,
           time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,
           time_confirmed: null,
           arrival_at: null,
@@ -1265,6 +1267,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         delivery_message_status: (d.delivery_message_status as string | null) ?? null,
         disposal_request: null,
         dp_remark: (d.remark as string | null) ?? null,
+        remark_locked: false,
         time_range: (d.time_range as string | null) ?? null,
         time_confirmed: null,
         arrival_at: null,
@@ -1314,17 +1317,18 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
   await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
 
-  /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
+  /* ── PMS project SETUP / DISMANTLE union (mirror; only the Remarks is written here)
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
      exhibition projects, so a project's setup / dismantle window is a real fleet
      commitment the coordinator must SEE to avoid double-booking a lorry. This is a
-     read-only mirror of what the PMS module already schedules (projects.setup_* /
+     mirror of what the PMS module already schedules (projects.setup_* /
      dismantle_*): scheduling + crew assignment stay in PMS, which owns that editor
      and its permission gates (SETUP_DISMANTLE). One row per SET window (a project
      with both a setup and a dismantle date shows two rows). Fleet is company-shared
      so this is intentionally NOT company-scoped. public.projects → c.env.DB raw SQL
      (same path as the ASSR union). Defensive: any failure logs + leaves the rest. */
   const projectOrders: BoardRow[] = [];
+  const writableCompanies = allowedCompanyIds(c);
   try {
     const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
     if ('err' in projR) throw projR.err; lap('dp-projects');
@@ -1406,6 +1410,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           delivery_message_status: null,
           disposal_request: null,
           dp_remark: p.delivery_remark ?? null, // the project's one board remark, on both its SETUP and DISMANTLE rows
+          // Listed for every company (shared fleet), but the remark saves only within the caller's companies.
+          remark_locked: writableCompanies !== undefined && !writableCompanies.includes(Number(p.company_id)),
           time_range: null,
           time_confirmed: null,
           arrival_at: null,

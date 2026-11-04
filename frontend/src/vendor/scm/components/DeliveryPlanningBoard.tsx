@@ -457,6 +457,9 @@ function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false,
   if ((isProject(order) && !allowProject) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
+      // Remount when the saved value changes: an uncontrolled box would keep the
+      // old text, and a blur would save it back over the newer value.
+      key={value ?? ''}
       className={styles.inlineEdit}
       defaultValue={value ?? ''}
       placeholder={placeholder}
@@ -1404,7 +1407,7 @@ export function DeliveryPlanningBoard({
       /* Every row type takes a remark, each on its own record: SO header, DP job,
          the service-case leg, or the project's board remark. */
       accessor: (o) => (
-        <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject
+        <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject={!o.remark_locked}
           onCommit={(v) => updateFieldsMutate(
             isDp(o) ? { type: 'dp', id: dpIdOf(o), dpRemark: v }
               : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, dpRemark: v }

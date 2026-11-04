@@ -276,6 +276,8 @@ export type PlanningOrder = {
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
+  /* A project row of a company the caller is not granted: listed (shared fleet), but its Remarks cannot be saved. */
+  remark_locked?: boolean;
   region: RegionCode;   // the order's primary bucket (from customer_state)
   regions: RegionCode[];  // primary + any leg buckets
   warehouse_id: string | null;
