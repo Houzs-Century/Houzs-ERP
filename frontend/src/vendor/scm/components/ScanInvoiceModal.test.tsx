@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { billSkuOptions, grnOptions, piBlock, priceDiffers, type BillLine, type PiCheckDoc, type PiReview } from '../lib/scan-pi-check';
 
-const bl = (grnItemId: string, grnNumber: string, supplierSku: null, itemCode: string, remaining = 2): BillLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, description: `${itemCode} desc`, remaining, unitPriceSen: 100_00 });
+const bl = (grnItemId: string, grnNumber: string, itemCode: string, remaining = 2): BillLine => ({ grnItemId, grnNumber, supplierSku: null, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, description: `${itemCode} desc`, remaining, unitPriceSen: 100_00 });
 const billLines = [bl('g1', 'HC-GRN-1', 'A1'), bl('g2', 'HC-GRN-2', 'A2')];
 const review = (invoiceNumber: string, grnItemId: string): PiReview => ({ v: 1, supplierId: 's1', supplierRead: 'DIGLANT', invoiceNumber, invoiceDate: '2026-11-03', doNo: null, poNo: null, notes: null, lines: [{ key: `k${invoiceNumber}`, grnItemId, grnNumber: null, qty: 1, suggested: false, read: { itemCode: 'T1', description: 'Mattress', qty: 1, unitPrice: 120, lineTotal: 120 } }] });
 const doc = (id: string, r: PiReview, duplicateOf: PiCheckDoc['duplicateOf']): PiCheckDoc => ({ id, batchId: 'b', fileName: 'inv.pdf', pages: null, state: 'pending', note: null, review: r, createdAt: '', hasFile: true, canGold: true, gold: false, duplicateOf, repeatOf: null, blocked: null });
