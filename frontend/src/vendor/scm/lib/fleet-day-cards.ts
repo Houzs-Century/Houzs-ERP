@@ -98,6 +98,27 @@ export function slotSortKey(timeRange: string | null | undefined): number {
   return kind === 'AM' ? 0 : kind === 'PM' ? PM_START : Number.MAX_SAFE_INTEGER;
 }
 
+/** Condense a slot label for the day-map legend (owner 2026-11-04 — the per-stop
+ *  window chips were too verbose to scan): "10:30AM to 12:30PM" -> "10:30–12:30",
+ *  "10 AM-1 PM" -> "10–13". A bare "AM"/"PM" bucket stays the tag; a present but
+ *  unreadable label is kept as the dispatcher typed it; "" for no slot. 24-hour
+ *  clock with ":00" dropped, an en dash between the ends. */
+export function condenseWindow(label: string | null | undefined): string {
+  if (!label || !label.trim()) return '';
+  const t = label.trim();
+  const up = t.toUpperCase();
+  if (up === 'AM' || up === 'PM') return up;
+  const { start, end } = slotMinutes(t);
+  const fmt = (m: number): string => {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return min === 0 ? String(h) : `${h}:${String(min).padStart(2, '0')}`;
+  };
+  if (start != null && end != null) return `${fmt(start)}–${fmt(end)}`;
+  if (start != null) return fmt(start);
+  return t; // present but unparseable — keep what the dispatcher typed
+}
+
 /* ── Lorry run status ─────────────────────────────────────────────────────
    Not departed = no stop started · On the way = any stop started, not all done
    · Completed = every drop delivered. A "started" stop is the stop-status rule's
