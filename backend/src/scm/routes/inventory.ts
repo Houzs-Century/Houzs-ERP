@@ -463,7 +463,9 @@ export const productTotalsHandler = async (
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from('v_inventory_product_totals').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate product totals to the active company (view exposes company_id, mig 0106)
-    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
+    // Barcode is searchable too (cash & carry items carry the AutoCount barcode,
+    // exposed on the view by mig 20261104T1000) — scan or type it to find the SKU.
+    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%,barcode.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
     return q.order('item_code').range(from, to);
   });

@@ -212,7 +212,7 @@ export const Inventory = () => {
               <input
                 type="search"
                 className={styles.searchInput}
-                placeholder="Search code / description…"
+                placeholder="Search code / barcode / description…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -589,6 +589,19 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
        the name already carries the brand, the suffix only polluted it. */
     getValue: (r) => r.product_name,
     render: (r) => r.product_name,
+  },
+  {
+    /* AutoCount barcode — cash & carry / bedline items carry one; make-to-order
+       furniture usually has none, so this reads "—". Searchable via the box above
+       (code / barcode / description). */
+    key: 'barcode',
+    label: 'Barcode',
+    width: '150px',
+    getValue: (r) => r.barcode ?? '',
+    render: (r) =>
+      r.barcode
+        ? <span className={styles.codeChip}>{r.barcode}</span>
+        : <span className={styles.numCellZero}>—</span>,
   },
   {
     key: 'category',
