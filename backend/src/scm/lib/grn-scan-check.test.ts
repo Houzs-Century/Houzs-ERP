@@ -1,6 +1,6 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
-import { blockedReason, buildReview, cleanReview, duplicateOf, picksOf, type GrnReview } from './grn-scan-check';
+import { blockedReason, buildReview, cleanReview, duplicateOf, giftsOf, picksOf, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
 const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryDate: '2026-11-03', lines: [
@@ -12,16 +12,29 @@ const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p'
 
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
-    const r = buildReview(parsed, 's1', match);
+    const r = buildReview(parsed, 's1', match, []);
     expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-03' });
     expect(r.lines.map((l) => [l.poItemId, l.qty, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, null], [null, 1, 'ZZ']]);
   });
   test('a read the matcher never saw keeps every printed line', () => {
-    expect(buildReview(parsed, null, null).lines).toHaveLength(2);
+    expect(buildReview(parsed, null, null, []).lines).toHaveLength(2);
   });
   test('the saved edit keeps known fields only, drops a bad date and a negative qty', () => {
     const r = cleanReview({ supplierId: 's1', doNo: ' DO 77 ', deliveryDate: '03/11/2026', lines: [{ key: 'k', poItemId: 'pi-1', qty: -3, evil: 1 }], extra: 'x' });
-    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', qty: 0, read: null }] });
+    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', gift: null, qty: 0, read: null }] });
+  });
+  test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
+    const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }]);
+    expect(r.lines[1]).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
+  });
+  test('a free gift is never also a PO line, and adds up per product with its printed code', () => {
+    const r = cleanReview({ lines: [
+      { key: 'a', poItemId: 'pi-1', gift: { itemCode: 'P', name: 'Pillow' }, qty: 2, read: { itemCode: 'GWP', qty: 2 } },
+      { key: 'b', gift: { itemCode: 'P', name: 'Pillow' }, qty: 3 },
+    ] }) as GrnReview;
+    expect(r.lines[0].poItemId).toBeNull();
+    expect(picksOf(r)).toEqual([]);
+    expect(giftsOf(r)).toEqual([{ printedCode: 'GWP', itemCode: 'P', name: 'Pillow', qty: 5 }]);
   });
   test('Create converts tied lines with a qty, one pick per PO line', () => {
     const r = { lines: [{ poItemId: 'pi-1', qty: 1 }, { poItemId: 'pi-1', qty: 1 }, { poItemId: null, qty: 5 }, { poItemId: 'pi-2', qty: 0 }] } as GrnReview;

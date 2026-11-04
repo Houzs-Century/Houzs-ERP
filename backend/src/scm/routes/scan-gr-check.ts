@@ -24,7 +24,9 @@ import { IMAGE_MIMES, MAX_FILE_BYTES, sha256Hex } from '../lib/scan-ocr';
 import { askBoundaries, cutPdf, pdfPageCount, planChunks } from '../lib/scan-split';
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 import { loadOpenPoLines, loadSuppliers } from '../lib/grn-scan-load';
-import { blockedReason, cleanReview, duplicateOf, picksOf, type GrnReview } from '../lib/grn-scan-check';
+import { blockedReason, cleanReview, duplicateOf, giftsOf, picksOf, type GrnReview } from '../lib/grn-scan-check';
+import { saveScanCodes } from '../lib/grn-scan-codes';
+import { addGiftLines, giftNote, loadCatalogueProducts } from '../lib/grn-scan-gifts';
 import { runGrnJobFromRow } from './scan-gr';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped service client every scm route uses
@@ -181,6 +183,19 @@ scanGrCheck.get('/pending', async (c) => {
   } });
 });
 
+/* GET /scan-gr/check/products?search= — ACTIVE products of this company, to say
+   which of ours a free gift is. Code or name contains, 20 at most. */
+scanGrCheck.get('/products', async (c) => {
+  const term = (c.req.query('search') ?? '').trim();
+  if (term.length < 2) return c.json({ success: true, data: { products: [] } });
+  const like = `%${term.replace(/[%_,()]/g, ' ')}%`;
+  const { data, error } = await svcOf(c.env).from('mfg_products').select('code, name')
+    .eq('company_id', activeCompanyId(c)).eq('status', 'ACTIVE')
+    .or(`code.ilike.${like},name.ilike.${like}`).order('code').limit(20);
+  if (error) return c.json({ error: 'query_failed', reason: 'Could not search products. Please try again.' }, 500);
+  return c.json({ success: true, data: { products: (data as Array<{ code: string; name: string | null }> | null) ?? [] } });
+});
+
 /* Open PO lines of one supplier, when the operator changes a document's supplier. */
 scanGrCheck.get('/po-lines', async (c) => {
   const supplierId = c.req.query('supplierId') ?? '';
@@ -228,7 +243,7 @@ scanGrCheck.post('/create', async (c) => {
   const companyCode = await companyCodeById(svc, companyId);
   const houzsUserId = callerId(c);
   const userId = (await resolveCallerStaffId(svc, houzsUserId)) ?? c.get('user').id;
-  const results: Array<{ id: string; ok: boolean; grnNumbers?: string[]; reason?: string }> = [];
+  const results: Array<{ id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null }> = [];
   for (const r of rows) {
     const review = r.review as GrnReview;
     const picks = picksOf(review);
@@ -250,9 +265,21 @@ scanGrCheck.post('/create', async (c) => {
       continue;
     }
     const grnNumbers = res.created.map((g) => g.grnNumber);
+    /* Free gifts go on the first draft at RM0, no PO link, and each printed code
+       is remembered for this supplier so the next delivery order marks it alone.
+       Only ACTIVE products of this company (loadCatalogueProducts). */
+    const wanted = giftsOf(review);
+    const products = await loadCatalogueProducts(svc, companyId, wanted.map((g) => g.itemCode));
+    const added = await addGiftLines(svc, companyId, res.created[0].id, wanted.filter((g) => products.has(g.itemCode)), userId);
+    const skipped = wanted.length - added.length;
+    const teach = added.filter((g) => g.printedCode).map((g) => ({ printedCode: g.printedCode, itemCode: g.itemCode }));
+    if (teach.length > 0 && review.supplierId && companyId != null) {
+      const saved = await saveScanCodes(svc, { companyId, supplierId: review.supplierId, userId: houzsUserId, pairs: teach });
+      if (!saved.ok) console.warn('[scan-gr check] gift code not remembered:', saved.reason);
+    }
     await svc.from('scan_jobs').update({ review_state: 'created', linked_doc_no: grnNumbers[0], updated_at: new Date().toISOString() })
       .eq('id', r.id).eq('company_id', companyId);
-    results.push({ id: r.id, ok: true, grnNumbers });
+    results.push({ id: r.id, ok: true, grnNumbers, giftNote: [giftNote(added), skipped > 0 ? `${skipped} free gift${skipped === 1 ? '' : 's'} could not be added; add them on the draft.` : null].filter(Boolean).join(' ') || null });
   }
   return c.json({ success: true, data: { results } });
 });

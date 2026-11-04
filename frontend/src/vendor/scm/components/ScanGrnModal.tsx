@@ -156,6 +156,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   const close = () => { void flush(); onClose(); };
   const made = results.filter((r) => r.ok).flatMap((r) => r.grnNumbers ?? []);
   const refused = results.filter((r) => !r.ok);
+  const giftNotes = results.flatMap((r) => (r.giftNote ? [r.giftNote] : []));
 
   return (
     <div className={styles.modal} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -211,6 +212,12 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                       <div className={styles.resultMain}>{made.length} draft goods receipt{made.length === 1 ? '' : 's'}: {made.join(', ')}. Open each from the Goods Receipt list to post it.</div>
                     </div>
                   )}
+                  {giftNotes.map((n) => (
+                    <div key={n} className={styles.resultRow}>
+                      <span className={`${styles.chip} ${styles.chipGreen}`}>Free gift</span>
+                      <div className={styles.resultMain}>{n}</div>
+                    </div>
+                  ))}
                   {refused.map((r) => (
                     <div key={r.id} className={styles.resultRow}>
                       <span className={`${styles.chip} ${styles.chipYellow}`}>Not created</span>
