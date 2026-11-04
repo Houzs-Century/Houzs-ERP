@@ -201,7 +201,7 @@ export function buildProjectsCalendarModel({
         if (organizer && (task.organizer || "") !== organizer) return false;
         // With a search: only render tasks whose parent project passed the
         // filter — keeps the view consistent (task chips beside their bar).
-        if (needle && !projectById.has(task.project_id)) return false;
+        if (words.length > 0 && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })
     : [];
