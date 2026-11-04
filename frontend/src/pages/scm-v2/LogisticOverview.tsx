@@ -23,6 +23,15 @@ import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDail
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { deliveryProgressBreakdown, messageStatusBreakdown, NO_MESSAGE_STATUS } from "./logisticStatus";
+
+/* The progress slice colours mirror the state tabs on Delivery Planning. */
+const PROGRESS_COLOR: Record<string, string> = {
+  PENDING_DELIVERY: PALETTE[0]!,
+  PENDING_SCHEDULE: TONE.warn,
+  OVERDUE: TONE.bad,
+  DELIVERED: TONE.good,
+};
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
@@ -181,6 +190,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const followMap = new Map<string, { count: number; sen: number }>();
   for (const o of open) { const k = followUpOf(o.delivery_message_status); const g = followMap.get(k) ?? { count: 0, sen: 0 }; g.count += 1; g.sen += o.local_total_sen; followMap.set(k, g); }
   const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
+  /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
+     by delivery progress and by the customer-message status. */
+  const progress = useMemo(() => deliveryProgressBreakdown(rows), [rows]);
+  const msgStatus = useMemo(() => messageStatusBreakdown(rows), [rows]);
+  const rowsSen = useMemo(() => rows.reduce((a, o) => a + o.local_total_sen, 0), [rows]);
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
 
   return (
@@ -233,6 +247,43 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
               {follow.map(([k, g]) => <tr key={k}><Td left className={k.startsWith("Waiting") || k.startsWith("To reschedule") ? "text-warning-text" : ""}>{k}</Td><Td>{g.count}</Td><Td>{fmtSen(g.sen)}</Td></tr>)}
             </tbody></table>
             <p className="mt-1 text-[11px] text-ink-muted">From the message status on Delivery Planning.</p>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Order status breakdown" hint={`${n(rows.length)} sales orders on the board${warehouse ? " · this warehouse" : ""} · delivered shown are those recently closed`}>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div>
+            <div className="mb-1.5 text-[12px] font-semibold text-ink">By delivery progress</div>
+            {rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No orders on the board.</p> : (<>
+              <SplitBar format={n} parts={progress.map((s) => ({ label: s.label, value: s.count, color: PROGRESS_COLOR[s.key] ?? "#9aa39a" }))} />
+              <table className="mt-2 w-full border-collapse">
+                <thead><tr><Th left>Progress</Th><Th>Orders</Th><Th>Share</Th><Th>Amount</Th></tr></thead>
+                <tbody>
+                  {progress.map((s) => (
+                    <tr key={s.key}>
+                      <Td left><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: PROGRESS_COLOR[s.key] ?? "#9aa39a" }} />{s.label}</Td>
+                      <Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td>
+                    </tr>
+                  ))}
+                  <tr className="font-semibold"><Td left>Total</Td><Td>{n(rows.length)}</Td><Td>100%</Td><Td>{fmtSen(rowsSen)}</Td></tr>
+                </tbody>
+              </table>
+            </>)}
+          </div>
+          <div>
+            <div className="mb-1.5 text-[12px] font-semibold text-ink">By message status</div>
+            {rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No orders on the board.</p> : (
+              <table className="w-full border-collapse">
+                <thead><tr><Th left>Message status</Th><Th>Orders</Th><Th>Share</Th><Th>Amount</Th></tr></thead>
+                <tbody>
+                  {msgStatus.map((s) => (
+                    <tr key={s.key}><Td left className={s.key === NO_MESSAGE_STATUS ? "text-ink-muted" : ""}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="mt-1 text-[11px] text-ink-muted">The customer-message workflow status filled on Delivery Planning; most orders have none set yet.</p>
           </div>
         </div>
       </Panel>
