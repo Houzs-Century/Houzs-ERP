@@ -85,6 +85,7 @@ import {
   todoTaskMoveHandler, todoRemarkAddHandler, todoRemarkEditHandler, todoLinkSearchHandler, todoRuleAddHandler,
 } from './accounting-todo-tasks';
 import { todoCalendarHandler } from './accounting-todo-calendar';
+import { rebankListHandler, rebankMoveHandler } from './accounting-rebank';
 /* Its handler stays importable from here, where the tests have always found it. */
 export { dailyBankHandler, loadDailyBankBoard } from './accounting-daily-bank';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
@@ -231,6 +232,8 @@ accounting.post('/todo/groups', todoGroupAddHandler);
 accounting.post('/todo/rules', todoRuleAddHandler);
 accounting.get('/todo/link-search', todoLinkSearchHandler);
 accounting.get('/todo/calendar', todoCalendarHandler);
+accounting.get('/receipts/rebank', rebankListHandler);
+accounting.post('/receipts/rebank', rebankMoveHandler);
 accounting.post('/todo/tasks', todoTaskCreateHandler);
 accounting.get('/todo/tasks/:id', todoTaskGetHandler);
 accounting.patch('/todo/tasks/:id', todoTaskPatchHandler);

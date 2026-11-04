@@ -93,6 +93,36 @@ export const useSaveBankDefault = (role: DefaultBankRole) => {
   });
 };
 
+/* Earlier transfer receipts booked on another bank than Receive into (owner
+   2026-11-04: 做改记工具) — listed for a date range, moved in batches. */
+export type RebankRow = {
+  source: 'SOPAY' | 'SIPAY'; paymentId: string; docNo: string; paidOn: string;
+  amountSen: number; jeNo: string; fromAccount: string; blocked: string | null;
+};
+export type RebankOutcome = {
+  source: 'SOPAY' | 'SIPAY'; paymentId: string; status: 'moved' | 'skipped' | 'failed';
+  reason: string | null; fromJeNo: string | null; jeNo: string | null;
+};
+export const REBANK_PER_CALL = 25;
+export const useRebankCandidates = (range: { from: string; to: string } | null) => useQuery({
+  queryKey: ['rebank-candidates', range?.from ?? '', range?.to ?? ''],
+  queryFn: () => authedFetch<{ target: string; rows: RebankRow[] }>(
+    `/accounting/receipts/rebank?from=${encodeURIComponent(range!.from)}&to=${encodeURIComponent(range!.to)}`,
+  ),
+  enabled: range != null,
+  retry: retryUnlessClientError,
+});
+export const useRebankMove = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: Array<{ source: 'SOPAY' | 'SIPAY'; paymentId: string }>) => authedFetch<{ target: string; results: RebankOutcome[] }>(
+      `/accounting/receipts/rebank`, { method: 'POST', body: JSON.stringify({ items }) },
+    ),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['rebank-candidates'] }); },
+    onError: writeFailedAs('Receipts not moved'),
+  });
+};
+
 export type JournalEntry = {
   id: string;
   je_no: string;
