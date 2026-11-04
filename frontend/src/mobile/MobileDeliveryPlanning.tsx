@@ -33,6 +33,7 @@ import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
 import { useLocalities, postcodeIndex, postcodeLabel } from "../vendor/scm/lib/localities-queries";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
+import { isSetupDismantleJob } from "./setupDismantleJob";
 import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
 
 /* ------------------------------------------------------------------ *
@@ -1352,7 +1353,10 @@ function StopDetail({
   const referral = (order.so_ref && order.so_ref.trim()) || "";
   const disposal =
     (order.replacement_disposal && order.replacement_disposal.trim()) || "";
-  const isSetup = !!disposal; // v2 "job" isn't in the feed; treat disposal as the setup/dismantle signal.
+  // Booth setup/dismantle POD shows only for a real SETUP/DISMANTLE job (project
+  // window or manual DP order), read off the feed's dp_job_type — NOT off disposal.
+  // A customer delivery with "replace furniture" is still a delivery. See setupDismantleJob.ts.
+  const isSetup = isSetupDismantleJob(order);
 
   // Invalidate the board AND every sibling mobile query that renders the same
   // DO/SO state, so a convert / start / complete on this board doesn't leave the
