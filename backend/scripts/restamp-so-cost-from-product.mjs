@@ -18,8 +18,8 @@
    recomputed as the SUM of its line costs (the invariant already true for
    189/190 costed 2990 orders), so an order's existing correct lines are left as
    they are and only the newly-stamped cost is added. Per line the cost is:
-     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), or with
-            no height the one the SKU, model or all sofas sell at most -> base_price_sen
+     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), the nearest
+            the grid holds when it has no price there, or with no height the one the SKU, model or all sofas sell at most -> base_price_sen
             -> cost_price_sen. A set that matches its model's combo costs the combo,
             spread over its lines, as saving the order does.
      other  base_price_sen -> cost_price_sen

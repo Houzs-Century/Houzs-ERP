@@ -31,8 +31,13 @@ describe('unitCostSen', () => {
   test('with no sale anywhere it takes the first height the grid holds', () => {
     expect(costHeight(sofa('9058-1B(LHF)', grid(['24', 73000], ['28', 75000])), {}, none)).toBe('24');
   });
-  test('a height the grid lacks is not guessed at', () => {
-    expect(unitCostSen(sofa('9058-1B(LHF)', grid(['24', 73000])), { seatHeight: '30' }, none)).toBe(0);
+  test('a height the grid lacks takes the nearest it holds, the taller on a tie', () => {
+    expect(unitCostSen(sofa('8069-1B', grid(['28', 90000])), { seatHeight: '32' }, none)).toBe(90000);
+    expect(unitCostSen(sofa('5535-2A', grid(['24', 100000], ['28', 120000])), { seatHeight: '26' }, none)).toBe(120000);
+    expect(unitCostSen(sofa('9058-1B', grid(['24', 73000], ['28', 75000])), { seatHeight: '30' }, none)).toBe(75000);
+  });
+  test('a height that is not a number takes no cost from the grid', () => {
+    expect(unitCostSen(sofa('8069-1B', grid(['28', 90000])), { seatHeight: 'Default' }, none)).toBe(0);
   });
   test('a product with no cost anywhere stays 0, and others read the flat lane', () => {
     expect(unitCostSen(sofa('X', []), {}, none)).toBe(0);

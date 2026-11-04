@@ -30,16 +30,22 @@ export function usualHeights(rows) {
 const gridOf = (p) => (Array.isArray(p?.seat_height_prices) ? p.seat_height_prices : [])
   .filter((e) => (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0);
 
-/** The height a sofa line costs at: the one it names, else the one this SKU, then
- *  its model, then all sofas sell at most (owner 2026-11-04: with nothing chosen,
- *  cost it as the usual variant), else the first the grid holds. Null when the
- *  line names a height the grid lacks, or the grid is empty. */
+/** The height a sofa line costs at: the one it names, or the nearest the grid holds
+ *  when it has no price there, the taller on a tie (owner 2026-11-04: 8069 is priced
+ *  at 28" and sold at 30"). With none named, the one this SKU, then its model, then
+ *  all sofas sell at most, else the first the grid holds. Null on an empty grid. */
 export function costHeight(p, variants, usual) {
   const grid = gridOf(p);
   if (grid.length === 0) return null;
   const has = (h) => grid.some((e) => String(e.height) === h);
   const named = heightOf(variants);
-  if (named != null) return has(clean(named)) ? clean(named) : null;
+  if (named != null) {
+    const want = clean(named);
+    if (has(want)) return want;
+    const away = (e) => Math.abs(Number(e.height) - Number(want));
+    const near = grid.filter((e) => Number.isFinite(away(e))).sort((a, b) => away(a) - away(b) || Number(b.height) - Number(a.height))[0];
+    return near ? String(near.height) : null;
+  }
   const tried = [...(usual.get(`sku:${p.code}`) ?? []), ...(usual.get(`model:${modelOf(p.code)}`) ?? []), ...(usual.get('all') ?? [])];
   return tried.find(has) ?? String(grid[0].height);
 }
