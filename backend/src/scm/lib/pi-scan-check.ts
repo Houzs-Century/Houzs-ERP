@@ -136,10 +136,18 @@ export function cleanPiReview(input: unknown): PiReview | null {
 }
 
 /** What Create converts: rows tied to a GRN line with a quantity, one per line. */
-export function billPicks(review: PiReview): Array<{ grnItemId: string; qty: number }> {
-  const byLine = new Map<string, number>();
-  for (const l of review.lines) if (l.grnItemId && l.qty > 0) byLine.set(l.grnItemId, (byLine.get(l.grnItemId) ?? 0) + l.qty);
-  return [...byLine].map(([grnItemId, qty]) => ({ grnItemId, qty }));
+export function billPicks(review: PiReview): Array<{ grnItemId: string; qty: number; unitPriceSen: number | null }> {
+  const byLine = new Map<string, { qty: number; pricedQty: number; sen: number }>();
+  for (const l of review.lines) {
+    if (!l.grnItemId || l.qty <= 0) continue;
+    const seen = byLine.get(l.grnItemId) ?? { qty: 0, pricedQty: 0, sen: 0 };
+    seen.qty += l.qty;
+    const price = l.read?.unitPrice;
+    if (price != null) { seen.pricedQty += l.qty; seen.sen += Math.round(price * 100) * l.qty; }
+    byLine.set(l.grnItemId, seen);
+  }
+  /* Two printed rows on one receipt line can carry two prices: the line holds one, so their average by qty. */
+  return [...byLine].map(([grnItemId, s]) => ({ grnItemId, qty: s.qty, unitPriceSen: s.pricedQty > 0 ? Math.round(s.sen / s.pricedQty) : null }));
 }
 
 /** Why a document cannot be created yet, in plain words, or null when it can. */

@@ -162,7 +162,10 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       companyId: job.companyId,
       allowedCompanyIds: job.companyId != null ? [job.companyId] : null,
       companyCode: null,
-      picks: match.picks.map((p) => ({ grnItemId: p.grnItemId, qty: p.qty })),
+      picks: match.picks.map((p) => {
+        const printed = parsed.lines[p.invoiceLineIndex]?.unitPrice;
+        return { grnItemId: p.grnItemId, qty: p.qty, unitPriceSen: printed == null ? null : Math.round(printed * 100) };
+      }),
       supplierInvoiceNumber: parsed.invoiceNumber,
       invoiceDate: parsed.invoiceDate,
     });
