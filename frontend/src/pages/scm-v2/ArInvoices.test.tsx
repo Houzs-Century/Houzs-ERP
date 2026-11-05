@@ -185,6 +185,17 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     expect(screen.queryByText('HC-SI-2609-001', { selector: 'a' })).toBeNull();
   });
 
+  test('the party filter names a debtor with its account code, as it does a customer', () => {
+    /* A debtor with no bill on the list yet: only the registry names them. */
+    DEBTORS.data.debtors.push({ id: 'd4', name: 'FRESH DEBTOR', code: '305-F001', phone: null, notes: null, is_active: true, outstanding_sen: 0 } as never);
+    try {
+      draw('?debtor=d4');
+      expect((screen.getByRole('combobox', { name: 'Filter by customer or debtor' }) as HTMLInputElement).value).toBe('305-F001 · FRESH DEBTOR');
+    } finally {
+      DEBTORS.data.debtors.pop();
+    }
+  });
+
   test('?debtor= opens on that debtor alone', () => {
     draw('?debtor=d1');
     expect(screen.getByText('HC-ODB-2609-001', { selector: 'a' })).toBeTruthy();

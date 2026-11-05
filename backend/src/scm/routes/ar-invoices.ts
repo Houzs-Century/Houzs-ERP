@@ -33,7 +33,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-order-deposit';
-import { DEBTOR_PARTY_FIELDS } from './other-debtors';
+import { DEBTOR_PARTY_COLS } from './other-debtors';
 
 type Row = Record<string, any>;
 
@@ -48,7 +48,6 @@ export const SI_MIRROR_STATUSES = ['SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE'] 
 
 const SI_COLS = 'id, invoice_number, so_doc_no, debtor_code, debtor_name, invoice_date, due_date, currency, total_sen, local_total_sen, paid_sen, status, notes';
 const BILL_COLS = 'id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, created_at, doc_kind';
-const DEBTOR_PARTY_COLS = DEBTOR_PARTY_FIELDS.map(([, col]) => col).join(', ');
 
 /** One row of the list — a sales invoice (mirror) or a debtor bill; `kind` says which. */
 export type ArListRow = {
@@ -109,7 +108,7 @@ function shapeSi(r: Row): ArListRow {
   };
 }
 
-function shapeBill(r: Row, debtorName: string | null): ArListRow {
+function shapeBill(r: Row, debtorName: string | null, debtorCode: string | null): ArListRow {
   const total = Number(r.total_sen ?? 0);
   const received = Number(r.received_sen ?? 0);
   return {
@@ -119,7 +118,7 @@ function shapeBill(r: Row, debtorName: string | null): ArListRow {
     id: String(r.id),
     invoiceNumber: String(r.bill_number ?? ''),
     partyKey: `D:${String(r.debtor_id ?? '')}`,
-    partyCode: null,
+    partyCode: debtorCode,
     partyName: debtorName,
     debtorId: r.debtor_id ? String(r.debtor_id) : null,
     ref: null,
@@ -153,16 +152,20 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
     const { data, error } = await q.order('bill_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const bills = (data ?? []) as Row[];
-    /* The debtor's name off the registry — read whole, never assumed: a bill
-       whose debtor cannot be read prints "(debtor)", not the wrong name. */
-    const names = new Map<string, string>();
+    /* The debtor's name and account code off the registry — read whole, never
+       assumed: a bill whose debtor cannot be read prints "(debtor)", not the
+       wrong name. */
+    const who = new Map<string, { name: string; code: string | null }>();
     const ids = [...new Set(bills.map((b) => String(b.debtor_id ?? '')).filter(Boolean))];
     if (ids.length > 0) {
-      const { data: debtors, error: dErr } = await scopeToCompany(sb.from('acc_debtors').select('id, name').in('id', ids), c);
+      const { data: debtors, error: dErr } = await scopeToCompany(sb.from('acc_debtors').select('id, name, code').in('id', ids), c);
       if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
-      for (const d of (debtors ?? []) as Row[]) names.set(String(d.id), String(d.name ?? ''));
+      for (const d of (debtors ?? []) as Row[]) who.set(String(d.id), { name: String(d.name ?? ''), code: d.code ? String(d.code) : null });
     }
-    for (const b of bills) rows.push(shapeBill(b, names.get(String(b.debtor_id ?? '')) ?? null));
+    for (const b of bills) {
+      const d = who.get(String(b.debtor_id ?? ''));
+      rows.push(shapeBill(b, d?.name ?? null, d?.code ?? null));
+    }
   }
   if ((kind === 'ALL' || kind === 'SI') && docKind !== 'DN') {
     /* The operational invoices, read-only here: the Sales side raises and

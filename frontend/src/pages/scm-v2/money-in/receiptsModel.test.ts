@@ -90,5 +90,7 @@ describe('segments, chips and the URL', () => {
     expect(matchesReceipt(x, '1234.56')).toBe(true);
     expect(matchesReceipt(x, 'zzz')).toBe(false);
     expect(matchesReceipt(receiptItem(rr({ firstLine: 'Booth deposit back' }), bank), 'booth')).toBe(true);
+    expect(matchesReceipt(receiptItem(rr({ kind: 'DEBTOR', payerCode: '305-A001' }), bank), '305-a001')).toBe(true);
+    expect(matchesReceipt(receiptItem(rr({ kind: 'DEBTOR', payerCode: null }), bank), '305-a001')).toBe(false);
   });
 });

@@ -33,7 +33,7 @@ const RECEIPT = {
   lines: [{ id: 'gl1', line_no: 1, description: 'Deposit returned', credit_account_code: '700-0000', amount_sen: 88_800 }],
 };
 const DEBTOR = {
-  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: 'Rents the back lot', is_active: true, outstanding_sen: 0, address1: '12 Jalan Satu', city: 'Petaling Jaya', postcode: '46000', business_reg_no: '202001012345', email: 'ahmad@example.com' },
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', code: '305-A001', phone: '012-345', notes: 'Rents the back lot', is_active: true, outstanding_sen: 0, address1: '12 Jalan Satu', city: 'Petaling Jaya', postcode: '46000', business_reg_no: '202001012345', email: 'ahmad@example.com' },
   bills: [
     { id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50_000, received_sen: 50_000, status: 'PAID', notes: '转租九月', created_at: '2026-09-05T02:00:00Z', lines: [] },
     { id: 'b2', bill_number: 'HC-ODB-2609-002', bill_date: '2026-09-20', total_sen: 30_000, received_sen: 10_000, status: 'POSTED', notes: 'Booth rental', created_at: '2026-09-20T02:00:00Z', lines: [] },
@@ -174,7 +174,7 @@ describe('an other debtor, as a page', () => {
     expect(fact('Open bills').textContent).toBe('1');
     expect(fact('Received').textContent).toBe('RM 600.00');
     expect(screen.getByText('RM 200.00', { selector: 'div' })).toBeTruthy();
-    expect(screen.getByText(/Bills and receipts post to the 305-0000 Other Debtors control/)).toBeTruthy();
+    expect(screen.getByText(/Account code 305-A001 · bills and receipts post to the 305-0000 Other Debtors control/)).toBeTruthy();
     const bills = screen.getByRole('region', { name: 'Bills' });
     expect(within(bills).getByText('HC-ODB-2609-002').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/bills/b2');
     expect(within(bills).getByText('Open bills in Invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');

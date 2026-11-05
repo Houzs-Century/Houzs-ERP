@@ -105,7 +105,7 @@ export const DebtorBillDoc = () => {
   }, [accountsQ.data]);
   const billDebtor = q.data?.debtor?.id ?? null;
   const debtorOptions = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === billDebtor).map((x) => ({ id: x.id, name: x.name })),
+    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === billDebtor).map((x) => ({ id: x.id, name: x.name, code: x.code })),
     [debtorsQ.data, billDebtor],
   );
 
@@ -229,7 +229,7 @@ export const DebtorBillDoc = () => {
       ask={asking ? <AskBanner key={ask.title} ask={ask} busy={cancelBill.isPending} error={askError} onKeep={() => setAsking(false)} /> : null}
       party={{
         label: 'Bill to', name: debtor?.name ?? '—',
-        lines: [...(debtor ? partyAddressLines(debtor) : []), debtor ? [debtor.phone, debtor.email].filter(Boolean).join(' · ') : null],
+        lines: [...(debtor ? partyAddressLines(debtor) : []), debtor ? [debtor.phone, debtor.email].filter(Boolean).join(' · ') : null, debtor?.code ? `Account ${debtor.code}` : null],
       }}
       amount={{ label: 'Amount', value: fmtSen(bill.total_sen), sub: !cancelled && outstanding > 0 && received > 0 ? `${fmtSen(outstanding)} outstanding` : null }}
       facts={facts}

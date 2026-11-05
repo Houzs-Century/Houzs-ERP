@@ -126,7 +126,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
      debtor off the registry, so `?debtor=` always names one. */
   const partyOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const d of debtorsQ.data?.debtors ?? []) if (d.is_active) seen.set(`D:${d.id}`, d.name);
+    for (const d of debtorsQ.data?.debtors ?? []) if (d.is_active) seen.set(`D:${d.id}`, d.code ? `${d.code} · ${d.name}` : d.name);
     for (const x of items) if (x.partyKey && x.billTo !== '—') seen.set(x.partyKey, x.ar?.partyCode ? `${x.ar.partyCode} · ${x.billTo}` : x.billTo);
     return [{ value: '', label: 'All customers and debtors' }, ...[...seen].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))];
   }, [debtorsQ.data, items]);

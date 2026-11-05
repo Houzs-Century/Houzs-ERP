@@ -14,13 +14,16 @@ import { receipts } from '../src/scm/routes/receipts';
 type Row = Record<string, any>;
 const CO = 1;
 
+/* What the debtor receipts were read with: the fake does not walk an embed, so the column an embed names is checked here. */
+const debtorReceiptSelects: string[] = [];
+
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
   private op: 'select' | 'insert' | 'update' | 'delete' = 'select';
   private inserted: Row[] = [];
   private patch: Row = {};
   constructor(private rows: Row[], private table: string) {}
-  select() { return this; }
+  select(cols?: string) { if (cols && this.table === 'acc_debtor_receipts') debtorReceiptSelects.push(cols); return this; }
   order() { return this; }
   limit() { return this; }
   insert(p: Row | Row[]) { this.op = 'insert'; this.inserted = Array.isArray(p) ? p : [p]; return this; }
@@ -206,6 +209,15 @@ describe('the general receipt — record and post, one motion', () => {
       bills: [{ billId: 'b1', no: 'HC-ODB-2609-001', amountSen: 20000 }, { billId: 'b2', no: 'HC-ODB-2609-002', amountSen: 10000 }],
     });
     expect(body.receipts.find((r) => r.number === 'HC-ODR-2609-001')).toMatchObject({ bills: [] });
+  });
+
+  test("a debtor receipt carries its debtor's account code, for the search", async () => {
+    const tables = baseTables();
+    tables.acc_debtor_receipts[0].debtor = { name: 'AHMAD', code: '305-A001' };
+    debtorReceiptSelects.length = 0;
+    const body = await (await harness(tables).request(`/?month=${thisMonth}`)).json() as { receipts: Array<Row> };
+    expect(body.receipts.find((r) => r.number === 'HC-ODR-2609-001')).toMatchObject({ kind: 'DEBTOR', payer: 'AHMAD', payerCode: '305-A001' });
+    expect(debtorReceiptSelects.join(' ')).toContain('debtor:acc_debtors(name, code)');
   });
 
   /* Owner 2026-09-25: every search box finds a record by its SO's reference —

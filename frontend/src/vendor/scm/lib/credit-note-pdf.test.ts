@@ -57,6 +57,15 @@ async function render(over: Partial<CreditNotePdfHeader> = {}, lines: CreditNote
 }
 const has = (draws: TextDraw[], needle: string): boolean => draws.some((d) => d.text.includes(needle));
 
+describe("an other debtor's credit note", () => {
+  test("CUSTOMER carries the debtor's account code, read off the registry (party_code stays blank, owner 2026-11-03)", async () => {
+    const draws = await render({ kind: 'OCN', party_name: 'EASTERN DECORATOR', party_code: null, debtor_code: '305-E003' });
+    expect(has(draws, '305-E003')).toBe(true);
+    const bare = await render({ kind: 'OCN', party_name: 'EASTERN DECORATOR', party_code: null, debtor_code: null });
+    expect(bare.some((d) => d.text === 'Code')).toBe(false);
+  });
+});
+
 describe('the credit note sheet', () => {
   /* The design's A4 family (batch 5 step 10): CUSTOMER beside NOTE DETAILS, the
      lines without our accounts, TOTAL CREDIT, the words, Issued by. */

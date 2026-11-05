@@ -8,6 +8,8 @@
 
 /** The columns scm.acc_debtors gained (migration 20260921T1600), as the API returns them. */
 export type DebtorPartyColumns = {
+  /** The account code, AutoCount style: 305-A001 (migration 20261105T1900). Screens and prints only — never on a journal line. */
+  code: string | null;
   tin_number: string | null; business_reg_no: string | null; contact_person: string | null; attention: string | null;
   email: string | null; phone2: string | null; mobile: string | null; whatsapp_number: string | null; fax: string | null;
   address1: string | null; address2: string | null; address3: string | null; address4: string | null;
@@ -16,7 +18,7 @@ export type DebtorPartyColumns = {
 
 /** The form's boxes — every one a string; the same keys the registry routes take. */
 export type DebtorPartyValues = {
-  name: string; phone: string; notes: string;
+  name: string; code: string; phone: string; notes: string;
   tinNumber: string; businessRegNo: string; contactPerson: string; attention: string;
   email: string; phone2: string; mobile: string; whatsappNumber: string; fax: string;
   address1: string; address2: string; address3: string; address4: string;
@@ -59,7 +61,7 @@ const text = (v: string | null | undefined): string => (v ?? '').trim();
 
 /** A fresh form: every box blank, the country Malaysia. */
 export const emptyDebtorParty = (): DebtorPartyValues => ({
-  name: '', phone: '', notes: '',
+  name: '', code: '', phone: '', notes: '',
   tinNumber: '', businessRegNo: '', contactPerson: '', attention: '',
   email: '', phone2: '', mobile: '', whatsappNumber: '', fax: '',
   address1: '', address2: '', address3: '', address4: '',
@@ -68,7 +70,7 @@ export const emptyDebtorParty = (): DebtorPartyValues => ({
 
 /** The form's values from a stored debtor — the columns into the boxes. */
 export const debtorPartyFrom = (d: Partial<DebtorPartyColumns> & { name: string; phone: string | null; notes: string | null }): DebtorPartyValues => ({
-  name: text(d.name), phone: text(d.phone), notes: text(d.notes),
+  name: text(d.name), code: text(d.code), phone: text(d.phone), notes: text(d.notes),
   tinNumber: text(d.tin_number), businessRegNo: text(d.business_reg_no), contactPerson: text(d.contact_person), attention: text(d.attention),
   email: text(d.email), phone2: text(d.phone2), mobile: text(d.mobile), whatsappNumber: text(d.whatsapp_number), fax: text(d.fax),
   address1: text(d.address1), address2: text(d.address2), address3: text(d.address3), address4: text(d.address4),
@@ -78,6 +80,22 @@ export const debtorPartyFrom = (d: Partial<DebtorPartyColumns> & { name: string;
 /** What the registry routes are sent: every box, trimmed. A blank on Edit clears the field (the server stores NULL). */
 export const debtorPartyBody = (v: DebtorPartyValues): DebtorPartyValues =>
   Object.fromEntries(Object.entries(v).map(([k, s]) => [k, text(s)])) as DebtorPartyValues;
+
+/** The account code a new debtor is offered, by the rule the migration filled the
+ *  registry with: the control's number, the name's first letter or digit, the next
+ *  three-digit number after the highest taken with that letter. '' when the name
+ *  has no letter or digit: the form asks for a code instead. */
+export const suggestDebtorCode = (name: string, controlCode: string, taken: ReadonlyArray<string | null | undefined>): string => {
+  const letter = name.toUpperCase().match(/[A-Z0-9]/)?.[0];
+  if (!letter) return '';
+  const stem = `${controlCode.split('-')[0]}-${letter}`;
+  const top = taken.reduce<number>((high, code) => {
+    const c = text(code).toUpperCase();
+    const tail = c.startsWith(stem) ? c.slice(stem.length) : '';
+    return /^\d{3,}$/.test(tail) ? Math.max(high, Number(tail)) : high;
+  }, 0);
+  return `${stem}${String(top + 1).padStart(3, '0')}`;
+};
 
 /** The address as the paper prints it: the filled lines, then postcode and city, then state and country. */
 export const partyAddressLines = (d: Partial<DebtorPartyColumns>): string[] => {

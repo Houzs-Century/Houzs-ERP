@@ -40,7 +40,7 @@ const receiptRow = (over: Record<string, unknown>) => ({
 const DEBTOR_RECEIPT = { value: {} as Record<string, unknown> };
 const debtorReceipt = (over: Record<string, unknown>) => ({
   receipt: receiptRow(over),
-  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 20_000, address1: '12 Jalan Satu' },
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', code: '305-A001', phone: '012-345', notes: null, is_active: true, outstanding_sen: 20_000, address1: '12 Jalan Satu' },
   allocations: [
     { billId: 'b1', amountSen: 50_000, billNumber: '2990-ODB-2609-001', billDate: '2026-09-05', description: '转租九月', totalSen: 50_000, receivedSen: 0, status: 'POSTED', docKind: 'INV' },
     { billId: 'b2', amountSen: 10_000, billNumber: '2990-ODB-2609-002', billDate: '2026-09-20', description: 'Booth rental', totalSen: 30_000, receivedSen: 0, status: 'POSTED', docKind: 'INV' },
@@ -184,6 +184,7 @@ describe("an other debtor's receipt walks the four layers", () => {
   test('a draft: who paid, into which account, the bills it knocks off; Prepare', async () => {
     openDebtorReceipt({});
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '2990-ODR-2610-001' })).toBeTruthy());
+    expect(screen.getByText('Account 305-A001')).toBeTruthy();
     expect(fact('Received into').textContent).toBe('310-0001 Hong Leong Bank');
     expect(fact('Journal').textContent).toBe('Written at approval');
     const knocks = screen.getByRole('region', { name: 'Knocks off' });

@@ -90,7 +90,7 @@ const BILLS: Record<string, unknown> = {
   b1: {
     bill: { id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月', created_at: '2026-09-05T02:00:00Z',
       lines: [{ id: 'l1', line_no: 1, description: '转租', credit_account_code: '700-0000', amount_sen: 50000 }] },
-    debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000, address1: '12 Jalan Satu' },
+    debtor: { id: 'd1', name: 'AHMAD BIN ALI', code: '305-A001', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000, address1: '12 Jalan Satu' },
     /* What came in on it (read c8): a receipt, and an other debtor's credit note. */
     receipts: [{ id: 'r1', number: 'HC-ODR-2609-004', date: '2026-09-28', status: 'POSTED', submittedAt: '2026-09-28T01:00:00Z', checkedAt: '2026-09-28T02:00:00Z', approvedAt: '2026-09-28T03:00:00Z', amountSen: 20000 }],
     creditNotes: [{ id: 'n1', number: 'HC-OCN-2610-001', date: '2026-10-10', status: 'POSTED', reason: 'Rental discount', amountSen: 3000, appliedSen: 3000 }],
@@ -212,6 +212,13 @@ const setAmount = (scope: HTMLElement, label: string, rm: string) => {
   fireEvent.change(box, { target: { value: rm } });
   fireEvent.blur(box);
 };
+
+describe("a debtor bill's party", () => {
+  test("names the debtor's account code under the address", () => {
+    openBill('b1');
+    expect(screen.getByText('Account 305-A001')).toBeTruthy();
+  });
+});
 
 describe('a deposit invoice, as a page', () => {
   test('its customer, order, payment and journal; the Books line is the journal\'s own accounts; Print prints the sheet', async () => {

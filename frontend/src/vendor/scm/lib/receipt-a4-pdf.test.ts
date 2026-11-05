@@ -114,6 +114,14 @@ describe("an other debtor's receipt on paper", () => {
     expect(draws.some((d) => d.text === 'DRAFT')).toBe(true);
   });
 
+  test("RECEIVED FROM names the debtor's account code when it has one (owner 2026-11-03)", async () => {
+    const draws = await render(debtorReceiptPaper({ ...DEBTOR, debtor: { ...DEBTOR.debtor!, code: '305-A001' } }));
+    expect(draws.some((d) => d.text === 'Account')).toBe(true);
+    expect(has(draws, '305-A001')).toBe(true);
+    const bare = await render(debtorReceiptPaper(DEBTOR));
+    expect(bare.some((d) => d.text === 'Account')).toBe(false);
+  });
+
   test('approved: no watermark, its journal named; voided: VOID', async () => {
     const approved = await render(debtorReceiptPaper({ ...DEBTOR, receipt: { ...DEBTOR.receipt, status: 'POSTED', checked_at: 'x' }, journalNo: '2990-JE-2610-0101' }));
     expect(approved.some((d) => d.text === 'DRAFT')).toBe(false);

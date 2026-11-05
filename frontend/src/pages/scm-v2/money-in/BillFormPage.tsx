@@ -66,7 +66,7 @@ export function BillFormPage({ mode, id, debtorId, docKind, backLabel, titleExtr
   const paper = dn ? 'debit note' : 'debtor bill';
   const ownDebtor = d?.debtor?.id ?? null;
   const debtors = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === ownDebtor).map((x) => ({ id: x.id, name: x.name })),
+    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === ownDebtor).map((x) => ({ id: x.id, name: x.name, code: x.code })),
     [debtorsQ.data, ownDebtor],
   );
   const title = mode === 'edit' ? `Edit ${bill?.bill_number ?? ''}` : mode === 'copy' ? `New ${paper} · copy of ${bill?.bill_number ?? ''}` : `New ${paper}`;

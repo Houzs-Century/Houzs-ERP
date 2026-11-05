@@ -120,6 +120,14 @@ describe('AR Aging', () => {
     expect((b as unknown as { paidBeforeErp: Row }).paidBeforeErp).toEqual({ orders: 1, sen: 400 });
   });
 
+  test("an other debtor's row prints its account code; the row's key stays the debtor", async () => {
+    const t = AR();
+    t.acc_debtors![0].code = '305-L001';
+    const b = await (await app(t).request('/ar-aging?asOf=2026-09-30')).json() as Body;
+    expect(rowOf(b, 'LANDLORD CO')).toMatchObject({ key: 'DEBTOR:d-1', code: '305-L001', balanceSen: 2_000 });
+    expect(b.differenceSen).toBe(0);
+  });
+
   test('an other-debtor credit note comes off the bill it knocked off, by what it applied', async () => {
     const t = AR();
     t.v_gl_entries!.push(gl('305-0000', 'OCN', 'OCN-1', '2026-09-12', 0, 1_000, null, { party_type: 'ODEBTOR', party_name: 'LANDLORD CO' }));
