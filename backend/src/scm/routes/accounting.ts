@@ -993,7 +993,7 @@ export const glStreamHandler = async (c: any) => {
     if (accountCode) q = q.eq('account_code', accountCode);
     if (from)        q = q.gte('entry_date', from);
     if (to)          q = q.lte('entry_date', to);
-    return q.range(pFrom, pTo);
+    return q.order('line_id').range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = (data ?? []) as Array<{ reversed?: boolean | null; reversed_by_je?: string | null }>;
@@ -1020,6 +1020,7 @@ export const balancesHandler = async (c: Context<{ Bindings: Env; Variables: Var
   const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
     .from('v_account_balances')
     .select('*'), c) // multi-company: isolate balances to the active company (view exposes company_id, mig 0106)
+    .order('account_code')
     .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (asOf === '') return c.json({ balances: data ?? [] });
@@ -1029,6 +1030,7 @@ export const balancesHandler = async (c: Context<{ Bindings: Env; Variables: Var
     .from('v_gl_entries')
     .select('account_code, debit_sen, credit_sen, reversed, reversed_by_je'), c) // multi-company: the active company's lines only
     .gt('entry_date', asOf)
+    .order('line_id')
     .range(from, to));
   if (later.error) return c.json({ error: 'load_failed', reason: later.error.message }, 500);
   return c.json({ balances: balancesAsOf((data ?? []) as AccountBalanceRow[], (later.data ?? []) as LaterLine[]), asOf });

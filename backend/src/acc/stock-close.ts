@@ -112,6 +112,7 @@ async function ownedMovementsAsOf(sb: any, companyId: number, date: string): Pro
     .select(REPLAY_COLS)
     .eq('company_id', companyId)
     .lte('movement_date', date)
+    .order('id')
     .range(from, to));
   if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
   const { data: dateless, error: dlErr } = await sb
@@ -186,6 +187,7 @@ export async function loadOwnedMovementsUpTo(sb: Sb, companyId: number, date: st
     .select(cols)
     .eq('company_id', companyId)
     .lte('movement_date', date)
+    .order('id')
     .range(from, to));
   if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
   const { data: dateless, error: dlErr } = await sb
