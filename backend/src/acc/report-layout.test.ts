@@ -390,16 +390,16 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect(laid.outSen).toBe(48_700);
     expect(laid.inSen - laid.outSen).toBe(155_000 - 69_700);
     expect(flat(laid.nodes)).toEqual([
-      ['category', 'Source of funds', 'in', 89_000, 66.4, [
-        ['category', 'Deposit received', null, 89_000, 66.4, [
-          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 67.2],
-          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -0.7],
+      ['category', 'Source of funds', 'in', 89_000, 100, [
+        ['category', 'Deposit received', null, 89_000, 100, [
+          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 101.1],
+          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -1.1],
         ]],
       ]],
       ['category', 'Expenses', 'out', 45_000, 92.4, [['account', '900-A001 · ACCOUNTING FEE', 'out', 45_000, 92.4]]],
       ['subtotal', 'Net operation surplus / (deficit)', null, 44_000, null],
-      ['category', 'Loan From / (Repayment)', 'in', 40_000, 29.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 29.9]]],
-      ['unassigned', 'Unassigned receipts', 'in', 5_000, 3.7, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 3.7]]],
+      ['category', 'Loan From / (Repayment)', 'in', 40_000, 44.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 44.9]]],
+      ['unassigned', 'Unassigned receipts', 'in', 5_000, 5.6, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 5.6]]],
       ['unassigned', 'Unassigned payments', 'out', 3_700, 7.6, [
         ['account', '905-0000 · TRAVELLING', 'out', 700, 1.4],
         ['account', 'Supplier advances (预付)', 'out', 3_000, 6.2],

@@ -15,7 +15,11 @@
 //     601-0001 bedding…), the allocation split in the proportion of the PI's
 //     own debit lines (a single-group PI is simply that group);
 //   · an AP invoice → the bill's own lines' accounts, the same way;
-//   · money the voucher paid beyond what it settled → "Supplier advances".
+//   · money the voucher paid beyond what it settled, and a bill from before the
+//     books (an opening paper, its other side the opening clearing) → the
+//     creditor control itself (owner 2026-11-05);
+//   · paid out of a trade-finance account → its own line, TF-AP.
+// The opening journal is Balance b/f, never a receipt or a payment.
 // With `party=1` (AutoCount's "display trade debtor/creditor in details") the
 // control-account rows are named by the party instead and are not split.
 //
@@ -31,9 +35,11 @@
 // tree, every line with a direction, In/Out top categories with their own
 // subtotal names, running subtotals, the unassigned at the foot — each row
 // keeping its figure per money column, a category summing its rows per
-// column, % of the side's total on every line. A transfer prints where the
-// other money account sits on the tree; the supplier-advance row, which is
-// no account, prints under Unassigned payments. The flat rows stay as they
+// column, % of the side's total on every line. A transfer between two of the
+// report's own columns is off the tree (it stays in the rows and the
+// balances); one to an account left out prints where that account sits. TF-AP,
+// which is no account, prints where the layout places it, else under
+// Unassigned payments. The flat rows stay as they
 // were: the screen's drill-down and the tests read them.
 //
 // BUILDER (2026-09-21, the Dashboard): buildReceiptsPayments is the report
@@ -48,6 +54,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
+import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -94,6 +101,16 @@ export type RpCard = { takingsSen: number; transitSen: number; codes: string[] }
 export type RpQuery = { from: string; to: string; byParty: boolean; wanted: string[] };
 
 const ADVANCE_KEY = 'ADV';
+/* What a supplier is paid out of a trade-finance account (owner 2026-11-05: its own line
+   under Cost of funds, apart from Accounts payable). No chart account: the layout
+   places this code like any account, under Unassigned payments until it does. */
+export const TRADE_FINANCE_AP = 'TF-AP';
+const TRADE_FINANCE_AP_NAME = 'Trade finance - Accounts payable & creditors';
+/* A money account is a trade-finance one by its name (CASH AT BANK - MAYBANK (TRADE FINANCE)). */
+const isTradeFinanceAccount = (name: string | null | undefined): boolean => /TRADE\s*FINANCE/i.test(String(name ?? ''));
+/* The opening journal (acc/opening-balance) is the books' starting position, not a
+   receipt or a payment: its money legs are Balance b/f whatever their date. */
+const isOpeningJournal = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '') === OPENING_SOURCE;
 /* Neither side of a reversal pair is a receipt or a payment (docs/bugs/0923). */
 const live = (l: GlLine) => countsInTheBooks(l);
 const sen = (l: GlLine) => Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
@@ -315,7 +332,8 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
 
   const opening: Record<string, number> = {};
   for (const col of columns) opening[col.code] = 0;
-  for (const l of loaded.money) if (l.entry_date < from && colSet.has(l.account_code)) opening[l.account_code] = (opening[l.account_code] ?? 0) + sen(l);
+  for (const l of loaded.money) if ((l.entry_date < from || isOpeningJournal(l)) && colSet.has(l.account_code)) opening[l.account_code] = (opening[l.account_code] ?? 0) + sen(l);
+  const tradeFinance = new Set(allMoney.filter((a) => isTradeFinanceAccount(a.name)).map((a) => a.code));
 
   /* Group the period by journal; keep the ones with a selected money leg. */
   const byJe = new Map<string, GlLine[]>();
@@ -340,6 +358,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   for (const [jeNo, lines] of byJe) {
     const moneyLegs = lines.filter((l) => colSet.has(l.account_code));
     if (moneyLegs.length === 0) continue;
+    if (lines.some(isOpeningJournal)) continue; // counted in Balance b/f above
     const first = lines[0]!;
     const meta = { jeNo, entryDate: first.entry_date, sourceType: first.source_type, sourceDocNo: first.source_doc_no, narration: first.notes, party: null as string | null };
     const others = lines.filter((l) => !colSet.has(l.account_code));
@@ -375,13 +394,25 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         const settled = split.reduce((s, x) => s + x.sen, 0);
         const scale = controlAbs > 0 ? controlShare / controlAbs : 0;
         let placed = 0;
+        const control = counterparts.find((l) => apControls.has(l.account_code))!;
+        const supplierMeta = { ...meta, party: control.party_name ?? null };
+        /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line;
+           a bill from before the books (an opening paper, whose other side is the opening
+           clearing) and money paid ahead of a bill both read as the creditor control. */
+        const toControl = (amt: number) => add(side, control.account_code, control.account_code, String(control.account_name ?? control.account_code), leg.account_code, amt, supplierMeta);
+        const tf = tradeFinance.has(leg.account_code);
         for (const x of split) {
           const amt = Math.round(x.sen * scale);
           placed += amt;
-          add(side, x.code, x.code, x.name, leg.account_code, amt, { ...meta, party: counterparts.find((l) => apControls.has(l.account_code))?.party_name ?? null });
+          if (tf) add(side, TRADE_FINANCE_AP, TRADE_FINANCE_AP, TRADE_FINANCE_AP_NAME, leg.account_code, amt, supplierMeta);
+          else if (x.code === OPENING_CLEARING) toControl(amt);
+          else add(side, x.code, x.code, x.name, leg.account_code, amt, supplierMeta);
         }
         const advance = controlShare - placed;
-        if (advance !== 0 || settled === 0) add(side, ADVANCE_KEY, null, 'Supplier advances (预付)', leg.account_code, advance, { ...meta, party: counterparts.find((l) => apControls.has(l.account_code))?.party_name ?? null });
+        if (advance !== 0 || settled === 0) {
+          if (tf) add(side, TRADE_FINANCE_AP, TRADE_FINANCE_AP, TRADE_FINANCE_AP_NAME, leg.account_code, advance, supplierMeta);
+          else toControl(advance);
+        }
         for (const l of counterparts.filter((l) => !apControls.has(l.account_code))) {
           add(side, l.account_code, l.account_code, String(l.account_name ?? l.account_code), leg.account_code, shareOf(Math.abs(sen(l))), { ...meta, party: l.party_name ?? null });
         }
@@ -438,7 +469,11 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
   const tree = laid.layout.blocks.accounts ?? [];
-  const cf = layOutCashFlow(tree, cashFlowLines(receiptRows), cashFlowLines(paymentRows), companyId);
+  /* A transfer between two of the report's own columns is neither cash in nor out
+     (owner 2026-11-05: 完全不显示): off the tree, kept in the rows and the per-column
+     balances. A transfer to an account left out of the columns still shows. */
+  const ownTransfer = (r: RpRow) => r.key.startsWith('XFER:') && r.code !== null && colSet.has(r.code);
+  const cf = layOutCashFlow(tree, cashFlowLines(receiptRows.filter((r) => !ownTransfer(r))), cashFlowLines(paymentRows.filter((r) => !ownTransfer(r))), companyId);
   const layout = { stored: laid.stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen };
   return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries, card } };
 }
