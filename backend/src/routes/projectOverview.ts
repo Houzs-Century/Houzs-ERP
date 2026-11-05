@@ -27,6 +27,16 @@ import { todayMyt } from "../scm/lib/my-time";
 
 export const projectOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+/** The day the ERP's own orders became the record of a fair's sales (owner 2026-11-05:
+    8 月的要 … all up to August). Before it the orders were opened in AutoCount and only
+    one or two reached the ERP, so an event that ended before this day and has the team's
+    typed figures reads them (By Total Sales), not its few ERP orders (By Sales Orders). */
+export const ORDERS_RECORD_FROM = "2026-09-01";
+export const readsTypedFirst = (p: { start_date: string | null; end_date: string | null; income: unknown }): boolean => {
+  const end = String(p.end_date ?? p.start_date ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(end) && end < ORDERS_RECORD_FROM && Number(p.income) > 0;
+};
+
 projectOverview.use("*", async (c, next) => {
   if (financeHiddenForUser(c.get("user") as unknown as AuthUser)) {
     return c.json({ error: "You don't have permission to view financial information." }, 403);
@@ -214,15 +224,15 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
      no order keeps its own costs (rental, setup, books) at zero sales. Empty on a
      failed read: the page then falls back to the keyed lines below. */
   const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand, total_sales: p.total_sales })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
-  const compact = (id: number) => {
-    const e = pnls.get(id);
+  const compact = (p: { id: number; start_date: string | null; end_date: string | null; income: unknown }) => {
+    const e = pnls.get(p.id);
     if (!e) return null;
     /* An event with an order opened reads By Sales Orders; one with none (most
        events before August, whose orders were never linked to the fair) reads
        its books - By Total Sales - so the history is not blank (owner
        2026-10-20: "之前的数据全部都是空的吗？"). */
-    const col: PnlColumn = e.by_so ?? e.by_sales;
-    const fromOrders = !!e.by_so;
+    const col: PnlColumn = readsTypedFirst(p) ? e.by_sales : e.by_so ?? e.by_sales;
+    const fromOrders = col === e.by_so;
     return {
       fromOrders,
       sales: col.sales,
@@ -247,7 +257,7 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
       },
       salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
       chatReport: report.get(p.id) ?? null,
-      pnl: compact(p.id),
+      pnl: compact(p),
       collection: collection.get(p.id) ?? { totalSen: 0, paidSen: 0 },
     })),
   } };
