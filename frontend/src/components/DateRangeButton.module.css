@@ -20,7 +20,10 @@
 
 /* The popover: presets on the left, fields and calendar on the right. */
 .pop {
-  position: absolute; z-index: 50; top: calc(100% + 6px); right: 0; width: 560px; max-width: calc(100vw - 32px);
+  /* On <body>, at the spot lib/popoverPlacement measures (inline left/top). The
+     colour tokens live on .root, which a portal is not under, so they repeat here. */
+  --ink: #11140f; --text: #414539; --muted: #767b6e; --line: #d6d9d2; --petrol: #16695f; --brass: #a16a2e; --bad: #a83434;
+  position: fixed; z-index: 1000; width: 560px; max-width: calc(100vw - 16px); font-variant-numeric: tabular-nums;
   display: grid; grid-template-columns: 150px minmax(0, 1fr); overflow: hidden;
   border: 1px solid var(--line); border-radius: 12px; background: #ffffff;
   box-shadow: 0 1px 0 rgba(17, 24, 16, 0.06), 0 18px 40px -16px rgba(17, 24, 16, 0.35);

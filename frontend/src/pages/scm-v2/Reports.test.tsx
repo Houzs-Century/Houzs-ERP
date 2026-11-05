@@ -139,10 +139,13 @@ describe('the P&L', () => {
 
   test('the tree: a category with its subtotal and %, every row with its % of sales beside; L1 / L2 / All fold it', () => {
     at(OCT, <PnLTab />);
+    /* An open group prints its figures on its Total line below its rows, the title bare (owner 2026-11-05). */
     const op = screen.getByText('Operating Expense').closest('tr')!;
     expect(op.getAttribute('data-kind')).toBe('category');
-    expect(op.textContent).toContain('105.00');
-    expect(op.textContent).toContain('10.5%');
+    expect(op.textContent).not.toContain('105.00');
+    const opTotal = screen.getByText('Total Operating Expense').closest('tr')!;
+    expect(opTotal.textContent).toContain('105.00');
+    expect(opTotal.textContent).toContain('10.5%');
     expect(screen.getByText('ADVERT').closest('tr')!.textContent).toContain('12.0%');
     expect(screen.getByText('ADVERT - SHOWROOM').closest('tr')!.getAttribute('data-depth')).toBe('3');
     expect(screen.getByText('NET PROFIT').closest('tr')!.textContent).toContain('41.5%');
@@ -165,7 +168,7 @@ describe('the P&L', () => {
     fireEvent.click(screen.getByRole('button', { name: /^501-0000 · SALES · / }));
     expect(screen.getByRole('region', { name: 'Lines of 501-0000 SALES' })).toBeTruthy();
     expect(navigateSpy).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /^Operating Expense · / }));
+    fireEvent.click(screen.getByRole('button', { name: /^Total Operating Expense · / }));
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     const [href, opts] = navigateSpy.mock.calls[0]! as [string, { state: { back: { to: string; label: string } } }];
     expect(href).toBe('/scm/accounting?tab=gl&accounts=900-A001%2C900-A014&from=2026-10-01&to=2026-10-31&in=reports');

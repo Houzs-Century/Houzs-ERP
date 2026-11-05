@@ -31,6 +31,25 @@ export type SheetColumn = {
 export type SheetValue = number | string | null;
 export type SheetRow = { kind: SheetRowKind; depth: number; label: string; cells: SheetValue[] };
 export type SheetTable = { columns: SheetColumn[]; rows: SheetRow[] };
+
+/** The screen's totals-below rule on a file (owner 2026-11-05: Excel and PDF the same
+    way): a group below the top level whose rows follow it is open — its figures move to
+    a "Total <name>" row after them and its title prints bare; a folded group (no rows
+    after it) keeps its figures. */
+export function rowsWithTotalsBelow(rows: SheetRow[]): SheetRow[] {
+  const out: SheetRow[] = [];
+  const stack: SheetRow[] = [];
+  const close = (g: SheetRow) => out.push({ kind: 'total', depth: g.depth, label: `Total ${g.label}`, cells: g.cells });
+  rows.forEach((r, i) => {
+    while (stack.length > 0 && stack[stack.length - 1]!.depth >= r.depth) close(stack.pop()!);
+    const group = r.depth > 0 && (r.kind === 'category' || r.kind === 'unassigned') && (rows[i + 1]?.depth ?? -1) > r.depth;
+    if (group) { out.push({ ...r, cells: [] }); stack.push(r); } else out.push(r);
+  });
+  while (stack.length > 0) close(stack.pop()!);
+  return out;
+}
+export const sheetWithTotalsBelow = <S extends { tables: SheetTable[] }>(sheet: S): S =>
+  ({ ...sheet, tables: sheet.tables.map((t) => ({ ...t, rows: rowsWithTotalsBelow(t.rows) })) });
 export type ReportSheet = {
   title: string;
   subtitle: string;

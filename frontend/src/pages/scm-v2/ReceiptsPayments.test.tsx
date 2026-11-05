@@ -149,10 +149,13 @@ describe('the Cash Flow tab', () => {
     expect(screen.getAllByText('Bank').map((e) => e.closest('tr')?.textContent)).toEqual([expect.stringContaining('(120.00)'), expect.stringContaining('(200.00)')]);
     expect(screen.getAllByText('Card money not yet in the bank').flatMap((e) => (e.closest('tr') ? [e.closest('tr')!.textContent] : []))).toEqual([expect.stringContaining('20.00'), expect.stringContaining('40.00')]);
     /* The tree (docs/bugs/0912): the category with its per-column subtotal and its % of the side. */
+    /* Open, its figures sit on its Total line below its rows (owner 2026-11-05). */
     const purchases = screen.getByText('Purchases').closest('tr')!;
     expect(purchases.getAttribute('data-kind')).toBe('category');
-    expect(purchases.textContent).toContain('400.00');
-    expect(purchases.textContent).toContain('52.6%');
+    expect(purchases.textContent).not.toContain('400.00');
+    const purchasesTotal = screen.getByText('Total Purchases').closest('tr')!;
+    expect(purchasesTotal.textContent).toContain('400.00');
+    expect(purchasesTotal.textContent).toContain('52.6%');
     const sofa = screen.getByText('PURCHASE OF SOFA').closest('tr')!;
     expect(within(sofa).getByText('601-0003')).toBeTruthy();
     expect(sofa.getAttribute('data-depth')).toBe('2');
@@ -169,7 +172,7 @@ describe('the Cash Flow tab', () => {
     expect(within(sofa).getByText('FOSHAN CHAIRS')).toBeTruthy();
     expect(within(sofa).getByText(/Payment voucher PV-3/)).toBeTruthy();
     /* The category's total: the sofa row's entry, and it alone here. */
-    fireEvent.click(screen.getByRole('button', { name: /^Purchases · Total/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Total Purchases · Total/ }));
     expect(screen.getByRole('region', { name: 'Entries of Purchases' }).textContent).toContain('Total · 1 entry');
     fireEvent.click(within(screen.getByRole('group', { name: 'Show debtor and creditor names' })).getByRole('button', { name: 'By debtor / creditor' }));
     expect(lastRead.value.endsWith('|true')).toBe(true);
