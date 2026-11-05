@@ -239,15 +239,15 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
         }
         let catSide: Side | undefined;
         let totalLabel: string | undefined;
-        if (cashFlow) {
-          if (depth === 1) {
-            if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
-            catSide = o.flow as Side;
-          }
-          const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
-          if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
-          if (tl) totalLabel = tl;
+        if (cashFlow && depth === 1) {
+          if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
+          catSide = o.flow as Side;
         }
+        /* Any category, in any report and at any depth, may name its Total line (owner
+           2026-11-05: L5 with a subtotal under each); unnamed it prints "Total <name>". */
+        const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
+        if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
+        if (tl) totalLabel = tl;
         const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
         const cat: LayoutCategory = { kind: 'category', id, label, children };
@@ -378,6 +378,7 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, baseSen);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
@@ -527,6 +528,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, null);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
@@ -540,6 +542,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     const side = it.flow ?? 'in';
     if (it.hiddenFor?.includes(companyId)) continue;
     const kids = walk(it.children, side);
+    if (kids.length === 0) continue; // nothing in it this period (the hidden own-account transfers)
     const node = groupNode('category', it.id, it.label, kids, null);
     node.flow = side;
     node.totalLabel = it.totalLabel ?? `Total ${it.label}`;
@@ -560,7 +563,10 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   }
   const inSen = tops.filter((t) => t.side === 'in').reduce((s, t) => s + t.node.amountSen, 0);
   const outSen = tops.filter((t) => t.side === 'out').reduce((s, t) => s + t.node.amountSen, 0);
-  /* Second pass: % of the side's total, and the running subtotals. */
+  /* Second pass: the %, and the running subtotals. In: % of the first In category,
+     Total Cash In (owner 2026-11-05), so funding or other income never pushes a line
+     past 100%; Out: % of the out side's total. */
+  const inBase = tops.find((t) => t.side === 'in')?.node.amountSen || null;
   const withPct = (n: LaidNode, base: number | null): void => {
     n.pct = pctOf(n.amountSen, base);
     for (const k of n.children) withPct(k, base);
@@ -573,7 +579,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (runningCells) t.node.cells = { ...runningCells };
       continue;
     }
-    withPct(t.node, t.side === 'in' ? (inSen || null) : (outSen || null));
+    withPct(t.node, t.side === 'in' ? inBase : (outSen || null));
     const by: 1 | -1 = t.side === 'in' ? 1 : -1;
     running += by * t.node.amountSen;
     runningCells = addCells(runningCells, scaled(t.node.cells, by));

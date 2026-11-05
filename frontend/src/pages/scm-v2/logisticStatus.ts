@@ -50,3 +50,18 @@ export function messageStatusBreakdown(rows: PlanningOrder[]): StatusSlice[] {
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   return withPct(out, rows.length);
 }
+
+/** Keep the top `n` slices and fold the rest into one "Other (k)" row, so a long
+ *  tail of tiny statuses does not stretch the table. The share is recomputed
+ *  from the untruncated total. */
+export function topWithOther(slices: StatusSlice[], n: number): StatusSlice[] {
+  if (slices.length <= n) return slices;
+  const total = slices.reduce((a, s) => a + s.count, 0);
+  const tail = slices.slice(n);
+  const count = tail.reduce((a, s) => a + s.count, 0);
+  const sen = tail.reduce((a, s) => a + s.sen, 0);
+  return [
+    ...slices.slice(0, n),
+    { key: "__other__", label: `Other (${tail.length})`, count, sen, pct: total ? Math.round((count / total) * 1000) / 10 : 0 },
+  ];
+}

@@ -111,7 +111,7 @@ describe('the Performance P&L — Single', () => {
     expect(within(rent).getByText('500.00')).toBeTruthy();
     expect(within(rent).getByText('9.6%')).toBeTruthy();
     expect(rowOf(/^Total other income \(as booked\)/)).toBeTruthy();
-    const fixed = rowOf(/^Fixed costs/);
+    const fixed = rowOf(/^Total Fixed costs/);
     expect(within(fixed).getByText('45,800.00')).toBeTruthy();
     expect(within(fixed).getByText('875.7%')).toBeTruthy();
     const opex = rowOf(/Operating expense — 16\.00%/);

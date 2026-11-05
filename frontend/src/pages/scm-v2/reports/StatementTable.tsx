@@ -20,7 +20,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { fmtSenPlain } from '../../../vendor/shared/format';
-import { fmtPct, folderOpen, foldsChildren } from '../../../vendor/scm/lib/report-layout';
+import { fmtPct, folderOpen, foldsChildren, totalsBelow } from '../../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from '../AccountLinesRow';
 import { AccountCell } from '../JournalEntryCards';
 import type { Level, ReportTree } from '../ReportLayoutTree';
@@ -182,16 +182,19 @@ export function StatementTable({
             </tr>
           </thead>
           <tbody>
-            {shown.map((l) => {
-              const i = lines.indexOf(l);
-              const folder = (l.kind === 'category' || l.kind === 'unassigned') && foldsChildren(lines, i);
+            {totalsBelow(shown, lines, level, tree.open).map((l) => {
+              const i = l.totalOf || l.bare ? lines.findIndex((x) => x.id === (l.totalOf ?? l.id)) : lines.indexOf(l);
+              const sub = Boolean(l.totalOf);
+              /* A group's Total line opens what its figure covers, under itself, as the group would. */
+              const own = sub ? lines[i]! : l;
+              const folder = !sub && (l.kind === 'category' || l.kind === 'unassigned') && foldsChildren(lines, i);
               const open = folder && folderOpen(l, level, tree.open);
               /* An account row opens its lines by its name; in 'figures' mode any row
                  with figures opens what is behind a figure (a category's: every row under it). */
               const account = l.kind === 'row' && (drillRows === 'figures' || Boolean(l.code));
               const opensElsewhere = Boolean(onOpenRow) && account;
-              const drillable = !onOpenRow && (account || (drillRows === 'figures' && (l.kind === 'category' || l.kind === 'unassigned')));
-              const drilled = drillable ? drill[l.id] : undefined;
+              const drillable = !onOpenRow && !l.bare && (account || (drillRows === 'figures' && (sub || l.kind === 'category' || l.kind === 'unassigned')));
+              const drilled = drillable ? drill[own.id] : undefined;
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
               const name = nameOf(l);
@@ -224,11 +227,12 @@ export function StatementTable({
                     </th>
                     {columns.map((c, ci) => {
                       const cls = [s.cell, c.kind === 'total' ? s.colTotal : '', ci < lastPeriod ? s.colRule : ''].join(' ');
-                      if (l.kind === 'block') return <td key={c.key} className={cls} />;
+                      /* An open group's figures print on its Total line below (totalsBelow). */
+                      if (l.kind === 'block' || l.bare) return <td key={c.key} className={cls} />;
                       const cell = l.cells[c.key];
                       const text = cell ? fmt(cell.amountSen) : DASH;
                       const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : DASH) : null;
-                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || (folder && onCategoryFigure));
+                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || ((folder || sub) && onCategoryFigure));
                       return (
                         <td key={c.key} className={cls}>
                           <span className={s.cellInner}>
@@ -238,7 +242,7 @@ export function StatementTable({
                                 className={s.figure}
                                 aria-label={`${l.label} · ${c.label}`}
                                 aria-pressed={drillable ? drilled === c.key : undefined}
-                                onClick={() => (drillable ? toggleDrill(l.id, c.key) : onCategoryFigure?.(codesUnder(lines, i), c))}
+                                onClick={() => (drillable ? toggleDrill(own.id, c.key) : onCategoryFigure?.(codesUnder(lines, i), c))}
                               >
                                 {text}
                               </button>
@@ -249,7 +253,7 @@ export function StatementTable({
                       );
                     })}
                   </tr>
-                  {drilled && renderLines && renderLines(l, drillCol ?? null, () => toggleDrill(l.id, drilled), columns.length + 1)}
+                  {drilled && renderLines && renderLines(own, drillCol ?? null, () => toggleDrill(own.id, drilled), columns.length + 1)}
                   {drilled && !renderLines && l.code && (
                     <AccountLinesRow
                       code={l.code}
@@ -257,7 +261,7 @@ export function StatementTable({
                       from={drillCol ? drillCol.from : span.from}
                       to={drillCol ? drillCol.to : span.to}
                       colSpan={columns.length + 1}
-                      onClose={() => toggleDrill(l.id, drilled)}
+                      onClose={() => toggleDrill(own.id, drilled)}
                     />
                   )}
                   {noteAfter?.(l)}

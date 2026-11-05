@@ -22,8 +22,8 @@
 // asks before it drops unsaved changes.
 // ----------------------------------------------------------------------------
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Layers, PenLine, Plus, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Hand, Layers, PenLine, Plus, X } from 'lucide-react';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -37,6 +37,9 @@ import s from './ReportLayoutEditor.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const sideWord = (side: Side): string => (side === 'in' ? 'In' : 'Out');
+/* How close to the scroll area's top or bottom a drag starts it scrolling, and how far a step goes. */
+const EDGE_PX = 56;
+const STEP_PX = 18;
 
 type Drag = { block: string; item: LayoutItem; key: string };
 /** A rename in progress: the name, and the subtotal line's name where the category has one (Cash flow's sides). */
@@ -57,8 +60,37 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<Drag | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  /* Owner 2026-11-05: a long tree cannot be dragged past the screen. A row is picked
+     up (parked), the page scrolled freely, and the row put down with Place here. */
+  const [parked, setParked] = useState<Drag | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   /* Close with unsaved changes asks first (the design's banner under the head). */
   const [asking, setAsking] = useState(false);
+
+  useEffect(() => {
+    if (!parked) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setParked(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [parked]);
+
+  /* While a row is dragged, near the scroll area's top or bottom edge (or the window's)
+     the tree scrolls, so a drag reaches a row off the screen. */
+  useEffect(() => {
+    if (!drag) return;
+    const onOver = (e: DragEvent) => {
+      const el = scrollRef.current;
+      const r = el?.getBoundingClientRect();
+      if (el && r && el.scrollHeight > el.clientHeight) {
+        if (e.clientY < r.top + EDGE_PX) el.scrollTop -= STEP_PX;
+        else if (e.clientY > r.bottom - EDGE_PX) el.scrollTop += STEP_PX;
+      }
+      if (e.clientY < EDGE_PX) window.scrollBy(0, -STEP_PX);
+      else if (e.clientY > window.innerHeight - EDGE_PX) window.scrollBy(0, STEP_PX);
+    };
+    document.addEventListener('dragover', onOver);
+    return () => document.removeEventListener('dragover', onOver);
+  }, [drag]);
 
   const data = q.data;
   /* The server's tree is the draft until the first edit; after a save or a
@@ -116,7 +148,19 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     onDragEnd: () => { setDrag(null); setOver(null); },
   });
   const rowClass = (base: string, key: string): string =>
-    [base, drag?.key === key ? s.dragging : '', over === key && drag?.key !== key ? s.dropOn : ''].filter(Boolean).join(' ');
+    [base, drag?.key === key || parked?.key === key ? s.dragging : '', over === key && drag?.key !== key ? s.dropOn : ''].filter(Boolean).join(' ');
+  const pickUp = (block: string, item: LayoutItem, key: string, label: string) => (
+    <button type="button" className={s.iconBtn} aria-label={`Pick up ${label}`} title="Pick up: scroll to where it goes, then Place here"
+      aria-pressed={parked?.key === key} onClick={() => setParked(parked?.key === key ? null : { block, item, key })}><Hand {...ICON} /></button>
+  );
+  /* Where a parked row may go down: before this row, or inside this category. */
+  const placeHere = (block: string, target: DropTarget, key: string, label: string) =>
+    parked && parked.block === block && parked.key !== key && (
+      <button type="button" className={s.place} aria-label={`${target.kind === 'into' ? 'Place inside' : 'Place before'} ${label}`}
+        onClick={() => { if (draft) apply(placeItem(draft, block, parked.item, target)); setParked(null); }}>
+        {target.kind === 'into' ? 'Place inside' : 'Place here'}
+      </button>
+    );
 
   const onSave = async () => {
     if (!draft) return;
@@ -224,6 +268,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.code)}</td>
           <td className={`${s.shrink} ${s.right}`}>
             <span className={s.icons}>
+              {placeHere(block, { kind: 'before', key }, key, it.code)}
+              {pickUp(block, it, key, it.code)}
               <button type="button" className={s.iconBtn} aria-label={`Unplace ${it.code}`} title="Back to Unassigned"
                 onClick={() => draft && apply(unplaceAccount(draft, block, it.code, it.flow))}><X {...ICON} /></button>
             </span>
@@ -250,6 +296,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.label)}</td>
           <td className={`${s.shrink} ${s.right}`}>
             <span className={s.icons}>
+              {placeHere(block, { kind: 'before', key }, key, it.label)}
+              {pickUp(block, it, key, it.label)}
               {rename?.id !== it.id && (
                 <button type="button" className={s.iconBtn} aria-label={`Rename ${it.label}`} title="Rename" onClick={() => startRename(it.id, it.label, null)}><PenLine {...ICON} /></button>
               )}
@@ -279,7 +327,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             {rename?.id === it.id ? renameBox(it) : (
               <span className={s.name}>
                 <span>{it.label}</span>
-                {side && <span className={s.subText}>{`Subtotal line: ${it.totalLabel || `Total ${it.label}`}`}</span>}
+                {(side || it.totalLabel) && <span className={s.subText}>{`Subtotal line: ${it.totalLabel || `Total ${it.label}`}`}</span>}
               </span>
             )}
           </td>
@@ -309,9 +357,12 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.label)}</td>
           <td className={`${s.shrink} ${s.right}`}>
             <span className={s.icons}>
+              {placeHere(block, { kind: 'before', key }, `${key}:before`, it.label)}
+              {placeHere(block, { kind: 'into', categoryId: it.id }, key, it.label)}
+              {pickUp(block, it, key, it.label)}
               {rename?.id !== it.id && (
                 <button type="button" className={s.iconBtn} aria-label={`Rename ${it.label}`} title="Rename"
-                  onClick={() => startRename(it.id, it.label, side ? (it.totalLabel ?? '') : null)}><PenLine {...ICON} /></button>
+                  onClick={() => startRename(it.id, it.label, it.totalLabel ?? '')}><PenLine {...ICON} /></button>
               )}
               <button type="button" className={s.iconBtn} aria-label={`Add a category under ${it.label}`} title="Add a category under it"
                 onClick={() => draft && apply(addCategory(draft, block, it.id, 'New category', newCategoryId()))}><Plus {...ICON} /></button>
@@ -351,6 +402,10 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               <span className={s.blockTools}>
                 <button type="button" className={s.addLink} aria-label={`Add a category to ${block.title}`}
                   onClick={() => apply(addCategory(draft, block.key, null, 'New category', newCategoryId()))}>+ Add category</button>
+                {parked && parked.block === block.key && (
+                  <button type="button" className={s.place} aria-label={`Place at the end of ${block.title}`}
+                    onClick={() => { apply(placeItem(draft, block.key, parked.item, { kind: 'end' })); setParked(null); }}>Place at the end</button>
+                )}
                 {cashFlow && (
                   <button type="button" className={s.addLink} aria-label={`Add a subtotal to ${block.title}`} title="A running subtotal of everything above it, In less Out"
                     onClick={() => apply(addSubtotal(draft, block.key, 'New subtotal', newSubtotalId()))}>+ Subtotal</button>
@@ -459,7 +514,14 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                 </>
               )}
             </div>
-            <div className={s.scroll}>
+            {parked && (
+              <div className={s.parked} role="status">
+                <Hand {...ICON} aria-hidden />
+                <span className={s.askText}>{`Moving ${parked.item.kind === 'account' ? parked.item.code : parked.item.label}: scroll to where it goes and press Place here (Place inside for a category). Esc cancels.`}</span>
+                <button type="button" className={s.btn} onClick={() => setParked(null)}>Cancel</button>
+              </div>
+            )}
+            <div className={s.scroll} ref={scrollRef}>
               <table className={s.table}>
                 <thead>
                   <tr>

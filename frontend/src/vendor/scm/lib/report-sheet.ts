@@ -29,8 +29,27 @@ export type SheetColumn = {
 };
 /** sen for an amount column, one-decimal % for a pct column, a string for text; null prints a dash. */
 export type SheetValue = number | string | null;
-export type SheetRow = { kind: SheetRowKind; depth: number; label: string; cells: SheetValue[] };
+export type SheetRow = { kind: SheetRowKind; depth: number; label: string; cells: SheetValue[]; /** A group's own Total name (layout totalLabel). */ totalLabel?: string };
 export type SheetTable = { columns: SheetColumn[]; rows: SheetRow[] };
+
+/** The screen's totals-below rule on a file (owner 2026-11-05: Excel and PDF the same
+    way): a group below the top level whose rows follow it is open — its figures move to
+    a "Total <name>" row after them and its title prints bare; a folded group (no rows
+    after it) keeps its figures. */
+export function rowsWithTotalsBelow(rows: SheetRow[]): SheetRow[] {
+  const out: SheetRow[] = [];
+  const stack: SheetRow[] = [];
+  const close = (g: SheetRow) => out.push({ kind: 'total', depth: g.depth, label: g.totalLabel ?? `Total ${g.label}`, cells: g.cells });
+  rows.forEach((r, i) => {
+    while (stack.length > 0 && stack[stack.length - 1]!.depth >= r.depth) close(stack.pop()!);
+    const group = r.depth > 0 && (r.kind === 'category' || r.kind === 'unassigned') && (rows[i + 1]?.depth ?? -1) > r.depth;
+    if (group) { out.push({ ...r, cells: [] }); stack.push(r); } else out.push(r);
+  });
+  while (stack.length > 0) close(stack.pop()!);
+  return out;
+}
+export const sheetWithTotalsBelow = <S extends { tables: SheetTable[] }>(sheet: S): S =>
+  ({ ...sheet, tables: sheet.tables.map((t) => ({ ...t, rows: rowsWithTotalsBelow(t.rows) })) });
 export type ReportSheet = {
   title: string;
   subtitle: string;
@@ -54,7 +73,7 @@ export const PCT_COLUMN = (label: string): SheetColumn => ({ label, kind: 'pct' 
 /** A statement's lines — pnlLines / balanceSheetLines, already folded to what
     the screen shows — as rows of amount and %. A block title carries no figure. */
 export const statementRows = (lines: FlatLine[]): SheetRow[] =>
-  lines.map((l) => ({ kind: l.kind, depth: l.depth, label: l.label, cells: l.kind === 'block' ? [] : [l.amountSen, l.pct] }));
+  lines.map((l) => ({ kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}), cells: l.kind === 'block' ? [] : [l.amountSen, l.pct] }));
 
 export const statementTable = (lines: FlatLine[], pctTitle: string): SheetTable =>
   ({ columns: [AMOUNT_COLUMN(), PCT_COLUMN(pctTitle)], rows: statementRows(lines) });
@@ -94,7 +113,7 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
     rows.push({ kind: 'block', depth: 0, label: n.label, cells: [] });
     const lines = flattenLaid(n.children).map(({ node, depth }) => ({ id: node.id, depth, node }));
     for (const { node, depth } of linesVisible(lines, level, open)) {
-      rows.push({ kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category', depth, label: node.label, cells: cellsOf(node.cells, node.amountSen, node.pct) });
+      rows.push({ kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category', depth, label: node.label, ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}), cells: cellsOf(node.cells, node.amountSen, node.pct) });
     }
     rows.push({ kind: 'total', depth: 0, label: n.totalLabel ?? `Total ${n.label}`, cells: cellsOf(n.cells, n.amountSen, n.pct) });
   }
@@ -138,7 +157,7 @@ export function monthlyTable(columns: MonthColumn[], shown: MonthlyLine[], showP
     ? [{ label: c.label, kind: 'pct', edge: c.cumulative }]
     : [{ label: c.label, kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: c.cumulative }]));
   const rows = shown.map((l): SheetRow => ({
-    kind: l.kind, depth: l.depth, label: l.label,
+    kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}),
     cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
       const cell = l.cells[c.key];
       if (!cell) return showPct ? [null] : [null, null];
@@ -159,7 +178,7 @@ export function statementColumnsTable(
     ? [{ label: c.label, kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: c.edge }]
     : [{ label: c.label, kind: 'amount', edge: c.edge }]));
   const rows = shown.map((l): SheetRow => ({
-    kind: l.kind, depth: l.depth, label: l.label,
+    kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}),
     cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
       const cell = l.cells[c.key];
       if (!cell) return c.pct ? [null, null] : [null];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deliveryProgressBreakdown, messageStatusBreakdown, NO_MESSAGE_STATUS } from "./logisticStatus";
+import { deliveryProgressBreakdown, messageStatusBreakdown, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
 import type { PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 
 /** Only the three fields the breakdowns read; the rest is irrelevant here. */
@@ -44,5 +44,21 @@ describe("messageStatusBreakdown", () => {
     expect(r[0]).toMatchObject({ label: NO_MESSAGE_STATUS, count: 3, pct: 50 });
     expect(r[1]).toMatchObject({ label: "Done Scheduling", count: 2 });
     expect(r.find((s) => s.label === "Invalid Data")).toMatchObject({ count: 1 });
+  });
+});
+
+describe("topWithOther", () => {
+  const slice = (label: string, count: number, pct: number) => ({ key: label, label, count, sen: count * 10, pct });
+
+  it("returns the list unchanged when it already fits", () => {
+    const s = [slice("A", 5, 50), slice("B", 5, 50)];
+    expect(topWithOther(s, 7)).toBe(s);
+  });
+
+  it("folds the tail into one 'Other (k)' row with a recomputed share", () => {
+    const s = [slice("A", 50, 50), slice("B", 30, 30), slice("C", 12, 12), slice("D", 5, 5), slice("E", 3, 3)];
+    const r = topWithOther(s, 2);
+    expect(r).toHaveLength(3);
+    expect(r[2]).toMatchObject({ key: "__other__", label: "Other (3)", count: 20, sen: 200, pct: 20 });
   });
 });

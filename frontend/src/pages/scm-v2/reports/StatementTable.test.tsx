@@ -161,7 +161,8 @@ describe('the statement table', () => {
   test('a category folds by its chevron or its name; its figure hands its accounts to the General ledger', () => {
     const onCategoryFigure = vi.fn();
     render(<Table onCategoryFigure={onCategoryFigure} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Operating expense · Sep 2026' }));
+    /* Open, the group's figures sit on its Total line below (owner 2026-11-05). */
+    fireEvent.click(screen.getByRole('button', { name: 'Total Operating expense · Sep 2026' }));
     expect(onCategoryFigure).toHaveBeenCalledWith(['900-A001', '900-A014'], COLS[2]);
     fireEvent.click(screen.getByRole('button', { name: 'Collapse Operating expense' }));
     expect(screen.queryByText('ADVERT')).toBeNull();
