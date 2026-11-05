@@ -14,18 +14,22 @@
    are the stale rows the owner asked to clear.
 
    WHAT THIS DOES. Stamp closed_at on completed-but-unclosed cases in scope, so
-   they drop off the board. closed_at is set to the case's own newest leg date
-   (its last real activity), which is months old — so a now-closed case does
-   NOT reappear on the Delivered tab, because that tab keys on the leg date
-   being within 90 days, not on closed_at. Nothing else is touched: stage and
-   status already read completed/Closed; only the missing timestamp is filled.
+   they drop off the board. closed_at is dated by the case's own newest LEG date
+   (customer pickup / own-team inspection / delivery-back) when it has one; a
+   completed case with NO leg date — the wider non-board batch — is dated by
+   stage_changed_at (when it entered the 'completed' stage), falling back to
+   created_at. Every date used is months old, so a now-closed case does NOT
+   reappear on the Delivered tab (that tab keys on the leg date being within 90
+   days, not on closed_at). Nothing else is touched: stage and status already
+   read completed/Closed; only the missing timestamp is filled.
 
    SCOPE (env SCOPE). 'board' (default) = only cases carrying a board-driving
-   date (customer_pickup_at OR do_date OR an own-team inspection visit) = the 15
-   on the board today, and exactly what the owner approved. 'all' = every
-   completed-but-unclosed case in the company (the wider migration-era batch).
-   Always scoped to COMPANY (env COMPANY, default 1): company_id is the only
-   write boundary under the service role (companyScope.ts).
+   date (customer_pickup_at OR do_date OR an own-team inspection visit) — the 15
+   that showed on the board, cleared 2026-11-05. 'all' = every completed-but-
+   unclosed case in the company (the wider ~160 non-board batch, dated by
+   stage_changed_at / created_at). Always scoped to COMPANY (env COMPANY,
+   default 1): company_id is the only write boundary under the service role
+   (companyScope.ts).
 
    MODE=plan (default) lists every target and writes nothing. MODE=apply needs
    CONFIRM="CLOSE COMPLETED ASSR", writes one row at a time behind the same
@@ -70,12 +74,18 @@ const targetWhere = () =>
   `stage = 'completed' AND closed_at IS NULL AND archived_at IS NULL
      AND company_id = ${CO}${SCOPE === 'board' ? ` AND ${BOARD_DATE}` : ''}`;
 
-/* The newest leg date on a case, as a bare YYYY-MM-DD, or NULL if somehow none.
-   Lexicographic GREATEST over the text date columns works because they are ISO
-   strings; own-team inspection only, to match the board. */
+/* The newest LEG date on a case (own-team inspection only, to match the board),
+   as a bare YYYY-MM-DD, or NULL when the case drove no fleet trip. Lexicographic
+   GREATEST over the text date columns works because they are ISO strings. */
 const LEG_DATE_SQL =
   `NULLIF(GREATEST(COALESCE(customer_pickup_at, ''), COALESCE(do_date, ''),
                    COALESCE(CASE WHEN inspection_by = 'own' THEN inspection_visit_at END, '')), '')`;
+/* The date to stamp as closed_at: the leg date when there is one, else when the
+   case entered the 'completed' stage (stage_changed_at), else created_at. A
+   board case always has a leg date; the non-board batch is dated by the stage
+   change. NULL only if a case somehow has no date at all (then it is skipped). */
+const CLOSE_DATE_SQL =
+  `COALESCE(${LEG_DATE_SQL}, NULLIF(TRIM(stage_changed_at), ''), NULLIF(TRIM(created_at), ''))`;
 
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} scope=${SCOPE}`);
@@ -83,6 +93,7 @@ async function main() {
   const rows = await sql.unsafe(
     `SELECT id, assr_no, company_id, status, stage,
             ${LEG_DATE_SQL} AS leg_date,
+            ${CLOSE_DATE_SQL} AS close_date,
             customer_pickup_at, do_date, inspection_visit_at, inspection_by
        FROM assr_cases
       WHERE ${targetWhere()}
@@ -90,8 +101,9 @@ async function main() {
 
   note(`\n=== TARGET: completed Service Cases never stamped closed_at (company ${CO}, scope ${SCOPE}) ===`);
   for (const r of rows) {
-    const closedAt = `${String(r.leg_date).slice(0, 10)}T00:00:00.000Z`;
-    note(`  ${r.assr_no}  id=${r.id}  leg=${r.leg_date ?? '(none)'}  ->  closed_at=${r.leg_date ? closedAt : '(SKIP: no leg date)'}`);
+    const closedAt = r.close_date ? `${String(r.close_date).slice(0, 10)}T00:00:00.000Z` : null;
+    const src = r.leg_date ? 'leg' : 'stage_changed_at/created_at';
+    note(`  ${r.assr_no}  id=${r.id}  ->  closed_at=${closedAt ?? '(SKIP: no date)'}${closedAt ? ` [${src}]` : ''}`);
   }
   note(`  target rows: ${rows.length}`);
 
@@ -112,8 +124,8 @@ async function main() {
   note(`\n=== CLOSING ${rows.length} CASE(S) ===`);
   let wrote = 0;
   for (const r of rows) {
-    if (!r.leg_date) { note(`  SKIP ${r.assr_no} id=${r.id} — no leg date to date the close by`); continue; }
-    const closedAt = `${String(r.leg_date).slice(0, 10)}T00:00:00.000Z`;
+    if (!r.close_date) { note(`  SKIP ${r.assr_no} id=${r.id} — no date to stamp the close by`); continue; }
+    const closedAt = `${String(r.close_date).slice(0, 10)}T00:00:00.000Z`;
     const back = await sql`UPDATE assr_cases
          SET closed_at = ${closedAt}
        WHERE id = ${r.id} AND stage = 'completed' AND closed_at IS NULL
