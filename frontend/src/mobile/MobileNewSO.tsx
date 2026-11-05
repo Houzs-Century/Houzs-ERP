@@ -3240,7 +3240,7 @@ function LineCard({
               </div>
             )}
             <div style={{ display: "flex", gap: 9 }}>
-              <SpecSel label="Seat height" required invalid={showErrors && missing.has("seatHeight")}
+              <SpecSel label="Seat Size" required invalid={showErrors && missing.has("seatHeight")}
                 value={String(v.seatHeight ?? "")} opts={sofaSeatOpts} onChange={(x) => setVar({ seatHeight: x })} />
               {/* Owner 2026-07-13 — sofa Leg Height carries a standing "Default"
                   option and auto-seeds, so it is not a required-empty field. */}
