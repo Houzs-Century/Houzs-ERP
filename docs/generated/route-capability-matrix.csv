@@ -765,6 +765,7 @@ PUT,/api/scm/ap-invoices/plans,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + 
 POST,/api/scm/ap-invoices/print-bundle,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
 GET,/api/scm/ar-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-invoices.ts
 GET,/api/scm/ar-invoices/bills/:billId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-invoices.ts
+GET,/api/scm/ar-invoices/sales/:siId/credit-notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-invoices.ts
 GET,/api/scm/ar/reconciliation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.outstanding"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-reconciliation.ts
 GET,/api/scm/autocount-outbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 POST,/api/scm/autocount-outbox/:id/requeue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts

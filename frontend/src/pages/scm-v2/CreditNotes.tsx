@@ -437,7 +437,6 @@ export function NoteActions({ doc, onEdit }: { doc: NoteDoc; onEdit: (n: CreditN
       <Button variant="ghost" size="sm" onClick={() => void doc.printOne()} disabled={busy || doc.printing}>{doc.printing ? 'Preparing…' : 'Print'}</Button>
       {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, doc.lines, doc.allocations)} disabled={busy}>Edit</Button>}
       {n.status === 'DRAFT' && <Button size="sm" onClick={() => doc.post.mutate(n.id)} disabled={busy}>{doc.post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-      {doc.knockOff && <Button variant="ghost" size="sm" onClick={doc.knockOff} disabled={busy}>Knock off</Button>}
       {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
       {n.status !== 'CANCELLED' && !n.opening && (
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doc.cancelNote()}>

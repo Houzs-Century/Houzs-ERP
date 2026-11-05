@@ -4,7 +4,7 @@
 // c6 / f2). The reads credit-note-allocations.ts hands a customer note to.
 //
 // It posts nothing and settles nothing into the invoice. An allocation row
-// names the invoice (sales_invoice_id, migration 20261103T2100), applied_sen
+// names the invoice (sales_invoice_id, migration 20261105T2000), applied_sen
 // what it took, and the invoice's outstanding — its total, less its receipts,
 // its order's deposit and the credit notes knocked off it — is read through
 // scm/lib/si-credit-notes.ts and si-order-deposit.ts wherever it is shown.

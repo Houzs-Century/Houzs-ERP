@@ -1,4 +1,4 @@
--- 20261103T2100_acc_credit_note_sales_invoice_target.sql
+-- 20261105T2000_acc_credit_note_sales_invoice_target.sql
 -- A customer's credit note knocks off the customer's SALES INVOICES (owner
 -- 2026-11-03: 「要」, his design "like AutoCount"; batch 5 spec c6 / f2). Until
 -- now an application named a purchase invoice, an AP invoice or an other

@@ -6,7 +6,7 @@
 // The knock-off posts nothing: the note's own journal already credits the
 // customer (Dr its lines / Cr 300-0000 Trade Debtors). It is a row of
 // scm.acc_credit_note_allocations naming the invoice (sales_invoice_id,
-// migration 20261103T2100), applied_sen what it took. It is kept APART from
+// migration 20261105T2000), applied_sen what it took. It is kept APART from
 // the invoice's paid_sen on purpose: paid_sen feeds the overpayment rule
 // (customer-credits.ts reconcileSiOverpay — money above the total becomes
 // customer credit), so a credit written there would turn a later full payment

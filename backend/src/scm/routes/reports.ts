@@ -44,6 +44,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mytDateOf, rangeBoundsMy } from '../lib/my-time';
 import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-list-stamps';
+import { creditNotesOf } from '../lib/si-credit-notes';
 import { stampSoRefs } from '../lib/so-ref-lookup';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
@@ -546,8 +547,10 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
      orders dozens of times — then subtracted from `balance_sen` below. Same
      function the invoice list uses, so the report and the screen cannot drift.
      A failed stamp leaves the slice at 0 and the balance UN-adjusted, which is
-     the only direction a report of what is owed may be wrong in. */
+     the only direction a report of what is owed may be wrong in. The credit
+     notes knocked off the invoice (si-credit-notes.ts) come off the same way. */
   const depositByInvoice = new Map<string, number>();
+  const creditByInvoice = new Map<string, number>();
   {
     const stubs: Array<Record<string, unknown>> = [];
     const seen = new Set<string>();
@@ -560,7 +563,10 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       stubs.push({ id, so_doc_no: (h.so_doc_no as string | null) ?? null });
     }
     await stampOrderDeposit(sb, stubs, activeCompanyId(c) ?? null);
-    for (const st of stubs) depositByInvoice.set(String(st.id), Number(st.so_deposit_applied_sen ?? 0));
+    for (const st of stubs) {
+      depositByInvoice.set(String(st.id), Number(st.so_deposit_applied_sen ?? 0));
+      creditByInvoice.set(String(st.id), creditNotesOf(st));
+    }
   }
 
   const rows = ((data ?? []) as unknown as AnyRow[])
@@ -589,7 +595,9 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       flat.header_tax_sen      = headerTax;
       const headerDeposit = depositByInvoice.get(String(headerObj.id ?? '')) ?? 0;
       flat.so_deposit_applied_sen = headerDeposit;
-      flat.balance_sen = Math.max(headerTotal - headerPaid - headerDeposit, 0);
+      const headerCredit = creditByInvoice.get(String(headerObj.id ?? '')) ?? 0;
+      flat.credit_notes_sen = headerCredit;
+      flat.balance_sen = Math.max(headerTotal - headerPaid - headerDeposit - headerCredit, 0);
       return flat;
     })
     .filter((r) => {

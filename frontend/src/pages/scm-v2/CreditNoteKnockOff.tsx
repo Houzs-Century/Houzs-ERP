@@ -24,6 +24,7 @@ import {
   type CreditAllocation, type CreditNote, type CreditNoteDetail, type KnockOffRow, type KnockOffTarget,
 } from '../../vendor/scm/lib/credit-note-queries';
 import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { DataTable, type Column } from '../../components/DataTable';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { moneyInDocHref } from './money-in/moneyInDocs';
 
@@ -277,6 +278,22 @@ export function CustomerKnockOffSection({ note, allocations, depositLine, onKnoc
   const empty = cancelled ? 'Cancelled · nothing is knocked off.'
     : !posted ? 'No knock-off set. Edit the draft to knock it off against an invoice.'
       : `Not knocked off yet · ${fmtSen(left)} sits as credit on ${note.party_name ?? 'the customer'}.`;
+  const columns: Column<CreditAllocation>[] = [
+    {
+      key: 'invoice_no', label: 'Invoice', getValue: (a) => a.number ?? '',
+      render: (a) => <FinanceDocLink to={moneyInDocHref('salesInvoice', a.docId)}>{a.number ?? 'Invoice'}</FinanceDocLink>,
+    },
+    { key: 'date', label: 'Date', getValue: (a) => a.docDate ?? '', render: (a) => fmtDateOrDash(a.docDate ?? null), exportFormat: 'date' },
+    {
+      key: 'invoice_total', label: 'Invoice total', align: 'right', getValue: (a) => a.docTotalSen ?? 0,
+      render: (a) => (a.docTotalSen == null ? '—' : fmtSen(a.docTotalSen)), exportValue: (a) => (a.docTotalSen ?? 0) / 100, exportFormat: 'money',
+    },
+    {
+      key: 'knocked_off', label: posted ? 'Knocked off' : 'To knock off', align: 'right', getValue: takenOf,
+      render: (a) => fmtSen(takenOf(a)), exportValue: (a) => takenOf(a) / 100, exportFormat: 'money',
+      total: (rows) => fmtSen(rows.reduce((s, a) => s + takenOf(a), 0)),
+    },
+  ];
   return (
     <section aria-label="Knocks off" style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -289,22 +306,7 @@ export function CustomerKnockOffSection({ note, allocations, depositLine, onKnoc
       </div>
       {depositLine ? <div style={soft}>{depositLine}</div>
         : takes.length === 0 || cancelled ? <div style={soft}>{empty}</div>
-          : (
-            <table aria-label="Invoices it knocks off" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>Invoice</th><th style={th}>Date</th><th style={{ ...th, textAlign: 'right' }}>Invoice total</th><th style={{ ...th, textAlign: 'right' }}>{posted ? 'Knocked off' : 'To knock off'}</th></tr></thead>
-              <tbody>
-                {takes.map((a) => (
-                  <tr key={a.id}>
-                    <td style={td}><FinanceDocLink to={moneyInDocHref('salesInvoice', a.docId)}>{a.number ?? 'Invoice'}</FinanceDocLink></td>
-                    <td style={{ ...td, color: 'var(--fg-muted)' }}>{fmtDateOrDash(a.docDate ?? null)}</td>
-                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{a.docTotalSen == null ? '—' : fmtSen(a.docTotalSen)}</td>
-                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtSen(takenOf(a))}</td>
-                  </tr>
-                ))}
-                <tr><td colSpan={3} style={{ ...td, fontWeight: 600 }}>Total</td><td style={{ ...td, textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmtSen(taken)}</td></tr>
-              </tbody>
-            </table>
-          )}
+          : <DataTable<CreditAllocation> tableId="mi-note-knock-off" embedded columns={columns} rows={takes} getRowKey={(a) => a.id} />}
     </section>
   );
 }

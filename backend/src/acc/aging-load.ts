@@ -84,7 +84,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
     byValues(sb, companyId, 'sales_invoice_payments', 'id, sales_invoice_id', 'id', docsOf('SIPAY')),
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'invoice_number', docsOf('SI')),
     byValues(sb, companyId, 'acc_deposit_invoices', 'di_number, so_doc_no', 'di_number', docsOf('DI')),
-    byValues(sb, companyId, 'acc_credit_notes', 'note_number, kind, so_doc_no, sales_invoice_id', 'note_number', docsOf('CN', 'DN')),
+    byValues(sb, companyId, 'acc_credit_notes', 'id, note_number, kind, so_doc_no, sales_invoice_id', 'note_number', docsOf('CN', 'DN')),
     byValues(sb, companyId, 'payment_vouchers', 'pv_number, refund_source_type, refund_source_doc_no', 'pv_number', docsOf('PV')),
     byValues(sb, companyId, 'acc_debtor_bills', 'id, bill_number, debtor_id', 'bill_number', docsOf('ODB')),
     byValues(sb, companyId, 'acc_debtor_receipts', 'id, receipt_number, debtor_id', 'receipt_number', docsOf('ODR')),
@@ -104,13 +104,16 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
      that the SI lines did not bring. */
   const siById = new Map<string, Row>(sisByNo.rows.map((s) => [String(s.id), s]));
   const siByNo = new Map<string, Row>(sisByNo.rows.map((s) => [String(s.invoice_number), s]));
+  /* The invoices in the books at the date — the only ones a knock-off can come off here. */
+  const siInBooks = new Map<string, Row>(siById);
   const wantIds = uniq([...siPays.rows.map((p) => p.sales_invoice_id), ...notes.rows.map((n) => n.sales_invoice_id)]).filter((id) => !siById.has(id));
   const wantNos = uniq(pvs.rows.filter((v) => v.refund_source_type === 'SI').map((v) => v.refund_source_doc_no)).filter((n) => !siByNo.has(n));
   const [moreById, moreByNo, allocs, noteAllocs] = await Promise.all([
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'id', wantIds),
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'invoice_number', wantNos),
     byValues(sb, companyId, 'acc_debtor_receipt_allocations', 'id, receipt_id, bill_id, amount_sen', 'receipt_id', uniq(receipts.rows.map((r) => String(r.id)))),
-    byValues(sb, companyId, 'acc_credit_note_allocations', 'id, note_id, debtor_bill_id, applied_sen', 'note_id', uniq(debtorNotes.rows.map((n) => String(n.id)))),
+    byValues(sb, companyId, 'acc_credit_note_allocations', 'id, note_id, debtor_bill_id, sales_invoice_id, applied_sen', 'note_id',
+      uniq([...debtorNotes.rows, ...notes.rows.filter((n) => n.kind === 'CN')].map((n) => String(n.id)))),
   ]);
   if (!moreById.ok) return moreById;
   if (!moreByNo.ok) return moreByNo;
@@ -216,6 +219,21 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
         if (n?.so_doc_no) at = orderGroup(String(n.so_doc_no), l);
         else if (si) at = invoiceGroup(si, l);
         base.kind = l.source_type === 'CN' ? 'Credit note' : 'Debit note';
+        /* A customer's credit note comes off the sales invoices it knocked off, by
+           what each knock-off took (owner 2026-11-03), as an other debtor's does.
+           The rest stays where it was, and so does a share on an invoice not in
+           the books at the date. */
+        const taken = l.source_type === 'CN' && n
+          ? (noteAllocs.rows as Row[]).filter((a) => String(a.note_id) === String(n.id) && siInBooks.has(String(a.sales_invoice_id)))
+          : [];
+        if (taken.length > 0) {
+          const home = at ?? { group: own, party: lineParty(l) };
+          const where = new Map(taken.map((a) => [String(a.sales_invoice_id), invoiceGroup(siInBooks.get(String(a.sales_invoice_id))!, l)]));
+          const partyOf = new Map([...where.values()].map((g) => [g.group, g.party]));
+          const parts = taken.map((a) => ({ group: where.get(String(a.sales_invoice_id))!.group, amountSen: Number(a.applied_sen ?? 0), date: l.entry_date }));
+          entries.push(...splitLine({ ...base, ...home }, parts).map((e) => (e.group === home.group ? e : { ...e, party: partyOf.get(e.group) ?? e.party })));
+          return;
+        }
         break;
       }
       case 'PV': {

@@ -128,6 +128,31 @@ describe('AR Aging', () => {
     expect(b.differenceSen).toBe(0);
   });
 
+  test("a customer's credit note comes off the invoice it knocked off, by what it applied; the rest stays 未冲", async () => {
+    const t = AR();
+    /* RM 500 to ALI with no order, RM 300 of it knocked off SI-A1, which owed 400. */
+    t.v_gl_entries!.push(gl('300-0000', 'CN', 'CN-A9', '2026-09-12', 0, 500, 'C-1'));
+    t.acc_credit_notes!.push({ id: 'n-a9', company_id: CO, note_number: 'CN-A9', kind: 'CN', so_doc_no: null, sales_invoice_id: null });
+    t.acc_credit_note_allocations = [{ id: 'na-9', company_id: CO, note_id: 'n-a9', sales_invoice_id: 'si-a1', debtor_bill_id: null, applied_sen: 300 }];
+    const b = await (await app(t).request('/ar-aging?asOf=2026-09-30')).json() as Body;
+    expect((rowOf(b, 'ALI').items as Row[]).map((i) => [i.docNo, i.openSen])).toEqual([['SI-A1', 100]]);
+    expect(rowOf(b, 'ALI')).toMatchObject({ key: 'C-1', balanceSen: -1_300, unappliedSen: -1_400, cells: [0, 100, 0, 0, 0] });
+    expect((rowOf(b, 'ALI').unapplied as Row[]).find((u) => u.docNo === 'CN-A9')).toMatchObject({ kind: 'Credit note', amountSen: -200 });
+    expect(b.differenceSen).toBe(0);
+  });
+
+  test('a knock-off on an invoice not yet in the books at the date stays 未冲 until it is', async () => {
+    const t = AR();
+    t.v_gl_entries!.push(gl('300-0000', 'CN', 'CN-A9', '2026-09-12', 0, 500, 'C-1'));
+    t.acc_credit_notes!.push({ id: 'n-a9', company_id: CO, note_number: 'CN-A9', kind: 'CN', so_doc_no: null, sales_invoice_id: null });
+    t.sales_invoices!.push({ id: 'si-f', company_id: CO, invoice_number: 'SI-F', so_doc_no: 'SO-A', due_date: null, debtor_code: 'C-1', debtor_name: 'ALI', status: 'SENT', total_sen: 777, paid_sen: 0, migrated_no_stock: false });
+    t.acc_credit_note_allocations = [{ id: 'na-9', company_id: CO, note_id: 'n-a9', sales_invoice_id: 'si-f', debtor_bill_id: null, applied_sen: 300 }];
+    const b = await (await app(t).request('/ar-aging?asOf=2026-09-30')).json() as Body;
+    expect((rowOf(b, 'ALI').unapplied as Row[]).find((u) => u.docNo === 'CN-A9')).toMatchObject({ amountSen: -500 });
+    expect((rowOf(b, 'ALI').items as Row[]).map((i) => [i.docNo, i.openSen])).toEqual([['SI-A1', 400]]);
+    expect(b.differenceSen).toBe(0);
+  });
+
   test('an other-debtor credit note comes off the bill it knocked off, by what it applied', async () => {
     const t = AR();
     t.v_gl_entries!.push(gl('305-0000', 'OCN', 'OCN-1', '2026-09-12', 0, 1_000, null, { party_type: 'ODEBTOR', party_name: 'LANDLORD CO' }));
