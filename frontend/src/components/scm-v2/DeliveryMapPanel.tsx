@@ -495,8 +495,8 @@ export type DeliveryMapPanelProps = {
    *  never a lock). Absent → no pill (a page without narrowing). */
   compactColumns?: boolean | null;
   onCompactColumnsChange?: (on: boolean) => void;
-  /** Orders that could not be located ("N 张单定位不到 — 检查地址"). `label` is a
-   *  friendlier identity line than the raw ref when present (e.g. a job's code). */
+  /** Orders that could not be located ("N couldn't be located — check the address").
+   *  `label` is a friendlier identity line than the raw ref when present (e.g. a job's code). */
   ungeocoded?: Array<{ ref: string; label?: string; reason: string }>;
   /** False = the SERVER has no maps key (geocoding off) — said out loud. */
   serverConfigured?: boolean;
@@ -970,8 +970,8 @@ export function DeliveryMapPanel({
           <details className="group rounded-md border border-border bg-surface-dim text-[11px] text-ink-muted">
             <summary className="flex cursor-pointer select-none items-center gap-1.5 px-2.5 py-1.5 text-ink-secondary marker:content-['']">
               <ChevronDown size={13} className="flex-none transition-transform group-open:rotate-180" />
-              <span className="font-semibold">{ungeocoded.length} 张单定位不到</span>
-              <span className="text-ink-muted">— 检查地址</span>
+              <span className="font-semibold">{ungeocoded.length} couldn&rsquo;t be located</span>
+              <span className="text-ink-muted">— check the address</span>
             </summary>
             <ul className="list-disc space-y-0.5 px-2.5 pb-2 pl-7">
               {ungeocoded.map((u) => (

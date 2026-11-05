@@ -367,7 +367,7 @@ export function buildLorryRoutes(
         unlocated.push({
           ref: d.soDocNo,
           label: d.codeLine || d.soDocNo,
-          reason: d.rowType === 'so' ? '地址定位不到' : '非送货作业，暂无定位',
+          reason: d.rowType === 'so' ? 'Address could not be located' : 'Non-delivery job — no location',
         });
         continue;
       }

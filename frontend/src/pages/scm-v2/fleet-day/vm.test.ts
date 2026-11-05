@@ -242,7 +242,7 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     expect(vqe.allRefs).toEqual(['A', 'B', 'C']); // focus still finds the ungeocoded B
   });
   test('the ungeocoded drop is surfaced with a reason, never dropped', () => {
-    expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: '地址定位不到' }]);
+    expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: 'Address could not be located' }]);
   });
   test('a non-SO job with no pin says so (not a geocode miss)', () => {
     const jobDocs: DocRowVM[] = [
@@ -254,7 +254,7 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
     const out = buildLorryRoutes(jobCards, new Map(), null, (k) => k);
     expect(out.routes.find((r) => r.id === 'VQE9058')!.stops).toEqual([]);
-    expect(out.unlocated).toEqual([{ ref: 'ASSR/1#delivery', label: 'ASSR/1', reason: '非送货作业，暂无定位' }]);
+    expect(out.unlocated).toEqual([{ ref: 'ASSR/1#delivery', label: 'ASSR/1', reason: 'Non-delivery job — no location' }]);
   });
 });
 
