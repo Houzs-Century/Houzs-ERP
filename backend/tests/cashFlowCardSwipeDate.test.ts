@@ -87,6 +87,19 @@ const world = () => fakeSb({
   ],
   acc_report_layouts: [],
   acc_acquirers: [{ company_id: CO, code: 'PBB', display_name: 'PBB', transit_account_code: PBB, is_active: true }],
+  /* B and D pay their orders in full (balance); C is the first 400 of a 1,000 order (a deposit). */
+  mfg_sales_orders: [
+    { company_id: CO, doc_no: 'SO-A', local_total_sen: 100000 },
+    { company_id: CO, doc_no: 'SO-B', local_total_sen: 60000 },
+    { company_id: CO, doc_no: 'SO-C', local_total_sen: 100000 },
+    { company_id: CO, doc_no: 'SO-D', local_total_sen: 20000 },
+  ],
+  mfg_sales_order_payments: [
+    { company_id: CO, id: 'pay-a', so_doc_no: 'SO-A', amount_sen: 100000, paid_at: '2026-08-20', created_at: null },
+    { company_id: CO, id: 'pay-b', so_doc_no: 'SO-B', amount_sen: 60000, paid_at: '2026-09-10', created_at: null },
+    { company_id: CO, id: 'pay-c', so_doc_no: 'SO-C', amount_sen: 40000, paid_at: '2026-09-12', created_at: null },
+    { company_id: CO, id: 'pay-d', so_doc_no: 'SO-D', amount_sen: 20000, paid_at: '2026-09-15', created_at: null },
+  ],
 });
 
 function harness() {
@@ -123,10 +136,12 @@ describe('Cash Flow: card money on the swipe date (owner 2026-11-05)', () => {
     const r = await get('2026-09-01', '2026-09-30');
     expect(r.columns.map((c) => c.code)).toEqual([BANK, CARD_COLUMN]);
     /* B 600 paid out; C 400 half paid (200 / 200); D 200 unclaimed. */
-    expect(onTree(r, `${AR}:CARD-BANK`)).toBe(80000);
-    expect(onTree(r, `${AR}:CARD-TRANSIT`)).toBe(40000);
-    expect(leaves(r.layout.tree).find((n) => n.key === `${AR}:CARD-BANK`)?.label).toBe('Card - in the bank');
-    expect(leaves(r.layout.tree).find((n) => n.key === `${AR}:CARD-TRANSIT`)?.label).toBe('Card - not yet in the bank');
+    expect(onTree(r, `${AR}:BAL:CARD-BANK`)).toBe(60000);
+    expect(onTree(r, `${AR}:DEP:CARD-BANK`)).toBe(20000);
+    expect(onTree(r, `${AR}:DEP:CARD-TRANSIT`)).toBe(20000);
+    expect(onTree(r, `${AR}:BAL:CARD-TRANSIT`)).toBe(20000);
+    expect(leaves(r.layout.tree).find((n) => n.key === `${AR}:DEP:CARD-BANK`)?.label).toBe('Card - in the bank');
+    expect(leaves(r.layout.tree).find((n) => n.key === `${AR}:DEP:CARD-TRANSIT`)?.label).toBe('Card - not yet in the bank');
     /* The payouts (August's 1,000 among them) never reach the tree… */
     expect(leaves(r.layout.tree).some((n) => String(n.key).startsWith('XFER:'))).toBe(false);
     expect(r.layout.inSen).toBe(120000);

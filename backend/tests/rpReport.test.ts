@@ -93,6 +93,15 @@ const world = () => fakeSb({
   ap_invoice_lines: [{ id: 'l1', company_id: CO, invoice_id: 'api-1', debit_account_code: '900-A001', amount_sen: 5000 }],
   acc_report_layouts: [],
   acc_acquirers: [{ company_id: CO, code: 'PBB', display_name: 'PBB', transit_account_code: '326-0010', is_active: true }],
+  /* pay-1 is the first 500.00 of a 1,000.00 order (a deposit); pay-c1 pays a 300.00 order in full (its balance). */
+  mfg_sales_orders: [
+    { company_id: CO, doc_no: 'SO-1', local_total_sen: 100000 },
+    { company_id: CO, doc_no: 'SO-2', local_total_sen: 30000 },
+  ],
+  mfg_sales_order_payments: [
+    { company_id: CO, id: 'pay-1', so_doc_no: 'SO-1', amount_sen: 50000, paid_at: '2026-07-05', created_at: '2026-07-05T03:00:00Z' },
+    { company_id: CO, id: 'pay-c1', so_doc_no: 'SO-2', amount_sen: 30000, paid_at: '2026-07-15', created_at: '2026-07-15T03:00:00Z' },
+  ],
 });
 
 function harness(sb: ReturnType<typeof fakeSb>) {
@@ -129,7 +138,7 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(r.opening).toEqual({ '310-0010': -10000, '320-0000': 0, CARD: 5000 });
 
     /* Receipts: the collection on AR into the bank; the transfer into the drawer. */
-    expect(cell(r.receipts, '300-0000', '310-0010')).toBe(50000);
+    expect(cell(r.receipts, '300-0000:DEP:CASH', '310-0010')).toBe(50000);
     expect(cell(r.receipts, 'XFER:310-0010', '320-0000')).toBe(20000);
     /* Payments: utilities from the drawer; the supplier payment split by PI-1's own
        groups (700 → sofa 400 / bedding 300) plus 300 paid ahead; the AP bill's rent;
@@ -160,7 +169,7 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
     /* July's swipe, no statement has paid it out: Card - not yet in the bank, on the debtor's row. */
     expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
-    expect(cell(july.receipts, '300-0000:CARD-TRANSIT', 'CARD')).toBe(30000);
+    expect(cell(july.receipts, '300-0000:BAL:CARD-TRANSIT', 'CARD')).toBe(30000);
     expect(cell(july.payments, '900-T009', 'CARD')).toBe(300);
     /* The memo still reads: July's swipe (the fee is the settlement module's own, not a taking)
        and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee = the Card c/f. */
@@ -211,7 +220,7 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(r.layout.inSen - r.layout.outSen).toBe(r.totals.receiptsTotalSen - r.totals.paymentsTotalSen);
     const [receipts, payments] = r.layout.tree as [Laid, Laid];
     expect(receipts.children.map((n) => [n.label, n.amountSen, n.pct, n.children.map((k) => [k.key, k.amountSen, k.pct])])).toEqual([
-      ['CURRENT ASSETS', 80000, 100, [['300-0000', 50000, 62.5], ['300-0000:CARD-TRANSIT', 30000, 37.5]]],
+      ['CURRENT ASSETS', 80000, 100, [[undefined, 50000, 62.5], [undefined, 30000, 37.5]]],
     ]);
     const byLabel = (label: string) => payments.children.find((n) => n.label === label)!;
     expect(payments.children.some((n) => n.children.some((k) => String(k.key).startsWith('XFER:')))).toBe(false);
