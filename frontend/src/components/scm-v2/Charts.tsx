@@ -79,16 +79,28 @@ function useWidth(fallback: number) {
 
 /** Vertical columns per period, side by side or stacked, with an optional line on top. */
 /** `valueLabels`: print each bar's figure above it (keep it off when bars are many and narrow). */
-export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels }: {
+/** A short money label for an axis tick: 1.2M, 345K, 900. */
+const tickMoney = (v: number): string => {
+  const a = Math.abs(v);
+  const t = a >= 1e6 ? `${(a / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}K` : a.toFixed(0);
+  return v < 0 ? `-${t}` : t;
+};
+
+/** `axes` (owner 2026-11-05, Project Overview: one chart, but with its scales): the
+ *  amount scale on the left, the line's % scale on the right, and a card on hover
+ *  with every figure of the column under the pointer. */
+export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels, axes }: {
   labels: string[]; series: Series[]; values: number[][]; format: Fmt; stacked: boolean;
   line: { name: string; color: string; values: Array<number | null>; format: Fmt } | null; highlight: number | null; height: number; valueLabels: boolean;
+  axes: boolean;
 }) {
   const [ref, W] = useWidth(420);
-  const H = height; const padL = 8; const padB = 22; const padT = 10;
+  const [hover, setHover] = useState<number | null>(null);
+  const H = height; const padL = axes ? 48 : 8; const padR = axes && line ? 44 : 0; const padB = 22; const padT = 10;
   const n = labels.length;
   const totals = labels.map((_, i) => (stacked ? values.reduce((a, s) => a + Math.max(0, s[i] ?? 0), 0) : Math.max(0, ...values.map((s) => s[i] ?? 0))));
   const max = Math.max(1, ...totals);
-  const slot = (W - padL) / Math.max(1, n);
+  const slot = (W - padL - padR) / Math.max(1, n);
   const groupW = slot * 0.68;
   const barW = stacked ? groupW : groupW / Math.max(1, series.length);
   const y = (v: number) => padT + (H - padB - padT) * (1 - v / max);
@@ -98,9 +110,16 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
   const ly = (v: number) => padT + (H - padB - padT) * (1 - (v - lmin) / (lmax - lmin));
   const step = Math.max(1, Math.ceil((n * 44) / W));
   return (
-    <div ref={ref}>
+    <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block" role="img" aria-label="Column chart">
-        {[0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={padL} x2={W} y1={y(max * f)} y2={y(max * f)} stroke="#eceee8" strokeWidth="1" />)}
+        {[0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={padL} x2={W - padR} y1={y(max * f)} y2={y(max * f)} stroke="#eceee8" strokeWidth="1" />)}
+        {axes && [0, 0.25, 0.5, 0.75, 1].map((f) => (
+          <text key={`l${f}`} x={padL - 6} y={y(max * f) + 3.5} textAnchor="end" className="fill-ink-muted" style={{ fontSize: 10 }}>{tickMoney(max * f)}</text>
+        ))}
+        {axes && line && [0, 0.25, 0.5, 0.75, 1].map((f) => {
+          const v = lmin + (lmax - lmin) * f;
+          return <text key={`r${f}`} x={W - padR + 6} y={ly(v) + 3.5} textAnchor="start" style={{ fontSize: 10, fill: line.color }}>{`${v.toFixed(0)}%`}</text>;
+        })}
         {labels.map((lab, i) => {
           const x0 = padL + i * slot + (slot - groupW) / 2;
           let acc = 0;
@@ -123,6 +142,10 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
                 ) : null;
               })}
               {i % step === 0 && <text x={padL + i * slot + slot / 2} y={H - 6} textAnchor="middle" className="fill-ink-muted" style={{ fontSize: 10.5 }}>{lab}</text>}
+              {axes && (
+                <rect x={padL + i * slot} y={padT - 6} width={slot} height={H - padB - padT + 6} fill={hover === i ? "#16695f" : "transparent"} opacity={hover === i ? 0.05 : 1}
+                  onMouseEnter={() => setHover(i)} />
+              )}
             </g>
           );
         })}
@@ -138,6 +161,16 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
           </>
         )}
       </svg>
+      {axes && hover !== null && (
+        <div className="pointer-events-none absolute top-1 z-10 min-w-[150px] rounded-lg border border-border bg-surface px-3 py-2 text-[11.5px] shadow-md"
+          style={padL + hover * slot + slot / 2 > W / 2 ? { right: W - (padL + hover * slot) + 4 } : { left: padL + (hover + 1) * slot + 4 }}>
+          <div className="mb-1 font-semibold text-ink">{labels[hover]}</div>
+          {series.map((sr, si) => (
+            <div key={sr.name} className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{sr.name}</span><span>{format(values[si]?.[hover] ?? 0)}</span></div>
+          ))}
+          {line && <div className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{line.name}</span><span>{line.values[hover] == null ? "-" : line.format(line.values[hover]!)}</span></div>}
+        </div>
+      )}
       <Legend items={[...series.map((s) => ({ label: s.name, color: s.color, dot: false })), ...(line ? [{ label: line.name, color: line.color, dot: true }] : [])]} />
     </div>
   );
