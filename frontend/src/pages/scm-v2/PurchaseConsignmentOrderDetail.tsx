@@ -119,6 +119,7 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   warehouseId:    it.warehouse_id ?? undefined,
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
+  notes:          it.notes ?? '',
   /* An existing line's stored price is authoritative — don't let the cost
      auto-recompute clobber it on enter-edit. Editing variants re-arms it. */
   priceTouched:   true,
@@ -453,6 +454,7 @@ export const PurchaseConsignmentOrderDetail = () => {
             warehouseId:    d.warehouseId  || undefined,
             itemGroup:      d.category,
             variants:       Object.keys(d.variants).length ? d.variants : undefined,
+            notes:          d.notes || undefined,
           });
           continue;
         }
@@ -468,6 +470,7 @@ export const PurchaseConsignmentOrderDetail = () => {
           (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           (d.warehouseId ?? null) !== (it.warehouse_id ?? null) ||
+          (d.notes ?? '') !== (it.notes ?? '') ||
           JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
         if (!changed) continue;
         await updateItem.mutateAsync({
@@ -482,6 +485,7 @@ export const PurchaseConsignmentOrderDetail = () => {
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
+          notes:          d.notes ?? '',
         });
       }
       setIsEditing(false);
@@ -673,6 +677,9 @@ export const PurchaseConsignmentOrderDetail = () => {
                           || it.material_name;
                         return summary ? <div className={styles.muted} style={{ fontSize: 'var(--fs-11)' }}>{summary}</div> : null;
                       })()}
+                      {(it.notes ?? '').trim() && (
+                        <div className={styles.muted} style={{ fontSize: 'var(--fs-11)' }}>Remark: {it.notes!.trim()}</div>
+                      )}
                     </td>
                     <td className={styles.muted}>{it.item_group ?? it.material_kind}</td>
                     <td className={styles.tableRight}>{it.qty}</td>

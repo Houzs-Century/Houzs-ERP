@@ -85,6 +85,8 @@ export type PcLineDraft = {
   /** true once the operator types into Unit Price — a manual override wins and
       the parent's supplier-price auto-fill stops touching this line's cost. */
   priceTouched?: boolean;
+  /** Per-line remark — purchase_consignment_order_items.notes. */
+  notes?: string;
 };
 
 /** Factory for a fresh blank consignment line draft. */
@@ -308,6 +310,19 @@ export const PcLineCard = ({
           disabled={identityLocked}
           onChange={(e) => onChange({ materialName: e.target.value })}
           placeholder="(auto-filled if bound — editable for one-off purchases)"
+          className={styles.fieldInput}
+        />
+      </label>
+
+      {/* Remarks — full width, same box Create renders. */}
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>Remarks</span>
+        <input
+          type="text"
+          value={l.notes ?? ''}
+          disabled={disabled}
+          onChange={(e) => onChange({ notes: e.target.value })}
+          placeholder="Type remarks…"
           className={styles.fieldInput}
         />
       </label>
