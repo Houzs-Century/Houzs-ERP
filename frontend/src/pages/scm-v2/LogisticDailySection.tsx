@@ -45,7 +45,7 @@ export function LogisticDailySection({ days: allDays, regions, doList, onDrill }
           {region && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setRegion(null)}>All regions</button>}
           <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />
         </span>}>
-        <Columns valueLabels={!amt} height={190} stacked={false} format={amt ? fmtSen : (x) => `${x} orders`} highlight={null}
+        <Columns axes={false} valueLabels={!amt} height={190} stacked={false} format={amt ? fmtSen : (x) => `${x} orders`} highlight={null}
           labels={days.map((x) => dd(x.date))}
           series={[{ name: amt ? "Delivered amount" : "Orders delivered", color: TONE.good }]}
           values={[days.map((x) => (amt ? x.amountSen : x.orders))]}

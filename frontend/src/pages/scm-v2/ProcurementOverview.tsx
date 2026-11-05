@@ -260,7 +260,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             <p className="mb-2 text-[12.5px] text-ink-secondary">
               Per row: how long the supplier really takes (PO to goods in), how often they come by the date on the PO and how late when they do not, and how many days before the customer&apos;s date we ask the supplier to deliver. If that gap is large, purchasing is asking for goods too early.
             </p>
-            <Columns valueLabels={false} height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null}
+            <Columns axes={false} valueLabels={false} height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null}
               labels={groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => label(g.key).slice(0, 14))}
               series={[{ name: "Supplier takes · average", color: PALETTE[0]! }, { name: "Date on PO before the customer date · average", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
               values={[

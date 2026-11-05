@@ -146,7 +146,7 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
       <SectionTitle eyebrow="Volume" title="Cases coming in and going out" />
       <div>
         <Panel title="Monthly trend" hint="cases opened and closed each month · line = that month's average days to close (cases closed in it)">
-          {d && <Columns valueLabels height={230} stacked={false} format={(x) => `${x} cases`} highlight={d.trend.length - 1}
+          {d && <Columns axes={false} valueLabels height={230} stacked={false} format={(x) => `${x} cases`} highlight={d.trend.length - 1}
             labels={d.trend.map((t) => `${t.month.slice(2, 4)}/${t.month.slice(5)}`)}
             series={[{ name: "Opened", color: "#c9a77c" }, { name: "Closed", color: TONE.good }]}
             values={[d.trend.map((t) => t.opened), d.trend.map((t) => t.closed)]}
