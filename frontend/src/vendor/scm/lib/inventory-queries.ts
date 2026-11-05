@@ -101,6 +101,10 @@ export type InventoryBalance = {
 export type InventoryProductTotal = {
   item_code: string;
   product_name: string;
+  /* AutoCount barcode (cash & carry / bedline items carry one; most make-to-order
+     furniture has none and this is null). Exposed on v_inventory_product_totals by
+     mig 20261104T1000; searchable and shown as the Barcode column. */
+  barcode: string | null;
   category: 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
   size_label: string | null;
   base_price_sen: number | null;

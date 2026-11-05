@@ -56,6 +56,7 @@ import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
+import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -70,7 +71,11 @@ export type RpGlLine = {
 };
 type GlLine = RpGlLine;
 
-export type RpRow = { key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number };
+export type RpRow = {
+  key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number;
+  /** A sub-heading the row prints under, within its account's place on the tree (Deposit / Balance). */
+  group?: { id: string; label: string };
+};
 export type RpEntry = {
   jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null;
   narration: string | null; party: string | null; side: 'R' | 'P'; rowKey: string; column: string; sen: number;
@@ -114,6 +119,24 @@ export const CARD_IN_BANK = 'CARD-BANK';
 export const CARD_NOT_IN_BANK = 'CARD-TRANSIT';
 const CARD_IN_BANK_NAME = 'Card - in the bank';
 const CARD_NOT_IN_BANK_NAME = 'Card - not yet in the bank';
+/* The customers' money on the debtor control (owner 2026-11-05): an order's payments
+   are Deposit or Balance (acc/order-payment-kind.ts), each by how it came in; a refund
+   to a customer is a negative receipt; what reaches the debtor control otherwise
+   (a sales-invoice payment, a journal) is Other receipts. Not by party. */
+const KIND_GROUP: Record<PaymentKind, { id: string; label: string }> = {
+  DEP: { id: 'DEP', label: 'Deposit' },
+  BAL: { id: 'BAL', label: 'Balance' },
+};
+const CASH_PART = 'CASH';
+const CASH_PART_NAME = 'Transfer / cash';
+export const CUSTOMER_REFUND = 'REFUND';
+export const CUSTOMER_OTHER = 'OTHER';
+/* Where a debtor-control row prints among its siblings: Deposit's three, Balance's three, Refund, Other. */
+const CUSTOMER_ORDER = [`DEP:${CASH_PART}`, `DEP:${CARD_IN_BANK}`, `DEP:${CARD_NOT_IN_BANK}`, `BAL:${CASH_PART}`, `BAL:${CARD_IN_BANK}`, `BAL:${CARD_NOT_IN_BANK}`, CUSTOMER_REFUND, CUSTOMER_OTHER];
+const customerRank = (r: RpRow): number => {
+  const i = r.code === null ? -1 : CUSTOMER_ORDER.indexOf(r.key.slice(r.code.length + 1));
+  return i < 0 ? -1 : i;
+};
 /* The settlement module's own journals (a fee, a payout, a move between the clearing accounts) — never a swipe. */
 const settlementOwn = (l: { source_type: string | null }): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '').startsWith('SETTLE');
 /* What a supplier is paid out of a trade-finance account (owner 2026-11-05: its own line
@@ -201,6 +224,8 @@ export type RpSources = {
   /** The acquirers' transit accounts — with the chart's EDC transit role, the card-machine clearing accounts (the Card column). */
   acquirerTransits: () => Promise<{ ok: true; codes: string[] } | Fail>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
+  /** The orders behind the named customer-payment rows (SOPAY source_doc_no), with all of each order's payments. */
+  orderPayments: (paymentIds: string[]) => Promise<{ ok: true; facts: OrderPaymentFacts } | Fail>;
   /** The card settlement history: which statement claimed each card payment and what the bank has received on it. */
   cardPayouts: () => Promise<{ ok: true; facts: CardPayoutFacts } | Fail>;
   /** The company's active money accounts, by code. */
@@ -215,6 +240,7 @@ export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpS
   acquirerTransits: () => loadAcquirerTransits(sb, companyId),
   layout: () => resolveLayout(sb, layoutIds, 'rp'),
   cardPayouts: () => loadCardPayoutFacts(sb, companyId),
+  orderPayments: (ids) => loadOrderPaymentFacts(sb, companyId, ids),
   moneyAccounts: async () => {
     const { data, error } = await sb.from('accounts')
       .select('account_code, account_name').eq('company_id', companyId).eq('acc_money', true).eq('is_active', true).order('account_code');
@@ -377,15 +403,22 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   }
   const supplierPvs = supplierVouchersOf(loaded.period, colSet, apControls);
   const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await src.splits(supplierPvs, controlCodes);
+  const customerPayments = [...new Set([...byJe.values()].flatMap((ls) => {
+    const f = ls[0];
+    return f && String(f.source_type ?? '').replace(/_REVERSAL$/, '') === 'SOPAY' && f.source_doc_no && ls.some((l) => colSet.has(l.account_code)) ? [f.source_doc_no] : [];
+  }))];
+  const orderFacts = byParty || !roles.AR ? { ok: true as const, facts: { orders: [], payments: [] } } : await src.orderPayments(customerPayments);
+  if (!orderFacts.ok) return { ok: false, reason: orderFacts.reason };
+  const kinds = paymentKinds(orderFacts.facts);
   if (!splits.ok) return { ok: false, reason: splits.reason };
 
   const receipts = new Map<string, RpRow>();
   const payments = new Map<string, RpRow>();
   const entries: RpEntry[] = [];
-  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }) => {
+  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }, group?: RpRow['group']) => {
     if (amount === 0) return;
     const book = side === 'R' ? receipts : payments;
-    const row = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0 };
+    const row: RpRow = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0, ...(group ? { group } : {}) };
     row.cells[column] = (row.cells[column] ?? 0) + amount;
     row.totalSen += amount;
     book.set(key, row);
@@ -469,6 +502,24 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? l.party_name ?? '—'}` : l.account_code;
         const name = byParty && onControl ? `${l.party_name ?? '(no party)'} · ${l.account_name ?? l.account_code}` : String(l.account_name ?? l.account_code);
         const lineMeta = { ...meta, party: l.party_name ?? null };
+        if (!byParty && l.account_code === roles.AR) {
+          /* A customer's money, always a receipt: money back out of the bank is a negative one. */
+          const signed = side === 'R' ? amt : -amt;
+          const kind = base === 'SOPAY' && first.source_doc_no ? kinds.get(first.source_doc_no) : undefined;
+          const put = (part: string, partName: string, value: number, group?: RpRow['group']) =>
+            add('R', `${l.account_code}:${part}`, l.account_code, partName, leg.account_code, value, lineMeta, group);
+          if (!kind) {
+            if (side === 'P') put(CUSTOMER_REFUND, '(-) Refund', signed);
+            else put(CUSTOMER_OTHER, 'Other receipts (not order payments)', signed);
+            continue;
+          }
+          const g = KIND_GROUP[kind];
+          if (!swipe) { put(`${kind}:${CASH_PART}`, CASH_PART_NAME, signed, g); continue; }
+          const banked = Math.round(signed * bankShare);
+          put(`${kind}:${CARD_IN_BANK}`, CARD_IN_BANK_NAME, banked, g);
+          put(`${kind}:${CARD_NOT_IN_BANK}`, CARD_NOT_IN_BANK_NAME, signed - banked, g);
+          continue;
+        }
         if (!swipe) { add(side, key, l.account_code, name, leg.account_code, amt, lineMeta); continue; }
         const banked = Math.round(amt * bankShare);
         const cardName = (part: string) => (byParty && onControl ? `${name} · ${part}` : part);
@@ -481,7 +532,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const sortRows = (m: Map<string, RpRow>): RpRow[] => [...m.values()].sort((a, b) => {
     const pa = a.key === ADVANCE_KEY ? 2 : a.key.startsWith('XFER:') ? 1 : 0;
     const pb = b.key === ADVANCE_KEY ? 2 : b.key.startsWith('XFER:') ? 1 : 0;
-    return pa - pb || String(a.code ?? '').localeCompare(String(b.code ?? '')) || a.name.localeCompare(b.name);
+    return pa - pb || String(a.code ?? '').localeCompare(String(b.code ?? '')) || customerRank(a) - customerRank(b) || a.name.localeCompare(b.name);
   });
   const receiptRows = sortRows(receipts);
   const paymentRows = sortRows(payments);
@@ -550,5 +601,6 @@ export function cashFlowLines(rows: RpRow[]): LaidLine[] {
     code: r.code ?? r.key, key: r.key, name: r.name,
     label: r.key === r.code ? `${r.code} · ${r.name}` : r.name,
     amountSen: r.totalSen, cells: { ...r.cells },
+    ...(r.group ? { group: r.group } : {}),
   }));
 }

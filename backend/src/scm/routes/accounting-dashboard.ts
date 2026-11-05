@@ -47,6 +47,7 @@ import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import { buildBalanceSheet, buildPnl, loadAccounts, sectionResolver, sumGlRows, type AccountRow, type PnlReport, type ReportLine, type ReportSources, type SumRow } from './accounting-reports';
 import type { CardPayoutFacts } from '../../acc/card-in-bank';
+import type { OrderPaymentFacts } from '../../acc/order-payment-kind';
 import { buildReceiptsPayments, rpDbSources, supplierVouchersOf, type RpGlLine, type RpSources, type RpSplit, type RpTotals } from './accounting-rp';
 import { buildPerformance, perfDbSources, type PerfSources, type PerformancePayload } from './accounting-performance';
 import { loadForecastAccounts, loadGrid } from './accounting-forecast';
@@ -151,7 +152,7 @@ type Preload = {
   /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
   perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null };
   /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
-  rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]>; acquirerTransits: string[]; cardPayouts: CardPayoutFacts };
+  rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]>; acquirerTransits: string[]; cardPayouts: CardPayoutFacts; orderPayments: OrderPaymentFacts };
 };
 
 /* Two waves of parallel reads (2026-09-22, the owner's "loading 很慢": the
@@ -242,17 +243,21 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
   const moneySet = new Set(money.accounts.map((a) => a.code));
   const vouchers = supplierVouchersOf(glRows.filter((r) => r.entry_date >= windowStart && r.entry_date <= windowEnd), moneySet, apControls);
-  const [lines, prods, rateAccount, splits] = await Promise.all([
+  /* The window's customer payments (SOPAY), for their orders' Deposit / Balance. */
+  const customerPayments = [...new Set(glRows.filter((r) => r.entry_date >= windowStart && r.entry_date <= windowEnd && String(r.source_type ?? '').replace(/_REVERSAL$/, '') === 'SOPAY' && r.source_doc_no).map((r) => String(r.source_doc_no)))];
+  const [lines, prods, rateAccount, splits, orderPayments] = await Promise.all([
     perfDb.lines(liveDocs),
     chunkIn<{ code: string; category: string | null }>(itemCodes, (batch, f, t) =>
       sb.from('mfg_products').select('code, category').eq('company_id', companyId).in('code', batch).range(f, t)),
     perfDb.rateAccount(settings.settings.account),
     rpDb.splits(vouchers, controlCodes),
+    rpDb.orderPayments(customerPayments),
   ]);
   if (!lines.ok) return { ok: false, reason: `order lines: ${lines.reason}` };
   if (prods.error) return { ok: false, reason: `products: ${prods.error.message}` };
   if (!rateAccount.ok) return { ok: false, reason: `rate account: ${rateAccount.reason}` };
   if (!splits.ok) return { ok: false, reason: `supplier payments: ${splits.reason}` };
+  if (!orderPayments.ok) return { ok: false, reason: `customer payments: ${orderPayments.reason}` };
   const categoryOfItem = new Map<string, string | null>();
   for (const p of prods.data) categoryOfItem.set(String(p.code), p.category == null ? null : String(p.category));
   return {
@@ -262,7 +267,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
       moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, booksOpening: books.opening, layouts,
       forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
       perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
-      rp: { moneyAccounts: money.accounts, splits: splits.byPv, acquirerTransits: acquirers.codes, cardPayouts: cardPayouts.facts },
+      rp: { moneyAccounts: money.accounts, splits: splits.byPv, acquirerTransits: acquirers.codes, cardPayouts: cardPayouts.facts, orderPayments: orderPayments.facts },
     },
   };
 }
@@ -296,6 +301,8 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
     acquirerTransits: async () => ({ ok: true as const, codes: pre.rp.acquirerTransits }),
     layout: () => layout('rp'),
     cardPayouts: async () => ({ ok: true as const, facts: pre.rp.cardPayouts }),
+    /* The window's orders hold every payment the report can name; the classifier reads them whole. */
+    orderPayments: async () => ({ ok: true as const, facts: pre.rp.orderPayments }),
     moneyAccounts: async () => ({ ok: true as const, accounts: pre.rp.moneyAccounts }),
     roles: async () => pre.roles,
     /* The window's map, cut to the vouchers asked for — a voucher with no
