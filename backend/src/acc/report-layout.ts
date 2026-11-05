@@ -283,6 +283,9 @@ export type LaidLine = {
   label?: string;
   /** A figure per money column (Receipts & Payments); amountSen is their total. */
   cells?: Record<string, number>;
+  /** Cash Flow: a sub-heading the line prints under where its account sits (lines of one code
+      sharing it print together under it). */
+  group?: { id: string; label: string };
 };
 export type LaidNode = {
   kind: 'category' | 'account' | 'unassigned' | 'subtotal';
@@ -491,13 +494,25 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     node.flow = flow;
     return node;
   };
+  /* Lines of one code that share a group print under its sub-heading, in their order. */
+  const grouped = (pairs: Array<{ line: LaidLine; node: LaidNode }>, flow: Flow, code: string): LaidNode[] => {
+    const out: Array<LaidNode | { gid: string; label: string; kids: LaidNode[] }> = [];
+    for (const { line, node } of pairs) {
+      if (!line.group) { out.push(node); continue; }
+      const gid = `${flow}:grp:${code}:${line.group.id}`;
+      const at = out.find((o) => 'gid' in o && o.gid === gid) as { kids: LaidNode[] } | undefined;
+      if (at) at.kids.push(node);
+      else out.push({ gid, label: line.group.label, kids: [node] });
+    }
+    return out.map((o) => ('gid' in o ? groupNode('category', o.gid, o.label, o.kids, null) : o));
+  };
   /* The lines an account line takes, oriented to its side. */
   const take = (code: string, flow: Flow, side: Side): LaidNode[] => {
     if (flow === 'in' || flow === 'out') {
       const placed = flow === 'in' ? inPlaced : outPlaced;
       const ls = ((flow === 'in' ? inBy : outBy).get(code) ?? []).filter((l) => !placed.has(keyOf(l)));
       for (const l of ls) placed.add(keyOf(l));
-      return ls.map((l) => leaf(l, flow === side ? 1 : -1, flow));
+      return grouped(ls.map((l) => ({ line: l, node: leaf(l, flow === side ? 1 : -1, flow) })), flow, code);
     }
     /* Net: in − out per row key, oriented to the side. */
     const ins = (inBy.get(code) ?? []).filter((l) => !inPlaced.has(keyOf(l)));
@@ -505,7 +520,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     for (const l of ins) inPlaced.add(keyOf(l));
     for (const l of outs) outPlaced.add(keyOf(l));
     const keys = [...new Set([...ins, ...outs].map(keyOf))];
-    return keys.map((key) => {
+    return grouped(keys.map((key) => {
       const i = ins.find((l) => keyOf(l) === key);
       const o = outs.find((l) => keyOf(l) === key);
       const src = i ?? o!;
@@ -515,8 +530,8 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       const node = laidLineNode({ ...src, amountSen, cells }, null);
       node.id = `net:${node.id}`;
       node.flow = 'net';
-      return node;
-    });
+      return { line: src, node };
+    }), 'net', code);
   };
   const walk = (list: LayoutItem[], side: Side): LaidNode[] => {
     const out: LaidNode[] = [];
