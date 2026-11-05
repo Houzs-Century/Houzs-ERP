@@ -279,8 +279,17 @@ export function incomeLines(lines: readonly BillLine[], range: readonly string[]
   return out.sort((a, b) => a.month.localeCompare(b.month) || a.billNo.localeCompare(b.billNo));
 }
 
+/** 300 → "3", 150 → "1.5". */
+export const pctLabel = (bp: number): string => (bp / 100).toFixed(2).replace(/\.?0+$/, '');
+/** One fair's transport income: its sales × the rate, in whole sen. */
+export const fairIncomeOf = (salesSen: number, bp: number): number => Math.round((salesSen * bp) / 10_000);
+
 /* ── The P&L ──────────────────────────────────────────────────────────────── */
-export type Leg = { lineId: string; accountCode: string; accountName: string | null; day: string; debitSen: number; creditSen: number; notes: string | null; docNo: string | null };
+export type Leg = {
+  lineId: string; accountCode: string; accountName: string | null; day: string; debitSen: number; creditSen: number; notes: string | null; docNo: string | null;
+  /** The document that posted it (API = an AP invoice, by its number) and the party on the line. */
+  sourceType?: string | null; sourceDocNo?: string | null; partyName?: string | null;
+};
 export type PnlAccounts = {
   outsource: ReadonlyMap<string, RegionCode>;
   /** The Transport Income accounts Other Debtor bill lines are read on. */
@@ -293,7 +302,7 @@ export type PnlAccounts = {
   salary: ReadonlySet<string>;
 };
 export type PnlRowKey =
-  | 'do_value' | 'do_income' | 'ti_houzs' | 'ti_conts' | 'ti_hookka' | 'sd_income' | 'ti_2990' | 'total_income'
+  | 'do_value' | 'do_income' | 'ti_houzs' | 'ti_conts' | 'ti_hookka' | 'sd_income' | 'fair_income' | 'ti_2990' | 'total_income'
   | 'outsource' | 'petrol' | 'upkeep' | 'instalment' | 'roadtax' | 'manpower' | 'other_lorry' | 'inhouse_total' | 'total_expense'
   | 'net' | 'cost_per_do' | 'net_cost_per_do';
 export type PnlRow = { key: PnlRowKey; label: string; sen: Record<RegionCode, number | null>; totalSen: number | null };
@@ -302,6 +311,9 @@ export type PnlInput = {
   /** The DOs of the months asked for, each in its region. */
   dos: ReadonlyArray<{ region: RegionCode; valueSen: number }>;
   doIncomeBp: number;
+  /** Each fair opened in the months, in its region: its sales (Project Overview's), × fairIncomeBp. */
+  fairs: ReadonlyArray<{ region: RegionCode; salesSen: number }>;
+  fairIncomeBp: number;
   income: readonly IncomeLine[];
   trips: readonly SetupTrip[];
   /** Every leg on the accounts below, from far enough back for the longest spread. */
@@ -314,6 +326,7 @@ export type PnlInput = {
 export type LogisticsPnl = {
   from: string; to: string; months: string[];
   doIncomeBp: number;
+  fairIncomeBp: number;
   dos: Record<RegionCode, number> & { total: number };
   rows: PnlRow[];
   income: IncomeLine[];
@@ -339,6 +352,9 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
   };
   const sdIncome = zero();
   for (const t of input.trips) sdIncome[t.region] += t.amountSen;
+  /* Transport Income (1% of fair sales) — owner 2026-11-05, like the DO's 3%: each fair's own, then summed. */
+  const fairIncome = zero();
+  for (const f of input.fairs) fairIncome[f.region] += fairIncomeOf(f.salesSen, input.fairIncomeBp);
 
   /* The books: each leg into its row. Manpower never re-counts an own-lorry account. */
   const outsource = zero();
@@ -375,7 +391,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
   const less = (x: RegionSen, y: RegionSen): RegionSen => add(x, { PG: -y.PG, KL: -y.KL, EM: -y.EM, SG: -y.SG });
 
   const ti = { houzs: incomeBy('houzs'), conts: incomeBy('conts'), hookka: incomeBy('hookka'), '2990': incomeBy('2990') };
-  const otherIncome = add(ti.houzs, ti.conts, ti.hookka, sdIncome, ti['2990']);
+  const otherIncome = add(ti.houzs, ti.conts, ti.hookka, sdIncome, fairIncome, ti['2990']);
   const totalIncome = add(doIncome, otherIncome);
   const inHouse = {
     petrol: klOnly(kl.petrol), upkeep: klOnly(spread.sen.upkeep), instalment: klOnly(kl.instalment),
@@ -392,7 +408,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
     return { key, label, sen: by, totalSen: n > 0 ? Math.round(total(sen) / n) : null };
   };
 
-  const pctText = (input.doIncomeBp / 100).toFixed(2).replace(/\.?0+$/, '');
+  const pctText = pctLabel(input.doIncomeBp);
   const rows: PnlRow[] = [
     money('do_value', 'Delivery Order', doValue),
     money('do_income', `Transport Income (${pctText}% of DO)`, doIncome),
@@ -400,6 +416,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
     money('ti_conts', 'Transport Income (The Conts)', ti.conts),
     money('ti_hookka', 'Transport Income (Hookka)', ti.hookka),
     money('sd_income', 'Set/Dismantle Income (In-house)', sdIncome),
+    money('fair_income', `Transport Income (${pctLabel(input.fairIncomeBp)}% of fair sales)`, fairIncome),
     money('ti_2990', 'Transport Income (2990)', ti['2990']),
     money('total_income', 'TOTAL INCOME', totalIncome),
     money('outsource', 'Outsource Expense', outsource),
@@ -417,7 +434,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
   ];
 
   return {
-    from: input.from, to: input.to, months: range, doIncomeBp: input.doIncomeBp,
+    from: input.from, to: input.to, months: range, doIncomeBp: input.doIncomeBp, fairIncomeBp: input.fairIncomeBp,
     dos: { ...counts, total: total(counts) },
     rows,
     income: [...input.income],

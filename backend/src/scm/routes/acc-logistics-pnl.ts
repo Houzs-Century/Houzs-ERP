@@ -8,6 +8,8 @@
 //                                    trip and spread it counted
 //   PUT /logistics/income-rate       { pct } — the share of the DOs' value counted
 //                                    as transport income (3% until changed)
+//   PUT /logistics/fair-income-rate  { pct } — the share of each fair's sales
+//                                    counted as transport income (1% until changed)
 //   PUT /logistics/area-rate         { area, rateRm | null, reset? } — the rate per
 //                                    setup / dismantle trip in one area
 //   PUT /logistics/spread            { lineId, months | null } — how many months
@@ -20,17 +22,22 @@
 // The arithmetic: scm/lib/logistics-pnl.ts.
 // ----------------------------------------------------------------------------
 
-import { activeCompanySql, requireActiveCompanyId } from '../lib/companyScope';
+import { requireActiveCompanyId } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { delivererOf, monthOf, regionOfDo } from '../lib/logistics-cost';
+import { delivererOf, monthOf, regionOfDo, type LogisticsDo, type RegionCode } from '../lib/logistics-cost';
 import {
-  AREAS, MAX_SPREAD, addMonths, buildLogisticsPnl, coveredKinds, incomeLines, isAreaKey, monthsBetween, pnlAccountsOf, rateOf, setupTrips,
-  type BillLine, type Fair, type Leg, type TripKind,
+  AREAS, MAX_SPREAD, addMonths, areaOf, buildLogisticsPnl, incomeLines, isAreaKey, monthsBetween, pnlAccountsOf, rateOf,
+  type BillLine, type Leg, type SetupTrip,
 } from '../lib/logistics-pnl';
+import { buildMonthCost, fairBlock, monthCostTotal, type FairBlock, type FairLineIn, type ThreeplBill } from '../lib/logistics-breakdown';
+import { readFairTrips, type FairRow } from '../lib/fair-trips';
+import { LOGISTICS_CHARGE_DOC } from '../lib/event-books';
+import { pnlAndLinesForProjects, type PnlWithLines } from '../../services/eventPnlBatch';
+import { LEDGER_COST_CATEGORIES } from '../../services/projects';
 import { fail, loadCostSetup, readMonthDos } from './acc-logistics';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -68,29 +75,28 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
   const read = await readMonthDos(sb, companyId, wholeFrom, wholeTo);
   if (!read.ok) return fail(c, read.what, read.reason);
   const shown = read.dos.filter((d) => d.day >= from && d.day <= to);
-  const ownTrips = new Set<string>();
-  for (const d of shown) {
-    const w = delivererOf(d, setup.lorries);
-    if (w.kind === 'own') ownTrips.add(`${w.plate}|${d.day}`);
-  }
+  const regionOf = new Map(read.dos.map((d) => [d.id, regionOfDo(d).code] as const));
+  const ownTripsIn = (dos: readonly LogisticsDo[]) => {
+    const keys = new Set<string>();
+    for (const d of dos) {
+      const w = delivererOf(d, setup.lorries);
+      if (w.kind === 'own') keys.add(`${w.plate}|${d.day}`);
+    }
+    return keys.size;
+  };
 
-  /* Finance's own: area rates, spreads, trip ticks. */
-  const [rateRes, spreadRes, markRes] = await Promise.all([
-    sb.from('acc_logistics_area_rates').select('area, rate_sen').eq('company_id', companyId),
-    sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId),
-    sb.from('acc_logistics_trip_marks').select('trip_key, in_house').eq('company_id', companyId),
-  ]);
-  if (rateRes.error) return fail(c, 'area rates', rateRes.error.message);
+  /* Finance's own spreads (the rates and ticks are read with the trips). */
+  const spreadRes = await sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId);
   if (spreadRes.error) return fail(c, 'spreads', spreadRes.error.message);
-  if (markRes.error) return fail(c, 'trip ticks', markRes.error.message);
-  const rates = new Map(((rateRes.data ?? []) as Row[]).map((r) => [String(r.area), r.rate_sen == null ? null : Number(r.rate_sen)] as const));
   const spreadMonths = new Map(((spreadRes.data ?? []) as Row[]).map((r) => [String(r.line_id), Number(r.months)] as const));
-  const marks = new Map(((markRes.data ?? []) as Row[]).map((r) => [String(r.trip_key), r.in_house === true] as const));
+  const rateRes = await sb.from('acc_logistics_area_rates').select('area, rate_sen').eq('company_id', companyId);
+  if (rateRes.error) return fail(c, 'area rates', rateRes.error.message);
+  const rates = new Map(((rateRes.data ?? []) as Row[]).map((r) => [String(r.area), r.rate_sen == null ? null : Number(r.rate_sen)] as const));
 
   /* The books: every leg on the P&L's accounts, from far enough back for the longest spread. */
   const spreadFrom = `${addMonths(monthOf(wholeFrom), -(MAX_SPREAD - 1))}-01`;
   const legsRes = await chunkIn<Row>(accounts.all, (b, lo, hi) => sb.from('v_gl_entries')
-    .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, opening, notes, je_no')
+    .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, opening, notes, je_no, source_type, source_doc_no, party_name')
     .eq('company_id', companyId).in('account_code', b).gte('entry_date', spreadFrom).lte('entry_date', wholeTo)
     .order('line_id').range(lo, hi));
   if (legsRes.error) return fail(c, 'ledger', legsRes.error.message);
@@ -98,6 +104,8 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     lineId: String(l.line_id), accountCode: String(l.account_code), accountName: l.account_name == null ? null : String(l.account_name),
     day: String(l.entry_date).slice(0, 10), debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0),
     notes: l.notes == null ? null : String(l.notes), docNo: l.je_no == null ? null : String(l.je_no),
+    sourceType: l.source_type == null ? null : String(l.source_type), sourceDocNo: l.source_doc_no == null ? null : String(l.source_doc_no),
+    partyName: l.party_name == null ? null : String(l.party_name),
   }));
 
   /* What Finance billed extra: Other Debtor bills a few months either side —
@@ -131,84 +139,157 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     };
   });
 
-  /* The fairs set up or dismantled in the range, and what was outsourced on them. */
-  let fairs: Fair[] = [];
+  /* The fairs set up or dismantled in the range and their trips — the ONE read
+     the fairs' own books use too (scm/lib/fair-trips.ts). */
+  let fairs: FairRow[] = [];
+  let trips: SetupTrip[] = [];
   let tripsProblem: string | null = null;
-  const outsourced = new Map<number, Set<TripKind>>();
   if (c.env?.DB) {
-    try {
-      const res = await c.env.DB.prepare(
-        `SELECT p.id AS id, p.code AS code, p.name AS name, p.state AS state, p.venue AS venue,
-                p.start_date AS startdate, p.end_date AS enddate
-           FROM projects p
-          WHERE p.archived_at IS NULL AND lower(coalesce(p.status, '')) <> 'cancelled'
-            AND ((p.start_date >= ? AND p.start_date <= ?) OR (p.end_date >= ? AND p.end_date <= ?))${activeCompanySql(c, 'p.company_id')}
-          ORDER BY p.start_date, p.id`,
-      ).bind(from, to, from, to).all();
-      fairs = ((res.results ?? []) as Row[]).map((r) => ({
-        id: Number(r.id), code: r.code == null ? null : String(r.code), name: String(r.name ?? ''),
-        state: r.state == null ? null : String(r.state), venue: r.venue == null ? null : String(r.venue),
-        startDate: day(r.startdate), endDate: day(r.enddate),
-      })).filter((f) => Number.isFinite(f.id));
-    } catch (e) {
-      tripsProblem = String((e as Error)?.message ?? e);
-    }
+    const ft = await readFairTrips(c.env.DB, companyId, { from, to });
+    if (ft.ok) { fairs = ft.fairs; trips = ft.trips; } else tripsProblem = ft.reason;
   } else {
     tripsProblem = 'the fairs are not reachable from here';
   }
-  if (fairs.length > 0) {
-    const ids = fairs.map((f) => f.id);
-    const fairAccounts = setup.chart.filter((a) => a.pms_row === 'transport_setup_dismantle').map((a) => a.account_code);
-    const onFairAccounts = fairAccounts.length > 0 ? ids.map(String) : [];
-    const [threeplRes, apRes, pvRes] = await Promise.all([
-      chunkIn<Row>(ids.map(String), (b, lo, hi) => sb.from('threepl_bill_lines').select('id, project_id, kind, text')
-        .eq('company_id', companyId).eq('assign', 'event').in('project_id', b).order('id').range(lo, hi)),
-      chunkIn<Row>(onFairAccounts, (b, lo, hi) => sb.from('ap_invoice_lines').select('id, invoice_id, project_id, debit_account_code, description')
-        .eq('company_id', companyId).in('project_id', b).in('debit_account_code', fairAccounts).order('id').range(lo, hi)),
-      chunkIn<Row>(onFairAccounts, (b, lo, hi) => sb.from('payment_voucher_lines').select('id, pv_id, project_id, debit_account_code, description')
-        .eq('company_id', companyId).in('project_id', b).in('debit_account_code', fairAccounts).order('id').range(lo, hi)),
-    ]);
-    if (threeplRes.error) return fail(c, '3PL bill lines', threeplRes.error.message);
-    if (apRes.error) return fail(c, 'AP invoice lines', apRes.error.message);
-    if (pvRes.error) return fail(c, 'payment voucher lines', pvRes.error.message);
-    const [invRes, pvsRes] = await Promise.all([
-      chunkIn<Row>([...new Set(apRes.data.map((l) => String(l.invoice_id)))], (b, lo, hi) => sb.from('ap_invoices').select('id, status')
-        .eq('company_id', companyId).in('id', b).order('id').range(lo, hi)),
-      chunkIn<Row>([...new Set(pvRes.data.map((l) => String(l.pv_id)))], (b, lo, hi) => sb.from('payment_vouchers').select('id, status')
-        .eq('company_id', companyId).in('id', b).order('id').range(lo, hi)),
-    ]);
-    if (invRes.error) return fail(c, 'AP invoices', invRes.error.message);
-    if (pvsRes.error) return fail(c, 'payment vouchers', pvsRes.error.message);
-    const dead = new Set(['CANCELLED', 'REJECTED', 'VOID']);
-    const liveInv = new Set(invRes.data.filter((x) => !dead.has(String(x.status ?? '').toUpperCase())).map((x) => String(x.id)));
-    const livePv = new Set(pvsRes.data.filter((x) => !dead.has(String(x.status ?? '').toUpperCase())).map((x) => String(x.id)));
-    const cover = (projectId: unknown, kinds: TripKind[]) => {
-      const id = Number(projectId);
-      const s = outsourced.get(id) ?? new Set<TripKind>();
-      for (const k of kinds) s.add(k);
-      outsourced.set(id, s);
-    };
-    for (const l of threeplRes.data) cover(l.project_id, coveredKinds(l.kind, l.text));
-    for (const l of apRes.data) if (liveInv.has(String(l.invoice_id))) cover(l.project_id, coveredKinds(null, l.description));
-    for (const l of pvRes.data) if (livePv.has(String(l.pv_id))) cover(l.project_id, coveredKinds(null, l.description));
+
+  /* Each fair opened in the range: its sales and its own books (Project Overview's engine). */
+  const opened = fairs.filter((f) => f.startDate != null && f.startDate >= from && f.startDate <= to);
+  let fairBooks = new Map<number, PnlWithLines>();
+  let fairsProblem: string | null = tripsProblem;
+  if (!fairsProblem && opened.length > 0) {
+    const pl = await pnlAndLinesForProjects(c.env, opened.map((f) => ({ id: f.id, brand: f.brand, total_sales: f.totalSales })), companyId, LEDGER_COST_CATEGORIES);
+    if (pl.ok) fairBooks = pl.byId; else fairsProblem = pl.reason;
   }
+  const fairRegion = (f: FairRow): RegionCode => areaOf(f.state)?.region ?? 'KL';
+  const salesRmOf = (id: number): number => { const p = fairBooks.get(id)?.pnl; return p ? (p.by_so ?? p.by_sales).sales : 0; };
+
+  /* The carriers' bills behind the outsource legs (by AP invoice number), their
+     3PL lines, and the fair lines with no fair picked. */
+  const outsourceLegs = legs.filter((l) => accounts.outsource.has(l.accountCode) && l.day >= wholeFrom && l.day <= wholeTo);
+  const apNos = [...new Set(outsourceLegs.filter((l) => l.sourceType === 'API' && l.sourceDocNo).map((l) => l.sourceDocNo!))];
+  const [apRes, noFairRes] = await Promise.all([
+    chunkIn<Row>(apNos, (b, lo, hi) => sb.from('ap_invoices').select('id, invoice_number, invoice_date, supplier_id')
+      .eq('company_id', companyId).in('invoice_number', b).order('id').range(lo, hi)),
+    paginateAll<Row>((lo, hi) => sb.from('threepl_bill_lines').select('id, ap_invoice_id, amount_sen')
+      .eq('company_id', companyId).eq('assign', 'event').is('project_id', null).order('id').range(lo, hi)),
+  ]);
+  if (apRes.error) return fail(c, 'AP invoices', apRes.error.message);
+  if (noFairRes.error) return fail(c, '3PL bill lines', noFairRes.error.message);
+  const apIds = apRes.data.map((x) => String(x.id));
+  const noFairApIds = [...new Set((noFairRes.data ?? []).map((l) => String(l.ap_invoice_id)))];
+  const [tplRes, supRes, noFairApRes] = await Promise.all([
+    chunkIn<Row>(apIds, (b, lo, hi) => sb.from('threepl_bill_lines').select('id, ap_invoice_id, threepl_company_id, amount_sen, assign, do_ids')
+      .eq('company_id', companyId).in('ap_invoice_id', b).order('id').range(lo, hi)),
+    chunkIn<Row>([...new Set(apRes.data.map((x) => String(x.supplier_id)))], (b, lo, hi) => sb.from('suppliers').select('id, name')
+      .eq('company_id', companyId).in('id', b).order('id').range(lo, hi)),
+    chunkIn<Row>(noFairApIds, (b, lo, hi) => sb.from('ap_invoices').select('id, invoice_date, status')
+      .eq('company_id', companyId).in('id', b).order('id').range(lo, hi)),
+  ]);
+  if (tplRes.error) return fail(c, '3PL bill lines', tplRes.error.message);
+  if (supRes.error) return fail(c, 'suppliers', supRes.error.message);
+  if (noFairApRes.error) return fail(c, 'AP invoices', noFairApRes.error.message);
+  const carrierIds = [...new Set(tplRes.data.map((l) => l.threepl_company_id).filter((x) => x != null).map(String))];
+  const carRes = await chunkIn<Row>(carrierIds, (b, lo, hi) => sb.from('threepl_companies').select('id, name')
+    .eq('company_id', companyId).in('id', b).order('id').range(lo, hi));
+  if (carRes.error) return fail(c, '3PL companies', carRes.error.message);
+  const carrierName = new Map(carRes.data.map((x) => [String(x.id), String(x.name ?? '')] as const));
+  const supplierName = new Map(supRes.data.map((x) => [String(x.id), String(x.name ?? '')] as const));
+  const linesOfAp = new Map<string, Row[]>();
+  for (const l of tplRes.data) { const k = String(l.ap_invoice_id); linesOfAp.set(k, [...(linesOfAp.get(k) ?? []), l]); }
+  const threeplBills = new Map<string, ThreeplBill>();
+  for (const ap of apRes.data) {
+    const ls = linesOfAp.get(String(ap.id)) ?? [];
+    const named = ls.map((l) => (l.threepl_company_id == null ? '' : carrierName.get(String(l.threepl_company_id)) ?? '')).filter(Boolean);
+    threeplBills.set(String(ap.invoice_number), {
+      billNo: String(ap.invoice_number), day: String(ap.invoice_date ?? '').slice(0, 10),
+      carrier: mostCommon(named), supplier: supplierName.get(String(ap.supplier_id)) ?? null,
+      lines: ls.map((l) => ({ amountSen: Number(l.amount_sen ?? 0), assign: l.assign == null ? null : String(l.assign), doIds: Array.isArray(l.do_ids) ? (l.do_ids as unknown[]).map(String) : [] })),
+    });
+  }
+  /* A bill may name DOs of another month: their regions too. */
+  const missing = [...new Set([...threeplBills.values()].flatMap((b) => b.lines.flatMap((l) => l.doIds)).filter((id) => !regionOf.has(id)))];
+  if (missing.length > 0) {
+    const more = await readDoRegions(sb, companyId, missing);
+    if (!more.ok) return fail(c, more.what, more.reason);
+    for (const [id, r] of more.regions) regionOf.set(id, r);
+  }
+  const noFairDay = new Map(noFairApRes.data.filter((x) => String(x.status ?? '').toUpperCase() !== 'CANCELLED').map((x) => [String(x.id), String(x.invoice_date ?? '').slice(0, 10)] as const));
+  const charged = new Set(read.charges.map((ch) => String(ch.do_id)));
 
   const range = monthsBetween(from, to);
-  const pnl = buildLogisticsPnl({
-    from, to,
-    dos: shown.map((d) => ({ region: regionOfDo(d).code, valueSen: d.valueSen })),
-    doIncomeBp: setup.doIncomeBp,
-    income: incomeLines(billLines, range, accounts.income),
-    trips: setupTrips({ fairs, outsourced, marks, rates, from, to }),
-    legs, accounts, spreadMonths,
-    ownTrips: ownTrips.size,
+  const pnlFor = (f: string, t: string) => {
+    const ms = monthsBetween(f, t);
+    return buildLogisticsPnl({
+      from: f, to: t,
+      dos: read.dos.filter((d) => d.day >= f && d.day <= t).map((d) => ({ region: regionOf.get(d.id) ?? 'KL', valueSen: d.valueSen })),
+      doIncomeBp: setup.doIncomeBp,
+      fairs: opened.filter((x) => x.startDate! >= f && x.startDate! <= t).map((x) => ({ region: fairRegion(x), salesSen: Math.round(salesRmOf(x.id) * 100) })),
+      fairIncomeBp: setup.fairIncomeBp,
+      income: incomeLines(billLines, ms, accounts.income),
+      trips: trips.filter((x) => x.day >= f && x.day <= t),
+      legs, accounts, spreadMonths,
+      ownTrips: ownTripsIn(read.dos.filter((d) => d.day >= f && d.day <= t)),
+    });
+  };
+  const pnl = pnlFor(from, to);
+
+  /* Month by month: the P&L, the delivery cost, the fairs. */
+  const perMonth = range.map((m) => {
+    const f = m === monthOf(from) ? from : `${m}-01`;
+    const t = m === monthOf(to) ? to : monthEnd(`${m}-01`);
+    const p = range.length === 1 ? pnl : pnlFor(f, t);
+    const inHouseSen = p.rows.find((r) => r.key === 'inhouse_total')?.totalSen ?? 0;
+    const cost = buildMonthCost({
+      month: m, dos: read.dos.filter((d) => d.day >= f && d.day <= t), regionOf, lorries: setup.lorries, charged, inHouseSen,
+      legs: outsourceLegs.filter((l) => l.day >= f && l.day <= t).map((l) => ({
+        accountRegion: accounts.outsource.get(l.accountCode)!, netSen: l.debitSen - l.creditSen,
+        billNo: l.sourceType === 'API' ? l.sourceDocNo ?? null : null, partyName: l.partyName ?? null,
+      })),
+      bills: threeplBills,
+    });
+    const fairBlocks: FairBlock[] = opened.filter((x) => x.startDate! >= f && x.startDate! <= t).map((x) => {
+      const b = fairBooks.get(x.id);
+      const col = b ? (b.pnl.by_so ?? b.pnl.by_sales) : null;
+      return fairBlock({
+        fair: { id: x.id, code: x.code, name: x.name, venue: x.venue, startDate: x.startDate, endDate: x.endDate, region: fairRegion(x) },
+        salesRm: col?.sales ?? 0, fairIncomeBp: setup.fairIncomeBp, lines: (b?.lines ?? []) as FairLineIn[],
+        books: { setupRm: col?.setup ?? 0, transportSetupDismantleRm: col?.transportSetupDismantle ?? 0 }, chargeDocNo: LOGISTICS_CHARGE_DOC,
+      });
+    });
+    const noFair = (noFairRes.data ?? []).filter((l) => { const d = noFairDay.get(String(l.ap_invoice_id)); return d != null && d >= f && d <= t; });
+    return {
+      month: m, rows: p.rows, dos: p.dos, cost, costTotalSen: monthCostTotal(cost),
+      fairs: fairBlocks, noFair: { lines: noFair.length, sen: noFair.reduce((s, l) => s + Number(l.amount_sen ?? 0), 0) },
+    };
   });
   return c.json({
     ...pnl,
     tripsProblem,
+    fairsProblem,
+    perMonth,
     areaRates: AREAS.map((a) => ({ key: a.key, label: a.label, region: a.region, rateSen: rateOf(a, rates), defaultRateSen: a.defaultRateSen, isDefault: !rates.has(a.key) })),
   });
 };
+
+const mostCommon = (xs: readonly string[]): string | null => {
+  const n = new Map<string, number>();
+  for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+  return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
+};
+
+/** The regions of DOs read by id (a 3PL bill naming another month's DOs). */
+async function readDoRegions(sb: any, companyId: number, ids: string[]): Promise<{ ok: true; regions: Map<string, RegionCode> } | { ok: false; what: string; reason: string }> {
+  const res = await chunkIn<Row>(ids, (b, lo, hi) => sb.from('delivery_orders').select('id, state, city, postcode, address1, address2')
+    .eq('company_id', companyId).in('id', b).order('id').range(lo, hi));
+  if (res.error) return { ok: false, what: 'delivery orders', reason: res.error.message };
+  return {
+    ok: true,
+    regions: new Map(res.data.map((d) => [String(d.id), regionOfDo({
+      state: d.state == null ? null : String(d.state), city: d.city == null ? null : String(d.city),
+      postcode: d.postcode == null ? null : String(d.postcode),
+      address: [d.address1, d.address2].filter((x) => x != null && x !== '').join(' | ') || null,
+    }).code] as const)),
+  };
+}
 
 /* ── The PUTs: Finance's settings ─────────────────────────────────────────── */
 async function readBody(c: any): Promise<any> {
@@ -233,6 +314,27 @@ export const saveIncomeRateHandler = async (c: any): Promise<Response> => {
   );
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true, doIncomeBp: bp });
+};
+
+/** PUT /logistics/fair-income-rate — { pct }: the share of each fair's sales counted as
+    Transport Income (1% to start, owner 2026-11-05); 0–100, two decimals at most. */
+export const saveFairIncomeRateHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json({ error: NO_RIGHT }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await readBody(c);
+  if (body === undefined) return c.json({ error: 'invalid_json' }, 400);
+  const pct = Number(body?.pct);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100 || Math.round(pct * 100) !== pct * 100) {
+    return c.json({ error: 'bad_pct', message: 'The rate is a percentage from 0 to 100, two decimals at most.' }, 400);
+  }
+  const bp = Math.round(pct * 100);
+  const { error } = await c.get('supabase').from('acc_logistics_settings').upsert(
+    { company_id: co.companyId, fair_income_bp: bp, updated_at: new Date().toISOString(), updated_by: actorOf(c) },
+    { onConflict: 'company_id' },
+  );
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  return c.json({ ok: true, fairIncomeBp: bp });
 };
 
 /** PUT /logistics/area-rate — { area, rateRm | null, reset? }: null = no rate there; reset = the default again. */

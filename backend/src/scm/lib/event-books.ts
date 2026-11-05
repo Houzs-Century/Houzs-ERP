@@ -24,7 +24,9 @@
 // ----------------------------------------------------------------------------
 
 import { countsInTheBooks } from '../../acc/reversal-pairs';
+import { fmtMoneySen } from '../shared/format';
 import { PMS_ROWS, isPmsRow, type PmsRow } from './event-accounts';
+import { chargesByFair, readFairTrips, type FairCharge } from './fair-trips';
 
 /** One tagged leg, as the event page reads it. */
 export type BooksLeg = {
@@ -57,8 +59,11 @@ export async function readEventBooks(db: D1Database, projectId: number, companyI
         WHERE l.project_id = ?${companyId != null ? ' AND l.company_id = ?' : ''}
         ${order}`
     ).bind(projectId, ...(companyId != null ? [companyId] : [])).all<BooksLeg>();
-    const [res, credits] = await Promise.all([one(GL_LEGS, GL_ORDER), one(SCN_CREDIT_LEGS, SCN_CREDIT_ORDER)]);
-    return { ok: true, legs: withScnCredits(res.results ?? [], credits.results) };
+    const [res, credits, trips] = await Promise.all([
+      one(GL_LEGS, GL_ORDER), one(SCN_CREDIT_LEGS, SCN_CREDIT_ORDER), readFairTrips(db, companyId, { projectIds: [projectId] }),
+    ]);
+    if (!trips.ok) return { ok: false, reason: trips.reason };
+    return { ok: true, legs: [...withScnCredits(res.results ?? [], credits.results), ...chargeLegs(chargesByFair(trips.trips).get(projectId) ?? [])] };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
@@ -116,6 +121,37 @@ const GL_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.account_code, l.de
          JOIN scm.journal_entries je ON je.id = l.journal_entry_id
          LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.account_code`;
 const GL_ORDER = 'ORDER BY je.entry_date, je.je_no, l.line_no';
+
+/* THE IN-HOUSE SETUP / DISMANTLE CHARGE (owner 2026-11-05, CONFIRMED): what
+   Logistics charges the fair for each setup / dismantle trip our own crew and
+   lorry did (the area's rate, shared by the booths on the trip) is a COST of
+   the fair on its Transport Setup & Dismantle row. The one exception to "the
+   books replace the whole row": the row is the bills booked on it PLUS this
+   charge for every trip no 3PL bill covers (or Finance ticked as ours). The
+   same trips and ticks as the Logistics P&L's Set/Dismantle Income
+   (scm/lib/fair-trips.ts), so the two always agree. Read live, never posted. */
+export const LOGISTICS_CHARGE_SOURCE = 'LOGISTICS';
+/** The document number a charge line carries on the event page. */
+export const LOGISTICS_CHARGE_DOC = 'Logistics charge';
+export function chargeLegs(charges: readonly FairCharge[]): BooksLeg[] {
+  return charges.map((ch) => ({
+    leg_id: `trip:${ch.tripKey}:${ch.projectId}`,
+    account_code: '',
+    debit_sen: ch.sen,
+    credit_sen: 0,
+    notes: `In-house ${ch.kind} trip ${ch.day}${ch.rateSen != null ? ` · ${fmtMoneySen(ch.rateSen)}` : ''}${ch.booths > 1 ? ` shared by ${ch.booths} booths` : ''}`,
+    je_no: 'Logistics',
+    entry_date: ch.day,
+    source_type: LOGISTICS_CHARGE_SOURCE,
+    source_doc_no: LOGISTICS_CHARGE_DOC,
+    posted: true,
+    reversed: false,
+    reversed_by_je: null,
+    account_name: 'Logistics setup / dismantle charge',
+    account_type: 'EXPENSE',
+    pms_row: 'transport_setup_dismantle',
+  }));
+}
 
 /** The rows the event P&L sums the books straight into; the others
  *  (transport fee, commission) are % rows (services/eventPnl.ts pctRow). */
@@ -345,14 +381,21 @@ async function readMany(db: D1Database, ids: readonly number[], companyId: numbe
  *  events (owner 2026-10-19: the Projects list shows the event page's P&L). Either
  *  read failing is a failed read. */
 export async function readEventBooksMany(db: D1Database, projectIds: readonly number[], companyId: number | null): Promise<BooksManyRead> {
-  const [posted, checked, credits] = await Promise.all([
+  const [posted, checked, credits, trips] = await Promise.all([
     readMany(db, projectIds, companyId, GL_LEGS, '', GL_ORDER),
     readMany(db, projectIds, companyId, CHECKED_PV_LEGS, CHECKED_NOT_APPROVED, CHECKED_ORDER),
     readMany(db, projectIds, companyId, SCN_CREDIT_LEGS, '', SCN_CREDIT_ORDER),
+    readFairTrips(db, companyId, { projectIds }),
   ]);
   if (!posted.ok) return posted;
   if (!checked.ok) return checked;
   if (!credits.ok) return credits;
+  if (!trips.ok) return { ok: false, reason: trips.reason };
+  /* Each fair's in-house setup / dismantle charge (chargeLegs). */
+  const wanted = new Set(projectIds);
+  for (const [id, charges] of chargesByFair(trips.trips)) {
+    if (wanted.has(id)) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...chargeLegs(charges)]);
+  }
   /* The supplier notes' credits, each event's own (withScnCredits). */
   for (const [id, legs] of credits.byProject) posted.byProject.set(id, withScnCredits(posted.byProject.get(id) ?? [], legs));
   for (const [id, legs] of checked.byProject) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...legs]);

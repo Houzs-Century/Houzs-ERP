@@ -167,6 +167,7 @@ describe('the P&L', () => {
       from: '2026-09-01', to: '2026-09-30',
       dos: [{ region: 'PG', valueSen: 10_000_000 }, { region: 'KL', valueSen: 20_000_000 }, { region: 'KL', valueSen: 10_000_000 }, { region: 'SG', valueSen: 5_000_000 }],
       doIncomeBp: 300,
+      fairs: [{ region: 'KL', salesSen: 38_640_000 }, { region: 'PG', salesSen: 21_480_050 }], fairIncomeBp: 100,
       income: [{ lineId: 'a', billNo: 'B', billDate: '2026-10-23', debtorName: '2990 Home Sdn Bhd', description: null, accountCode: '599-0000', accountName: null, amountSen: 444_210, month: '2026-09', row: '2990', region: 'KL', by: 'wording' }],
       trips: [{ key: 'k', kind: 'setup', day: '2026-09-11', venue: 'MID VALLEY', area: 'kualalumpur', areaLabel: 'Kuala Lumpur', region: 'KL', fairs: [], rateSen: 40_000, outsourced: false, mark: null, inHouse: true, amountSen: 40_000 }],
       legs: [
@@ -190,7 +191,9 @@ describe('the P&L', () => {
     expect(row('do_income').sen).toEqual({ PG: 300_000, KL: 900_000, EM: 0, SG: 150_000 });
     expect(row('ti_2990').sen.KL).toBe(444_210);
     expect(row('sd_income').sen.KL).toBe(40_000);
-    expect(row('total_income').totalSen).toBe(1_350_000 + 444_210 + 40_000);
+    expect(row('fair_income').label).toBe('Transport Income (1% of fair sales)');
+    expect(row('fair_income').sen).toEqual({ PG: 214_801, KL: 386_400, EM: 0, SG: 0 });
+    expect(row('total_income').totalSen).toBe(1_350_000 + 444_210 + 40_000 + 386_400 + 214_801);
     expect(row('outsource').sen).toEqual({ PG: 1_597_000, KL: 138_000, EM: 0, SG: 507_233 });
     expect(row('petrol').sen).toEqual({ PG: 0, KL: 814_726, EM: 0, SG: 0 });
     expect(row('upkeep').totalSen).toBe(116_200);
@@ -200,10 +203,10 @@ describe('the P&L', () => {
     const inHouse = 814_726 + 116_200 + 252_100 + 1_978_363;
     expect(row('inhouse_total').sen.KL).toBe(inHouse);
     expect(row('total_expense').totalSen).toBe(1_597_000 + 138_000 + 507_233 + inHouse);
-    expect(row('net').sen.PG).toBe(300_000 - 1_597_000);
+    expect(row('net').sen.PG).toBe(300_000 + 214_801 - 1_597_000);
     expect(row('cost_per_do').sen.KL).toBe(Math.round((138_000 + inHouse) / 2));
     expect(row('cost_per_do').sen.EM).toBeNull();
-    expect(row('net_cost_per_do').sen.KL).toBe(Math.round((138_000 + inHouse - 444_210 - 40_000) / 2));
+    expect(row('net_cost_per_do').sen.KL).toBe(Math.round((138_000 + inHouse - 444_210 - 40_000 - 386_400) / 2));
     expect(p.inHousePerTripSen).toBe(Math.round(inHouse / 4));
     expect(p.spreads.map((s) => s.lineId)).toEqual(['u']);
   });

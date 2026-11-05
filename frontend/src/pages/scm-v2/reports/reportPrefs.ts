@@ -84,3 +84,20 @@ export function writeStatementWidths(all: StatementWidths): void {
     else window.localStorage.setItem(WIDTHS_KEY, JSON.stringify(all));
   } catch { /* nothing remembered */ }
 }
+
+/** A Finance table's layout (FinanceGrid): fin-grid-v1:<table> (localStorage),
+ *  its column widths, order, hidden and frozen columns. Null when none is kept. */
+const GRID_KEY = 'fin-grid-v1:';
+export function readGridLayout(table: string): unknown {
+  try {
+    return JSON.parse(window.localStorage.getItem(GRID_KEY + table) ?? 'null') as unknown;
+  } catch {
+    return null;
+  }
+}
+export function writeGridLayout(table: string, layout: unknown): void {
+  try {
+    if (layout == null) window.localStorage.removeItem(GRID_KEY + table);
+    else window.localStorage.setItem(GRID_KEY + table, JSON.stringify(layout));
+  } catch { /* nothing remembered */ }
+}

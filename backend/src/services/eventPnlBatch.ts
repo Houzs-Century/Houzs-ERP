@@ -26,9 +26,23 @@ export async function pnlForProjects(
   companyId: number | null,
   costCategories: readonly string[],
 ): Promise<Map<number, EventPnl>> {
-  const out = new Map<number, EventPnl>();
+  const read = await pnlAndLinesForProjects(env, rows, companyId, costCategories);
+  return read.ok ? new Map([...read.byId].map(([id, x]) => [id, x.pnl] as const)) : new Map();
+}
+
+/** Each event's P&L and the lines it summed (the books in), by event id — the
+ *  Logistics report's Setup & Dismantle opens a fair's rows into these. A failed
+ *  read says why. */
+export type PnlWithLines = { pnl: EventPnl; lines: PnlLine[] };
+export async function pnlAndLinesForProjects(
+  env: Env,
+  rows: ReadonlyArray<{ id: number; brand?: string | null; total_sales?: number | string | null }>,
+  companyId: number | null,
+  costCategories: readonly string[],
+): Promise<{ ok: true; byId: Map<number, PnlWithLines> } | { ok: false; reason: string }> {
+  const out = new Map<number, PnlWithLines>();
   const ids = [...new Set(rows.map((r) => Number(r.id)).filter(Number.isInteger))];
-  if (ids.length === 0) return out;
+  if (ids.length === 0) return { ok: true, byId: out };
   const marks = ids.map(() => "?").join(", ");
   try {
     const [ledger, sales, books, so, rates] = await Promise.all([
@@ -44,7 +58,7 @@ export async function pnlForProjects(
       loadFairSoTotalsMany(env, ids, companyId),
       loadCostRates(env, rows.map((r) => r.brand ?? null)),
     ]);
-    if (!books.ok) return out;
+    if (!books.ok) return { ok: false, reason: books.reason };
     const linesOf = new Map<number, PnlLine[]>();
     for (const l of ledger.results ?? []) {
       const id = Number(l.project_id);
@@ -61,17 +75,21 @@ export async function pnlForProjects(
     for (const r of rows) {
       const id = Number(r.id);
       const applied = applyEventBooks(id, linesOf.get(id) ?? [], { ok: true, legs: books.byProject.get(id) ?? [] }, costCategories);
-      out.set(id, eventPnl({
-        lines: [...applied.lines, ...(salesOf.get(id) ?? [])],
-        booksRows: new Set(applied.books.rows),
-        lumpSales: r.total_sales == null ? null : Number(r.total_sales),
-        so: so.get(id) ?? null,
-        rate: rates.get((r.brand ?? "").trim()) ?? null,
-      }));
+      const lines = [...applied.lines, ...(salesOf.get(id) ?? [])];
+      out.set(id, {
+        lines,
+        pnl: eventPnl({
+          lines,
+          booksRows: new Set(applied.books.rows),
+          lumpSales: r.total_sales == null ? null : Number(r.total_sales),
+          so: so.get(id) ?? null,
+          rate: rates.get((r.brand ?? "").trim()) ?? null,
+        }),
+      });
     }
-    return out;
-  } catch {
-    return new Map();
+    return { ok: true, byId: out };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
 
