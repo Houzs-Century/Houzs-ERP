@@ -6,11 +6,16 @@ function fakeCtx() {
   const runs: Array<{ sql: string; binds: unknown[] }> = [];
   const prepare = (sql: string) => ({
     bind: (...binds: unknown[]) => ({
-      first: async () => ({ id: 7 }),
+      first: async () => ({ id: 7, assr_no: 'ASSR/2610-059', company_id: 1 }),
       run: async () => { runs.push({ sql, binds }); return { meta: { changes: 1 } }; },
     }),
   });
   return { c: { env: { DB: { prepare } }, get: () => undefined }, runs };
+}
+
+function fakeLog(error: { message: string } | null = null) {
+  const rows: Array<Record<string, unknown>> = [];
+  return { rows, sb: { from: () => ({ insert: async (row: Record<string, unknown>) => { rows.push(row); return { error }; } }) } };
 }
 
 describe('writeNonSoFields (assr time slot)', () => {
@@ -27,13 +32,36 @@ describe('writeNonSoFields (assr time slot)', () => {
   // HC-0193: the pickup row and the service-delivery row of one case keep separate statuses.
   it('writes the message status to the named leg column only', async () => {
     const { c, runs } = fakeCtx();
-    await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
-    await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'To Send Driver Info', jobKind: 'delivery' });
+    const { sb } = fakeLog();
+    await writeNonSoFields(c, sb, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
+    await writeNonSoFields(c, sb, 'assr', '7', { deliveryMessageStatus: 'To Send Driver Info', jobKind: 'delivery' });
     expect(runs[0]!.sql).toContain('pickup_message_status = ?');
     expect(runs[0]!.sql).not.toContain('delivery_message_status');
     expect(runs[1]!.sql).toContain('delivery_message_status = ?');
     expect(runs[1]!.sql).not.toContain('pickup_message_status');
     expect((await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send' })).status).toBe(400);
+  });
+
+  it('logs the status pick under the row key, so it outranks an older send', async () => {
+    const { c } = fakeCtx();
+    const { sb, rows } = fakeLog();
+    await writeNonSoFields(c, sb, 'assr', '7', { deliveryMessageStatus: '', jobKind: 'inspection' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ doc_no: 'ASSR/2610-059#inspection', source: 'board-status-pick', company_id: 1, payload: '{"status":null}' });
+  });
+
+  it('a time slot write logs no status pick', async () => {
+    const { c } = fakeCtx();
+    const { sb, rows } = fakeLog();
+    await writeNonSoFields(c, sb, 'assr', '7', { timeRange: '2-4pm', jobKind: 'delivery' });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('reports not saved when the pick cannot be logged', async () => {
+    const { c } = fakeCtx();
+    const { sb } = fakeLog({ message: 'log down' });
+    const r = await writeNonSoFields(c, sb, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'delivery' });
+    expect(r.status).toBe(500);
   });
 
   it('refuses a slot with no leg, and blanks an empty one to null', async () => {
@@ -60,7 +88,7 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
 
   it('saves the pickup and writes nothing to the service job columns', async () => {
     const { c, runs } = closedCtx();
-    const pickup = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
+    const pickup = await writeNonSoFields(c, fakeLog().sb, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
     expect(pickup.status).toBe(200);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.sql).toContain('pickup_message_status = ?');
@@ -71,7 +99,7 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
 
   it('still saves the pickup when the pickup itself happened (actual_pickup_at set)', async () => {
     const { c, runs } = closedCtx({ ...closedCase, actual_pickup_at: '2026-10-20' });
-    const r = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', timeRange: '2-4pm', jobKind: 'customer_pickup' });
+    const r = await writeNonSoFields(c, fakeLog().sb, 'assr', '7', { deliveryMessageStatus: 'Done Send', timeRange: '2-4pm', jobKind: 'customer_pickup' });
     expect(r.status).toBe(200);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.sql).toContain('pickup_message_status = ?');

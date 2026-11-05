@@ -79,6 +79,9 @@ import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useAuth } from '../../auth/AuthContext';
 import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 
+/* The sends that name a date with Confirm / Amend; a Service Case job has its own. */
+const ASSR_DATE_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['delivery', 'amend']);
+
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
   // Single click opens the job panel; double click goes to the document.
@@ -348,8 +351,12 @@ export const DeliveryPlanning = () => {
   const selectedAssrRows = allOrders.filter((o) => isAssr(o) && sel.has(rowIdOf(o)));
   const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
   const openSendModal = (kind: SendMessageKind) => {
-    if (kind === 'assr_arrangement') { setSendKind(kind); setSendingRows(selectedAssrRows); return; }
     const docs = new Set(selectedSoDocNos());
+    /* With only Service Case jobs ticked, Send Now / Amend Now are their date
+       message: Service Arrangement carries the same Confirm / Amend. */
+    if (kind === 'assr_arrangement' || (ASSR_DATE_KINDS.has(kind) && docs.size === 0)) {
+      setSendKind('assr_arrangement'); setSendingRows(selectedAssrRows); return;
+    }
     // Driver Info also goes to a Service Case job: its trip's driver, its date.
     const assr = kind === 'driver_info' ? selectedAssrRows : [];
     if (docs.size === 0 && assr.length === 0) return;
@@ -461,11 +468,15 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {(() => {
-                      /* Only Service Arrangement and Driver Info reach a Service
-                         Case job; the rest read a Sales Order, so with only ASSR
-                         rows ticked they are greyed instead of doing nothing. */
+                      /* Service Arrangement, Driver Info and the two date sends
+                         reach a Service Case job; the rest read a Sales Order, so
+                         with only ASSR rows ticked they are greyed instead of doing
+                         nothing. */
                       const soOnlyIdle = (k: SendMessageKind) =>
-                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedSoDocNos().length === 0;
+                        k !== 'assr_arrangement' && k !== 'driver_info' && !ASSR_DATE_KINDS.has(k) && selectedSoDocNos().length === 0;
+                      // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
+                      const assrLeftOut = (k: SendMessageKind) =>
+                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
                       const renderKind = (
                         [k, label, hint]: readonly [SendMessageKind, string, string],
                         sub: boolean,
@@ -484,7 +495,7 @@ export const DeliveryPlanning = () => {
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                             <MessageSquare size={14} strokeWidth={1.75} /> {label}
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{hint}</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
                         </button>
                       );
                       return (

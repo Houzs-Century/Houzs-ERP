@@ -8,17 +8,16 @@
                            rides one), company-bounded to the caller's companies.
      · a DP / ASSR row's MESSAGE status → scm.dp_orders.delivery_message_status,
                            or public.assr_cases.<leg>_message_status (c.env.DB,
-                           the plane the ASSR board union reads). For a service
-                           case the Service-Arrangement WhatsApp reply still
-                           overlays its own value when the customer has answered,
-                           so a hand-set status shows until then (owner-accepted).
+                           the plane the ASSR board union reads). A service
+                           case's row shows the newest of send / customer tap /
+                           staff pick, so the pick is logged too.
      · a DP / ASSR / project row's REMARKS → scm.dp_orders.remark,
                            public.assr_cases.<leg>_remark, or the project's one
                            projects.delivery_remark (its own column, not the
                            Projects team's schedule_remark). */
 import { scopeToAllowedCompanies, allowedCompaniesSql } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from './assr-board-scope';
+import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_STATUS_PICK_SOURCE } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -107,6 +106,22 @@ export async function writeNonSoFields(
         WHERE id = ? AND archived_at IS NULL`,
     ).bind(...binds, caseId).run();
     if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
+    if (deliveryMessageStatus !== undefined) {
+      // Without this row the leg's last send or tap would hide the pick on the next read, so a failure reports "not saved".
+      const { error } = await sb.from('wa_message_log').insert({
+        batch_id: crypto.randomUUID(),
+        company_id: legCase.company_id ?? null,
+        doc_no: `${legCase.assr_no}#${jobKind}`,
+        phone: '',
+        payload: JSON.stringify({ status: msg }),
+        http_code: null,
+        success: true,
+        error: null,
+        source: ASSR_STATUS_PICK_SOURCE,
+        created_by: c.get('user')?.id ?? null,
+      });
+      if (error) return { status: 500, body: { error: 'update_failed', reason: String(error.message).slice(0, 200) } };
+    }
   } catch (e) {
     return { status: 500, body: { error: 'update_failed', reason: String((e as Error).message).slice(0, 200) } };
   }
