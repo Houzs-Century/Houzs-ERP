@@ -101,6 +101,31 @@ describe('measureAnchoredPanel', () => {
     expect(above.maxHeight).toBe(460);
   });
 
+  test('HC-0170: a field just above the phone keyboard opens UP, not behind the keyboard', () => {
+    // iPhone, Edit Sales Order: innerHeight stays 750 with the keyboard up,
+    // but only 0..315 is visible. Against 750 the City list "had 503px below"
+    // and hung under the keyboard — nothing showed while typing.
+    const pos = measureAnchoredPanel(anchor(207), 750, 280, { top: 0, bottom: 315 });
+    expect(pos.top).toBeUndefined();
+    expect(pos.bottom).toBe(750 - 207 + 4); // still placed in layout coordinates
+    expect(pos.maxHeight).toBe(195);
+  });
+
+  test('a visible band scrolled down the page caps the flipped panel at the band top', () => {
+    // Keyboard up and the page scrolled: the operator sees 300..615 of the
+    // layout viewport. 280px above the field would start at 166, off-screen.
+    const pos = measureAnchoredPanel(anchor(450), 750, 280, { top: 300, bottom: 615 });
+    expect(pos.top).toBeUndefined();
+    expect(pos.maxHeight).toBe(138);
+    expect(750 - pos.bottom! - pos.maxHeight).toBeGreaterThanOrEqual(300);
+  });
+
+  test('without a band it measures the whole viewport, as before', () => {
+    expect(measureAnchoredPanel(anchor(207), 750, 280)).toEqual(
+      measureAnchoredPanel(anchor(207), 750, 280, { top: 0, bottom: 750 }),
+    );
+  });
+
   test('honours the caller cap rather than a house default', () => {
     // The cap is the list's own design — a two-row menu must not open ten rows
     // tall just because the state picker does.
@@ -215,6 +240,27 @@ describe('useAnchoredPanel', () => {
       window.dispatchEvent(new Event('resize'));
     });
     expect(result.current?.top).toBe(232);
+  });
+
+  test('re-measures when the keyboard shrinks the VISUAL viewport after open', () => {
+    // Focus opens the panel first; the keyboard slides up a moment later and
+    // fires only visualViewport resize — window sees nothing.
+    const vv = Object.assign(new EventTarget(), { offsetTop: 0, height: window.innerHeight });
+    // jsdom has no visualViewport at all, so define one rather than spy.
+    Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    try {
+      const { result } = renderHook(() => useAnchoredPanel(stubAnchor(207), true, 280));
+      expect(result.current?.top).toBe(239);
+
+      vv.height = 315;
+      act(() => {
+        vv.dispatchEvent(new Event('resize'));
+      });
+      expect(result.current?.top).toBeUndefined();
+      expect(result.current?.bottom).toBe(window.innerHeight - 207 + 4);
+    } finally {
+      delete (window as { visualViewport?: unknown }).visualViewport;
+    }
   });
 
   test('keeps the SAME object when a scroll did not move the anchor', () => {
