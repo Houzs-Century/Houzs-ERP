@@ -16,7 +16,8 @@
 // 2026-09-18): every top category is In or Out and prints as a section with
 // its own subtotal name, a running subtotal is a bold line, the unassigned
 // groups sit last, then Cash surplus / (deficit), Balance b/f and Balance c/f,
-// and the card money the bank has not received as two memo lines.
+// each split into the banks and the card money not yet in the bank (the Card
+// column: a swipe is Cash In on its own day, owner 2026-11-05).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +25,7 @@ import { BookOpen, Check, ChevronDown, X } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
-import { rpReportPath, useRpReport, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { balanceParts, CARD_COLUMN, rpReportPath, useRpReport, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { mergeColumns, rpLines } from '../../vendor/scm/lib/report-monthly';
@@ -133,11 +134,13 @@ export function cashFlowLines(r: RpReport, codes: readonly string[]): StatementL
   const surplusPer = Object.fromEntries(r.columns.map((c) => [c.code, (t.receipts[c.code] ?? 0) - (t.payments[c.code] ?? 0)]));
   const surplus = t.receiptsTotalSen - t.paymentsTotalSen;
   out.push({ id: 'net:surplus', label: 'Cash surplus / (deficit)', kind: 'net', depth: 0, cells: cells(surplusPer, surplus, pctOf(surplus, t.receiptsTotalSen)) });
+  /* Each balance in two parts, the banks and the card money not yet in the bank (owner 2026-11-05). */
+  const parts = (id: string, per: Record<string, number>, total: number): StatementLine[] =>
+    balanceParts(r, id, per, total).map((p) => ({ id: p.id, label: p.label, kind: 'row', depth: 1, cells: cells(p.per, p.sen, null) }));
   out.push({ id: 'bal:opening', label: 'Balance b/f', kind: 'total', depth: 0, cells: cells(r.opening, t.openingTotalSen, null) });
+  out.push(...parts('bal:opening', r.opening, t.openingTotalSen));
   out.push({ id: 'bal:closing', label: 'Balance c/f', kind: 'net', depth: 0, cells: cells(t.closing, t.closingTotalSen, null) });
-  /* The card money the bank has not received (owner 2026-09-28): the columns cannot carry it, the memo can. */
-  out.push({ id: 'memo:card-takings', label: 'Card takings this period (swiped, not yet in the bank)', kind: 'memo', depth: 0, cells: { total: { amountSen: r.card.takingsSen, pct: null } } });
-  out.push({ id: 'memo:card-transit', label: 'Card money in transit at period end', kind: 'memo', depth: 0, cells: { total: { amountSen: r.card.transitSen, pct: null } } });
+  out.push(...parts('bal:closing', t.closing, t.closingTotalSen));
   return out;
 }
 
@@ -239,7 +242,7 @@ export const ReceiptsPaymentsTab = () => {
         <ReportTool label="Columns"><Segmented options={VIEWS} value={view} onChange={setView} label="Columns" /></ReportTool>
         {view === 'total' && money.length > 0 && (
           <ReportTool label="Accounts">
-            <AccountsPicker accounts={money.map((a) => ({ code: a.account_code, name: a.account_name }))} ticked={ticked} onTicked={setTicked} />
+            <AccountsPicker accounts={[...money.map((a) => ({ code: a.account_code, name: a.account_name })), ...(report?.columns.filter((c) => c.code === CARD_COLUMN) ?? [])]} ticked={ticked} onTicked={setTicked} />
           </ReportTool>
         )}
         {view === 'month' && (

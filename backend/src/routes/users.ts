@@ -56,10 +56,12 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   AliasMailboxCollisionError,
   changePersonalMailboxAliasAtomically,
+  closePersonalMailOnDisable,
   companyMailboxDomain,
   isPersonalAddressTaken,
   markMailHostPending,
   provisionPersonalMailbox,
+  reopenPersonalMailbox,
   type PersonalMailboxAliasChange,
 } from "../lib/mail-provision";
 
@@ -1194,6 +1196,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
       email_alias: users.email_alias,
       name: users.name,
       department_id: users.department_id,
+      status: users.status,
     })
     .from(users)
     .where(eq(users.id, id))
@@ -1502,11 +1505,15 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
   if (body.status === "disabled") {
     await bustUserSessions(c.env, id);
     await db.delete(sessions).where(eq(sessions.user_id, id));
+    await closePersonalMailOnDisable(c.env.DB, id);
   } else if (set.role_id != null) {
     // Role change keeps the sessions alive but leaves the cached AuthUser's
     // permissions stale for up to 60s. Bust the caches so the next request
     // re-hydrates the new role/permissions.
     await bustUserSessions(c.env, id);
+  }
+  if (body.status === "active" && current[0].status === "disabled") {
+    await reopenPersonalMailbox(c.env.DB, id);
   }
 
   // Keep the Sales Team roster in lockstep with the user's PRIMARY department.
@@ -1616,6 +1623,7 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   // (both scopes) so nothing rides the 300s TTL after they are gone.
   await bustBannerForUser(c.env, id);
   await db.delete(sessions).where(eq(sessions.user_id, id));
+  await closePersonalMailOnDisable(c.env.DB, id);
 
   // Hard-delete path — either explicit ?hard=1 or never-joined user.
   if (hard || target.status === "invited") {

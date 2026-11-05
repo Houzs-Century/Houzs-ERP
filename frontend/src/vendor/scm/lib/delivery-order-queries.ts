@@ -20,6 +20,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { companyHeaderFor } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { invalidateSoLists } from './sales-order-queries';
@@ -237,15 +238,21 @@ export function doListSearchParams(f: { status?: string; q?: string; sort?: stri
   return usp;
 }
 
-export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[]; from?: string; to?: string; dateBy?: DoDateBy }) {
-  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies, from, to, dateBy } = params;
+/* `companyCode` PINS the read to a SPECIFIC company for this call — the driver
+   run-sheet (a cross-company queue) resolves a stop's DO in the stop's OWN
+   company, not the tab's active one, so a 2990 DO is found even while the tab
+   reads HOUZS. Omitted everywhere else (the desktop list), so those reads keep
+   the tab's active company exactly as before. It joins the queryKey so a
+   HOUZS-scoped and a 2990-scoped read of the same q/page never share a cache. */
+export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[]; from?: string; to?: string; dateBy?: DoDateBy; companyCode?: string | null }) {
+  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies, from, to, dateBy, companyCode } = params;
   const usp = doListSearchParams({ status, q, sort, debtorNames, currencies, from, to, dateBy });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
     enabled,
-    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? []), from ?? '', to ?? '', dateBy ?? ''],
-    queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
+    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? []), from ?? '', to ?? '', dateBy ?? '', companyCode ?? ''],
+    queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal, headers: companyHeaderFor(companyCode) }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
     retry: retryUnlessClientError,
@@ -253,9 +260,12 @@ export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: numb
   });
 }
 
-export const useMfgDeliveryOrderDetail = (id: string | null) => useQuery({
-  queryKey: ['mfg-delivery-order-detail', id],
-  queryFn: () => authedFetch<{ deliveryOrder: any; items: any[] }>(`/delivery-orders-mfg/${id}`),
+/* `companyCode` — see useMfgDeliveryOrdersPaged. The POD screen opens a stop's DO
+   from the cross-company run-sheet, so it reads the detail in the stop's own
+   company; the desktop DO detail omits it and stays on the active company. */
+export const useMfgDeliveryOrderDetail = (id: string | null, companyCode?: string | null) => useQuery({
+  queryKey: ['mfg-delivery-order-detail', id, companyCode ?? ''],
+  queryFn: () => authedFetch<{ deliveryOrder: any; items: any[] }>(`/delivery-orders-mfg/${id}`, { headers: companyHeaderFor(companyCode) }),
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
@@ -328,9 +338,14 @@ export type DoDeliveryEvidence = {
 export const useUpdateMfgDeliveryOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status, evidence }: { id: string; status: string; evidence?: DoDeliveryEvidence }) =>
+    /* `companyCode` PINS this status write to a SPECIFIC company — the driver
+       run-sheet (cross-company queue) starts/delivers a stop's DO in the stop's
+       OWN granted company, not the tab's active one, so a 2990 DO advances even
+       while the tab reads HOUZS. Omitted by the desktop callers, which keep the
+       active company. */
+    mutationFn: ({ id, status, evidence, companyCode }: { id: string; status: string; evidence?: DoDeliveryEvidence; companyCode?: string | null }) =>
       authedFetch(`/delivery-orders-mfg/${id}/status`, {
-        method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }),
+        method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }), headers: companyHeaderFor(companyCode),
       }),
     onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
     onError: (err) => {
