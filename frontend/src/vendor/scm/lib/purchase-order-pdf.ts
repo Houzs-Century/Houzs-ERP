@@ -207,6 +207,17 @@ export function poUrgencyLabel(
    assumption was wrong — real lines store the slot flat, so nothing ever drew.)
    Returns null for non-sofa / malformed / unknown-module lines. Never throws. */
 const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.length - a.length);
+/* Maintenance names the consoles "Console Fabric" / "Console Wooden" and their
+   SKUs carry that upper-case ("9050-CONSOLE WOODEN"), so the exact "Console"
+   suffix never matched and the piece fell off the layout (HC-0184,
+   HC-PO-2610-438). Any trailing CONSOLE word draws as the one Console module. */
+const CONSOLE_TAIL_RE = /(?:^|[-\s])CONSOLE(?:\s+[A-Z]+)*$/i;
+function sofaModuleSuffixOf(code: string): { moduleId: string; suffixLen: number } | null {
+  const exact = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id));
+  if (exact) return { moduleId: exact, suffixLen: exact.length };
+  const tail = CONSOLE_TAIL_RE.exec(code);
+  return tail ? { moduleId: 'Console', suffixLen: tail[0].length } : null;
+}
 function sofaCellFromLine(
   variants: Record<string, unknown> | null | undefined,
   itemCode: string | null | undefined,
@@ -219,8 +230,7 @@ function sofaCellFromLine(
   if (typeof y !== 'number' || !Number.isFinite(y)) return null;
   // Module id = the SOFA_MODULES id the item_code ENDS with (longest match):
   // "XAMMAR-2A(RHF)" → "2A(RHF)".
-  const code = (itemCode ?? '').trim();
-  const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
+  const moduleId = sofaModuleSuffixOf((itemCode ?? '').trim())?.moduleId ?? null;
   if (!moduleId || !findModule(moduleId)) return null;
   const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
   const groupKey = typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : '';
@@ -249,15 +259,16 @@ function sofaModuleFromLine(
   // Preferred: the SKU code's longest known-module suffix.
   const code = (itemCode ?? '').trim();
   if (code) {
-    const suffix = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id));
-    if (suffix && findModule(suffix)) {
+    const suffix = sofaModuleSuffixOf(code);
+    if (suffix && findModule(suffix.moduleId)) {
       // Base model = the code minus the module suffix (drop a trailing '-').
-      const base = code.slice(0, code.length - suffix.length).replace(/[-\s]+$/, '');
-      return { moduleId: suffix, baseModel: base };
+      const base = code.slice(0, code.length - suffix.suffixLen).replace(/[-\s]+$/, '');
+      return { moduleId: suffix.moduleId, baseModel: base };
     }
   }
   // Fallback: the trailing "MODULE(HAND)" token of the name / description.
   const text = (fallbackText ?? '').trim();
+  if (CONSOLE_TAIL_RE.test(text)) return { moduleId: 'Console', baseModel: '' };
   const m = text.match(SOFA_MODULE_TOKEN_RE);
   const token = m?.[1]?.trim();
   if (token && findModule(token)) {
@@ -310,6 +321,7 @@ async function renderPurchaseOrderInto(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
   const docTitle = opts?.docTitle ?? 'PURCHASE ORDER';
+  const firstPage = doc.getNumberOfPages();
 
   await ensureBrandingForActiveCompany();
 
@@ -909,6 +921,23 @@ async function renderPurchaseOrderInto(
   doc.text(`Authorised Signature (${COMPANY.name})`, margin + 2,            lastY + 21);
   doc.text('Supplier Acknowledgement',               margin + sigW + 8 + 2, lastY + 21);
   lastY += 28;
+
+  /* 2990-0028 (Sim 2026-10-29): a cancelled PO's paper must read as void, on
+     every one of its pages, so a re-sent copy cannot pass for a live order. */
+  if (header.status === 'CANCELLED') {
+    const pageH = doc.internal.pageSize.getHeight();
+    for (let p = firstPage; p <= doc.getNumberOfPages(); p += 1) {
+      doc.setPage(p);
+      doc.saveGraphicsState();
+      doc.setGState(doc.GState({ opacity: 0.14 }));
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(72);
+      doc.setTextColor(180, 30, 30);
+      doc.text('CANCELLED', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
+      doc.restoreGraphicsState();
+      doc.setTextColor(0, 0, 0);
+    }
+  }
 
   return { supplierName: s.name ?? 'supplier' };
 }

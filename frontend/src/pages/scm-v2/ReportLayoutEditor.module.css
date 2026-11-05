@@ -1,0 +1,126 @@
+/* Finance › Reports › Layout (the owner's Claude Design, batch 6 §5.12;
+   Finance-1a-Reports template 174–195): the editor stands in place of the
+   report — its head with the actions, the question on an unsaved Close, the
+   note, then the tree with a tick per company. Colours from
+   finance/finance-ui.module.css. */
+
+.card {
+  background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px;
+  box-shadow: var(--fin-card-shadow); overflow: hidden;
+}
+
+/* ── Head: layers icon, title, Unsaved changes, the saved line; actions right. ── */
+.head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 12px 16px; border-bottom: 1px solid var(--fin-rule); }
+.headText { flex: 1; min-width: 240px; }
+.title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; color: var(--fin-ink); }
+.titleIcon { flex: none; color: var(--fin-petrol); }
+.sub { margin-top: 2px; font-size: 12px; color: var(--fin-muted); }
+.tag {
+  display: inline-flex; align-items: center; height: 20px; box-sizing: border-box; padding: 0 7px; border-radius: 4px;
+  background: var(--fin-warn-bg); color: var(--fin-warn-fg); font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn {
+  height: 30px; padding: 0 12px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  color: var(--fin-text); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--fin-paper); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btnSolid, .btnSolid:hover:not(:disabled) { border-color: var(--fin-petrol); background: var(--fin-petrol); color: #ffffff; }
+.btnSolid:hover:not(:disabled) { background: var(--fin-petrol-ink); }
+.btnDanger, .btnDanger:hover:not(:disabled) { border-color: var(--fin-late-fg); background: var(--fin-late-fg); color: #ffffff; padding: 0 13px; }
+
+/* ── The question on an unsaved Close. ── */
+.ask {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 16px;
+  background: var(--fin-warn-bg); border-bottom: 1px solid #e5d6b3; font-size: 12.5px; color: #5a3a14;
+}
+.askIcon { flex: none; color: var(--fin-brass); }
+.askText { flex: 1; min-width: 240px; line-height: 1.45; }
+
+.note { padding: 8px 16px; font-size: 12px; line-height: 1.5; color: var(--fin-muted); border-bottom: 1px solid var(--fin-rule-soft); }
+.problem { padding: 8px 16px; font-size: 12.5px; color: var(--fin-late-fg); background: var(--fin-late-bg); border-bottom: 1px solid var(--fin-rule-soft); }
+.status { padding: 14px 16px; font-size: 12.5px; color: var(--fin-muted); }
+
+/* ── The tree. ── */
+.scroll { overflow-x: auto; scrollbar-width: thin; }
+.table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 13px; color: var(--fin-ink); }
+.table th {
+  padding: 8px; background: var(--fin-paper); border-bottom: 1px solid var(--fin-rule);
+  font-size: 12px; font-weight: 600; color: var(--fin-text); text-align: left; white-space: nowrap;
+}
+.table td { height: 34px; padding: 0 8px; border-top: 1px solid var(--fin-rule-soft); vertical-align: middle; }
+.table th:first-child, .table td:first-child { padding-left: 16px; }
+.table th:last-child, .table td:last-child { padding-right: 16px; }
+.center { text-align: center !important; }
+.right { text-align: right !important; }
+.shrink { width: 1%; white-space: nowrap; }
+
+.block td { height: 38px; background: var(--fin-row); border-top: 1px solid var(--fin-rule); font-weight: 700; }
+.blockTools { display: inline-flex; align-items: center; gap: 12px; }
+.category td { font-weight: 600; }
+.subtotal td { background: var(--fin-row); font-weight: 600; font-style: italic; }
+.spareHead td { height: 30px; font-size: 12px; font-style: italic; color: var(--fin-muted); }
+.spare td { color: var(--fin-text); }
+.empty td { height: 30px; font-size: 12px; color: var(--fin-muted); }
+.dragging { opacity: 0.45; }
+.dropOn { box-shadow: inset 0 0 0 1.5px var(--fin-petrol); }
+
+.codeCell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.code { min-width: 68px; font-size: 12px; font-weight: 400; color: var(--fin-detail); font-variant-numeric: tabular-nums; }
+.grip { flex: none; display: inline-grid; place-items: center; color: var(--fin-muted); cursor: grab; }
+.chev {
+  flex: none; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--fin-detail); cursor: pointer;
+}
+.chev:hover { background: var(--fin-rule); }
+.chevGap { flex: none; width: 18px; }
+.name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.subText { font-size: 11.5px; font-weight: 400; font-style: normal; color: var(--fin-muted); }
+.addLink {
+  padding: 0; border: 0; background: transparent; color: var(--fin-petrol); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+}
+.addLink:hover { color: var(--fin-petrol-ink); text-decoration: underline; }
+
+/* Renamed in place: the name, the subtotal line (Cash flow's sides), Done. */
+.rename { display: inline-flex; align-items: center; gap: 6px; }
+.renName, .renTotal {
+  width: 190px; height: 28px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-input); border-radius: 6px;
+  font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none;
+}
+.renName { border-color: var(--fin-petrol); font-weight: 600; }
+.renTotal:focus { border-color: var(--fin-petrol); }
+.done {
+  height: 28px; padding: 0 10px; border: 1px solid var(--fin-petrol); border-radius: 6px; background: var(--fin-petrol);
+  color: #ffffff; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.done:hover { background: var(--fin-petrol-ink); }
+
+.select {
+  height: 26px; padding: 0 6px; border: 1px solid var(--fin-input); border-radius: 6px; background: var(--fin-surface);
+  font: 400 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text);
+}
+.dirText { font-size: 12px; font-weight: 400; font-style: normal; color: var(--fin-detail); }
+.tick { width: 16px; height: 16px; margin: 0; accent-color: var(--fin-petrol); cursor: pointer; vertical-align: middle; }
+
+.icons { display: inline-flex; align-items: center; gap: 2px; }
+.iconBtn {
+  width: 24px; height: 24px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 5px;
+  background: transparent; color: var(--fin-detail); cursor: pointer;
+}
+.iconBtn:hover { background: var(--fin-rule-soft); color: var(--fin-ink); }
+.iconBtnDanger:hover { background: var(--fin-late-bg); color: var(--fin-late-fg); }
+.place {
+  height: 26px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  color: var(--fin-text); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.place:hover:not(:disabled) { background: var(--fin-paper); }
+.place:disabled { opacity: 0.5; cursor: default; }
+
+/* A picked-up row on its way (owner 2026-11-05): the bar stays above the tree while the page scrolls. */
+.parked {
+  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
+  margin: 0 16px 8px; padding: 8px 12px; border: 1px solid var(--fin-petrol-line, #b9d6d1); border-radius: 8px;
+  background: var(--fin-petrol-pale, #e1efed); color: var(--fin-petrol-ink, #0c3f39); font-size: 12.5px;
+}

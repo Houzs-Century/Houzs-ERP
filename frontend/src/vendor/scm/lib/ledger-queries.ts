@@ -15,6 +15,8 @@ export type LedgerLine = {
   lineId: string;
   date: string;
   jeNo: string;
+  /** The entry's id — what its card opens by (absent from an older server). */
+  jeId?: string | null;
   journal: LedgerJournal;
   counter: { code: string; name: string; more: number } | null;
   doc: string | null;

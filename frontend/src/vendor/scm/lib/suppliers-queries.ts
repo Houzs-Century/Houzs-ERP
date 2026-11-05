@@ -111,7 +111,7 @@ export type SupplierRow = {
  *  Stored cell type is `number` (centi); we widen to `unknown` on the wire
  *  because the column is JSONB and the server is the source of truth.
  */
-export type SofaPriceMatrix     = Record<string, { P1?: number; P2?: number; P3?: number }>;
+export type SofaPriceMatrix     = Record<string, { P1?: number; P2?: number; P3?: number; P4?: number }>;
 export type BedframePriceMatrix = { P1?: number; P2?: number };
 export type PriceMatrix         = SofaPriceMatrix | BedframePriceMatrix | Record<string, unknown>;
 
@@ -240,7 +240,7 @@ export type PoHeaderRow = PoHoldFields & {
       and the Worker deploy independently, so a freshly-shipped bundle can talk
       to a worker that still sends it — the column renders those as plain,
       un-linkable chips instead of blank ones. */
-  transfer_to_grns?: Array<{ id: string; grnNumber: string } | string>;
+  transfer_to_grns?: Array<{ id: string; grnNumber: string; receivedAt?: string | null } | string>;
 };
 
 export type PoItemSummary = {
@@ -402,6 +402,17 @@ export function useSuppliersPaged(params: {
     staleTime: 30_000,
     retry: retryUnlessClientError,
     retryDelay: 800,
+  });
+}
+
+/* Dated cost rows for one supplier's products (PO-date pricing on a from-scratch PO). */
+export function useSupplierPriceHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['supplier-price-history', id],
+    queryFn: () => authedFetch<{ history: Array<{ item_code: string; effective_from: string; created_at: string; unit_price_sen: number | null; price_matrix: unknown }> }>(`/suppliers/${id}/price-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
   });
 }
 

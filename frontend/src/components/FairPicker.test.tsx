@@ -22,11 +22,15 @@
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { FairOptionsResponse } from '../vendor/scm/lib/fair-options-queries';
+import type { FairBoothRequest, FairBoothResponse, FairOptionsResponse } from '../vendor/scm/lib/fair-options-queries';
 
 /* Swappable per test: most cases use the 2026-09-13 list; the edit-mode cases use
    the list production served for HC-SO-2609-071's own date. */
-const fixture = vi.hoisted(() => ({ data: null as FairOptionsResponse | null }));
+const fixture = vi.hoisted(() => ({
+  data: null as FairOptionsResponse | null,
+  booth: null as FairBoothResponse | null,
+  boothAsked: [] as Array<FairBoothRequest | null>,
+}));
 
 const DATA: FairOptionsResponse = {
   date: '2026-09-13',
@@ -85,11 +89,15 @@ const DATA_2026_10_MID_VALLEY: FairOptionsResponse = {
 vi.mock('../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../vendor/scm/lib/fair-options-queries')>()),
   useFairOptions: () => ({ data: fixture.data ?? DATA, isLoading: false, isError: false }),
+  useFairBooth: (req: FairBoothRequest | null) => {
+    fixture.boothAsked.push(req);
+    return { data: fixture.booth ?? undefined };
+  },
 }));
 
 import { FairDayPicker, FairPicker, type FairPickValue } from './FairPicker';
 
-afterEach(() => { fixture.data = null; });
+afterEach(() => { fixture.data = null; fixture.booth = null; fixture.boothAsked = []; });
 
 function renderPicker(value: FairPickValue, soDate = '2026-09-13') {
   const onChange = vi.fn();
@@ -366,6 +374,72 @@ describe('FairPicker — the DAY starts empty whenever the event changes', () =>
     const { onChange } = renderPicker({ venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', day: '2026-09-12' });
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
     expect(onChange).toHaveBeenCalledWith({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null, day: null });
+  });
+});
+
+describe('FairPicker — the BOOTH only when the system cannot tell (rule 9, HC-0161)', () => {
+  /* HC-SO-2610-323: a pillow-only scan at MLE @ MID VALLEY, three booths. */
+  const MLE: FairPickValue = { venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-09-25', endDate: '2026-09-27', day: '2026-09-26' };
+  const ASK: FairBoothResponse = {
+    ask: true,
+    booths: [{ projectId: 313, brand: 'AKEMI' }, { projectId: 316, brand: 'ERGOTEX' }, { projectId: 314, brand: 'ZANOTTI' }],
+    message: 'MID VALLEY — MLE (09/25 - 09/27) has booths for AKEMI, ZANOTTI, ERGOTEX, and nothing on this order has a brand that picks one. Pick the booth this order belongs to.',
+  };
+  const renderAsk = (value: FairPickValue) => {
+    fixture.data = DATA_2026_10_MID_VALLEY;
+    const onChange = vi.fn();
+    render(<FairPicker value={value} soDate="2026-10-08" onChange={onChange} boothFor={{ docNo: 'HC-SO-2610-323', items: [] }} />);
+    return { onChange };
+  };
+  const boothSelect = () => screen.queryByLabelText('Booth') as HTMLSelectElement | null;
+
+  it('asks the server about the picked event and the order', () => {
+    renderAsk(MLE);
+    expect(fixture.boothAsked.at(-1)).toEqual({
+      fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-09-25', fairEnd: '2026-09-27', docNo: 'HC-SO-2610-323', items: [],
+    });
+  });
+
+  it('nothing is asked for a place alone, or where the form never asks', () => {
+    renderAsk({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null, day: null });
+    expect(fixture.boothAsked.at(-1)).toBeNull();
+    fixture.boothAsked = [];
+    renderPicker(MLE);
+    expect(fixture.boothAsked.at(-1)).toBeNull();
+  });
+
+  it('the brand or the keyer decided: no Booth pick', () => {
+    fixture.booth = { ask: false, booths: [], message: null };
+    renderAsk(MLE);
+    expect(boothSelect()).toBeNull();
+  });
+
+  it('undecided: every booth of the event, named by brand, and why it asks', () => {
+    fixture.booth = ASK;
+    renderAsk(MLE);
+    expect([...boothSelect()!.options].map((o) => o.textContent)).toEqual(['— pick the booth —', 'AKEMI booth', 'ERGOTEX booth', 'ZANOTTI booth']);
+    expect(screen.getByRole('note').textContent).toContain('Pick the booth this order belongs to.');
+  });
+
+  it('picking a booth keeps the event and its day', () => {
+    fixture.booth = ASK;
+    const { onChange } = renderAsk(MLE);
+    fireEvent.change(boothSelect()!, { target: { value: '313' } });
+    expect(onChange).toHaveBeenCalledWith({ ...MLE, booth: 313 });
+  });
+
+  it('a picked booth reads back, and the line asking for it goes', () => {
+    fixture.booth = ASK;
+    renderAsk({ ...MLE, booth: 316 });
+    expect(boothSelect()!.value).toBe('316');
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
+  it('another event drops the booth', () => {
+    fixture.booth = ASK;
+    const { onChange } = renderAsk({ ...MLE, booth: 316 });
+    fireEvent.change(fairSelect(), { target: { value: 'fair:mid valley|bighome|2026-10-02|2026-10-04' } });
+    expect(onChange.mock.calls.at(-1)?.[0]).not.toHaveProperty('booth');
   });
 });
 

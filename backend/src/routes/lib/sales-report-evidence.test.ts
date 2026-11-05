@@ -23,6 +23,7 @@ const EVIDENCE = buildReportEvidence(
     [600, [note(6, "1. HC13999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" })]],
   ]),
   new Map([[307, "2026-10-09"], [2260, "2026-10-15"], [500, "2026-10-12"], [501, "2026-10-12"], [600, "2026-10-12"]]),
+  new Map(),
 );
 
 describe("reportVerdict", () => {
@@ -52,11 +53,15 @@ describe("reportVerdict", () => {
 describe("loadReportEvidence", () => {
   test("reads the chat of this company's fairs, by start day or by id, and parses the reports", async () => {
     const asked: Array<[string, unknown[]]> = [];
+    /* Two queries per invocation now (owner 2026-10-30): chat notes, then
+       attendee emails. The mock returns the note row for the notes query and
+       an empty attendee set — the notes test already covers that author. */
     const db = {
       prepare: (sql: string) => ({
         bind: (...vals: unknown[]) => ({
           all: async <T>() => {
             asked.push([sql, vals]);
+            if (/project_sales_attendees/.test(sql)) return { results: [] as unknown as T[] };
             return { results: [{ id: 1, project_id: 307, note: "10/10\n1. HC13315 RM11000 Luis", created_at: "2026-10-10 22:00:00", start_date: "2026-10-09", ...ummu }] as unknown as T[] };
           },
         }),
@@ -65,10 +70,16 @@ describe("loadReportEvidence", () => {
     const bySince = await loadReportEvidence(db, " AND p.company_id = 1", { since: "2026-08-01" });
     expect(bySince.get("HC13315")).toEqual([{ projectId: 307, reportDate: "2026-10-10", amountSen: 1100000, salesperson: "Luis" }]);
     await loadReportEvidence(db, " AND p.company_id = 1", { projectIds: [307, 307, 2260] });
-    expect(asked.map(([sql, vals]) => [/p\.start_date >= \?/.test(sql) || /p\.id IN \(\?, \?\)/.test(sql), /AND p\.company_id = 1$/.test(sql), vals])).toEqual([
+    /* The relevant queries are the two notes queries (one per invocation); the
+       attendee queries carry the same scope and bindings. */
+    const noteCalls = asked.filter(([sql]) => !/project_sales_attendees/.test(sql));
+    expect(noteCalls.map(([sql, vals]) => [/p\.start_date >= \?/.test(sql) || /p\.id IN \(\?, \?\)/.test(sql), /AND p\.company_id = 1$/.test(sql), vals])).toEqual([
       [true, true, ["2026-08-01"]],
       [true, true, [307, 2260]],
     ]);
+    /* Every notes query is paired with an attendees query that shares its scope. */
+    const attendeeCalls = asked.filter(([sql]) => /project_sales_attendees/.test(sql));
+    expect(attendeeCalls.length).toBe(noteCalls.length);
     expect(await loadReportEvidence(db, "", { projectIds: [] })).toEqual(new Map());
   });
 });

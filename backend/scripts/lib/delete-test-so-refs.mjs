@@ -53,7 +53,19 @@ export const AUDIT_KEEP = new Set([
      DELETE the portal needs to drop it, so the queue must survive the delete. */
   "scm.mfg_so_item_deletions",
   "scm.venture_portal_outbox",
+  /* The Delivery Planning board's "what changed" feed (migration 20261027T1000):
+     a trigger on the order's tables inserts one row per write and prunes rows
+     older than 2 days itself. Deleting the order FIRES that trigger, so a new
+     row naming the document appears the moment it goes - and the board needs
+     it to drop the order. Deleting these by hand is both pointless and wrong. */
+  "scm.delivery_board_changes",
 ]);
+
+/* Deleted by the script's own explicit step, not by CHILD_TABLES, because the
+   rule is not "delete everything": a voucher already USED on another order
+   refuses, and one redeemed here is handed back (RESTORE_REDEEMED). Not
+   unclassified - just classified by code. */
+export const PWP_TABLE = "scm.pwp_codes";
 
 /* A hit in one of these is a real downstream DOCUMENT and refuses the run. The
    two that `delete-test-so.mjs` also probes by name are listed here as well, so
@@ -77,7 +89,7 @@ export const UNCLASSIFIED = "unclassified";
 
 /** Which bucket a swept reference falls in. `childTables` is a Set of qualified names. */
 export function classifyReference(table, childTables) {
-  if (childTables.has(table)) return CHILD;
+  if (childTables.has(table) || table === PWP_TABLE) return CHILD;
   if (AUDIT_KEEP.has(table)) return AUDIT;
   if (DOWNSTREAM_TABLES.has(table)) return DOWNSTREAM;
   return UNCLASSIFIED;
@@ -193,4 +205,54 @@ export function controlDrift(before, after) {
 
 function firstLine(e) {
   return String(e && e.message ? e.message : e).split(/\r?\n/)[0];
+}
+
+/**
+ * Posted money that deleting the order would strand. READ-ONLY; the caller
+ * refuses on any entry. Returns plain sentences.
+ *
+ * The script deletes the order's payment, its Official Receipt and its Deposit
+ * Invoice. None of those own a journal, but the journals NAME them:
+ *   SOPAY  source_doc_no = the payment's id
+ *   DI     source_doc_no = the deposit invoice's number
+ * A live (not reversed) entry would keep posting Dr/Cr for a payment that no
+ * longer exists. The app's own delete-payment path reverses these first
+ * (acc/deposit-invoices.ts cancelDepositInvoice, acc/payments.ts); this script
+ * does not, so it stops and says so. Also stops on a FORMAL receipt (already in
+ * the customer's hand - the app cancels it, never deletes it) and on a deposit
+ * invoice with a credit note against it.
+ */
+export async function ledgerBlockers(db, docNo) {
+  const has = async (t) => Boolean((await db.unsafe(`SELECT to_regclass('${t}') AS t`))[0].t);
+  const out = [];
+  const payIds = (await has("scm.mfg_sales_order_payments"))
+    ? (await db`SELECT id::text AS id FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${docNo}`).map((r) => r.id)
+    : [];
+  const diNos = [];
+  if (await has("scm.acc_official_receipts")) {
+    for (const r of await db`
+      SELECT or_number FROM scm.acc_official_receipts
+       WHERE lower(btrim(doc_no)) = lower(btrim(${docNo})) AND status = 'FORMAL'`) {
+      out.push(`Official Receipt ${r.or_number} is FORMAL (issued to the customer). Cancel it on the Official Receipts screen first.`);
+    }
+  }
+  if (await has("scm.acc_deposit_invoices")) {
+    for (const r of await db`
+      SELECT di_number, credit_note_id FROM scm.acc_deposit_invoices WHERE so_doc_no = ${docNo}`) {
+      diNos.push(r.di_number);
+      if (r.credit_note_id) out.push(`Deposit invoice ${r.di_number} has a credit note against it.`);
+    }
+  }
+  if (await has("scm.journal_entries") && (payIds.length || diNos.length)) {
+    const live = await db`
+      SELECT je_no, source_type, source_doc_no FROM scm.journal_entries
+       WHERE reversed IS NOT TRUE
+         AND ((source_type = 'SOPAY' AND source_doc_no = ANY(${payIds}::text[]))
+           OR (source_type = 'DI' AND source_doc_no = ANY(${diNos}::text[])))
+       ORDER BY je_no`;
+    for (const j of live) {
+      out.push(`journal ${j.je_no} (${j.source_type} ${j.source_doc_no}) is still posted. Delete the payment on the order screen first - that reverses it.`);
+    }
+  }
+  return out;
 }

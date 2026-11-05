@@ -153,12 +153,13 @@ const BINDING_COLS =
    to translate to a 400.
 
    Shapes (centi int, ≥0):
-     SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n }, ... }
+     SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n, "P4"?: n }, ... }
      BEDFRAME  → { "P1"?: n, "P2"?: n }
      MATTRESS / ACCESSORY / SERVICE → must be null/undefined (single price
                                        flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
+const SOFA_TIER_KEYS = new Set(['P1', 'P2', 'P3', 'P4']);
 export function validatePriceMatrix(
   raw: unknown,
   category: string | null,
@@ -208,7 +209,7 @@ export function validatePriceMatrix(
       }
       const tiers: Record<string, number> = {};
       for (const [tier, val] of Object.entries(inner as Record<string, unknown>)) {
-        if (!TIER_KEYS.has(tier)) {
+        if (!SOFA_TIER_KEYS.has(tier)) {
           throw new Error(`invalid_price_matrix:sofa_tier:${height}.${tier}`);
         }
         if (val === null || val === undefined || val === '') continue;
@@ -872,6 +873,23 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
 
   if (rows.length === 0) return c.json({ inserted: 0, skipped });
 
+  /* One main supplier per item (owner 2026-10-31): a batch row arriving as main
+     demotes the item's other main, as the single create does. Without it a batch
+     import left 83 items with two or three mains. */
+  for (const kind of MATERIAL_KINDS) {
+    const mains = rows.filter((r) => r.is_main_supplier && r.material_kind === kind).map((r) => String(r.item_code));
+    for (let i = 0; i < mains.length; i += 100) {
+      const { error: demoteErr } = await pgrestIn(supabase
+        .from('supplier_material_bindings')
+        .update({ is_main_supplier: false })
+        .eq('material_kind', kind)
+        .eq('is_main_supplier', true)
+        .eq('company_id', activeCompanyId(c))
+        .neq('supplier_id', supplierId), 'item_code', mains.slice(i, i + 100));
+      if (demoteErr) return c.json({ error: 'demote_failed', reason: demoteErr.message }, 500);
+    }
+  }
+
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .insert(stampCompany(rows, c))
@@ -1176,6 +1194,24 @@ export const listBindingPriceChangesHandler = async (c: any) => {
   });
 };
 suppliers.get('/:id/bindings/:bindingId/price-changes', listBindingPriceChangesHandler);
+
+// GET /suppliers/:id/price-history — every dated cost row for the supplier's mfg
+// products, so a from-scratch PO can price each line as of the PO date.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const listSupplierPriceHistoryHandler = async (c: any) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data, error } = await c.get('supabase')
+    .from('supplier_binding_price_history')
+    .select('item_code, effective_from, unit_price_sen, price_matrix, created_at')
+    .eq('company_id', co.companyId)
+    .eq('supplier_id', c.req.param('id'))
+    .eq('material_kind', 'mfg_product')
+    .limit(5000);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ history: data ?? [] });
+};
+suppliers.get('/:id/price-history', listSupplierPriceHistoryHandler);
 
 // Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers

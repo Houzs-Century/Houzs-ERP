@@ -18,6 +18,8 @@ export type ArListKind = 'ALL' | 'SI' | 'ODB';
     other-debtor bill raised on the AR Invoices page; `kind` says which. */
 export type ArListRow = {
   kind: 'SI' | 'ODB';
+  /** 'DN' for a debit note to an other debtor (a bill of its own kind, series {co}ODN-); every other row 'INV'. */
+  docKind?: 'INV' | 'DN';
   id: string;
   invoiceNumber: string;
   /** The party as the filter groups it: `C:<debtor code>` for a customer, `D:<debtor id>` for an other debtor. */
@@ -41,15 +43,22 @@ export type ArListRow = {
   status: string;
 };
 
-export const useArInvoices = (kind: ArListKind = 'ALL') => useQuery({
-  queryKey: ['ar-invoices', kind],
-  queryFn: () => authedFetch<{ rows: ArListRow[] }>(`/ar-invoices?kind=${kind}`),
+/** docKind: 'DN' lists the other debtors' debit notes alone (the CN / DN page's tab). */
+export const useArInvoices = (kind: ArListKind = 'ALL', docKind?: 'INV' | 'DN') => useQuery({
+  queryKey: ['ar-invoices', kind, docKind ?? 'any'],
+  queryFn: () => authedFetch<{ rows: ArListRow[] }>(`/ar-invoices?kind=${kind}${docKind ? `&docKind=${docKind}` : ''}`),
   staleTime: 15_000,
 });
 
 /** A debtor bill with its lines and its debtor (the registry row the printed
     invoice's BILL TO reads) — the pop-out over the list. */
-export type ArBillDetail = { bill: DebtorBill; debtor: OtherDebtor | null };
+export type ArBillDetail = {
+  bill: DebtorBill; debtor: OtherDebtor | null;
+  /** The debtor receipts that knock it off, with their stage marks and the amount on this bill (batch 5 §8.3 c8). */
+  receipts?: Array<{ id: string; number: string; date: string | null; status: string; submittedAt: string | null; checkedAt: string | null; approvedAt: string | null; amountSen: number }>;
+  /** The other-debtor credit notes allocated to it (c8). */
+  creditNotes?: Array<{ id: string; number: string; date: string | null; status: string; reason: string | null; amountSen: number; appliedSen: number }>;
+};
 
 export const useArBillDetail = (id: string | null) => useQuery({
   queryKey: ['ar-bill', id],

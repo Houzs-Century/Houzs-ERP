@@ -35,10 +35,26 @@ export type RpReport = {
   layout: { stored: boolean; tree: LaidNode[]; inSen: number; outSen: number };
   /** The card money the bank has not received (owner 2026-09-28): what was swiped on
       the card-machine clearing accounts in the period (the settlement module's own
-      movements aside) and what those accounts still hold at the period's end. A
-      swipe reaches the columns only once the acquirer pays it out. */
+      movements aside) and what those accounts still hold at the period's end. Since
+      2026-11-05 the swipes are in the Card column and Balance c/f says the same. */
   card: { takingsSen: number; transitSen: number; codes: string[] };
 };
+
+/** The card-machine clearing accounts as one money column (owner 2026-11-05): a swipe is
+    Cash In on its own day, into this column; the payout is a transfer to the bank. */
+export const CARD_COLUMN = 'CARD';
+export type BalancePart = { id: string; label: string; per: Record<string, number>; sen: number };
+/** A balance line's two parts, the banks and the card money not yet in the bank, when the
+    report has the Card column; none otherwise. */
+export function balanceParts(r: { columns: RpColumn[] }, id: string, per: Record<string, number>, total: number): BalancePart[] {
+  if (!r.columns.some((c) => c.code === CARD_COLUMN)) return [];
+  const card = per[CARD_COLUMN] ?? 0;
+  const bankPer = Object.fromEntries(Object.entries(per).filter(([k]) => k !== CARD_COLUMN));
+  return [
+    { id: `${id}:bank`, label: 'Bank', per: bankPer, sen: total - card },
+    { id: `${id}:card`, label: 'Card money not yet in the bank', per: { [CARD_COLUMN]: card }, sen: card },
+  ];
+}
 
 export const rpReportPath = (from: string, to: string, accounts: readonly string[], byParty: boolean): string =>
   `/accounting/reports/receipts-payments?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`

@@ -94,6 +94,18 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // feature is on for this handset, never who is signed in — the session itself
   // lives in the iOS Keychain, not here.
   { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
+  // The Finance report opened last in this tab (batch 6 §1.1): the sidebar's one
+  // Reports entry goes back to it. The report's sidebar address, no identity data.
+  { id: "finance-report-last", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-reports-last", matches: exact("fin-reports-last") },
+  // The Finance report list pinned open (owner's redesign, batch 6 §4.1; the
+  // design's own key) — '1'/'0', a per-device layout preference.
+  { id: "finance-report-list-pin", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-rail-pinned", matches: exact("fin-reports-rail-pinned") },
+  // The last date range picked on a Finance report in this tab (batch 6 §4.3):
+  // a report opened with no dates in its address follows it. {from,to} ISO days.
+  { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
+  // The statement column widths a person dragged, per view (batch 6 §4.1; the
+  // design's own key) — px for the account column, Total and the periods.
+  { id: "finance-statement-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-colw-v2", matches: exact("fin-reports-colw-v2") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
@@ -109,6 +121,10 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // per-device layout preference the user can toggle off (and any explicit
   // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
   { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
+  // The Finance grids' dragged column widths (owner's redesign, batch 6 §1.3:
+  // Journal entries, General ledger, Merchant charges, Collection) — an array
+  // of px per column. A layout preference; no identity/company data.
+  { id: "finance-column-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-<grid>-cw", matches: (key) => /^fin-[a-z]+-cw$/.test(key) },
   {
     id: "grid-and-panel-layout",
     classification: "DEVICE_PREF",
@@ -229,8 +245,17 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // key is per user so a shared browser never shows one person's draft to the
   // next. Reviewed with the announcements redesign.
   "pages/announcements/ComposerModal.tsx",
+  // Finance grid column widths (finance-column-widths, fin-<grid>-cw): reads,
+  // writes and removes its own key only — px per column, no identity data.
+  "pages/scm-v2/finance/useColumnWidths.ts",
+  // The report opened last (finance-report-last), for the sidebar's Reports entry.
+  "pages/scm-v2/reports/lastReport.ts",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
+  // The Finance reports' own memory (finance-report-list-pin, finance-report-
+  // range, finance-statement-widths): the list's pin, the last range picked and
+  // the statement column widths — no identity data.
+  "pages/scm-v2/reports/reportPrefs.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

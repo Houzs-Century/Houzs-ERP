@@ -26,7 +26,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import {
   assembleMonth, monthOf, monthWindow, nextMonth, previousMonth,
-  type MonthStatement, type MonthBalances, type TypedBalance,
+  printedClosingOf, type MonthStatement, type MonthBalances, type TypedBalance,
 } from '../../acc/bank-month';
 import { lockedRefusal, monthAsDate, monthFromDate } from '../../acc/bank-lock';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
@@ -90,15 +90,20 @@ const feedersOf = (all: Row[], lineStatementIds: Set<number>, window: { from: st
     || (Number(s.line_count ?? 0) === 0
       && (dayOf(s.period_from) ?? '') >= window.from && (dayOf(s.period_to) ?? '') <= window.to));
 
-/** What lines OUTSIDE the window have claimed (docs/bugs/0802): a POSTED
-    line's own entry, or its match row. Passed to the reconciliation so an
-    earlier entry reconciled on an earlier month is not "still waiting" here. */
+/** What lines OUTSIDE the window, dated no later than its last day, have
+    claimed (docs/bugs/0802): a POSTED line's own entry, or its match row.
+    Passed to the reconciliation so an earlier entry reconciled on an earlier
+    month is not "still waiting" here. A LATER month's line does not count:
+    the bank paid that entry after this month ended, so at its end the entry
+    was still waiting — 2990's RM 6,024.06 voucher of 29 May, paid 8 July, left
+    June's list the day July was matched and June would not close again. */
 const claimedOutside = (
-  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>,
+  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>, upTo: string,
 ): Set<string> => {
   const out = new Set<string>();
   for (const l of allLines) {
     if (inWindow.has(Number(l.id)) || String(l.state) !== 'POSTED') continue;
+    if ((dayOf(l.booked_on) ?? '') > upTo) continue;
     /* Every entry the line names — a split's "A, B" is two (docs/bugs/0809). */
     for (const je of jeNosOf(l.posted_je_no)) out.add(je);
     for (const m of matchesByLine.get(Number(l.id)) ?? []) { const je = textOf(m.je_no); if (je) out.add(je); }
@@ -173,13 +178,16 @@ async function loadTypedBalances(
   return { ok: true, byKey };
 }
 
-/** What can speak for a month: its own typed closing, and the previous
-    month's, which is where it opens. */
-const typedFor = (byKey: Map<string, TypedBalance>, accountCode: string, month: string): MonthBalances => {
+/** What can speak for a month beyond its own files: its own typed closing,
+    and the previous month's closing — as that month's files printed it, else
+    as typed — which is where it opens (rule 5, owner 2026-11-03: 「不能9月close
+    了就直接带bank balance过来吗」). `statements` are the account's files. */
+const balancesFor = (byKey: Map<string, TypedBalance>, statements: MonthStatement[], accountCode: string, month: string): MonthBalances => {
   const prev = previousMonth(month);
   return {
     closing: byKey.get(`${accountCode}|${month}`) ?? null,
     previousClosing: prev == null ? null : (byKey.get(`${accountCode}|${prev}`) ?? null),
+    previousPrinted: prev == null ? null : printedClosingOf(statements, prev),
   };
 };
 
@@ -300,6 +308,13 @@ export const bankMonths = bankGuard(async (c) => {
     buckets.set(key, at);
   }
 
+  /* Each account's files, for the month a previous month's printed closing opens (rule 5). */
+  const filesOfAccount = new Map<string, MonthStatement[]>();
+  for (const s of statements) {
+    const code = textOf(s.account_code) ?? '';
+    filesOfAccount.set(code, [...(filesOfAccount.get(code) ?? []), asMonthStatement(s)]);
+  }
+
   /* Newest first — the month he is working is the one he just uploaded into. */
   const months = [...buckets.values()]
     .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
@@ -309,7 +324,7 @@ export const bankMonths = bankGuard(async (c) => {
         const row = byId.get(id);
         if (row) fed.push(asMonthStatement(row));
       }
-      const assembly = assembleMonth(b.month, fed, b.movements, typedFor(typedRes.byKey, b.accountCode, b.month));
+      const assembly = assembleMonth(b.month, fed, b.movements, balancesFor(typedRes.byKey, filesOfAccount.get(b.accountCode) ?? [], b.accountCode, b.month));
       return {
         accountCode: b.accountCode,
         month: b.month,
@@ -387,7 +402,7 @@ export async function loadMonthForLock(
   if (!typedRes.ok) return { ok: false, reason: typedRes.reason };
 
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
-  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, typedFor(typedRes.byKey, accountCode, month));
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month));
   if (!assembly) return { ok: false, reason: `${month} is not a month` };
 
   const ledger = await loadAccountLedger(sb, companyId, accountCode, assembly.periodTo);
@@ -415,7 +430,7 @@ export async function loadMonthForLock(
          still outstanding and the lock refused a month the screen said tallied
          (docs/bugs/0818). */
       claimedElsewhere: claimedSetFor(
-        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine, window.to), firstPeriodFrom },
         ledger.movements,
       ),
     }),
@@ -473,7 +488,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
   if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
-  const balances = typedFor(typedRes.byKey, accountCode, month);
+  const balances = balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month);
 
   const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
 
@@ -528,7 +543,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
   const claimedElsewhere = claimedSetFor(
-    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine, window.to), firstPeriodFrom },
     ledger.movements,
   );
   const reconciliation = reconcileBankStatement({

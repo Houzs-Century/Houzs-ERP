@@ -379,6 +379,42 @@ describe('sofa accessory follows the sofa colour/fabric only (owner 2026-09-22)'
   });
 });
 
+describe('a square pillow keeps its own colour (Adrian 2026-10-28, HC-SO-013238)', () => {
+  const pillow = (itemCode: string, variants: Record<string, unknown>, persisted = false): CascadeLine =>
+    ({ category: 'fabric_accessory', variants, itemCode, persisted });
+
+  test('a new square pillow is not filled from the sofa', () => {
+    const lines = [sofa({ fabricCode: 'NICCA-03' }), pillow('SQUARE PILLOW', {})];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toBe(lines[1]!.variants);
+  });
+
+  test('changing the sofa colour leaves the pillow colour alone', () => {
+    let lines = [
+      sofa({ fabricCode: 'NICCA-01' }), sofa({ fabricCode: 'NICCA-03' }),
+      pillow('SQUARE PILLOW', { fabricCode: 'NICCA-01' }, true),
+    ];
+    let out = run(lines, {}, CASCADE_CATEGORIES);
+    lines = [sofa({ fabricCode: 'NICCA-03' }), sofa({ fabricCode: 'NICCA-03' }), lines[2]!];
+    out = run(lines, out.masters, CASCADE_CATEGORIES);
+    expect(out.variants[2]).toEqual({ fabricCode: 'NICCA-01' });
+  });
+
+  test('a supplier-prefixed square pillow SKU is covered too', () => {
+    const lines = [sofa({ fabricCode: 'AMOR-12' }), pillow('822 SQUARE PILLOW', {})];
+    expect(run(lines, {}, CASCADE_CATEGORIES).variants[1]).toEqual({});
+  });
+
+  test('other sofa accessories (back cushion) still follow the sofa', () => {
+    let lines = [sofa({ fabricCode: 'AMOR-12' }), pillow('BC04', {})];
+    let out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'AMOR-12' });
+    lines = [sofa({ fabricCode: 'COVE-13' }), pillow('BC04', out.variants[1]!)];
+    out = run(lines, out.masters, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'COVE-13' });
+  });
+});
+
 describe('BUG-53 — a SAVED line is never filled, only forced (HC-SO-011143)', () => {
   /* Opening HC-SO-011143 to add a storage charge filled the sofa master's
      colourLabel onto the untouched SQUARE PILLOW beside its own MODENZA-04, so

@@ -162,7 +162,7 @@ page, and the POS Admin menu. This guide carries only what is built.
   Excel sheets and the printable page all come from `reportRows`, so the
   four agree column for column.
 - Device Sales report (layout P13, Ctrl+T, `pos/src/sell/Report.tsx`, rules
-  `pos/src/report.ts`): Today / Pick date / Full event over the local bills
+  `pos/src/report.ts`): Today / Pick date / From-To / Full event over the local bills
   (offline); All terminals (supervisor PIN) asks
   `GET /api/pos-device/report?from&to` for the event's synced bills. Print
   daily report = thermal Z-report (`zReportLines`, re-printable any time,
@@ -175,6 +175,11 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
+- POS Items > Add by category (`POST /api/pos-admin/items/add-all`, `dry_run`
+  for counts per `mfg_products.category`, else `categories[]`): tags the ticked
+  categories' ACTIVE products with a selling price and turns their off items on;
+  `POST items/keep-categories` switches off POS items outside the ticked ones;
+  `POST items/remove { ids[] }` is the list's tick-and-remove (same switch-off).
 - Install: the login screen (banner and footer link) and Settings offer
   "Install Houzs POS" through the browser install prompt (`pos/src/pwa.ts`
   `promptInstall`), hidden once the app runs in its own window.
@@ -185,7 +190,11 @@ page, and the POS Admin menu. This guide carries only what is built.
   (`pos/src/manager.ts`, token "", never saved or synced) and sets the device
   up in Settings: terminal + fair from the POS Admin lists, one button
   (`POST /api/pos-admin/device/register`). On a set-up device the manager
-  sign-in stays under the tiles as the second way in.
+  sign-in stays under the tiles as the second way in. The device remembers
+  the last email; "Keep me signed in on this device" keeps the ERP token in
+  localStorage so the front offers "Continue as <name>" (one tap) and a
+  Logout keeps it; "Not you? Sign out" or an ended ERP session clears it. The
+  password is never stored.
 - Pairing code (for a device with no ERP login on it): POS Admin > Terminals >
   Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
   set and linked) issues a one-time 8-character code, stored as a hash with
@@ -271,6 +280,10 @@ page, and the POS Admin menu. This guide carries only what is built.
   mounted pre-auth, and `scm.products` / `mfg_products.pos_active` belong to
   that older retail POS. The booth POS lives under `/api/pos-admin` (and the
   device API prefixes of the later steps); do not extend `routes/pos.ts`.
+- The 2990 tablet's My-orders tiles (`/api/pos/sales-stats`) and board (`/mine`) narrow by ONE pick through
+  `scm/lib/pos-sales-place.ts`: `?project=` = a roadshow event's linked orders, `?venue=` = a venue's orders
+  linked to no event (`__none__` = none recorded). The stats also answer `places` (the period's events and
+  unlinked venues), which fills the tablet's picker. A search on `/mine` ignores the pick, like the period.
 - A new company-2 SKU in a single-SKU category (not sofa / bedframe /
   mattress) is created `pos_active false` (`scm/lib/new-sku-pos-active.ts`):
   off the 2990 tablet until its Modular "Show in POS" switch sends `posActive`.

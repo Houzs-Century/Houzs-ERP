@@ -295,6 +295,16 @@ crons = [
   "5 16 * * *"
 ]
 
+# Run the fetch handler next to the database (Supabase aws-1-ap-southeast-1),
+# not wherever the request entered. A request is one hop from the user, but
+# dozens of database round trips from the Worker. HC-0167 (2026-10-28): the
+# same approve took ~1 s on most days and 18-23 s through whole afternoons
+# (10-22, 10-23) — the HC-0002 spells when requests ran in colo NRT. Cron and
+# queue handlers are not placed; they never were user-facing. Roll back by
+# deleting this block (one deploy).
+[placement]
+region = "aws:ap-southeast-1"
+
 [observability]
 [observability.logs]
 enabled = true

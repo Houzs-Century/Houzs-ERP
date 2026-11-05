@@ -45,7 +45,7 @@ export type BindingCost = {
  *  (selling-only) carries no cost and is skipped, never mirrored as a 0. */
 export type ProductSeatCost = {
   height: string;
-  tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | null;
+  tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4' | null;
   priceSen?: number | null;
 };
 
@@ -153,7 +153,7 @@ export function productToBindingPatch(
     // { "<height>": {P1,P2,P3} } — so mirror it across as a shape transform.
     // Only the COST side (priceSen) is read; sellingPriceSen is never touched.
     const rows = Array.isArray(product.seat_height_prices) ? product.seat_height_prices : [];
-    const matrix: Record<string, { P1?: number; P2?: number; P3?: number }> = {};
+    const matrix: Record<string, { P1?: number; P2?: number; P3?: number; P4?: number }> = {};
     for (const r of rows) {
       if (!r || typeof r.height !== 'string' || r.height === '') continue;
       const cost = asSen(r.priceSen);
@@ -161,7 +161,7 @@ export function productToBindingPatch(
       // never fabricate a 0 cost into the binding matrix (mirrors
       // resolveSeatHeightSen's costed() guard). A missing cost stays missing.
       if (cost === null) continue;
-      const key = r.tier === 'PRICE_1' ? 'P1' : r.tier === 'PRICE_3' ? 'P3' : 'P2';
+      const key = r.tier === 'PRICE_1' ? 'P1' : r.tier === 'PRICE_3' ? 'P3' : r.tier === 'PRICE_4' ? 'P4' : 'P2';
       const cell = matrix[r.height] ?? (matrix[r.height] = {});
       cell[key] = cost;
     }

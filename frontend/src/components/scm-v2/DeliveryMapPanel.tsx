@@ -51,7 +51,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
-import { X, MapPin as MapPinIcon } from 'lucide-react';
+import { X, MapPin as MapPinIcon, ChevronDown } from 'lucide-react';
 import { fmtSen, fmtTime } from '../../vendor/shared/format';
 import {
   clusterPins,
@@ -123,6 +123,10 @@ type OverlayProps = {
   onMapTypeChange?: (mapTypeId: string) => void;
   /** Colour stops by where they are in the run (null = by trip). */
   statusByRef: Map<string, StopStatus> | null;
+  /** Last Mile per-lorry view: draw stops as RINGS — filled = delivered, open
+   *  ring = still to deliver, red ring = late — on the lorry's own colour, so the
+   *  run reads as a route at a glance. Off = the fill-by-status pin used elsewhere. */
+  ringStops: boolean;
   vehicles: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
 };
@@ -133,7 +137,7 @@ type OverlayProps = {
    direction arrows + the region fly-to). */
 function PanelOverlay({
   pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey,
-  onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, vehicles, onVehicleClick,
+  onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, ringStops, vehicles, onVehicleClick,
 }: OverlayProps) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -272,20 +276,36 @@ function PanelOverlay({
         extend(p, countsForFit);
         const isSel = selectedRef != null && s.ref === selectedRef;
         const st = statusOf(s.ref);
+        /* Ring convention (Last Mile per-lorry): the lorry colour identifies the
+           run; a FILLED dot is delivered, an OPEN ring is still to deliver, a RED
+           ring is late. Elsewhere the pre-existing fill-by-status pin stays. */
+        let fillColor: string; let strokeColor: string; let strokeWeight: number; let labelColor: string;
+        if (ringStops) {
+          const delivered = st === 'done';
+          const ring = st === 'overdue' ? STOP_STATUS_COLOR.overdue : route.color;
+          fillColor = delivered ? route.color : '#ffffff';
+          strokeColor = isSel ? '#111111' : ring;
+          strokeWeight = isSel || !delivered ? 3.5 : 2;
+          labelColor = delivered ? '#ffffff' : ring;
+        } else {
+          fillColor = st ? STOP_STATUS_COLOR[st] : route.color;
+          strokeColor = isSel ? '#111111' : st ? route.color : '#ffffff';
+          strokeWeight = isSel || st ? 3 : 2;
+          labelColor = '#ffffff';
+        }
         const marker = new google.maps.Marker({
           position: p,
           map,
           title: `${route.title} · ${s.order}. ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}`,
           zIndex: isSel ? 3000 : dimmed ? 1 : 500,
-          label: { text: String(s.order), color: '#ffffff', fontWeight: 'bold', fontSize: '12px' },
+          label: { text: String(s.order), color: labelColor, fontWeight: 'bold', fontSize: '12px' },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: isSel ? 15 : 12,
-            /* By status the fill says delivered / on its way / late; the ring keeps the trip colour. */
-            fillColor: st ? STOP_STATUS_COLOR[st] : route.color,
+            fillColor,
             fillOpacity: opacity,
-            strokeColor: isSel ? '#111111' : st ? route.color : '#ffffff',
-            strokeWeight: isSel || st ? 3 : 2,
+            strokeColor,
+            strokeWeight,
           },
         });
         objectsRef.current.push(marker);
@@ -475,8 +495,9 @@ export type DeliveryMapPanelProps = {
    *  never a lock). Absent → no pill (a page without narrowing). */
   compactColumns?: boolean | null;
   onCompactColumnsChange?: (on: boolean) => void;
-  /** Orders that could not be located ("N 张单定位不到 — 检查地址"). */
-  ungeocoded?: Array<{ ref: string; reason: string }>;
+  /** Orders that could not be located ("N couldn't be located — check the address").
+   *  `label` is a friendlier identity line than the raw ref when present (e.g. a job's code). */
+  ungeocoded?: Array<{ ref: string; label?: string; reason: string }>;
   /** False = the SERVER has no maps key (geocoding off) — said out loud. */
   serverConfigured?: boolean;
   isLoading?: boolean;
@@ -485,6 +506,10 @@ export type DeliveryMapPanelProps = {
   children?: ReactNode;
   /** Where each stop is in its run — offers the Status colouring (Last Mile). */
   statusByRef?: Map<string, StopStatus> | null;
+  /** Last Mile: draw each lorry's stops as a numbered route of RINGS (filled =
+   *  delivered, open ring = to deliver, red ring = late) on the lorry's colour,
+   *  under the "By status" view. "By trip" keeps the solid lorry-colour dots. */
+  routeStopRings?: boolean;
   /** Lorries' current positions (vehicle-positions.ts). */
   vehicles?: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
@@ -521,12 +546,16 @@ export function DeliveryMapPanel({
   children,
   className,
   statusByRef = null,
+  routeStopRings = false,
   vehicles = NO_VEHICLES,
   onVehicleClick,
 }: DeliveryMapPanelProps) {
   /* Colour by status (the default when the page knows it) or by trip. */
   const [colorBy, setColorBy] = useState<'status' | 'trip'>('status');
   const activeStatus = statusByRef && colorBy === 'status' ? statusByRef : null;
+  /* Rings only under the status view (where the delivered/to-deliver/late split
+     is meaningful); "By trip" keeps the solid lorry-colour dots. */
+  const ringStops = routeStopRings && activeStatus != null;
   const statusCounts = useMemo(() => {
     const n: Record<StopStatus, number> = { done: 0, active: 0, overdue: 0, scheduled: 0 };
     for (const st of activeStatus?.values() ?? []) n[st] += 1;
@@ -536,6 +565,16 @@ export function DeliveryMapPanel({
   const [hoverRef, setHoverRef] = useState<string | null>(null);
   /* Legend-row hover — visual dimming only (no zoom, no board filter). */
   const [legendHoverId, setLegendHoverId] = useState<string | null>(null);
+  /* Which per-lorry rows have their stop-time windows expanded (owner 2026-11-04:
+     the windows are secondary — a compact span shows on the row, per-stop times
+     open on demand). */
+  const [expandedRoutes, setExpandedRoutes] = useState<Set<string>>(() => new Set());
+  const toggleRouteExpanded = (id: string) =>
+    setExpandedRoutes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   /* Roadmap declutter (owner addendum 2026-08-08): decluttered by default;
      the Labels toggle mirrors Satellite's checkbox (off = all labels off).
      Only shown while the ROADMAP layer is active — satellite keeps Google's
@@ -679,6 +718,7 @@ export function DeliveryMapPanel({
                 onHoverRef={setHoverRef}
                 onMapTypeChange={setMapTypeId}
                 statusByRef={activeStatus}
+                ringStops={ringStops}
                 vehicles={vehicles}
                 onVehicleClick={onVehicleClick}
               />
@@ -732,7 +772,31 @@ export function DeliveryMapPanel({
       {/* Trip legend — one row per drawn trip: swatch, Trip N, stop count,
           time range, crew (Last Mile), per-stop windows. Hover dims the other
           trips; click is the existing focus behaviour. */}
-      {activeStatus && (
+      {/* Ring convention (Last Mile "By status"): the dot shape reads the state —
+          filled = delivered, open ring = still to deliver, red ring = late — on
+          the lorry's own colour, so the map reads as per-lorry routes. */}
+      {ringStops && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-ink-secondary" />
+            Delivered <span className="font-semibold tabular-nums text-ink">{statusCounts.done}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-ink-secondary bg-transparent" />
+            To deliver <span className="font-semibold tabular-nums text-ink">{statusCounts.active + statusCounts.scheduled}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2 bg-transparent" style={{ borderColor: STOP_STATUS_COLOR.overdue }} />
+            Late <span className="font-semibold tabular-nums text-ink">{statusCounts.overdue}</span>
+          </span>
+          {vehicles.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2.5 w-3.5 rounded-sm bg-[#111827]" /> Lorry now <span className="font-semibold tabular-nums text-ink">{vehicles.length}</span>
+            </span>
+          )}
+        </div>
+      )}
+      {activeStatus && !ringStops && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
           {(['done', 'active', 'overdue', 'scheduled'] as const).map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
@@ -747,7 +811,101 @@ export function DeliveryMapPanel({
           )}
         </div>
       )}
-      {legend.length > 0 && (
+      {/* Per-lorry picker (owner 2026-11-04: "车辆那里 — button"). Last Mile draws
+          each lorry as a tappable BUTTON card — plate the label, driver + a
+          delivered/total progress bar supporting it — and tapping it filters the
+          map to that lorry's route; an "All" button (and tapping the active card
+          again) clears back to every lorry. Per-stop times are secondary, behind
+          the chevron. The proposal pages (no delivered/total) keep the plain row. */}
+      {legend.length > 0 && legend.some((r) => r.delivered != null && r.total != null) && (
+        <div className="border-b border-border px-3 py-2.5">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-brand text-ink-muted">By lorry</span>
+            <button
+              type="button"
+              onClick={() => { if (focus) onRouteClick?.(focus.routeId); }}
+              aria-pressed={!focus}
+              className={[
+                'rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold transition-colors',
+                !focus ? 'border-accent bg-accent/10 text-accent' : 'border-border text-ink-secondary hover:bg-surface-raised',
+              ].join(' ')}
+            >
+              All lorries
+            </button>
+            <span className="text-[10.5px] text-ink-muted">tap one to show just its route</span>
+          </div>
+          <div className="space-y-2">
+            {legend.map((row) => {
+              const isFocused = focus?.routeId === row.routeId;
+              const windowed = row.stops.filter((s) => s.windowLabel);
+              const expanded = expandedRoutes.has(row.routeId);
+              const total = row.total ?? 0;
+              const delivered = row.delivered ?? 0;
+              const pct = total > 0 ? Math.round((delivered / total) * 100) : 0;
+              return (
+                <div
+                  key={row.routeId}
+                  className="relative"
+                  onMouseEnter={() => setLegendHoverId(row.routeId)}
+                  onMouseLeave={() => setLegendHoverId(null)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onRouteClick?.(row.routeId)}
+                    aria-pressed={isFocused}
+                    title={isFocused ? 'Showing only this lorry — tap to show all' : "Tap to show only this lorry's route"}
+                    className={[
+                      'block w-full rounded-lg border px-2.5 py-2 pr-9 text-left transition-colors',
+                      isFocused ? 'border-accent bg-accent/5 ring-1 ring-accent' : 'border-border hover:bg-surface-raised',
+                    ].join(' ')}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="inline-block h-3.5 w-3.5 flex-none rounded-full" style={{ background: row.color }} />
+                      <span className="flex-none text-[13px] font-bold text-ink">{row.title}</span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-ink-muted">{row.crewLabel ?? ''}</span>
+                      <span className="flex flex-none items-center gap-1.5">
+                        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-dim">
+                          <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: row.color }} />
+                        </span>
+                        <span className="tabular-nums text-[11.5px] text-ink-secondary">
+                          <span className="font-semibold text-ink">{delivered}</span>/{total}
+                        </span>
+                      </span>
+                    </span>
+                    {(row.timeRange || isFocused) && (
+                      <span className="mt-0.5 flex items-center gap-2 pl-[22px] text-[10.5px]">
+                        {row.timeRange && <span className="tabular-nums text-ink-muted">{row.timeRange}</span>}
+                        {isFocused && <span className="font-semibold text-accent">Showing only this lorry</span>}
+                      </span>
+                    )}
+                    {expanded && windowed.length > 0 && (
+                      <span className="mt-1 flex flex-wrap gap-1.5 pl-[22px]">
+                        {windowed.map((s) => (
+                          <span key={s.ref} className="rounded bg-surface-dim px-1.5 py-0.5 text-[10.5px] tabular-nums text-ink-secondary">
+                            <span className="text-ink-muted">{s.order}.</span> {s.windowLabel}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </button>
+                  {windowed.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleRouteExpanded(row.routeId)}
+                      aria-expanded={expanded}
+                      aria-label={expanded ? 'Hide stop times' : 'Show stop times'}
+                      className="absolute right-1.5 top-2 rounded p-0.5 text-ink-muted hover:bg-surface-raised hover:text-ink"
+                    >
+                      <ChevronDown size={14} className={expanded ? 'rotate-180' : ''} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {legend.length > 0 && !legend.some((r) => r.delivered != null && r.total != null) && (
         <div className="border-b border-border">
           {legend.map((row) => {
             const isFocused = focus?.routeId === row.routeId;
@@ -809,16 +967,20 @@ export function DeliveryMapPanel({
           <p className="text-[11.5px] text-ink-muted">No depot marker: {depotReason}.</p>
         )}
         {ungeocoded.length > 0 && (
-          <div className="rounded-md border border-border bg-surface-dim px-2.5 py-1.5 text-[11.5px] text-ink-secondary">
-            <span className="font-semibold">{ungeocoded.length} 张单定位不到 — 检查地址.</span>
-            <ul className="mt-0.5 list-disc pl-4">
+          <details className="group rounded-md border border-border bg-surface-dim text-[11px] text-ink-muted">
+            <summary className="flex cursor-pointer select-none items-center gap-1.5 px-2.5 py-1.5 text-ink-secondary marker:content-['']">
+              <ChevronDown size={13} className="flex-none transition-transform group-open:rotate-180" />
+              <span className="font-semibold">{ungeocoded.length} couldn&rsquo;t be located</span>
+              <span className="text-ink-muted">— check the address</span>
+            </summary>
+            <ul className="list-disc space-y-0.5 px-2.5 pb-2 pl-7">
               {ungeocoded.map((u) => (
                 <li key={u.ref}>
-                  <span className="font-mono">{u.ref}</span> — {u.reason}
+                  <span className="font-mono">{u.label ?? u.ref}</span> — {u.reason}
                 </li>
               ))}
             </ul>
-          </div>
+          </details>
         )}
       </div>
 

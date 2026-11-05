@@ -106,6 +106,12 @@ export function ReportPopup({ state, session, onClose, say }: { state: DeviceSta
         <button type="button" className={seg(range.kind === "today")} onClick={() => setRange({ kind: "today" })}>Today</button>
         <button type="button" className={seg(range.kind === "date")} onClick={() => setRange({ kind: "date", date: range.kind === "date" ? range.date : mytDate(new Date().toISOString()) })}>Pick date</button>
         {range.kind === "date" && <input type="date" value={range.date} min={ev.start_date ?? undefined} max={ev.end_date ?? undefined} onChange={(e) => { if (e.target.value) setRange({ kind: "date", date: e.target.value }); }} aria-label="Report date" />}
+        <button type="button" className={seg(range.kind === "range")} onClick={() => setRange({ kind: "range", from: range.kind === "range" ? range.from : days.from, to: range.kind === "range" ? range.to : days.to })}>From / To</button>
+        {range.kind === "range" && <>
+          <input type="date" value={range.from} min={ev.start_date ?? undefined} max={ev.end_date ?? undefined} onChange={(e) => { if (e.target.value) setRange({ kind: "range", from: e.target.value, to: range.to }); }} aria-label="Report from" />
+          <span className="muted">to</span>
+          <input type="date" value={range.to} min={ev.start_date ?? undefined} max={ev.end_date ?? undefined} onChange={(e) => { if (e.target.value) setRange({ kind: "range", from: range.from, to: e.target.value }); }} aria-label="Report to" />
+        </>}
         <button type="button" className={seg(range.kind === "event")} onClick={() => setRange({ kind: "event" })}>Full event</button>
         <span style={{ flex: 1 }} />
         <button type="button" className={seg(scope === "terminal")} onClick={() => setScope("terminal")}>{state.bundle.terminal.code}</button>

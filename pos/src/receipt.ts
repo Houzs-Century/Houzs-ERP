@@ -69,7 +69,7 @@ export function receiptLines(sale: SaleRecord, ctx: ReceiptContext): ReceiptLine
   if (sale.item_discount_sen !== 0 || sale.bill_discount_sen !== 0) push(lr("Total Discount", money(-(sale.item_discount_sen + sale.bill_discount_sen)), w));
   if (sale.sst_applied || s.show_sst_when_zero) push(lr(`SST ${sale.sst_applied ? sale.sst_rate : s.sst_rate}%`, money(sale.sst_amount_sen), w));
   if (sale.rounding_sen !== 0) push(lr("Rounding Adj", money(sale.rounding_sen), w));
-  push(lr(sale.type === "RETURN" ? (sale.total_sen < 0 ? "REFUND" : "CUSTOMER PAYS") : "FINAL TOTAL", money(Math.abs(sale.total_sen)), w), { bold: true, big: true });
+  push(lr(sale.type === "RETURN" ? (sale.total_sen < 0 ? "REFUND" : "CUSTOMER PAYS") : "FINAL TOTAL", money(Math.abs(sale.total_sen)), w), { bold: true });
   for (const p of sale.payments) {
     push(lr(posMethodLabel(p.method), money(Math.abs(p.amount_sen)), w));
     if (p.reference) push(lr(`  Ref ${p.reference}`, "", w));

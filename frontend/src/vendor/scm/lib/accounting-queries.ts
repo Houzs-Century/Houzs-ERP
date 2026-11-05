@@ -68,26 +68,58 @@ export const useAccounts = () => baseQuery<{ accounts: Account[]; sections?: Acc
 );
 
 /* Which account plays which part for the ACTIVE company (resolveRoles server-
-   side: overrides first, seeded defaults where nothing is set). BANK_DEFAULT
-   pre-fills the PV "Paid From"; AP is the control account an AP Payment
-   debits. */
+   side: overrides first, seeded defaults where nothing is set). BANK_PAY_DEFAULT
+   pre-fills the PV "Paid From" (BANK_DEFAULT, where money is received, when
+   unset); AP is the control account an AP Payment debits. */
 export type AccountRoles = { roles: Record<string, string>; overridden: Record<string, string> };
 export const useAccountRoles = () => baseQuery<AccountRoles>(
   ['account-roles'], `/accounting/roles`,
 );
 
-/* The owner's own lever (默认银行我可以自己maintenance): repoint BANK_DEFAULT to
-   another money account. The server refuses non-money / inactive / other-
-   company accounts by name. */
-export const useSaveBankDefault = () => {
+/* The owner's own lever (默认银行我可以自己maintenance): repoint a default bank —
+   BANK_DEFAULT (received into) or BANK_PAY_DEFAULT (paid from) — to another
+   money account. The server refuses non-money / inactive / other-company
+   accounts by name. */
+export type DefaultBankRole = 'BANK_DEFAULT' | 'BANK_PAY_DEFAULT';
+export const useSaveBankDefault = (role: DefaultBankRole) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (accountCode: string) => authedFetch<{ ok: boolean; accountCode: string }>(
-      `/accounting/roles/BANK_DEFAULT`,
+      `/accounting/roles/${role}`,
       { method: 'PUT', body: JSON.stringify({ accountCode }) },
     ),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['account-roles'] }); },
     onError: writeFailedAs('Default bank not saved'),
+  });
+};
+
+/* Earlier transfer receipts booked on another bank than Receive into (owner
+   2026-11-04: 做改记工具) — listed for a date range, moved in batches. */
+export type RebankRow = {
+  source: 'SOPAY' | 'SIPAY'; paymentId: string; docNo: string; paidOn: string;
+  amountSen: number; jeNo: string; fromAccount: string; blocked: string | null;
+};
+export type RebankOutcome = {
+  source: 'SOPAY' | 'SIPAY'; paymentId: string; status: 'moved' | 'skipped' | 'failed';
+  reason: string | null; fromJeNo: string | null; jeNo: string | null;
+};
+export const REBANK_PER_CALL = 25;
+export const useRebankCandidates = (range: { from: string; to: string } | null) => useQuery({
+  queryKey: ['rebank-candidates', range?.from ?? '', range?.to ?? ''],
+  queryFn: () => authedFetch<{ target: string; rows: RebankRow[] }>(
+    `/accounting/receipts/rebank?from=${encodeURIComponent(range!.from)}&to=${encodeURIComponent(range!.to)}`,
+  ),
+  enabled: range != null,
+  retry: retryUnlessClientError,
+});
+export const useRebankMove = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: Array<{ source: 'SOPAY' | 'SIPAY'; paymentId: string }>) => authedFetch<{ target: string; results: RebankOutcome[] }>(
+      `/accounting/receipts/rebank`, { method: 'POST', body: JSON.stringify({ items }) },
+    ),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['rebank-candidates'] }); },
+    onError: writeFailedAs('Receipts not moved'),
   });
 };
 
@@ -232,8 +264,10 @@ export type AccountBalance = {
   total_credit_sen: number;
   balance_sen: number;
 };
-export const useAccountBalances = () => baseQuery<{ balances: AccountBalance[] }>(
-  ['account-balances'], `/accounting/balances`,
+/** The Trial balance — every line the books count, or cut at a day (`asOf`,
+ *  YYYY-MM-DD; the redesign's As at, batch 6 read c1). */
+export const useAccountBalances = (asOf?: string) => baseQuery<{ balances: AccountBalance[] }>(
+  asOf ? ['account-balances', asOf] : ['account-balances'], asOf ? `/accounting/balances?asOf=${encodeURIComponent(asOf)}` : `/accounting/balances`,
 );
 
 /* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor
@@ -254,10 +288,17 @@ export type ChartRow = {
   /** 需要 Event and the PMS event page's row (owner 2026-10-01, payment-request item 4). */
   needsEvent?: boolean;
   pmsRow?: string | null;
+  /** The Logistics P&L's row this account feeds (owner 2026-10-29: picked here, not on the report). */
+  logisticsRow?: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-/** pmsRows: the PMS event page's rows an account can fill — one list, from the server. */
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[]; pmsRows?: Array<{ row: string; label: string }> }>(
+/** pmsRows: the PMS event page's rows an account can fill; logisticsRows: the Logistics
+    P&L's, each with the account type it reads — one list each, from the server. */
+export const useChartUnion = () => baseQuery<{
+  companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[];
+  pmsRows?: Array<{ row: string; label: string }>;
+  logisticsRows?: Array<{ row: string; label: string; type: ChartRow['type'] }>;
+}>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -339,13 +380,16 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chart-union'] });
       void qc.invalidateQueries({ queryKey: ['accounts'] });
+      /* A Logistics row moves money between the logistics reports' rows. */
+      void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics'] });
+      void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics-pnl'] });
     },
   });
 };
@@ -385,8 +429,12 @@ export type DebtorBillLine = { id: string; line_no: number; description: string 
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
+  /** 'DN' for a debit note to the debtor (2026-10-28) — prints as DEBIT NOTE. */
+  doc_kind?: 'INV' | 'DN';
   /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
   lines?: DebtorBillLine[];
+  /** When it was raised — the bill page's trail. */
+  created_at?: string | null;
 };
 export type DebtorReceipt = {
   id: string; receipt_number: string; receipt_date: string;
@@ -438,7 +486,9 @@ export const useCreateDebtorBill = () => {
     mutationFn: ({ debtorId, ...body }: {
       debtorId: string; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
+      /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
+      docKind?: 'INV' | 'DN';
+    }) => authedFetch<{ ok: boolean; bill: { id?: string; billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateDebtors(qc),
@@ -480,6 +530,21 @@ export const useCreateDebtorReceipt = () => {
     onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
+/** Change a debtor receipt nobody has checked yet — its date, money account and
+    bills (the owner's Claude Design, batch 5 §4.3 c5). Posts nothing; it keeps
+    its stage and its number. */
+export const useUpdateDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ receiptId, ...body }: {
+      receiptId: string; receiptDate?: string; bankAccountCode?: string;
+      allocations?: Array<{ billId: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { id: string; receiptNumber: string; totalSen: number; stage: 'Draft' | 'Prepared' } }>(
+      `/other-debtors/receipts/${receiptId}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
 /* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
 export const useDebtorReceiptAction = () => {
   const qc = useQueryClient();
@@ -513,19 +578,28 @@ export type ReceiptRow = {
   debtorId?: string; notes?: string | null;
   /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
   soRef?: string | null; soCustomerSoNo?: string | null;
+  /** GENERAL rows: the first line's description — what the money was for (batch 5 §2.3 c1). */
+  firstLine?: string | null;
+  /** DEBTOR rows: the four layers' marks, and the bills the receipt knocks off (c1). */
+  submittedAt?: string | null; checkedAt?: string | null; approvedAt?: string | null;
+  bills?: Array<{ billId: string; no: string | null; amountSen: number }>;
 };
 /** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
-    filter, null when none. */
-export const useReceipts = (month?: string) => baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
-  ['receipts', month ?? 'all'], `/receipts${month ? `?month=${month}` : ''}`,
-);
+    filter, null when none. `kind` reads one kind alone (Debtor maintenance's
+    receipts, batch 5 §4.3). */
+export const useReceipts = (month?: string, kind?: ReceiptRow['kind']) => {
+  const query = [month ? `month=${month}` : '', kind ? `kind=${kind}` : ''].filter(Boolean).join('&');
+  return baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
+    ['receipts', month ?? 'all', ...(kind ? [kind] : [])], `/receipts${query ? `?${query}` : ''}`,
+  );
+};
 export const useCreateReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
       payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string; totalSen: number } }>(
+    }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen: number } }>(
       `/receipts`, { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },

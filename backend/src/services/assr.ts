@@ -16,7 +16,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPurchaseOrders } from "./assrOrderPos";
+import { attachOrderPosAndFill } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -1134,12 +1134,12 @@ const FIELD_LABELS: Record<string, string> = {
 // (resolution method, verification outcome, priority, costs, identity, …)
 // is config noise and is NOT recorded. Photos/files/videos are logged
 // separately as attachment events, and item remarks via item_remark.
-const FIELD_LOG_ALLOW = new Set<string>([
+export const FIELD_LOG_ALLOW = new Set<string>([
   // dates
   "customer_pickup_at", "actual_pickup_at", "supplier_pickup_at", "items_ready_at",
   "completion_date", "do_date", "qc_receipt_date",
   // remarks / free-text notes
-  "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes",
+  "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes", "verified_root_cause",
 ]);
 const fieldLabel = (k: string): string =>
   FIELD_LABELS[k] ?? k.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
@@ -1387,8 +1387,8 @@ export async function patchAssrCase(
   // When the case's item_code changes, re-resolve the creditor so the
   // link to the procurement supplier stays accurate. Awaited (a floating
   // promise dies with the response); a failed lookup shouldn't fail the PATCH.
-  if ("item_code" in body) {
-    await resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
+  if ("item_code" in body || ("doc_no" in body && (beforeSnapshot?.doc_no ?? null) !== body.doc_no)) {
+    await resolveCreditorForCase(env, id, "item_code" in body ? body.item_code ?? null : beforeSnapshot?.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
     );
   }
@@ -2063,7 +2063,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
 
 /** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
 async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
-  if (isSupabaseConfigured(env)) await attachOrderPurchaseOrders(getSupabaseService(env), rows);
+  if (isSupabaseConfigured(env)) await attachOrderPosAndFill(env, rows);
 }
 
 /** Attach live DO numbers as `do_numbers` on each row. The case table's own

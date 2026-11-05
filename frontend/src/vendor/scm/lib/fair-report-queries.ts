@@ -35,7 +35,14 @@ export type FairFilters = {
   month?: string;        // YYYY-MM
   dateFrom?: string;     // YYYY-MM-DD (inclusive)
   dateTo?: string;       // YYYY-MM-DD (inclusive)
+  /** How the dates pick the rows: by the orders' SO date (default) or each stage by its own date. */
+  dateBasis?: FairDateBasis;
 };
+
+/** 'so': every stage's rows from the orders whose SO date is in the window (the
+ *  default); 'stage': Delivery Orders by the date their rows show, Invoices by
+ *  invoice date — Sales Orders and the P&L keep the SO date (owner 2026-11-03). */
+export type FairDateBasis = 'so' | 'stage';
 
 /** Fair-identity columns emitted on every stage row (fairDims). */
 export type FairDims = {
@@ -203,6 +210,7 @@ export type FairFiltersEcho = {
   month: string | null;
   date_from: string | null;
   date_to: string | null;
+  date_basis?: FairDateBasis;
 };
 
 export type FairSoResponse = {
@@ -226,16 +234,47 @@ export type FairInvoiceResponse = {
   filters: FairFiltersEcho;
   meta: { access_tier: 'management' | 'sales_director' | 'none' };
 };
+/** A brand's cost-rate card (project_cost_rates): plain percentages (5 == 5%). */
+export type FairCostRate = {
+  transport_pct: number;
+  merchandise_pct: number;
+  commission_normal_pct: number;
+  commission_boost_pct: number | null;
+  boost_min_gp_pct: number | null;
+  boost_min_sales: number | null;
+};
+
+/** One fair's line in the every-fair P&L (no fair picked): its summary is the
+ *  one its own P&L shows once picked, priced on its own card. */
+export type FairPnlFairRow = {
+  project_id: number;
+  project: string | null;
+  project_start_date: string | null;
+  project_end_date: string | null;
+  venue: string | null;     // the venue its orders were taken at (the commonest)
+  brand: string | null;     // the fair's brand — whose card prices its overhead
+  rate_present: boolean;
+  summary: FairPnlSummary;
+};
+
 export type FairPnlResponse = {
   stage: 'pnl';
   rows: FairPnlRow[];
   summary: FairPnlSummary;
+  /** No fair picked: every fair with orders in the period, a line each. */
+  fairs?: FairPnlFairRow[];
+  /** No fair picked: the period's orders that carry no fair (in no line). */
+  no_fair?: { orders: number; revenue_sen: number };
   filters: FairFiltersEcho;
   meta: {
     access_tier: 'management' | 'sales_director' | 'none';
-    needs_project: boolean;   // true when no fair (project) is selected yet
+    needs_project: boolean;   // true when no fair (project) is selected yet — the per-order rows wait for one
     brand: string | null;     // the fair's brand (drives the rate card)
     rate_present: boolean;    // false when the brand has no project_cost_rates card
+    /** The picked fair's card (null: none, or no fair picked). */
+    rate?: FairCostRate | null;
+    /** The picked fair itself — named even when none of its orders is in the dates. */
+    fair?: { project_id: number; project: string | null; project_start_date: string | null; project_end_date: string | null } | null;
   };
 };
 export type FairReportResponse = FairSoResponse | FairDoResponse | FairInvoiceResponse | FairPnlResponse;
@@ -251,6 +290,7 @@ function buildFairQs(stage: FairStage, f: FairFilters): string {
   if (f.month)       params.set('month', f.month);
   if (f.dateFrom)    params.set('date_from', f.dateFrom);
   if (f.dateTo)      params.set('date_to', f.dateTo);
+  if (f.dateBasis === 'stage') params.set('date_basis', 'stage');
   return params.toString();
 }
 

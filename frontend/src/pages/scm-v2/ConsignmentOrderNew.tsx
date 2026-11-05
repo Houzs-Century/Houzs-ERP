@@ -275,7 +275,7 @@ export const ConsignmentOrderNew = () => {
   const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
     const { variants, masters } = cascadeMasterVariants(
-      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown>, itemCode: l.itemCode })),
       masterSnapshotRef.current,
       /* Same answer as the desktop SO page: every category cascades. */
       null,

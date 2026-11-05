@@ -1,9 +1,12 @@
-/* The Event costs tab (owner 2026-09-30): each event starting in the months,
-   what was booked on it from the ledger, cost vs other; the filter to events
-   with money, a row opening to its accounts and entries, and the CSV. */
+/* The Event costs report (owner 2026-09-30; the redesign, batch 6 §5.11):
+   each event starting in the months, what was booked on it from the ledger,
+   cost vs other; the shared range read in whole months; four tiles; the
+   filter to events with money; a row opening to its accounts and entries;
+   Excel from the rows as shown and the CSV under the header's ⋯. */
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { EventCosts } from '../../vendor/scm/lib/event-queries';
 
 const REPORT: EventCosts = {
@@ -29,34 +32,87 @@ const REPORT: EventCosts = {
   totals: { costSen: 1_200_000, otherSen: 300_000 },
 };
 
+const read = vi.fn();
 vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
-  useEventCosts: () => ({ data: REPORT, isLoading: false, isError: false, error: null }),
+  useEventCosts: (from: string, to: string) => { read(from, to); return { data: REPORT, isLoading: false, isError: false, error: null }; },
 }));
+const xlsx = vi.fn(async (..._a: unknown[]) => {});
+vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
+vi.mock('../../vendor/scm/lib/report-sheet-pdf', () => ({ generateReportPdf: vi.fn() }));
 
-import { EventCostsTab, eventCostsCsv } from './EventCosts';
+import { EventCostsTab, eventCostsCsv, eventCostsSheet } from './EventCosts';
 
-describe('the Event costs tab', () => {
-  test('lists every event with its cost and other; the filter keeps only events with money; a row opens to its accounts and entries', () => {
-    render(<EventCostsTab />);
-    const table = screen.getByRole('table');
-    expect(within(table).getByText(/HOMELOVE @ SETIA SPICE/)).toBeTruthy();
-    expect(within(table).getByText(/MLE @ PWCC/)).toBeTruthy();
-    expect(within(table).getByText('cancelled')).toBeTruthy();
-    /* Totals: cost and other kept apart. */
-    const totalRow = within(table).getByText('Total').closest('tr')!;
-    expect(totalRow.textContent).toContain('12,000.00');
-    expect(totalRow.textContent).toContain('3,000.00');
+const draw = (search = '?tab=events&from=2026-09-01&to=2026-09-30') => render(
+  <MemoryRouter initialEntries={[`/scm/accounting${search}`]}><EventCostsTab /></MemoryRouter>,
+);
+const events = () => within(within(screen.getByRole('region', { name: 'Events' })).getAllByRole('table')[0]!);
 
-    fireEvent.click(within(table).getByText(/HOMELOVE @ SETIA SPICE/));
-    expect(screen.getByText('JE-2609-0012')).toBeTruthy();
-    expect(screen.getByText('HC-API-2609-003')).toBeTruthy();
+beforeEach(() => {
+  read.mockClear();
+  xlsx.mockClear();
+  window.sessionStorage.removeItem('fin-report-range');
+});
+
+describe('Event costs', () => {
+  test('every event with its cost and other, the tiles, the total; a row opens to its accounts and entries; the money filter', () => {
+    draw();
+    expect(read).toHaveBeenLastCalledWith('2026-09-01', '2026-09-30');
+    const t = events();
+    expect(t.getByText(/HOMELOVE @ SETIA SPICE/)).toBeTruthy();
+    expect(t.getByText(/MLE @ PWCC/)).toBeTruthy();
+    expect(t.getByText('cancelled')).toBeTruthy();
+    const tiles = within(screen.getByRole('group', { name: 'Totals' }));
+    expect(tiles.getByText('Events')).toBeTruthy();
+    expect(tiles.getByText('1 with money booked')).toBeTruthy();
+    expect(tiles.getByText('12,000.00')).toBeTruthy();
+    expect(tiles.getByText('3,000.00')).toBeTruthy();
+    /* The total row: cost and other kept apart. */
+    const total = t.getAllByText('12,000.00').map((e) => e.closest('tr')!).find((tr) => tr.textContent.includes('3,000.00') && !tr.textContent.includes('SETIA'));
+    expect(total).toBeTruthy();
+
+    const row = t.getByText(/HOMELOVE @ SETIA SPICE/).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'Expand row' }));
+    const lines = within(screen.getByRole('table', { name: /^Entries on .*SETIA SPICE/ }));
+    expect(lines.getByText('JE-2609-0012')).toBeTruthy();
+    expect(lines.getByText('HC-API-2609-003')).toBeTruthy();
     /* Accounts print code over name (the house rule for an account). */
     expect(screen.getAllByText('RENTAL DEPOSIT').length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByLabelText('Only events with money booked'));
+    fireEvent.click(screen.getByRole('switch', { name: 'Only events with money booked' }));
     expect(screen.queryByText(/MLE @ PWCC/)).toBeNull();
-    expect(screen.getByText(/1 with money booked/)).toBeTruthy();
+    expect(tiles.getByText('1 with money booked')).toBeTruthy();
+  });
+
+  test('the shared range reads in whole months; the find box narrows by name', () => {
+    draw('?tab=events&from=2026-08-15&to=2026-09-10');
+    expect(read).toHaveBeenLastCalledWith('2026-08-01', '2026-09-30');
+    fireEvent.change(screen.getByLabelText('Find an event'), { target: { value: 'pwcc' } });
+    expect(events().queryByText(/SETIA SPICE/)).toBeNull();
+    expect(events().getByText(/MLE @ PWCC/)).toBeTruthy();
+  });
+
+  test('Excel draws the events as shown, an opened event with its entries', async () => {
+    draw();
+    const row = events().getByText(/HOMELOVE @ SETIA SPICE/).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'Expand row' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
+    const [sheet, file] = xlsx.mock.calls[0] as [{ title: string; tables: Array<{ rows: Array<{ kind: string; label: string }> }> }, string];
+    expect(sheet.title).toBe('Event costs');
+    expect(sheet.tables[0]!.rows.map((r) => r.kind)).toEqual(['category', 'row', 'row', 'category', 'total']);
+    expect(file).toBe('event-costs-2026-09-2026-09.xlsx');
+    /* The CSV moved under the ⋯. */
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'CSV' })).toBeTruthy();
+  });
+
+  test('the sheet keeps cost and other apart on an entry', () => {
+    const sheet = eventCostsSheet(REPORT.events, new Set(['336']), 'Sep 2026', REPORT.totals);
+    const rows = sheet.tables[0]!.rows;
+    expect(rows[1]!.cells.slice(3)).toEqual([1_200_000, null]);
+    expect(rows[2]!.cells.slice(3)).toEqual([null, 300_000]);
+    expect(rows.at(-1)).toMatchObject({ kind: 'total', cells: [null, null, null, 1_200_000, 300_000] });
   });
 
   test('the CSV carries each event, its entries under it, and the totals', () => {

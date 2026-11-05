@@ -3,8 +3,11 @@
 import { Panel, Th, Td, StepTabs } from "../../components/scm-v2/OverviewKit";
 import { useState } from "react";
 import { formatCurrency, cn } from "../../lib/utils";
-import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projectStage";
+import { PROJECT_STAGES, projectStage, setupArrangedOf, driverKeyedOf } from "./projectStage";
 import { useQuery } from "../../hooks/useQuery";
+import { useAuth } from "../../auth/AuthContext";
+import { canSaveSalesReport } from "../../auth/salesAccess";
+import { BillRefFix } from "./BillRefFix";
 import { api } from "../../api/client";
 
 // Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
@@ -25,12 +28,13 @@ interface DataGaps {
    with no sales against it), and No chat sales report (per event). */
 interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
+  sizeSqm: number | null;
   id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
   hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
   /** The P&L's rental (Finance's books or a typed line), in RM. */
   rental: number;
 }
-type BooksTab = "daily" | "nocogs" | "rental" | "report";
+type BooksTab = "daily" | "nocogs" | "rental" | "report" | "size";
 /** A Sales Order of a recent event with a product line at no cost - its SKU has no cost in Product Maintenance. */
 interface SoNoCogs { docNo: string; projectId: number; event: string; code: string; startDate: string; endDate: string; amountSen: number; items: string[] }
 /** An event of the last 180 days whose chat report holds bills not opened under it. */
@@ -40,6 +44,8 @@ interface NotDailyEvent { id: number; code: string; name: string; startDate: str
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
   const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; soNoCogs: SoNoCogs[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
   const [tab, setTab] = useState<BooksTab>("daily");
+  const { user } = useAuth();
+  const canFix = canSaveSalesReport(user);
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g) return null;
@@ -47,12 +53,14 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
   const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
   const noReport = g.books.filter((r) => !r.hasReport);
+  /* Venue rent per m² reads the booth size, so an event without one is left out of it. */
+  const noSize = g.books.filter((r) => !((r.sizeSqm ?? 0) > 0));
   /* One line per row (owner 2026-10-20: "不需要两排"): the event's name, its code on hover. */
   const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[320px] truncate"><span className="text-primary" title={r.code}>{r.name}</span></Td>;
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
       <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
-        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["nocogs", "SO no COGS", g.soNoCogs.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
+        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["nocogs", "SO no COGS", g.soNoCogs.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0], ["size", "No project size", noSize.length, 0]] as Array<[string, string, number, number]>} />
       <div className="max-h-[460px] overflow-auto">
         {tab === "daily" && (
           <table className="w-full border-collapse">
@@ -63,7 +71,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               return (
               <tr key={`${r.id}-${b.ref}-${i}`} className={cn("cursor-pointer hover:bg-surface-2/50", first && i > 0 && "border-t-2 border-border")} onClick={() => onOpen(r.id)}>
                 {first ? eventCell(r) : <Td left> </Td>}
-                <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+                <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="whitespace-nowrap font-mono">{b.ref}{canFix && <BillRefFix projectId={r.id} from={b.ref} onSaved={() => q.reload()} />}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
                 <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
                   {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
                 </Td>
@@ -120,6 +128,18 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
             </tbody>
           </table>
         )}
+        {tab === "size" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th></tr></thead>
+            <tbody>{noSize.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{r.rental > 0 ? money(r.rental) : "—"}</Td>
+              </tr>
+            ))}
+              {noSize.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a booth size.</Td></tr>}
+            </tbody>
+          </table>
+        )}
       </div>
       <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it; every event since {g.recentFrom}, running ones included. Rental and chat report: the finished events above. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
     </Panel>
@@ -147,7 +167,7 @@ export function ProjectStuckPanel({ onOpen }: { onOpen: (id: number) => void }) 
      event start + the days set on it in the template — not the tracker's
      fixed T-offsets. Days late = the task furthest past its date. */
   const rows = d.events.map((e) => {
-    const st = projectStage(e.items, setupArrangedOf(e.setupCrew, e.setupStartAt), e.start, d.today);
+    const st = projectStage(e.items, setupArrangedOf(e.setupCrew, e.setupStartAt), driverKeyedOf(e.setupCrew), e.start, d.today);
     const mapped = e.items.filter((i) => (PROJECT_STAGES[st.currentIdx]?.titles ?? []).includes(i.title) && i.due);
     const stageDue = mapped.length ? mapped.map((i) => i.due as string).sort().at(-1) as string : st.deadline;
     return { e, st, stageDue, late: e.late[0]?.daysOver ?? 0 };

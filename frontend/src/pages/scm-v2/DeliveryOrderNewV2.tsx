@@ -90,6 +90,7 @@ import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
 import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";
+import { afterCreatePath, sourceDocPath } from "../../lib/returnToSource";
 import {
   seedFollowerVariants,
   seedableMasterVariants,
@@ -1040,7 +1041,7 @@ export function DeliveryOrderNewV2() {
              Never blocks; the DO exists and the goods have gone. */
           await notifyAcNotSent(notify, res, "Delivery order");
           if (res?.id) {
-            navigate(`/scm/delivery-orders/${res.id}`);
+            navigate(afterCreatePath(`/scm/delivery-orders/${res.id}`, sourceDocPath.salesOrder(fromSoParam)));
           } else {
             navigate("/scm/delivery-orders");
           }
@@ -1085,6 +1086,7 @@ export function DeliveryOrderNewV2() {
       );
 
       const ops: Array<Promise<unknown>> = [];
+      const added: Array<ReturnType<typeof toDoItemBody>> = [];
       for (const itemId of removed) {
         ops.push(deleteItem.mutateAsync({ id: editId, itemId }));
       }
@@ -1096,9 +1098,11 @@ export function DeliveryOrderNewV2() {
             ops.push(updateItem.mutateAsync({ id: editId, itemId: l.itemId, ...body }));
           }
         } else {
-          ops.push(addItem.mutateAsync({ id: editId, ...body }));
+          added.push(body);
         }
       }
+      // One request, so the server checks a sofa set over all its new modules.
+      if (added.length > 0) ops.push(addItem.mutateAsync({ id: editId, items: added }));
       // Lines first, then the header — mirrors SalesOrderDetail.saveEdit so a
       // header guard that reads the live line rows sees the fresh variants.
       await Promise.all(ops);

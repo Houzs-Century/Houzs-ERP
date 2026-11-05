@@ -57,6 +57,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { loadRequestForPco, markRequestPcoIssued } from '../lib/product-request-link';
+import { poInactivePickRefusal } from './po-gates';
 import type { Env, Variables } from '../env';
 
 export const purchaseConsignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -369,6 +370,10 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const nextPcNumber = async (): Promise<string> =>
     mintMonthlyDocNo(supabase, 'purchase_consignment_orders', 'pc_number', `${p}PCO-${yymm}`);
 
+  /* HC-0153: a NEW line may not name a deactivated SKU (same rule as the PO
+     create path, po-gates.ts). Copy-as-new carries old lines through this door. */
+  { const inactive = await poInactivePickRefusal(supabase, activeCompanyId(c) ?? null, items); if (inactive) return c.json(inactive, 409); }
+
   // Compute totals.
   let subtotal = 0;
   const itemRows = items.map((it) => {
@@ -569,6 +574,8 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
   const childLock = await pcoHasDownstream(sb, pcoId);
   if (childLock) return c.json(childLock, 409);
 
+  { const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind, itemCode: it.itemCode }]); if (inactive) return c.json(inactive, 409); }
+
   const qty = Number(it.qty ?? 1);
   const unitPriceSen = Number(it.unitPriceSen ?? 0);
   const discountSen = Number(it.discountSen ?? 0);
@@ -625,9 +632,14 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_consignment_order_items')
-    .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_group, variants')
+    .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_group, variants, item_code, material_kind')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  /* HC-0153: only a MOVED code is a new pick; an unchanged code keeps a legacy line editable. */
+  if (typeof it.itemCode === 'string' && it.itemCode !== String(prev.item_code ?? '')) {
+    const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind ?? prev.material_kind, itemCode: it.itemCode }]);
+    if (inactive) return c.json(inactive, 409);
+  }
 
   const qty = it.qty !== undefined ? Number(it.qty) : prev.qty;
   const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;

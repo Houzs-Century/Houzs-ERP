@@ -56,6 +56,11 @@
 // resolves a > b > c exactly as above. The flip that makes (c)/(a) the only
 // execution answer (the live DO-time allocator binding) is PR-4, owner-gated.
 //
+// 2990-0023 (2026-10-28): a POOLED company (every company but
+// HARD_BOUND_COMPANY_ID) now resolves a > c > b — the PO names the SO the
+// pooled walk gives it, and the raised-for SO rides as `provenance`. The
+// hard-bound company keeps a > b > c. See mergeAssignments.
+//
 // Read-only + company-scoped: every doc read is scopeToCompany'd (a foreign id
 // resolves to nothing); computeMrp is called with the active company id; the
 // origin + DO-linked SOs are re-validated against company-owned mfg_sales_orders.
@@ -71,6 +76,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
 import { computeVariantKey } from '../shared';
 import { effectiveSoDelivery } from '../shared';
 import { parseProvenanceNote } from './document-flow';
@@ -352,7 +358,16 @@ export function buildDeliveredSoLock(
    not (b) won. The precedence itself is NOT changed — `assignments` and
    `storedLink` are byte-identical to the pre-PR-3 output. A SKU whose only
    data is stored origin still appears (layer (b) wins for it), so provenance
-   is never silently dropped by the only-SKUs-with-an-assignment rule. */
+   is never silently dropped by the only-SKUs-with-an-assignment rule.
+
+   `pooled` (2990-0023, 2026-10-28) = the company pools its supply (every
+   company but HARD_BOUND_COMPANY_ID). There (c) outranks (b): a pooled walk
+   can hand a PO to another SO with an earlier delivery date (boss rule,
+   2990-0018), and Sim asked that the PO then name THAT SO, not the one it was
+   raised for. (b) stays on the wire as `provenance` — the "Bought for" chip —
+   and still wins when MRP has no answer for the SKU (received / stock). The
+   hard-bound company keeps a > b > c: its bound lines only ever use their own
+   PO, so there (c) already equals (b). */
 export function mergeAssignments(
   poSkus: Array<string | null | undefined>,
   doLock: Map<string, OriginAssignment[]>,
@@ -361,15 +376,17 @@ export function mergeAssignments(
   /* SKUs whose PO lines carry a stored so_item_id. Reported per SKU so the UI
      can distinguish "the database binds this" from "MRP currently thinks this",
      independently of which layer happened to win the precedence. */
-  linkedSkus: Set<string> = new Set(),
+  linkedSkus: Set<string>,
+  pooled: boolean,
 ): SkuOrigin[] {
   const wantedSkus = new Set((poSkus ?? []).map((s) => (s ?? '').trim()).filter(Boolean));
   const out: SkuOrigin[] = [];
   for (const code of wantedSkus) {
+    const stored = storedOrigin.get(code)?.length ? storedOrigin.get(code) : null;
+    const mrp = floating.get(code)?.length ? floating.get(code) : null;
     const picked =
       (doLock.get(code)?.length ? doLock.get(code) : null)
-      ?? (storedOrigin.get(code)?.length ? storedOrigin.get(code) : null)
-      ?? (floating.get(code)?.length ? floating.get(code) : null);
+      ?? (pooled ? mrp ?? stored : stored ?? mrp);
     if (!picked || picked.length === 0) continue;
     out.push({
       itemCode: code,
@@ -519,7 +536,8 @@ poSoCoverage.get('/:type/:id', async (c) => {
     const candidateDocs = [...new Set([...exactDocs, ...noteTokens])];
 
     // ── (a) DELIVERED DO-lock (linkage C), (c) MRP floating (linkage A) ──────
-    // Both computed here; the merge applies the precedence a > b > c. computeMrp
+    // Both computed here; the merge applies the precedence (a > b > c, or
+    // a > c > b for a pooled company). computeMrp
     // is the SAME single engine the SO detail reads via mrpLineCoverage — inverted
     // by mrpReverseCoverage — so SO->PO and PO->SO can never disagree.
     const doLockRes = await resolveDeliveredSoLock(sb, c, po.poNumber);
@@ -579,7 +597,10 @@ poSoCoverage.get('/:type/:id', async (c) => {
       }
     }
 
-    const origins = mergeAssignments(poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus);
+    const origins = mergeAssignments(
+      poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus,
+      activeCompanyId(c) !== HARD_BOUND_COMPANY_ID,
+    );
     /* "Delivered" per SKU — the DO(s) that shipped this PO's goods + qty (owner
        2026-07-31). The forward companion of the delivered-lock above; the drill-
        down matches it into each line by item_code. */
@@ -927,7 +948,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
     }
   }
 
-  // ── Precedence merge per PO (a > b > c > none), then roll up to the cell ──
+  // ── Precedence merge per PO (a > b > c > none; a > c > b when pooled) ──
+  const pooled = activeCompanyId(c) !== HARD_BOUND_COMPANY_ID;
   for (const id of validIds) {
     const poNum = poNumberById.get(id) ?? '';
     const skus = skusByPo.get(id) ?? [];
@@ -946,7 +968,9 @@ export async function resolvePoSoCoveragePerSkuForPos(
       if (hdrs.length > 0) storedOrigin = buildStoredOrigins(skus, hdrs, lines);
     }
     const floating = floatingByPo.get(poNum) ?? new Map<string, OriginAssignment[]>();
-    const origins = mergeAssignments(skus, doLock, storedOrigin, floating, linkedSkusByPo.get(id) ?? new Set());
+    const origins = mergeAssignments(
+      skus, doLock, storedOrigin, floating, linkedSkusByPo.get(id) ?? new Set(), pooled,
+    );
     out.set(id, origins);
   }
   return out;

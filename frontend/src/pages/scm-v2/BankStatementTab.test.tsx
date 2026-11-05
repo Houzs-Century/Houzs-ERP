@@ -161,11 +161,6 @@ describe('what the books hold that the bank has not shown', () => {
     expect(screen.getByText(/2990DraftOR-2608-005 · 2990-SO-2608-067 · NG KAH YEE/)).toBeTruthy();
     lines = [LINE, SPLIT, OTHER];
   });
-
-  test('the month box says a dated file it names covers the whole month', () => {
-    render(<BankStatementTab />);
-    expect(screen.getByText(/covers that whole month/)).toBeTruthy();
-  });
 });
 
 /* ── Several movements to one entry ──────────────────────────────────────────
@@ -339,23 +334,19 @@ describe('matching the obvious ones', () => {
   });
 });
 
-describe('the year-and-month box', () => {
-  test('says it also files a statement that carries no transactions', () => {
-    render(<BankStatementTab />);
-    expect(screen.getByLabelText('Statement month')).toBeTruthy();
-    expect(screen.getByText(/no transactions at all/)).toBeTruthy();
-  });
-});
-
 describe('the list of statements read', () => {
   test('says how much of each is still undecided, and how much of that is card money', () => {
     render(<BankStatementTab />);
     expect(screen.getByText('3 of 9 · 2 card payout(s)')).toBeTruthy();
   });
 
-  test('names which acquirers can be recognised at all', () => {
-    render(<BankStatementTab />);
-    expect(screen.getByText(/Card money is recognised for MBB, PBB, AEON, HLB/)).toBeTruthy();
+  /* The upload is the page's Upload drawer now (BankUpload.test.tsx); the list keeps one door to it. */
+  test('opens the Upload drawer, and carries no upload box of its own', () => {
+    const onUpload = vi.fn();
+    render(<BankStatementTab onUpload={onUpload} />);
+    expect(screen.queryByLabelText('Bank statement file')).toBeNull();
+    fireEvent.click(screen.getByText('Upload statement'));
+    expect(onUpload).toHaveBeenCalledTimes(1);
   });
 
   /* One account's files at a time (owner 2026-09-13: 无法分辨), the tab
@@ -768,37 +759,6 @@ describe('every certain payout at once', () => {
     lines = [SPLIT, OTHER];
     openStatement();
     expect(screen.queryByText(/Money received — all/)).toBeNull();
-  });
-});
-
-/* ── The bank's monthly statement PDF (owner 2026-09-14: 也支持 csv，也支持 pdf;
-   docs/bugs/0869): the browser reads its text with positions and the upload
-   carries it marked as a PDF; a CSV goes as it always did. ────────────────── */
-describe('uploading a statement PDF', () => {
-  const pick = async (file: File) => {
-    render(<BankStatementTab />);
-    fireEvent.change(screen.getByLabelText('Bank account'), { target: { value: '310-0010' } });
-    const input = screen.getByLabelText('Bank statement file') as HTMLInputElement;
-    expect(input.accept).toContain('.pdf');
-    fireEvent.change(input, { target: { files: [file] } });
-    const go = () => screen.getByText('Upload bank statement').closest('button') as HTMLButtonElement;
-    await waitFor(() => expect(go().disabled).toBe(false));
-    fireEvent.click(go());
-    expect(uploadMutate).toHaveBeenCalledTimes(1);
-    return uploadMutate.mock.calls[0]![0] as { fileName: string; format: string; content: string; accountCode: string };
-  };
-
-  test('a picked .pdf is sent as its extracted text, marked PDF', async () => {
-    uploadMutate.mockReset();
-    const sent = await pick(new File(['%PDF-1.4'], 'MBBcurrent_564418759397_2026-08-31.pdf', { type: 'application/pdf' }));
-    expect(sent).toMatchObject({ accountCode: '310-0010', fileName: 'MBBcurrent_564418759397_2026-08-31.pdf', format: 'PDF' });
-    expect(JSON.parse(sent.content)).toMatchObject({ kind: 'houzs-pdf-text/1', pages: [{ lines: [{ y: 693 }] }] });
-  });
-
-  test('a picked .csv is sent as its text, marked CSV, as it always was', async () => {
-    uploadMutate.mockReset();
-    const sent = await pick(new File(['EFFECT DATE|AMOUNT\n20260605|100'], 'aug.csv', { type: 'text/csv' }));
-    expect(sent).toMatchObject({ fileName: 'aug.csv', format: 'CSV', content: 'EFFECT DATE|AMOUNT\n20260605|100' });
   });
 });
 

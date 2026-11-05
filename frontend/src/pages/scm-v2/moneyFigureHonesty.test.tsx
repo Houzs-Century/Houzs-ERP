@@ -37,7 +37,7 @@ vi.mock('../../vendor/scm/lib/inventory-queries', async (orig) => ({
   useCogsEntries,
 }));
 
-import { TrialBalanceTab } from './Accounting';
+import { TrialBalanceTab } from './TrialBalance';
 import { CogsTab } from './Inventory';
 
 const wrap = (ui: ReactNode) => (

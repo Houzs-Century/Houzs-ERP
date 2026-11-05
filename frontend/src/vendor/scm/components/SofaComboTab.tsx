@@ -48,7 +48,7 @@ import { todayMyt } from '../lib/dates';
 // → Sofa → Sizes; config key `sofaSizes`). This fallback only shows if that
 // config fails to load — same default the rest of the app uses.
 const HEIGHTS_FALLBACK = ['24', '26', '28', '30', '32', '35'];
-const TIERS: SofaPriceTier[] = ['PRICE_1', 'PRICE_2', 'PRICE_3'];
+const TIERS: SofaPriceTier[] = ['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4'];
 
 const ICON_PROPS = { size: 14, strokeWidth: 1.75 } as const;
 

@@ -9,10 +9,25 @@
 
 import { fmtSen } from "@2990s/shared";
 import type { Column } from "../../components/DataTable";
-import { lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
+import { LineValuesCell, lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
 import { PI_LABELS as L, senToRinggit, type PiListLine } from "../../vendor/scm/lib/pi-list-export";
+import type { PiPoPriceSummary } from "../../vendor/scm/lib/pi-list-po-price";
 
 export type PiGridRow = { id: string; lines?: PiListLine[] };
+
+/** The invoice's lines at our PO prices. A line the PO never priced has no share
+ *  in it, so a part-count says so rather than reading as the whole invoice. */
+export function PoAmountCell({ summary }: { summary: PiPoPriceSummary | undefined }) {
+  if (!summary) return <span className="text-[12px] text-ink-muted">…</span>;
+  if (summary.comparableLines === 0) return <span className="text-[12px] text-ink-muted">No PO price</span>;
+  const gap = summary.totalDiffSen;
+  return (
+    <span className="whitespace-nowrap" title={summary.linesDiffering > 0 ? `Invoice is ${gap > 0 ? "above" : "below"} the purchase order by ${fmtSen(Math.abs(gap))}. For reference only.` : undefined}>
+      {summary.comparableLines < summary.lines && <span className="mr-1.5 text-[11px] text-ink-muted">{summary.comparableLines} of {summary.lines} lines</span>}
+      <span className="font-money text-[13px] text-ink" style={summary.linesDiffering > 0 ? { color: "#a16a2e" } : undefined}>{fmtSen(summary.poAmountSen)}</span>
+    </span>
+  );
+}
 
 export function piLineColumns<T extends PiGridRow>(): Record<string, Column<T, PiListLine>> {
   const linesOf = (r: T): readonly PiListLine[] => r.lines ?? [];
@@ -42,7 +57,16 @@ export function piLineColumns<T extends PiGridRow>(): Record<string, Column<T, P
     location: text("location", L.location, (l) => l.location, { width: "90px" }),
     proj_no: blank("proj_no", L.projNo),
     qty: lineSumColumn<T, PiListLine>({ key: "qty", label: L.qty, linesOf, pick: (l) => l.qty, exportFormat: "number" }),
-    unit_price: rate("unit_price", L.unitPrice, (l) => l.unit_price_sen),
+    /* The two prices side by side on screen (owner 2026-11-04). The file keeps
+       AutoCount's "Unit Price", and PO Price has no export value of its own: the
+       export's PO column is po_unit_price. A PO price of 0 means never priced. */
+    po_price: {
+      key: "po_price",
+      label: "PO Price",
+      width: "120px",
+      render: (r) => <LineValuesCell values={linesOf(r).map((l) => l.po_unit_price_sen || null)} format={(v) => fmtSen(Number(v))} />,
+    },
+    unit_price: { ...rate("unit_price", "PI Price", (l) => l.unit_price_sen), exportLabel: L.unitPrice },
     discount: money("discount", L.discount, (l) => l.discount_sen),
     line_total: money("line_total", L.lineTotal, (l) => l.line_total_sen),
     tax_code: blank("tax_code", L.taxCode),

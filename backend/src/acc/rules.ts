@@ -18,6 +18,10 @@
 //  Acquirer settlement conf. | Dr fee                / Cr transit      | SETTLE      | SETTLE_REVERSAL
 //  Statement-level charge    | Dr fee                / Cr transit      | SETTLEADJ   | SETTLEADJ_REVERSAL
 //  Acquirer payout received  | Dr bank               / Cr transit      | SETTLEBANK  | SETTLEBANK_REVERSAL
+//  Books' opening balances   | each account to the old book's B/F     | OPENING     | OPENING_REVERSAL
+//    (Houzs 31/08/2026 from AutoCount; the Opening Balance page. Its bills,
+//    credits and debtor bills are ordinary API / SCN / ODB documents flagged
+//    `opening`, so the books count them whatever their date.)
 //
 //  Customer-payment debit side, by the sales panel's own method model:
 //    cash                 -> CASH role (335-0000)
@@ -42,6 +46,10 @@ import type { StockBucket } from '../scm/lib/stock-bucket';
 export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
+  /* The bank a voucher pays FROM by default — apart from BANK_DEFAULT, the
+     bank money is received INTO (owner 2026-11-04: Houzs Century receives in
+     Maybank and pays from Hong Leong). Unset, it is BANK_DEFAULT. */
+  | 'BANK_PAY_DEFAULT'
   | 'CLOSING_STOCK'
   /* The closing stocks by warehouse bucket (owner 2026-09-21: closing stock -
      customer / display / service; 2026-09-30: + showroom, + others): each
@@ -73,6 +81,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   AP_OTHER: '405-0000',          // OTHER CREDITOS (the accountant's spelling)
   CASH: '320-0000',              // CASH IN HAND
   BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
+  BANK_PAY_DEFAULT: '310-0010',  // resolveRoles: the company's BANK_DEFAULT when unset
   TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
   TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
   CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
@@ -140,8 +149,10 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   CN: 'CN_REVERSAL',
   DN: 'DN_REVERSAL',
   SCN: 'SCN_REVERSAL',
+  OCN: 'OCN_REVERSAL',
   RCT: 'RCT_REVERSAL',
   DI: 'DI_REVERSAL',
+  OPENING: 'OPENING_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -167,9 +178,11 @@ export async function resolveRoles(sb: any, companyId: number | null): Promise<R
     console.error('[acc/rules] roles read failed — using default codes:', error.message);
     return codes;
   }
-  for (const r of (data ?? []) as Array<{ role: string; account_code: string }>) {
+  const rows = (data ?? []) as Array<{ role: string; account_code: string }>;
+  for (const r of rows) {
     if (r.role in codes && r.account_code) codes[r.role as AccountRole] = r.account_code;
   }
+  if (!rows.some((r) => r.role === 'BANK_PAY_DEFAULT' && r.account_code)) codes.BANK_PAY_DEFAULT = codes.BANK_DEFAULT;
   return codes;
 }
 
@@ -281,6 +294,27 @@ export function debitNoteLines(roles: RoleCodes, note: { note_number: string }, 
       notes: l.description ?? `Debit note ${note.note_number}`,
       projectId: l.projectId ?? null,
     })),
+  ];
+}
+
+/** Other-debtor credit note posted (owner 2026-10-28): Dr each line's account
+    (the line names it — a discount, an adjustment; there is no default) / Cr
+    the other-debtor control for the debtor, named as a debtor bill names it
+    (ODEBTOR, no code, the registry name) — the debtor owes that much less. */
+export function otherDebtorCreditNoteLines(roles: RoleCodes, note: { note_number: string }, debtor: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Other debtor credit note ${note.note_number}`,
+      projectId: l.projectId ?? null,
+    })),
+    {
+      accountCode: roles.AR_OTHER, debitSen: 0, creditSen: totalSen,
+      partyType: 'ODEBTOR', partyCode: null, partyName: debtor.name,
+      notes: `Other debtor credit note ${note.note_number}`,
+    },
   ];
 }
 

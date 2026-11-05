@@ -110,7 +110,27 @@ describe("executable route contract", () => {
     // 179 since 2026-10-21: /scm/delivery-planning-driver — the driver run-sheet
     // ("Last Mile Delivery (Driver)") brought to desktop beside the admin board.
     // 180 since 2026-10-21: /hr/employees, Employees & Attendance (HC-0125).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(180);
+    // 181 since 2026-10-28: /scm/opening-balance, Finance › Setup › Opening Balance.
+    // 182 since 2026-10-28: /scm/supplier-notes, Finance › Money out › Supplier &
+    // Other Creditor CN / DN — the supplier's notes moved off /scm/credit-notes.
+    // 183 since 2026-11-02: /scm/finance/rules, Finance › Setup › To do rules —
+    // the To do's rule switches, routines and groups (Claude Design redesign).
+    // 184 since 2026-11-02: /scm/saved-locations, the transfer from/to address book (方案2).
+    // 187 since 2026-11-03: /scm/ap-invoices/:id, /scm/credit-notes/:id and
+    // /scm/supplier-notes/:id — the bill and note pages (batch 4, step 6).
+    // 190 since 2026-11-03: /scm/ar-invoices/deposit/:id, /bills/:id and /sales/:id —
+    // Money in's invoice documents as pages (Claude Design, batch 5 step 1).
+    // 192 since 2026-11-03: /scm/receipts/official/:id and /scm/receipts/debtor/:id —
+    // the official and the other-debtor receipt as pages (Claude Design, batch 5 step 3).
+    // 194 since 2026-11-03: /scm/receipts/sundry/:id and /scm/other-debtors/:id —
+    // a sundry receipt and an other debtor as pages (Claude Design, batch 5 step 2).
+    // 193 since 2026-11-03: /scm/official-receipts folded into Receipts — a
+    // legacy redirect now (Claude Design, batch 5 step 4), so the contract's
+    // count below stays.
+    // 193 still since 2026-11-03: /scm/deposit-invoices folded into Invoices (a
+    // legacy redirect now) and /scm/finance/deposit-invoices, Setup › Deposit
+    // invoices, holds its switch (Claude Design, batch 5 step 5).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(193);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -166,7 +186,17 @@ describe("executable route contract", () => {
     // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
     // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
     // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(189);
+    // 190 since 2026-10-28 — /scm/opening-balance; see the staff-route count above.
+    // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
+    // 192 since 2026-11-02 — /scm/finance/rules; see the staff-route count above.
+    // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
+    // 196 since 2026-11-03 — the bill and note pages (batch 4, step 6); see the staff-route count above.
+    // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
+    // 201 since 2026-11-03 — the two receipt document pages; see the staff-route count above.
+    // 203 since 2026-11-03 — the sundry receipt and other debtor pages; see the staff-route count above.
+    // 203 still since 2026-11-03 — /scm/official-receipts moved from page to legacy redirect.
+    // 204 since 2026-11-03 — Setup › Deposit invoices (+1), /scm/deposit-invoices a legacy redirect.
+    expect(ROUTE_CONTRACT).toHaveLength(204);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

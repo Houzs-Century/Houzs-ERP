@@ -25,6 +25,7 @@ The fabric COST ledger and per-context price tiers. Backs the Fabric Converter t
 - The SCM client is service-role and bypasses RLS — the `company_id` predicate in the route is the ONLY tenant boundary (reads via `scopeToCompany`, writes via `requireActiveCompanyId` + `scopeToCompanyId`).
 - `scm.fabric_trackings` is keyed PER-COMPANY (composite PK `(company_id, id)`) — two companies may legitimately hold the same fabric code as two separate rows. Never reintroduce an `onConflict: 'id'` upsert or a cross-company-refusal guard here; both were workarounds for an old global key and are now wrong.
 - `scm.fabric_library`/`scm.fabric_colours` are STILL GLOBAL text keys (not yet per-company), because external foreign keys reference `fabric_library.id` from outside this repo's DDL — `syncFabricToSellingLibrary` must keep reporting a collision ("already belongs to another organisation") rather than re-homing a series/colour to a new company.
+- Sofa tier is `PRICE_1`..`PRICE_4` (3 = Half Leather, 4 = Full Leather); bedframe tier stops at `PRICE_3` and the UI offers only 1 / 2. `fabric_library` (POS selling tier) stays at PRICE_3: the 2990 POS has no PRICE_4 add-on.
 - A `description` PATCH must also update the mirrored `fabric_colours.label` — the colour name a salesperson actually sees comes from the selling-library mirror, not from the tracking row.
 
 ## Gotchas

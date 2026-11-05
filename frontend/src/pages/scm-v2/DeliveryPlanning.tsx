@@ -32,7 +32,7 @@ import { useMemo, useState } from 'react';
 import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
-import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown } from 'lucide-react';
+import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
@@ -41,7 +41,8 @@ import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, SKIP_LABEL, failedNote, sendInChunks, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { phoneKey } from '../../vendor/scm/lib/driver-info-send';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -52,11 +53,11 @@ import {
   rowIdOf,
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
-import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryPlanningLayouts';
+import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
-import { compareByDeliveryDate } from '../../vendor/scm/lib/delivery-date-group';
+import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -67,12 +68,11 @@ import {
   useScheduleDelivery,
   useDeliveryMessageStatuses,
   useSendDeliveryMessages,
-  useUpdateDeliveryFields,
+  useSyncDeliveryContacts,
   filterOrdersByRegion,
   planningCountsFrom,
   type PlanningOrder,
   type PlanningCounts,
-  type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
@@ -110,16 +110,17 @@ export const DeliveryPlanning = () => {
      sort is active; a drag persists the new order of the displayed rows. The
      DEFAULT beneath it (owner follow-up 2026-10-23) is EFFECTIVE delivery date,
      earliest first — so a board nobody has dragged opens date-ordered, and
-     within each All-view month bucket the rows stay date-ordered. A manual drag
-     still wins for the rows it placed (orderComparator ranks them first; the
-     rest, and a board with no saved order, fall through to the date sort), and a
-     clicked column header overrides both as always. */
+     within each All-view month bucket the rows stay date-ordered. Inside a day
+     each lorry reads earliest Time Slot first. A manual drag still wins for the
+     rows it placed (orderComparator ranks them first; the rest, and a board with
+     no saved order, fall through to the date sort), and a clicked column header
+     overrides both as always. */
   const rowOrder = useDeliveryRowOrder().data;
   const setRowOrder = useSetRowOrder();
   const orderSort = useMemo(() => {
     const cmp = orderComparator(rowOrder ?? []);
     return (a: PlanningOrder, b: PlanningOrder) =>
-      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliveryDate(a, b);
+      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliverySlot(a, b);
   }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
@@ -330,7 +331,7 @@ export const DeliveryPlanning = () => {
      Doc list from the WHOLE region fetch (not the state tab) so switching tabs
      never refires the statuses query. */
   const soDocNos = useMemo(
-    () => allOrders.filter((o) => o.row_type === 'so').map((o) => o.so_doc_no).sort(),
+    () => allOrders.filter((o) => o.row_type === 'so' || o.row_type === 'assr').map((o) => o.so_doc_no).sort(),
     [allOrders],
   );
   const { data: msgStatuses } = useDeliveryMessageStatuses(soDocNos);
@@ -342,38 +343,82 @@ export const DeliveryPlanning = () => {
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
+  if (bulkMenuOpen && sel.size === 0) setBulkMenuOpen(false);
+  /* Ticked Service Case legs - they send their own Service Arrangement (HC-0171). */
+  const selectedAssrRows = allOrders.filter((o) => isAssr(o) && sel.has(rowIdOf(o)));
+  const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
   const openSendModal = (kind: SendMessageKind) => {
+    if (kind === 'assr_arrangement') { setSendKind(kind); setSendingRows(selectedAssrRows); return; }
     const docs = new Set(selectedSoDocNos());
-    if (docs.size === 0) return;
+    // Driver Info also goes to a Service Case job: its trip's driver, its date.
+    const assr = kind === 'driver_info' ? selectedAssrRows : [];
+    if (docs.size === 0 && assr.length === 0) return;
     setSendKind(kind);
-    setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
+    setSendingRows([...allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)), ...assr]);
   };
 
   /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
      date are the row's own Amend Reason + Delivery Date, so there is nothing to
-     ask — the backend reads them per order and skips any missing either. Fire,
-     move the status on the ones that went, and report the summary. */
+     ask — the backend reads them per order and skips any missing either. Fire
+     and report the summary; the send itself moves each sent order's status. */
   const sendMsg = useSendDeliveryMessages();
-  const updateFields = useUpdateDeliveryFields();
-  const sendPostponeDirect = () => {
+  const [postponing, setPostponing] = useState(false);
+  /* Untick what went out; failed / skipped rows stay ticked to retry (HC-0197:
+     a sent row that left a status-filtered view stayed ticked and counted). */
+  const untickSent = (sentRows: PlanningOrder[]) => setSel((p) => {
+    const n = new Set(p);
+    for (const o of sentRows) n.delete(rowIdOf(o));
+    return n;
+  });
+  const sendPostponeDirect = async () => {
+    const docs = new Set(selectedSoDocNos());
+    if (docs.size === 0 || postponing) return;
+    const byPhone = new Map<string, string[]>();
+    for (const o of allOrders) {
+      if (o.row_type !== 'so' || !docs.has(o.so_doc_no)) continue;
+      const key = phoneKey(o.phone) || o.so_doc_no;
+      byPhone.set(key, [...(byPhone.get(key) ?? []), o.so_doc_no]);
+    }
+    setPostponing(true);
+    const res = await sendInChunks(sendMsg.mutateAsync, 'postpone', [...byPhone].map(([phone, docNos]) => ({ phone, docNos })));
+    setPostponing(false);
+    const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
+    untickSent(allOrders.filter((o) => o.row_type === 'so' && sentDocs.has(o.so_doc_no)));
+    const notMoved = statusNotMovedNote(res.statusNotMoved);
+    const failed = failedNote(res.failed);
+    const parts: string[] = [];
+    if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+    if (failed) parts.push(failed);
+    if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+    if (notMoved) parts.push(notMoved);
+    void notify({
+      title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
+      body: parts.join(' ') || 'Nothing to send.',
+      tone: res.failed.length || notMoved ? 'error' : 'info',
+    });
+  };
+
+  /* Sync to Connect (owner 2026-11-02): push the selected orders' full field set
+     into each customer's Connect contact so the chat panel shows the order's
+     details — no WhatsApp sent. Fire and report, like Postpone. */
+  const syncContacts = useSyncDeliveryContacts();
+  const syncToConnectDirect = () => {
     const docNos = selectedSoDocNos();
-    if (docNos.length === 0 || sendMsg.isPending) return;
-    void sendMsg.mutate({ docNos, kind: 'postpone' }, {
-      onSuccess: (res: SendDeliveryMessagesResult) => {
-        const after = KIND_AFTER_STATUS['postpone'];
-        if (after) for (const g of res.sent) for (const id of g.docNos) void updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+    if (docNos.length === 0 || syncContacts.isPending) return;
+    void syncContacts.mutate({ docNos }, {
+      onSuccess: (res) => {
         const parts: string[] = [];
-        if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+        if (res.synced.length) parts.push(`Synced ${res.synced.length} contact${res.synced.length === 1 ? '' : 's'} (${res.synced.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
         if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
         if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
         void notify({
-          title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
-          body: parts.join(' ') || 'Nothing to send.',
+          title: res.failed.length ? 'Sync finished with failures' : res.synced.length ? 'Contacts synced to Connect' : 'Nothing synced',
+          body: parts.join(' ') || 'Nothing to sync.',
           tone: res.failed.length ? 'error' : 'info',
         });
         setSel(new Set());
       },
-      onError: (err) => notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+      onError: (err) => notify({ title: 'Sync failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
     });
   };
 
@@ -392,12 +437,12 @@ export const DeliveryPlanning = () => {
               <Button
                 variant="primary"
                 style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
-                disabled={selectedSoDocNos().length === 0}
-                title={selectedSoDocNos().length === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
+                disabled={sendCount === 0}
+                title={sendCount === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
                 onClick={() => { setSendMenuOpen((v) => !v); setOneTimeOpen(false); }}
               >
                 <MessageSquare size={16} strokeWidth={1.75} />
-                Send Message ({selectedSoDocNos().length})
+                Send Message ({sendCount})
                 <ChevronDown size={14} strokeWidth={1.75} />
               </Button>
               {sendMenuOpen && (
@@ -416,6 +461,11 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {(() => {
+                      /* Only Service Arrangement and Driver Info reach a Service
+                         Case job; the rest read a Sales Order, so with only ASSR
+                         rows ticked they are greyed instead of doing nothing. */
+                      const soOnlyIdle = (k: SendMessageKind) =>
+                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedSoDocNos().length === 0;
                       const renderKind = (
                         [k, label, hint]: readonly [SendMessageKind, string, string],
                         sub: boolean,
@@ -424,8 +474,10 @@ export const DeliveryPlanning = () => {
                           key={k}
                           type="button"
                           role="menuitem"
-                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
-                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                          disabled={soOnlyIdle(k)}
+                          title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
+                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
+                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
@@ -437,10 +489,27 @@ export const DeliveryPlanning = () => {
                       );
                       return (
                         <>
+                          {selectedAssrRows.length > 0 && renderKind(['assr_arrangement', 'Service Arrangement', `${selectedAssrRows.length} ASSR job${selectedAssrRows.length === 1 ? '' : 's'}: date message (Confirm / Amend)`], false)}
                           {([
                             ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
                             ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
                           ] as const).map((it) => renderKind(it, false))}
+                          {/* Sync to Connect (owner 2026-11-02): fill the customer's
+                              Connect contact panel from the order — no message sent. */}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={selectedSoDocNos().length === 0 || syncContacts.isPending}
+                            onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); syncToConnectDirect(); }}
+                            style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: selectedSoDocNos().length === 0 ? 'default' : 'pointer', textAlign: 'left', opacity: selectedSoDocNos().length === 0 ? 0.5 : 1 }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                              <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
+                            </span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Fill the customer's Connect details from the order — no message sent</span>
+                          </button>
                           {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
                               fold under one entry, opened on demand. */}
                           <button
@@ -460,6 +529,7 @@ export const DeliveryPlanning = () => {
                           </button>
                           {oneTimeOpen && ([
                             ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
+                            ['overdue_order', 'Overdue Order', 'Production delay - one-way heads-up, no new date'],
                             ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
                             ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
                             ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],
@@ -494,6 +564,10 @@ export const DeliveryPlanning = () => {
         orders={allOrders}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
+        onApplyLayoutPreset={(id) => {
+          const region = LAYOUT_PRESET_REGION[id];
+          if (region && regionKeys.has(region)) setRegion(region);
+        }}
         initialRowLimit={200}
         defaultSort={orderSort}
         onRowReorder={(keys) => setRowOrder.mutate(keys)}
@@ -544,7 +618,9 @@ export const DeliveryPlanning = () => {
                 <div
                   role="menu"
                   style={{
-                    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    /* Opens UP: the bulk bar floats at the screen's bottom edge, and a
+                       menu dropped below it showed only a sliver of Schedule (HC-0164). */
+                    position: 'absolute', bottom: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
                     /* Short today, but cap + scroll so it can't fall off-screen either
                        if more bulk actions are added (twin of the Send Message menu). */
                     maxHeight: '70vh', overflowY: 'auto',
@@ -591,6 +667,7 @@ export const DeliveryPlanning = () => {
             : isAssr(row)
             ? [
                 { label: 'Set job date…', onClick: () => setDatingAssr(row) },
+                { label: 'Send WhatsApp…', onClick: () => { setSendKind('assr_arrangement'); setSendingRows([row]); } },
                 { divider: true },
                 { label: 'Open Service Case', onClick: () => openRow(row) },
               ]
@@ -636,7 +713,7 @@ export const DeliveryPlanning = () => {
       )}
 
       {sendingRows && sendingRows.length > 0 && (
-        <SendDeliveryMessageModal rows={sendingRows} kind={sendKind} onClose={() => setSendingRows(null)} />
+        <SendDeliveryMessageModal rows={sendingRows} kind={sendKind} onClose={() => setSendingRows(null)} onSent={untickSent} />
       )}
 
       {editing && (

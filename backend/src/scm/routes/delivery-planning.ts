@@ -85,15 +85,16 @@ import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
-import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap, allowedCompanyIds } from '../lib/companyScope';
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
+import { scheduleDpDate, writeNonSoFields } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -106,7 +107,7 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
-import { echoTripCrew } from '../lib/trip-crew-echo';
+import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock } from '../../lib/step-timing';
@@ -959,6 +960,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       delivery_message_status: r.deliveryMessageStatus ?? r.delivery_message_status ?? null,
       disposal_request: r.disposalRequest ?? r.disposal_request ?? null,
       dp_remark: r.dpRemark ?? r.dp_remark ?? null,
+      remark_locked: false,
       // HC DO-execution raw-data fields — from the latest DO, null when this SO
       // has no (non-DRAFT/CANCELLED) DO yet.
       time_range: doExecByDoc.get(docNo)?.time_range ?? null,
@@ -1134,10 +1136,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
-          delivery_message_status: null,
+          // Hand-set status; overlayAssrChatState overlays the WhatsApp reply when there is one (owner 2026-10-29).
+          delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
-          dp_remark: null,
-          time_range: null,
+          dp_remark: a[ASSR_LEG_REMARK_COL[leg.jobKind]] ?? null,
+          remark_locked: false,
+          time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,
           time_confirmed: null,
           arrival_at: null,
           departure_at: null,
@@ -1186,52 +1190,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  /* ── ASSR crew echo (P3) ──────────────────────────────────────────────────────
-     An ASSR leg scheduled onto a trip (scheduleAssrOntoTrip) writes a trip_stop
-     keyed by (assr_case_id, stop_type). Resolve that stop's trip crew so the board's
-     Driver / Lorry cells reflect the assignment — not just optimistically, but on
-     every load. Best-effort: any failure leaves the ASSR rows date-only. */
-  try {
-    const assrCaseIds = [...new Set(assrOrders.map((o) => o.assr_id).filter((x): x is number => x != null))];
-    if (assrCaseIds.length) {
-      const { data: stops } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(assrCaseIds, (batch, from, to) => sb.from('trip_stops')
-        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', batch).order('assr_case_id').range(from, to));
-      if (stops.length) {
-        const tripIds = [...new Set(stops.map((s) => s.trip_id).filter(Boolean))];
-        const { data: trips } = await chunkIn<{ id: string; driver_id: string | null; lorry_id: string | null }>(tripIds,
-          (batch, from, to) => sb.from('trips').select('id, driver_id, lorry_id').in('id', batch).order('id').range(from, to));
-        const tripById = new Map(trips.map((t) => [String(t.id), t]));
-        const driverIds = [...new Set(trips.map((t) => t.driver_id).filter((x): x is string => !!x))];
-        const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
-        const { data: drvRaw } = driverIds.length ? await sb.from('drivers').select('id, name').in('id', driverIds) : { data: [] };
-        const { data: lryRaw } = lorryIds.length ? await sb.from('lorries').select('id, plate').in('id', lorryIds) : { data: [] }; lap('dp-assr-crew');
-        const driverName = new Map(((drvRaw ?? []) as Array<{ id: string; name: string | null }>).map((d) => [String(d.id), d.name]));
-        const lorryPlate = new Map(((lryRaw ?? []) as Array<{ id: string; plate: string | null }>).map((l) => [String(l.id), l.plate]));
-        const stopByKey = new Map<string, { driver: string | null; lorry: string | null }>();
-        for (const s of stops) {
-          const t = tripById.get(String(s.trip_id));
-          stopByKey.set(`${s.assr_case_id}#${s.stop_type}`, {
-            driver: t?.driver_id ? (driverName.get(String(t.driver_id)) ?? null) : null,
-            lorry: t?.lorry_id ? (lorryPlate.get(String(t.lorry_id)) ?? null) : null,
-          });
-        }
-        for (const o of assrOrders) {
-          const st = o.job_kind === 'customer_pickup' ? 'PICKUP' : o.job_kind === 'inspection' ? 'INSPECTION' : 'DELIVERY';
-          const hit = stopByKey.get(`${o.assr_id}#${st}`);
-          if (hit && (hit.driver || hit.lorry)) {
-            o.crew = {
-              driver: hit.driver, helper: null, lorry: hit.lorry,
-              driver_1_name: hit.driver, driver_1_ic: null, driver_1_contact: null,
-              driver_2_name: null, helper_1_name: null, helper_2_name: null,
-              lorry_plate: hit.lorry,
-            };
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`[delivery-planning] ASSR crew echo skipped: ${String((e as Error).message).slice(0, 120)}`);
-  }
+  /* An ASSR leg on a trip shows that run's crew — driver, lorry and helpers
+     (owner 2026-10-29) — resolved from the leg's trip_stop. Best-effort. */
+  await echoAssrCrew(sb, assrOrders).catch((e: Error) => console.warn(`[delivery-planning] ASSR crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-assr-crew');
+  await overlayAssrChatState(sb, assrOrders); // HC-0171: the customer's WhatsApp answer on ASSR rows
 
   /* ── DP Order union (mig 0129) ────────────────────────────────────────────────
      The MANUAL DP orders — SETUP / DISMANTLE / SUPPLIER_PICKUP and any DP order
@@ -1302,10 +1264,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         house_type: null,
         replacement_disposal: null,
         referral: null,
-        delivery_message_status: null,
+        delivery_message_status: (d.delivery_message_status as string | null) ?? null,
         disposal_request: null,
-        dp_remark: null,
-        time_range: null,
+        dp_remark: (d.remark as string | null) ?? null,
+        remark_locked: false,
+        time_range: (d.time_range as string | null) ?? null,
         time_confirmed: null,
         arrival_at: null,
         departure_at: null,
@@ -1354,17 +1317,18 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
   await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
 
-  /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
+  /* ── PMS project SETUP / DISMANTLE union (mirror; only the Remarks is written here)
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
      exhibition projects, so a project's setup / dismantle window is a real fleet
      commitment the coordinator must SEE to avoid double-booking a lorry. This is a
-     read-only mirror of what the PMS module already schedules (projects.setup_* /
+     mirror of what the PMS module already schedules (projects.setup_* /
      dismantle_*): scheduling + crew assignment stay in PMS, which owns that editor
      and its permission gates (SETUP_DISMANTLE). One row per SET window (a project
      with both a setup and a dismantle date shows two rows). Fleet is company-shared
      so this is intentionally NOT company-scoped. public.projects → c.env.DB raw SQL
      (same path as the ASSR union). Defensive: any failure logs + leaves the rest. */
   const projectOrders: BoardRow[] = [];
+  const writableCompanies = allowedCompanyIds(c);
   try {
     const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
     if ('err' in projR) throw projR.err; lap('dp-projects');
@@ -1445,7 +1409,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           referral: null,
           delivery_message_status: null,
           disposal_request: null,
-          dp_remark: null,
+          dp_remark: p.delivery_remark ?? null, // the project's one board remark, on both its SETUP and DISMANTLE rows
+          // Listed for every company (shared fleet), but the remark saves only within the caller's companies.
+          remark_locked: writableCompanies !== undefined && !writableCompanies.includes(Number(p.company_id)),
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1929,7 +1895,9 @@ function emptyCounts(): Record<'ALL' | DeliveryState, number> {
 deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   const type = c.req.param('type').toLowerCase();
   const id = c.req.param('id');
-  if (type !== 'so' && type !== 'do') return c.json({ error: 'bad_type', reason: 'type must be so | do' }, 400);
+  if (type !== 'so' && type !== 'do' && type !== 'dp' && type !== 'assr' && type !== 'project') {
+    return c.json({ error: 'bad_type', reason: 'type must be so | do | dp | assr | project' }, 400);
+  }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = fieldsSchema.safeParse(body);
@@ -1950,6 +1918,20 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
 
   const sb = c.get('supabase');
 
+  /* DP / Service-Case / project rows carry a few editable fields here — message
+     status, Time Slot, Remarks (writeNonSoFields says which type takes which).
+     The rest of fieldsSchema is SO/DO-shaped, so these types write their own
+     columns and return (module keeps the router thin). */
+  if (type === 'dp' || type === 'assr' || type === 'project') {
+    const r = await writeNonSoFields(c, sb, type, id, {
+      deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
+      timeRange: p.timeRange as string | null | undefined,
+      remark: p.dpRemark as string | null | undefined,
+      jobKind: p.jobKind as 'customer_pickup' | 'delivery' | 'inspection' | undefined,
+    });
+    return c.json(r.body, r.status);
+  }
+
   // Split the present keys into the two column maps.
   const soUpdates: Record<string, unknown> = {};
   for (const [k, col] of Object.entries(SO_FIELD_COLS)) {
@@ -1968,15 +1950,19 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   let doId: string | null = null;
   /* COMPANY GATE for the whole handler: everything below keys off soDocNo /
      doId, both taken from the caller-supplied :id. Resolve the document ONCE,
-     scoped, and refuse before any write. */
+     scoped, and refuse before any write.
+     ALLOWED companies, not the active one (HC-0180): the board lists every
+     granted company's orders (MULTICOMPANY-MODULE-MAP rule 3), so pinning the
+     active company 404'd "That item could no longer be found" on a 2990 row
+     picked while switched to Houzs. Same widening as GET /:docNo/lines. */
   if (type === 'so') {
-    const { data: own, error: ownErr } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
     ).maybeSingle();
     if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   } else {
-    const { data: own, error: ownErr } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('delivery_orders').select('id').eq('id', id), c,
     ).maybeSingle();
     if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
@@ -1986,7 +1972,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (type === 'so') {
     soDocNo = id;
     if (Object.keys(doUpdates).length > 0) {
-      const { data: doRows, error: doRowsErr } = await scopeToCompany(sb.from('delivery_orders')
+      const { data: doRows, error: doRowsErr } = await scopeToAllowedCompanies(sb.from('delivery_orders')
         .select('id, status').eq('so_doc_no', id), c);
       if (doRowsErr) return c.json({ error: 'lookup_failed', reason: doRowsErr.message }, 500);
       const live = ((doRows ?? []) as Array<{ id: string; status: string | null }>)
@@ -2115,14 +2101,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
          in a company the caller holds no grant for; nothing else re-checks.
          Scoped again HERE and not only at the gate above, because doId can come
          from the so_doc_no lookup and a scoped read never protects the write
-         that follows it (MULTICOMPANY-MODULE-MAP rule 1).
-
-         UNSETTLED, left visible: the gate at the top of this handler is
-         scopeToCompany (ACTIVE company), NARROWER than this line, so the
-         widening cannot admit a second company today. But
-         MULTICOMPANY-MODULE-MAP.md rule 3 says Delivery Planning is one unified
-         board across companies, which is what this line was written for.
-         Whoever settles it should change the GATE, not this predicate. */
+         that follows it (MULTICOMPANY-MODULE-MAP rule 1). */
       const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
         /* DEAD BRANCH, here and at every other 42501 site in this file. 42501 is
@@ -2239,8 +2218,8 @@ async function nextTripNo(sb: any): Promise<string> {
 deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   const type = c.req.param('type').toLowerCase();
   const id = c.req.param('id');
-  if (type !== 'so' && type !== 'do' && type !== 'assr') {
-    return c.json({ error: 'bad_type', reason: 'type must be so | do | assr' }, 400);
+  if (type !== 'so' && type !== 'do' && type !== 'assr' && type !== 'dp') {
+    return c.json({ error: 'bad_type', reason: 'type must be so | do | assr | dp' }, 400);
   }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2268,7 +2247,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* The case must EXIST and be OPEN before ANYTHING is written. The date write
+    /* The case must EXIST and THIS job must be open (a sibling's POD closing the case does not lock it) before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
        Lorry cells are editable for ASSR) skips that write entirely. Without this
@@ -2276,20 +2255,20 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
        closed / archived / non-existent case: fleet capacity consumed by work that
        is finished or was never there, and invisible on the board because the
        board has no row for it. Fails the same way the date path already does.
-       It is ALSO the company gate for everything below: assrOpenCaseGuardSql
+       It is ALSO the company gate for everything below: assrLegGuardSql
        carries the caller's granted-company predicate, so an out-of-scope case
        404s here (owner ruling 2026-08-21). */
-    const openCase = (await c.env.DB.prepare(
-      assrOpenCaseGuardSql(c),
-    ).bind(caseId).first()) as { id: number } | null;
-    if (!openCase) return c.json({ error: 'not_found' }, 404);
+    const legCase = (await c.env.DB.prepare(
+      assrLegGuardSql(c),
+    ).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+    if (!legCase || !assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
       try {
         const res = await c.env.DB.prepare(
           `UPDATE assr_cases SET ${col} = ?, updated_at = datetime('now')
-            WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+            WHERE id = ? AND archived_at IS NULL`,
         ).bind(p.scheduleDate, caseId).run();
         if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
       } catch (e) {
@@ -2308,6 +2287,12 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       ? await scheduleAssrOntoTrip(c, sb, caseId, jobKind, p)
       : { state: 'NOT_REQUESTED' };
     return c.json({ ok: true, assr: { id: caseId, job_kind: jobKind, [col]: p.scheduleDate ?? null }, ...tripFieldsFor(wiring) });
+  }
+
+  /* DP (manual job) rows — date-only here; crew is the trip's (see the module). */
+  if (type === 'dp') {
+    const r = await scheduleDpDate(c, c.get('supabase'), id, p.scheduleDate);
+    return c.json(r.body, r.status);
   }
 
   const wantsTrip = p.tripId != null || p.lorryId != null;
@@ -2792,7 +2777,7 @@ async function scheduleAssrOntoTrip(
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's
        default date so a crew-only edit (no scheduleDate) still lands on the right day.
        company-scope: deliberately UNSCOPED, and safe — reachable only after the
-       ASSR branch's assrOpenCaseGuardSql has 404'd any case outside the caller's
+       ASSR branch's assrLegGuardSql has 404'd any case outside the caller's
        granted companies. Same shape as routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,

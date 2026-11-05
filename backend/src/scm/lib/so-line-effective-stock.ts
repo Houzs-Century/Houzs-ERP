@@ -156,9 +156,12 @@ export function soLineStockVerdict(
 ): {
   stock_status_effective: EffectiveStockStatus;
   non_selling_warehouse: { code: string | null; name: string | null; type: string | null; notice: string } | null;
+  /** HC-0159: no Processing Date on the order, the allocator's only reason to leave every line PENDING. */
+  awaiting_processing_date: boolean;
 } {
   const w = nonSelling.get(String(row.warehouse_id ?? '')) ?? null;
   return {
+    awaiting_processing_date: !orderProcessed,
     stock_status_effective: effectiveLineStockStatus(row.stock_status ?? null, liveState, {
       orderProcessed,
       lineHardBound: isHardBoundLine(row.item_group ?? null, row.item_code ?? null),

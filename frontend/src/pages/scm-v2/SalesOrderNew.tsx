@@ -51,7 +51,7 @@ import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines } from '../../lib/soCopyLines';
 import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
@@ -79,7 +79,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { addressLineProps } from '../../lib/acColumnWidths';
+import { SoAddressLines } from '../../components/SoAddressLines';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -276,6 +276,8 @@ export const SalesOrderNew = () => {
   const [fillAddressLater, setFillAddressLater] = useState(false);
   const [address1,    setAddress1]    = useState('');
   const [address2,    setAddress2]    = useState('');
+  const [address3,    setAddress3]    = useState('');
+  const [address4,    setAddress4]    = useState('');
   const [state,       setState]       = useState('');
   const [city,        setCity]        = useState('');
   const [postcode,    setPostcode]    = useState('');
@@ -351,14 +353,17 @@ export const SalesOrderNew = () => {
     setNote(h.note ?? '');
     setAddress1(h.address1 ?? '');
     setAddress2(h.address2 ?? '');
+    setAddress3(h.address3 ?? '');
+    setAddress4(h.address4 ?? '');
     setState(h.customer_state ?? '');
     setCity(h.city ?? h.address3 ?? '');
     setPostcode(h.postcode ?? h.address4 ?? '');
     setEmergencyName(h.emergency_contact_name ?? '');
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
-    if (Array.isArray(srcItems) && srcItems.length > 0) {
-      setLines(srcItems.filter((it) => !it.cancelled).map((it: any) => ({
+    const copyKept = copySeedLines(srcItems, h.status, (n) => void notify(n));
+    if (copyKept.length > 0) {
+      setLines(copyKept.map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',
@@ -766,7 +771,7 @@ export const SalesOrderNew = () => {
   const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
     const { variants, masters } = cascadeMasterVariants(
-      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown>, itemCode: l.itemCode })),
       masterSnapshotRef.current,
       /* The ONE set, shared with mobile (owner 2026-09-09: cascade is for sofa
          only). This used to be `null` — EVERY category, a mattress line's
@@ -1618,7 +1623,7 @@ export const SalesOrderNew = () => {
         venue: effectiveVenueName || undefined,
         /* The picked event's ORGANIZER. Together with the venue, the order date
            and the brand derived from the lines, this is what identifies one
-           fair; the server never trusts a project id from here. */
+           fair; a booth id is taken only where those cannot tell (rule 9). */
         noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD. Venue + organizer + period is what names
@@ -1629,10 +1634,13 @@ export const SalesOrderNew = () => {
         fairEnd: fairPick.endDate ?? undefined,
         /* Which DAY of that event (owner 2026-09-24) — kept only as one of its days. */
         fairDate: fairPick.day ?? undefined,
+        fairProjectId: fairPick.booth ?? undefined, // the booth, when the form asked (FairPicker rule 9)
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
         address2: fillAddressLater ? undefined : (address2 || undefined),
+        address3: fillAddressLater ? undefined : (address3 || undefined),
+        address4: fillAddressLater ? undefined : (address4 || undefined),
         customerState: state || undefined,
         city: city || undefined,
         postcode: postcode || undefined,
@@ -1969,6 +1977,7 @@ export const SalesOrderNew = () => {
                    the fair that was running on the order's real date. */
                 soDate={fairDate}
                 onChange={onFairChange}
+                boothFor={{ docNo: null, items: lines.filter((l) => l.itemCode).map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup })) }}
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
               />
@@ -2120,42 +2129,13 @@ export const SalesOrderNew = () => {
             </div>
           </label>
 
-          {/* Address fields — only Address 1/2 dim when fill-later is on. */}
+          {/* Address fields — only the address lines dim when fill-later is on. */}
           <div className={styles.formGrid4}>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 1</span>
-              <input
-                className={`${styles.fieldInput} ${editedClass('address1', address1)}`}
-                value={address1}
-                {...addressLineProps(setAddress1, { value: address2, set: setAddress2 })}
-                onChange={(e) => setAddress1(e.target.value)}
-                placeholder="Unit, street, area"
-              />
-            </label>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 2</span>
-              <input
-                className={styles.fieldInput}
-                value={address2}
-                {...addressLineProps(setAddress2, null)}
-                onChange={(e) => setAddress2(e.target.value)}
-                placeholder="Apt, floor, building (optional)"
-              />
-            </label>
+            <SoAddressLines lines={[address1, address2, address3, address4]}
+              onChange={(line, v) => ({ 1: setAddress1, 2: setAddress2, 3: setAddress3, 4: setAddress4 })[line](v)}
+              fieldClassName={styles.field} labelClassName={styles.fieldLabel}
+              inputClassName={(i) => (i === 0 ? `${styles.fieldInput} ${editedClass('address1', address1)}` : styles.fieldInput)}
+              style={{ opacity: fillAddressLater ? 0.4 : 1, pointerEvents: fillAddressLater ? 'none' : 'auto' }} />
             {/* Owner spec 2026-07-23 — StatePicker enforces "MY default listed,
                 click Others for CN/SG, Search filters across all". Same shared
                 component as Warehouse / Supplier / Venue / MobileNewSO — no

@@ -7,7 +7,10 @@
      · Reset asks first, then calls the reset;
      · nothing is sent until Save;
      · the Cash Flow (owner 2026-09-18): a side per top category, a direction
-       per line, a category's own subtotal name, subtotal rows, spares per side.
+       per line, a category's own subtotal name, subtotal rows, spares per side;
+     · the redesign (batch 6 §5.12): an "Unsaved changes" tag after an edit,
+       a side renamed in place with its subtotal line beside it, and Close
+       asks before it drops unsaved changes.
    The operations themselves: vendor/scm/lib/report-layout.test.ts; the
    server: tests/reportLayouts.test.ts. */
 
@@ -94,7 +97,7 @@ import { ReportLayoutEditor } from './ReportLayoutEditor';
 const shape = (items: LayoutItem[]): unknown[] =>
   items.map((it) => (it.kind === 'account' ? it.code : it.kind === 'subtotal' ? { subtotal: it.id } : { [it.id]: shape(it.children) }));
 const saved = (): Layout => saveAsync.mock.calls[saveAsync.mock.calls.length - 1]![0];
-const draw = () => render(<ReportLayoutEditor report="pnl" onClose={() => {}} />);
+const draw = (onClose: () => void = () => {}) => render(<ReportLayoutEditor report="pnl" onClose={onClose} />);
 const drawRp = () => render(<ReportLayoutEditor report="rp" onClose={() => {}} />);
 const placeButtons = () => screen.getAllByRole('button', { name: /^Place / }).map((b) => b.getAttribute('aria-label'));
 const rowOf = (text: string | RegExp) => screen.getByText(text).closest('tr')!;
@@ -123,6 +126,7 @@ describe('the layout editor', () => {
     expect(screen.getByRole('button', { name: 'Place 900-H010' })).toBeTruthy();
     /* Save waits for an edit. */
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
   });
 
   test('rename, then Save sends the renamed tree — and only then', async () => {
@@ -133,6 +137,7 @@ describe('the layout editor', () => {
     fireEvent.change(input, { target: { value: 'Marketing' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.getByText('Marketing')).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
     expect(saveAsync).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
@@ -155,6 +160,37 @@ describe('the layout editor', () => {
     expect((saved().blocks.expenses![0] as { hiddenFor?: number[] }).hiddenFor).toEqual([2]);
     /* The tick under ADVERTISEMENT (HOUZS) rode along untouched. */
     expect(((saved().blocks.expenses![0] as { children: Array<{ hiddenFor?: number[] }> }).children[0]!).hiddenFor).toEqual([1]);
+  });
+
+  /* Owner 2026-11-05: a long tree cannot be dragged past the screen, so a row is picked
+     up, the page scrolled, and the row put down; Esc lets go. Any category names its own Total line. */
+  test('Pick up parks a row; Place inside puts it in a category; Esc cancels', async () => {
+    saveAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick up 900-A001' }));
+    expect(screen.getByRole('status').textContent).toContain('Moving 900-A001');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('button', { name: 'Place inside ADVERTISEMENT' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick up 900-A001' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Place inside ADVERTISEMENT' }));
+    expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    expect(shape(saved().blocks.expenses!)).toEqual([{ 'acc:900-0000': [{ 'acc:900-A002': ['900-A014', '900-A001'] }] }]);
+  });
+
+  test('a category below the top names its own Total line, and Save sends it', async () => {
+    saveAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename ADVERTISEMENT' }));
+    const total = screen.getByLabelText('Subtotal name of ADVERTISEMENT') as HTMLInputElement;
+    fireEvent.change(total, { target: { value: 'Total marketing' } });
+    fireEvent.keyDown(total, { key: 'Enter' });
+    expect(screen.getByText('Subtotal line: Total marketing')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    const cat = (saved().blocks.expenses![0] as { children: Array<{ totalLabel?: string }> }).children[1]!;
+    expect(cat.totalLabel).toBe('Total marketing');
   });
 
   test('a new category joins the block; deleting one moves what it held up a level; an unplaced account goes back to Unassigned', async () => {
@@ -211,20 +247,64 @@ describe('the layout editor', () => {
     const rows = within(rowOf('Operating Expense').parentElement!).getAllByRole('row');
     expect(rows.length).toBeGreaterThan(2);
   });
+
+  test('Close with nothing changed closes; with changes it asks — Keep editing stays, Close without saving drops them', () => {
+    saveAsync.mockClear();
+    const closed = vi.fn();
+    const { unmount } = draw(closed);
+    fireEvent.click(screen.getByRole('button', { name: 'Close the layout editor' }));
+    expect(closed).toHaveBeenCalledTimes(1);
+    unmount();
+
+    closed.mockClear();
+    draw(closed);
+    fireEvent.click(screen.getByRole('button', { name: 'Move 900-A001 down' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close the layout editor' }));
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByText(/changes that are not saved/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.queryByText(/changes that are not saved/)).toBeNull();
+    expect(closed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close the layout editor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close without saving' }));
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(saveAsync).not.toHaveBeenCalled();
+  });
+
+  test('a saved layout closes without asking', async () => {
+    saveAsync.mockClear();
+    const closed = vi.fn();
+    draw(closed);
+    fireEvent.click(screen.getByRole('button', { name: 'Move 900-A001 down' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Close the layout editor' }));
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('the Cash Flow layout (owner 2026-09-18)', () => {
   test('a side per top category, a direction per line, the subtotal name, and the spares per side', () => {
     drawRp();
-    expect(screen.getByRole('dialog', { name: 'Layout · Cash Flow' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Layout · Cash flow' })).toBeTruthy();
     expect(screen.getByText('Direction', { selector: 'th' })).toBeTruthy();
     expect((screen.getByLabelText('Side of RECEIPTS') as HTMLSelectElement).value).toBe('in');
     expect((screen.getByLabelText('Side of PAYMENTS') as HTMLSelectElement).value).toBe('out');
     /* A category deeper down follows its parent: no side of its own. */
     expect(screen.queryByLabelText('Side of CURRENT ASSETS')).toBeNull();
     expect(screen.getAllByLabelText('Direction of 300-0000').map((e) => (e as HTMLSelectElement).value)).toEqual(['in', 'out']);
+    /* A side shows its subtotal line, and names it in place beside its name (Rename). */
+    expect(screen.getByText('Subtotal line: Total receipts')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename RECEIPTS' }));
     expect((screen.getByLabelText('Subtotal name of RECEIPTS') as HTMLInputElement).value).toBe('Total receipts');
-    expect(screen.queryByLabelText('Subtotal name of CURRENT ASSETS')).toBeNull();
+    expect(screen.getByLabelText('Subtotal name of RECEIPTS').getAttribute('title')).toBe('Its subtotal line');
+    fireEvent.keyDown(screen.getByLabelText('Rename RECEIPTS'), { key: 'Escape' });
+    /* A category deeper down may name its own Total line too (owner 2026-11-05); unnamed, it shows none. */
+    expect(screen.queryByText(/Subtotal line: Total CURRENT ASSETS/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename CURRENT ASSETS' }));
+    expect((screen.getByLabelText('Subtotal name of CURRENT ASSETS') as HTMLInputElement).placeholder).toBe('Total CURRENT ASSETS');
+    fireEvent.keyDown(screen.getByLabelText('Rename CURRENT ASSETS'), { key: 'Escape' });
     /* 601-0003 reads Out only, 910-0000 nowhere: the In side lacks both, the Out side lacks 910-0000. */
     expect(screen.getByText(/Unassigned receipts/)).toBeTruthy();
     expect(screen.getByText(/Unassigned payments/)).toBeTruthy();
@@ -236,7 +316,10 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     drawRp();
     fireEvent.change(screen.getByLabelText('Side of PAYMENTS'), { target: { value: 'in' } });
     fireEvent.change(screen.getAllByLabelText('Direction of 300-0000')[1]!, { target: { value: 'net' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename PAYMENTS' }));
     fireEvent.change(screen.getByLabelText('Subtotal name of PAYMENTS'), { target: { value: 'Net Loan' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.getByText('Subtotal line: Net Loan')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add a subtotal to Accounts' }));
     expect(screen.getByText('New subtotal')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Rename New subtotal' }));

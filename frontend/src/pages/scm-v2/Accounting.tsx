@@ -14,28 +14,19 @@
 //      drift named to the document (brief §3.5)
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
+import { ReportShell } from './reports/ReportShell';
 import {
-  useAccountBalances,
   useAccounts,
   type Account,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AgingReport } from './AgingReport';
-import {
-  useControlCheck,
-  usePaymentBookingDryRun,
-  useBookUnbookedPayments,
-  type ControlCheckRow,
-  type UnbookedPayments,
-  type PaymentDryRun,
-  type PaymentDryRunRow,
-  type PaymentDrift,
-  type PaymentDriftRow,
-} from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
+import { TrialBalanceTab } from './TrialBalance';
 import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
@@ -46,25 +37,21 @@ import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
-import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { LogisticsCostTab } from './LogisticsCost';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
 import { JournalTab } from './JournalEntries';
-import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
-import { ReceiptBackfillCard } from './ReceiptBackfillCard';
-import { PageHeader } from '../../components/Layout';
+import { SelfCheckTab } from './SelfCheck';
+import { AccountingHeader } from './books/AccountingHeader';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 
-// The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
-// amount, never "RM NaN". Kept under the local name so callsites are unchanged.
-const fmt = (sen: number | null | undefined) => fmtSen(sen);
-
 type Tab = AccountingTab;
+
+/* The tabs that draw their own head, with their actions in it. */
+const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close']);
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
@@ -81,10 +68,13 @@ export const Accounting = () => {
     if (wanted && wanted !== tab) setTabState(wanted);
   }, [wanted, tab]);
 
-  return (
-    <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title={`Accounting · ${ACCOUNTING_TAB_TITLES[tab]}`} />
+  /* A report tab is drawn in the report shell — the report list and the
+     report's own header (batch 6 §4.3); Journal entries, the General ledger
+     and the Trial balance too when opened from the list (`in=reports`). */
+  const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
 
+  return (
+    <AccountingFrame tab={tab} report={report}>
       {tab === 'coa'   && <CoaTab />}
       {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
@@ -106,9 +96,25 @@ export const Accounting = () => {
       {tab === 'events' && <EventCostsTab />}
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
-    </div>
+      {tab === 'logistics' && <LogisticsCostTab />}
+    </AccountingFrame>
   );
 };
+
+/* The frame a tab is drawn in: a report in the report shell (a tab that draws
+   its own head keeps it, the shell adds the report list), any other tab under
+   the redesign's head (batch 6 §1.2) — "Finance · <section>" over the tab's
+   own name, unless the tab draws its own with its actions in it. */
+const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportItem | null; children: ReactNode }) => (
+  report
+    ? <ReportShell report={report.id} ownHeader={OWN_HEADER.has(tab)}>{children}</ReportShell>
+    : (
+      <div className="space-y-4">
+        {!OWN_HEADER.has(tab) && <AccountingHeader tab={tab} />}
+        {children}
+      </div>
+    )
+);
 
 /* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
@@ -193,7 +199,7 @@ const CoaTab = () => {
           {
             key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '',
             render: (r) => r.parent_code
-              ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
+              ? <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
               : '—',
           },
           {
@@ -229,422 +235,3 @@ const JeTab = () => <JournalTab />;
    running balance, the journal's references (docs/bugs/0924). Its filters
    live in the URL, so a figure on a statement opens it on that account. */
 const GlTab = () => <GeneralLedger />;
-
-/* ── Trial Balance ───────────────────────────────────────────────────── */
-
-export const TrialBalanceTab = () => {
-  const q = useAccountBalances();
-  // Pre-sort into the canonical statement order — DataTable's groupBy buckets
-  // in first-seen row order, so this IS the group order until the user sorts.
-  const rows = useMemo(() => {
-    const all = q.data?.balances ?? [];
-    const rank = (t: string) => {
-      const i = ACCOUNT_TYPE_ORDER.indexOf(t);
-      return i === -1 ? ACCOUNT_TYPE_ORDER.length : i;
-    };
-    return [...all].sort(
-      (a, b) => rank(a.account_type) - rank(b.account_type) || a.account_code.localeCompare(b.account_code),
-    );
-  }, [q.data]);
-
-  /* The report's own self-check (brief §3.7: every report is born carrying
-     one): Σ debits must equal Σ credits over the whole ledger. Anything but
-     0.00 is a BUG in the books, not an opinion about them. */
-  const totals = useMemo(() => {
-    let dr = 0; let cr = 0;
-    for (const r of rows) { dr += r.total_debit_sen; cr += r.total_credit_sen; }
-    return { dr, cr, diff: dr - cr };
-  }, [rows]);
-
-  type BalanceRow = (typeof rows)[number];
-  /* A self-check folded over a list that is empty BECAUSE THE READ FAILED
-     computes dr === cr === 0, which reads as "the books balance" — in the green
-     frame, as a finding. It is not a finding about the ledger, it is the
-     absence of one. `isLoading` alone cannot tell them apart: it is FALSE after
-     a failed fetch, which is exactly when `rows` is emptiest. So the tiles show
-     the unknown marker and the failure is stated. */
-  const unknown = q.isError || (!q.isSuccess && rows.length === 0);
-  const NOT_KNOWN = '—';
-  return (
-    <div className="space-y-3">
-      {q.isError && (
-        <div style={{
-          padding: 'var(--space-3) var(--space-4)',
-          background: 'rgba(184, 51, 31, 0.10)',
-          border: '1px solid var(--c-festive-b, #B8331F)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: 'var(--fs-13)',
-          color: 'var(--c-festive-b, #B8331F)',
-        }}>
-          <strong>The account balances could not be loaded, so this report is not a statement about the books.</strong>{' '}
-          {q.error instanceof Error ? q.error.message : 'Please try again.'}
-        </div>
-      )}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
-        <SummaryTile label="Σ Debit" value={unknown ? NOT_KNOWN : fmt(totals.dr)} />
-        <SummaryTile label="Σ Credit" value={unknown ? NOT_KNOWN : fmt(totals.cr)} />
-        <div style={{
-          padding: 'var(--space-3) var(--space-4)',
-          background: unknown ? 'var(--c-cream)' : totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
-          border: `1px solid ${unknown ? 'var(--c-line, rgba(34,31,32,0.08))' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
-          borderRadius: 'var(--radius-md)',
-        }}>
-          <div className={styles.subtitle} style={{ marginBottom: 2 }}>Difference (must be 0.00)</div>
-          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: unknown ? 'var(--c-ink)' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
-            {unknown
-              ? `${NOT_KNOWN} — not checked`
-              : `${fmt(totals.diff)}${totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}`}
-          </div>
-        </div>
-      </section>
-
-      <DataTable<BalanceRow>
-        tableId="accounting-balances"
-        layoutFamily="accounting-balances"
-        exportName="trial-balance"
-        rows={q.isLoading || q.isError ? null : rows}
-        loading={q.isLoading}
-        emptyLabel={q.isError ? 'The account balances could not be loaded.' : 'No balances yet.'}
-        getRowKey={(r) => r.account_code}
-        groupBy={{ key: 'type' }}
-        columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
-          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
-          { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
-          { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
-          {
-            key: 'balance', label: 'Balance', align: 'right', width: '150px',
-            getValue: (r) => r.balance_sen / 100,
-            render: (r) => (
-              <span style={{ fontWeight: 700, color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)' }}>
-                {fmt(r.balance_sen)}
-              </span>
-            ),
-          },
-        ] satisfies Column<BalanceRow>[]}
-      />
-    </div>
-  );
-};
-
-/* ── Self-check (control accounts vs documents) ──────────────────────── */
-
-const SelfCheckTab = () => {
-  const q = useControlCheck();
-  const checks = q.data?.checks ?? [];
-
-  return (
-    <div className="space-y-3">
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Running checks…</div>}
-      {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
-      {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
-      {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
-      {/* Money on cancelled orders with no exit taken yet (docs/bugs/0931). */}
-      <CancelledWithMoneyCard />
-      <ReceiptBackfillCard />
-    </div>
-  );
-};
-
-/* ── Money on a document that never reached the ledger ──────────────────────
-   A booking failure does not fail the operator's save — sales must be able to
-   record money whatever accounting is doing — so until this card existed the
-   only trace was a server log. Owner, asked whether this page should say so: 要.
-
-   The BOUNDARY is shown, not hidden. About 2,700 historical payments are
-   deliberately unbooked, so the server reports from the first day this company
-   ever booked one; a card that silently spoke about a period nobody could see
-   would be its own kind of lie. */
-
-/* docs/bugs/0652: a company whose hook had refused EVERY payment read "all of
-   them" here — nothing had ever booked, so there was "no period to check". The
-   card now says so in red, with the money, and the Why? button puts each
-   unbooked payment through the gate's own checks (dry run, nothing written) and
-   prints the verdict and reason the console-only hook never showed anyone. */
-export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
-  const good = 'var(--c-secondary-a, #2F5D4F)';
-  const bad = 'var(--c-festive-b, #B8331F)';
-  const never = p.since == null && (p.neverBooked?.count ?? 0) > 0;
-  const clean = p.ok && p.rows.length === 0 && !never;
-  const dry = usePaymentBookingDryRun();
-  const book = useBookUnbookedPayments();
-  const askConfirm = useConfirm();
-  /* The real run is offered only after a dry run the gate refused nothing on
-     (docs/bugs/0655) — the owner presses it himself; the write is his. */
-  const bookable = dry.data && dry.data.scanned > 0 && dry.data.failed.length === 0 ? dry.data : null;
-  const bookableSen = bookable ? bookable.rows.reduce((s, r) => s + r.amountSen, 0) : 0;
-  const unbookedCount = never ? (p.neverBooked?.count ?? 0) : p.rows.length;
-  const unbookedSen = never ? (p.neverBooked?.totalSen ?? 0) : p.totalSen;
-
-  return (
-    <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>Payments that reached the ledger</b>
-        <span style={{
-          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
-          background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
-          color: clean ? good : bad,
-        }}>
-          {clean ? 'all of them' : never ? 'none, ever' : `${p.rows.length} did not`}
-        </span>
-        {!clean && <span>{fmt(unbookedSen)} on {unbookedCount} payment{unbookedCount === 1 ? '' : 's'} and not in the books</span>}
-        {!clean && (
-          <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending}
-            style={{ marginLeft: 'auto', border: `1px solid ${bad}`, color: bad, background: 'none', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600 }}>
-            {dry.isPending ? 'Asking the gate…' : 'Why? (dry run)'}
-          </button>
-        )}
-      </div>
-
-      {p.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {p.error}</div>}
-
-      {/* The period this card is speaking about, always — including when it is
-          speaking about nothing. */}
-      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
-        {p.since == null
-          ? (never
-            ? `No payment has ever been booked in this company, yet ${p.neverBooked?.count ?? 0} were recorded between ${p.neverBooked?.firstPaidOn ?? '?'} and ${p.neverBooked?.lastPaidOn ?? '?'} (imported and zero rows not counted). The booking hook is not reaching the books — press Why? for the gate's own reason on each.`
-            : 'No payment has been booked in this company yet, and its SO/SI payment tables hold no bookable row (imported and zero rows are skipped by design).')
-          : `Counting payments from ${p.since}, the first day this company booked one. `
-            + 'Anything earlier is history that was deliberately left unbooked.'}
-      </div>
-
-      {dry.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The dry run could not run: {dry.error instanceof Error ? dry.error.message : String(dry.error)}</div>}
-      {dry.data && <DryRunResult r={dry.data} />}
-      {bookable && !book.data && (
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
-          <button type="button" disabled={book.isPending}
-            onClick={() => {
-              void askConfirm({
-                title: `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} into the ledger?`,
-                body: `The gate refused none of them. Each posts on its own paid date — ${fmt(bookableSen)} in total, Dr bank / cash / clearing, Cr Trade Debtors.`,
-                confirmLabel: 'Book them',
-              }).then((ok) => { if (ok) book.mutate(); });
-            }}
-            style={{ border: `1px solid ${good}`, color: good, background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 700 }}>
-            {book.isPending ? 'Booking…' : `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} now`}
-          </button>
-          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Nothing is written until you confirm.</span>
-        </div>
-      )}
-      {book.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The booking could not run: {book.error instanceof Error ? book.error.message : String(book.error)}</div>}
-      {book.data && (
-        <div style={{ fontSize: 'var(--fs-13)', color: book.data.failed.length > 0 ? bad : good, fontWeight: 600 }}>
-          Booked {book.data.posted}, skipped {book.data.skipped}, refused {book.data.failed.length}
-          {book.data.remaining > 0 ? ` — ${book.data.remaining} still waiting, press Why? and book again` : ' — the card re-reads now'}.
-        </div>
-      )}
-
-      {p.rows.length > 0 && (
-        <DataTable<UnbookedPayments['rows'][number]>
-          tableId="acc-unbooked-payments"
-          embedded
-          columns={[
-            { key: 'document', label: 'Document', getValue: (r) => r.docNo, render: (r) => r.docNo },
-            { key: 'paidOn', label: 'Paid on', getValue: (r) => r.paidOn, render: (r) => fmtDateOrDash(r.paidOn) },
-            { key: 'how', label: 'How', getValue: (r) => r.method, render: (r) => r.method },
-            { key: 'amount', label: 'Amount', align: 'right', getValue: (r) => r.amountSen, exportValue: (r) => r.amountSen / 100, exportFormat: 'money', render: (r) => fmt(r.amountSen) },
-          ]}
-          rows={p.rows}
-          getRowKey={(r) => `${r.source}:${r.id}`}
-        />
-      )}
-    </div>
-  );
-};
-
-/* ── A payment that reached the ledger and then stopped agreeing with it ────
-   Editing a payment writes the row and does NOT re-post its journal entry, so
-   the two drift apart in silence. Today almost nothing is editable — a payment
-   can only be changed on the day it was keyed — and that accident is the only
-   thing holding the count at zero. The owner has confirmed with management
-   (2026-09-10) that Finance should be able to correct a mis-keyed payment,
-   which opens that window; this card is what has to be watching when it does.
-
-   It reads. It writes nothing, and offers no button to: putting the entry
-   right is the NEXT step (make the edit reverse and re-post), and a fix
-   offered before that exists would be a fix that does not work. */
-const driftWords: Record<PaymentDriftRow['fields'][number], string> = {
-  amount: 'amount', date: 'date', method: 'how it was paid',
-};
-
-export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
-  const good = 'var(--c-secondary-a, #2F5D4F)';
-  const bad = 'var(--c-festive-b, #B8331F)';
-  const soft = 'var(--c-ink-soft, #777)';
-  const clean = d.ok && d.rows.length === 0;
-  /* Nothing booked here yet is not the same statement as everything agrees,
-     and the card must not borrow the second one's words for the first. */
-  const nothingToCompare = clean && d.scanned === 0;
-
-  return (
-    <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>Payments that still agree with their entry</b>
-        <span style={{
-          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
-          background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
-          color: clean ? good : bad,
-        }}>
-          {nothingToCompare ? 'nothing to compare' : clean ? `all ${d.scanned}` : `${d.rows.length} do not`}
-        </span>
-      </div>
-
-      {d.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {d.error}</div>}
-
-      <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
-        {nothingToCompare
-          ? 'No payment has reached the ledger in this company yet, so there is no entry to compare a payment against.'
-          : `Comparing ${d.scanned} payment${d.scanned === 1 ? '' : 's'} against the journal entry that explains it. `
-            + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
-      </div>
-
-      {/* Stays a plain table on purpose: this card reads and offers no button
-          at all (PaymentDriftCard.test), and a list grid brings its own. */}
-      {d.rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-              <th>Document</th><th>Entry</th><th>What moved</th>
-              <th style={{ textAlign: 'right' }}>Payment says</th>
-              <th style={{ textAlign: 'right' }}>Entry says</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.rows.map((r) => (
-              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
-                <td>{r.docNo}</td>
-                <td>{r.jeNo}</td>
-                <td>{r.fields.map((f) => driftWords[f]).join(', ')}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                  {fmt(r.paymentAmountSen)}<br />
-                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.paidOn || 'no date'} · {r.paymentMethod}</span>
-                </td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                  {fmt(r.entryAmountSen)}<br />
-                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.entryDate} · {r.entryMethod ?? 'not stated'}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {d.rows.length > 0 && (
-        <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
-          Nothing here is corrected automatically. The entry is put right by reversing it and
-          booking it again — until that is built, reverse the entry by hand and re-key the payment.
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* The dry run's answer, row by row — the verdict column is the gate's own
-   status word (would_post, account_invalid, …) and the reason is its sentence. */
-const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
-  const good = 'var(--c-secondary-a, #2F5D4F)';
-  const bad = 'var(--c-festive-b, #B8331F)';
-  const byStatus = new Map<string, number>();
-  for (const row of r.rows) byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);
-  const summary = [...byStatus].map(([s, n]) => `${n} ${s === 'would_post' ? 'would post' : s}`).join(', ');
-  return (
-    <div className="space-y-1" style={{ fontSize: 'var(--fs-13)' }}>
-      <div>
-        <b>Dry run</b> — {r.scanned} unbooked payment{r.scanned === 1 ? '' : 's'} put through the gate, nothing written
-        {r.rows.length > 0 ? `: ${summary}.` : '.'}
-        {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
-      </div>
-      {r.rows.length > 0 && (
-        <DataTable<PaymentDryRunRow>
-          tableId="acc-payment-dry-run"
-          embedded
-          columns={[
-            { key: 'document', label: 'Document', getValue: (row) => row.docNo, render: (row) => row.docNo },
-            { key: 'paidOn', label: 'Paid on', getValue: (row) => row.paidOn, render: (row) => fmtDateOrDash(row.paidOn) },
-            { key: 'how', label: 'How', getValue: (row) => row.method, render: (row) => row.method },
-            { key: 'amount', label: 'Amount', align: 'right', getValue: (row) => row.amountSen, render: (row) => fmt(row.amountSen) },
-            {
-              key: 'verdict', label: 'Verdict', getValue: (row) => (row.status === 'would_post' ? 'would post' : row.status),
-              render: (row) => <span style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</span>,
-            },
-            { key: 'reason', label: 'Reason', getValue: (row) => row.reason ?? '', render: (row) => row.reason ?? '—' },
-          ]}
-          rows={r.rows}
-          getRowKey={(row) => row.id}
-        />
-      )}
-    </div>
-  );
-};
-
-const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
-  if ('error' in check) {
-    return (
-      <div style={{ ...cardStyle, borderColor: 'var(--c-festive-b, #B8331F)' }}>
-        <b>{check.role} · {check.accountCode}</b> — check could not run: {check.error}
-      </div>
-    );
-  }
-  const ok = check.ok;
-  return (
-    <div style={{ ...cardStyle, borderColor: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }} className="space-y-2">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>{check.role === 'AR' ? 'Accounts Receivable control'
-          : check.role === 'AR_OTHER' ? 'Other Debtors control'
-          : check.role === 'AP_OTHER' ? 'Other Creditors control'
-          : 'Accounts Payable control'}</b>
-        <span className={styles.codeChip}>{check.accountCode}</span>
-        <span>GL balance {fmt(check.glBalanceSen)}</span>
-        <span style={{
-          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
-          background: ok ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
-          color: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)',
-        }}>
-          {ok ? 'CLEAN' : `${check.driftDocs.length + check.foreignLines.length} FINDING${check.driftDocs.length + check.foreignLines.length === 1 ? '' : 'S'}`}
-        </span>
-      </div>
-
-      {check.driftDocs.length > 0 && (
-        <DataTable<(typeof check.driftDocs)[number]>
-          tableId="acc-control-drift"
-          embedded
-          columns={[
-            { key: 'document', label: 'Document', getValue: (d) => d.docNo, render: (d) => <span className={styles.codeChip}>{d.docNo}</span> },
-            { key: 'docTotal', label: 'Document total', align: 'right', getValue: (d) => d.docTotalSen, render: (d) => fmt(d.docTotalSen) },
-            { key: 'jeTotal', label: 'Journal total', align: 'right', getValue: (d) => d.jeTotalSen, render: (d) => fmt(d.jeTotalSen) },
-            { key: 'diff', label: 'Difference', align: 'right', getValue: (d) => d.diffSen, render: (d) => <span style={{ fontWeight: 700 }}>{fmt(d.diffSen)}</span> },
-            { key: 'wrong', label: 'What is wrong', getValue: (d) => d.note, render: (d) => d.note },
-          ]}
-          rows={check.driftDocs}
-          getRowKey={(d) => d.docNo}
-        />
-      )}
-
-      {check.foreignLines.length > 0 && (
-        <div style={{ fontSize: 'var(--fs-13)' }}>
-          Lines on this control account from sources that do not belong here:{' '}
-          {check.foreignLines.map((f) => `${f.jeNo} (${f.sourceType})`).join(', ')}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ── Helpers ─────────────────────────────────────────────────────────── */
-const SummaryTile = ({
-  label, value, muted, bold,
-}: { label: string; value: string; muted?: boolean; bold?: boolean }) => (
-  <div style={{
-    padding: 'var(--space-3) var(--space-4)',
-    background: 'var(--c-cream)',
-    border: `1px solid ${muted ? 'var(--c-line, rgba(34,31,32,0.08))' : 'var(--c-orange)'}`,
-    borderRadius: 'var(--radius-md)',
-  }}>
-    <div className={styles.subtitle} style={{ marginBottom: 2 }}>{label}</div>
-    <div style={{ fontSize: 'var(--fs-16)', fontWeight: bold ? 900 : 700, color: 'var(--c-ink)' }}>
-      {value}
-    </div>
-  </div>
-);
-

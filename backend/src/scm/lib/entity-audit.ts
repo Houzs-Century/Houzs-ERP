@@ -52,6 +52,10 @@ export const ENTITY_TYPES = [
   /* An Event Commission month (owner 2026-10-26, 关月): closed (POST) and
      reopened (REVERSE), keyed "<company id>:<YYYY-MM>". Write-only so far. */
   'COMMISSION_MONTH',
+  /* The books' opening (owner 2026-10-28; Finance › Setup › Opening Balance):
+     its accounts and stock re-posted, a paper added, changed or cancelled, the
+     opening locked or unlocked. Write-only so far. */
+  'OPENING_BALANCE',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
@@ -99,8 +103,11 @@ export function isEntityType(v: unknown): v is EntityType {
    and WITHDRAW_FROM_APPROVAL are the requester's half, APPROVE and REJECT the
    decider's. They answer "who asked for this money, who said yes/no, and when" —
    the question the 决定 trail exists for. A REJECT row carries the why as a
-   field change (rejection_note), where the submitter reads it. */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'CHECK', 'APPROVE', 'REJECT'] as const;
+   field change (rejection_note), where the submitter reads it.
+   REMIND_APPROVER (2026-11-03) is a note sent to the approver's bell about a
+   checked voucher: it changes nothing on the voucher, and the trail is where
+   the hour between two reminders is read from. */
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'CHECK', 'APPROVE', 'REJECT', 'REMIND_APPROVER'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:

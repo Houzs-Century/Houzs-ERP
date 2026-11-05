@@ -1,6 +1,26 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the eight-stage set by COMPLETED and VOIDED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the ASSR_SHEET_STATUS / ALL_STAGES D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST|frontend/src/components/Sidebar.tsx frontend/src/pages/scm-v2/reports-catalog.ts",
+      "why": "NOT one rule in two homes: the same three permission keys are the gate of several unrelated Finance entries, each its own decision — Bank & cards (Merchant reports, Bank statements, Unmatched payments) and Setup (Chart of accounts, Opening balance, Recon setup) in the sidebar, and the Forecast P&L and Dashboard, which moved with their gate into pages/scm-v2/reports-catalog.ts when Finance › Reports became one entry (owner Claude Design batch 6 §1.1: keep every member's own gate). Changing one entry's gate must not change the others; each is pinned by sidebarFinanceGroups / sidebarReportsEntry tests."
+    },
+    {
+      "check": "D1",
+      "key": "UMMUAIMANLM@GMAIL.COM,WEISIANG329@GMAIL.COM,YZHE212@GMAIL.COM|backend/src/routes/lib/sales-report-bills.ts frontend/src/auth/salesAccess.ts",
+      "why": "THE CHAT SALES-REPORT ADMIN EMAILS (owner 2026-10-14 trio + Peter added 2026-10-30), one decision with ONE authoritative home and a vendored twin. backend/src/routes/lib/sales-report-bills.ts SAVE_EMAILS is the server's gate (canSaveSalesReport, called per note author inside collectReport). frontend/src/auth/salesAccess.ts SAVE_EMAILS mirrors it so the chat UI shows the Save button for the same accounts; the backend is the authority and returns a can_save flag per project (which also carries the per-event sales-attendee grant that the frontend list CANNOT compute). The two files share no build graph (frontend cannot import backend/src), the set is closed, and a divergence costs a UI button that doesn't match what the server would accept — never a wrong grant, since the server is the referee."
+    },
+    {
       "check": "D1",
       "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
       "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
@@ -37,8 +57,13 @@
     },
     {
       "check": "D1",
-      "key": "PRICE_1,PRICE_2,PRICE_3|backend/src/scm/routes/fabric-library.ts backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/sofa-combos.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/components/FabricsTable.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx",
-      "why": "THE THREE PRICE TIERS. A closed vocabulary fixed by the supplier price sheet; the copies are a validator and three label maps (VALID_TIERS, TIERS, TIER_LABELS, allTiers, TIER_NEXT). Recorded rather than merged because the validator must stay server-side and the labels must stay renderable offline."
+      "key": "PRICE_1,PRICE_2,PRICE_3,PRICE_4|backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/sofa-combos.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx frontend/src/vendor/scm/lib/fabric-queries.ts",
+      "why": "THE FOUR SOFA PRICE TIERS (2990-0024: supplier lists price Fabric / Acacia / Half Leather / Full Leather). A closed vocabulary fixed by the supplier price sheet; the copies are the server validators (VALID_TIERS, TIERS) and the screens that offer them (TIER_LABELS, allTiers, FABRIC_TIER_OPTIONS). The validator must stay server-side and the labels renderable offline; divergence refuses a save, never a wrong price."
+    },
+    {
+      "check": "D1",
+      "key": "PRICE_1,PRICE_2,PRICE_3|backend/src/scm/routes/fabric-library.ts backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/pos-sofa-combos.ts",
+      "why": "THE THREE TIERS that stop short of PRICE_4, each for its own reason: fabric-library is the 2990 POS selling tier (the POS has no PRICE_4 add-on), pos_sofa_combos.tier carries its own CHECK (PRICE_1..PRICE_3), and fabric-tracking BEDFRAME_TIERS because Full Leather is a sofa-only grade. Three different gates that share words, not one rule with three homes."
     },
     {
       "check": "D1",
@@ -92,8 +117,8 @@
     },
     {
       "check": "D1",
-      "key": "APR,AUG,DEC,FEB,JAN,JUL,JUN,MAR,MAY,NOV,OCT,SEP|backend/src/routes/finance.ts backend/src/routes/projects_print.ts backend/src/scm/lib/po.ts frontend/src/pages/Projects.tsx",
-      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 4 homes: MONTH_LABELS, MONTHS, month, mon."
+      "key": "APR,AUG,DEC,FEB,JAN,JUL,JUN,MAR,MAY,NOV,OCT,SEP|backend/src/routes/finance.ts backend/src/routes/projects_print.ts backend/src/scm/lib/logistics-pnl.ts backend/src/scm/lib/po.ts frontend/src/pages/Projects.tsx",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 5 homes: MONTH_LABELS, MONTHS, month, mon, and the Logistics P&L reading the month a bill line names (\"SEP'26\")."
     },
     {
       "check": "D1",
@@ -617,8 +642,8 @@
     },
     {
       "check": "D1",
-      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TIER_KEYS, SOFA_TIERS_FOR_EXPORT. Cost of divergence is a blank chip, not a wrong number."
+      "key": "P1,P2,P3,P4|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it: the sofa price_matrix cell keys (suppliers.ts SOFA_TIER_KEYS validates, SupplierBindingsCsv SOFA_TIERS_FOR_EXPORT writes the CSV columns). Divergence is a missing CSV column, which the server validator would refuse on import, never a wrong number."
     },
     {
       "check": "D1",
@@ -1246,6 +1271,11 @@
       "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
     },
     {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.CREATE,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "MONEY IN'S MERGED ROWS (Receipts, Invoices) against the payment-recording rows' gate, one key apart BY DESIGN (the owner's Claude Design, batch 5 steps 4–5). Official Receipts folded into Receipts and Deposit invoices into Invoices, so each merged Sidebar row shows to whoever saw EITHER old row — the union of the recording gate (payment_voucher.post OR sales_order.write) and the voucher create gate; inside each page every kind still shows only to whoever saw its old row (money-in/moneyInGates.ts). The four-key set stays on Setup › Deposit invoices (the switch the old Deposit invoices row held, gated as it was). Divergence costs a nav row showing or not, never money — the server's own checks are unchanged."
+    },
+    {
       "check": "D1",
       "key": "DO,GRN,PO,SO|backend/src/scm/lib/downstream-lock.ts backend/src/scm/routes/change-log.ts frontend/src/lib/changeLog.ts",
       "why": "THE FOUR DOCUMENT KINDS THE OWNER OPENED TO STAFF (2026-09-08), plus one unrelated set that happens to hold the same four values. Three homes, and each answers a different question: downstream-lock.ts REFUSALS is a map of why a downstream document refuses an edit and has nothing to do with the change log; change-log.ts ALL_DOC_TYPES is the SERVER's list, which is the boundary — the client cannot widen it; frontend/src/lib/changeLog.ts CL_DOC_TYPES plus CL_DOC_TYPE_LABEL is the ONE client-side home, imported by both pages/ChangeLog.tsx and mobile/MobileChangeLog.tsx rather than written out again (they each held a copy until this entry was recorded, and that copy was deleted, not allowlisted). Cost of the remaining divergence is a chip the server answers 'every type' for, never a wrong number. Same shape as the AutoCount doc-type entry above."
@@ -1277,8 +1307,18 @@
     },
     {
       "check": "D1",
-      "key": "CN,DN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
-      "why": "THE THREE KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE — off the same three words: the third presentation of the one vocabulary, not a fourth answer."
+      "key": "CN,DN,OCN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
+      "why": "THE FOUR KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831; OCN — a credit note to an other debtor — joined 2026-10-28, migration 20261029T0900) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE / CREDIT NOTE — off the same four words: the third presentation of the one vocabulary, not a fourth answer."
+    },
+    {
+      "check": "D1",
+      "key": "CN,DN,OCN|backend/src/scm/routes/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx",
+      "why": "THE MONEY-IN PAGE'S KINDS (owner 2026-10-28: Customer & Other Debtor CN / DN beside Supplier & Other Creditor CN / DN). The server's SIDE_KINDS.AR decides which notes GET /credit-notes?side=AR lists; the page's SIDES.AR.kinds draws the same three as its tabs and its New note picker before any row arrives. The page asks the server by side, never by its own list, so a divergence shows a tab with no rows, never a note on the wrong page. Pinned on both ends: otherDebtorCreditNote.test.ts (side=AR / side=AP lists) and CreditNotes.test.tsx (the two pages)."
+    },
+    {
+      "check": "D2",
+      "key": "CN,DN,OCN ~ CN,DN,OCN,SCN",
+      "why": "DIFFERENT QUESTIONS ON PURPOSE: the four-word set is every kind of note (the CHECK's vocabulary); the three-word set is the Money-in page's — the customer's and the other debtor's notes. SCN is the supplier's credit note and lives on Money out › Supplier & Other Creditor CN / DN (owner 2026-10-28). Not a missed word."
     },
     {
       "check": "D1",
@@ -1302,8 +1342,13 @@
     },
     {
       "check": "D1",
-      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,OPENING_BALANCE,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
+    },
+    {
+      "check": "D1",
+      "key": "API,ODB,ODR,SCN|backend/src/acc/opening-balance.ts backend/src/scm/routes/accounting-opening.ts frontend/src/pages/scm-v2/OpeningBalance.tsx",
+      "why": "THE OPENING PAPER KINDS (owner 2026-10-28, Opening Balance page). ONE home answers which papers an opening may hold: OPENING_PAPER_KINDS in backend/src/acc/opening-balance.ts, the only list the server validates against (isKind). The other two key something ELSE by it: accounting-opening.ts PAPER is per-kind WIRING (table, number and date columns, party column, line table), and OpeningBalance.tsx KIND_WORD is PRESENTATION (the word a paper prints). Each is typed Record<OpeningPaperKind, …> on the same union, so a kind added to the union and not to a map fails to compile; a divergence that slips past costs a blank word, never a paper the server would book."
     },
     {
       "check": "D2",
@@ -1492,13 +1537,18 @@
     },
     {
       "check": "D1",
-      "key": "AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
-      "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). SendDeliveryMessageModal's KIND_TITLE and KIND_AFTER_STATUS are PRESENTATION of the same vocabulary — the drawer heading and the workflow status the board shows after a successful send — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,OVERDUE_ORDER,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
+      "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). KIND_AFTER_STATUS (the status a sent order lands on) lives beside them and is written server-side by the send (HC-0164). SendDeliveryMessageModal's KIND_TITLE is PRESENTATION of the same vocabulary — the drawer heading — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
+    },
+    {
+      "check": "D2",
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,OVERDUE_ORDER,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3 ~ AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3",
+      "why": "INTENDED, not a missed kind (HC-0164). KIND_AFTER_STATUS in delivery-message-kinds.ts is the Delivery Message Status a sent SALES ORDER lands on, written server-side by POST /delivery-messages/send. Two kinds are deliberately absent: ASSR_ARRANGEMENT (a service-case message — the case has no SO status column, its row reads state off the WhatsApp record, and /send hands it to sendAssrArrangement before any status write) and OVERDUE_ORDER (a one-way production-delay heads-up that moves no status — /send skips markSentStatus for it). The map is typed Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order'>, string>, so a NEW status-moving kind missing here is a compile error, not a silent gap."
     },
     {
       "check": "D1",
-      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts",
-      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
+      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/credit-note-pdf.ts frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts frontend/src/vendor/scm/lib/receipt-a4-pdf.ts",
+      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount — and since the owner’s Claude Design (batch 5 step 10) so do the customer’s credit / debit note and the A4 RECEIPT, the design’s one A4 family. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
     },
     {
       "check": "D1",
@@ -1669,6 +1719,21 @@
       "check": "D1",
       "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/routes/lib/hr-trip-store.ts backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
       "why": "THE scm.trip_stop_type ENUM, read four ways for four jobs: dp-orders.ts and delivery-planning-queries.ts list the job types a planner may raise, rate-rule-taxonomy.ts the ones a 3PL rate card prices, and hr-trip-store.ts STOP_KIND maps each stop onto the trip-pay kind HR pays the crew for (HC-0125 phase 5; HR can still change a row's kind). The database enum is the one vocabulary; a new stop type must be added to STOP_KIND deliberately or it pays nothing (NONE)."
+    },
+    {
+      "check": "D2",
+      "key": "P1,P2,P3 ~ P1,P2,P3,P4",
+      "why": "BEDFRAME vs SOFA price_matrix keys in suppliers.ts: a bedframe binding prices P1 / P2 / P3 only, a sofa binding adds P4 (Full Leather, 2990-0024). Two categories with different supplier grades, not one rule enforced at N-1 places. Divergence refuses a bedframe P4 cell, which is the intent."
+    },
+    {
+      "check": "D2",
+      "key": "PRICE_1,PRICE_2,PRICE_3 ~ PRICE_1,PRICE_2,PRICE_3,PRICE_4",
+      "why": "PRICE_4 (Full Leather) is a sofa-only cost grade (2990-0024). The three-tier sets are the bedframe tier, the 2990 POS selling tier (no PRICE_4 add-on in the POS) and pos_sofa_combos (own CHECK); the four-tier sets are sofa cost. Different scopes on purpose, not a missed home."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,INVOICED,SIGNED|backend/src/scm/routes/trips.ts frontend/src/vendor/scm/lib/delivery-stop-status.ts",
+      "why": "THE DELIVERED-DO SET — which delivery_order statuses mean the customer has the goods (DELIVERED/SIGNED/INVOICED). Two homes across the FE/BE boundary that share no build graph: DO_DELIVERED_STATUSES (delivery-stop-status.ts) is the live Last Mile board's stop-status rule — it decides a drop's done/overdue colour; DO_DELIVERED (trips.ts) is the GET /trips/history query filter — it only chooses which past delivery orders the History tab pulls. Same vocabulary, two runtimes, the frontend cannot import backend/src. Divergence shows or hides a History row, never money or stock."
     }
   ]
 }

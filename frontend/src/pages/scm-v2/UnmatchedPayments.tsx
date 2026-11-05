@@ -23,17 +23,17 @@ const daysBefore = (day: string, n: number): string =>
 
 /** Where it is stuck, in words, and the screen that unsticks it — one home for both. */
 export const STUCK: Record<UnmatchedState, { text: (r: UnmatchedPayment) => string; to: string; screen: string }> = {
-  CARD_NOT_REPORTED: { text: () => 'Not on a merchant report yet', to: '/scm/merchant-recon', screen: 'Merchant Recon' },
-  CARD_TO_CONFIRM: { text: () => 'On a merchant report — waiting for you to confirm', to: '/scm/merchant-recon', screen: 'Merchant Recon' },
+  CARD_NOT_REPORTED: { text: () => 'Not on a merchant report yet', to: '/scm/merchant-recon', screen: 'Merchant reports' },
+  CARD_TO_CONFIRM: { text: () => 'On a merchant report — waiting for you to confirm', to: '/scm/merchant-recon', screen: 'Merchant reports' },
   CARD_NO_MERCHANT: { text: (r) => `${r.channel ?? 'Its bank'} is not set up as a merchant`, to: '/scm/settlement-setup', screen: 'Merchant setup' },
   TRANSFER_NOT_BOOKED: { text: () => 'Not in the books — see Self-check', to: '/scm/accounting?tab=check', screen: 'Self-check' },
-  TRANSFER_NOT_MATCHED: { text: () => 'Not matched to the bank statement yet', to: '/scm/bank-recon', screen: 'Bank Recon' },
+  TRANSFER_NOT_MATCHED: { text: () => 'Not matched to the bank statement yet', to: '/scm/bank-recon', screen: 'Bank statements' },
   TRANSFER_NO_STATEMENT: {
     text: (r) => (r.statementUpTo
       ? `Bank statement for this day not uploaded yet (uploaded to ${fmtDate(r.statementUpTo)})`
       : 'No bank statement uploaded yet'),
     to: '/scm/bank-recon',
-    screen: 'Bank Recon',
+    screen: 'Bank statements',
   },
 };
 

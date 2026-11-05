@@ -66,11 +66,11 @@ const HEADER_TO_API: Partial<Record<string, CsvColumn>> = Object.fromEntries(
   CSV_COLUMNS.map((c) => [c.csv, c]),
 );
 
-// "Price 2" / "PRICE_2" / "P2" / "2" -> PRICE_2; blank or the table's "—" -> null.
+// "Price 2" / "PRICE_2" / "P2" / "2" / "Price 3 (HL)" -> PRICE_n; blank or the table's "—" -> null.
 // undefined = not a tier at all.
 function parseTier(raw: string): FabricTier | null | undefined {
   if (raw === '' || raw === '—' || raw === '-') return null;
-  const m = /^(?:price[\s_]*|p)?([123])$/i.exec(raw);
+  const m = /^(?:price[\s_]*|p)?([1234])(?:\s*\((?:hl|fl)\))?$/i.exec(raw);
   return m ? (`PRICE_${m[1]}` as FabricTier) : undefined;
 }
 
@@ -133,8 +133,13 @@ function parseGridRows(grid: string[][]): ParsedImport {
         obj[col.apiKey] = n;
       } else if (col.kind === 'tier') {
         const tier = parseTier(raw);
+        if (tier === 'PRICE_4' && col.apiKey === 'bedframePriceTier') {
+          errors.push(`Row ${r + 1}: ${col.csv} cannot be Price 4, it is a sofa-only grade ("${raw}")`);
+          rowOk = false;
+          break;
+        }
         if (tier === undefined) {
-          errors.push(`Row ${r + 1}: ${col.csv} must be Price 1, Price 2 or Price 3 ("${raw}")`);
+          errors.push(`Row ${r + 1}: ${col.csv} must be Price 1, 2, 3 or 4 ("${raw}")`);
           rowOk = false;
           break;
         }

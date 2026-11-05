@@ -62,7 +62,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
    is written until the operator confirms.
    ════════════════════════════════════════════════════════════════════════ */
 
-const SOFA_TIERS_FOR_EXPORT: readonly ('P1' | 'P2' | 'P3')[] = ['P1', 'P2', 'P3'];
+const SOFA_TIERS_FOR_EXPORT: readonly ('P1' | 'P2' | 'P3' | 'P4')[] = ['P1', 'P2', 'P3', 'P4'];
 
 /** RFC4180 quote when a cell contains comma / quote / newline. */
 function csvCell(v: unknown): string {
@@ -219,7 +219,7 @@ export function detectImportFormat(header: string[]): ImportFormat {
     header.includes('unit_price_rm') ||
     header.includes('bedframe_P1') ||
     header.includes('bedframe_P2') ||
-    header.some((h) => /^sofa_.+_(P1|P2|P3)$/.test(h))
+    header.some((h) => /^sofa_.+_(P1|P2|P3|P4)$/.test(h))
   ) return 'wide';
   return 'long';
 }
@@ -280,9 +280,9 @@ export function buildWidePatches(
 ): { patches: Map<string, AccumPatch>; skippedUnknown: number } {
   const idx = (col: string) => header.indexOf(col);
   const colCode = idx('internal_code');
-  const sofaColIndex = new Map<string, Map<'P1' | 'P2' | 'P3', number>>();
+  const sofaColIndex = new Map<string, Map<'P1' | 'P2' | 'P3' | 'P4', number>>();
   for (const h of sofaHeights) {
-    const inner = new Map<'P1' | 'P2' | 'P3', number>();
+    const inner = new Map<'P1' | 'P2' | 'P3' | 'P4', number>();
     for (const t of SOFA_TIERS_FOR_EXPORT) {
       const i = idx(`sofa_${h}_${t}`);
       if (i >= 0) inner.set(t, i);
@@ -317,7 +317,7 @@ export function buildWidePatches(
       const next: SofaPriceMatrix = { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
       let changed = false;
       for (const h of sofaHeights) {
-        const inner = { ...(next[h] ?? {}) } as { P1?: number; P2?: number; P3?: number };
+        const inner = { ...(next[h] ?? {}) } as { P1?: number; P2?: number; P3?: number; P4?: number };
         let innerChanged = false;
         const indices = sofaColIndex.get(h);
         if (!indices) continue;
@@ -420,9 +420,9 @@ export function buildLongPatches(
       }
       // tier blank → anchor row for an empty binding; nothing to layer.
     } else { // sofa
-      if (height && (tier === 'P1' || tier === 'P2' || tier === 'P3')) {
+      if (height && (tier === 'P1' || tier === 'P2' || tier === 'P3' || tier === 'P4')) {
         const m = sofaMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
-        const inner = { ...(m[height] ?? {}) } as { P1?: number; P2?: number; P3?: number };
+        const inner = { ...(m[height] ?? {}) } as { P1?: number; P2?: number; P3?: number; P4?: number };
         if (sen == null) delete inner[tier]; else inner[tier] = sen;
         if (Object.keys(inner).length === 0) delete m[height];
         else m[height] = inner;

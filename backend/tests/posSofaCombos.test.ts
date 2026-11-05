@@ -151,6 +151,34 @@ describe('GET /pos-pools/sofa-combos — 2990 reads its POS table, company 1 unc
 });
 
 describe('POS combo writes go through the DB functions, as the real caller', () => {
+  test('keeps inclusive and bare sofas distinct in list/history, API writes, and engine reads', async () => {
+    const rows = data();
+    const accessories = [{ modelId: 'cushion', qty: 2 }];
+    rows.pos_sofa_combos!.unshift(posRow({ id: 'with-cushions', accessories }));
+    const sb = fakeSupabase(rows, {
+      rpc: (_n, a) => ({ data: { id: 'new', ...(a.p_row as Row), company_id: 2 }, error: null }),
+    });
+    const app = ctxApp(sb, { companyId: 2 });
+    expect(((await json(await app.request('/sofa-combos'))).rules as Row[]).map((r) => r.id)).toEqual(['p1']);
+    expect(((await json(await app.request('/sofa-combos?includeAccessories=1'))).rules as Row[]).map((r) => r.id)).toEqual(['with-cushions', 'p1']);
+    const query = `/sofa-combos/history?baseModel=Xammar&tier=PRICE_1&modules=${encodeURIComponent('[["1S"]]')}`;
+    expect(((await json(await app.request(query))).rules as Row[]).map((r) => r.id)).toEqual(['p1', 'p1-old']);
+    expect(((await json(await app.request(`${query}&accessories=${encodeURIComponent(JSON.stringify(accessories))}`))).rules as Row[])
+      .map((r) => r.id)).toEqual(['with-cushions']);
+    const create = await app.request('/sofa-combos', { method: 'POST', body: JSON.stringify({
+      baseModel: 'Xammar', modules: [['1S']], accessories, sellingPricesByHeight: { 24: 125075 }, effectiveFrom: '2026-10-30',
+    }) });
+    expect(create.status).toBe(201);
+    expect((await json(create)).accessories).toEqual(accessories);
+    expect((sb.calls[0]!.args.p_row as Row).accessories).toEqual(accessories);
+    await app.request('/sofa-combos/with-cushions', { method: 'PUT', body: JSON.stringify({
+      sellingPricesByHeight: { 24: 126000 }, effectiveFrom: '2026-10-30',
+    }) });
+    expect((sb.calls[1]!.args.p_row as Row).accessories).toEqual(accessories);
+    const engine = await loadSellingSofaCombos(sb, { get: (k: string) => ({ companyId: 2, companyCode: '2990' } as Row)[k] });
+    expect(engine.find((r) => r.id === 'with-cushions')?.accessories).toEqual(accessories);
+  });
+
   test('create: company 2 + real actor passed to pos_sofa_combo_insert; no direct table write', async () => {
     const sb = fakeSupabase(data(), {
       rpc: (_n, a) => ({ data: { id: 'new', ...(a.p_row as Row), company_id: a.p_company_id, deleted_at: null, created_by_name: 'Loo' }, error: null }),

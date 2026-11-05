@@ -26,7 +26,7 @@ import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { requireScmAccess } from '../src/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { productRequests } from '../src/scm/routes/product-requests';
-import { loadRequestForPco, markRequestPcoIssued } from '../src/scm/lib/product-request-link';
+import { loadRequestForPco, markRequestPcoIssued, releaseRequestFromCancelledPo } from '../src/scm/lib/product-request-link';
 
 const notified = vi.fn((_event: string, _opts: Record<string, unknown>) => undefined);
 vi.mock('../src/services/productRequestNotify', () => ({
@@ -329,6 +329,33 @@ describe('product request — the new Models, then the PC Order', () => {
     expect(sb.tables.product_requests[0].status).toBe('CLOSED');
   });
 
+  test('a new-Model line takes a SKU already in the catalogue (2990-0025): its code, category and Model, and no second SKU', async () => {
+    const sb = world();
+    sb.tables.mfg_products.push({ id: 'mfg-2', company_id: CO, code: '2385-2RR', name: '2385 2RR (75cm)', category: 'SOFA', status: 'ACTIVE', model_id: 'model-5530', base_model: '2385' });
+    sb.tables.mfg_products.push({ id: 'mfg-x', company_id: 2, code: 'OTHER-CO', name: 'Other company SKU', category: 'SOFA', status: 'ACTIVE', model_id: null });
+    const raised = (await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_AURORA, LINE_5530] })).body.request as Row;
+    const id = String(raised.id);
+    const newLine = String((raised.lines as Row[])[0].id);
+    const skuLine = String((raised.lines as Row[])[1].id);
+    const purchaser = as(sb, PURCHASER);
+    const link = (lineId: string, body: Row, who = purchaser) => who(`/product-requests/${id}/lines/${lineId}/link-sku`, 'POST', body);
+    expect((await link(newLine, { itemCode: '2385-2RR' })).body.error).toBe('request_not_approved');
+    await purchaser(`/product-requests/${id}/approve`, 'POST', {});
+    expect((await link(newLine, { itemCode: '2385-2RR' }, as(sb, AMY))).status).toBe(403);
+    expect((await link(newLine, {})).body.error).toBe('item_code_required');
+    expect((await link(newLine, { itemCode: 'NOPE' })).status).toBe(404);
+    expect((await link(newLine, { itemCode: 'OTHER-CO' })).status).toBe(404);
+    expect((await link(skuLine, { itemCode: '2385-2RR' })).body.error).toBe('model_exists');
+    const before = sb.tables.mfg_products.length;
+    const done = await link(newLine, { itemCode: '2385-2RR' });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(sb.tables.mfg_products.length).toBe(before);
+    expect(sb.tables.product_request_lines.find((l) => l.id === newLine)).toMatchObject({ item_code: '2385-2RR', model_id: 'model-5530', category: 'SOFA' });
+    expect((await link(newLine, { itemCode: '5530-3S' })).body.error).toBe('model_exists');
+    const ready = await loadRequestForPco(sb as never, CO, id);
+    expect(ready.ok).toBe(true);
+  });
+
   test('a Purchase Order raised instead claims the request (2990-0015): PO_ISSUED with po_id, once, and only for the Purchaser', async () => {
     const sb = world();
     const id = String(((await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_5530] })).body.request as Row).id);
@@ -355,6 +382,23 @@ describe('product request — the new Models, then the PC Order', () => {
     if (!pco.ok) expect(pco.body).toMatchObject({ error: 'request_already_issued', message: expect.stringContaining('already has a Purchase Order') });
     expect((await purchaser(`/product-requests/${id}/close`, 'POST', {})).status).toBe(200);
     expect(sb.tables.product_requests[0].status).toBe('CLOSED');
+  });
+
+  test('a cancelled Purchase Order lets go of its request (2990-0027): APPROVED again, and a new PO may claim it', async () => {
+    const sb = world();
+    const id = String(((await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_5530] })).body.request as Row).id);
+    const purchaser = as(sb, PURCHASER);
+    expect((await purchaser(`/product-requests/${id}/approve`, 'POST', {})).status).toBe(200);
+    expect((await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' })).status).toBe(200);
+    /* A different PO's cancel leaves it alone. */
+    await releaseRequestFromCancelledPo(sb as never, CO, { id: 'po-other', po_number: 'OT-PO-2610-001' }, null);
+    expect(sb.tables.product_requests[0]).toMatchObject({ status: 'PO_ISSUED', po_id: 'po-1' });
+    await releaseRequestFromCancelledPo(sb as never, CO, { id: 'po-1', po_number: 'HC-PO-2610-001' }, null);
+    const after = (await purchaser(`/product-requests/${id}`)).body.request as Row;
+    expect(after).toMatchObject({ status: 'APPROVED', po_id: null, po: null });
+    expect(sb.tables.entity_audit_log.some((a) => a.entity_type === 'PRODUCT_REQUEST' && a.status_snapshot === 'APPROVED' && a.note === 'HC-PO-2610-001 cancelled')).toBe(true);
+    const again = await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
   });
 
   test('a request in another company is not a request at all', async () => {

@@ -403,6 +403,51 @@ describe('PUT /chart/update — one definition, every company', () => {
     expect(tables.accounts.find((r) => r.company_id === 1 && r.account_code === '900-R032')!.pms_row).toBeNull();
   });
 
+  /* The Logistics P&L's row (owner 2026-10-29: the own-lorry tick list moved to
+     the chart —「就不能在coa 那边tick？」): one per account, of the type it reads. */
+  test('the Logistics row rides the union, changes in every company, and only on an account of its type', async () => {
+    const tables = { accounts: [
+      acct(1, '900-P015', { account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', logistics_row: 'petrol' }),
+      acct(2, '900-P015', { account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', logistics_row: 'petrol' }),
+      acct(1, '450-H002', { account_name: 'HP CREDITOR- VNB 9058', account_type: 'LIABILITY' }),
+    ] };
+    const app = harness(tables);
+    const union = await (await app.request('/chart')).json() as { logisticsRows: Array<{ row: string; label: string; type: string }>; accounts: Row[] };
+    expect(union.logisticsRows.find((r) => r.row === 'outsource_em')).toEqual({ row: 'outsource_em', label: 'Outsource – SBH & SWK', type: 'EXPENSE' });
+    expect(union.logisticsRows.find((r) => r.row === 'instalment')).toEqual({ row: 'instalment', label: 'Lorry Installment', type: 'LIABILITY' });
+    expect(union.accounts.find((a) => a.code === '900-P015')).toMatchObject({ logisticsRow: 'petrol' });
+    expect(union.accounts.find((a) => a.code === '450-H002')).toMatchObject({ logisticsRow: null });
+    const put = (body: Row) => app.request('/chart/update', { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+    expect((await put({ code: '900-P015', logisticsRow: 'upkeep' })).status).toBe(200);
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '900-P015')!.logistics_row).toBe('upkeep');
+    }
+    const wrongType = await put({ code: '450-H002', logisticsRow: 'petrol' });
+    expect(wrongType.status).toBe(400);
+    expect(((await wrongType.json()) as Row).message).toBe('450-H002 is LIABILITY — Petrol reads EXPENSE accounts.');
+    expect((await put({ code: '450-H002', logisticsRow: 'instalment' })).status).toBe(200);
+    const bad = await put({ code: '900-P015', logisticsRow: 'manpower' });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as Row).error).toBe('bad_logistics_row');
+    expect((await put({ code: '900-P015', logisticsRow: null })).status).toBe(200);
+    expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '900-P015')!.logistics_row).toBeNull();
+  });
+
+  test('ticking a code on copies its per-account flags with the definition', async () => {
+    const tables = { accounts: [
+      acct(1, '900-U006', { account_name: 'UPKEEP OF LORI', account_type: 'EXPENSE' }),
+      acct(1, '900-U010', { account_name: 'UPKEEP OF LORI - VPC 9058', account_type: 'EXPENSE', parent_code: '900-U006', needs_event: true, pms_row: 'others', logistics_row: 'upkeep' }),
+    ] };
+    const app = harness(tables);
+    const res = await app.request('/chart/tick', {
+      method: 'PUT', body: JSON.stringify({ companyId: 2, code: '900-U010', active: true }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '900-U010'))
+      .toMatchObject({ needs_event: true, pms_row: 'others', logistics_row: 'upkeep' });
+  });
+
   test('an unknown code is a 404, an empty patch a 400', async () => {
     const app = harness({ accounts: [acct(1, '905-0000')] });
     const miss = await app.request('/chart/update', {

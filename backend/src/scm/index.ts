@@ -117,7 +117,9 @@ import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
 import { scanGr } from "./routes/scan-gr";
+import { scanGrCheck } from "./routes/scan-gr-check";
 import { scanPi } from "./routes/scan-pi";
+import { scanPiCheck } from "./routes/scan-pi-check";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
@@ -126,9 +128,11 @@ import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
+import { deliveryRemarks } from "./routes/delivery-remarks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
+import { savedLocations } from "./routes/saved-locations";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { threeplDoCharges } from "./routes/threepl-do-charges";
@@ -881,6 +885,10 @@ scm.use("/delivery-planning-regions/*", scmAreaGuard("scm.transportation.drivers
 scm.route("/delivery-planning-regions", deliveryPlanningRegions);
 scm.use("/delivery-planning-row-marks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-row-marks", deliveryPlanningRowMarks);
+// Last Mile order-drawer remarks thread (phase 3). Same board area gate: anyone
+// who can view the board reads; writing a note needs transportation edit.
+scm.use("/delivery-remarks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
+scm.route("/delivery-remarks", deliveryRemarks);
 scm.use("/delivery-planning-row-order/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-row-order", deliveryPlanningRowOrder);
 // Residence delivery rules (mig 0195) — per-building-type service duration +
@@ -894,6 +902,9 @@ scm.route("/delivery-residence-rules", deliveryResidenceRules);
 // area gate as the rest of the fleet masters.
 scm.use("/threepl-companies/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/threepl-companies", threeplCompanies);
+
+scm.use("/saved-locations/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/saved-locations", savedLocations);
 // Fleet A1 (mig 0205) — postcode -> zone map, the auto-propose delivery-date
 // action, and reversible day locks. Same Transportation area gate as the rest of
 // TMS: read the map / propose = view is enough for GET, but propose is a POST so
@@ -1012,13 +1023,17 @@ scm.route("/scan-so", scanSo);
 // area at 'view' level for the same reason as scan-so: enqueue only stages an
 // upload + background OCR that lands a DRAFT the operator later posts; it never
 // posts stock. The real post (grns PATCH /:id/post) keeps its default gate.
+scm.use("/scan-gr/check/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
 scm.use("/scan-gr/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
+scm.route("/scan-gr/check", scanGrCheck);
 scm.route("/scan-gr", scanGr);
 // scan-pi (OCR slice 5): photo a supplier invoice -> DRAFT Purchase Invoice by
 // converting the matching GRN(s). Same view-level rationale as scan-so/scan-gr
 // (enqueue only stages a background OCR that lands a DRAFT the operator confirms),
 // gated to the PI area.
+scm.use("/scan-pi/check/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
 scm.use("/scan-pi/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
+scm.route("/scan-pi/check", scanPiCheck);
 scm.route("/scan-pi", scanPi);
 // Re-added 2026-06-23 — card-terminal / EPP receipt OCR for the Payments panel.
 // The receipt IS the payment row's slip (one upload, both uses): the frontend

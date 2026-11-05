@@ -10,12 +10,12 @@
    its receipts, its sales order's customer date, and its product category.
 
    Company scope: every read is scoped to the active company. */
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, type CompanyScopeCtx } from '../lib/companyScope';
-import { cachedSwr, writeSwr } from '../lib/kv-swr';
+import { cachedSwr, writeSwr, bustSwrPrefix } from '../lib/kv-swr';
 import { MRP_REFRESH_COMPANY_IDS } from '../lib/mrp-snapshot';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env as WorkerEnv } from '../../types';
@@ -59,12 +59,28 @@ export function procurementOverviewParams(q: (k: string) => string | undefined, 
    views by the 15-minute cron, so the database does this once per refresh
    instead of once per viewer. Figures can be up to PROCOV_SOFT_SECONDS old. */
 export const PROCOV_SOFT_SECONDS = 20 * 60;
+/** The supplier score's window, the same 90 days the page asks for (SupplierScorecard). */
+export const scoreWindowFrom = (today: string) => new Date(Date.parse(`${today}T00:00:00Z`) - 89 * 86400000).toISOString().slice(0, 10);
 export const PROCOV_HARD_SECONDS = 2 * 60 * 60;
 export function procurementOverviewKey(companyId: number, p: ProcurementOverviewParams): string {
   return `swr:procov:v1:${companyId}:${p.today}:${p.from}:${p.to}:${p.dueTo}:${p.basis}:${p.scope}`;
 }
 
-procurementOverview.get('/', async (c) => {
+/** Every cached view of one company's report: the lead-time settings are baked into it, so a settings write drops them all. */
+export const bustProcurementOverview = (kv: KVNamespace | undefined, companyId: number) =>
+  bustSwrPrefix(kv, `swr:procov:v1:${companyId}:`);
+
+/** The page shows the 50 largest dead and buffer rows; the full lists stay in
+ *  the cached report and are served by GET /stock-health (owner 2026-10-31). */
+const PAGE_ITEMS = 50;
+export function forPage(body: Record<string, unknown>): Record<string, unknown> {
+  const dead = body.deadStock as { top?: unknown[]; bufferTop?: unknown[] } | undefined;
+  if (!dead) return body;
+  return { ...body, deadStock: { ...dead, top: (dead.top ?? []).slice(0, PAGE_ITEMS), bufferTop: (dead.bufferTop ?? []).slice(0, PAGE_ITEMS),
+    topCount: (dead.top ?? []).length, bufferCount: (dead.bufferTop ?? []).length } };
+}
+
+async function cachedReport(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const p = procurementOverviewParams((k) => c.req.query(k), todayMyt());
   const companyId = activeCompanyId(c);
   let waitUntil: ((x: Promise<unknown>) => void) | null = null;
@@ -80,12 +96,28 @@ procurementOverview.get('/', async (c) => {
   });
   c.header('X-Cache', source);
   if (at) c.header('X-Cache-At', at);
-  return result.ok ? c.json(result.body) : c.json(result.body, 500);
+  return result;
+}
+
+procurementOverview.get('/', async (c) => {
+  const result = await cachedReport(c);
+  return result.ok ? c.json(forPage(result.body as Record<string, unknown>)) : c.json(result.body, 500);
+});
+
+/* GET /procurement-overview/stock-health - every dead and buffer row of the
+   same cached report (same query parameters as the page), for the full list,
+   its sort and its Excel export. */
+procurementOverview.get('/stock-health', async (c) => {
+  const result = await cachedReport(c);
+  if (!result.ok) return c.json(result.body, 500);
+  const dead = (result.body as { deadStock?: { top?: unknown[]; bufferTop?: unknown[] } }).deadStock;
+  return c.json({ dead: dead?.top ?? [], buffer: dead?.bufferTop ?? [] });
 });
 
 /**
- * The 15-minute cron: recompute the two views people open by default (the page:
- * this month, due to month end; the home Overview: this month, due today) for
+ * The 15-minute cron: recompute the views people open by default (the page:
+ * this month, due to month end; the home Overview: this month, due today; the
+ * supplier score: the last 90 days to today, owner 2026-11-01) for
  * each live company and store them, so a viewer is served without waiting.
  * One company / view at a time; a failure is logged and the stale copy stays.
  */
@@ -97,6 +129,7 @@ export async function refreshProcurementOverviewSnapshots(env: WorkerEnv, today:
   const views = [
     procurementOverviewParams((k) => (k === 'dueTo' ? monthEnd : undefined), today),
     procurementOverviewParams(() => undefined, today),
+    procurementOverviewParams((k) => (k === 'from' ? scoreWindowFrom(today) : k === 'to' || k === 'dueTo' ? today : undefined), today),
   ];
   const sb = getSupabaseService(env);
   for (const companyId of MRP_REFRESH_COMPANY_IDS) {

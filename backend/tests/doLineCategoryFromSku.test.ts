@@ -27,7 +27,12 @@
  * reason and hide the assertion this suite exists to make.
  */
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+/* The dye-lot stock check needs live batch stock; HC-0146 tests the set check, so only that half is stubbed. */
+vi.mock('../src/scm/lib/sofa-batch-guard', async (orig) => ({
+  ...(await orig<typeof import('../src/scm/lib/sofa-batch-guard')>()),
+  findSofaLinesWithoutCompleteBatch: async () => [],
+}));
 import { addDeliveryOrderItemHandler } from '../src/scm/routes/delivery-orders-mfg';
 import { computeVariantKey } from '../src/scm/shared/variant-key';
 
@@ -184,5 +189,66 @@ describe('DO add-line — the stock bucket follows the SKU, not the request', ()
     });
     expect(res.status).toBe(201);
     expect(t.delivery_order_items.at(-1)!.item_group).toBe('accessory');
+  });
+});
+
+describe('DO add-line — Pull from SO in edit mode (HC-0146)', () => {
+  const soTables = () => {
+    const t = tables();
+    t.delivery_orders[0] = {
+      id: 'do-1', do_number: 'HC-DO-2608-001', company_id: CO, status: 'DRAFT',
+      warehouse_id: WH, so_doc_no: null, debtor_code: 'C-X', debtor_name: 'Customer X',
+    };
+    t.mfg_products.push({ code: 'SOFA-1A', category: 'SOFA', company_id: CO }, { code: 'SOFA-2A', category: 'SOFA', company_id: CO });
+    t.mfg_sales_orders.push(
+      { doc_no: 'SO-X', company_id: CO, debtor_code: 'C-X', debtor_name: 'Customer X' },
+      { doc_no: 'SO-Y', company_id: CO, debtor_code: 'C-Y', debtor_name: 'Customer Y' },
+    );
+    const base = { company_id: CO, stock_status: 'READY', cancelled: false, qty: 1, allocated_batch_no: 'B1', warehouse_id: WH };
+    t.mfg_sales_order_items.push(
+      { ...base, id: 'x1', doc_no: 'SO-X', item_code: 'SOFA-1A', item_group: 'SOFA' },
+      { ...base, id: 'x2', doc_no: 'SO-X', item_code: 'SOFA-2A', item_group: 'SOFA' },
+      { ...base, id: 'y1', doc_no: 'SO-Y', item_code: 'SOFA-1A', item_group: 'SOFA' },
+    );
+    return t;
+  };
+  const sofa = (soItemId: string, itemCode: string) => ({ itemCode, itemGroup: 'SOFA', qty: 1, unitPriceSen: 1000, soItemId });
+
+  test('a line from another customer\'s SO is refused', async () => {
+    const t = soTables();
+    const res = await addLine(harness(t), sofa('y1', 'SOFA-1A'));
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error?: string }).error).toBe('mixed_customers');
+    expect(t.delivery_order_items).toHaveLength(0);
+  });
+
+  test('a code-less DO whose name is only spelt differently is not refused', async () => {
+    const t = soTables();
+    Object.assign(t.delivery_orders[0], { debtor_code: null, debtor_name: 'Customer  x' });
+    Object.assign(t.mfg_sales_orders[0], { debtor_code: null });
+    const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A')] });
+    expect(res.status).toBe(201);
+  });
+
+  test('a failed batch names the line that stopped it', async () => {
+    const t = soTables();
+    const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A'), sofa('y1', 'SOFA-1A')] });
+    const body = await res.json() as { error?: string; failedIndex?: number; failedItemCode?: string };
+    expect(res.status).toBe(400);
+    expect(body).toMatchObject({ error: 'mixed_customers', failedIndex: 2, failedItemCode: 'SOFA-1A' });
+  });
+
+  test('two modules of one sofa set go in as one batch', async () => {
+    const t = soTables();
+    const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A')] });
+    expect(res.status).toBe(201);
+    expect(t.delivery_order_items).toHaveLength(2);
+  });
+
+  test('one module alone is still refused as a partial set', async () => {
+    const t = soTables();
+    const res = await addLine(harness(t), sofa('x1', 'SOFA-1A'));
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error?: string }).error).toBe('sofa_partial_set');
   });
 });

@@ -1,0 +1,54 @@
+/* Finance › Reports › Logistics cost in the owner's redesign (batch 6 §5.11):
+   the shared range in whole months and the view in the toolbar card, the
+   tiles, what could not be counted, then the view — the P&L with its settings
+   cards, or a Finance-Table. Colours from finance/finance-ui.module.css. */
+
+.card {
+  min-width: 0; padding: 12px 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px;
+  box-shadow: var(--fin-card-shadow);
+}
+.cardHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 6px; }
+.cardTitle { margin: 0; font-size: 14px; font-weight: 600; color: var(--fin-ink); }
+.hint { font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.grow { flex: 1; }
+
+.notCounted { padding: 10px 14px; border: 1px solid #efd3d3; border-radius: 10px; background: var(--fin-late-bg); }
+.notCountedTitle { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--fin-late-fg); }
+.notCounted ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--fin-text); }
+
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; color: var(--fin-ink); }
+.table th {
+  padding: 7px 8px; background: var(--fin-paper); border-bottom: 1px solid var(--fin-rule); font-size: 12px; font-weight: 600;
+  color: var(--fin-text); text-align: left; white-space: nowrap;
+}
+.table td { padding: 5px 8px; border-bottom: 1px solid var(--fin-rule-soft); vertical-align: top; }
+.num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scroll { overflow-x: auto; scrollbar-width: thin; }
+.heading td { padding-top: 10px; border-bottom: none; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fin-brass); }
+.bold td { font-weight: 650; border-top: 1px solid var(--fin-line); }
+.final td { background: var(--fin-info-bg); }
+.muted { color: var(--fin-muted); }
+.loss { color: var(--fin-late-fg); }
+.gain { color: var(--fin-petrol); }
+.problem { color: var(--fin-late-fg); font-size: 12.5px; }
+
+.input {
+  width: 84px; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid var(--fin-input); border-radius: 6px;
+  font: 400 12.5px 'IBM Plex Sans', system-ui, sans-serif; text-align: right; color: var(--fin-ink); outline: none;
+}
+.input:focus { border-color: var(--fin-petrol); }
+.rate { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fin-detail); }
+.btn {
+  height: 26px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  color: var(--fin-text); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--fin-paper); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btnSolid, .btnSolid:hover:not(:disabled) { border-color: var(--fin-petrol); background: var(--fin-petrol); color: #ffffff; }
+.btnSolid:hover:not(:disabled) { background: var(--fin-petrol-ink); }
+.tick { accent-color: var(--fin-petrol); }
+.region { display: inline-flex; flex-direction: column; }
+.regionCovers { font-size: 11px; color: var(--fin-muted); }
+
+.skeleton { display: grid; gap: 10px; padding: 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
+.skeletonBar { height: 14px; border-radius: 4px; }
