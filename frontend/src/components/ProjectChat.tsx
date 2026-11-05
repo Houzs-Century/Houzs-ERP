@@ -517,6 +517,8 @@ function actionLabel(action: string): string {
       return "Sales attending removed";
     case "sales_report_voided":
       return "Message voided";
+    case "books_gap_waived":
+      return "Removed from Books not complete";
     case "archived":
       return "Archived";
     case "restored":

@@ -8,6 +8,7 @@ import { useQuery } from "../../hooks/useQuery";
 import { useAuth } from "../../auth/AuthContext";
 import { canSaveSalesReport } from "../../auth/salesAccess";
 import { BillRefFix } from "./BillRefFix";
+import { BooksGapButton, type BooksGap } from "./BooksGapButton";
 import { api } from "../../api/client";
 
 // Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
@@ -29,6 +30,8 @@ interface DataGaps {
 interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
   sizeSqm: number | null;
+  /** What a person took off this list because the event truly has none. */
+  waived: BooksGap[];
   id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
   hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
   /** The P&L's rental (Finance's books or a typed line), in RM. */
@@ -44,6 +47,7 @@ interface NotDailyEvent { id: number; code: string; name: string; startDate: str
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
   const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; soNoCogs: SoNoCogs[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
   const [tab, setTab] = useState<BooksTab>("daily");
+  const [showRemoved, setShowRemoved] = useState(false);
   const { user } = useAuth();
   const canFix = canSaveSalesReport(user);
   const g = q.data;
@@ -51,10 +55,23 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   if (!g) return null;
   const sen = (x: number) => money(x / 100);
   const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
-  const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
-  const noReport = g.books.filter((r) => !r.hasReport);
+  const live = (rows: BookRow[], gap: BooksGap) => rows.filter((r) => !r.waived.includes(gap));
+  const rentalAll = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
+  const rentalRows = live(rentalAll, "rental");
+  const reportAll = g.books.filter((r) => !r.hasReport);
+  const noReport = live(reportAll, "report");
   /* Venue rent per m² reads the booth size, so an event without one is left out of it. */
-  const noSize = g.books.filter((r) => !((r.sizeSqm ?? 0) > 0));
+  const sizeAll = g.books.filter((r) => !((r.sizeSqm ?? 0) > 0));
+  const noSize = live(sizeAll, "size");
+  const removable: Partial<Record<BooksTab, { all: BookRow[]; left: BookRow[] }>> = {
+    rental: { all: rentalAll, left: rentalRows },
+    report: { all: reportAll, left: noReport },
+    size: { all: sizeAll, left: noSize },
+  };
+  const here = removable[tab];
+  const removedHere = here ? here.all.length - here.left.length : 0;
+  const rowsOf = (gap: BooksGap) => { const t = removable[gap]!; return showRemoved ? t.all : t.left; };
+  const gapCell = (r: BookRow, gap: BooksGap) => <Td>{canFix && <BooksGapButton key={String(r.waived.includes(gap))} projectId={r.id} gap={gap} waived={r.waived.includes(gap)} onSaved={() => q.reload()} />}</Td>;
   /* One line per row (owner 2026-10-20: "不需要两排"): the event's name, its code on hover. */
   const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[320px] truncate"><span className="text-primary" title={r.code}>{r.name}</span></Td>;
   return (
@@ -102,45 +119,47 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
         )}
         {tab === "rental" && (
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th>Sales Orders</Th><Th left>Problem</Th></tr></thead>
-            <tbody>{rentalRows.map((r) => (
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th>Sales Orders</Th><Th left>Problem</Th><Th> </Th></tr></thead>
+            <tbody>{rowsOf("rental").map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
                 {/* A rental below zero shows its figure, never "missing" (owner
                     2026-10-22: 下面写missing，但是上面是有amount的). */}
                 {eventCell(r)}<Td>{r.endDate}</Td><Td className={r.rental > 0 ? "" : "font-semibold text-err"}>{r.rental !== 0 && Number.isFinite(r.rental) ? money(r.rental) : "missing"}</Td>
                 <Td className={r.soSen > 0 ? "" : "font-semibold text-err"}>{sen(r.soSen)}</Td>
                 <Td left className="text-err">{r.rental < 0 ? "Rental below zero" : !(r.rental > 0) ? "No rental keyed" : "Rental keyed, no sales"}</Td>
+                {gapCell(r, "rental")}
               </tr>
             ))}
-              {rentalRows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has its rental and sales.</Td></tr>}
+              {rowsOf("rental").length === 0 && <tr><Td left className="text-ink-muted">Every finished event has its rental and sales.</Td></tr>}
             </tbody>
           </table>
         )}
         {tab === "report" && (
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Sales Orders</Th></tr></thead>
-            <tbody>{noReport.map((r) => (
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Sales Orders</Th><Th> </Th></tr></thead>
+            <tbody>{rowsOf("report").map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                {eventCell(r)}<Td>{r.endDate}</Td><Td>{sen(r.soSen)}</Td>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{sen(r.soSen)}</Td>{gapCell(r, "report")}
               </tr>
             ))}
-              {noReport.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a chat sales report.</Td></tr>}
+              {rowsOf("report").length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a chat sales report.</Td></tr>}
             </tbody>
           </table>
         )}
         {tab === "size" && (
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th></tr></thead>
-            <tbody>{noSize.map((r) => (
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th> </Th></tr></thead>
+            <tbody>{rowsOf("size").map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                {eventCell(r)}<Td>{r.endDate}</Td><Td>{r.rental > 0 ? money(r.rental) : "—"}</Td>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{r.rental > 0 ? money(r.rental) : "—"}</Td>{gapCell(r, "size")}
               </tr>
             ))}
-              {noSize.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a booth size.</Td></tr>}
+              {rowsOf("size").length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a booth size.</Td></tr>}
             </tbody>
           </table>
         )}
       </div>
+      {removedHere > 0 && <button type="button" className="mt-1 text-[11.5px] text-primary hover:underline" onClick={() => setShowRemoved((v) => !v)}>{showRemoved ? "Hide removed" : `Show removed (${removedHere})`}</button>}
       <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it; every event since {g.recentFrom}, running ones included. Rental and chat report: the finished events above. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
     </Panel>
   );
