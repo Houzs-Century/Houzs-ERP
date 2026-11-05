@@ -129,12 +129,18 @@ export async function readFairTrips(
 /** One fair's share of one trip's charge. */
 export type FairCharge = { projectId: number; tripKey: string; kind: TripKind; day: string; rateSen: number | null; booths: number; sen: number };
 
-/** Each fair's share of its in-house trips: a trip's charge shared equally by the
-    fairs on it (the remainder to the first), so the shares add up to the trip. */
+/** The first day a trip's charge reaches the fair's own books (owner 2026-11-05, B:
+    from the new books' start; July and August keep the figures typed on the event,
+    so there the Logistics P&L and the fairs' books are not compared). */
+export const FAIR_CHARGE_FROM = '2026-09-01';
+
+/** Each fair's share of its in-house trips from FAIR_CHARGE_FROM: a trip's charge
+    shared equally by the fairs on it (the remainder to the first), so the shares
+    add up to the trip. */
 export function chargesByFair(trips: readonly SetupTrip[]): Map<number, FairCharge[]> {
   const out = new Map<number, FairCharge[]>();
   for (const t of trips) {
-    if (t.amountSen === 0) continue;
+    if (t.amountSen === 0 || t.day < FAIR_CHARGE_FROM) continue;
     share(t.amountSen, t.fairs.length).forEach((sen, i) => {
       const f = t.fairs[i]!;
       const list = out.get(f.id) ?? [];

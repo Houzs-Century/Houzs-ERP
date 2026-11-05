@@ -318,3 +318,12 @@ test('the outsourced read compares a status as text, never the enum', async () =
   expect(covered).toMatch(/coalesce\(d\.status::text, ''\)/);
   expect(covered).not.toMatch(/coalesce\(d\.status, ''\)/);
 });
+
+/* Owner 2026-11-05 (B): the charge reaches a fair's books only from the new books'
+   start, 2026-09-01; July and August keep the figures typed on the event. */
+test('a trip before 2026-09-01 adds no charge to the fair; one on or after does', async () => {
+  const fairs = [{ id: 7, code: 'A', name: '[AKEMI] X @ MITEC', state: 'Kuala Lumpur', venue: 'MITEC', startdate: '2026-08-29', enddate: '2026-09-01' }];
+  const db = { prepare: (sql: string) => ({ bind: () => ({ all: async () => ({ results: /FROM projects p/.test(sql) ? fairs : [] }) }) }) } as unknown as D1Database;
+  const read = await readEventBooks(db, 7, 1);
+  expect(read.ok && read.legs.filter((l) => l.source_type === 'LOGISTICS').map((l) => [l.entry_date, l.debit_sen])).toEqual([['2026-09-01', 40_000]]);
+});
