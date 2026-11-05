@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AUTH_TOKEN_KEY } from "../../../lib/authToken";
 import { combineAbortSignals } from "../../../lib/abort";
+import { companyHeaderFor, setActiveCompanyId } from "../../../lib/activeCompany";
 import { authedFetch, failedWriteTail } from "./authed-fetch";
 
 beforeEach(() => {
@@ -245,5 +246,46 @@ describe("failedWriteTail", () => {
     );
     const err = await authedFetch("/so-amendments/a1/approve-so", { method: "PATCH" }).catch((e: unknown) => e);
     expect(failedWriteTail(err, UNCHANGED)).toBe(` ${UNCHANGED}`);
+  });
+});
+
+/* The driver run-sheet is a CROSS-COMPANY queue: on a mixed route a per-DO write
+   (Start / Arrived / POD) must act in the STOP's OWN granted company, not the
+   tab's active company. The call sites pass an explicit X-Company-Id
+   (companyHeaderFor); this is the guarantee that it reaches the wire AND that the
+   active-company switcher does not overwrite it — the exact failure the owner saw
+   ("Couldn't mark arrival — that record isn't in the company you're working in"
+   on a 2990 stop while the tab read HOUZS). */
+describe("authedFetch per-call company pin", () => {
+  const sentCompany = async (init?: RequestInit): Promise<string | null> => {
+    let captured: string | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_url, reqInit) => {
+      captured = new Headers(reqInit?.headers).get("X-Company-Id");
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }),
+      );
+    });
+    await authedFetch("/delivery-orders-mfg/do-1", init);
+    return captured;
+  };
+
+  test("an explicit per-call X-Company-Id WINS over the active-company switcher", async () => {
+    setActiveCompanyId(1); // tab is on HOUZS
+    expect(await sentCompany({ headers: companyHeaderFor("2990") })).toBe("2990");
+  });
+
+  test("without a per-call pin, the active company is still sent (unchanged)", async () => {
+    setActiveCompanyId(1);
+    expect(await sentCompany()).toBe("1");
+  });
+
+  test("a nullish pin falls back to the active company (companyHeaderFor is a no-op)", async () => {
+    setActiveCompanyId(2);
+    expect(await sentCompany({ headers: companyHeaderFor(null) })).toBe("2");
+  });
+
+  test("the pin is sent even when the tab has no active company", async () => {
+    // No setActiveCompanyId — companyHeader() would send nothing; the pin still must.
+    expect(await sentCompany({ headers: companyHeaderFor("2990") })).toBe("2990");
   });
 });

@@ -309,11 +309,25 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   // localStorage key DIRECTLY here to keep this vendored file self-contained
   // (same style as the auth:token read above). Absent → NO header → backend
   // falls back to its hostname default, so single-company Houzs is unchanged.
+  /* The tab's active company is stamped on every request — UNLESS the caller
+     PINNED a specific company for THIS one call. The driver run-sheet is a
+     CROSS-COMPANY queue: a mixed route interleaves both companies' stops, and a
+     per-DO read/write must act in the STOP's own granted company, not whichever
+     company the top-bar switcher happens to show (a mixed run would otherwise
+     need the switcher kept in lock-step with every stop — which is exactly how
+     "Couldn't mark arrival — that record isn't in the company you're working in"
+     reached a driver standing in front of a 2990 delivery while the tab read
+     HOUZS). Those call sites pass an explicit X-Company-Id (companyHeaderFor) and
+     it WINS here. authorization / content-type are still applied AFTER, so a
+     caller can never override them. No other caller sets X-Company-Id, so this is
+     a no-op for every other path. */
+  const callerHeaders = (init?.headers ?? {}) as Record<string, string>;
+  const callerPinnedCompany = Object.keys(callerHeaders).some((k) => k.toLowerCase() === 'x-company-id');
   const headers = {
-    ...(init?.headers ?? {}),
+    ...callerHeaders,
     authorization: `Bearer ${token}`,
     ...(pass ? { 'x-session-pass': pass } : {}),
-    ...companyHeader(),
+    ...(callerPinnedCompany ? {} : companyHeader()),
     ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
   };
   // Weak-wifi / Hyperdrive cold-start resilience (ported from HOOKKA
