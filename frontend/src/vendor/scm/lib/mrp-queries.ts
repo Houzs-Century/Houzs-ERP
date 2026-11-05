@@ -45,7 +45,11 @@ export type MrpLine = {
   ruleSupplierId?: string | null;
   /* Sofa only — the batch (= PO number) the whole set is planned from. */
   batchNo?: string | null;
+  /* Sofa only — this line's own POs that went to an earlier-delivery SO. */
+  ownPoSlottedTo?: SofaPoSlot[];
 };
+
+export type SofaPoSlot = { poNumber: string; soDocNo: string; deliveryDate: string | null };
 
 export type MrpSku = {
   /* Commander 2026-05-31 — each row is scoped to ONE warehouse (per-WH MRP);
@@ -107,6 +111,9 @@ export type SofaSet = {
      for a stock set, the covering PO otherwise; null when nothing covers it. A
      sofa set is one batch or nothing (1 PO = 1 batch, never split). */
   batchNo?: string | null;
+  /* Company 2 (2990-0018): POs raised for this line that the pooled plan gave
+     to another SO with an earlier delivery date. Absent on older snapshots. */
+  ownPoSlottedTo?: SofaPoSlot[];
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
 

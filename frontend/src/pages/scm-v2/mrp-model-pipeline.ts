@@ -126,6 +126,7 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       shortageQty: s.shortageQty,
       poSupplierId: s.poSupplierId, poSupplierName: s.poSupplierName,
       batchNo: s.batchNo ?? null,
+      ownPoSlottedTo: s.ownPoSlottedTo ?? [],
     });
   }
   return [...map.values()];

@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- 2990 sofa pool vs pillow: owner kept the pooled sofa rule (2990-0018, earlier delivery takes another SO's PO), but #4957 made 2990 pillows own-PO-first, so a set's sofa and pillow can land on different SOs and dye lots. Decide whether the pillow follows the sofa batch — 2026-10-27
 - DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; Team, Mailboxes lists the addresses still waiting (P3) — 2026-10-09
 - HC-0125 Employees & Attendance: after phase 1 deploys, grant `hr.employees.manage` (or `hr.employees.read`) to Nico's role in Team > Roles & Permissions; until then only Owner / IT Admin (`*`) see HR > Employees & Attendance — 2026-10-21
 - Lorry revenue / occupancy (Logistic Overview) reads the lorry from the DO crew, its lorry run, or the DO Vehicle field; on the local copy only 1 of 298 October DOs carries one. The owner says the team fills the plate on every DO: find WHERE (AutoCount, paper, another field) and read it from there — 2026-10-18
@@ -25,6 +26,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Legacy relay it-houzs.dev serves the PO dump and debtor list with no key: take it down or add a key — 2026-08-12
 
 ## Waiting on others
+- 2990-0018 part B, SO create: processing to delivery under 14 days needs a typed reason (Sim: 5B, both companies). Open: where the reason is stored, which entry points (desktop / MobileNewSO at size ceiling / header edit), drafts — Samuel — 2026-10-27
 - HC-0149 Copy as new: phone entry not built (`MobileNewSO.tsx` at its size ceiling; it already seeds from `convertFrom.copyFrom`). Delivery Order copy dropped (owner 2026-10-23: not needed) — Samuel — 2026-10-23
 - DEV-32 Edit SO after DO is desktop-only: the phone has no Override and `MobileNewSO.tsx` is at its size ceiling; port the after-DO mode (customer details + charge lines + DO pick) when Logistics needs it on the phone — Samuel — 2026-10-02
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
