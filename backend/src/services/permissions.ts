@@ -111,7 +111,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // DEV-32 (Syu 2026-10-01) — for Logistics. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_after_do",    resource: "Supply Chain", verb: "manage", label: "Edit SO after DO",             description: "After a Delivery Order is raised, change the SO customer details and add or edit charge lines (transport, storage, misc); the change is copied onto the DO. Not once the DO has an invoice or return." },
   // DEV-70 (syasya 2026-10-12) — price of a line already on a DO. Rule: scm/shared/so-after-do-edit.ts.
-  { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line follows. Not once the DO has an invoice or return." },
+  { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line and any invoice billing it follow, and the invoice's revenue is re-posted. Not once the DO has a Delivery Return." },
   // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the
   // SO back out of the Proceed lane (and, once the day has elapsed, undoes the
   // lock that says "this is what we PO to the supplier"). 2990 restricts it to
