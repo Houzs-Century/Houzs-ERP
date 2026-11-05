@@ -91,9 +91,9 @@ export function buildMonthCost(input: {
   bills: ReadonlyMap<string, ThreeplBill>;
 }): MonthCost {
   const { regionOf } = input;
-  const dos: Record<RegionCode, number> = { PG: 0, KL: 0, EM: 0, SG: 0 };
+  const dos: Record<RegionCode, number> = zero();
   const goodsSen = zero();
-  const noDeliverer: Record<RegionCode, number> = { PG: 0, KL: 0, EM: 0, SG: 0 };
+  const noDeliverer: Record<RegionCode, number> = zero();
 
   /* Our trips: one lorry, one day. */
   const trips = new Map<string, { plate: string; day: string; dos: LogisticsDo[] }>();

@@ -18,7 +18,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDayMonthRange } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { useLogisticsPnl, type LogisticsMonth, type LogisticsPnl, type PnlRegion } from '../../vendor/scm/lib/logistics-queries';
 import { FinanceGrid, fmtMoney, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
@@ -135,7 +135,7 @@ function RegionView({ p, mode, split, period, months }: ViewProps) {
           <tbody>
             {trips.map((t) => (
               <tr key={t.day}>
-                <td>{t.day.replace(/-/g, '/')}</td>
+                <td>{fmtDateOrDash(t.day)}</td>
                 <td className={s.num} title={t.doNumbers.join(', ')}>{t.dos}</td>
                 <td>{ALL_REGIONS.filter((r) => t.sen[r] !== 0).map(regionName).join(', ')}</td>
                 <td className={s.num}>{fmtMoney(t.here)}</td>
@@ -153,7 +153,7 @@ function RegionView({ p, mode, split, period, months }: ViewProps) {
       return (
         <table className={s.detailTable}>
           <thead><tr><th>Bill</th><th>Date</th><th className={s.num}>Cost</th></tr></thead>
-          <tbody>{bills.map((b) => <tr key={b.ref}><td>{b.ref}</td><td>{b.day.replace(/-/g, '/')}</td><td className={s.num}>{fmtMoney(b.here)}</td></tr>)}</tbody>
+          <tbody>{bills.map((b) => <tr key={b.ref}><td>{b.ref}</td><td>{fmtDateOrDash(b.day)}</td><td className={s.num}>{fmtMoney(b.here)}</td></tr>)}</tbody>
         </table>
       );
     };
