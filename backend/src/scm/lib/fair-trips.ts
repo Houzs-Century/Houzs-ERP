@@ -81,7 +81,7 @@ export async function readFairTrips(
 
     const ids = fairs.map((f) => f.id);
     const lco = companyId != null ? ' AND l.company_id = ?' : '';
-    const dead = `upper(coalesce(d.status, '')) NOT IN ('CANCELLED', 'REJECTED', 'VOID')`;
+    const dead = `upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'REJECTED', 'VOID')`;
     /* What was outsourced on the fairs: a 3PL bill line on the fair, or a line on a
        fair-transport account (the chart's Transport Setup & Dismantle row) of a live bill or voucher. */
     const covered = await db.prepare(
