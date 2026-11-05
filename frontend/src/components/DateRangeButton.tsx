@@ -8,8 +8,10 @@
 // one through DateField, so the picker cannot invent a date format of its own.
 // The presets come from lib/dateRangePresets (one home for every picker).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { placePopover } from '../lib/popoverPlacement';
 import { fmtDate } from '../vendor/shared/format';
 import { DateField } from '../vendor/scm/components/DateField';
 import {
@@ -56,6 +58,10 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
   const [view, setView] = useState(() => monthStart(from || today));
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  /* The popover lives on <body> (a portal) at a measured spot, so no sidebar or
+     clipping card can cover it (lib/popoverPlacement). */
+  const popRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   const allDates = from === '' && to === '';
   const oneEndMissing = (from === '') !== (to === '');
@@ -69,7 +75,9 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      close();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -81,6 +89,23 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    const place = () => {
+      const t = triggerRef.current?.getBoundingClientRect();
+      const p = popRef.current;
+      if (!t || !p) return;
+      setPos(placePopover(t, p.offsetWidth, p.offsetHeight, window.innerWidth, window.innerHeight));
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
     };
   }, [open]);
 
@@ -165,8 +190,14 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
         <ChevronDown size={13} strokeWidth={1.75} aria-hidden className={styles.triggerIcon} />
       </button>
 
-      {open && (
-        <div className={styles.pop} role="dialog" aria-label={`Pick ${label.toLowerCase()}`}>
+      {open && createPortal(
+        <div
+          ref={popRef}
+          className={styles.pop}
+          role="dialog"
+          aria-label={`Pick ${label.toLowerCase()}`}
+          style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: 'hidden' }}
+        >
           <div className={styles.presets} role="group" aria-label="Presets">
             {presets.map((k) => (
               <button
@@ -271,7 +302,8 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
               <button type="button" className={styles.done} onClick={close}>Done</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
