@@ -161,6 +161,26 @@ describe('an other-debtor credit note', () => {
     expect(supplierDoc.body).toMatchObject({ error: 'bad_target', message: 'Each line names a debtor bill.' });
   });
 
+  /* Owner 2026-11-03: the debtor's account code is on screens and prints only. It is
+     read off the registry beside the note, never stored as party_code: the journal
+     line copies party_code, and the control's party fields stay as they were. */
+  test("the note reads its debtor's account code; its party_code and its journal stay blank", async () => {
+    const { req, sb } = harness();
+    sb.tables.acc_debtors!.find((d) => d.id === 'deb-e')!.code = '305-E003';
+    const made = await req('/credit-notes', 'POST', OCN({ allocations: [tick('odb-e', 200_000)] }));
+    const id = (made.body.note as Row).id as string;
+    expect(made.body.note).toMatchObject({ party_code: null });
+
+    const listed = (await req('/credit-notes?side=AR', 'GET')).body.rows as Row[];
+    expect(listed.find((r) => r.id === id)).toMatchObject({ debtor_code: '305-E003', party_code: null });
+    const detail = await req(`/credit-notes/${id}`, 'GET');
+    expect(detail.body.note).toMatchObject({ debtor_code: '305-E003', party_code: null });
+
+    expect((await req(`/credit-notes/${id}/post`, 'POST')).status).toBe(200);
+    const control = (sb.tables.journal_entry_lines ?? []).filter((l) => l.account_code === '305-0000');
+    expect(control.map((l) => [l.party_type, l.party_code ?? null, l.party_name])).toEqual([['ODEBTOR', null, 'EASTERN DECORATOR SDN. BHD.']]);
+  });
+
   test('the two pages: side=AR is the customer\'s and the other debtor\'s notes, side=AP the supplier\'s', async () => {
     const { req } = harness();
     await req('/credit-notes', 'POST', OCN());

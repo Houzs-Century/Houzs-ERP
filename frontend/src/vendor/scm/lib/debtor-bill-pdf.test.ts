@@ -99,6 +99,14 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, 'CANCELLED')).toBe(false);
   });
 
+  test("BILL TO names the debtor's account code when it has one (owner 2026-11-03)", async () => {
+    const draws = await render({}, { code: '305-A001' });
+    expect(draws.some((d) => d.text === 'Account')).toBe(true);
+    expect(has(draws, '305-A001')).toBe(true);
+    const bare = await render();
+    expect(bare.some((d) => d.text === 'Account')).toBe(false);
+  });
+
   test('a cancelled bill wears the watermark; an unpaid one prints no received line', async () => {
     const cancelled = await render({ status: 'CANCELLED', received_sen: 0 });
     expect(has(cancelled, 'CANCELLED')).toBe(true);

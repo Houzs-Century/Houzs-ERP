@@ -68,10 +68,28 @@ export const DEBTOR_PARTY_FIELDS: ReadonlyArray<readonly [string, string]> = [
   ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'], ['address4', 'address4'],
   ['city', 'city'], ['postcode', 'postcode'], ['state', 'state'], ['country', 'country'],
 ];
-const DEBTOR_PARTY_COLS = DEBTOR_PARTY_FIELDS.map(([, col]) => col).join(', ');
+/** What a read of a debtor brings: the account code and the party's data. */
+export const DEBTOR_PARTY_COLS = ['code', ...DEBTOR_PARTY_FIELDS.map(([, col]) => col)].join(', ');
 const partyText = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s ? s : null; };
 /** Every party column from a create body — absent and blank alike are NULL. */
 const partyColumns = (body: Row): Row => Object.fromEntries(DEBTOR_PARTY_FIELDS.map(([key, col]) => [col, partyText(body[key])]));
+
+/* The debtor's account code, AutoCount style (owner 2026-11-03: 305-A001). For
+   screens and prints ONLY: no journal line, party field or posting rule reads it,
+   so every bill and receipt still posts to the one AR_OTHER control. Trimmed and
+   in capitals; a blank is no code. Unique per company (the migration's index). */
+const DEBTOR_CODE_MAX = 30;
+const debtorCodeOf = (v: unknown): string | null => { const s = String(v ?? '').trim().toUpperCase(); return s ? s : null; };
+const codeTaken = (c: any, code: string): Response => c.json({ error: 'code_taken', message: `Another debtor already has ${code}.` }, 409);
+const isDuplicateKey = (e: { code?: unknown; message?: unknown }): boolean => String(e.code ?? '') === '23505' || /duplicate key/i.test(String(e.message ?? ''));
+/** Refuses a code too long, or one another debtor of this company holds, in words. */
+const refuseDebtorCode = async (c: any, code: string | null, selfId: string | null): Promise<Response | null> => {
+  if (!code) return null;
+  if (code.length > DEBTOR_CODE_MAX) return c.json({ error: 'code_too_long', message: `An account code is ${DEBTOR_CODE_MAX} characters at most.` }, 400);
+  const { data, error } = await scopeToCompany(c.get('supabase').from('acc_debtors').select('id').eq('code', code), c);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return ((data ?? []) as Row[]).some((d) => String(d.id) !== selfId) ? codeTaken(c, code) : null;
+};
 
 /* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
@@ -128,16 +146,20 @@ export const createDebtorHandler = async (c: any): Promise<Response> => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const name = String(body.name ?? '').trim();
   if (!name) return c.json({ error: 'name_required' }, 400);
+  const code = debtorCodeOf(body.code);
+  const codeRefused = await refuseDebtorCode(c, code, null);
+  if (codeRefused) return codeRefused;
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_debtors').insert({
     company_id: activeCompanyId(c),
     name,
+    code,
     phone: body.phone ? String(body.phone).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,
     ...partyColumns(body),
     created_by: String(c.get('user')?.id ?? ''),
   }).select('id, name').single();
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (error) return code && isDuplicateKey(error) ? codeTaken(c, code) : c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true, debtor: data }, 201);
 };
 
@@ -155,6 +177,12 @@ export const updateDebtorHandler = async (c: any): Promise<Response> => {
     if (!name) return c.json({ error: 'name_required' }, 400);
     patch.name = name;
   }
+  if (body.code !== undefined) {
+    const code = debtorCodeOf(body.code);
+    const codeRefused = await refuseDebtorCode(c, code, String(found.debtor.id));
+    if (codeRefused) return codeRefused;
+    patch.code = code;
+  }
   if (body.phone !== undefined) patch.phone = body.phone ? String(body.phone).trim() : null;
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;
   for (const [key, col] of DEBTOR_PARTY_FIELDS) if (body[key] !== undefined) patch[col] = partyText(body[key]);
@@ -162,7 +190,7 @@ export const updateDebtorHandler = async (c: any): Promise<Response> => {
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
   const sb = c.get('supabase');
   const { error } = await sb.from('acc_debtors').update(patch).eq('company_id', found.debtor.company_id).eq('id', found.debtor.id);
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (error) return patch.code && isDuplicateKey(error) ? codeTaken(c, String(patch.code)) : c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
 

@@ -58,6 +58,12 @@ describe('segments, chips, search, order, the URL', () => {
     expect(matchesNote(x, 'nothing like it')).toBe(false);
   });
 
+  test('the search finds an other debtor’s note by the debtor’s account code, a credit note and a debit note alike', () => {
+    expect(matchesNote(noteItem(cn({ kind: 'OCN', party_code: null, debtor_code: '305-E003' })), '305-e003')).toBe(true);
+    expect(matchesNote(debitBillItem({ ...odn, partyCode: '305-O001' }), '305-o001')).toBe(true);
+    expect(matchesNote(debitBillItem(odn), '305-o001')).toBe(false);
+  });
+
   test('newest first; the URL’s kind and status read back, junk to the defaults', () => {
     const a = noteItem(cn({ note_date: '2026-11-01' }));
     const b = noteItem(cn({ id: 'n2', note_number: 'HC-CN-2611-002', note_date: '2026-11-03' }));

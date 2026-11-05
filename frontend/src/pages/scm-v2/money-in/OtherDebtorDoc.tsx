@@ -154,7 +154,7 @@ export const OtherDebtorDoc = () => {
       party={{ label: 'Bill to', name: debtor.name, lines: [...partyAddressLines(debtor), contact] }}
       amount={{ label: 'Outstanding', value: fmtSen(outstanding), sub: `${openBills} open bill${openBills === 1 ? '' : 's'}` }}
       facts={facts}
-      books={<>Bills and receipts post to the {control ? `${control}${accountName(control) ? ` ${accountName(control)}` : ''}` : 'other debtors'} control</>}
+      books={<>Account code {debtor.code || '—'} · bills and receipts post to the {control ? `${control}${accountName(control) ? ` ${accountName(control)}` : ''}` : 'other debtors'} control</>}
       trail={trail}
     >
       <DocSection title="Bills" buttons={(

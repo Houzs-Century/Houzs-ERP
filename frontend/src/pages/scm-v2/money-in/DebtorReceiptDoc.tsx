@@ -190,7 +190,7 @@ export const DebtorReceiptDoc = () => {
       notice={failure ? <div role="alert" className={`${s.note} ${s.toneLate}`}>{failure}</div> : null}
       party={{
         label: 'Received from', name: debtorName,
-        lines: [...(d.debtor ? partyAddressLines(d.debtor) : []), d.debtor ? [d.debtor.phone, d.debtor.email].filter(Boolean).join(' · ') : null],
+        lines: [d.debtor?.code ? `Account ${d.debtor.code}` : null, ...(d.debtor ? partyAddressLines(d.debtor) : []), d.debtor ? [d.debtor.phone, d.debtor.email].filter(Boolean).join(' · ') : null],
       }}
       amount={{ label: 'Amount', value: fmtSen(r.total_sen), sub: fmtDate(r.receipt_date) }}
       facts={facts}

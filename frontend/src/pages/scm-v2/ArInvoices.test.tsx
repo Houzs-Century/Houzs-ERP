@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type { OtherDebtor } from '../../vendor/scm/lib/accounting-queries';
 
 const TODAY = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
@@ -82,7 +83,7 @@ const ACCOUNTS = { data: { accounts: [
   { account_code: '700-0000', account_name: 'Other Income', account_type: 'INCOME', parent_code: null, is_active: true, acc_money: false },
   { account_code: '305-0000', account_name: 'Other Debtors', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, special_type: 'SDC' },
 ] }, isLoading: false };
-const DEBTORS = { data: { debtors: [
+const DEBTORS: { data: { debtors: OtherDebtor[] }; isLoading: boolean } = { data: { debtors: [
   { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30_000 },
   { id: 'd2', name: 'OLD DEBTOR', phone: null, notes: null, is_active: true, outstanding_sen: 0 },
   { id: 'd3', name: 'GONE DEBTOR', phone: null, notes: null, is_active: false, outstanding_sen: 0 },
@@ -183,6 +184,17 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     expect(screen.getByText('HC-DI-2610-002', { selector: 'a' })).toBeTruthy();
     expect(screen.queryByText('HC-DI-2610-001', { selector: 'a' })).toBeNull();
     expect(screen.queryByText('HC-SI-2609-001', { selector: 'a' })).toBeNull();
+  });
+
+  test('the party filter names a debtor with its account code, as it does a customer', () => {
+    /* A debtor with no bill on the list yet: only the registry names them. */
+    DEBTORS.data.debtors.push({ id: 'd4', name: 'FRESH DEBTOR', code: '305-F001', phone: null, notes: null, is_active: true, outstanding_sen: 0 });
+    try {
+      draw('?debtor=d4');
+      expect((screen.getByRole('combobox', { name: 'Filter by customer or debtor' }) as HTMLInputElement).value).toBe('305-F001 · FRESH DEBTOR');
+    } finally {
+      DEBTORS.data.debtors.pop();
+    }
   });
 
   test('?debtor= opens on that debtor alone', () => {

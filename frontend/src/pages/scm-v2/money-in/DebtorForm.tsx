@@ -9,17 +9,21 @@
 // lost. The structured address stays: the printed BILL TO reads it.
 //
 // The same doors as before: POST /other-debtors, PATCH /other-debtors/:id (a
-// blank box clears its field; Active / Inactive is the old Deactivate). The
-// account code the design shows waits for the owner (batch 5 §10 f3).
+// blank box clears its field; Active / Inactive is the old Deactivate).
+//
+// The account code (owner 2026-11-03, AutoCount style: 305-A001): a new debtor's
+// is suggested from the name until someone types over it; an edit keeps the code
+// it has. Two debtors never share one. For screens and prints only: bills and
+// receipts still post to the one other-debtors control.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
-  useAccountRoles, useAccounts, useCreateDebtor, useUpdateDebtor, type OtherDebtor,
+  useAccountRoles, useAccounts, useCreateDebtor, useOtherDebtors, useUpdateDebtor, type OtherDebtor,
 } from '../../../vendor/scm/lib/accounting-queries';
 import {
-  DEBTOR_PARTY_GROUPS, debtorPartyBody, debtorPartyFrom, emptyDebtorParty, type DebtorPartyField, type DebtorPartyValues,
+  DEBTOR_PARTY_GROUPS, debtorPartyBody, debtorPartyFrom, emptyDebtorParty, suggestDebtorCode, type DebtorPartyField, type DebtorPartyValues,
 } from '../../../vendor/scm/lib/debtor-party';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../../vendor/scm/lib/use-save-hotkey';
 import { useToastOptional } from '../../../hooks/useToast';
@@ -46,24 +50,37 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
   const update = useUpdateDebtor();
   const accountsQ = useAccounts();
   const rolesQ = useAccountRoles();
+  const debtorsQ = useOtherDebtors();
   const [v, setV] = useState<DebtorPartyValues>(() => (debtor ? debtorPartyFrom(debtor) : emptyDebtorParty()));
   const [active, setActive] = useState(debtor?.is_active ?? true);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* An edit keeps the code it has; a new debtor's follows the name until it is typed over. */
+  const [codeTyped, setCodeTyped] = useState(debtor != null);
   const saving = create.isPending || update.isPending;
   const set = (key: keyof DebtorPartyValues, value: string) => setV((p) => ({ ...p, [key]: value }));
-  const why = v.name.trim() ? null : 'Type the debtor’s name.';
+  const controlCode = rolesQ.data?.roles.AR_OTHER ?? '305-0000';
+  const otherCodes = useMemo(
+    () => (debtorsQ.data?.debtors ?? []).filter((d) => d.id !== debtor?.id).map((d) => d.code),
+    [debtorsQ.data, debtor?.id],
+  );
+  const suggested = suggestDebtorCode(v.name, controlCode, otherCodes);
+  const code = codeTyped ? v.code.trim() : suggested;
+  const clash = code !== '' && otherCodes.some((c) => (c ?? '').toUpperCase() === code.toUpperCase());
+  const why = !v.name.trim() ? 'Type the debtor’s name.' : clash ? `Another debtor already has ${code}.` : null;
+  const codeHint = clash ? 'Another debtor already has this code.'
+    : codeTyped ? 'The debtor’s own code'
+      : suggested || !v.name.trim() ? 'Suggested from the name · type to change' : 'Type the debtor’s own code';
   const filledMore = MORE.filter((f) => v[f.key].trim()).length;
   const control = useMemo(() => {
-    const code = rolesQ.data?.roles.AR_OTHER ?? '305-0000';
-    const name = (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name;
-    return `${code}${name ? ` ${name}` : ''}`;
-  }, [rolesQ.data, accountsQ.data]);
+    const name = (accountsQ.data?.accounts ?? []).find((a) => a.account_code === controlCode)?.account_name;
+    return `${controlCode}${name ? ` ${name}` : ''}`;
+  }, [controlCode, accountsQ.data]);
 
   const save = () => {
     if (why || saving) return;
     setError(null);
-    const body = debtorPartyBody(v);
+    const body = { ...debtorPartyBody(v), code };
     if (debtor) {
       update.mutate({ id: debtor.id, ...body, ...(active !== debtor.is_active ? { isActive: active } : {}) }, {
         onSuccess: () => { toast?.success(`${body.name} saved`); onClose(); },
@@ -101,6 +118,14 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
         <div className={ui.formCol}>
           <div className={`${ui.formCard} ${ui.formFields}`}>
             {box('name', { placeholder: 'As it prints on the invoice', full: true })}
+            <div className={ui.formField}>
+              <label>
+                <span className={ui.formLabel}>Account code</span>
+                <input className={ui.formInput} value={code} placeholder="305-A001" aria-label="Account code" aria-invalid={clash}
+                  onChange={(e) => { setCodeTyped(true); set('code', e.target.value.toUpperCase()); }} />
+              </label>
+              <div className={`${ui.formHint} ${clash ? ui.formHintBad : ''}`}>{codeHint}</div>
+            </div>
             {box('businessRegNo', { label: 'Registration no.', placeholder: 'Company or IC number' })}
             {box('phone')}
             {box('email')}
@@ -133,7 +158,7 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
           </section>
         </div>
         <aside className={ui.side} aria-label="Save">
-          <div className={ui.sideBooks}>Bills and receipts post to the {control} control.</div>
+          <div className={ui.sideBooks}>Account code {code || '—'} · bills and receipts post to the {control} control</div>
           {why && <div className={ui.sideWhy}>{why}</div>}
           <div className={ui.sideButtons}>
             <button type="button" className={ui.btn} onClick={onClose} disabled={saving}>Cancel</button>

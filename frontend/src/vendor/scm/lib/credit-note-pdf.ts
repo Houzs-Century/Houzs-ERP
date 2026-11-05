@@ -29,6 +29,8 @@ export type CreditNotePdfHeader = {
   note_date: string;
   party_name: string | null;
   party_code: string | null;
+  /** An other debtor's account code, read off the registry beside the note (its party_code stays blank). */
+  debtor_code?: string | null;
   so_doc_no: string | null;
   source_doc_no: string | null;
   sales_invoice_number?: string | null;
@@ -178,7 +180,7 @@ function renderCustomerNoteBody(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
   let y = drawInfoColumns(doc, startY,
-    { title: 'CUSTOMER', rows: [['Name', h.party_name || '—'], ['Code', h.party_code]] },
+    { title: 'CUSTOMER', rows: [['Name', h.party_name || '—'], ['Code', h.party_code ?? h.debtor_code ?? null]] },
     {
       title: 'NOTE DETAILS',
       rows: [

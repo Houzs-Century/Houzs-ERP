@@ -83,7 +83,7 @@ export const inNoteChip = (x: NoteItem, c: NoteChip): boolean => c === 'any' || 
 export const matchesNote = (x: NoteItem, q: string): boolean => {
   const needle = q.trim().toLowerCase();
   if (!needle) return true;
-  return searchText([x.no, x.party, x.reference, x.note?.reason, fmtSen(x.totalSen), (x.totalSen / 100).toFixed(2)]).includes(needle);
+  return searchText([x.no, x.party, x.note?.debtor_code, x.bill?.partyCode, x.reference, x.note?.reason, fmtSen(x.totalSen), (x.totalSen / 100).toFixed(2)]).includes(needle);
 };
 
 export const newestNoteFirst = (a: NoteItem, b: NoteItem): number => b.date.localeCompare(a.date) || b.no.localeCompare(a.no);

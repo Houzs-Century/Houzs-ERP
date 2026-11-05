@@ -70,7 +70,7 @@ export const DebtorBillForm = ({
   accounts: Account[];
   accountName: (code: string) => string | null;
   /** The registry's active debtors (and the bill's own on an edit). */
-  debtors: Array<{ id: string; name: string }>;
+  debtors: Array<{ id: string; name: string; code?: string | null }>;
   debtorId?: string;
   /** The other debtors control the bill debits (the AR_OTHER role). */
   controlCode?: string;
@@ -136,7 +136,7 @@ export const DebtorBillForm = ({
               {/* A bill keeps its debtor: the edit re-posts the same party. */}
               <select aria-label="Bill debtor" value={debtorId} className={ui.formInput} disabled={mode === 'edit'} onChange={(e) => setDebtorId(e.target.value)}>
                 <option value="">— Pick the debtor —</option>
-                {debtors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {debtors.map((d) => <option key={d.id} value={d.id}>{d.name}{d.code ? ` · ${d.code}` : ''}</option>)}
               </select>
               {mode === 'edit' && (
                 <span className={ui.formHint}>{receivedSen > 0 ? 'This bill has money received on it, so the debtor can’t change.' : 'A bill belongs to its debtor — copy it to bill someone else.'}</span>

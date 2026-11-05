@@ -574,6 +574,8 @@ export const useVoidDebtorReceipt = () => {
 export type ReceiptRow = {
   kind: 'GENERAL' | 'DEBTOR' | 'CUSTOMER';
   id: string; number: string; date: string; payer: string;
+  /** DEBTOR rows: the debtor's account code (for the search). */
+  payerCode?: string | null;
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
   /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
