@@ -11,12 +11,16 @@
 -- WHAT THIS CHANGES, and why it is safe to run against production:
 --   1. One nullable text column, scm.acc_debtors.code.
 --   2. One partial unique index: no two debtors of a company share a code.
---   3. The fill, ONCE: every debtor whose code is NULL gets its suggested code.
---      Deterministic — per company, prefix and letter, the next number after
---      the highest code already taken, in the order the debtors were created
---      (then by name, then by id); never touches a code that is already set,
---      so a re-run fills nothing. A name with no letter or digit in it keeps
---      NULL until someone types a code on the form.
+--   3. The fill, ONCE, in two steps. Neither touches a code that is already
+--      set, so a re-run fills nothing. Deterministic.
+--      a. The code AutoCount gave them, where the Houzs opening import recorded
+--         it: "AutoCount 305-E003" in the debtor's notes, else in its first
+--         bill's, else in its first receipt's. Two debtors naming one code: the
+--         one created first keeps it, the other goes to step b.
+--      b. Everyone else: per company, prefix and letter, the next number after
+--         the highest code already taken (step a's included), in the order the
+--         debtors were created (then by name, then by id). A name with no
+--         letter or digit in it keeps NULL until someone types a code on the form.
 --   The codes are for screens and prints ONLY: no journal line, party field or
 --   posting rule reads them. Bills and receipts keep posting to the AR_OTHER
 --   control (305-0000) exactly as before. Codes stay editable on the debtor's
@@ -38,9 +42,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS acc_debtors_company_code_key
   ON scm.acc_debtors (company_id, code)
   WHERE code IS NOT NULL;
 
--- The fill. The prefix is the number before the dash of the company's AR_OTHER
--- control (305-0000 when the company has no role row); the letter is the first
--- A-Z or 0-9 of the upper-cased name.
+-- Step a: the code AutoCount already gave them, off the notes the opening import
+-- wrote. A code another debtor of the company already holds is left alone.
+WITH recorded AS (
+  SELECT d.id,
+         d.company_id,
+         d.created_at,
+         COALESCE(
+           substring(d.notes FROM 'AutoCount ([0-9]{3}-[A-Z0-9][0-9]{3})'),
+           (SELECT substring(b.notes FROM 'AutoCount ([0-9]{3}-[A-Z0-9][0-9]{3})')
+              FROM scm.acc_debtor_bills b
+             WHERE b.debtor_id = d.id AND b.notes ~ 'AutoCount [0-9]{3}-[A-Z0-9][0-9]{3}'
+             ORDER BY b.bill_number LIMIT 1),
+           (SELECT substring(r.notes FROM 'AutoCount ([0-9]{3}-[A-Z0-9][0-9]{3})')
+              FROM scm.acc_debtor_receipts r
+             WHERE r.debtor_id = d.id AND r.notes ~ 'AutoCount [0-9]{3}-[A-Z0-9][0-9]{3}'
+             ORDER BY r.receipt_number LIMIT 1)
+         ) AS code
+    FROM scm.acc_debtors d
+   WHERE d.code IS NULL
+),
+first_holder AS (
+  SELECT DISTINCT ON (company_id, code) id, company_id, code
+    FROM recorded
+   WHERE code IS NOT NULL
+   ORDER BY company_id, code, created_at, id
+)
+UPDATE scm.acc_debtors d
+   SET code = f.code
+  FROM first_holder f
+ WHERE d.id = f.id
+   AND d.code IS NULL
+   AND NOT EXISTS (SELECT 1 FROM scm.acc_debtors o WHERE o.company_id = f.company_id AND o.code = f.code);
+
+-- Step b: everyone else. The prefix is the number before the dash of the
+-- company's AR_OTHER control (305-0000 when the company has no role row); the
+-- letter is the first A-Z or 0-9 of the upper-cased name.
 WITH todo AS (
   SELECT d.id,
          d.company_id,
