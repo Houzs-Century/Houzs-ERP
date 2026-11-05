@@ -75,21 +75,30 @@ export const DOWNSTREAM_TABLES = new Set([
   "scm.delivery_orders",
   // Posted money naming the PO.
   "scm.journal_entries",
-  /* A product request linked to this PO (po_id, ON DELETE SET NULL). Refused
-     until the owner rules whether the link may be dropped. */
-  "scm.product_requests",
 ]);
+
+/* Rows of ANOTHER document that keep living, with their link to the PO cleared.
+   product_requests.po_id is ON DELETE SET NULL (migration 20261026T1000); the
+   script sets it NULL itself in the same transaction so the result does not
+   depend on the FK being there. Owner, 5 Nov 2026: a test PO should not be
+   linked to a product request, so the link goes. */
+export const UNLINK_TABLES = [
+  { table: "scm.product_requests", column: "po_id" },
+];
 
 export const CHILD = "child";
 export const AUDIT = "audit";
 export const DOWNSTREAM = "downstream";
+export const UNLINK = "unlink";
 export const UNCLASSIFIED = "unclassified";
 
 const CHILD_NAMES = new Set(CHILD_TABLES.map((t) => t.table));
+const UNLINK_NAMES = new Set(UNLINK_TABLES.map((t) => t.table));
 
 /** Which bucket a swept reference falls in. */
 export function classifyReference(table) {
   if (CHILD_NAMES.has(table)) return CHILD;
+  if (UNLINK_NAMES.has(table)) return UNLINK;
   if (AUDIT_KEEP.has(table)) return AUDIT;
   if (DOWNSTREAM_TABLES.has(table)) return DOWNSTREAM;
   return UNCLASSIFIED;

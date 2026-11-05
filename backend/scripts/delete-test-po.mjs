@@ -17,6 +17,8 @@
 //   - SWEEPS THE LIVE SCHEMA for every column that names the PO's number, its
 //     uuid or one of its lines' uuids, and REFUSES on a GRN, invoice, return,
 //     stock movement, DO, journal or any reference nobody has classified.
+//   - A product request linked to the PO keeps living; its po_id is cleared
+//     (listed by id in the plan). Owner's ruling, 5 Nov 2026.
 //   - One transaction; nothing writes unless everything succeeds.
 //   - VERIFIES ON A FRESH CONNECTION: the PO and its children gone, the audit
 //     trail still there, and a CONTROL proving no OTHER purchase order moved.
@@ -32,7 +34,7 @@
 // prints the header and every child row as complete JSON.
 import postgres from "postgres";
 import {
-  AUDIT, AUDIT_KEEP, CHILD, CHILD_TABLES, DOWNSTREAM, UNCLASSIFIED,
+  AUDIT, AUDIT_KEEP, CHILD, CHILD_TABLES, DOWNSTREAM, UNCLASSIFIED, UNLINK, UNLINK_TABLES,
   bindMatch, classifyReference, controlDrift, controlSnapshot, poBlockers, sweepReferences,
 } from "./lib/delete-test-po-refs.mjs";
 
@@ -121,6 +123,7 @@ async function main() {
     [CHILD]: "CHILD        — deleted with the PO",
     [AUDIT]: "AUDIT        — deliberately KEPT (append-only record)",
     [DOWNSTREAM]: "DOWNSTREAM   — a real document / stock / money; this REFUSES",
+    [UNLINK]: "UNLINK       — the row stays, its link to this PO is cleared",
     [UNCLASSIFIED]: "UNCLASSIFIED — nobody has said what this is",
   };
   const orphans = [];
@@ -151,8 +154,15 @@ async function main() {
     console.log("");
   }
 
-  // (3) What will be deleted.
+  // (3) What will be deleted, and every row whose link to the PO will be cleared.
   for (const t of children) console.log(`Child   : ${t.table.padEnd(40)} rows=${await countIn(db, t)}`);
+  const unlinks = [];
+  for (const u of UNLINK_TABLES) {
+    if (!(await exists(db, u.table))) { console.log(`Unlink  : ${u.table.padEnd(40)} (table absent — skip)`); continue; }
+    const rows = await db.unsafe(`SELECT id::text AS id FROM ${u.table} WHERE "${u.column}" = $1::uuid ORDER BY id`, [String(po.id)]);
+    unlinks.push(u);
+    console.log(`Unlink  : ${`${u.table}.${u.column}`.padEnd(40)} rows=${rows.length}${rows.length ? "  " + rows.map((r) => r.id).join(" ") : ""}`);
+  }
 
   // (4) THE CONTROL — every OTHER purchase order, before and after.
   const [moneyRow] = await db`
@@ -174,6 +184,10 @@ async function main() {
 
   // (5) One transaction.
   await db.begin(async (sql) => {
+    for (const u of unlinks) {
+      const r = await sql.unsafe(`UPDATE ${u.table} SET "${u.column}" = NULL WHERE "${u.column}" = $1::uuid`, [String(po.id)]);
+      console.log(`Unlinked: ${`${u.table}.${u.column}`.padEnd(40)} rows=${r.count}`);
+    }
     for (const t of children) {
       const { text, params } = bindMatch(t.match, po);
       const r = await sql.unsafe(`DELETE FROM ${t.table} WHERE ${text}`, params);

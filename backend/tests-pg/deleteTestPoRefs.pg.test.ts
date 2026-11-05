@@ -9,7 +9,7 @@
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
-  AUDIT, CHILD, CHILD_TABLES, DOWNSTREAM, UNCLASSIFIED,
+  AUDIT, CHILD, CHILD_TABLES, DOWNSTREAM, UNCLASSIFIED, UNLINK, UNLINK_TABLES,
   bindMatch, classifyReference, controlDrift, controlSnapshot,
   poBlockers, referenceColumns, sweepReferences,
 } from '../scripts/lib/delete-test-po-refs.mjs';
@@ -114,6 +114,9 @@ async function seed(db: Sql) {
 }
 
 async function deleteLikeTheScript(db: Sql) {
+  for (const u of UNLINK_TABLES) {
+    await db.unsafe(`UPDATE ${u.table} SET "${u.column}" = NULL WHERE "${u.column}" = $1::uuid`, [PO.id]);
+  }
   for (const t of CHILD_TABLES) {
     if (t.table === 'scm.purchase_order_lines') continue; // not in this fixture
     const { text, params } = bindMatch(t.match, PO);
@@ -184,14 +187,27 @@ describePg('delete-test-po — the reference sweep, against real Postgres', () =
     expect(classifyReference('scm.inventory_movements')).toBe(DOWNSTREAM);
   });
 
-  test('an unlisted table refuses as UNCLASSIFIED; a product request refuses as DOWNSTREAM', async () => {
+  test('an unlisted table refuses as UNCLASSIFIED; a product request is UNLINK, not a refusal', async () => {
     await sql.unsafe(`INSERT INTO scm.po_supplier_mail_log (purchase_order_id) VALUES ('${PO.id}');
                       INSERT INTO scm.product_requests (po_id) VALUES ('${PO.id}')`);
     const hits = keys(await sweepReferences(sql, PO, []));
     expect(hits).toContain('scm.po_supplier_mail_log.purchase_order_id');
     expect(hits).toContain('scm.product_requests.po_id');
     expect(classifyReference('scm.po_supplier_mail_log')).toBe(UNCLASSIFIED);
-    expect(classifyReference('scm.product_requests')).toBe(DOWNSTREAM);
+    expect(classifyReference('scm.product_requests')).toBe(UNLINK);
+  });
+
+  test('a linked product request survives the delete with its po_id cleared; another PO keeps its link', async () => {
+    await sql.unsafe(`INSERT INTO scm.product_requests (id, po_id) VALUES
+                        ('dddddddd-0000-0000-0000-000000000001', '${PO.id}'),
+                        ('dddddddd-0000-0000-0000-000000000002', '${OTHER}')`);
+    await deleteLikeTheScript(sql);
+    const rows = await sql`SELECT id::text AS id, po_id::text AS po_id FROM scm.product_requests ORDER BY id`;
+    expect(rows).toEqual([
+      { id: 'dddddddd-0000-0000-0000-000000000001', po_id: null },
+      { id: 'dddddddd-0000-0000-0000-000000000002', po_id: OTHER },
+    ]);
+    expect(keys(await sweepReferences(sql, PO, [LINE_A, LINE_B]))).not.toContain('scm.product_requests.po_id');
   });
 
   test('classification: one bucket per table', () => {
