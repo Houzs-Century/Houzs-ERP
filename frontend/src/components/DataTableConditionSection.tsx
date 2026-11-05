@@ -71,10 +71,20 @@ export function DataTableConditionSection({
           </button>
         ))}
       </div>
-      <div className="mt-2 flex items-center gap-1.5">
-        <DateField aria-label="From date" value={from} onChange={setFrom} fullWidth />
-        <span className="text-[11px] text-ink-muted">to</span>
-        <DateField aria-label="To date" value={to} onChange={setTo} fullWidth />
+      {/* From/To stack VERTICALLY: the filter popover is only 236px wide, and
+          two full-width DateFields side by side pushed the "To" field (and its
+          calendar button) off the right edge, where overflow-hidden clipped it
+          so the end date could not be picked at all (owner 2026-11-05: to 后面
+          的日期选不到). One field per row gives each the full width. */}
+      <div className="mt-2 flex flex-col gap-1.5">
+        <label className="flex items-center gap-1.5">
+          <span className="w-9 shrink-0 text-[11px] text-ink-muted">From</span>
+          <DateField aria-label="From date" value={from} onChange={setFrom} fullWidth />
+        </label>
+        <label className="flex items-center gap-1.5">
+          <span className="w-9 shrink-0 text-[11px] text-ink-muted">To</span>
+          <DateField aria-label="To date" value={to} onChange={setTo} fullWidth />
+        </label>
       </div>
       <button type="button" className={cn(applyBtn, "mt-1.5 w-full")} disabled={!from && !to}
         onClick={() => onChange({ kind: "dateRange", from: from || null, to: to || null })}>
