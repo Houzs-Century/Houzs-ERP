@@ -307,3 +307,14 @@ describe('the in-house setup / dismantle charge', () => {
     ]);
   });
 });
+
+/* Production 2026-11-05: payment_vouchers.status is an enum, and coalesce(status, '')
+   casts '' to it and fails — every fair's books then read as "could not be read". */
+test('the outsourced read compares a status as text, never the enum', async () => {
+  const seen: string[] = [];
+  const db = { prepare: (sql: string) => { seen.push(sql); return { bind: () => ({ all: async () => ({ results: /FROM projects p/.test(sql) ? [{ id: 7, startdate: '2026-10-09', enddate: '2026-10-12', venue: 'MITEC', state: 'Kuala Lumpur', name: 'X' }] : [] }) }) }; } } as unknown as D1Database;
+  await readEventBooks(db, 7, 1);
+  const covered = seen.find((q) => /UNION ALL/.test(q) && /payment_vouchers/.test(q))!;
+  expect(covered).toMatch(/coalesce\(d\.status::text, ''\)/);
+  expect(covered).not.toMatch(/coalesce\(d\.status, ''\)/);
+});
