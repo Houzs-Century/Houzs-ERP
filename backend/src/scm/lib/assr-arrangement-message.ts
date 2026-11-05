@@ -26,7 +26,7 @@ import { logActivity } from '../../services/assr';
 import { normDate } from '../../services/agents/schedule-reconcile';
 import { fmtDate } from '../shared/format';
 import { normalizePhone } from '../shared/phone';
-import { ASSR_CONFIRMED_COL } from './assr-board-scope';
+import { ASSR_CONFIRMED_COL, ASSR_STATUS_PICK_SOURCE } from './assr-board-scope';
 import { KIND_AFTER_STATUS, KIND_AUTOMATION, kindAttributes, templateDate, type DriverInfoInput } from './delivery-message-kinds';
 import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../../services/connect';
 
@@ -283,13 +283,23 @@ export interface AssrChatState {
 type LogRow = { doc_no: string; source: string; success: boolean; payload: string | null; created_at: string };
 
 /** Fold the log rows (any order) into each row key's board state. The newest
- *  row wins: a fresh send after an amend clears the old request. */
+ *  row wins: a fresh send after an amend clears the old request, and a staff pick
+ *  replaces the status but leaves the customer's request on the row. */
 export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState> {
   const out = new Map<string, AssrChatState>();
   const sorted = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const r of sorted) {
-    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null; automation?: string } = {};
+    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null; automation?: string; status?: string | null } = {};
     try { p = JSON.parse(r.payload ?? '{}'); } catch { p = {}; }
+    if (r.source === ASSR_STATUS_PICK_SOURCE) {
+      const prev = out.get(r.doc_no);
+      out.set(r.doc_no, {
+        delivery_message_status: p.status ?? null,
+        amend_date_from_customer: prev?.amend_date_from_customer ?? null,
+        amend_reason_from_customer: prev?.amend_reason_from_customer ?? null,
+      });
+      continue;
+    }
     if (r.source === 'delivery-planning') {
       if (!r.success) continue;
       const status = p.automation === KIND_AUTOMATION.driver_info ? KIND_AFTER_STATUS.driver_info : 'Done Send';
@@ -316,7 +326,7 @@ export async function loadAssrChatState(sb: AnySchemaClient, rowKeys: string[]):
   const { data, error } = await sb.from('wa_message_log')
     .select('doc_no, source, success, payload, created_at')
     .in('doc_no', rowKeys)
-    .in('source', ['delivery-planning', 'chat-callback'])
+    .in('source', ['delivery-planning', 'chat-callback', ASSR_STATUS_PICK_SOURCE])
     .order('created_at', { ascending: false })
     .limit(2000);
   if (error) throw new Error(error.message);

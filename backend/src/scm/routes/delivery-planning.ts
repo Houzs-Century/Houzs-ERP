@@ -1136,7 +1136,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
-          // Hand-set status; overlayAssrChatState overlays the WhatsApp reply when there is one (owner 2026-10-29).
+          // Hand-set status; overlayAssrChatState replaces it with the newest send / tap / pick.
           delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
           dp_remark: a[ASSR_LEG_REMARK_COL[leg.jobKind]] ?? null,

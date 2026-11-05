@@ -583,9 +583,13 @@ export function useUpdateDeliveryFields() {
       }),
     /* HC-0175: without this the inline select snapped back to the old status and
        only showed the pick after the PATCH plus the row re-read, several seconds.
-       SO-context fields only: they land on the SO whether or not a DO exists. */
+       SO-context fields only: they land on the SO whether or not a DO exists.
+       A Service Case job takes the same patch: its re-read is the whole board. */
     onMutate: async (vars) => {
-      if (vars.type !== 'so') return { snapshots: [] };
+      if (vars.type !== 'so' && vars.type !== 'assr') return { snapshots: [] };
+      const isTarget = (o: PlanningOrder) => (vars.type === 'so'
+        ? o.row_type === 'so' && o.so_doc_no === vars.id
+        : o.row_type === 'assr' && String(o.assr_id) === vars.id && o.job_kind === vars.jobKind);
       const patch: Partial<PlanningOrder> = {};
       for (const [from, to] of SO_FIELD_COLUMNS) {
         if (vars[from] !== undefined) (patch as Record<string, unknown>)[to] = vars[from] || null;
@@ -598,7 +602,7 @@ export function useUpdateDeliveryFields() {
         snapshots.push([key, prev]);
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
-          orders: prev.orders.map((o) => (o.row_type === 'so' && o.so_doc_no === vars.id ? { ...o, ...patch } : o)),
+          orders: prev.orders.map((o) => (isTarget(o) ? { ...o, ...patch } : o)),
         });
       }
       return { snapshots };

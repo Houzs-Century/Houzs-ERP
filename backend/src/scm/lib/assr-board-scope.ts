@@ -79,6 +79,11 @@ export const ASSR_LEG_MSG_COL = {
   customer_pickup: 'pickup_message_status', inspection: 'inspection_message_status', delivery: 'delivery_message_status',
 } as const;
 
+/** wa_message_log source of a staff pick in the board's Delivery Message Status.
+ *  The leg's status is the newest event of send / tap / pick, and the leg columns
+ *  hold no time, so the pick is logged beside them. */
+export const ASSR_STATUS_PICK_SOURCE = 'board-status-pick';
+
 /** The board Remarks a Service Case keeps per leg, like the Time Slot. */
 export const ASSR_LEG_REMARK_COL = {
   customer_pickup: 'pickup_remark', inspection: 'inspection_remark', delivery: 'delivery_remark',
@@ -223,7 +228,7 @@ export function assrBoardLocation(
  *  on the board is one they cannot write to, and it 404s) and `assrLegOpen`
  *  then asks only about the named job. Archived cases stay locked. */
 export function assrLegGuardSql(c: CompanyScopeCtx): string {
-  return `SELECT id, stage, actual_pickup_at, closed_at, status FROM assr_cases
+  return `SELECT id, assr_no, company_id, stage, actual_pickup_at, closed_at, status FROM assr_cases
         WHERE id = ? AND archived_at IS NULL${assrCompanySql(c)}`;
 }
 

@@ -328,9 +328,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
      scm.dp_orders.delivery_message_status; service-case rows write
      assr_cases.delivery_message_status (owner 2026-10-29 — the non-SO job types
      adjust it too, so the ASSR row is an editable select, not a read-only chip).
-     For a service case the Service-Arrangement WhatsApp reply still overlays its
-     own value when the customer has answered, so a hand-set status shows until
-     then. */
+     A service case's row shows the newest of send / customer tap / this pick. */
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
     : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
     : { type: 'so' as const, id: order.so_doc_no };
