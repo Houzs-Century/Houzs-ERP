@@ -52,3 +52,11 @@
 
 .skeleton { display: grid; gap: 10px; padding: 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
 .skeletonBar { height: 14px; border-radius: 4px; }
+
+/* The 2026-11-05 report style: the rate boxes over the P&L, a list's title, a cell's inputs, a lorry's trips. */
+.rates { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 2px 2px 0; }
+.listTitle { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 10px 0 0; font-size: 14px; font-weight: 600; color: var(--fin-ink); }
+.inline { display: inline-flex; align-items: center; gap: 6px; }
+.detailTable { border-collapse: collapse; font-size: 12.5px; color: var(--fin-ink); font-variant-numeric: tabular-nums; }
+.detailTable th { padding: 4px 12px 4px 0; font-size: 11.5px; font-weight: 600; color: var(--fin-detail); text-align: left; white-space: nowrap; }
+.detailTable td { padding: 3px 12px 3px 0; border-top: 1px solid var(--fin-rule-soft); white-space: nowrap; }

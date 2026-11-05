@@ -197,7 +197,7 @@ describe('reading the books', () => {
     expect(String(calls[1]![0])).toMatch(/acc_credit_notes/);
     expect(calls[1]!.slice(1)).toEqual([7, 1]);
     await readEventBooks(db, 7, null);
-    expect(calls[2]!.slice(1)).toEqual([7]);
+    expect(calls.filter((x) => /journal_entry_lines/.test(String(x[0]))).at(-1)!.slice(1)).toEqual([7]);
 
     const broken = { prepare: () => { throw new Error('no such table: scm.journal_entry_lines'); } } as unknown as D1Database;
     expect(await readEventBooks(broken, 7, 1)).toEqual({ ok: false, reason: 'no such table: scm.journal_entry_lines' });
@@ -262,5 +262,48 @@ describe('a supplier credit note knocking off an event\'s invoice', () => {
     if (!read.ok) return;
     expect(read.byProject.get(2267)!.map((l) => l.leg_id)).toEqual(['api', 'scn:n4:l1']);
     expect(read.byProject.get(307)!.map((l) => l.leg_id)).toEqual(['b2']);
+  });
+});
+
+/* Owner 2026-11-05 (CONFIRMED): the in-house setup / dismantle charge is a cost
+   of the fair on its Transport Setup & Dismantle row — the bills booked there
+   PLUS the charge of each trip our crew did, shared by the booths on the trip;
+   the same trips as the Logistics P&L (scm/lib/fair-trips.ts). */
+describe('the in-house setup / dismantle charge', () => {
+  const fairs = [
+    { id: 7, code: 'A', name: 'AKEMI @ MITEC', state: 'Kuala Lumpur', venue: 'MITEC', startdate: '2026-10-09', enddate: '2026-10-12' },
+    { id: 8, code: 'Z', name: 'ZANOTTI @ MITEC', state: 'Kuala Lumpur', venue: 'MITEC', startdate: '2026-10-09', enddate: '2026-10-12' },
+  ];
+  const db = (covered: unknown[]) => ({
+    prepare: (sql: string) => ({
+      bind: () => ({
+        all: async () => ({
+          results: /FROM projects p/.test(sql) ? fairs
+            : /UNION ALL/.test(sql) && /threepl_bill_lines/.test(sql) ? covered
+            : /journal_entry_lines/.test(sql) ? [{ ...leg({ leg_id: 'bill', account_code: '900-T031', debit_sen: 30_000, pms_row: 'transport_setup_dismantle' }), project_id: 7 }]
+            : [],
+        }),
+      }),
+    }),
+  }) as unknown as D1Database;
+
+  test('each fair carries its share of each trip ours, beside the bills on the row', async () => {
+    const read = await readEventBooksMany(db([]), [7], 1);
+    expect(read.ok).toBe(true);
+    const legs = read.ok ? read.byProject.get(7)! : [];
+    /* KL's RM 400 a trip, two booths on it: RM 200 each, setup and dismantle. */
+    expect(legs.filter((l) => l.source_type === 'LOGISTICS').map((l) => [l.entry_date, l.debit_sen, l.pms_row])).toEqual([
+      ['2026-10-09', 20_000, 'transport_setup_dismantle'],
+      ['2026-10-12', 20_000, 'transport_setup_dismantle'],
+    ]);
+    const lines = booksLinesFor(7, legs).filter((l) => l.category === 'transport_setup_dismantle');
+    expect(lines.reduce((s, l) => s + l.amount, 0)).toBe(300 + 200 + 200);
+  });
+
+  test('a trip a 3PL bill covers is not charged', async () => {
+    const read = await readEventBooks(db([{ projectid: 8, kind: 'dismantle', words: 'Dismantle MITEC' }]), 7, 1);
+    expect(read.ok && read.legs.filter((l) => l.source_type === 'LOGISTICS').map((l) => [l.entry_date, l.debit_sen])).toEqual([
+      ['2026-10-09', 20_000],
+    ]);
   });
 });

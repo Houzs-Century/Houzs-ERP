@@ -43,27 +43,31 @@ export const fail = (c: any, what: string, reason: string) => c.json({ error: 'l
 /** The chart (with each account's Logistics row), our lorries, and the company's
     rate — what every door reads. */
 export async function loadCostSetup(sb: any, companyId: number): Promise<
-  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; doIncomeBp: number } | { ok: false; what: string; reason: string }
+  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; doIncomeBp: number; fairIncomeBp: number } | { ok: false; what: string; reason: string }
 > {
   const [chartRes, lorryRes, setRes] = await Promise.all([
     sb.from('accounts').select('account_code, account_name, account_type, is_active, parent_code, pms_row, logistics_row').eq('company_id', companyId),
     sb.from('lorries').select('id, plate, is_internal').eq('company_id', companyId),
-    sb.from('acc_logistics_settings').select('do_income_bp').eq('company_id', companyId).maybeSingle(),
+    /* Every column: fair_income_bp reads once its migration is in, the default before. */
+    sb.from('acc_logistics_settings').select('*').eq('company_id', companyId).maybeSingle(),
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
   if (lorryRes.error) return { ok: false, what: 'lorries', reason: lorryRes.error.message };
   if (setRes.error) return { ok: false, what: 'settings', reason: setRes.error.message };
-  const set = setRes.data as { do_income_bp?: number | null } | null;
+  const set = setRes.data as { do_income_bp?: number | null; fair_income_bp?: number | null } | null;
   return {
     ok: true,
     chart: (chartRes.data ?? []) as ChartAccount[],
     lorries: ((lorryRes.data ?? []) as Row[]).map((l) => ({ id: String(l.id), plate: String(l.plate ?? ''), isInternal: l.is_internal === true })),
     doIncomeBp: set?.do_income_bp == null ? DEFAULT_DO_INCOME_BP : Number(set.do_income_bp),
+    fairIncomeBp: set?.fair_income_bp == null ? DEFAULT_FAIR_INCOME_BP : Number(set.fair_income_bp),
   };
 }
 
 /** 3% of the DOs' value — the owner's sheet — until Finance sets the company's own. */
 export const DEFAULT_DO_INCOME_BP = 300;
+/** 1% of each fair's sales (owner 2026-11-05), until Finance sets the company's own. */
+export const DEFAULT_FAIR_INCOME_BP = 100;
 
 /** The DOs going out in the whole months: by the customer delivery date Delivery
     Planning schedules, else — none scheduled — by the DO's own date; with their
