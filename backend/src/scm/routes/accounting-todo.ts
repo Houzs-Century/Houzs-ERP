@@ -13,6 +13,7 @@ import { todayMyt, mytDateOf } from '../lib/my-time';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
 import { stampOrderDeposit } from '../lib/si-order-deposit';
+import { creditNotesOf } from '../lib/si-credit-notes';
 import { usersHoldingPermission } from '../../services/permissionHolders';
 import { keyedAs, merchantNamesOf } from '../../acc/merchant-names';
 import { loadBooksOpening } from '../../acc/books-opening';
@@ -241,14 +242,14 @@ async function readOverdue(sb: any, companyId: number, today: string): Promise<R
     .lt('due_date', addDays(today, -OVERDUE_DAYS)).order('id').range(lo, hi));
   if (all.error) return fail('overdue invoices', all.error.message);
   const rows = (all.data ?? []) as Rows;
-  /* What the invoice still owes after its order's deposit — the SI list's own rule. */
+  /* What the invoice still owes after its order's deposit and the credit notes knocked off it — the SI list's own rule. */
   await stampOrderDeposit(sb, rows, companyId);
   return {
     ok: true,
     value: rows
       .map((r) => ({
         invoiceNo: String(r.invoice_number ?? ''), debtor: String(r.debtor_name ?? ''), dueDate: String(r.due_date),
-        outstandingSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - Number(r.so_deposit_applied_sen ?? 0),
+        outstandingSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - Number(r.so_deposit_applied_sen ?? 0) - creditNotesOf(r),
       }))
       .filter((r) => r.outstandingSen > 0),
   };

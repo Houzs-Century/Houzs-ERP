@@ -15,12 +15,18 @@
 // answers and why), each line's description and amount with the accounts off
 // the paper, TOTAL CREDIT / TOTAL DEBIT, the amount in words, Issued by and the
 // company chop. A supplier's credit note (Money out) keeps its paper.
+//
+// A credit note to a customer or an other debtor prints what it knocked off
+// (the design's KNOCKED OFF AGAINST, owner 2026-11-03: 「要」): each invoice with
+// its date, its amount and the part taken, then what is left as credit on the
+// account — a close-out names the final invoice it closed against.
 // ----------------------------------------------------------------------------
 
 import {
   drawHeader, drawInfoColumns, drawTwoColInfo, drawSignatureBoxes, deliverPdf, deliverPdfBlob,
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, DOC_TABLE_STYLES, DOC_TABLE_HEAD_STYLES, type PdfAction,
 } from './pdf-common';
+import type { CreditNoteDetail } from './credit-note-queries';
 
 export type CreditNotePdfHeader = {
   note_number: string;
@@ -39,6 +45,31 @@ export type CreditNotePdfHeader = {
   je_no: string | null;
 };
 export type CreditNotePdfLine = { description: string | null; account_code: string; amount_sen: number };
+
+/** What a credit note knocked off — each document with its date, its amount and
+    the part taken — and the credit it leaves on the account. */
+export type CreditNoteKnockedOff = {
+  rows: Array<{ number: string; date: string | null; totalSen: number | null; knockedSen: number }>;
+  leftSen: number;
+};
+
+/** The block off a note's detail: a posted note's knock-offs (a draft's plan),
+    or the final invoice a close-out closed against. Null when there is none to
+    print: a debit note, a supplier's, a refund's or a move's, a cancelled one. */
+export function knockedOffOf(d: Pick<CreditNoteDetail, 'note' | 'allocations' | 'depositPaper' | 'closedInvoice'>): CreditNoteKnockedOff | null {
+  const n = d.note;
+  if ((n.kind !== 'CN' && n.kind !== 'OCN') || n.status === 'CANCELLED') return null;
+  if (d.depositPaper) {
+    return d.depositPaper.kind === 'closes' && d.closedInvoice
+      ? { rows: [{ number: d.closedInvoice.number, date: d.closedInvoice.date, totalSen: d.closedInvoice.totalSen, knockedSen: Number(n.total_sen) }], leftSen: 0 }
+      : null;
+  }
+  const posted = n.status === 'POSTED';
+  const rows = (d.allocations ?? [])
+    .map((a) => ({ number: a.number ?? '—', date: a.docDate ?? null, totalSen: a.docTotalSen ?? null, knockedSen: posted ? a.appliedSen : a.amountSen }))
+    .filter((r) => r.knockedSen > 0);
+  return { rows, leftSen: Math.max(0, Number(n.total_sen) - rows.reduce((sum, r) => sum + r.knockedSen, 0)) };
+}
 
 /* An other debtor's credit note prints as the debtor's bill does — to the
    party it billed, under CUSTOMER (2026-10-28). */
@@ -59,6 +90,7 @@ export function renderCreditNoteInto(
   h: CreditNotePdfHeader,
   lines: CreditNotePdfLine[],
   accountName: (code: string) => string | null,
+  knockedOff: CreditNoteKnockedOff | null = null,
 ): void {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -75,7 +107,7 @@ export function renderCreditNoteInto(
   const closesDeposit = looksLikeDepositInvoice(h.source_doc_no);
   /* A note to a customer or an other debtor takes the design's A4 family; a supplier's keeps its paper. */
   if (h.kind === 'SCN') renderSupplierNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit);
-  else renderCustomerNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit);
+  else renderCustomerNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit, knockedOff);
 
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
@@ -176,6 +208,7 @@ function renderCustomerNoteBody(
   accountName: (code: string) => string | null,
   startY: number,
   closesDeposit: boolean,
+  knockedOff: CreditNoteKnockedOff | null,
 ): void {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -219,6 +252,29 @@ function renderCustomerNoteBody(
   doc.text(h.kind === 'DN' ? 'TOTAL DEBIT' : 'TOTAL CREDIT', totalsX, y + 3);
   doc.text(fmtRm(h.total_sen), pageW - margin, y + 3, { align: 'right' });
   y += 10;
+  if (h.kind !== 'DN' && knockedOff && (knockedOff.rows.length > 0 || knockedOff.leftSen > 0)) {
+    /* What it knocked off, then what stays as credit on the account (the design's words). */
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text('KNOCKED OFF AGAINST', margin, y);
+    const body = knockedOff.rows.map((r) => [r.number, r.date ? fmtDocDate(r.date) : '', r.totalSen == null ? '' : fmtRm(r.totalSen), fmtRm(r.knockedSen)]);
+    if (knockedOff.leftSen > 0) {
+      body.push([knockedOff.rows.length > 0 ? 'Not applied · credit on account' : 'Not knocked off · credit on account', '', '', fmtRm(knockedOff.leftSen)]);
+    }
+    const lastBold = knockedOff.leftSen > 0 ? body.length - 1 : -1;
+    autoTable(doc, {
+      startY: y + 2,
+      head: [['Invoice No', 'Date', 'Invoice amount', 'Knocked off']],
+      body,
+      theme: 'plain',
+      rowPageBreak: 'avoid',
+      styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+      headStyles: DOC_TABLE_HEAD_STYLES,
+      columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 28 }, 2: { cellWidth: 34, halign: 'right' }, 3: { cellWidth: 34, halign: 'right' } },
+      margin: { left: margin, right: margin },
+      didParseCell: (data) => { if (data.section === 'body' && data.row.index === lastBold) data.cell.styles.fontStyle = 'bold'; },
+    });
+    y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 8;
+  }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
   doc.text('RINGGIT (IN WORDS)', margin, y);
   doc.setFont('helvetica', 'normal');
@@ -236,17 +292,17 @@ export async function generateCreditNotePdf(
   h: CreditNotePdfHeader,
   lines: CreditNotePdfLine[],
   accountName: (code: string) => string | null,
-  opts?: { action?: PdfAction },
+  opts?: { action?: PdfAction; knockedOff?: CreditNoteKnockedOff | null },
 ): Promise<void> {
   const { jsPDF, autoTable } = await load();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  renderCreditNoteInto(doc, autoTable, h, lines, accountName);
+  renderCreditNoteInto(doc, autoTable, h, lines, accountName, opts?.knockedOff ?? null);
   deliverPdf(doc, `${h.note_number}-${safeName(h.party_name ?? h.kind)}.pdf`, opts?.action);
 }
 
 /** Several notes as ONE document, each starting on a fresh page, in the order given. */
 export async function generateCreditNotesPdf(
-  items: Array<{ header: CreditNotePdfHeader; lines: CreditNotePdfLine[] }>,
+  items: Array<{ header: CreditNotePdfHeader; lines: CreditNotePdfLine[]; knockedOff?: CreditNoteKnockedOff | null }>,
   accountName: (code: string) => string | null,
   opts?: { action?: PdfAction },
 ): Promise<void> {
@@ -255,7 +311,7 @@ export async function generateCreditNotesPdf(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   items.forEach((it, i) => {
     if (i > 0) doc.addPage();
-    renderCreditNoteInto(doc, autoTable, it.header, it.lines, accountName);
+    renderCreditNoteInto(doc, autoTable, it.header, it.lines, accountName, it.knockedOff ?? null);
   });
   deliverPdfBlob(doc.output('blob'), 'credit-notes.pdf', opts?.action ?? 'save');
 }

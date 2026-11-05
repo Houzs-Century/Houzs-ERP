@@ -20,7 +20,7 @@ import { arListingTable, generateArListingPdf } from './ar-invoice-listing-pdf';
 const row = (over: Partial<ArListRow>): ArListRow => ({
   kind: 'SI', id: 'si-1', invoiceNumber: 'HC-SI-2609-001', partyKey: 'C:300-C001', partyCode: '300-C001', partyName: 'TAN AH KOW', debtorId: null,
   ref: 'HC-SO-2609-004', description: 'Bedroom set', invoiceDate: '2026-09-03', dueDate: '2026-09-30', currency: 'MYR',
-  totalSen: 440_000, paidSen: 60_000, depositAppliedSen: 20_000, outstandingSen: 380_000, status: 'SENT',
+  totalSen: 440_000, paidSen: 60_000, depositAppliedSen: 20_000, creditNotesSen: 0, outstandingSen: 380_000, status: 'SENT',
   ...over,
 });
 

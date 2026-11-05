@@ -51,6 +51,7 @@ function fakeSb(st: Store) {
     eq(c: string, v: unknown) { this.filters[c] = v; return this; }
     in(c: string, v: unknown[]) { this.ins[c] = v; return this; }
     order() { return this; }
+    range() { return this; }
     private rows(src: Row[]) {
       return src.filter((r) => {
         for (const [c, v] of Object.entries(this.filters)) if (r[c] !== v) return false;
@@ -175,10 +176,10 @@ describe('a failed read is not "nothing outstanding"', () => {
 });
 
 describe('cost', () => {
-  test('no orders on the page means no deposit reads at all', async () => {
+  test('no orders on the page means no deposit reads at all — only the credit notes are read', async () => {
     const st = store();
     await summariseSiOutstanding(fakeSb(st), onePage([{ id: 'a', so_doc_no: null, total_sen: 1, outstanding_sen: 1 }]), 1, AGG);
-    expect(st.reads).toHaveLength(0);
+    expect(st.reads).toEqual(['acc_credit_note_allocations']);
   });
 
   /* The stamp's sibling read carries the order numbers in the request URI, and
@@ -189,7 +190,8 @@ describe('cost', () => {
     const st = store({ orders: [], payments: [], invoices: [] });
     const rows = Array.from({ length: 600 }, (_, i) => ({ id: `si-${i}`, so_doc_no: `HC-SO-2608-${i}`, total_sen: 100, outstanding_sen: 100 }));
     await summariseSiOutstanding(fakeSb(st), onePage(rows), 1, AGG);
-    const batches = st.reads.length / 3;
+    const batches = st.reads.filter((t) => t === 'mfg_sales_orders').length;
+    expect(st.reads.filter((t) => t === 'acc_credit_note_allocations')).toHaveLength(batches);
     expect(Number.isInteger(batches)).toBe(true);
     expect(batches).toBeGreaterThan(1);
     expect(batches).toBeLessThanOrEqual(600 / 100);

@@ -39,6 +39,9 @@ export type ArListRow = {
   paidSen: number;
   /** The slice of the order's deposit applied to a sales invoice (0 on a bill). */
   depositAppliedSen: number;
+  /** What customers' credit notes knocked off a sales invoice (0 on a bill) — apart from paid. Absent
+      from a server older than the knock-off; read as 0. */
+  creditNotesSen?: number;
   outstandingSen: number;
   status: string;
 };
@@ -59,6 +62,18 @@ export type ArBillDetail = {
   /** The other-debtor credit notes allocated to it (c8). */
   creditNotes?: Array<{ id: string; number: string; date: string | null; status: string; reason: string | null; amountSen: number; appliedSen: number }>;
 };
+
+/** A credit note on a sales invoice: one knocked off it, or one that closed its
+    order's deposit invoice at this final invoice (`closesDeposit` — the
+    deposit lowers the invoice, the note is not counted again). */
+export type SalesInvoiceCreditNote = { id: string; number: string; date: string | null; what: string; amountSen: number; closesDeposit: boolean };
+
+/** The sales invoice page's Credit notes (GET /ar-invoices/sales/:id/credit-notes). */
+export const useSalesInvoiceCreditNotes = (siId: string | null) => useQuery({
+  queryKey: ['ar-invoices', 'si-credit-notes', siId],
+  queryFn: () => authedFetch<{ creditNotes: SalesInvoiceCreditNote[] }>(`/ar-invoices/sales/${encodeURIComponent(siId ?? '')}/credit-notes`),
+  enabled: !!siId,
+});
 
 export const useArBillDetail = (id: string | null) => useQuery({
   queryKey: ['ar-bill', id],

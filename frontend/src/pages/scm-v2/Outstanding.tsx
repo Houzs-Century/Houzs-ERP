@@ -248,13 +248,6 @@ type ColSpec = {
   hidden?: boolean;
 };
 
-/* Credit notes knocked off against a sales invoice: none can be today — the
-   knock-off waits on its own change (owner question f2) — so the column reads
-   0 until it ships. It starts hidden (Columns turns it on): an eleventh column
-   of zeros would squeeze the dates and amounts on a laptop screen. The
-   knock-off's change shows it by default. */
-const SI_CREDIT_NOTES_SEN = 0;
-
 /* Still open by the view's own rule (a paid or cancelled document never is),
    and something left on it — the date only turns late then. */
 const owes = (r: OutRow): boolean => r.is_outstanding === true && Number(r.outstanding_sen) > 0;
@@ -273,7 +266,9 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
        this column is what makes the smaller Outstanding readable instead of
        mysterious. */
     { key: 'so_deposit_applied_sen', label: 'SO deposit', kind: 'money', muted: true },
-    { key: 'credit_notes_sen', label: 'Credit notes', kind: 'money', muted: true, value: () => SI_CREDIT_NOTES_SEN, hidden: true },
+    /* The customers' credit notes knocked off it (owner 2026-11-03: 「要」), served
+       beside the deposit and, like it, already out of outstanding_sen. */
+    { key: 'credit_notes_sen', label: 'Credit notes', kind: 'money', muted: true },
     { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
     { key: 'status',         label: 'Status', kind: 'status' },
   ],
@@ -346,7 +341,7 @@ const isDead = (r: OutRow): boolean => isCancelledDocStatus(textOf(r.status));
 /** A sales invoice counts as part-paid once money, its order's deposit or a
  *  credit note has gone against it (the design's Partly paid). */
 const partlyPaid = (r: OutRow): boolean =>
-  Number(r.paid_sen ?? 0) + Number(r.so_deposit_applied_sen ?? 0) + SI_CREDIT_NOTES_SEN > 0;
+  Number(r.paid_sen ?? 0) + Number(r.so_deposit_applied_sen ?? 0) + Number(r.credit_notes_sen ?? 0) > 0;
 
 const statusTagOf = (module: OutstandingModule, r: OutRow) =>
   outstandingStatusTag(module, textOf(r.status), r.is_outstanding === true, module === 'si' && partlyPaid(r));

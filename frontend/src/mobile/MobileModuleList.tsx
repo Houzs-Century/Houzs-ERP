@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
+import { siCreditNotesSen, siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { lineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../auth/AuthContext";
@@ -295,7 +295,7 @@ const mrpState = (r: any): string => {
 const balanceSen = (r: any): number => siOutstandingSen(
   Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0),
   Number(pick(r, "paidSen", "paid_sen") ?? 0),
-  siDepositAppliedSen({ so_deposit_applied_sen: pick(r, "soDepositAppliedSen", "so_deposit_applied_sen") as number | null }));
+  siDepositAppliedSen({ so_deposit_applied_sen: pick(r, "soDepositAppliedSen", "so_deposit_applied_sen") as number | null }), siCreditNotesSen({ credit_notes_sen: pick(r, "creditNotesSen", "credit_notes_sen") as number | null }));
 
 /** Numeric-aware locale compare, mirroring the prototype's localeCompare with
  *  { numeric: true }. Used to keep sort keys terse in the configs. */

@@ -287,6 +287,18 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       total: (rows) => fmtSen(rows.filter((x) => !x.cancelled).reduce((s, x) => s + x.totalSen, 0)),
     },
     {
+      /* What customers' credit notes knocked off a sales invoice (owner 2026-11-03:
+         「要」) — kept apart from what was paid; a bill's own credit notes sit in
+         what it received. */
+      key: 'creditNotes', label: 'Credit notes', align: 'right',
+      render: (x) => (x.kind === 'si' && !x.cancelled && (x.ar?.creditNotesSen ?? 0) > 0
+        ? <span className={ui.money}>{fmtSen(x.ar!.creditNotesSen)}</span>
+        : <span className={ui.muted}>—</span>),
+      getValue: (x) => (x.kind === 'si' ? x.ar?.creditNotesSen ?? 0 : null),
+      exportValue: (x) => (x.kind === 'si' ? (x.ar?.creditNotesSen ?? 0) / 100 : null), exportFormat: 'money',
+      total: (rows) => fmtSen(rows.reduce((s, x) => s + (x.kind === 'si' && !x.cancelled ? x.ar?.creditNotesSen ?? 0 : 0), 0)),
+    },
+    {
       key: 'outstanding', label: 'Outstanding', align: 'right',
       /* The SI list's own figure; when the order's deposit settles part of it the cell says so. */
       render: (x) => (x.outstandingSen == null ? <span className={ui.muted}>—</span> : (

@@ -15,24 +15,37 @@
 // that. The ledger is not touched: the note's own journal (Dr AP control / Cr
 // its lines; Dr its lines / Cr the other-debtor control) already carries the
 // money; this is the document's side of it. A payment then pays what is left.
+//
+// Since 2026-11-03 (owner: 「要」, his design "like AutoCount") a CUSTOMER's
+// credit note knocks off the customer's SALES INVOICES the same way — one row
+// per invoice (sales_invoice_id), set whole on the same table — but nothing is
+// settled into the invoice: its paid_sen feeds the overpayment rule, so the
+// credit stays a row of its own that every reader of the invoice's outstanding
+// subtracts (credit-note-si.ts, scm/lib/si-credit-notes.ts), and the invoice's
+// status is rolled again to follow it. A deposit paper (the note closing a
+// deposit invoice at the final invoice, a refund's, a move's) knocks off nothing.
 // ----------------------------------------------------------------------------
 
 import { settlePiPaidSen } from '../scm/lib/pi-settlement';
 import { settleApInvoicePaidSen } from '../scm/lib/ap-invoice-settlement';
 import { settleDebtorBillReceivedSen } from '../scm/lib/debtor-bill-settlement';
+import { absorbsOrderDeposit } from '../scm/lib/si-order-deposit';
 import { fmtSen } from '../scm/shared/format';
+import {
+  customerOfNote, customerOpenInvoices, depositPapers, depositPaperRefusal, refreshSiStatuses, sameCustomer, sisOwing, type CustomerKey,
+} from './credit-note-si';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
 type Row = Record<string, any>;
 
-export type CreditTargetKind = 'PI' | 'API' | 'ODB';
+export type CreditTargetKind = 'PI' | 'API' | 'ODB' | 'SI';
 export type CreditTarget = { kind: CreditTargetKind; id: string; amountSen: number };
 
 /* Each document a credit comes off, by the columns its own table names it with. */
 type DocTable = {
-  table: string; column: 'purchase_invoice_id' | 'ap_invoice_id' | 'debtor_bill_id';
-  owner: 'supplier_id' | 'debtor_id'; number: string; paid: 'paid_sen' | 'received_sen'; ref: string | null; date: string;
+  table: string; column: 'purchase_invoice_id' | 'ap_invoice_id' | 'debtor_bill_id' | 'sales_invoice_id';
+  owner: 'supplier_id' | 'debtor_id' | 'debtor_code'; number: string; paid: 'paid_sen' | 'received_sen'; ref: string | null; date: string;
   /** The statuses that still owe. */
   owing: ReadonlySet<string>;
 };
@@ -42,33 +55,50 @@ const TABLE: Record<CreditTargetKind, DocTable> = {
   API: { table: 'ap_invoices', column: 'ap_invoice_id', owner: 'supplier_id', number: 'invoice_number', paid: 'paid_sen', ref: 'supplier_invoice_ref', date: 'invoice_date', owing: SUPPLIER_OWING },
   /* A debtor bill is POSTED until it is received in full (PAID). */
   ODB: { table: 'acc_debtor_bills', column: 'debtor_bill_id', owner: 'debtor_id', number: 'bill_number', paid: 'received_sen', ref: null, date: 'bill_date', owing: new Set(['POSTED']) },
+  /* A sales invoice is read by credit-note-si.ts — what it owes is not total
+     less paid (its order's deposit and the credit notes come off too), and its
+     customer is its AR party; only the names below are read here. */
+  SI: { table: 'sales_invoices', column: 'sales_invoice_id', owner: 'debtor_code', number: 'invoice_number', paid: 'paid_sen', ref: 'so_doc_no', date: 'invoice_date', owing: new Set() },
 };
-const ALLOCATION_COLS = 'id, purchase_invoice_id, ap_invoice_id, debtor_bill_id, amount_sen, applied_sen';
-const kindOfRow = (r: Row): CreditTargetKind => (r.purchase_invoice_id ? 'PI' : r.ap_invoice_id ? 'API' : 'ODB');
+const ALLOCATION_COLS = 'id, purchase_invoice_id, ap_invoice_id, debtor_bill_id, sales_invoice_id, amount_sen, applied_sen';
+const kindOfRow = (r: Row): CreditTargetKind => (r.purchase_invoice_id ? 'PI' : r.ap_invoice_id ? 'API' : r.sales_invoice_id ? 'SI' : 'ODB');
 const docSelect = (kind: CreditTargetKind): string => {
   const t = TABLE[kind];
   return ['id', t.number, t.owner, t.ref, t.date, 'total_sen', t.paid, 'status'].filter(Boolean).join(', ');
 };
 
+/* A sales invoice takes a credit note's knock-off as the row itself — nothing
+   is settled into it (its paid_sen feeds the overpayment rule) — so what was
+   asked, checked against what it owes first, is what it took. */
 const settle = (sb: Db, kind: CreditTargetKind, id: string, delta: number) =>
-  kind === 'PI' ? settlePiPaidSen(sb, id, delta) : kind === 'API' ? settleApInvoicePaidSen(sb, id, delta) : settleDebtorBillReceivedSen(sb, id, delta);
+  kind === 'SI' ? Promise.resolve({ ok: true, appliedSen: delta, clampedSen: 0 } as { ok: boolean; appliedSen: number; clampedSen: number; reason?: string })
+    : kind === 'PI' ? settlePiPaidSen(sb, id, delta) : kind === 'API' ? settleApInvoicePaidSen(sb, id, delta) : settleDebtorBillReceivedSen(sb, id, delta);
 
 /** Whose documents a credit comes off: a supplier note's supplier (purchase and
-    AP invoices), an other-debtor note's debtor (debtor bills). */
-export type CreditParty = { owner: 'supplier_id' | 'debtor_id'; id: string; kinds: readonly CreditTargetKind[] };
+    AP invoices), an other-debtor note's debtor (debtor bills), a customer
+    note's customer (sales invoices — its AR party, `customer`). */
+export type CreditParty = { owner: 'supplier_id' | 'debtor_id' | 'customer'; id: string; kinds: readonly CreditTargetKind[]; customer?: CustomerKey };
 export const supplierParty = (supplierId: string): CreditParty => ({ owner: 'supplier_id', id: supplierId, kinds: ['PI', 'API'] });
 export const debtorParty = (debtorId: string): CreditParty => ({ owner: 'debtor_id', id: debtorId, kinds: ['ODB'] });
-/** The party a stored note knocks off for — none for a customer note. */
+export const customerParty = (customer: CustomerKey): CreditParty => ({
+  owner: 'customer', id: `${customer.code ?? ''}|${customer.name ?? ''}`, kinds: ['SI'], customer,
+});
+/** The party a stored note knocks off for — none for a debit note. */
 export const partyOfNote = (note: Row): CreditParty | null =>
   note.kind === 'SCN' && note.supplier_id ? supplierParty(String(note.supplier_id))
     : note.kind === 'OCN' && note.debtor_id ? debtorParty(String(note.debtor_id))
-      : null;
+      : note.kind === 'CN' ? customerParty(customerOfNote(note))
+        : null;
 const words = (party: CreditParty) => (party.owner === 'debtor_id'
   ? { who: 'debtor', doc: 'bill' }
-  : { who: 'supplier', doc: 'invoice' });
+  : party.owner === 'customer' ? { who: 'customer', doc: 'invoice' } : { who: 'supplier', doc: 'invoice' });
+/** Where a credit a document could not take stays. */
+const staysWith = (kind: unknown): string => (kind === 'OCN' ? 'stays with the debtor' : kind === 'CN' ? 'stays as credit on the customer' : 'stays with the supplier');
 
 export type AllocationView = {
   id: string; kind: CreditTargetKind; docId: string; number: string | null;
+  /** The document's own date and total, for the note's print (KNOCKED OFF AGAINST). */
+  docDate: string | null; docTotalSen: number | null;
   amountSen: number; appliedSen: number; createdAt: string | null; createdBy: string | null;
 };
 
@@ -81,19 +111,21 @@ export async function noteAllocations(sb: Db, companyId: number, note: Row): Pro
     .eq('company_id', companyId).eq('note_id', note.id).order('created_at');
   if (error) return { ok: false, reason: error.message };
   const rows = (data ?? []) as Row[];
-  const numbers = new Map<string, string>();
-  for (const kind of ['PI', 'API', 'ODB'] as const) {
+  const docs = new Map<string, Row>();
+  for (const kind of ['PI', 'API', 'ODB', 'SI'] as const) {
     const ids = [...new Set(rows.filter((r) => kindOfRow(r) === kind).map((r) => r[TABLE[kind].column]).filter(Boolean).map(String))];
     if (ids.length === 0) continue;
-    const { data: docs, error: dErr } = await sb.from(TABLE[kind].table).select(`id, ${TABLE[kind].number}`).eq('company_id', companyId).in('id', ids);
+    const t = TABLE[kind];
+    const { data: found, error: dErr } = await sb.from(t.table).select(`id, ${t.number}, ${t.date}, total_sen`).eq('company_id', companyId).in('id', ids);
     if (dErr) return { ok: false, reason: dErr.message };
-    for (const d of (docs ?? []) as Row[]) numbers.set(String(d.id), String(d[TABLE[kind].number]));
+    for (const d of (found ?? []) as Row[]) docs.set(String(d.id), { number: String(d[t.number]), date: d[t.date] ?? null, total: Number(d.total_sen ?? 0) });
   }
   const allocations: AllocationView[] = rows.map((r) => {
     const kind = kindOfRow(r);
     const docId = String(r[TABLE[kind].column]);
+    const doc = docs.get(docId);
     return {
-      id: String(r.id), kind, docId, number: numbers.get(docId) ?? null,
+      id: String(r.id), kind, docId, number: doc?.number ?? null, docDate: doc?.date ?? null, docTotalSen: doc ? doc.total : null,
       amountSen: Number(r.amount_sen ?? 0), appliedSen: Number(r.applied_sen ?? 0),
       createdAt: r.created_at ?? null, createdBy: r.created_by ?? null,
     };
@@ -140,6 +172,17 @@ const openView = (kind: CreditTargetKind, r: Row): OpenInvoice => {
 
 /** The party's documents with money still owed — what a credit can come off. */
 export async function partyOpenDocs(sb: Db, companyId: number, party: CreditParty): Promise<{ ok: true; invoices: OpenInvoice[] } | { ok: false; reason: string }> {
+  if (party.owner === 'customer') {
+    const open = await customerOpenInvoices(sb, companyId, party.customer ?? { code: null, name: null });
+    if (!open.ok) return open;
+    return {
+      ok: true,
+      invoices: open.value.map((s) => ({
+        kind: 'SI' as const, id: s.id, number: s.number, invoiceRef: s.soDocNo, invoiceDate: s.date,
+        totalSen: s.totalSen, paidSen: s.totalSen - s.owedSen, outstandingSen: s.owedSen, status: s.status,
+      })),
+    };
+  }
   const out: OpenInvoice[] = [];
   for (const kind of party.kinds) {
     const t = TABLE[kind];
@@ -165,7 +208,8 @@ export type ApplyRefusal = { status: number; error: string; message: string };
     is written — the note posted and a supplier's or an other debtor's, the
     document this party's and owing, the amounts within what is owed and what is
     left — then each row is written and its document settled; applied_sen
-    records what the settle moved. */
+    records what the settle moved. A customer's note knocks off on its table
+    (setNoteKnockOff), never here. */
 export async function applyCreditNote(
   sb: Db,
   p: { companyId: number; note: Row; targets: CreditTarget[]; actor: string | null },
@@ -173,7 +217,7 @@ export async function applyCreditNote(
   const { note } = p;
   const refuse = (status: number, error: string, message: string) => ({ ok: false as const, refusal: { status, error, message } });
   const party = partyOfNote(note);
-  if (!party) return refuse(400, 'not_a_supplier_note', `${note.note_number} is not a supplier or other-debtor credit note — only those come off an invoice or a bill.`);
+  if (!party || party.owner === 'customer') return refuse(400, 'not_a_supplier_note', `${note.note_number} is not a supplier or other-debtor credit note — only those come off an invoice or a bill here.`);
   const w = words(party);
   if (note.status !== 'POSTED') return refuse(409, 'note_not_posted', `${note.note_number} is ${String(note.status).toLowerCase()} — post it first; the credit comes off a document once it is in the books.`);
   if (p.targets.length === 0) return refuse(400, 'targets_required', `Pick the ${w.doc} the credit comes off, and how much.`);
@@ -233,16 +277,24 @@ export async function removeAllocation(sb: Db, p: { companyId: number; note: Row
   if (error) return { ok: false, refusal: { status: 500, error: 'load_failed', message: error.message } };
   if (!data) return { ok: false, refusal: { status: 404, error: 'not_found', message: 'That application is not on this note.' } };
   const r = data as Row;
-  return giveBack(sb, p.companyId, [r]);
+  const back = await giveBack(sb, p.companyId, [r]);
+  await refreshSiStatuses(sb, p.companyId, siIdsOf([r]));
+  return back;
 }
 
-/** Every application of the note given back — before a cancel. */
+/** Every application of the note given back — before a cancel. A sales
+    invoice's status is rolled again: it owes the credit again. */
 export async function removeAllAllocations(sb: Db, p: { companyId: number; note: Row }): Promise<{ ok: true } | { ok: false; refusal: ApplyRefusal }> {
   const { data, error } = await sb.from('acc_credit_note_allocations').select(ALLOCATION_COLS)
     .eq('company_id', p.companyId).eq('note_id', p.note.id);
   if (error) return { ok: false, refusal: { status: 500, error: 'load_failed', message: error.message } };
-  return giveBack(sb, p.companyId, (data ?? []) as Row[]);
+  const rows = (data ?? []) as Row[];
+  const back = await giveBack(sb, p.companyId, rows);
+  await refreshSiStatuses(sb, p.companyId, siIdsOf(rows));
+  return back;
 }
+
+const siIdsOf = (rows: Row[]): string[] => rows.filter((r) => kindOfRow(r) === 'SI').map((r) => String(r.sales_invoice_id));
 
 async function giveBack(sb: Db, companyId: number, rows: Row[]): Promise<{ ok: true } | { ok: false; refusal: ApplyRefusal }> {
   for (const r of rows) {
@@ -319,6 +371,20 @@ export async function knockOffRows(sb: Db, companyId: number, p: { party: Credit
   for (const kind of p.party.kinds) {
     const ids = [...noted.takes.entries()].filter(([id, t]) => t.kind === kind && !rows.has(id)).map(([id]) => id);
     if (ids.length === 0) continue;
+    if (kind === 'SI') {
+      /* An invoice the note took in full (Paid now), or one that owes nothing
+         more — still the note's to untick. */
+      const sis = await sisOwing(sb, companyId, ids);
+      if (!sis.ok) return sis;
+      for (const s of sis.value.values()) {
+        const take = noted.takes.get(s.id)?.sen ?? 0;
+        rows.set(s.id, {
+          kind, id: s.id, number: s.number, invoiceRef: s.soDocNo, invoiceDate: s.date,
+          totalSen: s.totalSen, owedSen: s.owedSen + (applied ? take : 0), noteSen: take, status: s.status,
+        });
+      }
+      continue;
+    }
     const { data, error } = await sb.from(TABLE[kind].table).select(docSelect(kind))
       .eq('company_id', companyId).in('id', ids);
     if (error) return { ok: false, reason: error.message };
@@ -336,8 +402,8 @@ export async function knockOffRows(sb: Db, companyId: number, p: { party: Credit
   return { ok: true, rows: out };
 }
 
-/** The targets as the server takes them — each a purchase or AP invoice or a
-    debtor bill, a positive sum in sen, one line per document. */
+/** The targets as the server takes them — each a purchase or AP invoice, a
+    debtor bill or a sales invoice, a positive sum in sen, one line per document. */
 export function parseTargets(raw: unknown): CreditTarget[] {
   return (Array.isArray(raw) ? raw : []).map((t: any) => ({
     kind: String(t?.kind ?? '').toUpperCase() as CreditTargetKind, id: String(t?.id ?? '').trim(), amountSen: Number(t?.amountSen),
@@ -356,7 +422,10 @@ export async function checkKnockOff(
   const w = words(p.party);
   const seen = new Set<string>();
   for (const t of p.targets) {
-    if (!p.party.kinds.includes(t.kind) || !t.id) return refuse(400, 'bad_target', p.party.owner === 'debtor_id' ? 'Each line names a debtor bill.' : 'Each line names a purchase invoice or an AP invoice.');
+    if (!p.party.kinds.includes(t.kind) || !t.id) {
+      return refuse(400, 'bad_target', p.party.owner === 'debtor_id' ? 'Each line names a debtor bill.'
+        : p.party.owner === 'customer' ? 'Each line names a sales invoice of the customer.' : 'Each line names a purchase invoice or an AP invoice.');
+    }
     if (!Number.isInteger(t.amountSen) || t.amountSen <= 0) return refuse(400, 'bad_amount', 'Each amount is a positive sum in sen.');
     if (seen.has(t.id)) return refuse(400, 'bad_target', p.party.owner === 'debtor_id' ? 'A bill is named twice — one line per bill.' : 'An invoice is named twice — one line per invoice.');
     seen.add(t.id);
@@ -366,6 +435,23 @@ export async function checkKnockOff(
     return refuse(409, 'over_credit', `${p.label} is ${fmtSen(p.totalSen)} — knocking off ${fmtSen(asked)} is more.`);
   }
   const numbers = new Map<string, string>();
+  if (p.party.owner === 'customer') {
+    /* A sales invoice owes its total less its receipts, its order's deposit and
+       every credit note knocked off it — this note's own take counted back in. */
+    const sis = await sisOwing(sb, p.companyId, p.targets.map((t) => t.id));
+    if (!sis.ok) return refuse(500, 'load_failed', sis.reason);
+    for (const t of p.targets) {
+      const s = sis.value.get(t.id);
+      if (!s || !sameCustomer(p.party.customer ?? { code: null, name: null }, s.customer)) {
+        return refuse(400, 'invoice_not_this_customer', "That invoice is not one of this customer's here — pick it again.");
+      }
+      if (!absorbsOrderDeposit(s.status)) return refuse(409, 'invoice_not_owing', `${s.number} is ${s.status.toLowerCase()} — nothing is owed on it.`);
+      const owed = s.owedSen + (p.posted ? (p.current.get(t.id)?.sen ?? 0) : 0);
+      if (t.amountSen > owed) return refuse(409, 'over_invoice', `${s.number} only has ${fmtSen(owed)} outstanding.`);
+      numbers.set(t.id, s.number);
+    }
+    return { ok: true, numbers };
+  }
   for (const t of p.targets) {
     const { data, error } = await sb.from(TABLE[t.kind].table).select(docSelect(t.kind))
       .eq('company_id', p.companyId).eq('id', t.id).maybeSingle();
@@ -385,6 +471,16 @@ export async function checkKnockOff(
     numbers.set(t.id, doc.number);
   }
   return { ok: true, numbers };
+}
+
+/** A customer note that answers a deposit invoice (credit-note-si.ts
+    depositPapers) knocks off nothing — said in its own words. */
+export async function depositPaperBlock(sb: Db, companyId: number, note: Row): Promise<{ ok: true; refusal: ApplyRefusal | null } | { ok: false; reason: string }> {
+  if (note.kind !== 'CN') return { ok: true, refusal: null };
+  const papers = await depositPapers(sb, companyId, [note]);
+  if (!papers.ok) return papers;
+  const paper = papers.value.get(String(note.id));
+  return { ok: true, refusal: paper ? { status: 409, error: 'deposit_note', message: depositPaperRefusal(String(note.note_number), paper) } : null };
 }
 
 /** A draft's plan written whole: the rows it had go, the targets come in with
@@ -411,8 +507,11 @@ export async function setNoteKnockOff(
 ): Promise<{ ok: true; short: KnockOffShort[] } | { ok: false; refusal: ApplyRefusal }> {
   const { note } = p;
   const party = partyOfNote(note);
-  if (!party) return { ok: false, refusal: { status: 400, error: 'not_a_supplier_note', message: `${note.note_number} is not a supplier or other-debtor credit note — only those knock off an invoice or a bill.` } };
+  if (!party) return { ok: false, refusal: { status: 400, error: 'not_a_supplier_note', message: `${note.note_number} is a debit note — only a credit note knocks off an invoice or a bill.` } };
   if (note.status === 'CANCELLED') return { ok: false, refusal: { status: 409, error: 'note_cancelled', message: `${note.note_number} is cancelled — it knocks nothing off.` } };
+  const paper = await depositPaperBlock(sb, p.companyId, note);
+  if (!paper.ok) return { ok: false, refusal: { status: 500, error: 'load_failed', message: paper.reason } };
+  if (paper.refusal) return { ok: false, refusal: paper.refusal };
   const noted = await noteTakes(sb, p.companyId, note);
   if (!noted.ok) return { ok: false, refusal: { status: 500, error: 'load_failed', message: noted.reason } };
   const posted = note.status === 'POSTED';
@@ -442,26 +541,32 @@ export async function setNoteKnockOff(
   }
   changes.sort((a, b) => (a.to - a.from) - (b.to - b.from));
   const short: KnockOffShort[] = [];
-  for (const ch of changes) {
-    const back = await giveBack(sb, p.companyId, ch.rows);
-    if (!back.ok) return back;
-    if (ch.to <= 0) continue;
-    const { data: row, error: insErr } = await sb.from('acc_credit_note_allocations').insert({
-      company_id: p.companyId, note_id: note.id, [TABLE[ch.kind].column]: ch.id, amount_sen: ch.to, applied_sen: 0, created_by: p.actor,
-    }).select('id').single();
-    if (insErr || !row) return { ok: false, refusal: { status: 500, error: 'save_failed', message: insErr?.message ?? 'insert returned nothing' } };
-    const moved = await settle(sb, ch.kind, ch.id, ch.to);
-    const number = checked.numbers.get(ch.id) ?? (ch.kind === 'ODB' ? 'The bill' : 'The invoice');
-    if (!moved.ok || moved.appliedSen <= 0) {
-      await sb.from('acc_credit_note_allocations').delete().eq('company_id', p.companyId).eq('id', (row as Row).id);
-      if (!moved.ok) return { ok: false, refusal: { status: 500, error: 'settle_failed', message: `${number} could not take the credit: ${moved.reason ?? 'unknown'}` } };
-      short.push({ number, askedSen: ch.to, appliedSen: 0 });
-      continue;
+  const doc = (kind: CreditTargetKind) => (kind === 'ODB' ? 'The bill' : 'The invoice');
+  try {
+    for (const ch of changes) {
+      const back = await giveBack(sb, p.companyId, ch.rows);
+      if (!back.ok) return back;
+      if (ch.to <= 0) continue;
+      const { data: row, error: insErr } = await sb.from('acc_credit_note_allocations').insert({
+        company_id: p.companyId, note_id: note.id, [TABLE[ch.kind].column]: ch.id, amount_sen: ch.to, applied_sen: 0, created_by: p.actor,
+      }).select('id').single();
+      if (insErr || !row) return { ok: false, refusal: { status: 500, error: 'save_failed', message: insErr?.message ?? 'insert returned nothing' } };
+      const moved = await settle(sb, ch.kind, ch.id, ch.to);
+      const number = checked.numbers.get(ch.id) ?? doc(ch.kind);
+      if (!moved.ok || moved.appliedSen <= 0) {
+        await sb.from('acc_credit_note_allocations').delete().eq('company_id', p.companyId).eq('id', (row as Row).id);
+        if (!moved.ok) return { ok: false, refusal: { status: 500, error: 'settle_failed', message: `${number} could not take the credit: ${moved.reason ?? 'unknown'}` } };
+        short.push({ number, askedSen: ch.to, appliedSen: 0 });
+        continue;
+      }
+      const { error: upErr } = await sb.from('acc_credit_note_allocations').update({ applied_sen: moved.appliedSen })
+        .eq('company_id', p.companyId).eq('id', (row as Row).id);
+      if (upErr) return { ok: false, refusal: { status: 500, error: 'save_failed', message: upErr.message } };
+      if (moved.appliedSen < ch.to) short.push({ number, askedSen: ch.to, appliedSen: moved.appliedSen });
     }
-    const { error: upErr } = await sb.from('acc_credit_note_allocations').update({ applied_sen: moved.appliedSen })
-      .eq('company_id', p.companyId).eq('id', (row as Row).id);
-    if (upErr) return { ok: false, refusal: { status: 500, error: 'save_failed', message: upErr.message } };
-    if (moved.appliedSen < ch.to) short.push({ number, askedSen: ch.to, appliedSen: moved.appliedSen });
+  } finally {
+    /* A sales invoice's status follows what is knocked off it — whatever got written. */
+    await refreshSiStatuses(sb, p.companyId, changes.filter((ch) => ch.kind === 'SI').map((ch) => ch.id));
   }
   return { ok: true, short };
 }
@@ -469,7 +574,8 @@ export async function setNoteKnockOff(
 /** At post — the DRAFT → POSTED moment — the plan is carried out. A document
     that owes less now than planned takes what it owes; one that owes nothing
     (paid or cancelled since) takes none, and its row goes. The post stands
-    either way; `notApplied` says what stayed with the supplier or the debtor. */
+    either way; `notApplied` says what stayed with the supplier, the debtor or,
+    on a customer's note, as credit on the customer. */
 export async function carryOutPlan(sb: Db, p: { companyId: number; note: Row }): Promise<
   { ok: true; applied: Array<{ kind: CreditTargetKind; id: string; number: string; appliedSen: number }>; notApplied: string[] } | { ok: false; reason: string }
 > {
@@ -478,29 +584,52 @@ export async function carryOutPlan(sb: Db, p: { companyId: number; note: Row }):
   if (error) return { ok: false, reason: error.message };
   const applied: Array<{ kind: CreditTargetKind; id: string; number: string; appliedSen: number }> = [];
   const notApplied: string[] = [];
-  const holder = p.note.kind === 'OCN' ? 'the debtor' : 'the supplier';
-  for (const r of ((data ?? []) as Row[]).filter((x) => Number(x.applied_sen ?? 0) === 0)) {
-    const kind = kindOfRow(r);
-    const id = String(r[TABLE[kind].column]);
-    const asked = Number(r.amount_sen ?? 0);
-    const drop = async () => { await sb.from('acc_credit_note_allocations').delete().eq('company_id', p.companyId).eq('id', r.id); };
-    const { data: doc, error: dErr } = await sb.from(TABLE[kind].table).select(`${TABLE[kind].number}, status`).eq('company_id', p.companyId).eq('id', id).maybeSingle();
-    const number = String((doc as Row | null)?.[TABLE[kind].number] ?? (kind === 'ODB' ? 'The bill' : 'The invoice'));
-    if (dErr || !doc || !TABLE[kind].owing.has(String((doc as Row).status))) {
-      await drop();
-      notApplied.push(`${number} owes nothing now — its ${fmtSen(asked)} stays with ${holder}.`);
-      continue;
+  const stays = staysWith(p.note.kind);
+  const touched: string[] = [];
+  try {
+    for (const r of ((data ?? []) as Row[]).filter((x) => Number(x.applied_sen ?? 0) === 0)) {
+      const kind = kindOfRow(r);
+      const id = String(r[TABLE[kind].column]);
+      const asked = Number(r.amount_sen ?? 0);
+      const drop = async () => { await sb.from('acc_credit_note_allocations').delete().eq('company_id', p.companyId).eq('id', r.id); };
+      let number: string;
+      let take: number;
+      if (kind === 'SI') {
+        /* What it owes NOW — read one by one, as each knock-off just written
+           moves its order's deposit off the next invoice. */
+        touched.push(id);
+        const sis = await sisOwing(sb, p.companyId, [id]);
+        const s = sis.ok ? sis.value.get(id) : undefined;
+        number = s?.number ?? 'The invoice';
+        if (!s || !absorbsOrderDeposit(s.status) || s.owedSen <= 0) {
+          await drop();
+          notApplied.push(`${number} owes nothing now — its ${fmtSen(asked)} ${stays}.`);
+          continue;
+        }
+        take = Math.min(asked, s.owedSen);
+      } else {
+        const { data: d, error: dErr } = await sb.from(TABLE[kind].table).select(`${TABLE[kind].number}, status`).eq('company_id', p.companyId).eq('id', id).maybeSingle();
+        number = String((d as Row | null)?.[TABLE[kind].number] ?? (kind === 'ODB' ? 'The bill' : 'The invoice'));
+        if (dErr || !d || !TABLE[kind].owing.has(String((d as Row).status))) {
+          await drop();
+          notApplied.push(`${number} owes nothing now — its ${fmtSen(asked)} ${stays}.`);
+          continue;
+        }
+        take = asked;
+      }
+      const moved = await settle(sb, kind, id, take);
+      if (!moved.ok || moved.appliedSen <= 0) {
+        await drop();
+        notApplied.push(`${number} could not take the credit${moved.ok ? '' : `: ${moved.reason ?? 'unknown'}`} — its ${fmtSen(asked)} ${stays}.`);
+        continue;
+      }
+      const { error: upErr } = await sb.from('acc_credit_note_allocations').update({ applied_sen: moved.appliedSen }).eq('company_id', p.companyId).eq('id', r.id);
+      if (upErr) return { ok: false, reason: upErr.message };
+      if (moved.appliedSen < asked) notApplied.push(`${number} owed only ${fmtSen(moved.appliedSen)} — ${fmtSen(asked - moved.appliedSen)} ${stays}.`);
+      applied.push({ kind, id, number, appliedSen: moved.appliedSen });
     }
-    const moved = await settle(sb, kind, id, asked);
-    if (!moved.ok || moved.appliedSen <= 0) {
-      await drop();
-      notApplied.push(`${number} could not take the credit${moved.ok ? '' : `: ${moved.reason ?? 'unknown'}`} — its ${fmtSen(asked)} stays with ${holder}.`);
-      continue;
-    }
-    const { error: upErr } = await sb.from('acc_credit_note_allocations').update({ applied_sen: moved.appliedSen }).eq('company_id', p.companyId).eq('id', r.id);
-    if (upErr) return { ok: false, reason: upErr.message };
-    if (moved.appliedSen < asked) notApplied.push(`${number} owed only ${fmtSen(moved.appliedSen)} — ${fmtSen(asked - moved.appliedSen)} stays with ${holder}.`);
-    applied.push({ kind, id, number, appliedSen: moved.appliedSen });
+  } finally {
+    await refreshSiStatuses(sb, p.companyId, touched);
   }
   return { ok: true, applied, notApplied };
 }

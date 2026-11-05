@@ -86,7 +86,7 @@ const pdfSingle = vi.fn(async (..._args: unknown[]) => {});
 const pdfBatch = vi.fn(async (..._args: unknown[]) => {});
 const LINES = [{ id: 'l1', line_no: 1, description: 'Scratched leg — goodwill', account_code: '510-0000', amount_sen: 15000 }];
 
-vi.mock('../../vendor/scm/lib/credit-note-pdf', () => ({ generateCreditNotePdf: pdfSingle, generateCreditNotesPdf: pdfBatch }));
+vi.mock('../../vendor/scm/lib/credit-note-pdf', () => ({ generateCreditNotePdf: pdfSingle, generateCreditNotesPdf: pdfBatch, knockedOffOf: () => null }));
 vi.mock('../../vendor/scm/lib/authed-fetch', async (importOriginal) => ({
   ...(await importOriginal() as object),
   authedFetch: vi.fn(async (path: string) => {
@@ -236,6 +236,8 @@ describe('the Credit & Debit Notes page', () => {
     expect(createMutate.mock.calls[0]?.[0]).toEqual({
       kind: 'CN', noteDate: expect.any(String), reason: 'Scratched leg', sourceDocNo: null, soDocNo: '2990-SO-2607-019',
       lines: [{ description: 'Goodwill', accountCode: null, amountSen: 15000 }],
+      /* A customer's credit note always says its ticks too (2026-11-03) — none ticked is a plan. */
+      allocations: [],
     });
   });
 
@@ -270,7 +272,7 @@ describe('the Credit & Debit Notes page', () => {
     expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ note_number: '2990-CN-2609-001' });
     expect(pdfSingle.mock.calls[0]?.[1]).toEqual([expect.objectContaining({ account_code: '510-0000', amount_sen: 15000 })]);
     expect((pdfSingle.mock.calls[0]?.[2] as (code: string) => string | null)('510-0000')).toBe('RETURN INWARDS');
-    expect(pdfSingle.mock.calls[0]?.[3]).toEqual({ action: 'print' });
+    expect(pdfSingle.mock.calls[0]?.[3]).toEqual({ action: 'print', knockedOff: null });
 
     /* Ticked in the other order; printed in LIST order. */
     fireEvent.click(screen.getByLabelText('Tick 2990-SCN-2609-001'));
