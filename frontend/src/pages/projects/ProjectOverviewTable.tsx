@@ -91,6 +91,9 @@ export function ProjectOverviewTable({ rows, loading, onOpen }: { rows: Overview
       getRowKey={(r) => r.p.id}
       onRowClick={(r) => onOpen(r.p.id)}
       defaultSort={(a, b) => (b.p.startDate ?? "").localeCompare(a.p.startDate ?? "")}
+      /* More page sits below it (Venue rent, the stuck and gaps lists), which shrank the box to 240px:
+         it fills the screen instead (owner 2026-11-05, the Event Commission rule). */
+      freezeHeight="screen"
     />
   );
 }
