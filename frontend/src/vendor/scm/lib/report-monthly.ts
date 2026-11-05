@@ -31,6 +31,8 @@ export type FlatLine = {
   code?: string;
   /** A grey line after the name on screen (`· 3 lines`, `· GP % = …`); not exported. */
   caption?: string;
+  /** A group's own name for its Total line (the layout's totalLabel); else "Total <label>". */
+  totalLabel?: string;
 };
 
 export type MonthlyCell = { amountSen: number; pct: number | null };
@@ -87,6 +89,7 @@ export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
   flattenLaid(nodes, depth).map(({ node, depth: d }) => ({
     id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind === 'subtotal' ? 'net' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
     ...(node.code ? { code: node.code } : {}),
+    ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}),
   }));
 
 export const fixedLine = (id: string, label: string, kind: FlatLine['kind'], amountSen: number, pct: number | null): FlatLine =>
@@ -107,7 +110,7 @@ export function mergeColumns(columns: Array<{ key: string; lines: FlatLine[] }>)
     for (const l of col.lines) {
       let line = at.get(l.id);
       if (!line) {
-        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}), ...(l.caption ? { caption: l.caption } : {}) };
+        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}), ...(l.caption ? { caption: l.caption } : {}), ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}) };
         at.set(l.id, line);
         const after = prevId ? out.findIndex((x) => x.id === prevId) : -1;
         out.splice(after + 1, 0, line);

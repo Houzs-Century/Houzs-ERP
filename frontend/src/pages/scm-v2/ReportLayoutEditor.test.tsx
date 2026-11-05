@@ -162,6 +162,37 @@ describe('the layout editor', () => {
     expect(((saved().blocks.expenses![0] as { children: Array<{ hiddenFor?: number[] }> }).children[0]!).hiddenFor).toEqual([1]);
   });
 
+  /* Owner 2026-11-05: a long tree cannot be dragged past the screen, so a row is picked
+     up, the page scrolled, and the row put down; Esc lets go. Any category names its own Total line. */
+  test('Pick up parks a row; Place inside puts it in a category; Esc cancels', async () => {
+    saveAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick up 900-A001' }));
+    expect(screen.getByRole('status').textContent).toContain('Moving 900-A001');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('button', { name: 'Place inside ADVERTISEMENT' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick up 900-A001' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Place inside ADVERTISEMENT' }));
+    expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    expect(shape(saved().blocks.expenses!)).toEqual([{ 'acc:900-0000': [{ 'acc:900-A002': ['900-A014', '900-A001'] }] }]);
+  });
+
+  test('a category below the top names its own Total line, and Save sends it', async () => {
+    saveAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename ADVERTISEMENT' }));
+    const total = screen.getByLabelText('Subtotal name of ADVERTISEMENT') as HTMLInputElement;
+    fireEvent.change(total, { target: { value: 'Total marketing' } });
+    fireEvent.keyDown(total, { key: 'Enter' });
+    expect(screen.getByText('Subtotal line: Total marketing')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    const cat = (saved().blocks.expenses![0] as { children: Array<{ totalLabel?: string }> }).children[1]!;
+    expect(cat.totalLabel).toBe('Total marketing');
+  });
+
   test('a new category joins the block; deleting one moves what it held up a level; an unplaced account goes back to Unassigned', async () => {
     saveAsync.mockClear();
     draw();
@@ -269,9 +300,10 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     expect((screen.getByLabelText('Subtotal name of RECEIPTS') as HTMLInputElement).value).toBe('Total receipts');
     expect(screen.getByLabelText('Subtotal name of RECEIPTS').getAttribute('title')).toBe('Its subtotal line');
     fireEvent.keyDown(screen.getByLabelText('Rename RECEIPTS'), { key: 'Escape' });
-    /* A category deeper down has no subtotal line of its own. */
+    /* A category deeper down may name its own Total line too (owner 2026-11-05); unnamed, it shows none. */
+    expect(screen.queryByText(/Subtotal line: Total CURRENT ASSETS/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Rename CURRENT ASSETS' }));
-    expect(screen.queryByLabelText('Subtotal name of CURRENT ASSETS')).toBeNull();
+    expect((screen.getByLabelText('Subtotal name of CURRENT ASSETS') as HTMLInputElement).placeholder).toBe('Total CURRENT ASSETS');
     fireEvent.keyDown(screen.getByLabelText('Rename CURRENT ASSETS'), { key: 'Escape' });
     /* 601-0003 reads Out only, 910-0000 nowhere: the In side lacks both, the Out side lacks 910-0000. */
     expect(screen.getByText(/Unassigned receipts/)).toBeTruthy();
