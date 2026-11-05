@@ -123,6 +123,7 @@ export function cashFlowLines(r: RpReport, codes: readonly string[]): StatementL
         id: node.id, label: node.label, depth,
         kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category',
         ...(node.code ? { code: node.code } : {}),
+        ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}),
         cells: cells(node.cells, node.amountSen, node.pct),
       });
     }

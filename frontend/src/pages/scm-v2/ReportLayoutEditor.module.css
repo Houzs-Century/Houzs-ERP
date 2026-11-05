@@ -117,3 +117,10 @@
 }
 .place:hover:not(:disabled) { background: var(--fin-paper); }
 .place:disabled { opacity: 0.5; cursor: default; }
+
+/* A picked-up row on its way (owner 2026-11-05): the bar stays above the tree while the page scrolls. */
+.parked {
+  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
+  margin: 0 16px 8px; padding: 8px 12px; border: 1px solid var(--fin-petrol-line, #b9d6d1); border-radius: 8px;
+  background: var(--fin-petrol-pale, #e1efed); color: var(--fin-petrol-ink, #0c3f39); font-size: 12.5px;
+}

@@ -130,7 +130,7 @@ export const linesVisible = <L extends FoldableLine>(lines: L[], level: number |
 };
 
 /** A line as the totals-below rule reads it: a folder's figures, by column. */
-export type TotalsBelowLine = FoldableLine & { label: string; kind: string; cells: Partial<Record<string, unknown>> };
+export type TotalsBelowLine = FoldableLine & { label: string; kind: string; totalLabel?: string; cells: Partial<Record<string, unknown>> };
 
 /** Owner 2026-11-05 (subtotal 可以放在下面吗？): every OPEN group below the top
  *  level prints its figures on a "Total <name>" line after its rows, its own title
@@ -142,7 +142,7 @@ export function totalsBelow<L extends TotalsBelowLine>(
 ): Array<L & { bare?: boolean; totalOf?: string }> {
   const out: Array<L & { bare?: boolean; totalOf?: string }> = [];
   const stack: L[] = [];
-  const close = (f: L) => out.push({ ...f, id: `sub:${f.id}`, label: `Total ${f.label}`, kind: 'total', totalOf: f.id });
+  const close = (f: L) => out.push({ ...f, id: `sub:${f.id}`, label: f.totalLabel ?? `Total ${f.label}`, kind: 'total', totalOf: f.id });
   for (const l of shown) {
     while (stack.length > 0 && stack[stack.length - 1]!.depth >= l.depth) close(stack.pop()!);
     const i = all.indexOf(l);
