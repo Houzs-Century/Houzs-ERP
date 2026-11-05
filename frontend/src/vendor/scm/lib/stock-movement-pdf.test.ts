@@ -351,6 +351,7 @@ type TakeLineFixture = {
   variant_key: string; variant_label: string | null;
   system_qty: number | null; counted_qty: number | null; variance: number | null;
   notes: string | null;
+  source_pos?: Array<{ po: string; qty: number }>;
 };
 
 const TAKE_HEADER: TakeHeaderFixture = {
@@ -503,6 +504,23 @@ describe('Stock Take PDF', () => {
     const { printVariant } = await import('./stock-take-pdf');
     expect(printVariant('fabriccode pc151-01 · gap 12" · divanheight 10" · legheight 1" · special hb fully covered'))
       .toBe('pc151-01 · gap 12" · divan 10" · leg 1" · hb fully covered');
+  });
+
+  /* Sim 2026-10-26: the PO on the printed sheet too, to trace sofa / bedframe stock. */
+  test('an OPEN sheet prints a PO column when a line traces to a PO', async () => {
+    const { draws } = await renderTake(
+      { ...TAKE_HEADER, status: 'OPEN', posted_at: null },
+      TAKE_LINES.map((l, i) => ({ ...l, source_pos: i === 0 ? [{ po: 'HC-PO-010089', qty: 9 }] : [] })),
+    );
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('PO');
+    expect(text.some((t) => t.includes('HC-PO-010089 (9)'))).toBe(true);
+    expect(text).toContain('Rack');
+  });
+
+  test('no PO column when no line traces to a PO', async () => {
+    const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES.map((l) => ({ ...l, source_pos: [] })));
+    expect(draws.map((d) => d.text)).not.toContain('PO');
   });
 
   test('a POSTED sheet shows Variance in place of Rack', async () => {
