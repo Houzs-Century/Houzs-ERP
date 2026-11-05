@@ -70,7 +70,7 @@ export type MaintenanceConfig = {
 
 /** Fabric tier — same enum HOOKKA stores on fabric_trackings. PRICE_3 is a
  *  forward-compat slot; current Commander rules only switch on PRICE_1. */
-export type MfgFabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';
+export type MfgFabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 
 /** Per-(height, tier) sofa price entry. Legacy rows without `tier` are
  *  treated as PRICE_2 (HOOKKA's historic default).
@@ -623,7 +623,7 @@ export function computeMfgLineCost(
 // ----------------------------------------------------------------------------
 
 /** Raw price_matrix as it arrives off the binding row (JSONB). Bedframe =
- *  `{P1?,P2?}` (sen); sofa = `{ "<seatSize>": {P1?,P2?,P3?} }` (sen). Null on
+ *  `{P1?,P2?}` (sen); sofa = `{ "<seatSize>": {P1?,P2?,P3?,P4?} }` (sen). Null on
  *  rows / categories that use the flat `unit_price_sen`
  *  (mattress / accessory / service). */
 export type PoPriceMatrix = Record<string, unknown> | null;
@@ -640,7 +640,7 @@ const asSen = (v: unknown): number | null =>
  *  - BEDFRAME: basePriceSen = matrix.P2; price1Sen = matrix.P1. When BOTH are
  *    missing → basePriceSen = `unitPriceSen` (flat fallback).
  *  - SOFA: build seatHeightPrices from each `[size, cell]` — one row per
- *    populated tier (P2→PRICE_2, P1→PRICE_1, P3→PRICE_3). basePriceSen =
+ *    populated tier (P2→PRICE_2, P1→PRICE_1, P3→PRICE_3, P4→PRICE_4). basePriceSen =
  *    `unitPriceSen` so `computeMfgLineCost` falls back to flat when the
  *    matrix is empty / the picked seat size isn't found.
  *  - MATTRESS / ACCESSORY / SERVICE: basePriceSen = `unitPriceSen`.
@@ -689,9 +689,11 @@ export function computeMfgPoUnitCost(
         const p2 = asSen(cell.P2);
         const p1 = asSen(cell.P1);
         const p3 = asSen(cell.P3);
+        const p4 = asSen(cell.P4);
         if (p2 != null) seatHeightPrices.push({ height: size, tier: 'PRICE_2', priceSen: p2 });
         if (p1 != null) seatHeightPrices.push({ height: size, tier: 'PRICE_1', priceSen: p1 });
         if (p3 != null) seatHeightPrices.push({ height: size, tier: 'PRICE_3', priceSen: p3 });
+        if (p4 != null) seatHeightPrices.push({ height: size, tier: 'PRICE_4', priceSen: p4 });
       }
     }
     product = {

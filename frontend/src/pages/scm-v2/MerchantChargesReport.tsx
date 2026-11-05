@@ -5,48 +5,51 @@
 // A month is a block: its line across every merchant first, then a line per
 // merchant; a merchant opens to the reports (files) behind it. The fee % is
 // the merchant's fee against the gross; the bank's own payout charge sits
-// beside it and the two together are the total charge %. Export writes the
-// table as CSV.
+// beside it and the two together are the total charge %.
 //
 // Cash and Online are rows too (owner 2026-09-14, docs/bugs/0900: 这个 merchant
 // charge 其实会包括 cash online，只是 % 是 0 percent): the payments keyed on
 // sales orders that no merchant carried, at 0%, opening to the payments
 // themselves; they count in the month's line and the total.
+//
+// In the owner's Claude Design (batch 6 step 12, §5.6): the report shell, the
+// shared range in whole months, Merchant and Lines in the toolbar, the tiles
+// (worked once from the same read), the chart of fee % by merchant over the
+// chart's months (the same read for those months), the grid with resizable
+// columns (fin-mc-cw), Excel / PDF / Print as shown, the CSV under ⋯.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
-import { Button } from '@2990s/design-system';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
-  channelLabel, channelOrder, paymentFigures, useMerchantChargesReport,
+  CASH_CHANNEL, ONLINE_CHANNEL, channelLabel, channelOrder, paymentFigures, useMerchantChargesReport,
   type ChargeAcquirer, type ChargeFigures, type MerchantChargesReport,
 } from '../../vendor/scm/lib/merchant-charges-queries';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
+import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
+import { FinanceDateRange } from './reports/FinanceDateRange';
+import { useReportRange } from './reports/useReportRange';
+import {
+  ReportExports, ReportHeaderActions, ReportMessage, ReportMore, ReportTiles, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
+  type ReportTile,
+} from './reports/reportParts';
+import { monthName } from './reports/statementColumns';
+import { REPORT_CHART_COLORS, ReportBarChart, useChartMonths, type ChartBarSeries, type ChartMonth } from './reports/ReportBarChart';
+import { windowMonths, type ChartWindow } from './reports/chartWindow';
+import mc from './reports/MerchantCharges.module.css';
 
-const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-const thisMonth = (): string => myt().slice(0, 7);
-const monthsAgo = (n: number): string => {
-  const [y, m] = thisMonth().split('-').map(Number);
-  const d = new Date(Date.UTC(y!, m! - 1 - n, 1));
-  return d.toISOString().slice(0, 7);
-};
-
-const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)' };
-const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const danger = 'var(--c-festive-b, #B8331F)';
-
-const fmtRm = (sen: number): string => {
-  const abs = Math.abs(sen) / 100;
-  const text = abs.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return sen < 0 ? `(${text})` : text;
-};
+const fmtRm = (sen: number): string => fmtSenPlain(sen);
 const fmtPct = (pct: number): string => `${pct.toFixed(1)}%`;
-/* Months read as the ISO word the data carries, 2026-06 — no month-name table,
-   no locale (the date-format gate's rule). */
+const monthOf = (ym: string): string => monthName(`${ym}-01`);
+const isCard = (acquirer: string): boolean => acquirer !== CASH_CHANNEL && acquirer !== ONLINE_CHANNEL;
 
 const COLUMNS = ['Month / merchant', 'Lines', 'Gross', 'Merchant fee', 'Fee %', 'Bank charge', 'Total charge', 'Charge %', 'Net'] as const;
+const WIDTHS: ColumnWidthSpec = {
+  defaults: ['minmax(220px,1fr)', '64px', '120px', '112px', '72px', '112px', '112px', '80px', '120px'],
+  min: [160, 48, 90, 80, 56, 80, 80, 60, 90],
+  fit: [false, true, true, true, true, true, true, true, true],
+};
 
 /* The table as CSV: a month line, its merchants, their reports — or, under
    Cash and Online, the payments. */
@@ -77,22 +80,124 @@ const downloadText = (name: string, text: string) => {
   URL.revokeObjectURL(url);
 };
 
+/** The tiles' figures, worked once from the read: the totals, and the cards' share apart from cash and online. */
+export function chargeTileFigures(r: MerchantChargesReport) {
+  let cardGrossSen = 0;
+  for (const m of r.months) for (const a of m.acquirers) if (isCard(a.acquirer)) cardGrossSen += a.grossSen;
+  const ofCards = (sen: number) => (cardGrossSen > 0 ? (sen / cardGrossSen) * 100 : null);
+  return {
+    grossSen: r.totals.grossSen,
+    cashOnlineSen: r.totals.grossSen - cardGrossSen,
+    feeSen: r.totals.feeSen,
+    feePctCards: ofCards(r.totals.feeSen),
+    bankChargeSen: r.totals.bankChargeSen,
+    chargePct: r.totals.chargePct,
+    chargePctCards: ofCards(r.totals.chargeSen),
+  };
+}
+
+const merchantSub = (a: ChargeAcquirer): string => {
+  const n = a.payments ? a.payments.length : a.reports.length;
+  const what = a.payments ? 'payment' : 'report';
+  return `· ${n} ${what}${n === 1 ? '' : 's'}`;
+};
+
+/** The grid as the screen shows it — the opened merchants' files or payments
+ *  included — for Excel and PDF. */
+export function merchantChargesSheet(r: MerchantChargesReport, open: ReadonlySet<string>, subtitle: string): ReportSheet {
+  const cols: SheetColumn[] = [
+    { label: 'Lines', kind: 'text' }, AMOUNT_COLUMN('Gross'), AMOUNT_COLUMN('Merchant fee'), PCT_COLUMN('Fee %'),
+    AMOUNT_COLUMN('Bank charge'), AMOUNT_COLUMN('Total charge'), PCT_COLUMN('Charge %'), AMOUNT_COLUMN('Net'),
+  ];
+  const cells = (f: ChargeFigures) => [String(f.lines), f.grossSen, f.feeSen, f.feePct, f.bankChargeSen || null, f.chargeSen, f.chargePct, f.netSen];
+  const rows: SheetRow[] = [];
+  for (const m of r.months) {
+    rows.push({ kind: 'category', depth: 0, label: `${monthOf(m.month)} · all merchants`, cells: cells(m) });
+    for (const a of m.acquirers) {
+      rows.push({ kind: 'row', depth: 1, label: `${channelLabel(a.acquirer)} ${merchantSub(a)}`, cells: cells(a) });
+      if (!open.has(`${m.month}|${a.acquirer}`)) continue;
+      for (const rep of a.reports) rows.push({ kind: 'memo', depth: 2, label: `${rep.fileName ?? `batch ${rep.batchId}`} · swiped ${swiped(rep.periodFrom, rep.periodTo)}`, cells: cells(rep) });
+      for (const p of a.payments ?? []) rows.push({ kind: 'memo', depth: 2, label: `${p.docNo} · ${fmtDateOrDash(p.paidOn)}${p.subType ? ` · ${p.subType}` : ''}`, cells: cells(paymentFigures(p)) });
+    }
+  }
+  rows.push({ kind: 'total', depth: 0, label: `Total · ${r.months.length} month${r.months.length === 1 ? '' : 's'}`, cells: cells(r.totals) });
+  return {
+    title: 'Merchant charges',
+    subtitle,
+    meta: [{ label: 'Months', value: `${monthOf(r.from)} – ${monthOf(r.to)}` }, { label: 'Lines', value: r.confirmedOnly ? 'Confirmed only' : 'All lines' }],
+    tables: [{ columns: cols, rows }],
+    notes: [NOTE_FEES, NOTE_CASH],
+  };
+}
+
+const swiped = (from: string | null, to: string | null): string =>
+  `${fmtDateOrDash(from)}${to && to !== from ? ` – ${fmtDate(to)}` : ''}`;
+
+const NOTE_FEES = 'Fee % is the merchant’s fee against the gross they reported. Bank charge is what the bank took on the payout day (booked on Payment advice); Charge % is fee and bank charge together against the gross. A merchant opens to its reports.';
+const NOTE_CASH = 'Cash and Online are the payments keyed on sales orders, by payment date, with no fee; they count in the month and the total, and open to the payments.';
+
+/* ── The chart (batch 6 §5.6): fee % by merchant, month by month, the charge %
+   under each month — the same read over the chart's months. ── */
+const MERCHANT_COLORS = [REPORT_CHART_COLORS.petrol, REPORT_CHART_COLORS.gold, REPORT_CHART_COLORS.grey, '#0c3f39', '#a16a2e', '#5f6459'];
+
+export function chargeChartMonths(win: ChartWindow | null, r: MerchantChargesReport | undefined): { series: ChartBarSeries[]; months: ChartMonth[] } {
+  if (!win) return { series: [], months: [] };
+  const acquirers = [...new Set((r?.months ?? []).flatMap((m) => m.acquirers.map((a) => a.acquirer)).filter(isCard))].sort(channelOrder);
+  const series = acquirers.map((a, i) => ({ key: a, label: channelLabel(a), color: MERCHANT_COLORS[i % MERCHANT_COLORS.length]! }));
+  const byMonth = new Map((r?.months ?? []).map((m) => [`${m.month}-01`, m]));
+  const months = windowMonths(win).map((month): ChartMonth => {
+    const m = byMonth.get(month);
+    if (!m) return { month, values: {}, bottom: [], under: null };
+    return {
+      month,
+      values: Object.fromEntries(m.acquirers.filter((a) => isCard(a.acquirer)).map((a) => [a.acquirer, a.feePct])),
+      bottom: [{ label: 'Charge %', value: fmtPct(m.chargePct) }, { label: 'Gross', value: fmtRm(m.grossSen) }],
+      under: { text: fmtPct(m.chargePct), loss: false },
+    };
+  });
+  return { series, months };
+}
+
+function ChargesChart({ win, acquirer, confirmedOnly }: { win: ChartWindow; acquirer: string | null; confirmedOnly: boolean }) {
+  const q = useMerchantChargesReport(win.from.slice(0, 7), win.to.slice(0, 7), acquirer, confirmedOnly);
+  const { series, months } = chargeChartMonths(win, q.data);
+  return (
+    <ReportBarChart
+      title="Fee % by merchant, month by month"
+      series={series}
+      months={months}
+      win={win}
+      loading={q.isLoading}
+      failed={q.isError}
+      unit="pct"
+      fmtValue={fmtPct}
+      note={`Under each month: charge % across ${acquirer ? 'the merchant chosen' : 'every merchant, cash and online included'}. Shaded months are in the period; click a month to show it alone.`}
+    />
+  );
+}
+
+type Lines = 'all' | 'confirmed';
+const LINES: ReadonlyArray<{ value: Lines; label: string }> = [{ value: 'all', label: 'All lines' }, { value: 'confirmed', label: 'Confirmed only' }];
+
 export const MerchantChargesTab = () => {
-  const [from, setFrom] = useState(monthsAgo(5));
-  const [to, setTo] = useState(thisMonth());
+  const r = useReportRange();
+  const from = r.usable ? r.from.slice(0, 7) : '';
+  const to = r.usable ? r.to.slice(0, 7) : '';
   const [acquirer, setAcquirer] = useState<string | null>(null);
-  const [confirmedOnly, setConfirmedOnly] = useState(false);
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const q = useMerchantChargesReport(from, to, acquirer, confirmedOnly);
-  const r = q.data;
+  const [lines, setLines] = useState<Lines>('all');
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const q = useMerchantChargesReport(from, to, acquirer, lines === 'confirmed');
+  const d = q.data;
+  const cw = useColumnWidths('mc', WIDTHS);
+  const chartWin = useChartMonths(r.from, r.to, r.usable);
 
   /* The merchants the range had, for the filter — remembered off an
      unfiltered answer so picking one does not empty the list. Acquirers
      first, then Cash and Online, as the table lists them. */
   const [merchants, setMerchants] = useState<string[]>([]);
-  useMemo(() => {
-    if (r && acquirer == null) setMerchants([...new Set(r.months.flatMap((m) => m.acquirers.map((a) => a.acquirer)))].sort(channelOrder));
-  }, [r, acquirer]);
+  useEffect(() => {
+    if (d && acquirer == null) setMerchants([...new Set(d.months.flatMap((m) => m.acquirers.map((a) => a.acquirer)))].sort(channelOrder));
+  }, [d, acquirer]);
 
   const toggle = (key: string) => setOpen((prev) => {
     const next = new Set(prev);
@@ -100,125 +205,114 @@ export const MerchantChargesTab = () => {
     return next;
   });
 
-  return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={soft}>From month</span>
-        <input type="month" value={from} onChange={(e) => { if (e.target.value) setFrom(e.target.value); }} aria-label="Merchant charges from month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
-        <span style={soft}>to</span>
-        <input type="month" value={to} onChange={(e) => { if (e.target.value) setTo(e.target.value); }} aria-label="Merchant charges to month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
-        <select value={acquirer ?? ''} onChange={(e) => setAcquirer(e.target.value || null)} aria-label="Merchant" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}>
-          <option value="">Every merchant</option>
-          {merchants.map((m) => <option key={m} value={m}>{channelLabel(m)}</option>)}
-        </select>
-        <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={confirmedOnly} onChange={(e) => setConfirmedOnly(e.target.checked)} aria-label="Confirmed lines only" />
-          confirmed lines only
-        </label>
-        <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" onClick={() => { if (r) downloadText(`merchant-charges-${from}-${to}.csv`, merchantChargesCsv(r)); }} disabled={!r}>
-          <Download size={16} strokeWidth={1.75} /> Export
-        </Button>
-      </div>
-      <div style={soft}>
-        Fee % is the merchant's fee against the gross they reported. Bank charge is what the bank took on the payout day (booked on Payment advice); Charge % is fee and bank charge together against the gross. A merchant opens to its reports.
-        Cash and Online are the payments keyed on sales orders, by payment date, with no fee; they count in the month and the total, and open to the payments.
-      </div>
+  const subtitle = r.usable
+    ? `${monthOf(from)} – ${monthOf(to)} · cards by swipe date, cash and online by payment date · ${lines === 'confirmed' ? 'confirmed lines only' : 'every line'}`
+    : 'Pick dates.';
+  useReportSubtitle(subtitle);
 
-      {q.isLoading && <div style={soft}>Working the months out…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The report did not load — adjust the months to retry.</div>}
-      {r && r.months.length === 0 && <div style={soft}>No merchant report and no keyed payment in these months.</div>}
-      {r && r.months.length > 0 && (
-        <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr>{COLUMNS.map((c, i) => <th key={c} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{c}</th>)}</tr>
-            </thead>
-            <tbody>
-              {r.months.map((m) => (
-                <MonthBlock key={m.month} month={m} open={open} onToggle={toggle} />
+  const t = useMemo(() => (d ? chargeTileFigures(d) : null), [d]);
+  const tiles: ReportTile[] = [
+    { key: 'gross', label: 'Gross received', value: t ? fmtRm(t.grossSen) : '', sub: t ? `Cash and online ${fmtRm(t.cashOnlineSen)}` : '' },
+    { key: 'fees', label: 'Merchant fees', value: t ? fmtRm(t.feeSen) : '', sub: t ? `${t.feePctCards == null ? '—' : fmtPct(t.feePctCards)} of card sales` : '' },
+    { key: 'bank', label: 'Bank charges', value: t ? fmtRm(t.bankChargeSen) : '', sub: 'Taken on payout days' },
+    { key: 'charge', label: 'Charge %', value: t ? fmtPct(t.chargePct) : '', sub: t ? `Cards only ${t.chargePctCards == null ? '—' : fmtPct(t.chargePctCards)}` : '' },
+  ];
+
+  return (
+    <>
+      <ReportHeaderActions>
+        <ReportExports sheet={() => (d ? merchantChargesSheet(d, open, subtitle) : null)} fileBase={`merchant-charges-${from}-${to}`} />
+        <ReportMore items={[{ label: 'CSV', disabled: !d, onClick: () => { if (d) downloadText(`merchant-charges-${from}-${to}.csv`, merchantChargesCsv(d)); } }]} />
+      </ReportHeaderActions>
+      <ReportToolbar>
+        <FinanceDateRange />
+        <ReportTool label="Merchant">
+          <select className={mc.select} value={acquirer ?? ''} onChange={(e) => setAcquirer(e.target.value || null)} aria-label="Merchant">
+            <option value="">Every merchant</option>
+            {merchants.map((m) => <option key={m} value={m}>{channelLabel(m)}</option>)}
+          </select>
+        </ReportTool>
+        <ReportTool label="Lines"><Segmented options={LINES} value={lines} onChange={setLines} label="Lines" /></ReportTool>
+      </ReportToolbar>
+      {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
+      {r.usable && q.isError && <ReportMessage tone="error">The report did not load — adjust the months to retry.</ReportMessage>}
+      {r.usable && !q.isError && <ReportTiles label="Merchant charges figures" tiles={tiles} pending={!d} />}
+      {chartWin && r.usable && <ChargesChart win={chartWin} acquirer={acquirer} confirmedOnly={lines === 'confirmed'} />}
+      {r.usable && q.isLoading && <div className={`skeleton ${mc.card}`} style={{ height: 240 }} aria-busy="true" aria-label="Working the months out" />}
+      {d && (
+        <>
+          <div className={mc.card}>
+            <div data-cw-root="mc" className={mc.grid} style={{ minWidth: cw.minWidth }} role="table" aria-label="Merchant charges">
+              <div data-cw-row="" className={`${mc.row} ${mc.head}`} style={{ gridTemplateColumns: cw.template }} role="row">
+                {COLUMNS.map((c, i) => (
+                  <div key={c} data-cw-cell={i} role="columnheader" className={`${mc.headCell} ${i > 0 ? mc.num : ''}`}>
+                    <span data-cw-lbl="">{c}</span>
+                    <span className={mc.resize} {...cw.handle(i)}><span className={mc.resizeLine} /></span>
+                  </div>
+                ))}
+              </div>
+              {d.months.length === 0 && <p className={mc.empty}>No merchant report and no keyed payment in these months.</p>}
+              {d.months.map((m) => (
+                <Fragment key={m.month}>
+                  <FigureRow template={cw.template} className={mc.month} label={<>{monthOf(m.month)} <span className={mc.sub}>· all merchants</span></>} f={m} />
+                  {m.acquirers.map((a) => {
+                    const key = `${m.month}|${a.acquirer}`;
+                    const isOpen = open.has(key);
+                    const what = a.payments ? 'payments' : 'reports';
+                    return (
+                      <Fragment key={key}>
+                        <FigureRow template={cw.template} className={`${mc.merchant} ${isOpen ? mc.merchantOpen : ''}`} f={a} label={(
+                          <button type="button" className={`${mc.toggle} ${mc.indent}`} onClick={() => toggle(key)} aria-expanded={isOpen}
+                            aria-label={`${isOpen ? 'Hide' : 'Show'} the ${what} of ${channelLabel(a.acquirer)} for ${m.month}`}>
+                            {isOpen ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+                            <span>{channelLabel(a.acquirer)}</span> <span className={mc.sub}>{merchantSub(a)}</span>
+                          </button>
+                        )} />
+                        {isOpen && !a.payments && a.reports.map((rep) => (
+                          <FigureRow key={rep.batchId} template={cw.template} className={mc.detail} f={rep} data={{ 'data-report': String(rep.batchId) }} label={(
+                            <span className={mc.detailName}><span>{rep.fileName ?? `batch ${rep.batchId}`}</span> <span className={mc.sub}>· swiped {swiped(rep.periodFrom, rep.periodTo)}</span></span>
+                          )} />
+                        ))}
+                        {isOpen && a.payments?.map((p) => (
+                          <FigureRow key={p.id} template={cw.template} className={mc.detail} f={paymentFigures(p)} data={{ 'data-payment': p.id }} label={(
+                            <span className={mc.detailName}><span>{p.docNo}</span> <span className={mc.sub}>· {fmtDateOrDash(p.paidOn)}{p.subType ? ` · ${p.subType}` : ''}</span></span>
+                          )} />
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </Fragment>
               ))}
-              <FigureLine label="Total" figures={r.totals} strong indent={0} />
-            </tbody>
-          </table>
-        </div>
+              {d.months.length > 0 && (
+                <FigureRow template={cw.template} className={mc.total} f={d.totals} label={`Total · ${d.months.length} month${d.months.length === 1 ? '' : 's'}`} />
+              )}
+            </div>
+          </div>
+          <div className={mc.foot}>
+            <p className={mc.note}>{NOTE_FEES} {NOTE_CASH}</p>
+            {cw.custom && <button type="button" className={mc.reset} onClick={cw.reset}>Reset column widths</button>}
+          </div>
+        </>
       )}
+    </>
+  );
+};
+
+/** One line of the grid: its name, then the eight figures. */
+function FigureRow({ template, className, label, f, data }: {
+  template: string; className: string; label: React.ReactNode; f: ChargeFigures; data?: Record<string, string>;
+}) {
+  return (
+    <div data-cw-row="" className={`${mc.row} ${className}`} style={{ gridTemplateColumns: template }} role="row" {...data}>
+      <div role="cell" className={mc.cell}>{label}</div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{f.lines}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtRm(f.grossSen)}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtRm(f.feeSen)}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtPct(f.feePct)}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num} ${f.bankChargeSen > 0 ? mc.charge : ''}`}><span data-cw-lbl="">{f.bankChargeSen > 0 ? fmtRm(f.bankChargeSen) : '—'}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtRm(f.chargeSen)}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtPct(f.chargePct)}</span></div>
+      <div role="cell" className={`${mc.cell} ${mc.num}`}><span data-cw-lbl="">{fmtRm(f.netSen)}</span></div>
     </div>
   );
-};
-
-const MonthBlock = ({ month, open, onToggle }: { month: MerchantChargesReport['months'][number]; open: Set<string>; onToggle: (key: string) => void }) => (
-  <>
-    <FigureLine label={`${month.month} · all merchants`} figures={month} strong indent={0} top />
-    {month.acquirers.map((a) => {
-      const key = `${month.month}|${a.acquirer}`;
-      return (
-        <MerchantLines key={key} row={a} isOpen={open.has(key)} onToggle={() => onToggle(key)} monthLabel={month.month} />
-      );
-    })}
-  </>
-);
-
-const Cells = ({ f }: { f: ChargeFigures }) => {
-  const cell: React.CSSProperties = { padding: '4px 10px', ...num };
-  return (
-    <>
-      <td style={cell}>{f.lines}</td>
-      <td style={cell}>{fmtRm(f.grossSen)}</td>
-      <td style={cell}>{fmtRm(f.feeSen)}</td>
-      <td style={cell}>{fmtPct(f.feePct)}</td>
-      <td style={{ ...cell, color: f.bankChargeSen > 0 ? danger : undefined }}>{f.bankChargeSen > 0 ? fmtRm(f.bankChargeSen) : '—'}</td>
-      <td style={cell}>{fmtRm(f.chargeSen)}</td>
-      <td style={cell}>{fmtPct(f.chargePct)}</td>
-      <td style={cell}>{fmtRm(f.netSen)}</td>
-    </>
-  );
-};
-
-const FigureLine = ({ label, figures, strong, indent, top }: { label: string; figures: ChargeFigures; strong?: boolean; indent: number; top?: boolean }) => (
-  <tr style={{ borderTop: top ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #f0eee8)', fontWeight: strong ? 700 : 400 }}>
-    <td style={{ padding: '6px 10px', paddingLeft: 10 + indent }}>{label}</td>
-    <Cells f={figures} />
-  </tr>
-);
-
-/* One merchant (or channel) under a month: its line, and when opened the
-   reports behind it — or, for Cash and Online, the payments themselves. */
-const MerchantLines = ({ row, isOpen, onToggle, monthLabel }: {
-  row: ChargeAcquirer; isOpen: boolean; onToggle: () => void; monthLabel: string;
-}) => {
-  const label = channelLabel(row.acquirer);
-  const payments = row.payments ?? null;
-  const what = payments ? 'payments' : 'reports';
-  return (
-    <>
-      <tr style={{ borderTop: '1px solid var(--border-weak, #f0eee8)', background: isOpen ? 'var(--c-cream, #faf7f0)' : undefined }}>
-        <td style={{ padding: '4px 10px 4px 28px' }}>
-          <button type="button" onClick={onToggle} aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'Show'} the ${what} of ${label} for ${monthLabel}`}
-            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit', fontWeight: 600 }}>
-            {isOpen ? '▾' : '▸'} {label}
-          </button>
-        </td>
-        <Cells f={row} />
-      </tr>
-      {isOpen && !payments && row.reports.map((rep) => (
-        <tr key={rep.batchId} data-report={rep.batchId} style={{ background: 'var(--c-cream, #faf7f0)', fontSize: 'var(--fs-12)' }}>
-          <td style={{ padding: '2px 10px 2px 46px' }}>
-            <span style={{ fontFamily: 'var(--font-mono)' }}>{rep.fileName ?? `batch ${rep.batchId}`}</span>
-            <span style={soft}> · {fmtDateOrDash(rep.periodFrom)}{rep.periodTo && rep.periodTo !== rep.periodFrom ? ` → ${fmtDateOrDash(rep.periodTo)}` : ''}</span>
-          </td>
-          <Cells f={rep} />
-        </tr>
-      ))}
-      {isOpen && payments && payments.map((p) => (
-        <tr key={p.id} data-payment={p.id} style={{ background: 'var(--c-cream, #faf7f0)', fontSize: 'var(--fs-12)' }}>
-          <td style={{ padding: '2px 10px 2px 46px' }}>
-            <span style={{ fontFamily: 'var(--font-mono)' }}>{p.docNo}</span>
-            <span style={soft}> · {fmtDateOrDash(p.paidOn)}{p.subType ? ` · ${p.subType}` : ''}</span>
-          </td>
-          <Cells f={paymentFigures(p)} />
-        </tr>
-      ))}
-    </>
-  );
-};
+}

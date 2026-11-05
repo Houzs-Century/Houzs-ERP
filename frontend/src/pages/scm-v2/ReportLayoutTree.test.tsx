@@ -66,8 +66,12 @@ describe('the tree', () => {
     expect(within(drill).getByText('Rent August')).toBeTruthy();
     expect(within(drill).getByText('310-0010 CASH AT BANK - MAYBANK')).toBeTruthy();
     expect(within(drill).getByText('2990-HPV-2608-017')).toBeTruthy();
-    expect(within(drill).getByText(/共 1 笔/)).toBeTruthy();
-    expect((within(drill).getByRole('link', { name: '在 GL 打开' }) as HTMLAnchorElement).getAttribute('href')).toBe('/scm/accounting?tab=gl&accounts=900-A001&from=2026-08-01&to=2026-08-31');
+    /* The redesign's head (batch 6 §4.1): the account and the period, then the
+       ledger one click away — opened from a report, so in the report list. */
+    expect(within(drill).getByText(/2026\/08\/01 – 2026\/08\/31/)).toBeTruthy();
+    expect((within(drill).getByRole('link', { name: /Open in General ledger/ }) as HTMLAnchorElement).getAttribute('href')).toBe('/scm/accounting?tab=gl&accounts=900-A001&from=2026-08-01&to=2026-08-31&in=reports');
+    /* The debit and credit totals stand under the lines. */
+    expect(drill.textContent).toContain('1,200.00');
     /* The figure keeps its own door. */
     fireEvent.click(screen.getByRole('button', { name: '900-A001 — RENTAL total' }));
     expect(onPick).toHaveBeenCalledTimes(1);

@@ -54,6 +54,7 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
+import { autoTickChecklistOnUpload, autoTickPhasePhoto } from "../services/checklistAutoTick";
 import { canCreateEvent, getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
@@ -3308,6 +3309,11 @@ app.post("/:id/phase-photos", async (c) => {
   )
     .bind(id, phase, body.r2_key, body.content_type ?? null, body.caption ?? null, user?.id ?? null)
     .run();
+  // Crew Setup/Dismantle photo → auto-tick the matching DRIVER row DONE (these
+  // bypass task attachments). See services/checklistAutoTick.ts.
+  if (phase === "setup" || phase === "dismantle") {
+    await autoTickPhasePhoto(c.env, id, phase, user?.id ?? 0);
+  }
   return c.json({ id: r.meta.last_row_id });
 });
 
@@ -4056,6 +4062,9 @@ app.put(
     ) {
       await submitChecklistForReview(c.env, itemId, user?.id ?? 0);
     }
+    // Owner (repeated ask): auto-tick a plain evidence row DONE on upload — no
+    // manual click, mobile and PC. See services/checklistAutoTick.ts.
+    await autoTickChecklistOnUpload(c.env, item, itemId, user?.id ?? 0);
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`

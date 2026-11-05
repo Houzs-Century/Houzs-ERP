@@ -143,7 +143,7 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'sum:net')).toMatchObject({ kind: 'net', depth: 0 });
   });
 
-  test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash Surplus, Balance b/f, Balance c/f', () => {
+  test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash surplus / (deficit), Balance b/f, Balance c/f', () => {
     const top = (id: string, label: string, flow: 'in' | 'out', totalLabel: string, children: LaidNode[], pct: number | null, kind: LaidNode['kind'] = 'category'): LaidNode =>
       ({ ...cat(id, label, children, pct), kind, flow, totalLabel });
     const r = {
@@ -171,7 +171,7 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'tot:side:in')).toMatchObject({ label: 'Total receipts', kind: 'total', amountSen: 50_000, pct: 100 });
     expect(lines.find((l) => l.id === 'sub:ops')).toMatchObject({ label: 'Net operation surplus / (deficit)', kind: 'net', amountSen: 10_000, pct: null });
     expect(lines.find((l) => l.id === 'tot:unassigned:out')).toMatchObject({ label: 'Total unassigned payments', kind: 'total', amountSen: 30_000, pct: 42.9 });
-    expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash Surplus / (Deficit)', kind: 'net', amountSen: -20_000, pct: null });
+    expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash surplus / (deficit)', kind: 'net', amountSen: -20_000, pct: -40 });
     expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
     expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
   });

@@ -74,7 +74,7 @@ async function resetFixture(s: Sql): Promise<void> {
       sales_location text, agent text, salesperson_id uuid,
       local_total_sen integer NOT NULL DEFAULT 0,
       remark2 text, remark3 text, remark4 text, note text,
-      processing_date date, customer_delivery_date date,
+      processing_date date, customer_delivery_date date, sales_exemption_expiry date,
       address1 text, address2 text, address3 text, address4 text, postcode text, city text, customer_state text, customer_country text,
       venue text,
       status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
@@ -327,6 +327,9 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     await sql.unsafe(upd1, ['HC-SO-013495', null, '2026-10-02', 1] as never[]);
     const [row2] = await sql`SELECT remark4, customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
     expect(row2).toEqual({ remark4: 'Done Scheduling', d: '2026-10-02' });
+    // HC-0122: the first sheet date froze as the Sales Exemption Expiry; the 10-02 reschedule left it.
+    const [exp] = await sql`SELECT sales_exemption_expiry::text AS e FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
+    expect(exp).toEqual({ e: '2026-10-01' });
 
     // Only the remark, blank on purpose (col A cleared) — the date stays.
     await sql.unsafe(upd1, ['SO-013495', '', null, 1] as never[]);

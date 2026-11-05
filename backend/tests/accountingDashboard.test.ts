@@ -370,7 +370,9 @@ describe('buildDashboard — reads', () => {
     const count = (table: string) => reads.filter((n) => n === table).length;
     expect(count('mfg_sales_orders')).toBe(1);
     expect(count('mfg_sales_order_items')).toBe(1);
-    expect(count('acc_company_settings')).toBe(1);
+    /* Twice, both in the first wave: the Performance P&L's rate, and the
+       books' opening (acc/books-opening.ts) — never once per period. */
+    expect(count('acc_company_settings')).toBe(2);
     expect(count('v_gl_entries')).toBe(1);
     expect(count('acc_forecast_pnl')).toBe(1);
   });

@@ -21,7 +21,7 @@ export type ProductRequestApplication = (typeof PRODUCT_REQUEST_APPLICATIONS)[nu
 export const PRODUCT_REQUEST_STATUSES = ['REQUESTED', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'PCO_ISSUED', 'PO_ISSUED', 'CLOSED'] as const;
 export type ProductRequestStatus = (typeof PRODUCT_REQUEST_STATUSES)[number];
 
-export type ProductRequestAction = 'approve' | 'reject' | 'withdraw' | 'resubmit' | 'issue_pco' | 'issue_po' | 'close';
+export type ProductRequestAction = 'approve' | 'reject' | 'withdraw' | 'resubmit' | 'issue_pco' | 'issue_po' | 'release_po' | 'close';
 
 const FLOW: Record<ProductRequestAction, { from: ProductRequestStatus[]; to: ProductRequestStatus }> = {
   // The Purchaser's yes. Model/SKU builds and a PC Order may follow.
@@ -36,6 +36,8 @@ const FLOW: Record<ProductRequestAction, { from: ProductRequestStatus[]; to: Pro
   issue_pco: { from: ['APPROVED'], to: 'PCO_ISSUED' },
   // A Purchase Order was raised from it instead.
   issue_po:  { from: ['APPROVED'], to: 'PO_ISSUED' },
+  // Its PO was cancelled (2990-0027): it is approved again and may raise another.
+  release_po: { from: ['PO_ISSUED'], to: 'APPROVED' },
   // Nothing more to do: the goods came in, or the Purchaser ends it.
   close:     { from: ['APPROVED', 'PCO_ISSUED', 'PO_ISSUED'], to: 'CLOSED' },
 };

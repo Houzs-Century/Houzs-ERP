@@ -45,6 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { skuCategoryResolver } from './sku-category';
+import { retiredLineOf, type AcRetiredLine } from './autocount-outbox';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { pickAddLineBinding, readMfgProductBindings } from './supplier-bindings';
 import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
@@ -58,6 +59,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
+import { exemptionExpirySeed } from './so-exemption-expiry';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
@@ -395,7 +397,7 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date, sales_exemption_expiry').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
   // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
@@ -864,7 +866,7 @@ export async function applySoAmendment(
      its value. Rewriting legacy spellings onto today's keys before anything
      reads them is what stops that; it is an identity map until a rename lands.
      See shared/so-processing-date.ts for the removal condition. */
-  const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown };
+  const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown; sales_exemption_expiry?: string | null };
   const storedHeaderChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   /* A Processing Date removal clears the Delivery Date with it — the same cascade
      the direct header PATCH runs (soDatePairCascadeColumns), so the order never
@@ -902,6 +904,12 @@ export async function applySoAmendment(
          is preserved in the amendment's `old_header_snapshot` and the
          `AMENDMENT_SO_APPROVED` audit row, so replacing it stays fully auditable. */
       if (key === 'customerDeliveryDate') headerUpdates['amended_delivery_date'] = value === '' ? null : value;
+      /* HC-0122: the first date an order ever gets may arrive through an amendment;
+         freeze it as the Sales Exemption Expiry exactly as create / header PATCH do. */
+      if (key === 'customerDeliveryDate') {
+        const seed = exemptionExpirySeed(soHdrNow.status === 'DRAFT' ? null : soHdrNow.sales_exemption_expiry, dateOrNull(value));
+        if (seed) headerUpdates['sales_exemption_expiry'] = seed;
+      }
       headerApplied.push(`${col}=${value ?? 'cleared'}`);
     }
 
@@ -1190,6 +1198,9 @@ export type ReviseBoundPoResult = {
      an orphaned line left in place because it was already received, an added item
      whose supplier has no open PO, or a PO left with no lines at all. */
   warnings: string[];
+  /* AutoCount keys of the PO lines deleted here, read before the delete, so the
+     caller's AutoCount edit retires them — as applyPoAmendment's REMOVE does (HC-0121). */
+  retired: AcRetiredLine[];
 };
 
 export class ReceivedFloorError extends Error {
@@ -1221,6 +1232,21 @@ export function receivedFloorFromDb(
   return new ReceivedFloorError(poItemId, revisedQty, m ? Number(m[1]) : NaN);
 }
 
+/** Inside runScmPgCommand a refused statement THROWS (it never returns `{ error }`),
+ *  so receivedFloorFromDb on the result would never run. Await the update through
+ *  this and a P0411 comes out as the ReceivedFloorError the callers answer with 409. */
+export async function withReceivedFloor(
+  write: PromiseLike<{ error: { code?: string | null; message?: string } | null }>,
+  poItemId: string,
+  revisedQty: number,
+): Promise<{ error: { code?: string | null; message?: string } | null }> {
+  try {
+    return await write;
+  } catch (e) {
+    throw receivedFloorFromDb(e as { code?: string | null; message?: string }, poItemId, revisedQty) ?? e;
+  }
+}
+
 export async function reviseBoundPo(
   sb: Sb,
   amendmentId: string,
@@ -1232,7 +1258,7 @@ export async function reviseBoundPo(
      Unscoped (the legacy approve-po gate) keeps the original revise-all. */
   opts?: { onlyPoId?: string },
 ): Promise<ReviseBoundPoResult> {
-  const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [] });
+  const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [], retired: [] });
 
   // (1) Load amendment → SO doc_no.
   const { data: amdRow, error: amdErr } = await sb
@@ -1423,6 +1449,7 @@ export async function reviseBoundPo(
      supplier bound at all, is NOT auto-resolved by inventing a PO here — it is
      warned so the operator raises one. */
   const warnings: string[] = [];
+  const retired: AcRetiredLine[] = [];
   const addedNeedingPo = addedSoItemIds.filter((id) => !boundSoItemIdSet.has(id) && revisedById.has(id));
   const addedByPo = new Map<string, Array<{ soItemId: string; line: RevisedLine; supplierSku: string | null }>>();
   if (addedNeedingPo.length > 0) {
@@ -1546,7 +1573,7 @@ export async function reviseBoundPo(
         poLineId: pi.id, currentQty: pi.qty, po, soCompanyId, revised,
       });
       warnings.push(...lineWarnings);
-      const { error: updErr } = await sb.from('purchase_order_items').update(patch).eq('id', pi.id);
+      const { error: updErr } = await withReceivedFloor(sb.from('purchase_order_items').update(patch).eq('id', pi.id), pi.id, Number(patch.qty));
       if (updErr) {
         throw receivedFloorFromDb(updErr, pi.id, Number(patch.qty))
           ?? new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
@@ -1565,8 +1592,12 @@ export async function reviseBoundPo(
         warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);
         continue;
       }
+      const retire = await retiredLineOf(
+        sb as unknown as Parameters<typeof retiredLineOf>[0], 'purchase_order_items', String(orow.id),
+      );
       const { error: delErr } = await sb.from('purchase_order_items').delete().eq('id', orow.id);
       if (delErr) throw new Error(`reviseBoundPo: orphan PO line delete failed for ${orow.id}: ${delErr.message}`);
+      retired.push(...retire);
       linesRemoved += 1;
     }
 
@@ -1603,6 +1634,7 @@ export async function reviseBoundPo(
       const variants = line.variants;
       const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
+        companyId:  po.company_id,
         itemCode:   line.item_code ?? '',
         itemGroup,
         variants:   variants ?? null,
@@ -1695,5 +1727,5 @@ export async function reviseBoundPo(
     perPo.push({ poId: po.id, poNumber: po.po_number, revision: nextRevision, linesRederived, linesRemoved, linesAdded });
   }
 
-  return { revisedPoIds: perPo.map((p) => p.poId), perPo, warnings };
+  return { revisedPoIds: perPo.map((p) => p.poId), perPo, warnings, retired };
 }

@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
 import { DemandSoPanel } from './InventoryDemandSoPanel';
+import { LOCATION_COLUMN } from './InventoryLocationColumn';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -648,6 +649,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
+  LOCATION_COLUMN,
   {
     key: 'incoming',
     label: 'Incoming',
@@ -756,7 +758,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
        Falls back to surplus_qty so a cached pre-fix payload renders as before. */
     getValue: (r) => {
       const idle = r.sellable_surplus_qty ?? r.surplus_qty;
-      return idle > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${idle}` : `spare ${idle}`) : '';
+      return idle > 0 ? `dead ${idle}` : '';
     },
     render: (r) => {
       const idle = r.sellable_surplus_qty ?? r.surplus_qty;
@@ -780,9 +782,9 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
           className={`${styles.movementPill} ${mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
           title={mto
             ? `Make-to-order (${mfgCategoryLabel(r.category)}): ${fmtQty(idle)} spare on hand with no Sales Order — dead-stock candidate${parkedNote}. Open the drawer for the exact assigned/free lots.`
-            : `Make-to-stock (${mfgCategoryLabel(r.category)}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal.`}
+            : `Make-to-stock (${mfgCategoryLabel(r.category)}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal, but still dead stock: nothing open needs it (same rule as Procurement Overview).`}
         >
-          {mto ? 'Dead' : 'Spare'} {fmtQty(idle)}
+          Dead {fmtQty(idle)}
         </span>
       );
     },

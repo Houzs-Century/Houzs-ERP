@@ -23,6 +23,9 @@ export type OverviewView = {
   brand: string;
   type: string;
   organizer: string;
+  venue: string;
+  state: string;
+  stage: string;
   dim: Dim;
   pick: string | null;
   drill: Drill;
@@ -31,7 +34,7 @@ export type OverviewView = {
 /** The URL parameter each choice lives in. The period keeps its own
  *  (af_from / af_to, DashboardPeriod.tsx). */
 export const VIEW_PARAMS = {
-  sort: "ao_sort", brand: "ao_brand", type: "ao_type", organizer: "ao_org", dim: "ao_dim", pick: "ao_pick", drill: "ao_drill",
+  sort: "ao_sort", brand: "ao_brand", type: "ao_type", organizer: "ao_org", venue: "ao_venue", state: "ao_state", stage: "ao_stage", dim: "ao_dim", pick: "ao_pick", drill: "ao_drill",
 } as const;
 
 const SORTS: readonly SortKey[] = ["start", "sales", "np", "npPct"];
@@ -75,6 +78,9 @@ export function readView(params: URLSearchParams, today: string): OverviewView {
     brand: params.get(VIEW_PARAMS.brand) ?? "",
     type: params.get(VIEW_PARAMS.type) ?? "",
     organizer: params.get(VIEW_PARAMS.organizer) ?? "",
+    venue: params.get(VIEW_PARAMS.venue) ?? "",
+    state: params.get(VIEW_PARAMS.state) ?? "",
+    stage: params.get(VIEW_PARAMS.stage) ?? "",
     dim: dim && DIMS.includes(dim) ? dim : "brand",
     pick: params.get(VIEW_PARAMS.pick) || null,
     drill: decodeDrill(params.get(VIEW_PARAMS.drill), today),
@@ -92,6 +98,9 @@ export function writeView(prev: URLSearchParams, patch: Partial<OverviewView>, t
   if ("brand" in patch) set(VIEW_PARAMS.brand, patch.brand ?? null, "");
   if ("type" in patch) set(VIEW_PARAMS.type, patch.type ?? null, "");
   if ("organizer" in patch) set(VIEW_PARAMS.organizer, patch.organizer ?? null, "");
+  if ("venue" in patch) set(VIEW_PARAMS.venue, patch.venue ?? null, "");
+  if ("state" in patch) set(VIEW_PARAMS.state, patch.state ?? null, "");
+  if ("stage" in patch) set(VIEW_PARAMS.stage, patch.stage ?? null, "");
   if ("dim" in patch) set(VIEW_PARAMS.dim, patch.dim ?? null, "brand");
   if ("pick" in patch) set(VIEW_PARAMS.pick, patch.pick ?? null, "");
   if ("drill" in patch && patch.drill) set(VIEW_PARAMS.drill, encodeDrill(patch.drill), encodeDrill(defaultDrill(today)));

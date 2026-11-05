@@ -20,7 +20,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Download, Landmark, Undo2 } from 'lucide-react';
 import {
   useSettlementBatches, useSettlementBatch, useMarkBatchReceived, useUndoReceipt, useInTransit,
@@ -31,49 +31,68 @@ import {
   refusalText, payableOf,
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
+import { BankUploadDrawer, type BankUploaded } from './BankUpload';
 import { BankMonthTab } from './BankMonthTab';
 import { DateField } from '../../vendor/scm/components/DateField';
 import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
+import look from './BankStatements.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
 import { fmtDate } from '../../vendor/shared/format';
 
-/* Three views of the same money, and the FILE comes first now (layer 4).
-   Owner, 2026-08-19: 我不是应该upload bank statement 或 daily transaction report
-   然后你也自动核对吗 — so the default way in is the statement itself, and typing
-   a credit by hand is the fallback for the day there is no file, not the job. */
+/* The redesign (owner's Claude Design, batch 3): the page is "Bank statements"
+   — a card per account, its months, one month at a time — and the card-money
+   views it always carried sit beside it in a small switch, unchanged. The view
+   lives in the address (?view=), so To do and Daily Bank can link straight in. */
+type View = 'statements' | 'files' | 'money' | 'transit';
+const VIEWS: Array<[View, string]> = [
+  ['statements', 'Statements'], ['files', 'Files'], ['money', 'Money to come in'], ['transit', 'Still with the merchants'],
+];
 
 export const BankRecon = () => {
-  /* THE MONTH FIRST. Owner, 2026-09-08: 每天我上传bank statement 和 merchant
-     report 测试，但是有办法选这个是几月的？因为我发现好像没有 — he uploads a file
-     a day, so the file list is thirty rows and the question he is asking is
-     about September. The files stay one press away, because a movement is
-     still chased back to the file it came off. */
-  const [tab, setTab] = useState<'month' | 'statement' | 'money' | 'transit'>('month');
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('view');
+  const view: View = VIEWS.some(([k]) => k === asked) ? asked as View : 'statements';
+  const go = (next: View) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
+    if (next === 'statements') p.delete('view'); else p.set('view', next);
+    return p;
+  });
+  /* The Upload drawer lives in the address (?upload=1) so To do can open it,
+     on the account asked for; once a file is read the page lands on that
+     account's month. */
+  const uploading = params.get('upload') != null;
+  const openUpload = () => setParams((prev) => { const p = new URLSearchParams(prev); p.set('upload', '1'); return p; });
+  const closeUpload = (done: BankUploaded | null) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
+    p.delete('upload');
+    if (done) { p.delete('view'); p.delete('tab'); p.set('account', done.accountCode); p.set('month', done.month); }
+    return p;
+  });
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance · step 2 of 2" title="Bank statement reconciliation" />
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'month')} onClick={() => setTab('month')}>By month</button>
-        <button type="button" style={btn(tab === 'statement')} onClick={() => setTab('statement')}>Bank statement</button>
-        {/* Public Bank's IBG advice is uploaded on the Merchant reconciliation
-            screen only (owner 2026-09-12: merchant reconciliation 那边上传就好,
-            bank statement reconciliation 的 payment advice 拿掉; docs/bugs/0839)
-            — two doors to one table read as two uploads. The credit still
-            matches itself here once every day of the advice agrees. */}
-        <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Money to come in</button>
-        <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Still with the merchants</button>
-        <span style={{ flex: 1 }} />
-        <Link to="/scm/merchant-recon" style={{ ...btn(), textDecoration: 'none' }}>
-          <ArrowLeft {...ICON} /> Merchant reconciliation
-        </Link>
+      <PageHeader eyebrow="Finance · Bank & cards" title="Bank statements" />
+      <div className={look.row}>
+        {/* Public Bank's IBG advice is uploaded on Merchant reports only (owner
+            2026-09-12: bank statement reconciliation 的 payment advice 拿掉;
+            docs/bugs/0839) — two doors to one table read as two uploads. The
+            credit still matches itself here once every day of the advice agrees. */}
+        <div role="tablist" aria-label="Bank statements views" className={look.views}>
+          {VIEWS.map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={view === k}
+              className={`${look.view} ${view === k ? look.viewOn : ''}`} onClick={() => go(k)}>{label}</button>
+          ))}
+        </div>
+        <span className={look.grow} />
+        <Link to="/scm/merchant-recon" className={look.link}><ArrowLeft {...ICON} /> Merchant reports</Link>
       </div>
-      {tab === 'month' && <BankMonthTab />}
-      {tab === 'statement' && <BankStatementTab />}
-      {tab === 'money' && <WaitingForMoney />}
-      {tab === 'transit' && <InTransitTab />}
+      {view === 'statements' && <BankMonthTab />}
+      {view === 'files' && <BankStatementTab onUpload={openUpload} />}
+      {uploading && <BankUploadDrawer account={params.get('account')} onClose={closeUpload} />}
+      {view === 'money' && <WaitingForMoney />}
+      {view === 'transit' && <InTransitTab />}
     </div>
   );
 };

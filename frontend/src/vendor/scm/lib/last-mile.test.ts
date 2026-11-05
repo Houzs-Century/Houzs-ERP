@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL, isEastMalaysiaOrSingaporeStop } from './last-mile';
+import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, isAssignedNoTripRow, isLastMileJobRow, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL, isEastMalaysiaOrSingaporeStop } from './last-mile';
+import type { PlanningOrder } from './delivery-planning-queries';
 
 /* The Last Mile page's row derivation (owner pipeline 2026-08-07/08). The rows
  * are the SO rows whose server-stamped live trip sits on the picked day — the
@@ -169,6 +170,91 @@ describe('matchCrewSuggestions — crew labels only the day\'s already-sequenced
     ], tripIdByDocNo);
     expect(out.size).toBe(1);
     expect(out.get('trip-A')?.driverId).toBe('drv-1');
+  });
+});
+
+describe('isAssignedNoTripRow — a lorry assigned before a run is opened', () => {
+  const crewPlate = (plate: string | null) => ({ lorry_plate: plate } as PlanningOrder['crew']);
+  const due = (over: Record<string, unknown> = {}) => ({
+    row_type: 'so' as const,
+    trip_date: null as string | null,
+    delivery_state: 'PENDING_SCHEDULE' as const,
+    effective_delivery_date: DAY as string | null,
+    customer_delivery_date: null as string | null,
+    processing_date: null as string | null,
+    crew: null as PlanningOrder['crew'],
+    ...over,
+  });
+
+  test('due this day with a lorry on its crew = yes (belongs under that lorry)', () => {
+    expect(isAssignedNoTripRow(due({ crew: crewPlate('VQE9058') }), DAY)).toBe(true);
+  });
+
+  test('no lorry = no (stays in To arrange)', () => {
+    expect(isAssignedNoTripRow(due({ crew: null }), DAY)).toBe(false);
+    expect(isAssignedNoTripRow(due({ crew: crewPlate(null) }), DAY)).toBe(false);
+  });
+
+  test('already on a live trip = no (the trip owns it)', () => {
+    expect(isAssignedNoTripRow(due({ trip_date: DAY, crew: crewPlate('VQE9058') }), DAY)).toBe(false);
+  });
+
+  test('not due this day = no', () => {
+    expect(isAssignedNoTripRow(due({ effective_delivery_date: '2026-08-11', crew: crewPlate('VQE9058') }), DAY)).toBe(false);
+  });
+
+  test('a DELIVERED one STAYS — the feed flips an SO to DELIVERED off a LOADED DO, and a lorry\'s loaded drops must not vanish mid-run', () => {
+    expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', crew: crewPlate('VRH9058') }), DAY)).toBe(true);
+    // still bounded to the picked day — a past-day delivered drop does not pile up
+    expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', effective_delivery_date: '2026-08-09', crew: crewPlate('VRH9058') }), DAY)).toBe(false);
+  });
+});
+
+describe('isLastMileJobRow — a lorry\'s non-SO work of the day (owner 2026-11-02)', () => {
+  const crewPlate = (plate: string | null) => ({ lorry_plate: plate } as PlanningOrder['crew']);
+  const job = (over: Record<string, unknown> = {}) => ({
+    row_type: 'dp' as PlanningOrder['row_type'],
+    trip_date: null as string | null,
+    delivery_state: 'PENDING_DELIVERY' as PlanningOrder['delivery_state'],
+    effective_delivery_date: DAY as string | null,
+    customer_delivery_date: null as string | null,
+    processing_date: null as string | null,
+    crew: crewPlate('VRH9058') as PlanningOrder['crew'],
+    ...over,
+  });
+
+  test('a DP job on a live trip that day is in (the crew echo stamps its trip_date)', () => {
+    expect(isLastMileJobRow(job({ trip_date: DAY, crew: null }), DAY)).toBe(true);
+  });
+
+  test('a non-SO job due this day with a lorry on its crew is in — dp, assr and project alike', () => {
+    expect(isLastMileJobRow(job(), DAY)).toBe(true);
+    expect(isLastMileJobRow(job({ row_type: 'assr' }), DAY)).toBe(true);
+    expect(isLastMileJobRow(job({ row_type: 'project' }), DAY)).toBe(true);
+  });
+
+  test('an SO row is never a job row — it rides its own two SO paths', () => {
+    expect(isLastMileJobRow(job({ row_type: 'so' }), DAY)).toBe(false);
+  });
+
+  test('due this day but no lorry = out (nothing to place it under)', () => {
+    expect(isLastMileJobRow(job({ crew: null }), DAY)).toBe(false);
+    expect(isLastMileJobRow(job({ crew: crewPlate(null) }), DAY)).toBe(false);
+  });
+
+  test('another day = out; a stray timestamp still matches its calendar day', () => {
+    expect(isLastMileJobRow(job({ effective_delivery_date: '2026-08-11' }), DAY)).toBe(false);
+    expect(isLastMileJobRow(job({ effective_delivery_date: `${DAY}T09:00:00Z` }), DAY)).toBe(true);
+  });
+
+  test('delivered with no trip = out (historical); delivered on a day trip stays (a completed drop)', () => {
+    expect(isLastMileJobRow(job({ delivery_state: 'DELIVERED', trip_date: null }), DAY)).toBe(false);
+    expect(isLastMileJobRow(job({ delivery_state: 'DELIVERED', trip_date: DAY }), DAY)).toBe(true);
+  });
+
+  test('due date falls back effective -> customer -> processing', () => {
+    expect(isLastMileJobRow(job({ effective_delivery_date: null, customer_delivery_date: DAY }), DAY)).toBe(true);
+    expect(isLastMileJobRow(job({ effective_delivery_date: null, customer_delivery_date: null, processing_date: DAY }), DAY)).toBe(true);
   });
 });
 

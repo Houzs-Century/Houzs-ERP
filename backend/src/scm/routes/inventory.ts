@@ -523,6 +523,10 @@ export const productTotalsHandler = async (
   type IncPo = { po_number: string; eta: string | null; qty: number };
   const incomingPos = new Map<string, IncPo[]>();
   const oldestLot = new Map<string, string>();
+  /* HC-0206 (Sim): with "All warehouses" the row summed every location, so the
+     only way to find WHERE a SKU sits was to pick each warehouse in turn. On-hand
+     per warehouse, from the same open lots as the Stock + Consignment columns. */
+  const lotsByWh = new Map<string, Map<string, { qty: number; held: number }>>();
   // Warehouse-scoped Stock override (ask A) — only populated when a warehouse is
   // chosen; otherwise the company-wide totals view figure stands.
   const whStock = new Map<string, number>();
@@ -704,7 +708,7 @@ export const productTotalsHandler = async (
         // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
-        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        .select('item_code, warehouse_id, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.order('received_at').order('id').range(from, to);
     });
@@ -712,7 +716,15 @@ export const productTotalsHandler = async (
       // eslint-disable-next-line no-console
       console.error('[inventory] open lots read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
     }
-    for (const r of (lots ?? []) as Array<{ item_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+    for (const r of (lots ?? []) as Array<{ item_code: string; warehouse_id: string | null; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+      if (r.warehouse_id) {
+        const byWh = lotsByWh.get(r.item_code) ?? new Map<string, { qty: number; held: number }>();
+        const cur = byWh.get(r.warehouse_id) ?? { qty: 0, held: 0 };
+        cur.qty += Number(r.qty_remaining ?? 0);
+        if (isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) cur.held += Number(r.qty_remaining ?? 0);
+        byWh.set(r.warehouse_id, cur);
+        lotsByWh.set(r.item_code, byWh);
+      }
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
       // warehouse flag) and sum OWNED value only, so the list value column matches
@@ -740,6 +752,21 @@ export const productTotalsHandler = async (
     }
   }
 
+  const whIds = [...new Set([...lotsByWh.values()].flatMap((m) => [...m.keys()]))];
+  const whCode = new Map<string, { code: string; name: string | null }>();
+  if (whIds.length > 0) {
+    const { data: whRows, error: whErr } = await scopeToCompany(sb.from('warehouses').select('id, code, name'), c).in('id', whIds);
+    if (whErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] warehouse codes read failed:', (whErr as { message?: unknown }).message ?? whErr);
+    }
+    for (const w of (whRows ?? []) as Array<{ id: string; code: string; name: string | null }>) whCode.set(w.id, { code: w.code, name: w.name });
+  }
+  const stockByWarehouse = (code: string) => [...(lotsByWh.get(code) ?? new Map<string, { qty: number; held: number }>()).entries()]
+    .map(([id, v]) => ({ warehouse_id: id, code: whCode.get(id)?.code ?? '?', name: whCode.get(id)?.name ?? null, qty: Math.round(v.qty), held_qty: Math.round(v.held) }))
+    .filter((w) => w.qty !== 0)
+    .sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code));
+
   const enriched = products.map((p) => {
     const code = String(p.item_code);
     /* SERVICE SKUs hold no stock — a delivery fee is not a thing on a shelf.
@@ -762,7 +789,7 @@ export const productTotalsHandler = async (
         committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
         available_qty: 0, surplus_qty: 0,
         sellable_surplus_qty: 0, non_selling_qty: 0,
-        incoming_qty: 0, incoming_pos: [], demand_sos: [],
+        incoming_qty: 0, incoming_pos: [], demand_sos: [], stock_by_warehouse: [],
         oldest_lot_at: null,
       };
     }
@@ -872,6 +899,7 @@ export const productTotalsHandler = async (
       demand_sos:          (demandSos.get(code) ?? []).slice().sort((a, b) =>
         byDateAsc(a.delivery_date, b.delivery_date) || byDateAsc(a.so_date, b.so_date) || a.doc_no.localeCompare(b.doc_no)),
       oldest_lot_at:       oldestLot.get(code) ?? null,
+      stock_by_warehouse:  stockByWarehouse(code),
     };
   });
   // In a single-warehouse view, drop SKUs with no presence there (no stock, no

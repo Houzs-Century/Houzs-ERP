@@ -163,6 +163,51 @@ describe('the general receipt — record and post, one motion', () => {
     expect((await app.request('/?month=2026-13')).status).toBe(400);
   });
 
+  /* Debtor maintenance lists the debtor receipts alone (the owner's Claude
+     Design, batch 5 §4.3): ?kind= reads one kind, with the month as before. */
+  test('?kind= lists one kind alone; junk is a 400', async () => {
+    const tables = baseTables();
+    tables.acc_receipts.push({ id: 'g1', company_id: CO, receipt_number: 'HC-RCT-2609-001', payer_name: 'MLE', receipt_date: `${thisMonth}-03`, bank_account_code: '310-0010', total_sen: 5000, status: 'POSTED', notes: null });
+    const app = harness(tables);
+    const kinds = async (q: string) => ((await (await app.request(`/${q}`)).json()) as { receipts: Row[] }).receipts.map((r) => `${r.kind} ${r.number}`);
+    expect(await kinds('?kind=DEBTOR')).toEqual(['DEBTOR HC-ODR-2609-001']);
+    expect(await kinds('?kind=debtor')).toEqual(['DEBTOR HC-ODR-2609-001']);
+    expect(await kinds('?kind=GENERAL')).toEqual(['GENERAL HC-RCT-2609-001']);
+    expect(await kinds(`?kind=CUSTOMER&month=${thisMonth}`)).toEqual(['CUSTOMER HC-SO-2609-004']);
+    expect((await kinds('')).sort()).toEqual(['CUSTOMER HC-SO-2609-004', 'DEBTOR HC-ODR-2609-001', 'GENERAL HC-RCT-2609-001']);
+    expect((await app.request('/?kind=OFFICIAL')).status).toBe(400);
+  });
+
+  /* The merged Receipts page (the owner's Claude Design, batch 5 §2.3 c1): a
+     sundry receipt says what it was for (its first line), a debtor receipt its
+     stage marks and the bills it knocks off — this company's bills only. */
+  test("a sundry receipt carries its first line; a debtor receipt its four-layer marks and the bills it knocks off", async () => {
+    const tables = baseTables();
+    tables.acc_receipts.push({ id: 'g7', company_id: CO, receipt_number: 'HC-RCT-2609-007', payer_name: 'MLE', receipt_date: `${thisMonth}-04`, bank_account_code: '310-0010', total_sen: 5000, status: 'POSTED', notes: null });
+    tables.acc_receipt_lines.push(
+      { id: 'l2', company_id: CO, receipt_id: 'g7', line_no: 2, description: 'Second', credit_account_code: '700-0000', amount_sen: 1000 },
+      { id: 'l1', company_id: CO, receipt_id: 'g7', line_no: 1, description: 'Booth deposit back', credit_account_code: '700-0000', amount_sen: 4000 },
+    );
+    tables.acc_debtor_receipts.push({ id: 'dr2', company_id: CO, receipt_number: 'HC-ODR-2609-002', receipt_date: `${thisMonth}-05`, bank_account_code: '310-0010', total_sen: 30000, status: 'DRAFT', debtor_id: 'd1', submitted_at: `${thisMonth}-05T02:00:00Z`, checked_at: null, approved_at: null, debtor: { name: 'AHMAD' } });
+    tables.acc_debtor_receipt_allocations = [
+      { company_id: CO, receipt_id: 'dr2', bill_id: 'b1', amount_sen: 20000 },
+      { company_id: CO, receipt_id: 'dr2', bill_id: 'b2', amount_sen: 10000 },
+      { company_id: 2, receipt_id: 'dr2', bill_id: 'b9', amount_sen: 999 },
+    ];
+    tables.acc_debtor_bills = [
+      { id: 'b1', company_id: CO, bill_number: 'HC-ODB-2609-001' },
+      { id: 'b2', company_id: CO, bill_number: 'HC-ODB-2609-002' },
+      { id: 'b9', company_id: 2, bill_number: 'OTHER-CO-BILL' },
+    ];
+    const body = await (await harness(tables).request(`/?month=${thisMonth}`)).json() as { receipts: Array<Row> };
+    expect(body.receipts.find((r) => r.number === 'HC-RCT-2609-007')).toMatchObject({ kind: 'GENERAL', firstLine: 'Booth deposit back' });
+    expect(body.receipts.find((r) => r.number === 'HC-ODR-2609-002')).toMatchObject({
+      kind: 'DEBTOR', status: 'DRAFT', submittedAt: `${thisMonth}-05T02:00:00Z`, checkedAt: null, approvedAt: null,
+      bills: [{ billId: 'b1', no: 'HC-ODB-2609-001', amountSen: 20000 }, { billId: 'b2', no: 'HC-ODB-2609-002', amountSen: 10000 }],
+    });
+    expect(body.receipts.find((r) => r.number === 'HC-ODR-2609-001')).toMatchObject({ bills: [] });
+  });
+
   /* Owner 2026-09-25: every search box finds a record by its SO's reference —
      the customer row carries its order's raw pair, read in the caller's company. */
   test("a customer row carries its order's reference; another company's same number is never borrowed", async () => {

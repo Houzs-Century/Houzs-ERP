@@ -72,6 +72,10 @@ export type DataGridCompatProps<T> = {
   /** Enable drag-to-reorder; called with the new order of the displayed rows
    *  (only while no column sort is active). See DataTable.onRowReorder. */
   onRowReorder?: (orderedKeys: string[]) => void;
+  /** See DataTable.cellRangeSum. */
+  cellRangeSum?: boolean;
+  /** See DataTable.fitToWidth. */
+  fitToWidth?: boolean;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
   focusSearchNonce?: number;
@@ -106,6 +110,8 @@ export type DataGridCompatProps<T> = {
   resetFilters?: { active: boolean; onReset: () => void; label?: string };
   /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
+  /** See DataTable `onApplyLayoutSeed`. */
+  onApplyLayoutPreset?: (presetId: string) => void;
   overlayHidden?: readonly string[];
   onUserAdjustColumns?: () => void;
   scrollToRow?: { key: string; nonce: number } | null;
@@ -205,11 +211,14 @@ export function DataGridCompat<T>({
   persistFilters,
   resetFilters,
   layoutPresets,
+  onApplyLayoutPreset,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
   initialRowLimit,
   onRowReorder,
+  cellRangeSum,
+  fitToWidth,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
   const layoutSeeds = useMemo(
@@ -231,6 +240,8 @@ export function DataGridCompat<T>({
       getRowClassName={getRowClassName}
       initialRowLimit={initialRowLimit}
       onRowReorder={onRowReorder}
+      cellRangeSum={cellRangeSum}
+      fitToWidth={fitToWidth}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
       clientSearch={
@@ -248,6 +259,7 @@ export function DataGridCompat<T>({
       persistFilters={persistFilters}
       resetFilters={resetFilters}
       layoutSeeds={layoutSeeds}
+      onApplyLayoutSeed={onApplyLayoutPreset}
       overlayHidden={overlayHidden}
       onUserAdjustColumns={onUserAdjustColumns}
       scrollToRow={scrollToRow}

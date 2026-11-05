@@ -43,9 +43,9 @@ import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfg
 import { mfgProductMerge } from './mfg-product-merge';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
-mfgProducts.route('/merge', mfgProductMerge);
-
 mfgProducts.use('*', supabaseAuth);
+// After supabaseAuth: the merge gate reads houzsUser, which only supabaseAuth sets.
+mfgProducts.route('/merge', mfgProductMerge);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -197,7 +197,7 @@ export const listMfgProductsHandler = async (c: AppContext) => {
           // leg + gap with no input on the form, and `size_code` /
           // `compartment` are read off the product row, so those refuse on save
           // no matter what this select returns (2026-08-18).
-          'model:product_models(allowed_options, default_variants, active)',
+          'model:product_models(name, allowed_options, default_variants, active)',
       )
       .eq('status', 'ACTIVE')
       .order('code', { ascending: true });
@@ -210,14 +210,14 @@ export const listMfgProductsHandler = async (c: AppContext) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   // Flatten the joined model → a plain allowed_options field on each product.
-  type ModelJoin = { allowed_options: unknown; default_variants?: unknown; active?: boolean | null };
+  type ModelJoin = { name?: string | null; allowed_options: unknown; default_variants?: unknown; active?: boolean | null };
   /* BUG-50: a Model's Deactivate flips only product_models.active, so its SKUs
      kept status ACTIVE and stayed on the SO picker. A SKU under an inactive Model
      is treated as inactive here and in validateItemCodes. */
   const products: Array<Record<string, unknown>> = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: ModelJoin | ModelJoin[] | null }>)
     .map(({ model, ...p }) => ({ p, m: Array.isArray(model) ? model[0] : model }))
     .filter(({ m }) => m?.active !== false)
-    .map(({ p, m }) => ({ ...p, allowed_options: m?.allowed_options ?? null, model_default_variants: m?.default_variants ?? null }));
+    .map(({ p, m }) => ({ ...p, allowed_options: m?.allowed_options ?? null, model_default_variants: m?.default_variants ?? null, model_name: m?.name ?? null }));
 
   /* B1 — per-row cost-anchor STATE for the SKU Master cost column (teal ok /
      amber suppliers-differ / red gap / service). One BULK binding read over the
@@ -413,6 +413,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const supabase = c.get('supabase');
   let upserted = 0;
+  let created = 0;
   const failures: Array<{ code: string; reason: string }> = [];
 
   const plan = await planModelCategoryMoves(supabase, co.companyId, list);
@@ -517,7 +518,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
       incomingSeat.push({ ...e, tier: t });
     }
     if (badTier !== null) {
-      failures.push({ code, reason: `price tier "${badTier}" not recognized — use P1, P2, or P3` });
+      failures.push({ code, reason: `price tier "${badTier}" not recognized — use P1, P2, P3 or P4` });
       continue;
     }
     const tierOf = (e: SeatEntry) => e.tier ?? 'PRICE_2';
@@ -604,10 +605,11 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
       failures.push({ code, reason: error.message });
     } else {
       upserted += 1;
+      if (!existing) created += 1;
     }
   }
 
-  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50), modelsMoved });
+  return c.json({ upserted, created, failed: failures.length, failures: failures.slice(0, 50), modelsMoved });
 };
 mfgProducts.post('/batch-import', batchImportMfgProductsHandler);
 
@@ -782,7 +784,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     defaultVariants?: unknown;
     subAssemblies?: unknown;
     pieces?: unknown;
-    seatHeightPrices?: Array<{ height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3'; sellingPriceSen?: number }>;
+    seatHeightPrices?: Array<{ height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4'; sellingPriceSen?: number }>;
     branding?: string | null;
     /** PR #87 — per-SKU active toggle. Commander uses this from the Model
         detail "SKU variants" table to mark individual SKUs as no longer sold
@@ -925,7 +927,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
         return c.json({ error: 'invalid_selling_price' }, 400);
       }
     }
-    type Slot = { height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3'; sellingPriceSen?: number };
+    type Slot = { height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4'; sellingPriceSen?: number };
     const oldArr = (Array.isArray(current.seat_height_prices)
       ? (current.seat_height_prices as Slot[])
       : []);

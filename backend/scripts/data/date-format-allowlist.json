@@ -273,6 +273,11 @@
       "why": "ISO VALUE PRODUCER, not a display (case 1). A native date input reads and writes YYYY-MM-DD, and this one is bound to scm.sync_config vp.since — the Venture Portal feed's start date, compared against so_date in SQL. Storage is not display and is outside this rule. The page renders no date of its own except through fmtDateTime."
     },
     {
+      "file": "frontend/src/pages/scm-v2/BillPlanDialog.tsx",
+      "text": "const weekday = (ymd: string): string => new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });",
+      "why": "Renders the WEEKDAY NAME only (Wed), set before the date itself, which is written by fmtDate — the owner's design toast 'Planned payment for <bill> moved to Wed 2026/11/12 · supplier due stays 2026/11/30'. A weekday is a word and carries no day/month ambiguity."
+    },
+    {
       "file": "frontend/src/components/so-list-filter/SoDateRangeCalendar.tsx",
       "text": "new Date(Date.UTC(2024, 0, 1 + i)).toLocaleDateString(\"en-GB\", { weekday: \"short\", timeZone: \"UTC\" }).slice(0, 2));",
       "why": "Renders the WEEKDAY NAME only (the Mo..Su column heads of the SO filter range calendar). A weekday is a word by design and carries no day/month ambiguity."

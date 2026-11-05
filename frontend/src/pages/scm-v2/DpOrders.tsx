@@ -15,8 +15,10 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { FilterPills } from '../../components/FilterPills';
 import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
-import { CalendarClock, Plus, XCircle } from 'lucide-react';
+import { CalendarClock, Pencil, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
@@ -29,6 +31,7 @@ import {
   type DpOrderRow,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
+import { EditDpOrderDrawer } from '../../vendor/scm/components/EditDpOrderDrawer';
 import {
   ScheduleDpOrderDrawer,
   type ScheduleDpOrderTarget,
@@ -43,6 +46,12 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const joinedAddress = (r: DpOrderRow): string =>
   [r.address1, r.address2, r.address3, r.address4, r.city, r.postcode, r.state]
+    .filter(Boolean).join(', ');
+
+/* The origin ("from") a transfer was picked up from (owner 2026-11-02 方案1) —
+   name + address, so the list reads from -> to. Blank on jobs without an origin. */
+const joinedFrom = (r: DpOrderRow): string =>
+  [r.from_name, r.from_address1, r.from_address2, r.from_city, r.from_postcode, r.from_state]
     .filter(Boolean).join(', ');
 
 /* Provenance, humanised. party_name already carries the resolved party, so the
@@ -82,20 +91,36 @@ export const DpOrders = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewDp, setShowNewDp] = useState(false);
   const [scheduling, setScheduling] = useState<DpOrderRow | null>(null);
+  const [editing, setEditing] = useState<DpOrderRow | null>(null);
+
+  /* Status chips (HC-0210, same FilterPills strip as Amendments). Counts are off
+     the loaded set — this list filters client-side, like Amendments. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusChip = searchParams.get('status') ?? 'all';
+  const setStatusChip = (s: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (s === 'all') next.delete('status'); else next.set('status', s);
+    setSearchParams(next, { replace: true });
+  };
+  const allDp = useMemo(() => list.data?.dpOrders ?? [], [list.data]);
+  const statusChips = useMemo(() => {
+    // Follows the data (A-Z, as the column filter lists them), so no status can be dropped.
+    return ['all', ...[...new Set(allDp.map((r) => r.status))].sort()];
+  }, [allDp]);
 
   const rows = useMemo(() => {
-    const all = list.data?.dpOrders ?? [];
+    const all = statusChip === 'all' ? allDp : allDp.filter((r) => r.status === statusChip);
     const term = searchTerm.trim().toLowerCase();
     if (!term) return all;
     return all.filter((r) =>
       [
         r.dp_no, r.party_name, r.contact_name, r.contact_phone, r.remark,
-        r.city, r.state, r.postcode, joinedAddress(r), sourceRef(r),
+        r.city, r.state, r.postcode, joinedAddress(r), joinedFrom(r), sourceRef(r),
         dpJobTypeLabel(r.job_type), statusLabel('dpOrder', r.status),
         r.so_venue, r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '') : '',
       ].some((v) => (v ?? '').toLowerCase().includes(term)),
     );
-  }, [list.data, searchTerm, salespersonNameOf]);
+  }, [allDp, statusChip, searchTerm, salespersonNameOf]);
 
   const cancel = async (r: DpOrderRow) => {
     const ok = await askConfirm({
@@ -152,7 +177,17 @@ export const DpOrders = () => {
       render: (r) => dpJobTypeLabel(r.job_type),
     },
     {
-      key: 'party', label: 'Party',
+      /* Origin ("from") — the pickup point of a point-to-point / partner transfer
+         (owner 2026-11-02 方案1). Blank on jobs without one; the Party column is
+         the destination, so the two read from -> to. */
+      key: 'from', label: 'From', width: '160px',
+      getValue: (r) => joinedFrom(r),
+      render: (r) => r.from_name
+        ? <span title={joinedFrom(r)}>{r.from_name}</span>
+        : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+    },
+    {
+      key: 'party', label: 'To (Party)',
       getValue: (r) => r.party_name ?? '',
       render: (r) => r.party_name ? <strong>{r.party_name}</strong> : '—',
     },
@@ -236,9 +271,14 @@ export const DpOrders = () => {
       render: (r) => <span style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.created_at)}</span>,
     },
     {
-      key: 'actions', label: '', width: '190px', disableSort: true,
+      key: 'actions', label: '', width: '260px', disableSort: true,
       render: (r) => (
         <div style={{ display: 'inline-flex', gap: 4 }}>
+          {r.status === 'PENDING_SCHEDULE' && (
+            <Button variant="ghost" onClick={() => setEditing(r)}>
+              <Pencil {...ICON} /><span>Edit…</span>
+            </Button>
+          )}
           {r.status === 'PENDING_SCHEDULE' && (
             <Button variant="ghost" onClick={() => setScheduling(r)}>
               <CalendarClock {...ICON} /><span>Schedule…</span>
@@ -267,6 +307,16 @@ export const DpOrders = () => {
         )}
       />
 
+      <FilterPills
+        options={statusChips.map((s) => ({
+          value: s,
+          label: s === 'all' ? 'All' : statusLabel('dpOrder', s),
+          count: s === 'all' ? allDp.length : allDp.filter((r) => r.status === s).length,
+        }))}
+        value={statusChip}
+        onChange={setStatusChip}
+      />
+
       <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DataTable<DpOrderRow>
         onRowClick={(r) => setJobPanel(dpPanel(r))}
@@ -287,10 +337,11 @@ export const DpOrders = () => {
           loadedLimit: 500,
           totalRecords: rows.length,
         }}
-        resetFilters={{ active: searchTerm.trim() !== '', onReset: () => setSearchTerm('') }}
+        resetFilters={{ active: searchTerm.trim() !== '' || statusChip !== 'all', onReset: () => { setSearchTerm(''); setStatusChip('all'); } }}
         contextMenu={(r) => [
           ...(r.status === 'PENDING_SCHEDULE'
-            ? [{ label: 'Schedule…', onClick: () => setScheduling(r) }]
+            ? [{ label: 'Edit…', onClick: () => setEditing(r) },
+               { label: 'Schedule…', onClick: () => setScheduling(r) }]
             : []),
           ...(r.status !== 'CANCELLED'
             ? [{ label: 'Cancel job', onClick: () => void cancel(r), danger: true }]
@@ -300,6 +351,7 @@ export const DpOrders = () => {
       />
 
       {showNewDp && <NewDpOrderDrawer onClose={() => setShowNewDp(false)} />}
+      {editing && <EditDpOrderDrawer row={editing} onClose={() => setEditing(null)} />}
       {scheduling && (
         <ScheduleDpOrderDrawer dpRow={asScheduleTarget(scheduling)} onClose={() => setScheduling(null)} />
       )}

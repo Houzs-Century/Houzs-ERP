@@ -33,6 +33,7 @@
 // order read is scopeToCompany.
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
+import { extractRefTokens } from "../scm/shared/sales-report-parse";
 import type { Context } from "hono";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env, Variables } from "../scm/env";
@@ -51,15 +52,14 @@ import {
   type AttendeeRow,
   type MatchedBill,
   type NoteRow,
-  type OrderRow,
-} from "./lib/sales-report-bills";
+  type OrderRow, renameRef } from "./lib/sales-report-bills";
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Db = ReturnType<typeof getDb>;
 type ProjectRow = { id: number; name: string; start_date: string | null; end_date: string | null };
 
 const MISMATCH_SOURCE = "sales_report_fair_mismatch";
-const ONLY_THREE = "Only the owner, Ummu or Wei Siang can do this.";
+const ONLY_THREE = "Only the Owner, Ummu, Wei Siang, Peter, or an attending rep of this event can do this.";
 
 /** The real caller — supabaseAuth has replaced `user` with the pinned scm
  *  staff row by the time a handler runs; the person is in houzsUser. */
@@ -100,6 +100,24 @@ async function loadAttendees(db: Db, projectId: number): Promise<AttendeeRow[]> 
     user_name: r.user_name,
     rep_user_id: r.rep_user_id != null ? Number(r.rep_user_id) : null,
   }));
+}
+
+/** Emails of this project's Sales Attendees — the per-event side of the
+ *  save gate (owner 2026-10-30). sales_reps.user_id links the master row to
+ *  the login; a rep with no login contributes nothing (they can't post). */
+async function loadAttendeeEmails(db: Db, projectId: number): Promise<Set<string>> {
+  const rows = await db
+    .select({ email: users.email })
+    .from(project_sales_attendees)
+    .innerJoin(sales_reps, eq(sales_reps.id, project_sales_attendees.sales_rep_id))
+    .innerJoin(users, eq(users.id, sales_reps.user_id))
+    .where(eq(project_sales_attendees.project_id, projectId));
+  const emails = new Set<string>();
+  for (const r of rows) {
+    const e = (r.email ?? "").trim().toLowerCase();
+    if (e) emails.add(e);
+  }
+  return emails;
 }
 
 /** The project's live chat messages and who wrote each — the report's source.
@@ -168,22 +186,25 @@ async function loadEventNames(db: Db, ids: number[], companyId: number | undefin
   return new Map(rows.map((r) => [Number(r.id), r.name] as const));
 }
 
-/** Total Sales (whole RM), for the three who report only: the chat needs it to
- *  put Total Sales back when the summary it came from is voided. Everyone else
- *  gets null — Total Sales is finance data the project detail strips for them. */
-async function loadTotalSalesFor(c: Ctx, db: Db, projectId: number): Promise<number | null> {
-  if (!canSaveSalesReport(realUser(c))) return null;
+/** Total Sales (whole RM), for the people who may save a report: the chat
+ *  needs it to put Total Sales back when the summary it came from is voided.
+ *  Everyone else gets null — Total Sales is finance data the project detail
+ *  strips for them. Attendees of this project count on the save side (owner
+ *  2026-10-30), so they also see it. */
+async function loadTotalSalesFor(c: Ctx, db: Db, projectId: number, attendeeEmails: ReadonlySet<string>): Promise<number | null> {
+  if (!canSaveSalesReport(realUser(c), attendeeEmails)) return null;
   const rows = await db.select({ total_sales: project_finance.total_sales }).from(project_finance).where(eq(project_finance.project_id, projectId)).limit(1);
   return rows.length > 0 ? rows[0].total_sales : null;
 }
 
 async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
-  const [notes, attendees, totalSalesRm] = await Promise.all([
+  const [notes, attendees, attendeeEmails] = await Promise.all([
     loadNotes(db, project.id),
     loadAttendees(db, project.id),
-    loadTotalSalesFor(c, db, project.id),
+    loadAttendeeEmails(db, project.id),
   ]);
-  const report = collectReport(notes, project.start_date);
+  const totalSalesRm = await loadTotalSalesFor(c, db, project.id, attendeeEmails);
+  const report = collectReport(notes, project.start_date, attendeeEmails);
   /* No bills, no matching: most events have no report, and the order read is
      the heavy one. */
   const orders = report.bills.length > 0 ? await loadOrders(c, project) : [];
@@ -201,7 +222,7 @@ async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
     report_activity_ids: report.report_activity_ids,
     summary: report.summary,
     total_sales_rm: totalSalesRm,
-    can_save: canSaveSalesReport(realUser(c)),
+    can_save: canSaveSalesReport(realUser(c), attendeeEmails),
     /* This event, and whether the caller may move an order here from the
        report (Finance or PMS, owner 2026-10-20 — scm/lib/fair-transfer.ts). */
     project_id: project.id,
@@ -275,12 +296,13 @@ projectSalesBills.get("/:projectId", async (c) => {
 });
 
 projectSalesBills.post("/:projectId/notify", async (c) => {
-  if (!canSaveSalesReport(realUser(c))) return c.json({ error: ONLY_THREE }, 403);
   const projectId = parseProjectId(c);
   if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
   const db = getDb(c.env);
   const project = await loadProject(db, projectId, activeCompanyId(c));
   if (!project) return c.json({ error: "Not found" }, 404);
+  const attendeeEmails = await loadAttendeeEmails(db, project.id);
+  if (!canSaveSalesReport(realUser(c), attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
   try {
     const payload = await readPayload(c, db, project);
     return c.json({ notified: await notifyWrongFair(c, db, project, payload.bills) });
@@ -289,13 +311,49 @@ projectSalesBills.post("/:projectId/notify", async (c) => {
   }
 });
 
+/* Change one bill's reference (owner 2026-11-04: "我需要可以更改 reference 的, 让 SO
+   match 上来"). Bills are read out of the chat, so the message itself is corrected,
+   and a trail row records who changed what. */
+projectSalesBills.post("/:projectId/rename-ref", async (c) => {
+  const me = realUser(c);
+  const projectId = parseProjectId(c);
+  if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
+  let body: { from?: unknown; to?: unknown } | null;
+  try { body = await c.req.json() as { from?: unknown; to?: unknown }; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const from = String(body?.from ?? "").trim();
+  const to = String(body?.to ?? "").trim().toUpperCase();
+  if (!from || extractRefTokens(to).length !== 1) return c.json({ error: "invalid_reference", message: "Key the reference as printed, such as ZNT6767." }, 400);
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const db = getDb(c.env);
+  const project = await loadProject(db, projectId, company.companyId);
+  if (!project) return c.json({ error: "Not found" }, 404);
+  const attendeeEmails = await loadAttendeeEmails(db, project.id);
+  if (!me || !canSaveSalesReport(me, attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
+  const notes = await loadNotes(db, project.id);
+  const { bills } = collectReport(notes, project.start_date, attendeeEmails);
+  /* A second press lands after the first changed it: the report already says so. */
+  if (!bills.some((b) => b.ref_raw === from) && bills.some((b) => extractRefTokens(to).includes(b.ref_token))) return c.json({ ok: true });
+  const bill = bills.find((b) => b.ref_raw === from);
+  const source = bill ? notes.find((n) => n.id === bill.source_activity_id) : undefined;
+  const next = source?.note ? renameRef(source.note, from, to) : null;
+  if (!source || next === null) return c.json({ error: "Not found", message: `${from} is not on this event's sales report.` }, 404);
+  await db.update(project_activity).set({ note: next }).where(and(
+    eq(project_activity.id, source.id),
+    eq(project_activity.project_id, project.id),
+    eq(project_activity.action, "note"),
+    isNull(project_activity.archived_at),
+  ));
+  await db.insert(project_activity).values({ project_id: project.id, user_id: me.id, action: "sales_report_ref_changed", note: `${from} -> ${to}` });
+  return c.json({ ok: true });
+});
+
 /* Void a wrongly pasted message (owner 2026-10-14: "kalau wrong … void"). The
    message is archived — the chat and the detail page already leave archived
    rows out — so it stops counting at once, and a trail row records who voided
    what. Only a chat message (action 'note') can be voided, never a system row. */
 projectSalesBills.post("/:projectId/void/:activityId", async (c) => {
   const me = realUser(c);
-  if (!me || !canSaveSalesReport(me)) return c.json({ error: ONLY_THREE }, 403);
   const projectId = parseProjectId(c);
   const activityId = Number(c.req.param("activityId"));
   if (projectId == null || !Number.isInteger(activityId) || activityId <= 0) return c.json({ error: "invalid_id" }, 400);
@@ -304,6 +362,8 @@ projectSalesBills.post("/:projectId/void/:activityId", async (c) => {
   const db = getDb(c.env);
   const project = await loadProject(db, projectId, company.companyId);
   if (!project) return c.json({ error: "Not found" }, 404);
+  const attendeeEmails = await loadAttendeeEmails(db, project.id);
+  if (!me || !canSaveSalesReport(me, attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
   const voided = await db
     .update(project_activity)
     .set({ archived_at: sql`to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` })

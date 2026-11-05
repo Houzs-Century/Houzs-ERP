@@ -25,6 +25,8 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 | `postage` | Postage Confirm | `customer_phone`, `delivery_address` (delivery address, else customer address, + postcode/city/state) | no address (`no_address`) | no |
 | `delivery_completed` | Delivery Completed | — | — | no |
 
+After the messages leave, the same request moves each sent order's `delivery_message_status` to its "Done X" (`KIND_AFTER_STATUS` in `delivery-message-kinds.ts`, via `advanceSoGeneration` + an SO History row; `scm/lib/delivery-message-status.ts`). An order it could not move (an open SO editor lease, a version race that outlived two retries) comes back in `statusNotMoved` and the board names it — the board used to write the status itself, fire-and-forget, and lost it silently (HC-0164).
+
 "Resets conversation" = the six reset attributes below are sent as empty. Only the openers do it: a Driver Info or Balance Reminder to a customer who already confirmed must not clear `button_status`, or the Delivery Lock guard stops protecting the confirmed date.
 
 ### What the outbound send tells Connect (the contract the flows depend on)
@@ -36,11 +38,11 @@ Delivery Planning's Send Message (`POST /api/scm/delivery-messages/send`) posts 
 ## Permissions
 
 - No session, no user, no permission key — mounted PRE-AUTH (above the global `/api/*` auth middleware), because chat's servers have neither a staff session nor a company header to offer.
-- Authenticated instead by a single shared secret, `X-Chat-Key` against the `CHAT_CALLBACK_KEY` Worker secret — constant-time compare, a fixed failure delay, and a per-IP rate limiter. The secret speaks for exactly ONE company (Houzs Century, the WhatsApp number's owner); an unset secret refuses every request outright rather than letting an empty header match an empty value.
+- Authenticated instead by a single shared secret, `X-Chat-Key` against the `CHAT_CALLBACK_KEY` Worker secret — constant-time compare, a fixed failure delay, and a per-IP rate limiter. The secret speaks for the companies whose messages go out on the Houzs WhatsApp number: HOUZS and 2990 for Sales Order taps (2990's delivery messages use the same number; before HC-0200 every 2990 tap 404'd), HOUZS only for Service Case taps. Each order is recorded under its own `company_id`. An unset secret refuses every request outright rather than letting an empty header match an empty value.
 
 ## Rules that must not break
 
-- Company resolution runs FIRST, before any row is read, and every statement after it carries the company predicate — a misconfigured install (master readable but no HOUZS row) must refuse (500), never silently drop the predicate.
+- Company resolution runs FIRST, before any row is read, and every statement after it carries the company predicate — a misconfigured install (master readable but no HOUZS or 2990 row) must refuse (500), never silently drop the predicate.
 - "No such SO" and "not your company's SO" must return the identical 404 body — distinguishing them would let a caller probe which document numbers exist in another company.
 - `callback_id` must be sanitised to `[A-Za-z0-9_-]` before it is interpolated into the duplicate-detection `LIKE` probe — an unfiltered wildcard character would silently widen the match.
 - The duplicate probe must be scoped to both this company AND `source = 'chat-callback'` — otherwise an outbound delivery-planning send could be mistaken for a duplicate inbound reply.

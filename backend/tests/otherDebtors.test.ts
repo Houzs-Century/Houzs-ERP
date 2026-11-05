@@ -18,6 +18,10 @@ import { otherDebtors } from '../src/scm/routes/other-debtors';
 type Row = Record<string, any>;
 const CO = 1;
 
+/* A one-shot refusal for the next insert into / update of a table — the
+   receipt edit's put-the-old-bills-back path (batch 5 c5) needs a write that fails. */
+const failNext: { insertInto: string | null; updateOf: string | null } = { insertInto: null, updateOf: null };
+
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
   private op: 'select' | 'insert' | 'update' | 'delete' = 'select';
@@ -64,6 +68,10 @@ class FakeQuery {
     return Promise.resolve({ data: h[0] ?? null, error: h.length ? null : { message: 'no rows' } });
   }
   then(res: (v: any) => any, rej?: (e: any) => any) {
+    if ((this.op === 'insert' && failNext.insertInto === this.table) || (this.op === 'update' && failNext.updateOf === this.table)) {
+      if (this.op === 'insert') failNext.insertInto = null; else failNext.updateOf = null;
+      return Promise.resolve({ data: null, error: { message: `${this.op} refused` } }).then(res, rej);
+    }
     return Promise.resolve({ data: this.run(), error: null }).then(res, rej);
   }
 }
@@ -473,6 +481,137 @@ describe('the Receipt — four layers, partial knock-off, Dr bank / Cr control',
   });
 });
 
+/* Changing a receipt nobody has checked yet (the owner's Claude Design, batch 5
+   §4.3 c5) — the payment voucher's rule (pvCanEdit): a Draft or a Prepared
+   receipt changes in place and keeps its stage and number; a checked or posted
+   one refuses. The same checks as raising it, and nothing posts. */
+describe('editing a receipt before it is checked — posts nothing, keeps its stage', () => {
+  const patch = (app: Hono, path: string, body: Row) => app.request(path, {
+    method: 'PATCH', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+  });
+  const raise = async (app: Hono, billId: string, amountSen: number, extra: Row = {}) => {
+    const res = await post(app, '/d1/receipts', { receiptDate: '2026-09-03', bankAccountCode: '310-0010', allocations: [{ billId, amountSen }], ...extra });
+    expect(res.status, await res.clone().text()).toBe(201);
+    return (await res.json() as { receipt: { id: string; receiptNumber: string } }).receipt;
+  };
+  const allocsOf = (tables: Record<string, Row[]>, receiptId: string) =>
+    tables.acc_debtor_receipt_allocations.filter((a) => a.receipt_id === receiptId).map((a) => [a.bill_id, a.amount_sen]);
+  const withHlb = () => {
+    const tables = baseTables();
+    tables.accounts.push({ company_id: CO, account_code: '310-0020', account_name: 'HONG LEONG', special_type: 'SBK', acc_money: true, is_active: true });
+    return tables;
+  };
+
+  test('a prepared receipt changes its date, bank and bills; the stage and number stay; approval books what was saved', async () => {
+    const tables = withHlb();
+    const app = harness(tables);
+    const first = await makeBill(app, tables);
+    const second = await makeBill(app, tables, [30000]);
+    const row1 = tables.acc_debtor_bills.find((b) => b.bill_number === first.billNumber)!;
+    const row2 = tables.acc_debtor_bills.find((b) => b.bill_number === second.billNumber)!;
+    const receipt = await raise(app, row1.id, 20000);
+    expect((await post(app, `/receipts/${receipt.id}/submit`)).status).toBe(200);
+
+    const res = await patch(app, `/receipts/${receipt.id}`, {
+      receiptDate: '2026-09-10', bankAccountCode: '310-0020',
+      allocations: [{ billId: row1.id, amountSen: 10000 }, { billId: row2.id, amountSen: 30000 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, receipt: { id: receipt.id, receiptNumber: receipt.receiptNumber, totalSen: 40000, stage: 'Prepared' } });
+    const row = tables.acc_debtor_receipts.find((x) => x.id === receipt.id)!;
+    expect(row).toMatchObject({ receipt_number: receipt.receiptNumber, receipt_date: '2026-09-10', bank_account_code: '310-0020', total_sen: 40000, status: 'DRAFT' });
+    expect(row.submitted_at).toBeTruthy();
+    expect(allocsOf(tables, receipt.id)).toEqual([[row1.id, 10000], [row2.id, 30000]]);
+    /* Nothing posted, no bill touched. */
+    expect(tables.journal_entries.filter((j) => j.source_type === 'ODR')).toHaveLength(0);
+    expect(row1.received_sen).toBe(0);
+    expect(row2.received_sen).toBe(0);
+
+    /* The layers carry on with what was saved. */
+    expect((await post(app, `/receipts/${receipt.id}/check`)).status).toBe(200);
+    expect((await post(app, `/receipts/${receipt.id}/approve`)).status).toBe(200);
+    expect(row1.received_sen).toBe(10000);
+    expect(row2.received_sen).toBe(30000);
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODR')!;
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(jl.find((l) => l.account_code === '310-0020')).toMatchObject({ debit_sen: 40000 });
+    expect(jl.find((l) => l.account_code === '305-0000')).toMatchObject({ credit_sen: 40000 });
+  });
+
+  test('the same checks as raising it — and a refused change leaves the draft as it was', async () => {
+    const tables = withHlb();
+    tables.acc_debtors.push({ id: 'd2', company_id: CO, name: 'SITI', phone: null, notes: null, is_active: true });
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+    const other = await post(app, '/d2/bills', { billDate: '2026-09-03', lines: [{ description: 'x', creditAccountCode: '700-0000', amountSen: 5000 }] });
+    expect(other.status).toBe(201);
+    const otherId = (await other.json() as { bill: { id: string } }).bill.id;
+    const receipt = await raise(app, billRow.id, 20000);
+    const refused = async (body: Row) => {
+      const res = await patch(app, `/receipts/${receipt.id}`, body);
+      expect(res.status).toBe(400);
+      return (await res.json() as { error: string }).error;
+    };
+    expect(await refused({ allocations: [{ billId: billRow.id, amountSen: 60000 }] })).toBe('over_allocation');
+    expect(await refused({ allocations: [{ billId: otherId, amountSen: 100 }] })).toBe('bad_allocation');
+    expect(await refused({ allocations: [{ billId: billRow.id, amountSen: 10.5 }] })).toBe('bad_allocation');
+    expect(await refused({ allocations: [] })).toBe('allocations_required');
+    expect(await refused({ bankAccountCode: '700-0000' })).toBe('not_a_money_account');
+    expect(await refused({ bankAccountCode: '' })).toBe('bank_required');
+    expect(await refused({ receiptDate: '' })).toBe('bad_date');
+    expect(await refused({})).toBe('nothing_to_change');
+    const row = tables.acc_debtor_receipts.find((x) => x.id === receipt.id)!;
+    expect(row).toMatchObject({ receipt_date: '2026-09-03', bank_account_code: '310-0010', total_sen: 20000 });
+    expect(allocsOf(tables, receipt.id)).toEqual([[billRow.id, 20000]]);
+  });
+
+  test('a failed write puts the old bills back, so the total and the knock-off never disagree', async () => {
+    const tables = withHlb();
+    const app = harness(tables);
+    const first = await makeBill(app, tables);
+    const second = await makeBill(app, tables, [30000]);
+    const row1 = tables.acc_debtor_bills.find((b) => b.bill_number === first.billNumber)!;
+    const row2 = tables.acc_debtor_bills.find((b) => b.bill_number === second.billNumber)!;
+    const receipt = await raise(app, row1.id, 20000);
+    const change = { allocations: [{ billId: row2.id, amountSen: 30000 }] };
+
+    failNext.insertInto = 'acc_debtor_receipt_allocations';
+    expect((await patch(app, `/receipts/${receipt.id}`, change)).status).toBe(500);
+    expect(allocsOf(tables, receipt.id)).toEqual([[row1.id, 20000]]);
+
+    failNext.updateOf = 'acc_debtor_receipts';
+    expect((await patch(app, `/receipts/${receipt.id}`, change)).status).toBe(500);
+    expect(allocsOf(tables, receipt.id)).toEqual([[row1.id, 20000]]);
+    expect(tables.acc_debtor_receipts.find((x) => x.id === receipt.id)).toMatchObject({ total_sen: 20000 });
+  });
+
+  test('a checked or posted receipt refuses; the raise / write keys gate it', async () => {
+    const tables = withHlb();
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+    const checked = await raise(app, billRow.id, 10000);
+    await post(app, `/receipts/${checked.id}/submit`);
+    await post(app, `/receipts/${checked.id}/check`);
+    const locked = await patch(app, `/receipts/${checked.id}`, { receiptDate: '2026-09-11' });
+    expect(locked.status).toBe(409);
+    expect(await locked.json()).toMatchObject({ error: 'already_checked', message: `${checked.receiptNumber} has been checked — it is locked. Reject it back to Draft to change it.` });
+
+    const posted = await raise(app, billRow.id, 10000, { postNow: true });
+    const onBooks = await patch(app, `/receipts/${posted.id}`, { receiptDate: '2026-09-11' });
+    expect(onBooks.status).toBe(409);
+    expect((await onBooks.json() as { error: string }).error).toBe('not_editable');
+
+    const draft = await raise(app, billRow.id, 5000);
+    const viewer = harness(tables, ['scm.access', 'scm.payment_voucher.check']);
+    expect((await patch(viewer, `/receipts/${draft.id}`, { receiptDate: '2026-09-11' })).status).toBe(403);
+    const raiser = harness(tables, ['scm.access', 'scm.payment_voucher.create']);
+    expect((await patch(raiser, `/receipts/${draft.id}`, { receiptDate: '2026-09-11' })).status).toBe(200);
+    expect((await patch(app, '/receipts/nope', { receiptDate: '2026-09-11' })).status).toBe(404);
+  });
+});
+
 /* Void (owner 2026-09-29, the Other Debtors page now the registry alone and
    the Receipts page the one door for the money): a POSTED receipt's one undo
    — the ODR contra, the bills' money given back, the receipt CANCELLED; a
@@ -650,5 +789,28 @@ describe('an event on a bill line — optional, onto its own credit leg', () => 
     expect(editOther.status).toBe(400);
     expect(tables.journal_entries).toHaveLength(1);
     expect(tables.acc_debtor_bill_lines.filter((l) => l.bill_id === billRow.id).map((l) => l.project_id ?? null)).toEqual([null]);
+  });
+});
+
+/* A debit note to an other debtor (owner 2026-10-28: Customer & Other Debtor CN / DN):
+   the same bill — it raises what they owe and is received by the same receipts —
+   with doc_kind DN, its own series and its own name in the journal. */
+describe('a debit note to an other debtor is a bill of its own kind', () => {
+  test('mints {co}ODN-YYMM-NNN and books ODB as "Debit note"; a bad docKind refuses', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await post(app, '/d1/bills', { billDate: '2026-09-03', docKind: 'DN', lines: [{ description: 'Late fee', creditAccountCode: '700-0000', amountSen: 12000 }] });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const bill = (await res.json() as { bill: { id: string; billNumber: string; totalSen: number } }).bill;
+    expect(bill.billNumber).toMatch(/ODN-2609-001$/);
+    expect(tables.acc_debtor_bills.find((b) => b.id === bill.id)).toMatchObject({ doc_kind: 'DN', status: 'POSTED', total_sen: 12000 });
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODB' && j.source_doc_no === bill.billNumber)!;
+    expect(String(je.narration)).toMatch(/^Debit note .*ODN-2609-001 — AHMAD BIN ALI$/);
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(jl.find((l) => l.account_code === '305-0000')).toMatchObject({ debit_sen: 12000, party_name: 'AHMAD BIN ALI' });
+    const plain = await makeBill(app, tables);
+    expect(plain.billNumber).toMatch(/ODB-2609-001$/);
+    const bad = await post(app, '/d1/bills', { billDate: '2026-09-03', docKind: 'XX', lines: [{ creditAccountCode: '700-0000', amountSen: 100 }] });
+    expect(bad.status).toBe(400);
   });
 });

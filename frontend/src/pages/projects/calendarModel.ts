@@ -1,6 +1,10 @@
 import { compareCalendarEvents } from "../../lib/calendarSort";
 import type { ProjectStage, ProjectStatus } from "./types";
 
+/** A venue's initials, so "sccc" finds Setia City Convention Centre (owner 2026-11-04). */
+export const initialsOf = (name: string | null | undefined): string =>
+  (name ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w[0]).join("");
+
 export interface CalendarProject {
   id: number;
   code: string;
@@ -166,9 +170,9 @@ export function buildProjectsCalendarModel({
     !status || ((project.status as string | null) || "").toLowerCase() === status;
 
   // Free-text search — case-insensitive over the visible/label fields.
-  const needle = q.trim().toLowerCase();
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const matchesQuery = (project: CalendarProject): boolean => {
-    if (!needle) return true;
+    if (words.length === 0) return true;
     const hay = [
       project.code,
       project.name,
@@ -180,7 +184,7 @@ export function buildProjectsCalendarModel({
     ]
       .join(" ")
       .toLowerCase();
-    return hay.includes(needle);
+    return words.every((w) => hay.includes(w) || initialsOf(project.venue).includes(w));
   };
 
   const projects = allProjects.filter((project) => {
@@ -197,7 +201,7 @@ export function buildProjectsCalendarModel({
         if (organizer && (task.organizer || "") !== organizer) return false;
         // With a search: only render tasks whose parent project passed the
         // filter — keeps the view consistent (task chips beside their bar).
-        if (needle && !projectById.has(task.project_id)) return false;
+        if (words.length > 0 && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })
     : [];

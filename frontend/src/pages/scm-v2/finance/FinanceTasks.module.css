@@ -1,0 +1,180 @@
+/* The To do's task drawers and its rules page — the owner's Claude Design
+   "Finance-1a-To-do" (2026-11-02, batch 2). Colours are the design's own, on
+   the ERP's Theme C. */
+
+.drawer, .rulesPage {
+  --fin-ink: #11140f;
+  --fin-text: #414539;
+  --fin-detail: #5f6459;
+  --fin-muted: #767b6e;
+  --fin-line: #d6d9d2;
+  --fin-input: #c2c6bd;
+  --fin-rule: #e3e6e0;
+  --fin-paper: #f4f6f3;
+  --fin-petrol: #16695f;
+  --fin-petrol-ink: #0c3f39;
+  --fin-petrol-pale: #e1efed;
+  --fin-brass: #a16a2e;
+  --fin-green: #2f8a5b;
+}
+.drawer { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #ffffff; color: var(--fin-ink); }
+
+.head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 18px 20px 14px; border-bottom: 1px solid var(--fin-rule);
+}
+.headTitle { font-size: 17px; font-weight: 600; line-height: 1.3; }
+.headSub { margin-top: 3px; font-size: 12.5px; color: var(--fin-detail); }
+.close {
+  flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--fin-line);
+  border-radius: 6px; background: #ffffff; color: var(--fin-text); cursor: pointer;
+}
+.close:hover { background: var(--fin-paper); }
+
+.body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+.foot { flex: none; border-top: 1px solid var(--fin-rule); padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; }
+.footButtons { display: flex; justify-content: flex-end; gap: 8px; }
+.note { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--fin-detail); }
+.note > svg { flex: none; color: var(--fin-petrol); margin-top: 1px; }
+
+.field { display: flex; flex-direction: column; gap: 7px; }
+.fieldLabel { font-size: 12px; font-weight: 600; color: var(--fin-text); }
+.optional { font-weight: 400; color: var(--fin-muted); }
+.input {
+  height: 40px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--fin-input); border-radius: 8px;
+  font: 14px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none; min-width: 0; flex: 1;
+}
+.input:focus, .textarea:focus { border-color: var(--fin-petrol); }
+.textarea {
+  box-sizing: border-box; width: 100%; padding: 9px 12px; border: 1px solid var(--fin-input); border-radius: 8px;
+  font: 13px/1.5 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none; resize: vertical;
+}
+
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px; box-sizing: border-box;
+  border: 1px solid var(--fin-line); background: #ffffff; color: var(--fin-ink);
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.chip:hover { background: var(--fin-paper); }
+.chipOn, .chipOn:hover { border-color: var(--fin-ink); background: var(--fin-ink); color: #ffffff; }
+.addChip {
+  display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px; border-radius: 999px;
+  border: 1px dashed var(--fin-input); background: #ffffff; color: var(--fin-text);
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.subRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.subLabel { font-size: 12px; color: var(--fin-muted); min-width: 48px; }
+.dayGrid { display: flex; flex-wrap: wrap; gap: 4px; max-width: 420px; }
+.dayGrid .chip { height: 28px; padding: 0 9px; }
+.summary { font-size: 12.5px; color: var(--fin-petrol-ink); background: var(--fin-petrol-pale); padding: 8px 10px; border-radius: 6px; }
+.hint { font-size: 12px; color: var(--fin-muted); }
+
+.search {
+  display: flex; align-items: center; gap: 8px; height: 38px; box-sizing: border-box; padding: 0 12px;
+  border: 1px solid var(--fin-input); border-radius: 8px; color: var(--fin-muted);
+}
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); }
+.results { display: flex; flex-direction: column; border: 1px solid var(--fin-rule); border-radius: 8px; overflow: hidden; }
+.result {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border: 0; border-top: 1px solid var(--fin-rule);
+  background: #ffffff; text-align: left; cursor: pointer; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+.result:first-child { border-top: 0; }
+.result:hover { background: var(--fin-paper); }
+.linkCard { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #b9d6d1; border-radius: 8px; background: #f3f8f7; }
+.linkCard > svg { flex: none; color: var(--fin-petrol); }
+.linkText { flex: 1; min-width: 0; }
+.linkType { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fin-brass); }
+.linkNo { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.linkName { font-size: 12px; color: var(--fin-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.linkChip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--fin-petrol);
+  text-decoration: none; border-bottom: 1px dotted var(--fin-petrol);
+}
+
+.btnPrimary, .btnSecondary {
+  height: 34px; padding: 0 14px; border-radius: 6px; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btnPrimary { border: 1px solid #b9d6d1; background: var(--fin-petrol-pale); color: var(--fin-petrol-ink); }
+.btnPrimary:hover:not(:disabled) { background: #d3e7e3; }
+.btnSecondary { border: 1px solid var(--fin-line); background: #ffffff; color: var(--fin-text); }
+.btnSecondary:hover:not(:disabled) { background: var(--fin-paper); }
+.btnPrimary:disabled, .btnSecondary:disabled { opacity: 0.55; cursor: default; }
+
+.meta { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; font-size: 13px; }
+.metaKey { color: var(--fin-muted); }
+.remarks { display: flex; flex-direction: column; gap: 12px; }
+.remarksHead { display: flex; align-items: baseline; gap: 6px; font-size: 13px; font-weight: 600; }
+.count { font-size: 12px; font-weight: 400; color: var(--fin-muted); }
+.remark { display: flex; gap: 10px; }
+.avatar {
+  flex: none; width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center;
+  background: #eef0ec; color: var(--fin-text); font-size: 11px; font-weight: 700;
+}
+.remarkMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.remarkHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.remarkWho { font-weight: 600; color: var(--fin-ink); }
+.remarkTime { color: var(--fin-muted); }
+.remarkTag { height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; background: #eef0ec; color: var(--fin-text); font-size: 10.5px; font-weight: 600; }
+.remarkTagDone { background: #e2f0e9; color: var(--fin-green); }
+.edited, .editLink {
+  display: inline-flex; align-items: center; gap: 2px; border: 0; background: transparent; padding: 0; cursor: pointer;
+  font: 11.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-muted);
+}
+.editLink { color: var(--fin-petrol); font-weight: 600; }
+.remarkText { font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.editBox { display: flex; flex-direction: column; gap: 6px; }
+.editFoot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.editFoot .hint { margin-right: auto; }
+.history { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-left: 2px solid var(--fin-rule); background: #f9faf8; font-size: 12.5px; }
+.historyItem { display: flex; flex-direction: column; }
+.historyLabel { font-size: 11px; color: var(--fin-muted); margin-bottom: 2px; }
+.rightRow { display: flex; justify-content: flex-end; }
+.problem { padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: #fbeeee; font-size: 12.5px; color: #7a2222; }
+
+/* ── Setup › To do rules ─────────────────────────────────────────────── */
+
+.rulesPage { display: flex; flex-direction: column; gap: 20px; color: #11140f; }
+.card { background: #ffffff; border: 1px solid #d6d9d2; border-radius: 10px; overflow: hidden; }
+.cardHead { padding: 12px 16px; background: #f9faf8; border-bottom: 1px solid #e3e6e0; font-size: 13px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
+.cardNote { font-size: 12px; font-weight: 400; color: #767b6e; }
+.tableWrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; font-size: 11.5px; font-weight: 600; color: #5f6459; padding: 9px 16px; border-bottom: 1px solid #e3e6e0; white-space: nowrap; }
+.table td { padding: 11px 16px; border-top: 1px solid #e3e6e0; vertical-align: middle; }
+.table tr:first-child td { border-top: 0; }
+.ruleName { font-weight: 600; }
+.ruleFinds { font-size: 12px; color: #5f6459; margin-top: 2px; }
+.offRow td { opacity: 0.55; }
+.offRow td:last-child { opacity: 1; }
+.switch {
+  position: relative; width: 34px; height: 20px; border-radius: 999px; border: 0; padding: 0; cursor: pointer; background: #c2c6bd;
+}
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: #ffffff;
+  box-shadow: 0 1px 2px rgba(17, 24, 16, 0.25); transition: left 120ms ease;
+}
+.switchOn { background: #16695f; }
+.switchOn::after { left: 16px; }
+.switch:disabled { cursor: default; opacity: 0.6; }
+.amountInput {
+  width: 120px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px;
+  font: 13px 'IBM Plex Sans', system-ui, sans-serif; text-align: right; font-variant-numeric: tabular-nums;
+}
+.payeeInput { width: 180px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px; font: 13px 'IBM Plex Sans', system-ui, sans-serif; }
+.groupList { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 16px; }
+.groupPill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px; background: #f4f6f3; border: 1px solid #e3e6e0; font-size: 12.5px; }
+
+/* Setup › To do rules › New rule (batch 2c). */
+.headButton { margin-left: auto; height: 28px; }
+.newRule { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #e3e6e0; background: #fbfcfa; }
+.templateList { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.template {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid #d6d9d2; border-radius: 8px;
+  background: #ffffff; text-align: left; cursor: pointer; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f;
+}
+.template:hover { background: #f4f6f3; }
+.templateOn, .templateOn:hover { border-color: #16695f; box-shadow: inset 0 0 0 1px #16695f; background: #f3f8f7; }
+.newRuleRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.yours { margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; background: #eaf3f1; color: #1d5c54; font-size: 10.5px; font-weight: 600; vertical-align: middle; }

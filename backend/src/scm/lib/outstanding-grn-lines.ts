@@ -58,7 +58,7 @@ type NoteRow = {
    section describes. The handler has always coalesced them. */
 type LineRow = {
   id: string; grn_id: string; material_kind: string; item_code: string;
-  material_name: string; item_group: string | null; description: string | null;
+  material_name: string; item_group: string | null; description: string | null; supplier_sku: string | null;
   qty_accepted: number | null; qty_rejected: number | null;
   invoiced_qty: number | null; returned_qty: number | null;
   unit_price_sen: number; variants: unknown; created_at: string | null;
@@ -72,7 +72,7 @@ const NOTE_SELECT = `
 
 const LINE_SELECT = `
       id, grn_id, material_kind, item_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants, created_at
+      description, supplier_sku, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants, created_at
     `;
 
 /** What is still to bill on one line. Kept here so the route, the tests and
@@ -86,7 +86,7 @@ export type OutstandingGrnItem = {
   grnItemId: string; grnId: string; grnDocNo: string; receivedAt: string;
   supplierId: string; supplierCode: string; supplierName: string;
   purchaseOrderId: string | null; poDocNo: string | null;
-  itemCode: string; description: string; itemGroup: string;
+  itemCode: string; supplierSku: string | null; description: string; itemGroup: string;
   qtyAccepted: number | null; invoicedQty: number; remaining: number;
   unitPriceSen: number; variants: unknown;
   currency: string; exchangeRate: number;
@@ -170,6 +170,7 @@ function toItem(h: NoteRow, r: LineRow): OutstandingGrnItem {
     purchaseOrderId: h.purchase_order_id,
     poDocNo:         h.purchase_order?.po_number ?? null,
     itemCode:        r.item_code,
+    supplierSku:     r.supplier_sku,
     description:     r.description ?? r.material_name,
     itemGroup:       r.item_group ?? '',
     qtyAccepted:     r.qty_accepted,

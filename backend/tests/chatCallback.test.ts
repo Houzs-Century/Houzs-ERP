@@ -29,6 +29,7 @@ const sources = import.meta.glob(
     "../src/scm/routes/delivery-messages.ts",
     "../src/lib/chat-request-patch.ts",
     "../src/lib/chat-callback-record.ts",
+    "../src/scm/lib/assr-arrangement-message.ts",
   ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
@@ -124,24 +125,36 @@ describe("the callback records the request, it does not schedule", () => {
   });
 });
 
-describe("one secret, one company", () => {
-  test("the key speaks for HOUZS and the SO lookup is scoped to it", () => {
+describe("one secret, the companies of its number", () => {
+  test("the key speaks for HOUZS and 2990 and the SO lookup is scoped to them", () => {
     const src = route();
-    expect(src).toMatch(/CHAT_KEY_COMPANY\s*=\s*"HOUZS"/);
-    // company.id null-but-master-readable is a MISCONFIGURATION and must
-    // refuse; degrading to "no predicate" re-opens the cross-tenant hole on
-    // the day someone renames a company code.
-    expect(src).toMatch(/company\.master\s*&&\s*company\.id\s*==\s*null/);
-    expect(src).toMatch(/\.eq\("company_id",\s*company\.id\)/);
+    // HC-0200: 2990's delivery messages go out on the Houzs number, so their
+    // taps come back on this key. HOUZS-only 404'd every 2990 Confirm / Amend.
+    expect(src).toMatch(/CHAT_KEY_COMPANIES\s*=\s*\["HOUZS",\s*"2990"\]\s*as const/);
+    // An id null-but-master-readable is a MISCONFIGURATION and must refuse;
+    // degrading to "no predicate" re-opens the cross-tenant hole on the day
+    // someone renames a company code.
+    expect(src).toMatch(/keyCompanies\[i\]\.master\s*&&\s*keyCompanies\[i\]\.id\s*==\s*null/);
+    expect(src).toMatch(/\.in\("company_id",\s*orderCompanyIds\)/);
     expect(record()).toMatch(/\.eq\("company_id",\s*companyId\)/);
+  });
+
+  test("each order is recorded under its own company, Service Cases under HOUZS", () => {
+    const src = route();
+    expect(src).toMatch(/companyId:\s*t\.companyId,/);
+    expect(src).toMatch(/const company = keyCompanies\[0\]/);
+    expect(src).toMatch(/recordAssrChatTap\(c\.env,\s*sb,\s*\{\s*companyId:\s*company\.id/);
   });
 
   test("an unknown ref and another company's ref answer identically", () => {
     const src = route();
     // Distinguishing them would let a Houzs credential probe which doc numbers
     // exist elsewhere.
+    // One answer per branch: the SO lookup, and the Service Case lookup, whose
+    // company predicate sits in the same query (pinned below), so a case of
+    // another company is just as unknown.
     const hits = src.match(/unknown_ref/g) ?? [];
-    expect(hits.length).toBe(1);
+    expect(hits.length).toBe(2);
   });
 });
 
@@ -232,5 +245,38 @@ describe("callback rows cannot masquerade as send status", () => {
 
   test("the callback writes a source the filter excludes", () => {
     expect(record()).toMatch(/source:\s*"chat-callback"/);
+  });
+});
+
+describe("a Service Case tap records, it does not schedule (HC-0171)", () => {
+  const assr = () => stripComments(source("lib/assr-arrangement-message.ts"));
+
+  test("the case is read, never updated", () => {
+    expect(assr()).not.toMatch(/UPDATE\s+assr_cases/i);
+    for (const col of ["sched_pickup_date", "sched_inspection_date", "sched_delivery_date"]) {
+      expect(assr()).not.toMatch(new RegExp(`${col}\\s*=`));
+    }
+  });
+
+  test("the case lookup carries the callback's company", () => {
+    const src = assr();
+    const idx = src.indexOf("export async function recordAssrChatTap");
+    expect(idx).toBeGreaterThan(-1);
+    expect(src.slice(idx, idx + 900)).toContain("AND company_id = ?");
+  });
+
+  test("the timeline line is written before the log row that marks the tap handled", () => {
+    const src = assr();
+    const idx = src.indexOf("export async function recordAssrChatTap");
+    const body = src.slice(idx);
+    expect(body.indexOf("logActivity(")).toBeGreaterThan(-1);
+    expect(body.indexOf("logActivity(")).toBeLessThan(body.indexOf("source: 'chat-callback'"));
+  });
+
+  test("the route answers applied:false for a Service Case too", () => {
+    const src = route();
+    const idx = src.indexOf("recordAssrChatTap(");
+    expect(idx).toBeGreaterThan(-1);
+    expect(src.slice(idx, idx + 700)).toMatch(/applied:\s*false/);
   });
 });

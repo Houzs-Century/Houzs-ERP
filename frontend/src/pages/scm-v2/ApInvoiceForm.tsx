@@ -52,6 +52,17 @@ export type ApFormSubmit = {
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 export const emptyLine = (rid: number, projectId: number | null = null): ApFormLine => ({ rid, description: '', debitAccountCode: '', amountSen: 0, projectId });
+/** The due date a supplier's terms give a bill (the redesign): "30 Days" or
+    "Net 30" → the invoice date + 30; C.O.D., blank or anything unreadable →
+    none, and the due date is typed. */
+export const dueFromTerms = (terms: string | null | undefined, invoiceDate: string): string | null => {
+  const m = /(\d{1,3})\s*days?\b/i.exec(terms ?? '') ?? /\bnet\s*(\d{1,3})\b/i.exec(terms ?? '');
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) return null;
+  const d = new Date(`${invoiceDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(m[1]));
+  return d.toISOString().slice(0, 10);
+};
+
 export const emptyApForm = (): ApFormValues => ({ supplierId: '', supplierRef: '', invoiceDate: myt(), dueDate: '', description: '', lines: [emptyLine(1)] });
 
 export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
@@ -154,7 +165,7 @@ const iconBtn: React.CSSProperties = { border: 'none', background: 'none', curso
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
-  initialFiles, initialNote, initialEventSuggestions, selfId = null, requestId = null,
+  initialFiles, initialNote, initialEventSuggestions, selfId = null, requestId = null, canPost = false,
 }: {
   mode: ApFormMode;
   initial: ApFormValues;
@@ -162,7 +173,10 @@ export const ApInvoiceForm = ({
       "same bill" (owner 2026-10-05: 提醒也加 — a warning, never a block). */
   selfId?: string | null;
   requestId?: string | null;
-  suppliers: Array<{ id: string; code: string; name: string }>;
+  /** payment_terms: the due date follows them on a new bill (the redesign). */
+  suppliers: Array<{ id: string; code: string; name: string; payment_terms?: string | null }>;
+  /** Offer Save & post on a new bill (the post key): the page saves, then posts. */
+  canPost?: boolean;
   suppliersLoading?: boolean;
   lineAccounts: Account[];
   /** A bill handed over from the pile page: its read pages, waiting to attach
@@ -176,7 +190,7 @@ export const ApInvoiceForm = ({
   posted?: boolean;
   paidSen?: number;
   saving: boolean;
-  onSubmit: (values: ApFormSubmit, pendingFiles: PvFilePayload[]) => void | Promise<void>;
+  onSubmit: (values: ApFormSubmit, pendingFiles: PvFilePayload[], opts?: { post?: boolean }) => void | Promise<void>;
   onCancel: () => void;
 }) => {
   const [v, setV] = useState<ApFormValues>(initial);
@@ -217,6 +231,17 @@ export const ApInvoiceForm = ({
   /* The same bill — its printed number AND date — already asked for, vouchered
      or entered (lib/bill-matches.ts). Said under the bill's own fields. */
   const sameBill = useBillMatches(v.supplierRef, v.invoiceDate, requestId, selfId);
+
+  /* The due date from the supplier's terms (the redesign): filled while the box
+     is empty or still holds what the terms gave; a typed date stays. */
+  const [dueAuto, setDueAuto] = useState(false);
+  const terms = suppliers.find((s) => s.id === v.supplierId)?.payment_terms ?? null;
+  useEffect(() => {
+    if (v.dueDate && !dueAuto) return;
+    const due = dueFromTerms(terms, v.invoiceDate);
+    if (due && due !== v.dueDate) { setV((prev) => ({ ...prev, dueDate: due })); setDueAuto(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terms, v.invoiceDate]);
 
   const total = v.lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const belowPaid = posted && total < paidSen;
@@ -333,7 +358,8 @@ export const ApInvoiceForm = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Due date</span>
-          <DateField fullWidth className={styles.fieldInput} value={v.dueDate} onChange={(iso) => set({ dueDate: iso })} aria-label="AP invoice due date" />
+          <DateField fullWidth className={styles.fieldInput} value={v.dueDate} onChange={(iso) => { setDueAuto(false); set({ dueDate: iso }); }} aria-label="AP invoice due date" />
+          {dueAuto && terms && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>From the supplier's terms ({terms}).</span>}
         </label>
       </div>
       <BillMatchesNote matches={sameBill.data?.matches} />
@@ -416,9 +442,15 @@ export const ApInvoiceForm = ({
         {belowPaid && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>The total cannot fall below the {fmtSen(paidSen)} already paid.</span>}
         <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
-        <Button variant="primary" size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles)} disabled={saving || !ready}>
+        <Button variant={canPost && mode !== 'edit' ? 'secondary' : 'primary'} size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles)} disabled={saving || !ready}>
           {saving ? 'Saving…' : saveLabel}
         </Button>
+        {/* Save & post (the redesign): the same save, then today's post. */}
+        {canPost && mode !== 'edit' && (
+          <Button variant="primary" size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles, { post: true })} disabled={saving || !ready}>
+            Save & post
+          </Button>
+        )}
       </div>
     </div>
   );

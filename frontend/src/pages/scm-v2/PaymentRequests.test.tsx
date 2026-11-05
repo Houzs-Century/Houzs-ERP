@@ -5,8 +5,10 @@
      • the stage reads the owner's words, the voucher number beside it;
      • the requester edits or withdraws their own waiting request; a returned one
        shows Finance's note and goes back with "Fix and send again";
-     • Finance sees who asked, makes the voucher (PV New ?fromRequest=) or
-       returns the request with a note it must give. */
+     • Finance reads it under Money out (the redesign, batch 4 step 9): three
+       tabs with counts, the design's columns, the request's buttons on its row,
+       the request in a drawer — and answers as before: makes the voucher (PV
+       New ?fromRequest=) or sends the request back with a reason it must give. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -57,7 +59,7 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
   useWithdrawPaymentRequest: () => ({ mutate: (id: string) => { void withdrawAsync(id); }, isPending: false }),
-  useReturnPaymentRequest: () => ({ mutate: (b: Req) => { void returnAsync(b); }, isPending: false }),
+  useReturnPaymentRequest: () => ({ mutate: (b: Req) => { void returnAsync(b); }, mutateAsync: returnAsync, isPending: false }),
   useUploadPaymentRequestFile: () => ({ mutateAsync: uploadAsync, isPending: false }),
   useDeletePaymentRequestFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePaymentRequestFiles: () => ({ data: { files: [] }, isLoading: false }),
@@ -84,35 +86,58 @@ vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi
 
 import { PaymentRequests } from './PaymentRequests';
 
+const Where = () => { const l = useLocation(); return <div>At {l.pathname}{l.search}</div>; };
 const draw = (path = '/scm/payment-requests') => render(
   <MemoryRouter initialEntries={[path]}>
     <Routes>
       <Route path="/scm/payment-requests" element={<PaymentRequests />} />
       <Route path="/scm/payment-vouchers/new" element={<div>PV New opened</div>} />
+      <Route path="/scm/payment-vouchers/:id" element={<Where />} />
       <Route path="/scm/ap-invoices" element={<div>AP Invoices opened</div>} />
     </Routes>
   </MemoryRouter>,
 );
 
-/* Links into the page (owner 2026-10-08): the Payment Vouchers reminder lands on
-   「Waiting for Finance」; a PMS row's request number opens that request. */
+const paidVoucher = { id: 'pv-9', pvNumber: 'HC-PV-2609-014', status: 'POSTED', approvedAt: '2026-09-12T03:00:00Z', postedAt: '2026-09-12T03:00:00Z', bankConfirmed: false };
+const tabNamed = (name: RegExp) => screen.getByRole('tab', { name });
+
+/* Links into the page (owner 2026-10-08): the Payment Vouchers reminder and To do
+   land on the requests waiting for Finance — the To do tab since the redesign; a
+   PMS row's request number, or a voucher raised from a request, opens that request. */
 describe('links into the page', () => {
-  test('?filter=waiting opens on 「Waiting for Finance」; ?open= opens one request; anything else is All', () => {
+  test('Finance: ?filter=waiting opens on To do; ?open= opens one request in the drawer; anything else is To do', () => {
     isFinance = true; hasEvents = undefined;
     requests = [
       base({}),
-      base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: { id: 'pv-9', pvNumber: 'HC-PV-2609-014', status: 'POSTED', approvedAt: '2026-09-12T03:00:00Z', postedAt: '2026-09-12T03:00:00Z', bankConfirmed: false } }),
+      base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: paidVoucher }),
     ];
     const first = draw('/scm/payment-requests?filter=waiting');
-    expect(screen.getByRole('button', { name: /^Waiting for Finance/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(tabNamed(/^To do/).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('HC-PRQ-2609-001')).toBeTruthy();
     expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
     first.unmount();
     const second = draw('/scm/payment-requests?open=r2');
     expect(screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-002' })).toBeTruthy();
     second.unmount();
+    const third = draw('/scm/payment-requests?filter=paid');
+    expect(tabNamed(/^Paid/).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('HC-PRQ-2609-002')).toBeTruthy();
+    expect(screen.queryByText('HC-PRQ-2609-001')).toBeNull();
+    third.unmount();
+    draw('/scm/payment-requests?filter=nonsense');
+    expect(tabNamed(/^To do/).getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('a requester: ?filter=waiting opens on 「Waiting for Finance」; anything else is All', () => {
+    isFinance = false; hasEvents = undefined;
+    requests = [base({}), base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: paidVoucher })];
+    const first = draw('/scm/payment-requests?filter=waiting');
+    expect(screen.getByRole('button', { name: /^Waiting for Finance/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
+    first.unmount();
     draw('/scm/payment-requests?filter=nonsense');
     expect(screen.getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('tab')).toBeNull();
   });
 });
 
@@ -308,17 +333,70 @@ describe('the requester', () => {
 });
 
 describe('Finance', () => {
-  test('sees who asked; makes the voucher on PV New from the request', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  test('reads it under Money out: the three tabs with counts beside today\'s finer lists, and the design\'s columns in English', () => {
+    requests = [
+      base({ requested_by: 40, requested_by_name: 'Luis Teo', bank_account_no: '5123 4567 8901' }),
+      base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: paidVoucher }),
+      base({ id: 'r3', request_no: 'HC-PRQ-2609-003', status: 'REJECTED', stage: 'RETURNED', finance_note: 'Attach the organiser invoice' }),
+      base({ id: 'r4', request_no: 'HC-PRQ-2609-004', status: 'WITHDRAWN', stage: 'WITHDRAWN' }),
+    ];
+    isFinance = true;
+    draw();
+    expect(screen.getByText('Finance · Money out')).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['To do1', 'Turned into vouchers1', 'Sent back2', 'Paid1', 'Official invoice owed0', 'All4']);
+    expect(tabNamed(/^To do/).getAttribute('aria-selected')).toBe('true');
+    /* The design's columns in its order (the request number first, to open it;
+       the row's buttons last). Event, Pay by and Date wait in the chooser.
+       To do leads with the tick column — several requests, ONE voucher. */
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent))
+      .toEqual(['', 'Request', 'Kind', 'For', 'Why', 'Amount', 'Pay to', 'Requested by', 'Waiting', 'Stage', '']);
+    expect(screen.getByText('Payment')).toBeTruthy();
+    expect(screen.getByText('Maybank ···· 8901')).toBeTruthy();
+    /* The stage reads English only on Finance's list. */
+    expect(screen.getByText('Submitted')).toBeTruthy();
+    expect(screen.queryByText(/已提交/)).toBeNull();
+    expect(screen.getByLabelText('Only my requests')).toBeTruthy();
+  });
+
+  test('Waiting says how long it has waited — Today, then days, warm from three', () => {
+    requests = [
+      base({ id: 'r1', request_no: 'HC-PRQ-2610-001', created_at: daysAgo(0) }),
+      base({ id: 'r2', request_no: 'HC-PRQ-2610-002', created_at: daysAgo(1) }),
+      base({ id: 'r3', request_no: 'HC-PRQ-2610-003', created_at: daysAgo(4) }),
+    ];
+    isFinance = true;
+    draw();
+    expect(screen.getByText('Today')).toBeTruthy();
+    expect(screen.getByText('1 day')).toBeTruthy();
+    expect(screen.getByText('4 days').className).toMatch(/toneWarn/);
+    expect(screen.getByText('1 day').className).toMatch(/toneCalm/);
+  });
+
+  test('sees who asked; Make voucher on the row opens PV New from the request', () => {
     requests = [base({ requested_by: 40, requested_by_name: 'Luis Teo' })];
     isFinance = true;
     draw();
-    expect(screen.getByText('Requested by')).toBeTruthy();
     expect(screen.getByText('Luis Teo')).toBeTruthy();
+    fireEvent.click(screen.getByText('Make voucher ›'));
+    expect(screen.getByText('PV New opened')).toBeTruthy();
+  });
+
+  test('the number opens the request in a drawer, with the same answers', () => {
+    requests = [base({ requested_by: 40, requested_by_name: 'Luis Teo' })];
+    isFinance = true;
+    draw();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
-    const d = screen.getByRole('dialog');
+    const d = screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-001' });
+    expect(within(d).getByText('Raised by Luis Teo on 2026/09/10')).toBeTruthy();
+    /* The bank whole in the drawer; the list shows only its last four digits. */
+    expect(within(d).getByText('Maybank · 5123 · MLE EVENTS SDN BHD')).toBeTruthy();
+    expect(within(d).getByText(/starts as a draft\. It is checked, then approved, before any money moves\./)).toBeTruthy();
     /* Not Finance's own request: no Edit / Withdraw. */
     expect(within(d).queryByText('Edit')).toBeNull();
-    fireEvent.click(within(d).getByText('Make voucher'));
+    expect(within(d).queryByText('Withdraw')).toBeNull();
+    fireEvent.click(within(d).getByText('Make voucher ›'));
     expect(screen.getByText('PV New opened')).toBeTruthy();
   });
 
@@ -332,19 +410,51 @@ describe('Finance', () => {
     expect(screen.getByText('AP Invoices opened')).toBeTruthy();
   });
 
-  test('a request answered by an AP invoice reads how much of it is paid, and links the bill', () => {
+  test('⋯ and right-click hold every move; Open shows the drawer', () => {
+    requests = [base({ requested_by: 40, requested_by_name: 'Luis Teo' })];
+    isFinance = true;
+    draw();
+    fireEvent.click(screen.getByLabelText('More for HC-PRQ-2609-001'));
+    const menu = screen.getByRole('menu', { name: 'HC-PRQ-2609-001 menu' });
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Make voucher', 'Make AP invoice', 'Send back…']);
+    fireEvent.click(within(menu).getByText('Open'));
+    expect(screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-001' })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByText('Luis Teo'));
+    expect(screen.getAllByText('Make AP invoice').length).toBeGreaterThan(1);
+  });
+
+  test('a request answered by an AP invoice sits in Turned into vouchers, reads how much is paid, and opens the bill', () => {
     requests = [base({
       requested_by: 40, requested_by_name: 'Luis Teo', status: 'VOUCHERED', stage: 'PARTLY_PAID', ap_invoice_id: 'api-7',
       invoice: { id: 'api-7', invoiceNumber: 'HC-API-2609-007', status: 'PARTIALLY_PAID', totalSen: 850_000, paidSen: 300_000, paidBy: ['HC-PV-2609-010'], bankConfirmed: false },
     })];
     isFinance = true;
     draw();
-    expect(screen.getByText(/HC-API-2609-007 · RM 3,000\.00 of RM 8,500\.00 paid/)).toBeTruthy();
+    expect(screen.queryByText('HC-PRQ-2609-001')).toBeNull();
+    fireEvent.click(tabNamed(/^Turned into vouchers/));
+    expect(screen.getByRole('columnheader', { name: /^Voucher/ })).toBeTruthy();
+    expect(screen.getByText('HC-API-2609-007')).toBeTruthy();
+    expect(screen.getByText('RM 3,000.00 of RM 8,500.00 paid')).toBeTruthy();
+    expect(screen.getByText('Partly paid')).toBeTruthy();
+    expect(screen.queryByText('Make voucher ›')).toBeNull();
+    expect(screen.getByText('Open AP invoice ›')).toBeTruthy();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     const d = screen.getByRole('dialog');
-    expect(within(d).queryByText('Make voucher')).toBeNull();
-    expect(within(d).getByText('Open HC-API-2609-007 →').getAttribute('href')).toBe('/scm/ap-invoices?open=api-7');
+    expect(within(d).queryByText('Make voucher ›')).toBeNull();
+    expect(within(d).getByText('HC-API-2609-007').closest('a')?.getAttribute('href')).toBe('/scm/ap-invoices?open=api-7');
     expect(d.textContent).toContain('by HC-PV-2609-010');
+    fireEvent.click(within(d).getByText('HC-API-2609-007'));
+    expect(screen.getByText('AP Invoices opened')).toBeTruthy();
+  });
+
+  test('Open voucher › opens the voucher that answered it', () => {
+    requests = [base({ requested_by: 40, status: 'VOUCHERED', stage: 'PAID', voucher: paidVoucher })];
+    isFinance = true;
+    draw('/scm/payment-requests?filter=processing');
+    expect(tabNamed(/^Turned into vouchers/).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('HC-PV-2609-014')).toBeTruthy();
+    fireEvent.click(screen.getByText('Open voucher ›'));
+    expect(screen.getByText('At /scm/payment-vouchers/pv-9')).toBeTruthy();
   });
 
   test('a request whose bill is on another document is marked on the list, and the request says which and what was read', () => {
@@ -354,7 +464,7 @@ describe('Finance', () => {
     })];
     isFinance = true;
     draw();
-    expect(screen.getByLabelText('Same bill elsewhere').textContent).toBe('⚠ same bill');
+    expect(screen.getByLabelText('Same bill elsewhere').textContent).toBe('Same bill');
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     const d = screen.getByRole('dialog');
     expect(within(d).getByText('No. MLE-0925 · 2026/09/01 · total RM 8,500.00')).toBeTruthy();
@@ -375,14 +485,55 @@ describe('Finance', () => {
     expect(screen.getByText('PV New opened')).toBeTruthy();
   });
 
-  test('returns a request with the note the prompt demands', async () => {
+  test('sends a request back from its row: the reason is required, and the requester reads it', async () => {
     requests = [base({ requested_by: 40, requested_by_name: 'Luis Teo' })];
-    isFinance = true; returnAsync.mockClear(); promptFn.mockClear();
+    isFinance = true; returnAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('Send back'));
+    const box = screen.getByRole('group', { name: 'Send the request back' });
+    expect(within(box).getByText('Send MLE EVENTS SDN BHD’s request back to Luis Teo')).toBeTruthy();
+    const go = within(box).getByRole('button', { name: 'Send back' }) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.click(go);
+    expect(returnAsync).not.toHaveBeenCalled();
+    fireEvent.change(within(box).getByLabelText('Why it goes back'), { target: { value: '  Attach the organiser invoice ' } });
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Send the request back' })).toBeNull());
+  });
+
+  test('sends a request back from the drawer too; Sent back shows the reason', async () => {
+    requests = [
+      base({ requested_by: 40, requested_by_name: 'Luis Teo' }),
+      base({ id: 'r3', request_no: 'HC-PRQ-2609-003', status: 'REJECTED', stage: 'RETURNED', finance_note: 'Wrong payee', decided_by: 'Chew', decided_at: '2026-09-11T02:00:00Z' }),
+    ];
+    isFinance = true; returnAsync.mockClear();
+    const first = draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    const d = screen.getByRole('dialog');
+    fireEvent.click(within(d).getByText('Send back'));
+    fireEvent.change(within(d).getByLabelText('Why it goes back'), { target: { value: 'Attach the organiser invoice' } });
+    fireEvent.click(within(within(d).getByRole('group', { name: 'Send the request back' })).getByRole('button', { name: 'Send back' }));
+    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
+    first.unmount();
+    draw('/scm/payment-requests?filter=returned');
+    expect(screen.getByRole('columnheader', { name: /^Reason/ })).toBeTruthy();
+    expect(screen.getByText('Wrong payee')).toBeTruthy();
+    expect(screen.getByText('Returned')).toBeTruthy();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-003'));
+    expect(within(screen.getByRole('dialog')).getByText(/Returned by Chew .*: Wrong payee/)).toBeTruthy();
+  });
+
+  test('Finance\'s own waiting request is theirs to edit or withdraw, in the drawer', async () => {
+    requests = [base({ requested_by: 22, requested_by_name: 'Chew' })];
+    isFinance = true; withdrawAsync.mockClear();
     draw();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
-    fireEvent.click(within(screen.getByRole('dialog')).getByText('Return…'));
-    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
-    expect(JSON.stringify(promptFn.mock.calls[0]![0])).toContain('"required":true');
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText('Edit')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Withdraw'));
+    await waitFor(() => expect(withdrawAsync).toHaveBeenCalledWith('r1'));
   });
 });
 
@@ -503,7 +654,6 @@ describe('a refund request', () => {
     due_date: null, purpose: 'Customer want cancel this bill', project_id: null, bank_name: 'Maybank', bank_account_no: '5123 4567 8901',
     bank_account_name: 'NG WAN JUN', refund_source_type: 'SO', refund_source_doc_no: 'HC-SO-2610-144', ...over,
   });
-  const Where = () => { const l = useLocation(); return <div>At {l.pathname}{l.search}</div>; };
   const drawWhere = () => render(
     <MemoryRouter initialEntries={['/scm/payment-requests']}>
       <Routes>
@@ -513,10 +663,12 @@ describe('a refund request', () => {
     </MemoryRouter>,
   );
 
-  test('Finance: tagged with its order; approved with a Customer Refund on it — no AP invoice — or rejected with why', async () => {
-    requests = [refund()]; isFinance = true; mayRaise = true; promptFn.mockClear(); returnAsync.mockClear();
+  test('Finance: a Customer refund with its order; approved with a Customer Refund on it — no AP invoice — or rejected with why', async () => {
+    requests = [refund({ requested_by: 40 })]; isFinance = true; mayRaise = true; returnAsync.mockClear();
     const first = drawWhere();
-    expect(screen.getByText('Refund · HC-SO-2610-144')).toBeTruthy();
+    expect(screen.getByText('Customer refund')).toBeTruthy();
+    expect(screen.getByText('Customer want cancel this bill · HC-SO-2610-144')).toBeTruthy();
+    expect(screen.getByText('Make refund voucher ›')).toBeTruthy();
     fireEvent.click(screen.getByText('HC-PRQ-2610-009'));
     const d = screen.getByRole('dialog');
     expect(within(d).getByText('HC-SO-2610-144').closest('a')?.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2610-144');
@@ -524,10 +676,14 @@ describe('a refund request', () => {
     expect(within(d).getByText("Customer's bank")).toBeTruthy();
     expect(within(d).queryByText('Make AP invoice')).toBeNull();
     expect(within(d).queryByText(/Request the balance/)).toBeNull();
-    fireEvent.click(within(d).getByText('Reject…'));
-    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r9', note: 'Attach the organiser invoice' }));
-    expect(JSON.stringify(promptFn.mock.calls[0]![0])).toContain('Reject HC-PRQ-2610-009');
-    fireEvent.click(within(d).getByText('Make refund voucher'));
+    fireEvent.click(within(d).getByText('Reject'));
+    const box = within(d).getByRole('group', { name: 'Reject the refund request' });
+    expect(within(box).getByText('The money stays on HC-SO-2610-144; Nancy reads your reason there and here.')).toBeTruthy();
+    fireEvent.change(within(box).getByLabelText('Why it is rejected'), { target: { value: 'Convert to a new order instead' } });
+    fireEvent.click(within(box).getByRole('button', { name: 'Reject' }));
+    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r9', note: 'Convert to a new order instead' }));
+    await waitFor(() => expect(within(d).queryByRole('group', { name: 'Reject the refund request' })).toBeNull());
+    fireEvent.click(within(d).getByText('Make refund voucher ›'));
     expect(screen.getByText('At /scm/payment-vouchers/new?type=refund&fromRequest=r9')).toBeTruthy();
     first.unmount();
   });

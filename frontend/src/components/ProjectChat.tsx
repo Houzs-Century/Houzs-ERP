@@ -46,6 +46,12 @@ interface ProjectChatProps {
   height?: string;
 }
 
+/** The box grows with what is typed, so a pasted report can be read before sending. */
+function growToFit(el: HTMLTextAreaElement): void {
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 export function ProjectChat({
   projectId,
   activity,
@@ -121,6 +127,7 @@ export function ProjectChat({
   // user was scrolled away from the bottom.
   const [newCount, setNewCount] = useState(0);
   const wasAtBottomRef = useRef(true);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Chat UIs read oldest-at-top; stable-sort by created_at then id.
   const messages = useMemo(() => {
@@ -231,6 +238,8 @@ export function ProjectChat({
     try {
       await api.post(`/api/projects/${projectId}/notes`, { note });
       setDraft("");
+      if (inputRef.current) inputRef.current.style.height = "";
+      wasAtBottomRef.current = true;
       onPosted?.();
       void salesReport.afterSend(note);
       // Mark as read right away — our own send shouldn't light up our bell.
@@ -257,8 +266,9 @@ export function ProjectChat({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    /* Read before this render: a report taller than the margin is already in the
+       box here, so measuring now said "not at the bottom" and left it cut off. */
+    const atBottom = wasAtBottomRef.current || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     wasAtBottomRef.current = atBottom;
     if (messages.length > lastCount.current && atBottom) {
       el.scrollTop = el.scrollHeight;
@@ -351,12 +361,13 @@ export function ProjectChat({
       {canPost ? (
         <div className="flex items-end gap-2 border-t border-border bg-surface px-2.5 py-2">
           <textarea
+            ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => { setDraft(e.target.value); growToFit(e.target); }}
             onKeyDown={onKey}
             placeholder="Message…"
             rows={1}
-            className="min-h-[36px] max-h-[120px] flex-1 resize-none rounded-full border border-border bg-bg px-3.5 py-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="min-h-[36px] max-h-[160px] flex-1 resize-none rounded-2xl border border-border bg-bg px-3.5 py-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
           <button
             onClick={send}

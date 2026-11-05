@@ -178,6 +178,25 @@ describe('postJournal — the one gate', () => {
     { accountCode: '500-0000', debitSen: 0, creditSen: cr },
   ];
 
+  /* The books' opening (mig 20261028T2100): an opening creditor or debtor is
+     an opening bill of its own, so the OPENING journal may no more name a
+     control account than a manual one may; and the entry carries the flag the
+     report views count it by, whatever its date. */
+  it('an OPENING journal may NOT touch a control account, and carries the opening flag', async () => {
+    const sb = world();
+    const opening = { ...base, entryDate: '2026-08-31', sourceType: 'OPENING', sourceDocNo: 'HC-OPENING-2608', opening: true };
+    const refused = await postJournal(sb, { ...opening, lines: drCr(100, 100) });
+    expect(refused).toMatchObject({ ok: false, status: 'control_account_manual' });
+    expect((refused as { reason: string }).reason).toContain('opening bills');
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    const out = await postJournal(sb, { ...opening, lines: manualLines(100, 100) });
+    expect(out).toMatchObject({ ok: true, status: 'posted' });
+    expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'OPENING', entry_date: '2026-08-31', opening: true });
+    /* Every other journal is written without the column — the default (false) stands. */
+    await postJournal(sb, { ...base, lines: drCr(100, 100) });
+    expect(sb.tables.journal_entries[1]!.opening).toBeUndefined();
+  });
+
   it('postNow:false writes a DRAFT — entry + lines exist, posted stays false', async () => {
     const sb = world();
     const out = await postJournal(sb, { ...base, sourceType: 'MANUAL', sourceDocNo: null, postNow: false, lines: manualLines(500, 500) });

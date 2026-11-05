@@ -180,3 +180,18 @@ describe('a read that failed is not an absence', () => {
     }))?.error).toBe(QTY_CAP_CHECK_FAILED);
   });
 });
+
+describe('qtyCapRefusal — extraDrawn (units outside the drawn columns)', () => {
+  const sb = fakeSb({ g1: { qty_accepted: 2, returned_qty: 0 } });
+  const args = { table: 'grn_items', id: 'g1', capColumn: 'qty_accepted', drawnColumns: ['returned_qty'], what: 'GRN line' };
+
+  test('extraDrawn shrinks the headroom', async () => {
+    expect(await qtyCapRefusal(sb, { ...args, requested: 2, extraDrawn: 1 }))
+      .toMatchObject({ error: QTY_EXCEEDS_REMAINING, remaining: 1 });
+    expect(await qtyCapRefusal(sb, { ...args, requested: 1, extraDrawn: 1 })).toBeNull();
+  });
+
+  test('omitted extraDrawn changes nothing', async () => {
+    expect(await qtyCapRefusal(sb, { ...args, requested: 2 })).toBeNull();
+  });
+});

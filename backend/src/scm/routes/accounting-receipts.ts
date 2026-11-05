@@ -20,10 +20,12 @@ import { monthRange } from './accounting-receipts-check';
 const requirePerm = (c: any): boolean =>
   hasHouzsPerm(c, 'scm.payment_voucher.post') || hasHouzsPerm(c, 'scm.sales_order.write');
 
-/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM ─────────────────
-   Without a month: the newest `limit` receipts. With one: every receipt whose
-   payment day falls in it, oldest first, so the month reads whole beside its
-   check (accounting-receipts-check.ts). */
+/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM&all=1 ────────────
+   Without a month: the newest `limit` receipts — or, with `all=1`, every one,
+   newest first (Money in › Receipts' Any month, the owner's Claude Design batch
+   5 §2.3 c2: the book read whole, paged, so its chips count it truly). With a
+   month: every receipt whose payment day falls in it, oldest first, so the
+   month reads whole beside its check (accounting-receipts-check.ts). */
 export const receiptsList = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -35,8 +37,8 @@ export const receiptsList = async (c: any): Promise<Response> => {
   const range = month ? monthRange(month) : null;
   if (month && !range) return c.json({ error: 'bad_month', message: 'Which month? YYYY-MM.' }, 400);
 
-  const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at';
-  const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' ? q.eq('status', status) : q);
+  const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at, cancelled_at, cancelled_by, cancel_reason';
+  const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' || status === 'CANCELLED' ? q.eq('status', status) : q);
   if (range) {
     const all = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
       .eq('company_id', co.companyId).gte('paid_at', range.from).lte('paid_at', range.to))
@@ -44,11 +46,110 @@ export const receiptsList = async (c: any): Promise<Response> => {
     if (all.error) return c.json({ error: 'load_failed', reason: all.error.message }, 500);
     return c.json({ receipts: all.data ?? [] });
   }
+  if (String(c.req.query('all') ?? '') === '1') {
+    const every = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
+      .eq('company_id', co.companyId))
+      .order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to));
+    if (every.error) return c.json({ error: 'load_failed', reason: every.error.message }, 500);
+    return c.json({ receipts: every.data ?? [] });
+  }
   const { data, error } = await scoped(sb.from('acc_official_receipts').select(COLS).eq('company_id', co.companyId))
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ receipts: data ?? [] });
+};
+
+/* ── GET /accounting/receipts/:id — one official receipt, for its page ──────
+   (the owner's Claude Design, batch 5 §8.3 c7). The row; the receipt that
+   replaced it (a cancelled receipt points at its re-issue) and the one it
+   replaced; the PAYMENT's journal — a receipt posts nothing, its payment's
+   entry is its books; what the payment says now (the page names an amount
+   that is no longer the payment's); the order and its salesperson. Reads
+   only, every one of them company-scoped; a read that fails says so. */
+type PaymentNow = { amountSen: number; paidAt: string | null; method: string | null; soDocNo: string | null; salesInvoiceId: string | null };
+type Rec = Record<string, unknown>;
+const textOf = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
+
+export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Promise<Response> => {
+  if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+  const sb = c.get('supabase');
+  const fail = (what: string, reason: string) => c.json({ error: 'load_failed', reason: `${what}: ${reason}` }, 500);
+
+  const { data: row, error } = await sb.from('acc_official_receipts')
+    .select('id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at, created_by, cancelled_at, cancelled_by, cancel_reason, replaced_by_id')
+    .eq('company_id', co.companyId).eq('id', id).maybeSingle();
+  if (error) return fail('receipt', error.message);
+  if (!row) return c.json({ error: 'not_found', message: 'That receipt is not in the company you are working in.' }, 404);
+  const r = row as Rec;
+  const source = String(r.payment_source ?? '');
+  const paymentId = String(r.payment_id ?? '');
+
+  const [next, prev, jes] = await Promise.all([
+    r.replaced_by_id != null
+      ? sb.from('acc_official_receipts').select('id, or_number, status').eq('company_id', co.companyId).eq('id', r.replaced_by_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    sb.from('acc_official_receipts').select('id, or_number, status').eq('company_id', co.companyId).eq('replaced_by_id', id).maybeSingle(),
+    sb.from('journal_entries').select('id, je_no, entry_date, reversed, created_at')
+      .eq('company_id', co.companyId).eq('source_type', source).eq('source_doc_no', paymentId).order('created_at', { ascending: false }),
+  ]);
+  if (next.error) return fail('replacement', next.error.message);
+  if (prev.error) return fail('replaced receipt', prev.error.message);
+  if (jes.error) return fail('payment journal', jes.error.message);
+  const entries = (jes.data ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>;
+  const je = entries.find((e) => !e.reversed) ?? entries.at(0);
+
+  /* The payment as it stands now — gone when it was deleted. */
+  const table = source === 'SIPAY' ? 'sales_invoice_payments' : 'mfg_sales_order_payments';
+  const payCols = source === 'SIPAY' ? 'id, sales_invoice_id, paid_at, method, amount_sen' : 'id, so_doc_no, paid_at, method, amount_sen';
+  const { data: payRaw, error: payErr } = await sb.from(table).select(payCols).eq('company_id', co.companyId).eq('id', paymentId).maybeSingle();
+  if (payErr) return fail('payment', payErr.message);
+  const pay = payRaw as Rec | null;
+  const payment: PaymentNow | null = pay ? {
+    amountSen: Number(pay.amount_sen ?? 0), paidAt: textOf(pay.paid_at)?.slice(0, 10) ?? null, method: textOf(pay.method),
+    soDocNo: textOf(pay.so_doc_no), salesInvoiceId: textOf(pay.sales_invoice_id),
+  } : null;
+
+  /* A sales-invoice payment's invoice, and through it the order. */
+  let salesInvoice: { id: string; number: string } | null = null;
+  let soDocNo: string | null = payment?.soDocNo ?? (source === 'SOPAY' ? textOf(r.doc_no) : null);
+  if (source === 'SIPAY') {
+    const siId = payment?.salesInvoiceId ?? textOf(r.doc_no);
+    if (siId) {
+      const { data: siRaw, error: siErr } = await sb.from('sales_invoices').select('id, invoice_number, so_doc_no').eq('company_id', co.companyId).eq('id', siId).maybeSingle();
+      if (siErr) return fail('sales invoice', siErr.message);
+      const si = siRaw as Rec | null;
+      if (si) { salesInvoice = { id: String(si.id), number: String(si.invoice_number ?? '') }; soDocNo = textOf(si.so_doc_no); }
+    }
+  }
+  let salesperson: string | null = null;
+  if (soDocNo) {
+    const { data: soRaw, error: soErr } = await sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('company_id', co.companyId).eq('doc_no', soDocNo).maybeSingle();
+    if (soErr) return fail('sales order', soErr.message);
+    const spId = textOf((soRaw as Rec | null)?.salesperson_id);
+    if (spId) {
+      /* staff is the people master, shared by every company. */
+      const { data: spRaw, error: spErr } = await sb.from('staff').select('id, name').eq('id', spId).maybeSingle();
+      if (spErr) return fail('salesperson', spErr.message);
+      salesperson = textOf((spRaw as Rec | null)?.name);
+    }
+  }
+
+  const ref = (x: unknown) => { const v = x as { id: number; or_number: string; status: string } | null; return v ? { id: v.id, orNumber: v.or_number, status: v.status } : null; };
+  return c.json({
+    receipt: row,
+    replacedBy: ref(next.data),
+    replaces: ref(prev.data),
+    paymentJournal: je ? { id: je.id, jeNo: je.je_no, reversed: je.reversed === true } : null,
+    payment,
+    salesOrder: soDocNo,
+    salesInvoice,
+    salesperson,
+  });
 };
 
 /* ── POST /accounting/receipts/ensure — {source, paymentId} ──────────────── */
@@ -96,7 +197,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor });
   if (!r.ok) {
-    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' ? 409 : r.status === 'not_found' ? 404 : 500);
+    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' ? 409 : r.status === 'not_found' ? 404 : 500);
   }
   return c.json({ ok: true, orNumber: r.orNumber, already: r.already === true });
 };

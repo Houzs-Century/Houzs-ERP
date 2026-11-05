@@ -16,7 +16,7 @@
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { qtyCapRefusal } from '../lib/qty-cap';
+import { repairHeldQty, editLineCapRefusal, addLineCapRefusal } from '../lib/purchase-return-repair-held';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
@@ -165,8 +165,7 @@ export async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: 
        warehouse and come back), so it does not consume the receipt: counting it
        re-opened the PO as unreceived while the unit sat in KL SERVICE
        (2990-PRT-2610-001 / 2990-PO-2607-018). Only a CREDIT return does.
-       ponytail: a REPAIR line no longer shrinks the returnable pool either, so
-       the same unit could be raised twice; cap repairs on their own if that bites. */
+       It still is not returnable again: the return caps subtract repairHeldQty. */
     for (const p of (prs ?? []) as Array<{ id: string; status: string; kind: string | null }>) {
       if ((p.status ?? '').toUpperCase() === 'CANCELLED' || p.kind === 'REPAIR') cancelled.add(p.id);
     }
@@ -922,8 +921,10 @@ purchaseReturns.post('/', async (c) => {
       markIdempotencyNoWrite(c);
       return c.json({ error: 'grn_not_posted', grnNumber: p?.grn_number ?? null, status: p?.status ?? null }, 409);
     }
+    const repairHeld = await repairHeldQty(sb, preGrnItemIds, null);
+    if (!repairHeld) { markIdempotencyNoWrite(c); return c.json({ error: 'cap_check_failed', reason: 'repair returns unreadable' }, 500); }
     for (const r of giList) {
-      remainingByGrnItem.set(r.id, Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)));
+      remainingByGrnItem.set(r.id, Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0) - (repairHeld.get(r.id) ?? 0)));
     }
     /* A supplied id the read did not answer is NOT a free line — it is a
        deleted/foreign/unknown row, and skipping it was an uncapped OUT. */
@@ -1159,13 +1160,15 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   // Cap each line's return at its remaining (qty_accepted - returned_qty, 0106) —
   // a GRN line can be returned across multiple PRs. Drop lines already fully
   // returned. We return min(qty_rejected, remaining).
+  const heldA = await repairHeldQty(sb, ((items ?? []) as Array<{ id: string }>).map((i) => i.id), null);
+  if (!heldA) { markIdempotencyNoWrite(c); return c.json({ error: 'cap_check_failed', reason: 'repair returns unreadable' }, 500); }
   const rejectedItems = ((items ?? []) as Array<{
     id: string; grn_id: string; material_kind: string; item_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>)
     .map((it) => {
-      const remaining = (it.qty_accepted ?? 0) - (it.returned_qty ?? 0);
+      const remaining = (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) - (heldA.get(it.id) ?? 0);
       return { ...it, _qty: Math.min(it.qty_rejected ?? 0, Math.max(0, remaining)) };
     })
     .filter((it) => it._qty > 0);
@@ -1307,6 +1310,8 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     .select('id, material_kind, item_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
+  const heldB = await repairHeldQty(sb, ((items ?? []) as Array<{ id: string }>).map((i) => i.id), null);
+  if (!heldB) { markIdempotencyNoWrite(c); return c.json({ error: 'cap_check_failed', reason: 'repair returns unreadable' }, 500); }
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; item_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
@@ -1315,7 +1320,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   // Only copy lines with remaining = qty_accepted - returned_qty > 0, and return
   // the REMAINING qty (a GRN can be returned across multiple PRs, 0106).
   const lines = allLines
-    .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) }))
+    .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) - (heldB.get(it.id) ?? 0) }))
     .filter((it) => it._remaining > 0);
   /* An empty read is evidence that THE QUERY FOUND NOTHING, never that the
      note is settled — the select is company-scoped and scopeToCompany fails
@@ -1659,12 +1664,8 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
     if ((srcParent?.status ?? null) !== 'POSTED') {
       return c.json({ error: 'grn_not_posted', grnNumber: srcParent?.grn_number ?? null, status: srcParent?.status ?? null }, 409);
     }
-    const capLock = await qtyCapRefusal(sb, {
-      table: 'grn_items', id: grnItemId,
-      capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
-      requested: qtyReturned, what: 'GRN line',
-    });
-    if (capLock) return c.json(capLock, 409);
+    const capLock = await addLineCapRefusal(sb, { grnItemId, qtyReturned });
+    if (capLock) return c.json(capLock, capLock.error === 'cap_check_failed' ? 500 : 409);
   }
 
   /* IDENTITY, not just the key — docs/bugs/0672 site 15. The checks around this
@@ -1837,12 +1838,8 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
   // its accepted. headroom for THIS line = accepted - (returned - prevQty).
   const delta = qtyReturned - prevQty;
   if (grnItemId && delta !== 0) {
-    const capLock = await qtyCapRefusal(sb, {
-      table: 'grn_items', id: grnItemId,
-      capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
-      requested: qtyReturned, ownPriorDraw: prevQty, what: 'GRN line',
-    });
-    if (capLock) return c.json(capLock, 409);
+    const capLock = await editLineCapRefusal(sb, { prId, itemId, grnItemId, qtyReturned, prevQty });
+    if (capLock) return c.json(capLock, capLock.error === 'cap_check_failed' ? 500 : 409);
   }
 
   /* The EDIT half of the same back door: the cap above and adjustGrnReturnedQty

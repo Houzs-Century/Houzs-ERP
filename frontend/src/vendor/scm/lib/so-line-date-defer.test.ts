@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from './so-line-date-defer';
+import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from './so-line-date-defer';
 
 describe('deferLineDateToHeader — proceeding on the phone (BUG-39 follow-up)', () => {
   it('defers a cascaded line date while the order has no stored Processing Date', () => {
@@ -19,6 +19,18 @@ describe('deferLineDateToHeader — proceeding on the phone (BUG-39 follow-up)',
 describe('withoutLineDate', () => {
   it('drops only the delivery date', () => {
     expect(withoutLineDate({ itemCode: 'A', qty: 2, lineDeliveryDate: '2026-10-10' })).toEqual({ itemCode: 'A', qty: 2 });
+  });
+});
+
+describe('createLineBody — Save draft blanks the header dates, so the lines go dateless too', () => {
+  const line = { itemCode: 'A', lineDeliveryDate: '2026-11-20', lineDeliveryDateOverridden: false };
+
+  it('a draft line carries no delivery date (soLineDateRefusal would refuse it)', () => {
+    expect(createLineBody(line, true)).toEqual({ itemCode: 'A', lineDeliveryDateOverridden: false });
+  });
+
+  it('a confirmed create sends the line unchanged', () => {
+    expect(createLineBody(line, false)).toBe(line);
   });
 });
 

@@ -148,3 +148,21 @@ export function pvCanPost(pv: PvApprovalShape): Verdict {
   }
   return { ok: true };
 }
+
+/** May the approver be reminded of it (Remind approver, the redesign's e8)?
+    Only while it waits for the second yes: checked and not posted — an
+    approval that died before its post included, since approving again
+    finishes it. A reminder changes nothing on the voucher. */
+export function pvCanRemind(pv: PvApprovalShape): Verdict {
+  const dead = notDraft(pv);
+  if (dead) return dead;
+  if (!pv.checked_at) {
+    return {
+      ok: false, error: 'not_checked',
+      message: pv.submitted_at
+        ? 'This voucher is not checked yet — only a checked voucher waits for the approver.'
+        : 'This voucher was never prepared — nothing waits for the approver yet.',
+    };
+  }
+  return { ok: true };
+}

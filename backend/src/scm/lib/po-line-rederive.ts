@@ -91,6 +91,7 @@ export async function rederivePoLineFromSoLine(
     ? Number(ex.unit_price_sen)
     : await deriveMfgPoUnitCost(sb, {
       supplierId: po.supplier_id ?? '',
+      companyId:  po.company_id ?? args.soCompanyId,
       itemCode:   itemCode,
       itemGroup,
       variants:   variants ?? null,

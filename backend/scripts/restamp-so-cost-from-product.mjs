@@ -18,8 +18,10 @@
    recomputed as the SUM of its line costs (the invariant already true for
    189/190 costed 2990 orders), so an order's existing correct lines are left as
    they are and only the newly-stamped cost is added. Per line the cost is:
-     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight)
-            -> base_price_sen -> cost_price_sen
+     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), the nearest
+            the grid holds when it has no price there, or with no height the one the SKU, model or all sofas sell at most -> base_price_sen
+            -> cost_price_sen. A set that matches its model's combo costs the combo,
+            spread over its lines, as saving the order does.
      other  base_price_sen -> cost_price_sen
    line_cost = unit x qty; then the header's category aggregates + total_cost +
    margin (revenue - cost) are recomputed. This mirrors restamp-imported-so-costs
@@ -44,6 +46,7 @@
    RE-RUN: idempotent — value-guarded on unit_cost_sen = 0, so a second run
    stamps nothing (every gap the products can fill is already filled). */
 import postgres from 'postgres';
+import { comboLineCosts, costHeight, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -66,24 +69,6 @@ const CAT_COL = {
   ACCESSORY: 'accessories', SERVICE: 'service',
 };
 
-/** The product cost for one line, current (not as-of). SOFA reads the seat grid
- *  PRICE_2 cost at the ordered height; everything else the flat cost lane. */
-function unitCostSen(p, variants) {
-  if (!p) return 0;
-  const cat = String(p.category || '').toUpperCase();
-  if (cat === 'SOFA' && Array.isArray(p.seat_height_prices)) {
-    const h = variants?.seatHeight ?? variants?.seat_height ?? null;
-    if (h != null) {
-      const hh = String(h).replace(/"/g, '');
-      const hit = p.seat_height_prices.find(
-        (e) => String(e.height) === hh && (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0,
-      );
-      if (hit) return Number(hit.priceSen);
-    }
-  }
-  return Number(p.base_price_sen) || Number(p.cost_price_sen) || 0;
-}
-
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
 async function main() {
@@ -99,6 +84,20 @@ async function main() {
     const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
                             FROM scm.mfg_products WHERE company_id = ${co}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
+    const heightCounts = await sql`SELECT item_code, coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') AS height, count(*)::int AS n
+                                   FROM scm.mfg_sales_order_items
+                                   WHERE company_id = ${co} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
+                                   GROUP BY 1, 2`;
+    const usual = usualHeights(heightCounts);
+    const comboRows = await sql`SELECT id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at
+                                FROM scm.sofa_combo_pricing
+                                WHERE company_id = ${co} AND deleted_at IS NULL AND customer_id IS NULL AND supplier_id IS NULL`;
+    const combos = comboRows.map((r) => ({
+      id: r.id, baseModel: r.base_model, modules: r.modules, tier: r.tier, customerId: r.customer_id, pricesByHeight: r.prices_by_height,
+      pwpPricesByHeight: {}, label: r.label, effectiveFrom: String(r.effective_from).slice(0, 10), createdAt: r.created_at, deletedAt: null, defaultFreeGifts: [],
+    }));
+    const tierRows = await sql`SELECT fabric_code, coalesce(sofa_price_tier, price_tier, 'PRICE_2') AS tier FROM scm.fabric_trackings WHERE company_id = ${co}`;
+    const tierOf = new Map(tierRows.map((f) => [f.fabric_code, f.tier]));
 
     // Every order that has at least one zero-cost line — a fully-zero order OR a
     // partly-costed one with a few kosong lines. Both show a gap in the report.
@@ -137,17 +136,28 @@ async function main() {
     for (const so of sos) {
       const plan = { lineWrites: [], agg: { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 }, anyStamp: false };
       const lines = linesByDoc.get(so.doc_no) ?? [];
-      for (const l of lines) {
-        let uc = Number(l.unit_cost_sen) || 0;
-        if (uc === 0) {
-          const p = prodBy.get(l.item_code);
-          uc = unitCostSen(p, l.variants);
-          if (uc > 0) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: l.id, uc, qty: l.qty || 1 }); }
-          else noCost++;
-        }
+      const costed = lines.map((l) => {
         const p = prodBy.get(l.item_code);
-        const col = CAT_COL[String(p?.category || '').toUpperCase()] || 'others';
-        plan.agg[col] += uc * (l.qty || 1);
+        const qty = l.qty || 1;
+        const held = Number(l.unit_cost_sen) || 0;
+        if (held > 0) return { l, p, qty, uc: held, lc: held * qty, fresh: false };
+        const uc = unitCostSen(p, l.variants, usual);
+        return { l, p, qty, uc, lc: uc * qty, fresh: uc > 0 };
+      });
+      // Only a group with no cost yet takes a combo: a stamped line is never moved.
+      const sofas = costed.filter((c) => String(c.p?.category || '').toUpperCase() === 'SOFA');
+      const comboCost = sofas.length > 0 && sofas.every((c) => c.fresh)
+        ? comboLineCosts(sofas.map((c) => ({
+          id: c.l.id, itemCode: c.l.item_code, qty: c.qty, lineCostSen: c.lc,
+          tier: tierOf.get(String(c.l.variants?.fabricCode ?? '')) ?? 'PRICE_2', height: costHeight(c.p, c.l.variants, usual),
+        })), combos)
+        : new Map();
+      for (const c of costed) {
+        if (comboCost.has(c.l.id)) { c.lc = comboCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
+        if (c.fresh) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: c.l.id, uc: c.uc, lc: c.lc }); }
+        else if (c.uc === 0) noCost++;
+        const col = CAT_COL[String(c.p?.category || '').toUpperCase()] || 'others';
+        plan.agg[col] += c.lc;
       }
       const total = plan.agg.mattress_sofa + plan.agg.bedframe + plan.agg.accessories + plan.agg.service + plan.agg.others;
       const oldTotal = Number(so.total_cost_sen) || 0;
@@ -161,7 +171,7 @@ async function main() {
       if (headerChanged) touchedDocNos.push(so.doc_no);
 
       if (APPLY && plan.anyStamp) {
-        for (const w of plan.lineWrites) { wIds.push(w.id); wUc.push(w.uc); wLc.push(w.uc * w.qty); }
+        for (const w of plan.lineWrites) { wIds.push(w.id); wUc.push(w.uc); wLc.push(w.lc); }
         if (headerChanged) {
           hDoc.push(so.doc_no); hMs.push(plan.agg.mattress_sofa); hBf.push(plan.agg.bedframe);
           hAcc.push(plan.agg.accessories); hSvc.push(plan.agg.service); hOth.push(plan.agg.others);
@@ -214,9 +224,14 @@ async function main() {
     const prods = await check`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
                               FROM scm.mfg_products WHERE company_id = ${co}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
+    const heightCounts = await check`SELECT item_code, coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') AS height, count(*)::int AS n
+                                   FROM scm.mfg_sales_order_items
+                                   WHERE company_id = ${co} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
+                                   GROUP BY 1, 2`;
+    const usual = usualHeights(heightCounts);
     const zeros = await check`SELECT id, item_code, variants FROM scm.mfg_sales_order_items
                               WHERE company_id = ${co} AND coalesce(unit_cost_sen,0) = 0`;
-    for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants) > 0) remaining++;
+    for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants, usual) > 0) remaining++;
   }
   await check.end();
   if (remaining > 0) { bad(`INVARIANT FAILED: ${remaining} line(s) still read 0 though their product has a cost.`); process.exit(1); }

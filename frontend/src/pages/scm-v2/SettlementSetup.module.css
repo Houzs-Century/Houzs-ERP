@@ -1,277 +1,75 @@
-/* Reconciliation setup — the maintenance matrix.
- *
- * A CSS module rather than inline styles because the three things that make a
- * wide grid readable cannot be expressed inline: a row that lights up under the
- * cursor, a first column that stays put while the companies scroll, and a
- * checkbox that looks like a decision instead of a default. */
+/* Setup › Recon setup — the owner's Claude Design redesign (Finance-1a-Setup,
+   batch 6 §6.3). The shared parts (card, table, tags, modal, switch) are
+   finance/SetupParts.module.css; this is the page's own layout. */
 
-.card {
-  background: var(--c-cream);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 14px 16px 10px; }
+.title { font-size: 15px; font-weight: 600; }
+.mid { text-align: center; }
+.warn { font-size: 12px; color: #a83434; line-height: 1.4; }
+.fullRow { flex: 0 0 100%; }
+.tick { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: #16695f; cursor: pointer; }
+
+/* ── Merchants: the shared layout on the row, a cell per company ── */
+.merchants { min-width: 1000px; }
+.merchants th:first-child { width: 150px; }
+.merchants th:nth-child(2) { min-width: 240px; }
+.coName { font-weight: 400; color: #767b6e; }
+.topRow td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
+.rowName { display: block; font-size: 13.5px; font-weight: 600; }
+.rowSub { display: block; font-size: 12px; color: #767b6e; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.editLink { display: inline-block; margin-top: 6px; font-size: 12px; }
+.coCell { min-width: 260px; }
+.used { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; }
+.pickers { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.pickRow { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 6px; align-items: center; }
+.pickLabel { font-size: 11.5px; color: #767b6e; }
+
+/* ── Banks beside the company's numbering and default bank ── */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+.stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.bankName { display: block; font-size: 13px; font-weight: 500; }
+.absent { font-size: 11px; color: #a9ada3; }
+.users { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 4px; }
+.refusal { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12.5px; color: #a83434; border-top: 1px solid #eef0ec; }
+
+.smallCard {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: #ffffff;
+  border: 1px solid #d6d9d2; border-radius: 10px;
 }
+.smallHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.digitsRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: #414539; }
+.letters { display: flex; flex-direction: column; gap: 6px; }
+.letterRow { display: grid; grid-template-columns: 76px minmax(0, 1fr) 56px; gap: 8px; align-items: center; font-size: 12.5px; }
+.letterName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.letterBox { width: 52px; height: 28px; padding: 0 4px; text-align: center; font-weight: 600; text-transform: uppercase; }
+.smallFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; }
+.smallFoot > span { flex: 1; min-width: 160px; }
+.defaultRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
-.cardHead {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--c-line);
-  background: var(--c-paper);
+/* ── Bank statements and the recognition rules: a white card, head inside ── */
+.flatCard {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: #ffffff;
+  border: 1px solid #d6d9d2; border-radius: 10px;
 }
+.flatHead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.bankCell { display: inline-flex; align-items: center; gap: 6px; }
 
-.cardTitle {
-  font-size: var(--fs-15, 15px);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+.rules { min-width: 760px; }
+.rules th:nth-child(1) { width: 90px; }
+.rules th:nth-child(3) { width: 140px; }
+.rules th:nth-child(4) { width: 80px; }
+.rules th:nth-child(5) { width: 64px; }
+.offRule td:not(:nth-child(5)):not(:last-child) { opacity: 0.55; }
+.acq { font-weight: 600; }
+.pattern { width: 100%; min-width: 220px; }
+.order { width: 64px; }
+.ruleActs { width: 150px; white-space: nowrap; }
+.undo {
+  padding: 0; border: 0; background: none; font: 12px 'IBM Plex Sans', system-ui, sans-serif; color: #767b6e; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
 }
-
-.hint {
-  font-size: var(--fs-12);
-  color: var(--c-ink-soft, #777);
-}
-
-.scroll { overflow-x: auto; }
-
-.grid {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--fs-13);
-}
-
-/* ── Header ─────────────────────────────────────────────────────────────── */
-
-.groupHead {
-  padding: 6px var(--space-3);
-  font-size: var(--fs-11, 11px);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--c-ink-soft, #777);
-  text-align: center;
-  background: var(--c-paper);
-  border-bottom: 1px solid var(--c-line);
-}
-
-.head {
-  padding: var(--space-2) var(--space-3);
-  text-align: left;
-  font-weight: 600;
-  white-space: nowrap;
-  background: var(--c-paper);
-  border-bottom: 1px solid var(--c-line);
-}
-
-.headCompany {
-  composes: head;
-  text-align: center;
-  /* Wide enough that the tick and its bank stay on ONE line: 18 + 12 gap +
-     175 select + 24 padding. Narrower and the select wraps under the tick,
-     which is the thing that made it look cramped. */
-  min-width: 240px;
-  border-left: 1px solid var(--c-line);
-}
-
-.companyName { font-weight: 700; }
-
-/* ── Body ───────────────────────────────────────────────────────────────── */
-
-.row > td { border-bottom: 1px solid var(--line-soft, rgba(34, 31, 32, 0.06)); }
-.row:last-child > td { border-bottom: 0; }
-.row:hover > td { background: rgba(17, 20, 15, 0.025); }
-
-.label {
-  padding: var(--space-3);
-  vertical-align: middle;
-  position: sticky;
-  left: 0;
-  background: var(--c-cream);
-  z-index: 1;
-}
-.row:hover > .label { background: #f7f8f6; }
-
-.name { font-weight: 700; }
-.sub {
-  font-size: var(--fs-12);
-  color: var(--c-ink-soft, #777);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.shared {
-  padding: var(--space-3);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-
-/* One company's answer for one row. Tinted so the eye can run DOWN a company
-   as easily as across a merchant — the whole reason this is a matrix. */
-.cellCompany {
-  padding: var(--space-3);
-  text-align: center;
-  vertical-align: middle;
-  border-left: 1px solid var(--c-line);
-  background: rgba(17, 20, 15, 0.015);
-}
-
-/* Tick first, then what that tick decides, side by side with air between —
-   the owner: 这个打勾和旁边的 bank 可以有点距离 / aeon, mbb 这些放旁边. */
-.cellInner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.tick {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-  accent-color: var(--c-ink);
-  flex: 0 0 auto;
-}
-
-.bankPick {
-  flex: 0 1 175px;
-  min-width: 0;
-  padding: 4px 6px;
-  font-size: var(--fs-12);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-xs);
-  background: var(--c-cream);
-  color: var(--c-ink);
-}
-
-/* Its own line: it is about the select, not beside it. */
-.warn {
-  flex-basis: 100%;
-  font-size: var(--fs-11, 11px);
-  color: var(--c-warn, #B76B00);
-}
-
-.absent {
-  font-size: var(--fs-12);
-  color: var(--c-ink-soft, #777);
-  font-style: italic;
-}
-
-/* Which merchants pay into this account, for this company. */
-.users {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.userChip {
-  font-size: var(--fs-11, 11px);
-  font-family: var(--font-mono);
-  padding: 1px 7px;
-  border-radius: var(--radius-pill);
-  background: var(--c-success-bg, rgba(47, 93, 79, 0.08));
-  color: var(--c-success, #2F5D4F);
-}
-
-.pill {
-  font-size: var(--fs-11, 11px);
-  padding: 1px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--c-line);
-  color: var(--c-ink-soft, #777);
-  white-space: nowrap;
-}
-
-.pillWarn {
-  composes: pill;
-  border-color: var(--c-warn, #B76B00);
-  color: var(--c-warn, #B76B00);
-}
-
-/* ── Tidy tables and forms (owner 2026-09-13: setup 的东西很乱不整齐, 很多都会
-   wrap text, 不然就是没有 column/table; docs/bugs/0857). Every table names its
-   column widths, a code or a number never wraps, a long list of headings
-   reads as chips, and the edit form sits in its own frame with its fields in
-   two aligned rows. */
-.fixed { table-layout: fixed; }
-.nowrap { white-space: nowrap; }
-.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.cell { padding: var(--space-2) var(--space-3); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
-
-.chips { display: flex; gap: 4px; flex-wrap: wrap; }
-.chip {
-  font-size: var(--fs-11, 11px);
-  padding: 1px 7px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--c-line);
-  color: var(--c-ink-soft, #777);
-  white-space: nowrap;
-}
-
-.formCard {
-  margin: var(--space-3) var(--space-4) var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-md);
-  background: var(--c-paper);
-  display: grid;
-  gap: var(--space-3);
-}
-.formRow { display: grid; gap: var(--space-2) var(--space-3); }
-.formRow4 { composes: formRow; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.formRow5 { composes: formRow; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.formRow7 { composes: formRow; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.formRow8 { composes: formRow; grid-template-columns: repeat(8, minmax(0, 1fr)); }
-@media (max-width: 1100px) {
-  .formRow7, .formRow8 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-.field { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-12); color: var(--c-ink-soft, #777); min-width: 0; }
-.field > input, .field > select {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  font-size: var(--fs-13);
-  color: var(--c-ink);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-xs);
-  background: var(--c-cream);
-}
-.formActions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
-
-/* The per-company defaults: a label column and a content column, one row per
-   setting, so the select, the Save and the note line up instead of floating. */
-.defs {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  gap: var(--space-2) var(--space-4);
-  align-items: start;
-  padding: var(--space-3) var(--space-4);
-}
-.defs + .defs { border-top: 1px solid var(--c-line); }
-.defLabel { font-weight: 600; font-size: var(--fs-13); padding-top: 6px; }
-.defRow { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; min-width: 0; }
-.letters { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-2) var(--space-4); }
-.letter { display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; font-size: var(--fs-13); min-width: 0; }
-.letterName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--c-ink-soft, #777); }
-
-.footNote {
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--c-line);
-  background: var(--c-paper);
-  font-size: var(--fs-12);
-  color: var(--c-ink-soft, #777);
-}
-
-.error {
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--c-error, #B71C1C);
-  background: var(--c-error-bg, rgba(211, 47, 47, 0.08));
-  color: var(--c-error, #B71C1C);
-  font-size: var(--fs-13);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
+.undo:hover { color: #414539; }
+.addRule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px; }
+.newPattern { flex: 0 1 300px; min-width: 180px; }

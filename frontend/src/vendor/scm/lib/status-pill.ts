@@ -196,6 +196,7 @@ const PV: Record<string, Entry> = {
 const DP_ORDER: Record<string, Entry> = {
   PENDING_SCHEDULE: { label: 'Pending Schedule', tone: 'pending' },
   SCHEDULED:        { label: 'Scheduled',        tone: 'success' },
+  COMPLETED:        { label: 'Completed',        tone: 'success' },
   CANCELLED:        { label: 'Cancelled',        tone: 'danger' },
 };
 

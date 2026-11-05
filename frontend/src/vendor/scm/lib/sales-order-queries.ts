@@ -289,6 +289,7 @@ export type SoLineCoverage = {
   ready_source_pos: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
   stock_status_effective: string | null;
   non_selling_warehouse?: NonSellingWarehouseNote | null;
+  awaiting_processing_date?: boolean;
 };
 
 export const useSoLineCoverage = (docNo: string | null) => useQuery({

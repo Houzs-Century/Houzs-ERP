@@ -8,6 +8,13 @@
 // Keeps the navbar from rendering as an empty strip.
 const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/$/, "Overview"],
+  // Money in's documents, each a page of its own (Claude Design, batch 5 §8).
+  [/^\/scm\/ar-invoices\/deposit\/.+$/, "Deposit invoice"],
+  [/^\/scm\/ar-invoices\/bills\/.+$/, "Debtor bill"],
+  [/^\/scm\/ar-invoices\/sales\/.+$/, "Sales invoice"],
+  [/^\/scm\/receipts\/official\/.+$/, "Official receipt"],
+  [/^\/scm\/receipts\/debtor\/.+$/, "Debtor receipt"],
+  [/^\/scm\/receipts\/sundry\/.+$/, "Receipt"],
   [/^\/orders\/.+$/, "Sales Order"],
   [/^\/orders$/, "Sales Orders"],
   [/^\/delivery-orders$/, "Delivery Orders"],
@@ -34,9 +41,7 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/mail-center$/, "Mail Center"],
   [/^\/agents$/, "Agent Console"],
   [/^\/system-health$/, "System Health"],
-  [/^\/ai-usage$/, "AI Usage"],
-  [/^\/ocr$/, "OCR"],
-  [/^\/reports\/fair-report$/, "Sales Report"],
+  [/^\/reports\/fair-report$/, "Sales report"],
   // The Supply Chain hub is a single-segment route, so it never reaches the
   // /scm/* segment table below (which needs a 2nd segment). Curate it here —
   // without this entry labelForPath title-cased the slug to a bare "Scm".
@@ -45,77 +50,120 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
 
 // SCM V2 routes ship dozens of /scm/* pages — hand-rolling a regex per page
 // bloats the list. Instead the second URL segment picks the label from this
-// table: [plural, singular] where plural covers the listing (and its
-// action children like /new or /from-*) and singular covers the detail
-// page (a trailing entity id). Kept as one central table so adding a new
-// SCM route only means one map entry, not two regex lines.
-const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
+// table. A bare string is used where the listing and the detail page read the
+// same; a [plural, singular] pair where they differ — plural covers the listing
+// (and its action children like /new or /from-*), singular the detail page (a
+// trailing entity id). One central table, so a new SCM route is one map entry,
+// not two regex lines. EVERY /scm section in routeManifest must have an entry
+// (routeLabels.test.ts walks the manifest and fails CI otherwise), so a tab
+// always shows the page's own title and never falls through to a bare "Scm".
+type SegmentLabel = string | [string, string];
+export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   // Sales chain
   "sales-orders": ["Sales Orders", "Sales Order"],
   "delivery-orders": ["Delivery Orders", "Delivery Order"],
   "sales-invoices": ["Sales Invoices", "Sales Invoice"],
   "delivery-returns": ["Delivery Returns", "Delivery Return"],
+  // The DO print's "SCAN . MARK LOADED" QR lands on this one-shot page.
+  "do-load": "Scan Delivery Order",
   // Owner 2026-07-27 — the two amendment queues carry SHORT tab names so the
   // workspace strip stays scannable ("SO Amdt." / "PO Amdt."), and the two
   // sides are distinguishable at a glance. Detail pages push their own
   // breadcrumbs, so the descriptive titles live on-page, not here.
-  "amendments": ["SO Amdt.", "SO Amdt."],
+  "amendments": "SO Amdt.",
   // Procurement chain
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
-  "po-amendments": ["PO Amdt.", "PO Amdt."],
-  "cancel-requests": ["Cancel Requests", "Cancel Request"],
+  "po-amendments": "PO Amdt.",
+  "cancel-requests": ["Cancellation Requests", "Cancellation Request"],
   "payment-backdate-requests": ["Payment Backdate Requests", "Payment Backdate Request"],
   "purchase-invoices": ["Purchase Invoices", "Purchase Invoice"],
   "purchase-returns": ["Purchase Returns", "Purchase Return"],
-  "grns": ["Goods Received Notes", "Goods Received Note"],
-  "mrp": ["MRP", "MRP"],
+  "grns": ["Goods Received", "Goods Received Note"],
+  "mrp": "MRP",
   "suppliers": ["Suppliers", "Supplier"],
+  "supplier-maintenance": "Supplier Maintenance",
   // Warehouse / stock
   "warehouses": ["Warehouses", "Warehouse"],
-  "inventory": ["Inventory", "Inventory"],
+  "inventory": "Inventory",
   "stock-adjustments": ["Stock Adjustments", "Stock Adjustment"],
   "stock-transfers": ["Stock Transfers", "Stock Transfer"],
   "stock-takes": ["Stock Takes", "Stock Take"],
+  "fabric-tracking": "Fabric Converter",
+  "loading-list": "Loading List",
   // Products
   "products": ["Products", "Product"],
   "categories": ["Categories", "Category"],
   "product-models": ["Product Models", "Product Model"],
-  "fabric-tracking": ["Fabric Tracking", "Fabric Tracking"],
+  "product-requests": ["Product Requests", "Product Request"],
   // Finance
-  "accounting": ["Accounting", "Accounting"],
-  "outstanding": ["Outstanding", "Outstanding"],
-  "unbilled-deliveries": ["Not Billed", "Delivered, Not Yet Billed"],
+  "accounting": "Accounting",
+  "outstanding": "Outstanding",
+  // Money in's pages carry the redesign's names (owner's Claude Design, batch 5).
+  "unbilled-deliveries": "Not yet billed",
   "payment-vouchers": ["Payment Vouchers", "Payment Voucher"],
+  "payment-requests": ["Payment Requests", "Payment Request"],
   "currencies": ["Currencies", "Currency"],
+  "chart-of-accounts": "Chart of accounts",
+  "other-debtors": ["Debtor maintenance", "Other debtor"],
+  "receipts": ["Receipts", "Receipt"],
+  "official-receipts": ["Official receipts", "Official receipt"],
+  "ap-invoices": ["Supplier Bills", "Supplier Bill"],
+  "ar-invoices": ["Invoices", "Invoice"],
+  "credit-notes": ["Credit / debit notes", "Credit / debit note"],
+  "deposit-invoices": ["Deposit invoices", "Deposit invoice"],
+  "official-docs": "Official Invoices Owed",
+  "supplier-notes": "Supplier CN / DN",
+  "opening-balance": "Opening balance",
+  "forecast": "Forecast P&L",
+  "finance-dashboard": "Dashboard",
+  "daily-bank": "Daily Bank",
+  "merchant-recon": "Merchant Reports",
+  "bank-recon": "Bank Statements",
+  "unmatched-payments": "Unmatched Payments",
+  "settlement-setup": "Recon setup",
+  "fair-pending": "Fair Links to Settle",
   // Transportation
   "drivers": ["Drivers", "Driver"],
-  "delivery-planning": ["Delivery Planning", "Delivery Planning"],
-  "delivery-planning-driver": ["Last Mile Delivery (Driver)", "Last Mile Delivery (Driver)"],
+  "delivery-planning": "Delivery Planning",
+  "delivery-planning-driver": "Last Mile Delivery (Driver)",
   "dp-orders": ["DP Orders", "DP Order"],
-  "delivery-planning-regions": ["Delivery Planning Regions", "Delivery Planning Regions"],
-  "fleet": ["Fleet", "Fleet"],
-  "lorry-capacity": ["Lorry Capacity", "Lorry Capacity"],
+  "auto-schedule": "Delivery Date Arrangement",
+  "trips": "Delivery Time Arrangement",
+  "fleet-day": "Last Mile Delivery",
+  "fleet-run-sheet": "Driver Run-Sheet",
+  "driver-leave": "Crew Leave",
+  "delivery-planning-regions": "Delivery Regions",
+  "delivery-residence-rules": "Residence Rules",
+  "delivery-zones": ["Delivery Zones", "Delivery Zone"],
+  "delivery-rate-cards": ["Delivery Rate Cards", "Delivery Rate Card"],
+  "delivery-maintenance": "Coverage & Fleet",
+  "threepl-companies": ["3PL Companies", "3PL Company"],
+  "saved-locations": ["Saved Locations", "Saved Location"],
+  "fleet": "Fleet",
+  "lorry-capacity": "Lorry Capacity",
+  "lorry-live-map": "Lorry Live Map",
+  "logistic-overview": "Logistic Overview",
+  "procurement-overview": "Procurement Overview",
   // Consignment (sale side)
   "consignment-orders": ["Consignment Orders", "Consignment Order"],
   "consignment-notes": ["Consignment Notes", "Consignment Note"],
   "consignment-returns": ["Consignment Returns", "Consignment Return"],
   // Consignment (purchase side)
   "purchase-consignment-orders": ["Purchase Consignment Orders", "Purchase Consignment Order"],
-  "product-requests": ["Product Requests", "Product Request"],
   "purchase-consignment-receives": ["Purchase Consignment Receives", "Purchase Consignment Receive"],
   "purchase-consignment-returns": ["Purchase Consignment Returns", "Purchase Consignment Return"],
-  // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). Their
+  // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). The
   // slug is the singular group id and the label mirrors the NAV_TABS group
-  // header the hub itself renders as its title (no detail child → singular ==
-  // plural). Without these, /scm/<group> title-cased the slug to "Scm".
-  "sales-order": ["Sales Order", "Sales Order"],
-  "consignment": ["Consignment", "Consignment"],
-  "procurement": ["Procurement", "Procurement"],
-  "transportation": ["Transportation", "Transportation"],
-  "warehouse": ["Warehouse", "Warehouse"],
-  "finance": ["Finance", "Finance"],
+  // header the hub renders as its title. Without these, /scm/<group> title-cased
+  // the slug to "Scm".
+  "sales-order": "Sales Order",
+  "consignment": "Consignment",
+  "procurement": "Procurement",
+  "transportation": "Transportation",
+  "warehouse": "Warehouse",
+  "finance": "Finance",
   // Misc
-  "maintenance": ["Maintenance", "Maintenance"],
+  "maintenance": "Maintenance",
 };
 
 // /scm/reports/<report-slug> — its own table since these live one level
@@ -153,6 +201,20 @@ function isScmActionSegment(seg: string): boolean {
   return false;
 }
 
+// Last-resort label for a URL segment with no curated entry: the slug, dashes
+// turned to spaces and each word capitalised ("fleet-day" -> "Fleet Day").
+// It is only a SAFETY NET — a real page belongs in a table above so its tab
+// carries its on-screen title, not a prettied slug — but it guarantees a /scm/
+// page can never again collapse to a bare "Scm" (which is what an uncurated
+// second segment used to do: it fell through to the FIRST segment, "scm").
+function titleCaseSlug(slug: string): string {
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export function labelForPath(pathname: string): string {
   for (const [re, label] of ROUTE_LABELS) {
     if (re.test(pathname)) return label;
@@ -168,13 +230,17 @@ export function labelForPath(pathname: string): string {
     }
     const entry = SCM_SEGMENT_LABELS[segs[1]];
     if (entry) {
-      const [plural, singular] = entry;
+      // A bare string means listing and detail read the same.
+      const [plural, singular] = typeof entry === "string" ? [entry, entry] : entry;
       const isDetail = !!segs[2] && !isScmActionSegment(segs[2]);
       return isDetail ? singular : plural;
     }
-    // Unknown /scm/* — fall through to the generic first-segment
-    // uppercase so at least it reads something, not blank.
+    // Unknown /scm/<seg> — label it from the SECTION segment (the second one),
+    // never the first: the first is always "scm", and collapsing to "Scm" is
+    // exactly the bug this guards against. Curate the page above to give it its
+    // real title; this keeps it readable until someone does.
+    return titleCaseSlug(segs[1]);
   }
   const seg = segs[0] || "";
-  return seg ? seg[0].toUpperCase() + seg.slice(1) : "";
+  return seg ? titleCaseSlug(seg) : "";
 }

@@ -40,6 +40,7 @@ import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
+import { sendAiUsageToHub } from "./services/aiUsageHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
@@ -47,6 +48,10 @@ import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
+import { hr as hrEmployees } from "./routes/hr";
+import { hrAttendance } from "./routes/hr-attendance";
+import { attendance } from "./routes/attendance";
+import { runAutoClockOut } from "./routes/lib/hr-attendance-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
@@ -91,6 +96,7 @@ import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
 import deliverySheetSync from "./routes/deliverySheetSync";
 import chatCallback from "./routes/chatCallback";
+import connectPayments from "./routes/connect-payments";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -112,14 +118,17 @@ import {
   drainVenturePortalOutbox,
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
+import { runScheduledConnectSync } from "./scm/lib/connect-contact-sync";
 import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
+import { claimReportedOrders } from "./scm/lib/fair-claim";
 import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
+import { deliverDueShippedOrders } from "./scm/lib/deliver-due-shipped";
 import { refreshProcurementOverviewSnapshots } from "./scm/routes/procurement-overview";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -154,6 +163,7 @@ import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runWeeklyServiceCaseStatus } from "./services/assrWeeklyStatus";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
@@ -166,6 +176,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
 import { todayMyt } from "./scm/lib/my-time";
 import { reapOnce } from "./scm/lib/reaper";
@@ -431,6 +442,14 @@ app.use("/api/*", companyContext);
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
 
+// HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
+// payment onto its Sales Order through the one Payments writer. Mounted BELOW the
+// /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
+// user the auth middleware mints for Bearer <CONNECT_SERVICE_TOKEN> — the same
+// credential Connect's org sync uses — and the router itself gates to the service
+// tier with requirePermission("*"). See routes/connect-payments.ts.
+app.route("/api/connect/payments", connectPayments);
+
 // Inbox snapshot self-heal — the /api/inbox GET caches a per-user aggregate of
 // ASSR + Projects + Trips for ~60s. After the acting user makes a successful
 // write to ASSR or Projects, bust THEIR snapshot so their own inbox reflects it
@@ -526,6 +545,14 @@ app.route("/api/project-pos-sales", projectPosSales);
 // one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
+// HR Employees & Attendance (HC-0125): reads on either key, every write checks
+// hr.employees.manage inside. Salaries, so not under the SCM umbrella.
+app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
+app.route("/api/hr", hrEmployees);
+app.route("/api/hr", hrAttendance);
+// The phone punch clock (HC-0125): any signed-in account, answered only for
+// the employee linked to it, so NOT behind the hr.employees.* gate above.
+app.route("/api/attendance", attendance);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -886,6 +913,15 @@ export default {
           .catch((e) => console.error("[cron procurement-overview]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
+      // HR punch clock: close clock-ins left open 16 hours (a forgotten
+      // clock-out) at the shift end of their day. Idempotent.
+      ctx.waitUntil(
+        track("hr-auto-clockout", () => runAutoClockOut(env))
+          .then((r) => {
+            if (r.closed) console.log(`[cron hr-auto-clockout] closed=${r.closed}`);
+          })
+          .catch((e) => console.error("[cron hr-auto-clockout]", e))
+      );
       /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
          is provable rather than hoped for. The capture trigger swallows its own
          errors on purpose (it must never roll back a salesperson's Save), so a
@@ -904,6 +940,21 @@ export default {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
+      /* Houzs Connect contact sync (owner 2026-11-02): fill every customer's
+         Connect contact panel from their order, no message sent. Walks the
+         in-window orders a batch at a time by a cursor in app_config — the first
+         cycle backfills the ~1,099 existing contacts, then it wraps and keeps them
+         current (a new conversation contact is picked up on the next pass; an
+         explicit send fills instantly). Ships dark until CONNECT_WEBHOOK_* are set
+         (skipped:'not_configured'). Best-effort — a failed group is logged and
+         counted, never thrown. */
+      ctx.waitUntil(
+        track("connect-sync", () => runScheduledConnectSync(env))
+          .then((r) => {
+            if (r.synced || r.failed) console.log(`[cron connect-sync] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron connect-sync]", e))
       );
       // Houzs POS watchdog (spec section 10): terminal alerts, their emails
       // (once, then daily), auto-resolve, and the once-per-event summary.
@@ -1021,6 +1072,9 @@ export default {
               })
               .catch((e) => console.error("[cron fair-reconcile]", e))
           );
+          ctx.waitUntil(track("fair-claim", () => claimReportedOrders(env, new Date(event.scheduledTime + 8 * 3600_000).toISOString().slice(0, 10)))
+            .then((r) => { if (r.claimed > 0 || r.failed > 0) console.log(`[cron fair-claim] ${JSON.stringify(r)}`); })
+            .catch((e) => console.error("[cron fair-claim]", e)));
         }
       }
       // 3PL bills (owner 2026-10-24): an AP invoice from a transport supplier
@@ -1057,6 +1111,22 @@ export default {
         track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
+      );
+      // AI cost per company and feature, last 7 days, to the IT Hub (splits the
+      // Anthropic bill there). Best-effort; a missed day is re-sent the next day.
+      ctx.waitUntil(
+        track("ai-usage-hub", () => sendAiUsageToHub(env, new Date()))
+          .then((r) => console.log(r ? `[cron ai-usage-hub] sent ${r.days} day(s), ${r.rows} row(s)` : "[cron ai-usage-hub] not set up"))
+          .catch((e) => console.error("[cron ai-usage-hub]", e))
+      );
+      // Local "actually delivered" sweep (owner 2026-10-27): so-delivery-sync
+      // only SHIPS now; a SHIPPED local order whose DO date has passed and that
+      // has a driver is delivered here. East Malaysia / Singapore are left out —
+      // their delivered signal is the HC Delivery sheet, synced separately.
+      ctx.waitUntil(
+        track("deliver-due", () => deliverDueShippedOrders(getSupabaseService(env), todayMyt(), null))
+          .then((r) => console.log(`[cron deliver-due] scanned=${r.scanned} delivered=${r.delivered} skipped=${r.skipped}`))
+          .catch((e) => console.error("[cron deliver-due]", e))
       );
       // AutoCount DO-header mirror refresh (mig 0215) — feeds the ASSR list's
       // DO No column for Houzs cases. Incremental via DeliveryOrder/getSince
@@ -1099,6 +1169,20 @@ export default {
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
           .catch((e) => console.error("[cron assr-digest]", e))
       );
+      // Weekly Service Case status update to customers (owner 2026-11-02; moved
+      // Friday -> Monday 2026-11-03). This 02:00 UTC slot is 10:00 MYT; gate to
+      // Monday (getUTCDay 1) so it runs once a week at that hour without a
+      // dedicated cron trigger. Ships DARK — no-op unless scm.app_config
+      // 'scm.assr_weekly_status' is pilot/on. Best-effort.
+      if (new Date(event.scheduledTime).getUTCDay() === 1) {
+        ctx.waitUntil(
+          track("assr-weekly-status", () => runWeeklyServiceCaseStatus(env))
+            .then((r) => {
+              if (r.mode !== "off") console.log(`[cron assr-weekly-status] ${JSON.stringify(r)}`);
+            })
+            .catch((e) => console.error("[cron assr-weekly-status]", e))
+        );
+      }
       ctx.waitUntil(
         track("proj-reminders", () => runProjectDueReminders(env))
           .then((r) =>
@@ -1223,6 +1307,23 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // Books › Self-check summed for To do (batch 6 c3): the control check is
+      // too heavy for every To do read, so each night leaves one row per
+      // company in scm.acc_selfcheck_runs — reads only, nothing posts.
+      ctx.waitUntil(
+        track("self-check", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const runs = await sweepSelfCheck(sb, ids);
+          const failed = runs.filter((r) => !r.ok);
+          console.log(
+            `[cron self-check] ${runs.length} compan${runs.length === 1 ? "y" : "ies"}` +
+            (failed.length ? ` — failed: ${failed.map((r) => `${r.companyId}: ${r.reason}`).join("; ")}` : ""),
+          );
+        }).catch((e) => console.error("[cron self-check]", e)),
       );
       // Scheduled supplier prices whose effective date is today (BUG-32): onto
       // the flat binding POs read, then the derived product cost SOs read.

@@ -27,6 +27,7 @@ vi.mock("../../hooks/useQuery", () => ({
   useQuery: () => ({ data: GAPS, loading: false, fetching: false, placeholder: false, error: null, reload: () => {} }),
 }));
 
+vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ user: null }) }));
 import { ProjectDataGapsPanel } from "./ProjectOverviewParts";
 
 describe("Books not complete — Rental missing or no sales", () => {

@@ -16,7 +16,7 @@ import {
   soInvoiceAddress,
   AC_ADDRESS_LINE_MAX,
 } from './autocount-writeback';
-import { fitSoAddress } from './autocount-address-fit';
+import { fitSoAddress, soStreetTail, soTownLines } from './autocount-address-fit';
 
 const LONG = 'No 12A, Jalan Perindustrian Bukit Minyak 5, Kawasan Perindustrian';
 
@@ -166,5 +166,58 @@ describe('a corrected postcode replaces the cutover town line', () => {
     });
     expect(inv.InvAddr3).toBe('Selangor');
     expect(inv.InvAddr4).toBe('Selangor');
+  });
+});
+
+/* 2990-0036 (2990-SO-2611-009): the POS sent the whole address as address1, the
+   save fit spilled it into address3, and that line then won as the town line —
+   AutoCount and the delivery sheet lost "47820 Petaling Jaya". */
+describe('a street that runs on into lines 3 and 4 keeps the town', () => {
+  const SPILLED = {
+    address1: "A-05-07, D'Clover Residences, A-UG1-11,", address2: 'Dataran Sentral Damansara, No 3,',
+    address3: 'Jalan PJU 8/8B', address4: null,
+    postcode: '47820', city: 'Petaling Jaya', customer_state: 'Selangor',
+  };
+
+  test('line 3 follows the street and the town and state share line 4', () => {
+    expect(soInvoiceAddress(SPILLED)).toEqual({
+      InvAddr1: "A-05-07, D'Clover Residences, A-UG1-11,",
+      InvAddr2: 'Dataran Sentral Damansara, No 3,',
+      InvAddr3: 'Jalan PJU 8/8B',
+      InvAddr4: '47820 Petaling Jaya Selangor',
+    });
+  });
+
+  test('four street lines re-pack with the town, no word lost', () => {
+    const inv = soInvoiceAddress({ ...SPILLED, address4: 'Sentral Damansara' });
+    const lines = [inv.InvAddr1, inv.InvAddr2, inv.InvAddr3, inv.InvAddr4];
+    for (const v of lines) expect((v ?? '').length).toBeLessThanOrEqual(AC_ADDRESS_LINE_MAX);
+    expect(lines.join(' ')).toContain('47820 Petaling Jaya Selangor');
+    expect(lines.join(' ')).toContain('Jalan PJU 8/8B Sentral Damansara');
+  });
+
+  test('the town lines are the structured fields, not the street', () => {
+    expect(soTownLines(SPILLED)).toEqual(['47820 Petaling Jaya', 'Selangor']);
+    expect(soStreetTail(SPILLED)).toEqual(['Jalan PJU 8/8B']);
+  });
+
+  test('a cutover town line that names the postcode is not street', () => {
+    expect(soStreetTail({
+      address1: 'No 1', address2: null, address3: '51200 Kuala Lumpur', address4: 'Kuala Lumpur',
+      postcode: '51200', city: 'Kuala Lumpur', customer_state: 'Kuala Lumpur',
+    })).toEqual([]);
+  });
+
+  test('without a stored postcode lines 3 and 4 keep their old meaning', () => {
+    expect(soStreetTail({ ...SPILLED, postcode: null })).toEqual([]);
+  });
+
+  /* AutoCount-era rows keep their own text there (tests/deliverySheetSync.test.ts). */
+  test('a hand-typed state, a foreign postcode or a non-Malaysian order is not street', () => {
+    expect(soStreetTail({ ...SPILLED, address3: null, address4: 'P.PINANG' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, address3: 'KL' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, address3: 'SINGAPORE 123456' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, customer_state: 'West' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, customer_state: null })).toEqual([]);
   });
 });

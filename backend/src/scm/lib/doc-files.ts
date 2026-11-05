@@ -145,7 +145,7 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
       sb.from(spec.table).select('id, file_name, mime, size_bytes, sort_no, created_at, kind').eq(spec.fkColumn, found.doc.id), c,
     ).order('sort_no');
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    return c.json({ files: data ?? [] });
+    return c.json({ files: data ?? [], locked: found.doc.locked });
   };
 
   const stream = async (c: any): Promise<Response> => {

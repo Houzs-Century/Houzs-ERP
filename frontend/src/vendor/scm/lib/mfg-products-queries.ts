@@ -182,6 +182,8 @@ export type MfgProductRow = {
   // required in the source (the grid sorts on it); the rest are optional.
   description?: string | null;
   base_model?: string | null;
+  /** The Model's live name (follows a rename); base_model stays the model code. */
+  model_name?: string | null;
   pwp_price_sen?: number | null;
   unit_m3_milli: number;
   sku_code?: string | null;
@@ -770,6 +772,8 @@ export type BatchImportRow = {
 
 export type BatchImportResult = {
   upserted: number;
+  /* Of `upserted`, the rows whose code was new. */
+  created?: number;
   failed: number;
   failures: Array<{ code: string; reason: string }>;
   /* A category change on a SKU that belongs to a model moves the model and all its SKUs. */

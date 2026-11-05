@@ -30,7 +30,7 @@ import { SupervisorPin } from "../sell/SupervisorPin";
 const rm = (sen: number) => (sen / 100).toFixed(2);
 
 type Popup =
-  | { kind: "search"; q: string }
+  | { kind: "search"; q: string; browse?: boolean }
   | { kind: "qty" }
   | { kind: "price"; supervisor: BundleCashier }
   | { kind: "discount"; target: "item" | "bill" }
@@ -189,6 +189,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
 
   const actions = {
     search: () => setPopup({ kind: "search", q: "" }),
+    browse: () => setPopup({ kind: "search", q: "", browse: true }),
     qty: () => { if (needLine()) setPopup({ kind: "qty" }); },
     price: () => {
       if (!needLine()) return;
@@ -276,7 +277,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
         <button type="button" className="btn link" style={{ color: "#fff" }} onClick={actions.syncPanel} title="Sync panel">Last sync {ss.last_sync_at ?? state.last_sync_at ? fmtMyt(ss.last_sync_at ?? state.last_sync_at) : "--"}</button>
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
       </header>
-      {state.provisional && <div className="banner update">This device is not set up yet: no terminal, no fair, no items. Open <b>Settings</b> on the right, pick the terminal and the fair, and press Set up this device.</div>}
+      {state.provisional && <div className="banner update"><span className="grow">This device is not set up yet: no terminal, no fair, no items. Pick the terminal and the fair in Settings.</span><button type="button" className="btn primary" onClick={onOpenSetup}>Open Settings</button></div>}
       {state.test_mode && <div className="banner test">TEST MODE: every sale is a TEST sale (numbered {nextNo}), never synced, no stock deduction.</div>}
 
       <div className="sell">
@@ -339,7 +340,8 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
         </div>
 
         <div className="side">
-          <button type="button" className="btn" onClick={actions.search}>Item<small>F1</small></button>
+          <button type="button" className="btn" onClick={actions.search}>Item<small>F1 · search</small></button>
+          <button type="button" className="btn" onClick={actions.browse}>View All Items<small>browse the list</small></button>
           <button type="button" className="btn" onClick={actions.qty}>Qty<small>F2</small></button>
           <button type="button" className="btn" onClick={actions.price}>Price<small>F3</small></button>
           <button type="button" className="btn" onClick={actions.discount}>Discount<small>F10</small></button>
@@ -384,7 +386,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
 
       {toast && <div className={`toast${toast.bad ? " bad" : ""}`}>{toast.text}</div>}
 
-      {popup?.kind === "search" && <ItemSearch items={items} initial={popup.q} onPick={(i) => { add(i); if (s.printer_scanner.beep) beep("ok"); close(); }} onClose={close} />}
+      {popup?.kind === "search" && <ItemSearch items={items} initial={popup.q} browse={popup.browse === true} onPick={(i) => { add(i); if (s.printer_scanner.beep) beep("ok"); close(); }} onClose={close} />}
       {popup?.kind === "qty" && selected && <QtyPopup line={selected} onOk={(q) => { setCart((c) => setQty(c, selected.line_no, q)); if (q === 0) setSel(null); close(); }} onClose={close} />}
       {popup?.kind === "price" && selected && <PricePopup line={selected} supervisor={popup.supervisor} onOk={(p, reason) => { setCart((c) => overridePrice(c, selected.line_no, p, popup.supervisor.name, reason)); close(); }} onClose={close} />}
       {popup?.kind === "discount" && (popup.target === "bill" || selected) && (

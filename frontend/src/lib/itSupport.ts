@@ -48,7 +48,7 @@ const STATUS_TONE: Record<ItStatus, ItTone> = {
   waiting_reporter: "warning", resolved: "success", closed: "neutral", rejected: "error",
 };
 export const IT_KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
-export const IT_URGENCY = [["low", "Low"], ["medium", "Medium"], ["high", "High"]] as const;
+export const IT_URGENCY = [["high", "High"], ["medium", "Medium"], ["low", "Low"]] as const;
 /* IT may raise a request to urgent on the hub, so the list can show it even though the form does not offer it. */
 const URGENCY_TEXT: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
 const URGENCY_ORDER = ["urgent", "high", "medium", "low"];

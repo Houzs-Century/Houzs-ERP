@@ -1,0 +1,49 @@
+/* Finance › Reports › Event commission in the owner's redesign (batch 6
+   §5.11): the toolbar card (range, By fair / By SO date, brand), the month
+   close's state line, four tiles, then each part as a card on the
+   Finance-Table. Colours from finance/finance-ui.module.css. */
+
+.closeNote { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; color: var(--fin-detail); }
+.closeNoteClosed {
+  padding: 8px 12px; border: 1px solid var(--fin-line); border-radius: 8px; background: var(--fin-paper); color: var(--fin-text);
+}
+.closeIcon { flex: none; color: var(--fin-ink); }
+.strong { font-weight: 600; color: var(--fin-ink); }
+
+.card {
+  min-width: 0; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
+}
+.cardHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 12px 14px 0; }
+.cardTitle { margin: 0; font-size: 14px; font-weight: 600; color: var(--fin-ink); }
+.cardHint { font-size: 12px; color: var(--fin-muted); }
+.cardBody { padding: 10px 14px 14px; }
+.empty { margin: 0; padding: 4px 0; font-size: 12.5px; color: var(--fin-muted); }
+
+.idle {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; padding: 0; border: 0; background: none;
+  font: 500 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-detail); cursor: pointer;
+}
+.idle:hover { color: var(--fin-petrol); }
+
+.docLink {
+  padding: 0; border: 0; background: none; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+  text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap;
+}
+.docLink:hover { color: var(--fin-petrol); }
+
+.closeBtn {
+  height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--fin-petrol-line);
+  border-radius: 6px; background: var(--fin-petrol-pale); color: var(--fin-petrol-ink); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+}
+.closeBtn:hover:not(:disabled) { background: var(--fin-petrol-hover); }
+.closeBtn:disabled { opacity: 0.55; cursor: default; }
+
+.select {
+  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+
+.notes { margin: 0; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.skeleton { display: grid; gap: 10px; padding: 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
+.skeletonBar { height: 14px; border-radius: 4px; }

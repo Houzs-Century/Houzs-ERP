@@ -84,6 +84,8 @@ vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) 
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true), usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 vi.mock('./EntityHistoryPanel', () => ({ EntityHistoryPanel: () => null }));
+/* The trail read inline (the redesign): who did what, off the same audit log as the drawer. */
+vi.mock('../../vendor/scm/lib/entity-audit-queries', () => ({ useEntityAuditLog: () => ({ data: [{ id: 't1', action: 'reject', actor_name_snapshot: 'Mei Ling', status_snapshot: 'DRAFT', note: 'Wrong bank account', created_at: '2026-11-02T03:00:00Z' }], isLoading: false, isError: false }) }));
 vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
   PrintPreviewModal: () => null,
   usePrintPreview: () => ({ open: false, close: () => {}, openPreview: () => {} }),

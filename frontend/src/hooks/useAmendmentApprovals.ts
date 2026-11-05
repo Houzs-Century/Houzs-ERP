@@ -49,6 +49,9 @@ export const IT_SUPPORT_UNREAD_KEY = ["it-support", "unread-count"] as const;
    there (vendor/scm/lib/fair-options-queries.ts useAssignFair) moves the badge. */
 export const FAIR_LINKS_TO_SETTLE_KEY = ["fair-pending", "count"] as const;
 const FAIR_LINKS_TO_SETTLE_PATH = "/api/scm/mfg-sales-orders/fair-pending/count";
+/** Finance's To do (the Claude Design redesign, 2026-11-02): jobs waiting on the viewer. */
+export const FINANCE_TODO_COUNT_KEY = ["finance-todo", "count"] as const;
+const FINANCE_TODO_COUNT_PATH = "/api/scm/accounting/todo/count";
 /* Product requests waiting for the Purchaser (HC-0136: 「same like SO amendment」).
    Under the request queries' own prefix ['product-requests'], so every request
    write (vendor/scm/lib/product-request-queries.ts) moves the badge. */
@@ -62,7 +65,7 @@ interface PendingCountResponse {
 /** The badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
 export type ApprovalBadgeSource =
   | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies"
-  | "fair-links-to-settle" | "product-request-approvals";
+  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -73,6 +76,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "it-support-replies": "with a new reply from IT",
   "fair-links-to-settle": "orders with no fair",
   "product-request-approvals": "awaiting your approval",
+  "finance-todo": "waiting on you",
 };
 
 /**
@@ -144,6 +148,12 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       PRODUCT_REQUEST_APPROVALS_KEY,
       "/api/scm/product-requests/pending-count",
       enabled && can("scm.product_request.approve"),
+    ),
+    /* Finance only — the people who work its To do. */
+    "finance-todo": usePendingCount(
+      FINANCE_TODO_COUNT_KEY,
+      FINANCE_TODO_COUNT_PATH,
+      enabled && (can("scm.payment_voucher.create") || can("scm.payment_voucher.post")),
     ),
   };
 }

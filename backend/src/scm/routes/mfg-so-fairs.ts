@@ -17,6 +17,7 @@
 //
 //   GET  /fair-options          the dropdown, for one order date
 //   GET  /fair-default          the keyer's fair a new order starts with
+//   POST /fair-booth            whether the form must ask which booth of a picked event
 //   GET  /fair-pending          orders with no fair link a person should see
 //   GET  /fair-pending/count    how many — the sidebar badge
 //   GET  /fair-checks           linked orders to check: venue differs / Sales Attending
@@ -34,14 +35,18 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanySql, scopeToCompany, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
+  editFairKeyerId,
+  fairBoothQuestion,
   keyerFairDefaultFor,
   loadAllFairs,
   loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
+  type FairConfirmSb,
   type FairDb,
 } from '../lib/fair-binding';
-import { allFairOptions, buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
+import { allFairOptions, buildFairOptions, companyUsesKeyerFair, editFairPick, fairMissingMessage, isPickableFair } from '../lib/fair-options';
+import { deriveHeaderBrandingFromLines, loadHeaderBrandList } from '../lib/derive-line-branding';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
 import { loadFairPutAside, NOT_PUT_ASIDE, setFairPutAside } from '../lib/fair-put-aside';
 import { loadFairChecks } from '../lib/fair-checks';
@@ -150,6 +155,62 @@ mfgSoFairs.get('/fair-default', async (c) => {
     orderDate: soDate,
   });
   return c.json({ date: soDate, ...found, whyMessage: found.why ? fairMissingMessage(found.why) : null });
+});
+
+/**
+ * POST /mfg-sales-orders/fair-booth
+ * body: { fairVenue, fairOrganizer, fairStart, fairEnd, docNo? , items? }
+ *
+ * Whether the SO form shows a Booth pick under Fair (owner 2026-10-27, HC-0161:
+ * only when the system cannot tell which booth of the picked event the order is
+ * for). The answer is the save's own rule — the brand's booth, then the keyer's
+ * — so the form asks exactly when the save would link nothing.
+ *
+ *   - An EDIT (`docNo`): the order's stored brand and its keyer (the scanner on
+ *     a scan, else the caller), as the header PATCH reads them. An order already
+ *     linked to a booth of that event is not asked again (Fair Links moves it).
+ *   - A NEW order: the brand its `items` would be stamped with, keyed by the caller.
+ *
+ * Houzs only (the keyer rule). Never an error status: a failed read asks
+ * nothing, and the save and Fair Links still settle it.
+ */
+mfgSoFairs.post('/fair-booth', async (c) => {
+  const none = { ask: false, booths: [], message: null };
+  if (!companyUsesKeyerFair(c.get('companyCode'))) return c.json(none);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const pick = editFairPick(body, null);
+    if (!pick) return c.json(none);
+    const sb = c.get('supabase');
+    const callerId = Number(c.get('houzsUser')?.id ?? NaN);
+    const docNo = typeof body.docNo === 'string' ? body.docNo.trim() : '';
+    let brand: string | null;
+    let keyerId = callerId;
+    let linkedId: number | null = null;
+    if (docNo) {
+      const head = await scopeToCompany(sb.from('mfg_sales_orders').select('branding, project_id').eq('doc_no', docNo), c).maybeSingle();
+      if (head.error || !head.data) return c.json(none);
+      const stored = head.data as { branding?: unknown; project_id?: unknown };
+      brand = typeof stored.branding === 'string' ? stored.branding : null;
+      linkedId = stored.project_id == null ? null : Number(stored.project_id);
+      keyerId = await editFairKeyerId({ sb: sb as unknown as FairConfirmSb, scope: (q) => scopeToCompany(q, c), docNo, editorId: callerId });
+    } else {
+      const items = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+      const rows = items.map((it) => ({
+        item_code: typeof it.itemCode === 'string' ? it.itemCode : null,
+        item_group: typeof it.itemGroup === 'string' ? it.itemGroup : null,
+      }));
+      brand = await deriveHeaderBrandingFromLines(sb, rows, activeCompanyId(c) ?? null, await loadHeaderBrandList(c));
+    }
+    const q = await fairBoothQuestion({
+      db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
+      event: { venue: pick.venue, organizer: pick.organizer, startDate: pick.picked.startDate, endDate: pick.picked.endDate },
+      brand, keyerId,
+    });
+    return c.json(q.booths.some((b) => b.projectId === linkedId) ? none : q);
+  } catch {
+    return c.json(none);
+  }
 });
 
 /**

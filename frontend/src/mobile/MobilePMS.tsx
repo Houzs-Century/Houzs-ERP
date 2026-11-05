@@ -1005,8 +1005,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     // Field/sales cohort: whole tasklist sections removed (kept: OPERATION etc.).
     // Owner 2026-07-16 (2nd pass): sales executives/managers must still get
     // their OWN deliverables — anything badged SALES PIC (Setup Image, Defect
-    // List, Event Complete Image, Filled Floorplan) stays visible for them in
-    // every section; the rest of the simplified view is unchanged.
+    // List, Filled Floorplan) stays visible for them in every section; the rest
+    // of the simplified view is unchanged.
     if (cohort5 && cohortHiddenSection(sectionNameById.get(it.section_id ?? -1) ?? "")) {
       if (!(isSalesExecMgr && label === "SALES PIC")) return true;
     }
@@ -1055,7 +1055,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
       { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
       { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     ]),
-    { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
   // Purchaser view (Sim, Farra): Defect tiles to consult + their two docs.
@@ -1090,7 +1089,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: !canBdEdit },
     { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: !canBdEdit },
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
-    { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
     // Owner 2026-07-31: HALF tile (8 tiles = even count), beside Dismantle Image.
     { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit },
@@ -2173,7 +2171,7 @@ export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: b
 }
 
 // Item-level remark box (owner 2026-07-16, relocated same evening): the sales
-// PIC's photo tasks — Setup Image, Defect List, Event Complete Image — carry a
+// PIC's photo tasks — Setup Image, Defect List — carry a
 // standalone remark fillable WITHOUT uploading a file. Saved to the item's
 // `notes` via PATCH /checklist/:id. (Was on Weekend Activity/Deco earlier that
 // day; owner moved it here.)
@@ -2566,7 +2564,10 @@ function TaskRow({
 // columns (setup_driver_user_id / setup_lorry_id) untouched. Mobile shows
 // the FK-joined names when present and falls back to this JSON otherwise.
 type CrewPerson = { name: string; phone?: string | null };
-type LorryCrew = { plate: string; drivers: CrewPerson[]; helpers: CrewPerson[] };
+// `at` (owner 2026-10-26): each lorry's own setup / dismantle date+time. The
+// desktop editor dropped the single shared window date; mobile shows per-lorry
+// dates read-only (adding lorries / dates stays on desktop).
+type LorryCrew = { plate: string; at?: string | null; drivers: CrewPerson[]; helpers: CrewPerson[] };
 type PhaseCrew = { lorryCrew: LorryCrew[]; outsourced: CrewPerson[]; drivers: CrewPerson[]; helpers: CrewPerson[]; lorries: string[] };
 const parseCrewJson = (raw: string | null | undefined): PhaseCrew => {
   const out: PhaseCrew = { lorryCrew: [], outsourced: [], drivers: [], helpers: [], lorries: [] };
@@ -2583,6 +2584,7 @@ const parseCrewJson = (raw: string | null | undefined): PhaseCrew => {
     if (Array.isArray(j.lorry_crew) && j.lorry_crew.length) {
       out.lorryCrew = (j.lorry_crew as any[]).map((l) => ({
         plate: typeof l?.plate === "string" ? l.plate : "",
+        at: typeof l?.at === "string" ? l.at : null,
         drivers: people(l?.drivers),
         helpers: people(l?.helpers),
       }));
@@ -3066,16 +3068,21 @@ function PhaseBlock({
       </div>
       {canWrite ? (
         <>
-          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-            <label className="fld" style={{ flex: 1.4 }}>
-              <span className="fld-l">{kind} date</span>
-              <DateField fullWidth className="fld-i" value={date} disabled={busy} onChange={(iso) => { setDate(iso); void saveStart(iso, time); }}/>
-            </label>
-            <label className="fld" style={{ flex: 1 }}>
-              <span className="fld-l">Start time</span>
-              <input className="fld-i" type="time" value={time} disabled={busy} onChange={(e) => { setTime(e.target.value); void saveStart(date, e.target.value); }} />
-            </label>
-          </div>
+          {/* Single phase date — owner 2026-10-26: only the fallback quick-entry
+              path when NO per-lorry crew is set. Once lorries exist, each carries
+              its own date (shown read-only under Planned crew; set on desktop). */}
+          {crewIsEmpty(crew) && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+              <label className="fld" style={{ flex: 1.4 }}>
+                <span className="fld-l">{kind} date</span>
+                <DateField fullWidth className="fld-i" value={date} disabled={busy} onChange={(iso) => { setDate(iso); void saveStart(iso, time); }}/>
+              </label>
+              <label className="fld" style={{ flex: 1 }}>
+                <span className="fld-l">Start time</span>
+                <input className="fld-i" type="time" value={time} disabled={busy} onChange={(e) => { setTime(e.target.value); void saveStart(date, e.target.value); }} />
+              </label>
+            </div>
+          )}
           {/* Single driver/lorry quick-assign — only as a fallback when NO
               per-lorry crew is set (owner: hide once crew details exist). */}
           {crewIsEmpty(crew) && (
@@ -3099,6 +3106,7 @@ function PhaseBlock({
               {crew.lorryCrew.map((l, i) => (
                 <div key={i} style={{ marginBottom: 9, paddingLeft: 9, borderLeft: "2px solid #cfd4c9" }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#2f3329", marginBottom: 4 }}>{l.plate || `Lorry ${i + 1}`}</div>
+                  {l.at ? <div style={{ fontSize: 10, color: "#8a8f82", marginBottom: 4 }}>{dOnly(l.at)} · {tOnly(l.at)}</div> : null}
                   {l.drivers.map((p, j) => <CrewLine key={`d${j}`} role="Driver" person={p} />)}
                   {l.helpers.map((p, j) => <CrewLine key={`h${j}`} role="Helper" person={p} />)}
                 </div>
@@ -3113,8 +3121,8 @@ function PhaseBlock({
         </>
       ) : (
         <div className="pgrid2" style={{ marginBottom: 6 }}>
-          <div><div className="pkv-l">{kind} date</div><div className="pkv-v">{dOnly(startAt)}</div></div>
-          <div><div className="pkv-l">Start time</div><div className="pkv-v">{tOnly(startAt)}</div></div>
+          {crewIsEmpty(crew) && <div><div className="pkv-l">{kind} date</div><div className="pkv-v">{dOnly(startAt)}</div></div>}
+          {crewIsEmpty(crew) && <div><div className="pkv-l">Start time</div><div className="pkv-v">{tOnly(startAt)}</div></div>}
           {crewIsEmpty(crew) && <div><div className="pkv-l">{kind} driver</div><div className="pkv-v">{driverDisplay}</div></div>}
           {crewIsEmpty(crew) && <div><div className="pkv-l">Lorry / vehicle</div><div className="pkv-v">{lorryDisplay}</div></div>}
           {/* Read-only crew: same structured "Planned crew" layout as the
@@ -3126,6 +3134,7 @@ function PhaseBlock({
               {crew.lorryCrew.map((l, i) => (
                 <div key={i} style={{ marginBottom: 9, paddingLeft: 9, borderLeft: "2px solid #cfd4c9" }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#2f3329", marginBottom: 4 }}>{l.plate || `Lorry ${i + 1}`}</div>
+                  {l.at ? <div style={{ fontSize: 10, color: "#8a8f82", marginBottom: 4 }}>{dOnly(l.at)} · {tOnly(l.at)}</div> : null}
                   {l.drivers.map((p, j) => <CrewLine key={`d${j}`} role="Driver" person={p} />)}
                   {l.helpers.map((p, j) => <CrewLine key={`h${j}`} role="Helper" person={p} />)}
                 </div>

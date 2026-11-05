@@ -3,60 +3,55 @@
 // (owner 2026-09-14, from his screenshots: the journal list, 660 rows, should
 // group the lines under their entry — date / entry / references / description
 // once, then the account lines; docs/bugs/0935). Every entry of the period is
-// a group: its header row carries the date, the number, the journal, Ref. 1
+// a group: its head row carries the date, the number, the journal, Ref. 1
 // and Ref. 2 (the GL page's own references, acc/journal-refs), the narration,
 // the totals and the status; beneath it one row per line — the account (code
-// over name), the party, the note, debit or credit. Tapping the header opens
-// the entry's card (Post / Reverse / Copy / Edit); "New manual journal" opens
-// the draft form. Reversed entries and their contras are listed and marked —
-// the journal keeps the record (docs/bugs/0923); the GL page leaves them out.
+// over name), the party, the note, debit or credit. Reversed entries and their
+// contras are listed and marked — the journal keeps the record
+// (docs/bugs/0923); the GL page leaves them out.
+//
+// In the owner's redesign (batch 6 §2): one toolbar row — the date range, the
+// Journal, the Source, the search — over a grid whose columns are dragged
+// wider and remembered; the entry's number opens its card in a right drawer
+// (Post · Edit · Copy · Reverse on a manual journal; a document's entry opens
+// its document), and "New manual journal" opens the form there. Excel, PDF
+// and Print are the report sheet; the one-row-per-line CSV sits under ⋯.
 //
 // The filters live in the URL (/scm/accounting?tab=je&from=…&to=…&source=…
 // &journal=…) so a period can be handed on as a link; the search box filters
 // what is loaded.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button } from '@2990s/design-system';
-import { Download } from 'lucide-react';
-import { DateField } from '../../vendor/scm/components/DateField';
+import { ChevronDown, FileDown, FileSpreadsheet, MoreHorizontal, Plus, Printer, Search } from 'lucide-react';
+import { DateRangeButton } from '../../components/DateRangeButton';
+import { REPORT_RANGE_PRESETS, isIsoDay } from '../../lib/dateRangePresets';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { useJournalEntriesGrouped, type JournalEntryGrouped, type JournalGroupedFilters } from './accounting-phase1-queries';
 import { fmtLedger, fmtSide, journalLabel, type LedgerJournal } from '../../vendor/scm/lib/ledger-queries';
+import { exportFileName } from '../../vendor/scm/lib/report-sheet';
 import { triggerDownload } from '../../vendor/scm/lib/fabric-csv';
 import { fmtDate } from '../../vendor/shared/format';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
-import { NewJournalForm, JeDetailCard, AccountCell, jeStatus, btnStyle, type DraftSeed, type EditSeed } from './JournalEntryCards';
-import styles from './Suppliers.module.css';
+import { AccountCell, jeStatus, jeStatusTag, toneClass } from './JournalEntryCards';
+import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
+import { AccountingHeader } from './books/AccountingHeader';
+import { JournalDrawer, newJournalForm, type JournalDrawerState } from './books/JournalDrawer';
+import { JOURNAL_REVERSALS, JOURNAL_SOURCES, sourceLabel } from './books/journal-sources';
+import { journalSheet } from './books/journal-sheet';
+import { useBooksToast } from './books/BooksToast';
+import tokens from './finance/finance-ui.module.css';
+import s from './books/Books.module.css';
 
-/* The five journals, AutoCount's own vocabulary — the chips and the label. */
+/* The five journals, AutoCount's own vocabulary — the segments and the label. */
 export const JOURNALS: readonly LedgerJournal[] = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'];
 const isJournal = (j: string): j is LedgerJournal => (JOURNALS as readonly string[]).includes(j);
 /** The journal's word for a class the server stamped; the class itself when it is not one of the five. */
 export const journalWord = (j: string): string => (isJournal(j) ? journalLabel(j) : j);
 
-const SOURCES: ReadonlyArray<[string, string]> = [
-  ['SI', 'SI — Sales Invoice'], ['SI_REVERSAL', 'SI Reversal'], ['PI', 'PI — Purchase Invoice'], ['PI_REVERSAL', 'PI Reversal'],
-  ['PV', 'PV — Payment Voucher'], ['PV_REVERSAL', 'PV Reversal'], ['MANUAL', 'Manual'], ['MANUAL_REVERSAL', 'Manual Reversal'],
-];
-
-const card: React.CSSProperties = {
-  padding: 0,
-  background: 'var(--c-cream)',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-  borderRadius: 'var(--radius-md)',
-  overflowX: 'auto',
-};
-const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
-const th: React.CSSProperties = { padding: '6px 8px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
-const td: React.CSSProperties = { padding: '4px 8px', verticalAlign: 'top', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' };
-const num: React.CSSProperties = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const head: React.CSSProperties = { ...td, background: 'var(--c-cream-2, rgba(34,31,32,0.03))', fontWeight: 600, cursor: 'pointer' };
-
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthStart = (): string => `${myt().slice(0, 7)}-01`;
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type JournalPageParams = JournalGroupedFilters & { journal: string };
 
@@ -66,8 +61,8 @@ export const journalParamsFromSearch = (params: URLSearchParams): JournalPagePar
   const to = params.get('to') ?? '';
   const journal = (params.get('journal') ?? '').toUpperCase();
   return {
-    from: DATE.test(from) ? from : monthStart(),
-    to: DATE.test(to) ? to : myt(),
+    from: isIsoDay(from) ? from : monthStart(),
+    to: isIsoDay(to) ? to : myt(),
     sourceType: params.get('source') ?? '',
     journal: isJournal(journal) ? journal : '',
   };
@@ -76,9 +71,9 @@ export const journalParamsFromSearch = (params: URLSearchParams): JournalPagePar
 /** A contra — the entry that undid another — is named by its source type. */
 export const isContra = (r: Pick<JournalEntryGrouped, 'source_type'>): boolean => /_REVERSAL$/.test(r.source_type);
 
-/** What the search box reads of an entry: its head, its references, its accounts. */
+/** What the search box reads of an entry: its head, its references, its accounts and parties. */
 const haystack = (r: JournalEntryGrouped, nameOf: (code: string) => string): string =>
-  [r.je_no, r.entry_date, r.source_type, r.doc ?? '', r.doc2 ?? '', r.narration ?? '', r.who ?? '', journalWord(r.journal_class), jeStatus(r),
+  [r.je_no, r.entry_date, fmtDate(r.entry_date), r.source_type, sourceLabel(r.source_type), r.doc ?? '', r.doc2 ?? '', r.narration ?? '', r.who ?? '', journalWord(r.journal_class), jeStatus(r),
     ...r.lines.flatMap((l) => [l.account_code, nameOf(l.account_code), l.party_name ?? '', l.notes ?? ''])]
     .join(' ').toLowerCase();
 
@@ -88,10 +83,22 @@ export const filterEntries = (rows: JournalEntryGrouped[], journal: string, sear
   return term ? inJournal.filter((r) => haystack(r, nameOf).includes(term)) : inJournal;
 };
 
-/** The page's columns — ONE home for the screen and the CSV. */
+/** The page's columns — ONE home for the grid, the CSV and the widths. */
 export const JOURNAL_COLUMNS = ['Date', 'Entry', 'Journal', 'Ref. 1', 'Ref. 2', 'Description', 'Debit', 'Credit', 'Status'] as const;
+const RIGHT = [false, false, false, false, false, false, true, true, false];
+/* The design's tracks (Finance-1a-Reports, CW.je); dates, numbers and amounts never narrower than they read. */
+const WIDTHS: ColumnWidthSpec = {
+  defaults: ['78px', '108px', '60px', '108px', '96px', 'minmax(200px,1fr)', '96px', '96px', '116px'],
+  min: [60, 72, 40, 48, 48, 80, 56, 56, 64],
+  fit: [true, true, true, false, false, false, true, true, true],
+  gap: 12,
+};
+/** Entries drawn at a time; "Show more" adds the next lot of what loaded. */
+const PAGE = 100;
+/** The server's own cap on one period's read (accounting.ts journalEntriesList). */
+const LOADED_LIMIT = 500;
 
-const csvCell = (s: string): string => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+const csvCell = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 /** The journal as a flat CSV: one row per line, the entry's head repeated in
     front of it, the line's account, party and note behind. */
@@ -105,39 +112,72 @@ export function journalCsv(rows: JournalEntryGrouped[], nameOf: (code: string) =
   return out.map((row) => row.map(csvCell).join(',')).join('\n');
 }
 
-const Group = ({ r, nameOf, onOpen }: { r: JournalEntryGrouped; nameOf: (code: string) => string; onOpen: () => void }) => (
-  <tbody data-je={r.je_no} data-reversal={r.reversed ? 'reversed' : isContra(r) ? 'contra' : undefined}
-    style={r.reversed || isContra(r) ? { color: 'var(--text-soft, #8a8578)' } : undefined}>
-    <tr onClick={onOpen} role="button" aria-label={`Open ${r.je_no}`}>
-      <td style={{ ...head, whiteSpace: 'nowrap' }}>{fmtDate(r.entry_date)}</td>
-      <td style={head}><span className={styles.codeChip}>{r.je_no}</span></td>
-      <td style={head}>{journalWord(r.journal_class)}</td>
-      <td style={head}>{r.doc ?? '—'}</td>
-      <td style={head}>{r.doc2 ?? '—'}</td>
-      <td style={{ ...head, fontWeight: 500 }}>
-        {r.narration ?? r.who ?? '—'}
-        {r.who && r.narration && r.who !== r.narration && <span style={soft}> · {r.who}</span>}
-      </td>
-      <td style={{ ...head, ...num }}>{fmtLedger(r.total_debit_sen)}</td>
-      <td style={{ ...head, ...num }}>{fmtLedger(r.total_credit_sen)}</td>
-      <td style={head}>
-        <span className={`${styles.statusPill} ${r.posted ? styles.statusActive : styles.statusInactive}`}>{jeStatus(r)}</span>
-        {isContra(r) && <span className={styles.codeChip} style={{ marginLeft: 6 }}>contra</span>}
-      </td>
-    </tr>
-    {r.lines.map((l) => (
-      <tr key={l.line_no} data-line={l.line_no}>
-        <td style={td} />
-        <td style={td} colSpan={2}><AccountCell code={l.account_code} name={nameOf(l.account_code)} /></td>
-        <td style={td} colSpan={2}>{l.party_name ?? ''}</td>
-        <td style={td}>{l.notes ?? ''}</td>
-        <td style={num}>{fmtSide(l.debit_sen)}</td>
-        <td style={num}>{fmtSide(l.credit_sen)}</td>
-        <td style={td} />
-      </tr>
-    ))}
-  </tbody>
-);
+const Group = ({ r, nameOf, template, onOpen }: { r: JournalEntryGrouped; nameOf: (code: string) => string; template: string; onOpen: () => void }) => {
+  const tag = jeStatusTag(r);
+  const desc = r.narration ?? r.who ?? '—';
+  return (
+    <div data-je={r.je_no} data-reversal={r.reversed ? 'reversed' : isContra(r) ? 'contra' : undefined}
+      className={`${s.entry} ${r.reversed || isContra(r) ? s.dim : ''}`}>
+      <div data-cw-row="" className={`${s.row} ${s.gap12} ${s.entryHead}`} style={{ gridTemplateColumns: template }} onDoubleClick={onOpen}>
+        <span className={s.muted}>{fmtDate(r.entry_date)}</span>
+        <span className={s.cell}><button type="button" className={s.entryNo} onClick={onOpen} title="Open the entry">{r.je_no}</button></span>
+        <span className={s.muted}>{journalWord(r.journal_class)}</span>
+        <span className={s.cell} title={r.doc ?? undefined}>{r.doc ?? '—'}</span>
+        <span className={`${s.cell} ${s.muted}`} title={r.doc2 ?? undefined}>{r.doc2 ?? '—'}</span>
+        <span className={`${s.cell} ${s.desc}`} title={desc}>
+          {desc}
+          {r.who && r.narration && r.who !== r.narration && <span className={s.soft}> · {r.who}</span>}
+        </span>
+        <span className={`${s.num} ${s.strong}`}>{fmtLedger(r.total_debit_sen)}</span>
+        <span className={`${s.num} ${s.strong}`}>{fmtLedger(r.total_credit_sen)}</span>
+        <span className={s.tags}>
+          <span className={`${s.tag} ${toneClass(tag.tone)}`}>{tag.label}</span>
+          {isContra(r) && <span className={`${s.tag} ${s.toneCalm}`}>contra</span>}
+        </span>
+      </div>
+      {r.lines.map((l) => (
+        <div key={l.line_no} data-cw-row="" data-line={l.line_no} className={`${s.row} ${s.gap12} ${s.entryLine}`} style={{ gridTemplateColumns: template }}>
+          <span />
+          <span className={s.cell} style={{ gridColumn: 'span 2' }}><AccountCell code={l.account_code} name={nameOf(l.account_code)} /></span>
+          <span className={`${s.cell} ${s.muted}`} style={{ gridColumn: 'span 2' }}>{l.party_name ?? ''}</span>
+          <span className={`${s.cell} ${s.muted}`} title={l.notes ?? undefined}>{l.notes ?? ''}</span>
+          <span className={s.num}>{fmtSide(l.debit_sen)}</span>
+          <span className={s.num}>{fmtSide(l.credit_sen)}</span>
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/** The header's ⋯: what the design does not show and the ERP keeps. */
+function MoreMenu({ items }: { items: Array<{ label: string; onClick: () => void; disabled?: boolean }> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [open]);
+  return (
+    <div ref={ref} className={s.menuWrap}>
+      <button type="button" className={s.more} aria-label="More" title="More" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <MoreHorizontal size={15} />
+      </button>
+      {open && (
+        <div className={s.menu} role="menu">
+          {items.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={s.menuItem} disabled={it.disabled}
+              onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export const JournalTab = () => {
   const [params, setParams] = useSearchParams();
@@ -160,80 +200,141 @@ export const JournalTab = () => {
     setParams(q, { replace: true });
   };
 
-  const rangeOk = p.from <= p.to;
+  const rangeOk = isIsoDay(p.from) && isIsoDay(p.to) && p.from <= p.to;
   const q = useJournalEntriesGrouped({ from: p.from, to: p.to, sourceType: p.sourceType }, rangeOk);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
   const [search, setSearch] = useState('');
   const visible = useMemo(() => filterEntries(rows, p.journal, search, nameOf), [rows, p.journal, search, nameOf]);
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => { setShown(PAGE); }, [p.from, p.to, p.sourceType, p.journal, search]);
+  const page = visible.slice(0, shown);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  /* A copy of an opened manual journal: the seed the draft form opens with,
-     and a fresh key so a second Copy starts a fresh form (docs/bugs/0920).
-     An EDIT carries the entry as well — the form then saves to it (docs/bugs/0932). */
-  const [seed, setSeed] = useState<{ key: number; draft: DraftSeed; editing?: EditSeed } | null>(null);
+  const cw = useColumnWidths('je', WIDTHS);
+  const [drawer, setDrawer] = useState<JournalDrawerState | null>(null);
+  const toast = useBooksToast();
+
+  const narrowedBy = [
+    ...(p.journal ? [`${journalWord(p.journal)} journal`] : []),
+    ...(p.sourceType ? [`Source: ${sourceLabel(p.sourceType)}`] : []),
+    ...(search.trim() ? [`“${search.trim()}”`] : []),
+  ];
+  const sheet = () => journalSheet({ rows: visible, from: p.from, to: p.to, narrowedBy, nameOf, journalWord, statusWord: (r) => (isContra(r) ? `${jeStatusTag(r).label} · contra` : jeStatusTag(r).label) });
+  const excel = async () => {
+    const { downloadReportXlsx } = await import('../../vendor/scm/lib/report-sheet-xlsx');
+    await downloadReportXlsx(sheet(), exportFileName('journal-entries', p.from, p.to, 'xlsx'));
+  };
+  const pdf = async (action: 'preview' | 'print') => {
+    const { generateReportPdf } = await import('../../vendor/scm/lib/report-sheet-pdf');
+    await generateReportPdf(sheet(), { fileName: exportFileName('journal-entries', p.from, p.to, 'pdf'), action });
+  };
+  const nothing = visible.length === 0;
+
+  const actions = (
+    <div className={s.headActions}>
+      <button type="button" className={s.btnPrimary} onClick={() => setDrawer(newJournalForm())}><Plus size={14} aria-hidden />New manual journal</button>
+      <button type="button" className={s.btn} disabled={nothing} onClick={() => { void excel(); }}><FileSpreadsheet size={14} aria-hidden />Excel</button>
+      <button type="button" className={s.btn} disabled={nothing} onClick={() => { void pdf('preview'); }}><FileDown size={14} aria-hidden />PDF</button>
+      <button type="button" className={s.btn} disabled={nothing} onClick={() => { void pdf('print'); }}><Printer size={14} aria-hidden />Print</button>
+      <MoreMenu items={[{
+        label: 'CSV · one row per line', disabled: nothing,
+        onClick: () => triggerDownload(`journal-${p.from}-to-${p.to}.csv`, '﻿' + journalCsv(visible, nameOf)),
+      }]} />
+    </div>
+  );
+
+  const description = rangeOk
+    ? `${p.from === p.to ? fmtDate(p.from) : `${fmtDate(p.from)} – ${fmtDate(p.to)}`}${q.data ? ` · ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}` : ''}`
+    : 'Check the dates';
 
   return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); setSeed(null); }}>
-          {creating ? 'Close journal form' : 'New manual journal'}
-        </button>
-        <span style={soft}>From</span><DateField value={p.from} onChange={(v) => update({ from: v })} aria-label="Journal from" />
-        <span style={soft}>To</span><DateField value={p.to} onChange={(v) => update({ to: v })} aria-label="Journal to" />
-        <select value={p.sourceType ?? ''} onChange={(e) => update({ sourceType: e.target.value })} className={styles.searchInput} style={{ maxWidth: 220 }} aria-label="Source">
-          <option value="">All sources</option>
-          {SOURCES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-        </select>
-        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} className={styles.searchInput} style={{ maxWidth: 260 }}
-            placeholder="Filter loaded entries…" aria-label="Filter loaded entries" />
-          <SearchScopeHint scope="loaded" loadedLimit={500} resultCount={visible.length} term={search} />
+    <div className={`${tokens.root} ${s.page}`}>
+      <AccountingHeader tab="je" description={description} actions={actions} />
+
+      <div className={s.tools}>
+        <DateRangeButton from={p.from} to={p.to} presets={REPORT_RANGE_PRESETS} today={myt()} label="Entry dates"
+          onChange={(from, to) => update({ from, to })} />
+        <span className={s.tool}>
+          <span className={s.toolLabel}>Journal</span>
+          <span className={s.seg} role="group" aria-label="Journal">
+            {(['', ...JOURNALS] as const).map((jc) => (
+              <button key={jc || 'all'} type="button" className={`${s.segBtn} ${p.journal === jc ? s.segOn : ''}`} aria-pressed={p.journal === jc}
+                onClick={() => update({ journal: jc })}>
+                {jc ? journalLabel(jc) : 'All'}
+              </button>
+            ))}
+          </span>
         </span>
-        <Button variant="ghost" size="sm" disabled={visible.length === 0}
-          onClick={() => triggerDownload(`journal-${p.from}-to-${p.to}.csv`, '﻿' + journalCsv(visible, nameOf))}>
-          <Download size={16} strokeWidth={1.75} /> Export
-        </Button>
+        <span className={s.tool}>
+          <span className={s.toolLabel}>Source</span>
+          <span className={s.selectWrap}>
+            <select value={p.sourceType ?? ''} onChange={(e) => update({ sourceType: e.target.value })} className={s.select} aria-label="Source">
+              <option value="">All sources</option>
+              {JOURNAL_SOURCES.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+              <optgroup label="Reversals">
+                {JOURNAL_REVERSALS.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+              </optgroup>
+            </select>
+            <ChevronDown size={12} className={s.selectChevron} aria-hidden />
+          </span>
+        </span>
+        <label className={s.search}>
+          <Search size={13} aria-hidden />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find an entry, document, account or party" aria-label="Find an entry" />
+        </label>
       </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle(p.journal === '')} onClick={() => update({ journal: '' })}>All journals</button>
-        {JOURNALS.map((jc) => (
-          <button key={jc} type="button" style={btnStyle(p.journal === jc)} onClick={() => update({ journal: p.journal === jc ? '' : jc })}>
-            {journalLabel(jc)}
-          </button>
-        ))}
-        <span style={soft}>
+      <div className={s.toolNote}>
+        <span>
           {q.data ? `${visible.length} of ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} in the period` : ''}
-          {rows.length >= 500 ? ' — the first 500 loaded; narrow the period for the rest' : ''}
+          {rows.length >= LOADED_LIMIT ? ' — the first 500 loaded; narrow the period for the rest' : ''}
         </span>
+        {search.trim() && <SearchScopeHint scope="loaded" loadedLimit={500} resultCount={visible.length} term={search} />}
       </div>
 
-      {creating && <NewJournalForm key={seed?.key ?? 0} initial={seed?.draft ?? null} editing={seed?.editing ?? null} onDone={() => { setCreating(false); setSeed(null); }} />}
-      {selectedId && (
-        <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)}
-          onCopy={(draft) => { setSeed({ key: Date.now(), draft }); setCreating(true); setSelectedId(null); }}
-          onEdit={(editing) => { setSeed({ key: Date.now(), draft: editing, editing }); setCreating(true); setSelectedId(null); }} />
-      )}
+      {!rangeOk && <div className={s.problem}>From is later than To — adjust the dates.</div>}
+      {rangeOk && q.isError && <div className={s.problem}>The journal did not load — adjust the filters to retry.</div>}
 
-      {!rangeOk && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>From is later than To — adjust the dates.</div>}
-      {rangeOk && q.isLoading && <div style={soft}>Loading the journal…</div>}
-      {rangeOk && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The journal did not load — adjust the filters to retry.</div>}
-      {q.data && rows.length === 0 && <div style={soft}>No entries in the period.</div>}
-      {q.data && rows.length > 0 && visible.length === 0 && <div style={soft}>No entry matches.</div>}
-      {visible.length > 0 && (
-        <div style={card}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr>
-                {JOURNAL_COLUMNS.map((c) => (
-                  <th key={c} style={c === 'Debit' || c === 'Credit' ? { ...th, textAlign: 'right' } : th}>{c}</th>
+      {rangeOk && !q.isError && (
+        <div className={s.card}>
+          <div className={s.scroll}>
+            <div data-cw-root="je" style={{ minWidth: cw.minWidth }}>
+              <div data-cw-row="" className={`${s.row} ${s.gap12} ${s.gridHead}`} style={{ gridTemplateColumns: cw.template }}>
+                {JOURNAL_COLUMNS.map((label, i) => (
+                  <span key={label} data-cw-cell={i} className={`${s.headCell} ${RIGHT[i] ? s.right : ''}`}>
+                    <span data-cw-lbl="">{label}</span>
+                    <span className={s.resize} {...cw.handle(i)}><span className={s.resizeLine} /></span>
+                  </span>
                 ))}
-              </tr>
-            </thead>
-            {visible.map((r) => <Group key={r.id} r={r} nameOf={nameOf} onOpen={() => { setSelectedId(r.id); setCreating(false); }} />)}
-          </table>
+              </div>
+              {q.isLoading && (
+                <div className={s.skeleton} aria-label="Loading the journal">
+                  {[0, 1, 2, 3, 4].map((i) => <div key={i} className={s.skeletonBar} style={{ width: `${92 - i * 9}%` }} />)}
+                </div>
+              )}
+              {page.map((r) => (
+                <Group key={r.id} r={r} nameOf={nameOf} template={cw.template}
+                  onOpen={() => setDrawer({ mode: 'card', id: r.id, refs: { journal: journalWord(r.journal_class), doc: r.doc, doc2: r.doc2, who: r.who } })} />
+              ))}
+              {q.data && rows.length === 0 && <div className={s.empty}>No entries in the period.</div>}
+              {q.data && rows.length > 0 && visible.length === 0 && <div className={s.empty}>No entry matches.</div>}
+              {visible.length > shown && (
+                <div className={s.moreRow}>
+                  <button type="button" className={s.moreLink} onClick={() => setShown((n) => n + PAGE)}>
+                    Show {Math.min(PAGE, visible.length - shown)} more {Math.min(PAGE, visible.length - shown) === 1 ? 'entry' : 'entries'}
+                  </button>
+                  <span className={s.soft}> · {shown} of {visible.length} shown</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
+      {cw.custom && (
+        <div className={s.resetRow}><button type="button" className={s.resetLink} onClick={cw.reset}>Reset column widths</button></div>
+      )}
+
+      <JournalDrawer state={drawer} onChange={setDrawer} onClose={() => setDrawer(null)} onToast={toast.say}
+        backLabel="Journal entries" range={rangeOk ? { from: p.from, to: p.to } : null} />
+      {toast.node}
     </div>
   );
 };

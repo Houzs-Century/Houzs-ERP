@@ -41,7 +41,7 @@ describe('cashFlowSheet', () => {
     expect(s.tables[0]!.rows.map((x) => [x.kind, x.label])).toEqual([
       ['block', 'RECEIPTS'], ['row', '300-0000 · AR'], ['total', 'Total receipts'],
       ['block', 'PAYMENTS'], ['row', 'Supplier advances (预付)'], ['total', 'Total payments'],
-      ['net', 'Cash Surplus / (Deficit)'], ['total', 'Balance b/f'], ['net', 'Balance c/f'],
+      ['net', 'Cash surplus / (deficit)'], ['total', 'Balance b/f'], ['net', 'Balance c/f'],
     ]);
     expect(cashFlowSheet(r, { columns: ['310-0010'] }).tables[0]!.columns.map((c) => c.label)).toEqual(['310-0010 BANK', 'Total', '%']);
     expect(cashFlowSheet({ ...r, byParty: true }).meta[2]).toEqual({ label: 'Rows', value: 'By debtor / creditor' });

@@ -8,6 +8,7 @@ import {
   indexOrdersByToken,
   matchBill,
   matchBills,
+  renameRef,
   resolveAttendee,
   summarizeBills,
   type AttendeeRow,
@@ -35,13 +36,26 @@ const ATTENDEES: AttendeeRow[] = [
 ];
 
 describe("canSaveSalesReport", () => {
-  test("the Owner position and the two named accounts, nobody else", () => {
-    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" })).toBe(false);
-    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" })).toBe(false);
-    expect(canSaveSalesReport(null)).toBe(false);
+  test("the Owner position and the named accounts (incl. Peter), nobody else", () => {
+    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true); // Peter
+    expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport(null, null)).toBe(false);
+  });
+  test("a sales attendee of THIS project is accepted via attendeeEmails; others still rejected", () => {
+    const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "anthony@houzs.com" }, attendees)).toBe(true);
+    // Input is normalised to lowercase, so mixed-case email still matches a lowercased attendee set.
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "ADRIAN@houzs.com" }, attendees)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "someoneelse@houzs.com" }, attendees)).toBe(false);
+    // Admin tier still passes without an attendee list.
+    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, attendees)).toBe(true);
+    // An attendees set in mixed case is a caller mistake — a mixed-case attendee entry is not matched.
+    const mixedAttendees = new Set(["Mixed@case.com"]);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "mixed@case.com" }, mixedAttendees)).toBe(false);
   });
 });
 
@@ -58,7 +72,7 @@ describe("collectReport", () => {
       note(3, "1. HC99999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
       /* The corrected re-paste of HC13162 wins. */
       note(4, "10/10\n1. HC13162 RM2099 Ethan"),
-    ], "2026-10-09");
+    ], "2026-10-09", null);
     expect(r.bills.map((b) => [b.ref_token, b.amount_sen, b.report_date, b.source_activity_id, b.extra_sen])).toEqual([
       ["HC13162", 209900, "2026-10-10", 4, null],
       ["HC13163", 417200, "2026-10-10", 2, 71000],
@@ -69,7 +83,7 @@ describe("collectReport", () => {
   });
 
   test("a message all of whose bills were overtaken no longer counts as contributing", () => {
-    const r = collectReport([note(1, "1. HC1001 RM100 A"), note(2, "1. HC1001 RM150 A")], "2026-10-09");
+    const r = collectReport([note(1, "1. HC1001 RM100 A"), note(2, "1. HC1001 RM150 A")], "2026-10-09", null);
     expect(r.bills.map((b) => [b.ref_token, b.amount_sen])).toEqual([["HC1001", 15000]]);
     expect(r.report_activity_ids).toEqual([2]);
   });
@@ -79,9 +93,21 @@ describe("collectReport", () => {
       note(1, "Total RM 1,000", { author_email: "hello@houzscentury.com", author_position: "Owner" }),
       note(2, "JB @ Sutera Mall 9-11/10\n9/10:RM10,500\n10/10:RM37,865+2883\nTotal RM48,185+2883"),
       note(3, "Total RM 5", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
-    ], "2026-10-09");
+    ], "2026-10-09", null);
     expect(r.summary).toEqual({ activity_id: 2, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 02:00:00" });
     expect(r.bills).toEqual([]);
+  });
+
+  test("an attending rep's paste counts when the project's attendee emails include theirs", () => {
+    const r = collectReport([
+      /* Peter — admin tier (SAVE_EMAILS) — always counts. */
+      note(1, "1. HC2001 RM100 CH", { author_email: "yzhe212@gmail.com", author_position: "Sales Director" }),
+      /* An attendee of THIS project — counts because the Set carries their email. */
+      note(2, "1. HC2002 RM200 Anthony", { author_email: "anthony@houzs.com", author_position: "Sales Executive" }),
+      /* A sales rep who is NOT this event's attendee — still rejected. */
+      note(3, "1. HC2003 RM300 Random", { author_email: "random@houzs.com", author_position: "Sales Executive" }),
+    ], "2026-10-09", new Set(["anthony@houzs.com"]));
+    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["HC2001", "HC2002"]);
   });
 });
 
@@ -192,5 +218,28 @@ describe("matchBills + summarizeBills", () => {
     expect(persons).toEqual([]);
     expect(totals.count).toBe(0);
     expect(totals.not_opened_sen).toBe(0);
+  });
+});
+
+describe("a report posted again to fix a typo", () => {
+  const note = (id: number, text: string): NoteRow => ({ id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Owner" });
+  test("replaces the first, so the mistyped bill goes", () => {
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B", "3. ZNF6767 RM100 C"].join("\n");
+    const r = collectReport([note(1, first), note(2, first.replace("ZNF6767", "ZNT6767"))], "2026-09-11", null);
+    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["ZNT6730", "ZNT6766", "ZNT6767"]);
+  });
+  test("a later message of new bills for the day adds to it", () => {
+    const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B"].join("\n");
+    const r = collectReport([note(1, first), note(2, ["13/9", "1. ZNT6800 RM100 C"].join("\n"))], "2026-09-11", null);
+    expect(r.bills).toHaveLength(3);
+  });
+});
+
+describe("renameRef", () => {
+  test("changes the reference as a whole word", () => {
+    expect(renameRef("3. ZNF6767 RM4300 ADRIAN", "ZNF6767", "ZNT6767")).toBe("3. ZNT6767 RM4300 ADRIAN");
+  });
+  test("a reference the message does not print changes nothing", () => {
+    expect(renameRef("3. ZNF67670 RM4300", "ZNF6767", "ZNT6767")).toBeNull();
   });
 });

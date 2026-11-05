@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
 // CreditNoteKnockOff — a supplier credit note knocks off the supplier's invoices
 // on the AP Payment's own table (owner 2026-10-02: CN 的方式应该是类似 ap payment
-// 这样 knock off；扣错了就我 untick 会 knock off 的 invoice 就行了).
+// 这样 knock off；扣错了就我 untick 会 knock off 的 invoice 就行了), and an other
+// debtor's credit note the debtor's bills on the same table (2026-10-28).
 //
 // Tick = knock the invoice off in full, as far as the credit reaches; untick =
 // give it back; a typed figure = part of it. On a new or draft note the ticks
@@ -14,7 +15,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import {
-  useCreditNoteKnockOff, useSetCreditNoteAllocations, useSupplierKnockOff,
+  useCreditNoteKnockOff, usePartyKnockOff, useSetCreditNoteAllocations,
   type KnockOffRow, type KnockOffTarget,
 } from '../../vendor/scm/lib/credit-note-queries';
 import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
@@ -36,6 +37,25 @@ const samePick = (a: KnockOffPick, b: KnockOffPick): boolean => {
   return x.length === pickTargets(b).length && x.every((t) => b[t.id]?.amountSen === t.amountSen);
 };
 
+/** What the table says, by whose documents it holds: a supplier's invoices, an other debtor's bills. */
+const WORDS = {
+  supplier: {
+    holder: 'supplier', doc: 'Invoice', table: "Knock off the supplier's invoices",
+    pick: 'Pick the supplier to see their invoices.', loading: "Loading the supplier's invoices…", failed: 'The invoices did not load',
+    none: 'No invoice of this supplier owes anything now — the credit stays with the supplier.',
+    planned: 'tick the invoices this credit comes off — done when the note posts',
+    posted: 'tick to knock an invoice off, untick to give it back — like an AP Payment',
+  },
+  debtor: {
+    holder: 'debtor', doc: 'Bill', table: "Knock off the debtor's bills",
+    pick: 'Pick the other debtor to see their bills.', loading: "Loading the debtor's bills…", failed: 'The bills did not load',
+    none: 'No bill of this debtor owes anything now — the credit stays with the debtor.',
+    planned: 'tick the bills this credit comes off — done when the note posts',
+    posted: 'tick to knock a bill off, untick to give it back — like a receipt',
+  },
+} as const;
+export type KnockOffWho = keyof typeof WORDS;
+
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const th: React.CSSProperties = { padding: '6px 8px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)', textAlign: 'left', whiteSpace: 'nowrap' };
@@ -43,13 +63,16 @@ const td: React.CSSProperties = { padding: '6px 8px', borderTop: '1px solid var(
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
 
-/** The AP Payment's Apply-to-PI table, for a credit note. */
-export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = false }: {
-  rows: KnockOffRow[]; creditSen: number; pick: KnockOffPick; onChange: (next: KnockOffPick) => void; disabled?: boolean;
+/** The AP Payment's Apply-to-PI table, for a credit note. A debtor's bill has no
+    supplier reference, so the debtor's table leaves that column out. */
+export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = false, who = 'supplier' }: {
+  rows: KnockOffRow[]; creditSen: number; pick: KnockOffPick; onChange: (next: KnockOffPick) => void; disabled?: boolean; who?: KnockOffWho;
 }) {
   /* A typed figure the row cannot take is pulled back to what it can; the
      field is drawn again so it shows the figure kept, not the one typed. */
   const [redraw, setRedraw] = useState(0);
+  const w = WORDS[who];
+  const withRef = who === 'supplier';
   const taken = pickSen(pick);
   const put = (r: KnockOffRow, sen: number): void => {
     const next = { ...pick };
@@ -59,13 +82,13 @@ export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = fals
   };
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table aria-label="Knock off the supplier's invoices" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+      <table aria-label={w.table} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
         <thead>
           <tr>
             <th style={{ ...th, width: 34 }} aria-label="Knock off in full" />
-            <th style={th}>Invoice</th>
+            <th style={th}>{w.doc}</th>
             <th style={th}>Date</th>
-            <th style={th}>Supplier Ref</th>
+            {withRef && <th style={th}>Supplier Ref</th>}
             <th style={{ ...th, textAlign: 'right' }}>Amount</th>
             <th style={{ ...th, textAlign: 'right' }}>Outstanding</th>
             <th style={{ ...th, textAlign: 'right' }}>Knock off</th>
@@ -88,7 +111,7 @@ export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = fals
                   {r.kind === 'API' && <span style={{ ...soft, marginLeft: 6, fontFamily: 'inherit' }} title="AP invoice — a non-stock supplier bill">AP</span>}
                 </td>
                 <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDateOrDash(r.invoiceDate)}</td>
-                <td style={{ ...td, color: r.invoiceRef ? undefined : 'var(--fg-muted)' }}>{r.invoiceRef || '—'}</td>
+                {withRef && <td style={{ ...td, color: r.invoiceRef ? undefined : 'var(--fg-muted)' }}>{r.invoiceRef || '—'}</td>}
                 <td style={{ ...td, ...num }}>{fmtSen(r.totalSen)}</td>
                 <td style={{ ...td, ...num, color: 'var(--fg-muted)' }}>{fmtSen(r.owedSen)}</td>
                 <td style={{ ...td, ...num }}>
@@ -109,21 +132,21 @@ export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = fals
 }
 
 /** "Knocking off RM X · credit left RM Y of RM Z" — red when the ticks outrun the note. */
-export function KnockOffSum({ takenSen, totalSen }: { takenSen: number; totalSen: number }) {
+export function KnockOffSum({ takenSen, totalSen, who = 'supplier' }: { takenSen: number; totalSen: number; who?: KnockOffWho }) {
   const over = takenSen > totalSen;
   return (
     <div style={{ ...soft, color: over ? danger : soft.color }} aria-label="Knock-off total">
       Knocking off <strong style={num}>{fmtSen(takenSen)}</strong>
       {over
         ? <> — more than the note's {fmtSen(totalSen)}; untick some first.</>
-        : <> · credit left <strong style={num}>{fmtSen(totalSen - takenSen)}</strong> of {fmtSen(totalSen)} — it stays with the supplier.</>}
+        : <> · credit left <strong style={num}>{fmtSen(totalSen - takenSen)}</strong> of {fmtSen(totalSen)} — it stays with the {WORDS[who].holder}.</>}
     </div>
   );
 }
 
 /** A saved note's knock-off (draft or posted): the ticks, and "Save knock-off" to
     keep them — a draft's as its plan, a posted note's carried out at once. */
-export function NoteKnockOff({ noteId, posted, totalSen }: { noteId: string; posted: boolean; totalSen: number }) {
+export function NoteKnockOff({ noteId, posted, totalSen, who = 'supplier' }: { noteId: string; posted: boolean; totalSen: number; who?: KnockOffWho }) {
   const q = useCreditNoteKnockOff(noteId);
   const save = useSetCreditNoteAllocations();
   const server = useMemo(() => pickFromRows(q.data?.rows), [q.data]);
@@ -131,17 +154,18 @@ export function NoteKnockOff({ noteId, posted, totalSen }: { noteId: string; pos
   const pick = edit ?? server;
   const dirty = edit != null && !samePick(edit, server);
   const rows = q.data?.rows ?? [];
+  const w = WORDS[who];
   return (
     <section aria-label="Knock off" style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <strong>Knock off · 扣发票</strong>
-        <span style={soft}>{posted ? 'tick to knock an invoice off, untick to give it back — like an AP Payment' : 'carried out when the note posts'}</span>
+        <span style={soft}>{posted ? w.posted : 'carried out when the note posts'}</span>
       </div>
-      {q.isLoading && <div style={soft}>Loading the supplier's invoices…</div>}
-      {q.isError && <div style={{ color: danger }}>The invoices did not load — {errText(q.error)}</div>}
-      {q.data && rows.length === 0 && <div style={soft}>No invoice of this supplier owes anything now — the credit stays with the supplier.</div>}
-      {rows.length > 0 && <KnockOffTable rows={rows} creditSen={totalSen} pick={pick} onChange={setEdit} disabled={save.isPending} />}
-      <KnockOffSum takenSen={pickSen(pick)} totalSen={totalSen} />
+      {q.isLoading && <div style={soft}>{w.loading}</div>}
+      {q.isError && <div style={{ color: danger }}>{w.failed} — {errText(q.error)}</div>}
+      {q.data && rows.length === 0 && <div style={soft}>{w.none}</div>}
+      {rows.length > 0 && <KnockOffTable rows={rows} creditSen={totalSen} pick={pick} onChange={setEdit} disabled={save.isPending} who={who} />}
+      <KnockOffSum takenSen={pickSen(pick)} totalSen={totalSen} who={who} />
       {dirty && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           <Button size="sm" disabled={save.isPending || pickSen(pick) > totalSen}
@@ -159,26 +183,28 @@ export function NoteKnockOff({ noteId, posted, totalSen }: { noteId: string; pos
   );
 }
 
-/** The New / Edit note form's knock-off — the ticks ride the draft as its plan. */
-export function FormKnockOff({ supplierId, noteId, totalSen, pick, onChange }: {
-  supplierId: string; noteId?: string; totalSen: number; pick: KnockOffPick; onChange: (next: KnockOffPick) => void;
+/** The New / Edit note form's knock-off — the ticks ride the draft as its plan.
+    partyId: the supplier (or the other debtor) picked so far, '' for none yet. */
+export function FormKnockOff({ who, partyId, noteId, totalSen, pick, onChange }: {
+  who: KnockOffWho; partyId: string; noteId?: string; totalSen: number; pick: KnockOffPick; onChange: (next: KnockOffPick) => void;
 }) {
-  const fresh = useSupplierKnockOff(noteId ? null : supplierId || null);
+  const fresh = usePartyKnockOff(noteId || !partyId ? null : { who, id: partyId });
   const saved = useCreditNoteKnockOff(noteId ?? null);
   const q = noteId ? saved : fresh;
   const rows = q.data?.rows ?? [];
+  const w = WORDS[who];
   return (
     <section aria-label="Knock off" style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <strong>Knock off · 扣发票</strong>
-        <span style={soft}>tick the invoices this credit comes off — done when the note posts</span>
+        <span style={soft}>{w.planned}</span>
       </div>
-      {!supplierId && <div style={soft}>Pick the supplier to see their invoices.</div>}
-      {supplierId && q.isLoading && <div style={soft}>Loading the supplier's invoices…</div>}
-      {q.isError && <div style={{ color: danger }}>The invoices did not load — {errText(q.error)}</div>}
-      {supplierId && q.data && rows.length === 0 && <div style={soft}>No invoice of this supplier owes anything now — the credit stays with the supplier.</div>}
-      {rows.length > 0 && <KnockOffTable rows={rows} creditSen={totalSen} pick={pick} onChange={onChange} />}
-      {supplierId && <KnockOffSum takenSen={pickSen(pick)} totalSen={totalSen} />}
+      {!partyId && <div style={soft}>{w.pick}</div>}
+      {partyId && q.isLoading && <div style={soft}>{w.loading}</div>}
+      {q.isError && <div style={{ color: danger }}>{w.failed} — {errText(q.error)}</div>}
+      {partyId && q.data && rows.length === 0 && <div style={soft}>{w.none}</div>}
+      {rows.length > 0 && <KnockOffTable rows={rows} creditSen={totalSen} pick={pick} onChange={onChange} who={who} />}
+      {partyId && <KnockOffSum takenSen={pickSen(pick)} totalSen={totalSen} who={who} />}
     </section>
   );
 }

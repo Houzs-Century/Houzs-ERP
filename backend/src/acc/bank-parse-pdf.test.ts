@@ -91,6 +91,43 @@ describe('a Maybank statement PDF', () => {
     expect(r.reason).toContain('RM 2,527.97');
   });
 
+  /* Houzs 564418610346, September 2026: seventeen DuitNow service charges of
+     RM 0.50, one refund and a RM 0.45 card debit print with no leading zero
+     (".50-"). Unread, the walk missed by RM 8.45 and the month was refused. */
+  it('reads an amount under RM 1 printed with no leading zero, in and out; a RM 0.00 row is left out and counted', () => {
+    const small: PdfPage = { lines: [
+      ...HEADER(1),
+      line(560, [126, 'BEGINNING BALANCE'], [440, '1,000.00']),
+      /* A new account's first row: nothing moves, and its words belong to no movement. */
+      line(554, [43, '02/08'], [126, 'ACTIVATE ACCOUNT'], [378, '.00+'], [459, '1,000.00']),
+      line(551, [134, 'NEW ACCOUNT']),
+      line(548, [43, '04/08'], [126, 'DUITNOW PAYPRX DR'], [358, '500.00-'], [440, '500.00']),
+      line(536, [43, '04/08'], [126, 'DR DUITNOW S/CHRG'], [381, '.50-'], [440, '499.50']),
+      line(524, [43, '17/08'], [126, 'DUITNOW S/CHRG REFUND'], [378, '.50+'], [440, '500.00']),
+      line(512, [43, '20/08'], [126, 'DR/CARD SALES M/N 2409997 D 9'], [381, '.45-'], [440, '499.55']),
+      line(296, [126, 'ENDING BALANCE :'], [435, '499.55']),
+    ] };
+    const r = parsePdfStatement({ bankCode: 'MBB', pdf: pdf([small]), statementMonth: null });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.lines.map((l) => [l.description, l.amountSen, l.balanceSen])).toEqual([
+      ['DUITNOW PAYPRX DR', -50000, 50000],
+      ['DR DUITNOW S/CHRG', -50, 49950],
+      ['DUITNOW S/CHRG REFUND', 50, 50000],
+      ['DR/CARD SALES M/N 2409997 D 9', -45, 49955],
+    ]);
+    expect(r.closingBalanceSen).toBe(49955);
+    expect(r.skippedLines).toBe(1);
+    /* A balance under RM 1 reads too: a new account opens at ".00". */
+    const opened: PdfPage = { lines: [
+      ...HEADER(1),
+      line(560, [126, 'BEGINNING BALANCE'], [459, '.00']),
+      line(548, [43, '12/08'], [126, 'TRANSFER TO A/C'], [358, '1,000.00+'], [440, '1,000.00']),
+      line(296, [126, 'ENDING BALANCE :'], [440, '1,000.00']),
+    ] };
+    expect(parsePdfStatement({ bankCode: 'MBB', pdf: pdf([opened]), statementMonth: null })).toMatchObject({ ok: true, openingBalanceSen: 0, closingBalanceSen: 100000 });
+  });
+
   it('takes the year and month off the operator when the header prints no statement date, and refuses when neither is there', () => {
     /* Every page repeats the header, so every page loses the date. */
     const withMonth = parsePdfStatement({ bankCode: 'MBB', pdf: pdf([undated(PAGE1), undated(PAGE2)]), statementMonth: '2026-08' });

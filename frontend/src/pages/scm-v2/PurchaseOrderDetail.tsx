@@ -283,13 +283,32 @@ export const PurchaseOrderDetail = () => {
      every render (detail.data?.items is a fresh array each time otherwise). */
   const items = useMemo(() => detail.data?.items ?? [], [detail.data?.items]);
 
+  /* View → Edit gate (Commander 2026-05-29) — default is read-only View; click
+     Edit to flip into draft mode. The PO list's right-click "Edit" lands here
+     with ?edit=1, so open straight into Edit in that case. */
+  const [searchParams] = useSearchParams();
+  const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
+
+  /* #194 draft buffers. headerDraft is null until the first header field is
+     touched (then seeded from the PO).
+     Owner 2026-06-19 — line edits are now WHOLE-LINE drafts (editLines), one
+     PoLineCard per line, mirroring Create + SalesOrderDetail. Existing lines
+     carry their itemId; a freshly-added blank card has none until Save inserts
+     it. None of this persists until the single top Save. */
+  const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
+  const [editLines, setEditLines] = useState<EditLine[]>([]);
+  const [savingDraft, setSavingDraft] = useState(false);
+
   /* ── Whole-line editor data (owner 2026-06-19) — the SAME lookups Create
      uses so PoLineCard renders identically in Edit. Bindings come from the PO's
      supplier; allSkus is the catalogue fallback; maint + fabrics drive the
      variant dropdowns; specialsPools feeds the Special Orders checkboxes. The
      supplier-scoped maintenance surcharges feed the cost auto-recompute (same
-     supplier-then-master fallback as Create). */
-  const poSupplierId = po?.supplier_id ?? '';
+     supplier-then-master fallback as Create).
+     In Edit the supplier is the one PICKED in the header, not the saved one:
+     HC-PO-2611-048 was raised on EADECO (no binding, RM 0), switched to
+     Dunlopillo, and kept RM 0 because the lines still priced off EADECO. */
+  const poSupplierId = (isEditing && headerDraft?.supplierId) || (po?.supplier_id ?? '');
   const supplierDetailQ = useSupplierDetail(poSupplierId || null);
   const bindings = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
   const allSkusQ = useMfgProducts();
@@ -321,22 +340,6 @@ export const PurchaseOrderDetail = () => {
      Tags a line with which variant editor to show when a SKU is picked. */
   const categoryForCode = (code: string): string | undefined =>
     allSkus.find((p) => p.code === code)?.category.toLowerCase();
-
-  /* View → Edit gate (Commander 2026-05-29) — default is read-only View; click
-     Edit to flip into draft mode. The PO list's right-click "Edit" lands here
-     with ?edit=1, so open straight into Edit in that case. */
-  const [searchParams] = useSearchParams();
-  const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
-
-  /* #194 draft buffers. headerDraft is null until the first header field is
-     touched (then seeded from the PO).
-     Owner 2026-06-19 — line edits are now WHOLE-LINE drafts (editLines), one
-     PoLineCard per line, mirroring Create + SalesOrderDetail. Existing lines
-     carry their itemId; a freshly-added blank card has none until Save inserts
-     it. None of this persists until the single top Save. */
-  const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
-  const [editLines, setEditLines] = useState<EditLine[]>([]);
-  const [savingDraft, setSavingDraft] = useState(false);
 
   // PR-DRAFT-removal — POs are always SUBMITTED on create (no DRAFT). Header
   // edits stay open while the PO can still be received (SUBMITTED / PARTIALLY_RECEIVED).
@@ -436,9 +439,12 @@ export const PurchaseOrderDetail = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceSen) return l;
+        const supplierSku = l.bindingId
+          ? l.supplierSku
+          : bindings.find((b) => b.item_code === l.itemCode)?.supplier_sku ?? l.supplierSku;
+        if (cost === l.unitPriceSen && supplierSku === l.supplierSku) return l;
         changed = true;
-        return { ...l, unitPriceSen: cost };
+        return { ...l, unitPriceSen: cost, supplierSku };
       });
       return changed ? next : prev;
     });
@@ -583,6 +589,11 @@ export const PurchaseOrderDetail = () => {
        backend fills only still-NULL line slots server-side. So skip every
        line cascade below while `lockedDueToChildren`. */
     if (lockedDueToChildren) return;
+    /* HC-0207 — the old supplier's price is not the new supplier's. A line the
+       new supplier does not bind keeps its price for the operator to key. */
+    if (k === 'supplierId' && v !== headerView.supplierId) {
+      setEditLines((prev) => prev.map((d) => ({ ...d, bindingId: undefined, supplierSku: undefined, priceTouched: false })));
+    }
     // Commander 2026-05-29 — header Expected Delivery cascades to every line's
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").
@@ -1024,7 +1035,7 @@ export const PurchaseOrderDetail = () => {
               the approval this button briefly routed through is gone, the
               mandatory reason it introduced is not. Same for a DRAFT and a live
               PO; the server refuses either without a reason. */}
-          {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
+          {(po.status === 'DRAFT' || po.status === 'SUBMITTED') && (
             <Button variant="ghost" size="md"
               onClick={() => executeCancel(po.po_number)}
               disabled={cancelling}>
@@ -1704,7 +1715,10 @@ const SupplierCard = ({
                   )
                 )}
               </span>
-              <DateField fullWidth className={styles.fieldInput} value={draft[k]} disabled={locked} onChange={(iso) => onField(k, iso)}/>
+              <DateField fullWidth className={styles.fieldInput} value={draft[k]}
+                /* HC-0090: a date already saved in this slot is history; the server refuses a change too. */
+                disabled={locked || Boolean(po?.[`supplier_delivery_date_${k.slice(-1)}`])}
+                onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for

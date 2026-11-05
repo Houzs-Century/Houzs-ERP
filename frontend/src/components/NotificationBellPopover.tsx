@@ -7,13 +7,18 @@ import { cn, relativeTime } from "../lib/utils";
 import type { NotificationItem } from "../hooks/useNotifications";
 import type { BannerAnnouncement } from "./useAnnouncementBanner";
 import { CATEGORY_META, categoryOf, requiresAcknowledgement } from "./announcementCategory";
+import { inItsCompany, opensElsewhere, systemNoticeLink } from "./systemNoticeLink";
+import { getActiveCompanyId } from "../lib/activeCompany";
 
 
 type Tab = "all" | "ann" | "sys";
 
-// The tag a system notice wears, from its source column.
+// The tag a system notice wears, from its source column (a tag may carry the
+// thing it is about after a colon — systemNoticeLink reads that part).
 function systemTag(source: string | null | undefined): string {
-  switch (source) {
+  switch (String(source ?? "").split(":")[0]) {
+    case "pv_approval":
+      return "Payment voucher";
     case "scan":
       return "Scan";
     case "service_case":
@@ -203,7 +208,7 @@ export default function BellPopover({
                         </span>
                       )}
                     </div>
-                    <span className="text-[12.5px] font-[650] leading-[1.4] text-ink">{a.title}</span>
+                    <SystemNoticeTitle notice={a} onOpen={() => { onMarkRead(a); onNavigate(); }} />
                     {a.body && (
                       <span className="line-clamp-2 whitespace-pre-wrap text-[11.5px] leading-[1.45] text-ink-secondary">
                         {a.body}
@@ -263,6 +268,26 @@ export default function BellPopover({
       </div>
     </div>
   );
+}
+
+/** A system notice's title — a link when the notice names the page it is about
+ *  (a payment voucher reminder opens its voucher), plain words otherwise.
+ *  Opening it marks it read and closes the bell. Another company's voucher
+ *  opens in a new window on that company, never in this tab. */
+function SystemNoticeTitle({ notice, onOpen }: { notice: BannerAnnouncement; onOpen: () => void }) {
+  const cls = "text-[12.5px] font-[650] leading-[1.4] text-ink";
+  const link = systemNoticeLink(notice.source);
+  if (!link) return <span className={cls}>{notice.title}</span>;
+  const linkCls = cn(cls, "underline decoration-dotted underline-offset-[3px] hover:text-primary");
+  if (opensElsewhere(link, getActiveCompanyId())) {
+    return (
+      <a href={inItsCompany(link)} target="_blank" rel="noopener noreferrer" onClick={onOpen} className={linkCls}
+        title="Opens in a new window, in the company it belongs to">
+        {notice.title}
+      </a>
+    );
+  }
+  return <Link to={link.to} onClick={onOpen} className={linkCls}>{notice.title}</Link>;
 }
 
 /** One-line summary of an activity row. Mirrors the chat system-row

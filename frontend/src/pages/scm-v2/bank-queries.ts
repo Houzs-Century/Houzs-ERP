@@ -11,6 +11,11 @@ import { retryUnlessClientError } from '../../lib/retryPolicy';
 export type BankAccountSetup = {
   account_code: string;
   bank_code: string;
+  /** The bank as people say it ("Maybank") and the account's own name off the
+      chart — the Bank statements cards print both. Optional only for the
+      minute a newer screen reads an older server. */
+  bank_name?: string;
+  account_name?: string | null;
   account_no: string | null;
   statement_format: string;
   is_active: boolean;
@@ -185,7 +190,7 @@ export const useBankStatement = (id: number | null) => useQuery({
 /* A bank movement changes the LEDGER, so everything downstream of the ledger is
    stale after one — the settlement side included, since booking a credit here
    writes a receipt there. */
-const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
+export const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
   /* The month is the same movements counted a second way, so a decision on one
@@ -198,6 +203,8 @@ const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-in-transit'] });
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
+  /* Finance's To do counts the open lines; it moves with them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
 };
@@ -223,7 +230,10 @@ export const useUploadBankStatement = () => {
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;
       }>('/accounting/bank/statements', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-statements'] }); },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+    },
     /* No writeFailedAs: a refused statement says WHY, and the page shows the
        server's own sentence verbatim (§2.14). */
   });
@@ -423,6 +433,8 @@ export type BankBalanceSource = {
   fileName: string | null;
   on: string;
   typed?: { month: string; by: string | null; at: string; note: string | null };
+  /** An opening carried from the previous month's printed closing: the month that closed there. */
+  carried?: { month: string };
 };
 
 /** A month-end figure somebody typed off the bank's own statement. */
@@ -465,25 +477,32 @@ export const useBankMonths = () => useQuery({
   retryDelay: 800,
 });
 
+export type BankMonthDetail = {
+  accountCode: string;
+  month: string;
+  assembly: BankMonthAssembly;
+  reconciliation: Reconciliation;
+  lock: BankMonthLock | null;
+  /** The typed month-end figures as stored (docs/bugs/0858). Optional only
+      for the minute a newer screen reads an older server. */
+  balances?: BankMonthBalances;
+  statements: Array<BankStatement & { spanning: boolean }>;
+  lines: Array<BankLine & { file_name: string | null }>;
+  unmatchedEntries: LedgerEntry[];
+  /** This month's movements still to decide that an earlier file of the
+      account already recorded, and the files carrying them (owner
+      2026-10-14). Optional only for the minute a newer screen reads an older server. */
+  repeats?: { count: number; statementIds: number[] };
+};
+
+/** One account's month as the server assembles it — the month view's read, and
+    the fresh look Record journal takes before it writes anything. */
+export const fetchBankMonth = (accountCode: string, month: string) =>
+  authedFetch<BankMonthDetail>(`/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}`);
+
 export const useBankMonth = (accountCode: string | null, month: string | null) => useQuery({
   queryKey: ['bank-month', accountCode, month],
-  queryFn: () => authedFetch<{
-    accountCode: string;
-    month: string;
-    assembly: BankMonthAssembly;
-    reconciliation: Reconciliation;
-    lock: BankMonthLock | null;
-    /** The typed month-end figures as stored (docs/bugs/0858). Optional only
-        for the minute a newer screen reads an older server. */
-    balances?: BankMonthBalances;
-    statements: Array<BankStatement & { spanning: boolean }>;
-    lines: Array<BankLine & { file_name: string | null }>;
-    unmatchedEntries: LedgerEntry[];
-    /** This month's movements still to decide that an earlier file of the
-        account already recorded, and the files carrying them (owner
-        2026-10-14). Optional only for the minute a newer screen reads an older server. */
-    repeats?: { count: number; statementIds: number[] };
-  }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
+  queryFn: () => fetchBankMonth(accountCode!, month!),
   enabled: accountCode != null && month != null,
   retry: retryUnlessClientError,
   retryDelay: 800,

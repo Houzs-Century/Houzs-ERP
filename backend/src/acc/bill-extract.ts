@@ -45,7 +45,12 @@ export type BillExtraction = {
   vendorRegNo: string | null;
   /** proforma / quotation: not yet the real invoice — a payment on it owes the
       official one (owner 2026-10-01, payment-request item 3). */
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'payment_proof' | 'summary' | 'unknown';
+  /** One page that shows SEVERAL separate purchases (a screenshot of online
+      orders): each line is one purchase at its own total, so a voucher made
+      from it carries one line per purchase (owner 2026-11-03, a staff claim
+      whose Shopee screenshots held two orders a page). */
+  severalReceipts: boolean;
   invoiceNumber: string | null;
   invoiceDate: string | null;   // ISO yyyy-mm-dd, null when unreadable
   dueDate: string | null;
@@ -87,7 +92,8 @@ Return ONLY a JSON object, no prose, with exactly these keys:
 {
   "vendorName": the issuing company's name as PRINTED (the party asking to be paid) or null,
   "vendorRegNo": the issuer's registration number (e.g. 202301027399, 1234567-X) or null,
-  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "proforma" | "quotation" | "unknown" — "proforma" when the paper is titled PROFORMA / PRO FORMA INVOICE, "quotation" when titled QUOTATION / QUOTE,
+  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "proforma" | "quotation" | "unknown" — "proforma" when the paper is titled PROFORMA / PRO FORMA INVOICE, "quotation" when titled QUOTATION / QUOTE, "payment_proof" when the page only PROVES money was sent (a bank transfer slip, DuitNow / IBG / online-banking confirmation, a reimbursement transfer to a person) and itemises no goods or services, "summary" when the page LISTS other receipts or bills (a claim summary, expense report, reimbursement listing) rather than being one itself,
+  "severalReceipts": true ONLY when this one page shows several SEPARATE purchases, each with its own total (e.g. a screenshot of several online orders) — then "lines" holds one entry per purchase at that purchase's total and totalRm is their sum; otherwise false,
   "invoiceNumber": the document's own number or null,
   "invoiceDate": the document date as YYYY-MM-DD or null,
   "dueDate": the payment due date as YYYY-MM-DD or null,
@@ -176,12 +182,13 @@ const printedText = (v: unknown, max: number): string | null => {
 export function coerceBillJson(raw: unknown): BillExtraction {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const kindRaw = String(o.documentKind ?? '').toLowerCase();
-  const kind = (['invoice', 'bill', 'receipt', 'statement', 'proforma', 'quotation'] as const).find((k) => k === kindRaw) ?? 'unknown';
+  const kind = (['invoice', 'bill', 'receipt', 'statement', 'proforma', 'quotation', 'payment_proof', 'summary'] as const).find((k) => k === kindRaw) ?? 'unknown';
   const linesRaw = Array.isArray(o.lines) ? o.lines : [];
   return {
     vendorName: o.vendorName ? String(o.vendorName).slice(0, 200) : null,
     vendorRegNo: o.vendorRegNo ? String(o.vendorRegNo).slice(0, 60) : null,
     documentKind: kind,
+    severalReceipts: o.severalReceipts === true,
     invoiceNumber: o.invoiceNumber ? String(o.invoiceNumber).slice(0, 80) : null,
     invoiceDate: isoOrNull(o.invoiceDate),
     dueDate: isoOrNull(o.dueDate),

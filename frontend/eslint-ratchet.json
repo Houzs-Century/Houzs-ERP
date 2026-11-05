@@ -559,9 +559,6 @@
     "src/pages/scm-v2/FabricTracking.tsx": {
       "@typescript-eslint/no-floating-promises": 2
     },
-    "src/pages/scm-v2/FairReport.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 6
-    },
     "src/pages/scm-v2/Fleet.tsx": {
       "@typescript-eslint/no-floating-promises": 5,
       "@typescript-eslint/no-unnecessary-condition": 16

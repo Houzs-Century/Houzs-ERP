@@ -93,3 +93,45 @@ describe('GET /accounting/product-profit', () => {
     expect(r.body.freeBedframes).toEqual({ pieces: 1, sen: 90_000, orders: 1 });
   });
 });
+
+/* Several months (the redesign's c8; owner 2026-11-03 「要」, question g2): ?from / ?to
+   beside ?month, whole months, each order in its SO month, the months added up. */
+describe('GET /accounting/product-profit over several months', () => {
+  const byModel = (rows: any[]) => Object.fromEntries(rows.map((x) => [x.model, [x.units, x.orders, x.salesSen, x.costSen, x.giftSen, x.freeBedframeSen]]));
+
+  test('one month through from / to is the same report as ?month=', async () => {
+    const app = harness();
+    const month = await read(app, 'month=2026-09');
+    expect((await read(app, 'from=2026-09&to=2026-09')).body).toEqual(month.body);
+    /* A part month widens to the whole month. */
+    expect((await read(app, 'from=2026-09-14&to=2026-09-15')).body).toEqual(month.body);
+  });
+
+  test('August and September together are the two months added up, each order in its SO month', async () => {
+    const app = harness();
+    const aug = await read(app, 'month=2026-08');
+    const sep = await read(app, 'month=2026-09');
+    const both = await read(app, 'from=2026-08-01&to=2026-09-30');
+    expect(both.status).toBe(200);
+    expect(both.body).toMatchObject({ month: '2026-08', from: '2026-08-01', to: '2026-09-30', orders: aug.body.orders + sep.body.orders });
+    const a = byModel(aug.body.rows);
+    const s = byModel(sep.body.rows);
+    const summed: Record<string, number[]> = {};
+    for (const [model, v] of [...Object.entries(a), ...Object.entries(s)]) {
+      summed[model] = (summed[model] ?? v.map(() => 0)).map((n, i) => n + (v as number[])[i]!);
+    }
+    expect(byModel(both.body.rows)).toEqual(summed);
+    expect(both.body.rows.find((x: any) => x.model === 'ULTIMATE')).toMatchObject({ units: 2, salesSen: 1_200_000, costSen: 300_000 });
+    expect(both.body.freeBedframes).toEqual({ pieces: 1, sen: 90_000, orders: 1 });
+  });
+
+  test('a range that runs backwards, runs too long, or names no month is refused by name', async () => {
+    const app = harness();
+    expect((await read(app, 'from=2026-09&to=2026-08')).body.error).toBe('bad_range');
+    const long = await read(app, 'from=2024-09&to=2026-09');
+    expect(long.status).toBe(400);
+    expect(long.body).toMatchObject({ error: 'too_long', message: 'At most 24 months at a time.' });
+    expect((await read(app, 'from=2024-10&to=2026-09')).status).toBe(200);
+    expect((await read(app, 'from=2026-13&to=2026-14')).body.error).toBe('bad_month');
+  });
+});

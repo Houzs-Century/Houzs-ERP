@@ -131,17 +131,32 @@ export function foldRedundantSpecials(list: string[]): string[] {
  * while any non-cancelled line is still KIV (owner rule 2026-07-24, after an SO
  * was released with two KIV sofa lines and purchasing had nothing to order
  * against — a fabric series with no colour is not a thing anyone can buy).
+ * A KIV placeholder colour (isKivColourCode) is KIV too.
  */
 export function isColourKiv(
   variants: Record<string, unknown> | null | undefined,
 ): boolean {
   if (!variants || typeof variants !== 'object') return false;
+  if ([variants.fabricCode, variants.colourId, variants.colorCode, variants.colourCode, variants.fabricColor]
+    .some((code) => isKivColourCode(code))) return true;
   const committedSeries = str(variants.fabricId) || str(variants.fabricLabel);
   if (!committedSeries) return false;
   const colourConfirmed =
     str(variants.fabricCode) || str(variants.colorCode) || str(variants.colourCode)
     || str(variants.colourLabel) || str(variants.fabricColor);
   return !colourConfirmed;
+}
+
+/**
+ * A KIV placeholder colour (owner 2026-10-30): a colour CODE whose last word is
+ * KIV or TBC ("MAGIC Q KIV", "PC151-KIV"), kept in a series so a line can take
+ * that series (its tier, and the Venture Portal's fabric upgrade charge and
+ * KPI) before the customer picks the colour. It fills fabricCode, so without
+ * this it would pass for a confirmed colour and the order could be released
+ * for ordering against a colour nobody can buy.
+ */
+export function isKivColourCode(code: unknown): boolean {
+  return /(?:^|[\s_-])(?:KIV|TBC)$/i.test(str(code));
 }
 
 /**

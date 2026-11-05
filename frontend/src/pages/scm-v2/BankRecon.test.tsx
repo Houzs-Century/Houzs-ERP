@@ -87,14 +87,26 @@ const draw = () => {
   return r;
 };
 
-describe('the tab strip', () => {
-  /* The advice is uploaded on the Merchant reconciliation screen only (owner
-     2026-09-12: bank statement reconciliation 的 payment advice 拿掉;
-     docs/bugs/0839) — one door to one table. */
+describe('the view switch', () => {
+  /* The advice is uploaded on Merchant reports only (owner 2026-09-12: bank
+     statement reconciliation 的 payment advice 拿掉; docs/bugs/0839) — one door
+     to one table. */
   test('does not carry the payment advice — that door is on the merchant screen', () => {
     render(<MemoryRouter><BankRecon /></MemoryRouter>);
     expect(screen.queryByText('Payment advice')).toBeNull();
-    expect(screen.getByText('Bank statement')).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Statements', 'Files', 'Money to come in', 'Still with the merchants']);
+  });
+
+  /* The redesign: the page is "Bank statements", opening on the months, and the
+     view lives in the address so To do and Daily Bank can link straight in. */
+  test('opens on the statements, and on the view the address asks for', () => {
+    const first = render(<MemoryRouter><BankRecon /></MemoryRouter>);
+    expect(screen.getByText('Bank statements')).toBeTruthy();
+    expect(screen.getByText('by month tab')).toBeTruthy();
+    first.unmount();
+    render(<MemoryRouter initialEntries={['/scm/bank-recon?view=transit']}><BankRecon /></MemoryRouter>);
+    expect(screen.getByRole('tab', { name: 'Still with the merchants' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Sitting with the merchants right now')).toBeTruthy();
   });
 });
 

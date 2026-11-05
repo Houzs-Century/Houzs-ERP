@@ -169,6 +169,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, dueT
       const d = dueOf(l, basis);
       return [{
         poId: l.poId, poNumber: l.poNumber, poDate: l.poDate, supplier: l.supplier, category: l.category, itemCode: l.itemCode,
+        itemDesc: l.itemDesc, soDocNo: l.soDocNo,
         qty: l.qty, sen: Math.round(l.qty * l.priceSen), raised, due, dueDate: d,
         receivedQty, receivedSen: Math.round(receivedQty * l.priceSen),
         lastReceived: l.receipts.filter((r) => inPeriod(r.date) && !r.inferred).map((r) => r.date).sort().at(-1) ?? null,
@@ -280,8 +281,9 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
       const info = itemInfo.get(keyOf(r))!;
       return { ...r, qty: dead.get(r) ?? 0, onHand: r.qty, valueSen: deadSen(r), idleDays: idleOf(r),
         poolOnHand: info.onHand, scheduled: info.scheduled, unscheduled: info.unscheduled, byKind: info.byKind };
-    }).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
-    bufferTop: bufferRows.slice(0, 50),
+    }).sort((a, b) => b.valueSen - a.valueSen),
+    // Every row (owner 2026-10-31: list them all, sort, export); the page's route sends the first 50.
+    bufferTop: bufferRows,
   };
 }
 

@@ -23,8 +23,11 @@ import type { Env } from '../env';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { getSupabaseService } from '../../db/supabase';
 import { postPersonalNotice } from '../../services/personalNotice';
+import { scopeToCompanyIdOrOpen } from './companyScope';
+import { loadScanCodes } from './grn-scan-codes';
 import { createDraftPiFromGrnItems } from './pi-from-grn-core';
-import { remainingToBill } from './outstanding-grn-lines';
+import { buildPiReview, type BillableLine, type PiReview } from './pi-scan-check';
+import { loadOutstandingGrnLines, remainingToBill } from './outstanding-grn-lines';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
   matchInvoiceLinesToGrnLines, docRefMatches, normalizeCode,
@@ -60,6 +63,9 @@ export type PiScanJob = {
   uploadedImages: UploadedImage[];
   firstBuffer: ArrayBuffer | null;
   imageKeys: string[];
+  // A check-first scan (scan-pi-check.ts): keep the read for the operator to
+  // check and edit instead of minting the draft.
+  review: boolean;
 };
 
 /** A grns row we may anchor the invoice to. */
@@ -122,6 +128,12 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     if (sampleId) await touch({ sample_id: sampleId });
     await storePiScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
 
+    if (job.review) {
+      const { review, note } = await reviewOfPiRead(svc, job.companyId, parsed);
+      await touch({ status: 'done', review_state: 'pending', review, error: note });
+      return;
+    }
+
     if (!parsed) {
       console.error('[pi-scan-job] extraction failed:', job.id, call.errorMsg);
       return await needsReview(MSG.unreadable);
@@ -150,7 +162,10 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       companyId: job.companyId,
       allowedCompanyIds: job.companyId != null ? [job.companyId] : null,
       companyCode: null,
-      picks: match.picks.map((p) => ({ grnItemId: p.grnItemId, qty: p.qty })),
+      picks: match.picks.map((p) => {
+        const printed = parsed.lines[p.invoiceLineIndex]?.unitPrice;
+        return { grnItemId: p.grnItemId, qty: p.qty, unitPriceSen: printed == null ? null : Math.round(printed * 100) };
+      }),
       supplierInvoiceNumber: parsed.invoiceNumber,
       invoiceDate: parsed.invoiceDate,
     });
@@ -188,6 +203,37 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     console.error('[pi-scan-job] pipeline threw:', job.id, e);
     await fail(MSG.fallback);
   }
+}
+
+/** What is left to bill for the company, or null when it could not be read. */
+export async function loadBillableLines(svc: SupabaseClient, companyId: number | null): Promise<BillableLine[] | null> {
+  const res = await loadOutstandingGrnLines({ sb: svc, scopeQuery: (q) => scopeToCompanyIdOrOpen(q, companyId) });
+  if (res.error !== null) { console.error('[pi-scan-job] billable lines failed:', res.error); return null; }
+  return res.items.map((l) => ({
+    grnItemId: l.grnItemId, grnNumber: l.grnDocNo, supplierId: l.supplierId, poNumber: l.poDocNo,
+    itemCode: l.itemCode, supplierSku: l.supplierSku, description: l.description, remaining: l.remaining, unitPriceSen: l.unitPriceSen,
+  }));
+}
+
+/** The working copy of the check step: anchor, match, and tie what the name
+ *  allows, for the operator to confirm. Codes the delivery-order scanner has
+ *  learned for the supplier count here too. */
+export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | null, parsed: PiScanExtract | null): Promise<{ review: PiReview; note: string | null }> {
+  if (!parsed) return { review: buildPiReview(null, null, null, [], []), note: MSG.unreadable };
+  const anchors = await findAnchorGrns(svc, parsed, companyId);
+  const supplierId = anchors[0]?.supplier_id ?? await resolveSupplierId(svc, parsed, companyId);
+  const open = ((await loadBillableLines(svc, companyId)) ?? []).filter((l) => l.supplierId === supplierId);
+  const anchorNumbers = anchors.map((a) => a.grn_number);
+  if (anchors.length === 0) {
+    const review = buildPiReview(parsed, supplierId, null, open, []);
+    return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noAnchor };
+  }
+  const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
+  const bindingBySku = await loadSupplierBindings(svc, anchors, companyId);
+  if (supplierId) for (const t of await loadScanCodes(svc, companyId, supplierId)) bindingBySku.set(normalizeCode(t.supplierSku), t.itemCode);
+  const match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
+  const review = buildPiReview(parsed, supplierId, match, open, anchorNumbers);
+  return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noLines };
 }
 
 function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | null {

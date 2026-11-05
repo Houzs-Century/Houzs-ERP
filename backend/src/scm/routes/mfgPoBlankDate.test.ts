@@ -28,7 +28,7 @@ const sb = fakeSb({
     id: 'po-1', po_number: 'PO-2608-001', status: 'SUBMITTED', company_id: 1,
     po_date: '2026-08-01', expected_at: '2026-09-01', currency: 'MYR',
     notes: null, supplier_id: 'sup-1', purchase_location_id: 'loc-1',
-    supplier_delivery_date_2: '2026-09-10',
+    supplier_delivery_date_2: null,
     supplier_delivery_date_3: null,
     supplier_delivery_date_4: null,
   }],
