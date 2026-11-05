@@ -170,6 +170,22 @@ export function companyHeader(): Record<string, string> {
   return id !== null ? { "X-Company-Id": String(id) } : {};
 }
 
+/** Per-request header that PINS a SPECIFIC company for one call, instead of the
+ *  tab's active company. For a CROSS-COMPANY surface — the driver run-sheet,
+ *  where a mixed route interleaves both companies' stops — a per-DO read/write
+ *  must act in the STOP's own (granted) company, not whichever company the
+ *  top-bar switcher shows. The backend `companyContext` middleware validates the
+ *  pick against the caller's grants and accepts a company CODE or id, so the
+ *  board row's `company_code` ('HOUZS' / '2990') is enough. `{}` when nullish, so
+ *  callers can spread it unconditionally; `authedFetch` keeps an explicit
+ *  `X-Company-Id` over the switcher's `companyHeader()`. */
+export function companyHeaderFor(
+  idOrCode: string | number | null | undefined,
+): Record<string, string> {
+  if (idOrCode === null || idOrCode === undefined || idOrCode === "") return {};
+  return { "X-Company-Id": String(idOrCode) };
+}
+
 /** Set (or clear, with null) the active company and notify subscribers.
  *  An EXPLICIT switcher pick is the one thing that also updates the durable
  *  per-user record — so it survives the next login and becomes the default
