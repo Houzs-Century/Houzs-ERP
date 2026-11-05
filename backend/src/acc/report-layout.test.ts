@@ -414,3 +414,37 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect(laid.nodes[3]!.children[0]!.id).toBe('net:acc:350-0010');
   });
 });
+
+/* Owner 2026-11-05 (L5 with a subtotal under each): any category, in any report and
+   at any depth, may name its Total line; the name rides onto the laid node. */
+describe('a Total name at any depth', () => {
+  const nested: Layout = {
+    version: 1,
+    blocks: {
+      tradingIncome: [], costOfSales: [], otherIncome: [], taxation: [],
+      expenses: [{
+        kind: 'category', id: 'cat:wh', label: 'Warehouse expense', totalLabel: 'Total warehouse',
+        children: [{ kind: 'category', id: 'cat:wh:rent', label: 'Warehouse - Rental', totalLabel: 'Total warehouse rental', children: [{ kind: 'account', code: '900-R002' }] }],
+      }],
+    },
+  };
+
+  test('the P&L keeps a nested category’s Total name, and refuses one past the length limit', () => {
+    const ok = validateLayout('pnl', nested);
+    if (!ok.ok) throw new Error(ok.reason);
+    const top = ok.layout.blocks.expenses![0] as LayoutCategory;
+    expect(top.totalLabel).toBe('Total warehouse');
+    expect((top.children[0] as LayoutCategory).totalLabel).toBe('Total warehouse rental');
+    const long = JSON.parse(JSON.stringify(nested)) as Layout;
+    (long.blocks.expenses![0] as LayoutCategory).totalLabel = 'x'.repeat(200);
+    expect(validateLayout('pnl', long).ok).toBe(false);
+  });
+
+  test('the laid nodes carry it, the top and the nested one alike', () => {
+    const ok = validateLayout('pnl', nested);
+    if (!ok.ok) throw new Error(ok.reason);
+    const laid = layOutBlock(ok.layout.blocks.expenses!, [{ code: '900-R002', name: 'RENTAL OF WAREHOUSE', amountSen: 50_000 }], 2, null);
+    expect(laid[0]!.totalLabel).toBe('Total warehouse');
+    expect(laid[0]!.children[0]!.totalLabel).toBe('Total warehouse rental');
+  });
+});

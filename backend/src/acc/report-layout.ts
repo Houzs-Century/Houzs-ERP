@@ -239,15 +239,15 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
         }
         let catSide: Side | undefined;
         let totalLabel: string | undefined;
-        if (cashFlow) {
-          if (depth === 1) {
-            if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
-            catSide = o.flow as Side;
-          }
-          const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
-          if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
-          if (tl) totalLabel = tl;
+        if (cashFlow && depth === 1) {
+          if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
+          catSide = o.flow as Side;
         }
+        /* Any category, in any report and at any depth, may name its Total line (owner
+           2026-11-05: L5 with a subtotal under each); unnamed it prints "Total <name>". */
+        const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
+        if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
+        if (tl) totalLabel = tl;
         const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
         const cat: LayoutCategory = { kind: 'category', id, label, children };
@@ -378,6 +378,7 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, baseSen);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
@@ -527,6 +528,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, null);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
