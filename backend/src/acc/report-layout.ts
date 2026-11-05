@@ -542,6 +542,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     const side = it.flow ?? 'in';
     if (it.hiddenFor?.includes(companyId)) continue;
     const kids = walk(it.children, side);
+    if (kids.length === 0) continue; // nothing in it this period (the hidden own-account transfers)
     const node = groupNode('category', it.id, it.label, kids, null);
     node.flow = side;
     node.totalLabel = it.totalLabel ?? `Total ${it.label}`;
@@ -562,7 +563,10 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   }
   const inSen = tops.filter((t) => t.side === 'in').reduce((s, t) => s + t.node.amountSen, 0);
   const outSen = tops.filter((t) => t.side === 'out').reduce((s, t) => s + t.node.amountSen, 0);
-  /* Second pass: % of the side's total, and the running subtotals. */
+  /* Second pass: the %, and the running subtotals. In: % of the first In category,
+     Total Cash In (owner 2026-11-05), so funding or other income never pushes a line
+     past 100%; Out: % of the out side's total. */
+  const inBase = tops.find((t) => t.side === 'in')?.node.amountSen || null;
   const withPct = (n: LaidNode, base: number | null): void => {
     n.pct = pctOf(n.amountSen, base);
     for (const k of n.children) withPct(k, base);
@@ -575,7 +579,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (runningCells) t.node.cells = { ...runningCells };
       continue;
     }
-    withPct(t.node, t.side === 'in' ? (inSen || null) : (outSen || null));
+    withPct(t.node, t.side === 'in' ? inBase : (outSen || null));
     const by: 1 | -1 = t.side === 'in' ? 1 : -1;
     running += by * t.node.amountSen;
     runningCells = addCells(runningCells, scaled(t.node.cells, by));
