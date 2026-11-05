@@ -90,7 +90,7 @@ export function PnlView({ p, mode, split, showPct, period, months }: ViewProps) 
         <RateBox bp={p.doIncomeBp} what="DO value" useSave={useSaveIncomeRate} />
         <RateBox bp={p.fairIncomeBp} what="fair sales" useSave={useSaveFairIncomeRate} />
       </div>
-      <FinanceGrid storageKey={`logistics-pnl|${mode}|${split ? 1 : 0}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Account', width: 330 }} columns={columns} rows={rows} showPct={showPct}
+      <FinanceGrid layoutKey={`logistics-pnl|${mode}|${split ? 1 : 0}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Account', width: 330 }} columns={columns} rows={rows} showPct={showPct}
         title="Logistic cost report" subtitle={`${period} · RM`} ariaLabel="Logistics P&L" drillKey={`${months.join()}|${mode}|${split}`}
         foot={<span>
           Every % is of the Delivery Order value in its column. In-house costs sit in KL, as on the sheet.
@@ -188,7 +188,7 @@ function TripsList({ p }: { p: LogisticsPnl }) {
       <h3 className={s.listTitle}>Set/Dismantle Income (in-house) · the trips <span className={s.hint}>{ours.length} of {p.trips.length} trips ours{noRate > 0 ? ` · ${noRate} in an area with no rate (not counted)` : ''}</span></h3>
       {p.tripsProblem && <p className={s.problem}>The fairs could not be read — {p.tripsProblem}. No trip is counted.</p>}
       {p.trips.length > 0 && (
-        <FinanceGrid storageKey="logistics-trips" nameColumn={null} columns={TRIP_COLUMNS} rows={rows} title="Set/Dismantle Income (in-house) · the trips" ariaLabel="Setup and dismantle trips"
+        <FinanceGrid layoutKey="logistics-trips" nameColumn={null} columns={TRIP_COLUMNS} rows={rows} title="Set/Dismantle Income (in-house) · the trips" ariaLabel="Setup and dismantle trips"
           foot={<span>One setup trip on a fair&rsquo;s first day and one dismantle trip on its last; booths at one venue on one day share a trip. A trip an outsourced bill covers is not ours: tick it if our lorry went anyway, untick one we did not do. The fair&rsquo;s own books carry the same charge.</span>} />
       )}
     </>
@@ -207,7 +207,7 @@ function AreaRatesList({ rates }: { rates: LogisticsAreaRate[] }) {
   return (
     <>
       <h3 className={s.listTitle}>Setup / dismantle rate per trip, by area <span className={s.hint}>Leave a rate empty for an area we do not price.</span></h3>
-      <FinanceGrid storageKey="logistics-area-rates" nameColumn={{ label: 'Area', width: 180 }} title="Setup / dismantle rate per trip, by area" ariaLabel="Rates per trip by area"
+      <FinanceGrid layoutKey="logistics-area-rates" nameColumn={{ label: 'Area', width: 180 }} title="Setup / dismantle rate per trip, by area" ariaLabel="Rates per trip by area"
         columns={[{ key: 'region', label: 'Region', kind: 'text', width: 120 }, { key: 'rate', label: 'Rate per trip', kind: 'text', width: 300 }]} rows={rows} />
     </>
   );
@@ -259,7 +259,7 @@ function SpreadsList({ rows }: { rows: LogisticsSpreadRow[] }) {
     <>
       <h3 className={s.listTitle}>Upkeep and road tax &amp; insurance · each bill spread <span className={s.hint}>Upkeep stays in its own month until you give it more; insurance &amp; road tax is spread over 12.</span></h3>
       {rows.length === 0 ? <p className={s.hint}>No upkeep or insurance bill reaches these months.</p> : (
-        <FinanceGrid storageKey="logistics-spreads" nameColumn={{ label: 'Date', width: 110 }} columns={SPREAD_COLUMNS} rows={grid} title="Upkeep and road tax & insurance · each bill spread" ariaLabel="Upkeep and road tax spread" />
+        <FinanceGrid layoutKey="logistics-spreads" nameColumn={{ label: 'Date', width: 110 }} columns={SPREAD_COLUMNS} rows={grid} title="Upkeep and road tax & insurance · each bill spread" ariaLabel="Upkeep and road tax spread" />
       )}
     </>
   );
@@ -307,7 +307,7 @@ function IncomeList({ p }: { p: LogisticsPnl }) {
     <>
       <h3 className={s.listTitle}>Transport income billed · Other Debtor bills <span className={s.hint}>The month is the one the line names (SEP&rsquo;26), else the bill&rsquo;s.</span></h3>
       {rows.length === 0 ? <p className={s.hint}>No transport line on an Other Debtor bill for these months.</p> : (
-        <FinanceGrid storageKey="logistics-income-lines" nameColumn={{ label: 'Bill', width: 150 }} columns={INCOME_COLUMNS} rows={rows} title="Transport income billed · Other Debtor bills" ariaLabel="Transport income billed" />
+        <FinanceGrid layoutKey="logistics-income-lines" nameColumn={{ label: 'Bill', width: 150 }} columns={INCOME_COLUMNS} rows={rows} title="Transport income billed · Other Debtor bills" ariaLabel="Transport income billed" />
       )}
     </>
   );

@@ -17,6 +17,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { readGridLayout, writeGridLayout } from './reportPrefs';
 import s from './FinanceGrid.module.css';
 
 export type GridKind = 'money' | 'int' | 'pct' | 'text' | 'center';
@@ -84,20 +85,20 @@ export function cellText(v: GridValue, kind: GridKind, row: Pick<GridRow, 'int' 
 /* ── The layout a person keeps (localStorage: a personal preference) ── */
 type Layout = { w: Record<string, number>; order: string[]; hidden: string[]; freeze: number };
 const EMPTY: Layout = { w: {}, order: [], hidden: [], freeze: 0 };
-const STORE = 'fin-grid-v1:';
 function readLayout(key: string): Layout {
-  try {
-    const raw = localStorage.getItem(STORE + key);
-    if (!raw) return EMPTY;
-    const j = JSON.parse(raw) as Partial<Layout>;
-    return { w: j.w ?? {}, order: j.order ?? [], hidden: j.hidden ?? [], freeze: j.freeze ?? 0 };
-  } catch { return EMPTY; }
+  const j = readGridLayout(key);
+  if (!j || typeof j !== 'object') return EMPTY;
+  const l = j as Partial<Layout>;
+  return {
+    w: l.w && typeof l.w === 'object' ? l.w : {},
+    order: Array.isArray(l.order) ? l.order : [],
+    hidden: Array.isArray(l.hidden) ? l.hidden : [],
+    freeze: typeof l.freeze === 'number' ? l.freeze : 0,
+  };
 }
 function writeLayout(key: string, l: Layout) {
-  try {
-    if (Object.keys(l.w).length === 0 && l.order.length === 0 && l.hidden.length === 0 && l.freeze === 0) localStorage.removeItem(STORE + key);
-    else localStorage.setItem(STORE + key, JSON.stringify(l));
-  } catch { /* a private window: the layout lasts this visit */ }
+  const empty = Object.keys(l.w).length === 0 && l.order.length === 0 && l.hidden.length === 0 && l.freeze === 0;
+  writeGridLayout(key, empty ? null : l);
 }
 
 /** Siblings sorted by a column; rows that close a block (totals, checks) keep their place. */
@@ -121,9 +122,9 @@ function sortRows(rows: GridRow[], key: string, dir: 1 | -1, kindOf: (k: string)
 
 type Menu = { x: number; y: number; key: string };
 
-export function FinanceGrid({ storageKey, nameColumn, columns, rows, showPct = false, title, subtitle, ariaLabel, foot, drillKey }: {
+export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = false, title, subtitle, ariaLabel, foot, drillKey }: {
   /** Whose layout this is — one per view and mode. */
-  storageKey: string;
+  layoutKey: string;
   /** The frozen name column of a report; null for a list. */
   nameColumn: { label: string; width: number } | null;
   columns: GridColumn[];
@@ -137,13 +138,13 @@ export function FinanceGrid({ storageKey, nameColumn, columns, rows, showPct = f
   /** An open detail closes when this changes. */
   drillKey?: string;
 }) {
-  const [layout, setLayout] = useState<Layout>(() => readLayout(storageKey));
-  useEffect(() => { setLayout(readLayout(storageKey)); }, [storageKey]);
+  const [layout, setLayout] = useState<Layout>(() => readLayout(layoutKey));
+  useEffect(() => { setLayout(readLayout(layoutKey)); }, [layoutKey]);
   const save = useCallback((next: Layout | ((l: Layout) => Layout)) => setLayout((prev) => {
     const l = typeof next === 'function' ? next(prev) : next;
-    writeLayout(storageKey, l);
+    writeLayout(layoutKey, l);
     return l;
-  }), [storageKey]);
+  }), [layoutKey]);
 
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
@@ -207,7 +208,7 @@ export function FinanceGrid({ storageKey, nameColumn, columns, rows, showPct = f
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       resizing.current = false;
-      setLayout((l) => { writeLayout(storageKey, l); return l; });
+      setLayout((l) => { writeLayout(layoutKey, l); return l; });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);

@@ -234,7 +234,7 @@ function RegionView({ p, mode, split, period, months }: ViewProps) {
       <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`logistics-by-region-${months[0] ?? ''}-${months.at(-1) ?? ''}`} /></ReportHeaderActions>
       <ReportTiles tiles={tiles} label="Logistics totals" />
       <NotCounted lines={notCounted} />
-      <FinanceGrid storageKey={`logistics-region|${mode}|${split ? 1 : 0}`} nameColumn={{ label: 'Lorry / 3PL', width: 300 }} columns={columns} rows={rows}
+      <FinanceGrid layoutKey={`logistics-region|${mode}|${split ? 1 : 0}`} nameColumn={{ label: 'Lorry / 3PL', width: 300 }} columns={columns} rows={rows}
         title="Logistics cost · by region & trip" subtitle={`${period} · RM`} ariaLabel="Delivery cost by region and trip" drillKey={`${months.join()}|${mode}|${split}`}
         foot={<span>Our lorries carry the full in-house cost (petrol, upkeep, instalment, road tax &amp; insurance, manpower) ÷ the month&rsquo;s trips; a trip into two regions splits by DOs. 3PL goes by bill month. A lorry&rsquo;s figure opens its trips.</span>} />
     </>
@@ -316,7 +316,7 @@ function EventsView({ p, mode, split, showPct, period, months }: ViewProps) {
     <>
       <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`logistics-setup-dismantle-${months[0] ?? ''}-${months.at(-1) ?? ''}`} /></ReportHeaderActions>
       <ReportTiles tiles={tiles} label="Setup and dismantle totals" />
-      <FinanceGrid storageKey={`logistics-events|${mode}|${split ? 1 : 0}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Fair', width: 370 }} columns={columns} rows={rows} showPct={showPct}
+      <FinanceGrid layoutKey={`logistics-events|${mode}|${split ? 1 : 0}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Fair', width: 370 }} columns={columns} rows={rows} showPct={showPct}
         title="Logistics cost · setup & dismantle" subtitle={`${period} · RM`} ariaLabel="Setup and dismantle by fair" drillKey={`${months.join()}|${mode}|${split}`}
         foot={<span>Every % is of the fair sales in its column. A fair counts in the month it opened. Open a fair for the Logistics charge (trips × the area rate), Setup, Dismantle and Transport.</span>} />
     </>
