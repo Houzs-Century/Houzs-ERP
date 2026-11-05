@@ -34,6 +34,7 @@ export type EmployeeRow = {
   tax_residency: string | null;
   tax_category: string | null;
   tax_child_relief_sen: number | null;
+  trip_names: string | null;
   updated_at: string;
 };
 
@@ -84,6 +85,7 @@ export function rowToEmployee(
     taxResidency: r.tax_residency as TaxResidency | null,
     taxCategory: r.tax_category as TaxCategory | null,
     taxChildReliefSen: r.tax_child_relief_sen == null ? null : Number(r.tax_child_relief_sen),
+    tripNames: r.trip_names ?? "",
     updatedAt: r.updated_at,
   };
 }
@@ -121,6 +123,7 @@ export function employeeColumns(e: EmployeeInput) {
     tax_residency: e.taxResidency,
     tax_category: e.taxCategory,
     tax_child_relief_sen: e.taxChildReliefSen,
+    trip_names: blank(e.tripNames),
   };
 }
 

@@ -256,6 +256,9 @@ export function EmployeeDrawer({ employee, canManage, onClose, onSaved }: { empl
           <Field label="Phone">
             <input className={inputCls} value={d.phone} onChange={(e) => set("phone", e.target.value)} inputMode="tel" />
           </Field>
+          <Field label="Trip sheet names" hint="How the Trip Report writes this person (AMIR, NAEM). Comma between names.">
+            <input className={inputCls} value={d.tripNames} onChange={(e) => set("tripNames", e.target.value)} />
+          </Field>
           <Field label="Nationality">
             <input className={inputCls} value={d.nationality} onChange={(e) => set("nationality", e.target.value)} />
           </Field>

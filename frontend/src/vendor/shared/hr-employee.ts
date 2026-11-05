@@ -87,6 +87,8 @@ export type EmployeeInput = {
   taxResidency: TaxResidency | null;
   taxCategory: TaxCategory | null;
   taxChildReliefSen: number | null;
+  /** The names the person goes by on the trip sheet (AMIR), comma-separated. */
+  tripNames: string;
 };
 
 /** New-employee defaults. Statutory starts OFF: HR ticks it for the people who are registered. */
@@ -121,6 +123,7 @@ export function emptyEmployeeInput(todayYmd: string): EmployeeInput {
     taxResidency: null,
     taxCategory: null,
     taxChildReliefSen: null,
+    tripNames: "",
   };
 }
 
@@ -189,6 +192,11 @@ export function parseEmployeeInput(raw: unknown, todayYmd: string): EmployeeInpu
         : null
       : null,
     taxChildReliefSen: pcbEnabled && r.taxChildReliefSen !== null && r.taxChildReliefSen !== undefined && r.taxChildReliefSen !== "" ? n(r.taxChildReliefSen, 0) : null,
+    tripNames: s(r.tripNames)
+      .split(",")
+      .map((x) => x.replace(/\s+/g, " ").trim().toUpperCase())
+      .filter(Boolean)
+      .join(", "),
   };
 }
 
@@ -210,5 +218,6 @@ export function employeeInputProblem(e: EmployeeInput): string | null {
   if (!Number.isInteger(e.workingDaysPerMonth) || e.workingDaysPerMonth < 1 || e.workingDaysPerMonth > 31) return "Days / month must be a whole number from 1 to 31.";
   if (!Number.isFinite(e.otMultiplier) || e.otMultiplier < 0 || e.otMultiplier > 10) return "OT multiplier must be between 0 and 10.";
   if (e.taxChildReliefSen !== null && (!Number.isInteger(e.taxChildReliefSen) || e.taxChildReliefSen < 0)) return "Child relief must be RM 0.00 or more.";
+  if (e.tripNames.length > 200) return "Trip sheet names: at most 200 characters.";
   return null;
 }

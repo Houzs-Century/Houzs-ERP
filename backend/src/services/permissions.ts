@@ -287,6 +287,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // rules. Own keys, not scm.hr.*: commission and payroll are granted to
   // different people. Owner + IT Admin cover both via "*".
   { key: "hr.employees.read",   resource: "HR", verb: "read",   label: "View employees",   description: "See Employees & Attendance: every employee's pay basis, salary, bank and statutory flags, the public holidays and the pay rules (read-only)" },
+  // Approving a payroll month locks it, settles its advances and posts its
+  // penalties; approving a penalty sends it to payroll. Its own key so whoever
+  // keys hours and advances does not also sign off what they keyed.
+  { key: "hr.payroll.approve", resource: "HR", verb: "approve", label: "Approve payroll", description: "Approve or reopen a payroll month, mark it paid, and approve, reject or revoke penalties" },
   { key: "hr.employees.manage", resource: "HR", verb: "manage", label: "Manage employees", description: "Add and edit employees and their salary, link the ERP account they punch with, keep the public holidays and schedule pay-rule changes — changes what people are paid" },
 
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of

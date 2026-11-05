@@ -14,7 +14,7 @@
  */
 import type { PayRulesConfig } from "./hr-pay-rules";
 
-export type AttendanceStatus = "PRESENT" | "ABSENT" | "HALF_DAY" | "MEDICAL_LEAVE" | "ANNUAL_LEAVE" | "REST_DAY";
+export type AttendanceStatus = "PRESENT" | "ABSENT" | "HALF_DAY" | "MEDICAL_LEAVE" | "ANNUAL_LEAVE" | "REST_DAY" | "UNPAID_LEAVE";
 export const ATTENDANCE_STATUSES: ReadonlyArray<{ value: AttendanceStatus; label: string }> = [
   { value: "PRESENT", label: "Present" },
   { value: "ABSENT", label: "Absent" },
@@ -22,7 +22,13 @@ export const ATTENDANCE_STATUSES: ReadonlyArray<{ value: AttendanceStatus; label
   { value: "MEDICAL_LEAVE", label: "Medical leave" },
   { value: "ANNUAL_LEAVE", label: "Annual leave" },
   { value: "REST_DAY", label: "Rest day" },
+  { value: "UNPAID_LEAVE", label: "Unpaid leave" },
 ];
+
+/* Leave HR approved (phase 5): never a missed day for the driver's commission.
+ * The first three are paid, so payroll does not count them absent either. */
+export const PAID_LEAVE_STATUSES: ReadonlyArray<AttendanceStatus> = ["MEDICAL_LEAVE", "ANNUAL_LEAVE", "REST_DAY"];
+export const APPROVED_LEAVE_STATUSES: ReadonlyArray<AttendanceStatus> = [...PAID_LEAVE_STATUSES, "UNPAID_LEAVE"];
 
 export type PunchSource = "PHONE" | "MANUAL" | "AUTO";
 export type GeoResult = "IN" | "OUT" | "NONE";

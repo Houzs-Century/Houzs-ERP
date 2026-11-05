@@ -42,6 +42,7 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/agents$/, "Agent Console"],
   [/^\/system-health$/, "System Health"],
   [/^\/reports\/fair-report$/, "Sales report"],
+  [/^\/hr\/employees$/, "Employees & Attendance"],
   // The Supply Chain hub is a single-segment route, so it never reaches the
   // /scm/* segment table below (which needs a 2nd segment). Curate it here —
   // without this entry labelForPath title-cased the slug to a bare "Scm".

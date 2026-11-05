@@ -2,10 +2,9 @@
  * (routes/attendance.ts), the Attendance tab (routes/hr-attendance.ts) and
  * the hr-auto-clockout cron. Drizzle throughout. */
 import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
-import type { Env } from "../../types";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_pay_rule_versions, hr_punch_sites } from "../../db/schema";
-import { resolvePayRulesAsOf, normalizePayRules } from "../../scm/shared/hr-pay-rules";
+import { resolvePayRulesAsOf, normalizePayRules, type PayRulesConfig } from "../../scm/shared/hr-pay-rules";
 import { AUTO_CLOSE_AFTER_HOURS, toAttendanceRules, type AttendanceRules, type PunchSite } from "../../scm/shared/hr-attendance";
 import { asDate, autoCloseAt } from "./hr-attendance-view";
 
@@ -13,22 +12,28 @@ type Db = ReturnType<typeof getDb>;
 
 export const FORGOT_OUT_NOTE = "Forgot to punch out: closed at the shift end";
 
-/** The day rules in force on a work date, per company, from the dated pay rules. */
-export async function rulesResolver(db: Db, companyId: number): Promise<(workDate: string) => AttendanceRules> {
+/** The pay rules in force on a work date, per company, from the dated versions. */
+export async function payRulesResolver(db: Db, companyId: number): Promise<(workDate: string) => PayRulesConfig> {
   const rows = await db
     .select({ effective_from: hr_pay_rule_versions.effective_from, rules: hr_pay_rule_versions.rules })
     .from(hr_pay_rule_versions)
     .where(eq(hr_pay_rule_versions.company_id, companyId));
   const versions = rows.map((r) => ({ effectiveFrom: r.effective_from, rules: normalizePayRules(r.rules) }));
-  const cache = new Map<string, AttendanceRules>();
+  const cache = new Map<string, PayRulesConfig>();
   return (workDate) => {
     let r = cache.get(workDate);
     if (!r) {
-      r = toAttendanceRules(resolvePayRulesAsOf(versions, workDate));
+      r = resolvePayRulesAsOf(versions, workDate);
       cache.set(workDate, r);
     }
     return r;
   };
+}
+
+/** The day rules (shift, lunch, grace, blocks) in force on a work date. */
+export async function rulesResolver(db: Db, companyId: number): Promise<(workDate: string) => AttendanceRules> {
+  const cfgFor = await payRulesResolver(db, companyId);
+  return (workDate) => toAttendanceRules(cfgFor(workDate));
 }
 
 /** Active sites for the check, and every site's name (an inactive site still names old punches). */
@@ -45,7 +50,7 @@ export async function loadSites(db: Db, companyId: number): Promise<{ active: Pu
  * UPDATE re-checks clock_out_at IS NULL, so a clock-out racing the close
  * wins and a second run changes nothing. employeeId narrows it to one person
  * (their next punch); null sweeps the company. */
-export async function closeForgottenPunches(db: Db, companyId: number, employeeId: number | null, now: Date): Promise<number> {
+export async function closeForgottenPunches(db: Db, companyId: number, employeeId: number | null, now: Date): Promise<number[]> {
   const cutoff = new Date(now.getTime() - AUTO_CLOSE_AFTER_HOURS * 3600_000).toISOString();
   const open = await db
     .select({ id: hr_attendance.id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, notes: hr_attendance.notes })
@@ -59,9 +64,9 @@ export async function closeForgottenPunches(db: Db, companyId: number, employeeI
         lt(hr_attendance.clock_in_at, cutoff),
       ),
     );
-  if (open.length === 0) return 0;
+  if (open.length === 0) return [];
   const rulesFor = await rulesResolver(db, companyId);
-  let closed = 0;
+  const closed: number[] = [];
   for (const r of open) {
     if (!r.clock_in_at) continue;
     const outAt = autoCloseAt(r.work_date, asDate(r.clock_in_at), rulesFor(r.work_date));
@@ -75,20 +80,7 @@ export async function closeForgottenPunches(db: Db, companyId: number, employeeI
       })
       .where(and(eq(hr_attendance.id, r.id), isNull(hr_attendance.clock_out_at)))
       .returning({ id: hr_attendance.id });
-    closed += done.length;
+    closed.push(...done.map((d) => d.id));
   }
   return closed;
-}
-
-/** The cron sweep: every company with an open punch. */
-export async function runAutoClockOut(env: Env): Promise<{ companies: number; closed: number }> {
-  const db = getDb(env);
-  const companies = await db
-    .selectDistinct({ company_id: hr_attendance.company_id })
-    .from(hr_attendance)
-    .where(and(isNotNull(hr_attendance.clock_in_at), isNull(hr_attendance.clock_out_at)));
-  let closed = 0;
-  const now = new Date();
-  for (const c of companies) closed += await closeForgottenPunches(db, c.company_id, null, now);
-  return { companies: companies.length, closed };
 }
