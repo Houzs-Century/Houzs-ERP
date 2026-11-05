@@ -1193,6 +1193,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
         ? (c.req.query("phase") as "setup" | "dismantle")
         : undefined,
     brand: c.req.query("brand"),
+    organizer: c.req.query("organizer") || undefined,
     state: c.req.query("state") || undefined,
     event_type_id: eventTypeParam ? parseInt(eventTypeParam, 10) : undefined,
     section: c.req.query("section") || undefined,
