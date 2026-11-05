@@ -7,6 +7,7 @@ export function BillRefFix({ projectId, from, onSaved }: { projectId: number; fr
   const [value, setValue] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
 
   const save = async () => {
     if (busy) return;
@@ -16,12 +17,15 @@ export function BillRefFix({ projectId, from, onSaved }: { projectId: number; fr
     try {
       await api.post(`/api/project-sales-bills/${projectId}/rename-ref`, { from, to });
       setValue(null);
+      setSaved(to);
       onSaved();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not change the reference.");
     } finally { setBusy(false); }
   };
 
+  /* The report takes a second to recount; the row says so instead of looking unsaved. */
+  if (saved) return <span className="ml-2 font-sans text-[11.5px] text-ink-muted">Saved as {saved}, updating…</span>;
   if (value === null) {
     return <button type="button" className="ml-2 text-[11.5px] text-primary hover:underline" onClick={(e) => { e.stopPropagation(); setValue(from); }}>Edit</button>;
   }
