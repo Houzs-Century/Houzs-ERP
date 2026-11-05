@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { cn } from "../../lib/utils";
 import { LEVEL_LABEL, REACH_LABEL, type MailVisibility } from "./mail-personal";
+import { useMailClaim } from "./mail-claim";
 
 const VISIBILITY_KEY = "/api/mail-center/visibility";
 
@@ -31,7 +32,8 @@ export function MyMailboxNav({
 }) {
   const vis = useMailVisibility();
   const mine = vis?.myAddress;
-  if (!mine) return null;
+  if (!vis) return null;
+  if (!mine) return <ClaimMyAddress />;
   const active: MyMailboxPick | null =
     folder === "sentbyme" || folder === "drafts" ? folder : folder === "inbox" && mailbox?.toLowerCase() === mine ? "inbox" : null;
   return (
@@ -43,6 +45,62 @@ export function MyMailboxNav({
       <FolderItem icon={InboxIcon} label="Inbox" active={active === "inbox"} badge={unread(mine)} onClick={() => onPick("inbox", mine)} />
       <FolderItem icon={Send} label="Sent by me" active={active === "sentbyme"} onClick={() => onPick("sentbyme", mine)} />
       <FolderItem icon={FileText} label="Drafts" active={active === "drafts"} badge={drafts} badgeTone="muted" onClick={() => onPick("drafts", mine)} />
+    </div>
+  );
+}
+
+/** HC-0157 A: someone with no company address claims one here. */
+function ClaimMyAddress() {
+  const claim = useMailClaim();
+  const offer = claim.offer;
+  if (!offer || offer.address) return null;
+  return (
+    <div className="space-y-2 border-b border-border/60 px-3 pb-3">
+      <p className="m-0 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted/70">
+        <UserIcon className="h-3 w-3" />
+        Claim my address
+      </p>
+      <p className="m-0 text-[11.5px] leading-snug text-ink-secondary">
+        Pick your company address. You can claim it once; an admin can change it later.
+      </p>
+      <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-primary">
+        <input
+          value={claim.value}
+          onChange={(e) => claim.setValue(e.target.value)}
+          aria-label="Address name"
+          className="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[12px] text-ink outline-none"
+        />
+        <span className="shrink-0 pr-2 font-mono text-[11px] text-ink-muted">@{offer.domain}</span>
+      </div>
+      {offer.department ? (
+        <p className="m-0 text-[11px] text-ink-muted">Department: {offer.department.name} (from the Org Chart)</p>
+      ) : (
+        <select
+          value={claim.departmentId ?? ""}
+          onChange={(e) => claim.setDepartmentId(e.target.value ? Number(e.target.value) : null)}
+          aria-label="Department"
+          className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] text-ink outline-none focus:border-primary"
+        >
+          <option value="">Which department do you work in?</option>
+          {offer.departments.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {(claim.problem ?? claim.error) && <p className="m-0 text-[11px] text-err">{claim.problem ?? claim.error}</p>}
+      <button
+        type="button"
+        disabled={!claim.ready}
+        onClick={() => void claim.submit()}
+        className="w-full rounded-md bg-primary px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {claim.busy ? "Claiming…" : `Claim ${claim.value.trim().toLowerCase() || "…"}@${offer.domain}`}
+      </button>
+      {claim.needsDepartment && (
+        <p className="m-0 text-[10.5px] leading-snug text-ink-muted">An admin confirms your department.</p>
+      )}
     </div>
   );
 }
@@ -68,7 +126,7 @@ export function VisibilityPanel() {
         <div className="space-y-2 px-3 pb-1 pt-1 text-[11.5px] text-ink-secondary">
           <p className="m-0">{LEVEL_LABEL[vis.level] ?? vis.level}{vis.manage ? "; you can also manage mailboxes." : "."}</p>
           {vis.mailboxes.length === 0 ? (
-            <p className="m-0 text-ink-muted">No mailbox yet. Ask an admin to assign one.</p>
+            <p className="m-0 text-ink-muted">No mailbox yet. Claim your address above.</p>
           ) : (
             <ul className="m-0 list-none space-y-1 p-0">
               {vis.mailboxes.map((m) => (
