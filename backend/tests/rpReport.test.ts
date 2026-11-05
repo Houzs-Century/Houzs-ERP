@@ -125,8 +125,8 @@ const cell = (rows: Report['receipts'], key: string, col: string) => rows.find((
 describe('Receipts & Payments — columns per money account, rows in the owner\'s accounts', () => {
   test('opening, the period, closing — and a supplier payment read through what it settled (rule A)', async () => {
     const r = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
-    expect(r.columns.map((c) => c.code)).toEqual(['310-0010', '320-0000']);
-    expect(r.opening).toEqual({ '310-0010': -10000, '320-0000': 0 });
+    expect(r.columns.map((c) => c.code)).toEqual(['310-0010', '320-0000', 'CARD']);
+    expect(r.opening).toEqual({ '310-0010': -10000, '320-0000': 0, CARD: 5000 });
 
     /* Receipts: the collection on AR into the bank; the transfer into the drawer. */
     expect(cell(r.receipts, '300-0000', '310-0010')).toBe(50000);
@@ -147,22 +147,24 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(r.entries.some((e) => e.jeNo === 'JE-9R')).toBe(false);
     expect(r.receipts.find((x) => x.key === '910-0000')).toBeUndefined();
 
-    expect(r.totals.receipts).toEqual({ '310-0010': 50000, '320-0000': 20000 });
-    expect(r.totals.payments).toEqual({ '310-0010': 125000, '320-0000': 6000 });
-    expect(r.totals.closing).toEqual({ '310-0010': -85000, '320-0000': 14000 });
-    expect(r.totals.closingTotalSen).toBe(-71000);
+    expect(r.totals.receipts).toEqual({ '310-0010': 50000, '320-0000': 20000, CARD: 30000 });
+    expect(r.totals.payments).toEqual({ '310-0010': 125000, '320-0000': 6000, CARD: 300 });
+    expect(r.totals.closing).toEqual({ '310-0010': -85000, '320-0000': 14000, CARD: 34700 });
+    expect(r.totals.closingTotalSen).toBe(-36300);
     /* Rows carry their Total; entries carry the drill-down. */
     expect(r.payments.find((x) => x.key === '601-0003')?.totalSen).toBe(40000);
     expect(r.entries.filter((e) => e.jeNo === 'JE-3').map((e) => [e.rowKey, e.sen]).sort()).toEqual([['400-0000', 30000], ['601-0001', 30000], ['601-0003', 40000]]);
   });
 
-  test('the card money the bank has not received: what was swiped in the period, what the clearing accounts hold at its end (owner 2026-09-28: 9 月刷卡的钱要看得到)', async () => {
+  test('the card money: a swipe is Cash In on its day into the Card column, its fee a payment out of it (owner 2026-11-05)', async () => {
     const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
-    /* The swipes never reach a money column… */
+    /* July's swipe, no statement has paid it out: Card - not yet in the bank, on the debtor's row. */
     expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
-    expect(july.totals.receipts).toEqual({ '310-0010': 50000, '320-0000': 20000 });
-    /* …but the memo carries July's swipe (the acquirer's fee is the settlement module's own, not a taking)
-       and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee. */
+    expect(cell(july.receipts, '300-0000:CARD-TRANSIT', 'CARD')).toBe(30000);
+    expect(cell(july.payments, '900-T009', 'CARD')).toBe(300);
+    /* The memo still reads: July's swipe (the fee is the settlement module's own, not a taking)
+       and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee = the Card c/f. */
+    expect(july.totals.closing.CARD).toBe(34700);
     expect(july.card).toEqual({ takingsSen: 30000, transitSen: 34700, codes: ['326-0000', '326-0010'] });
     const june = await fetchReport(harness(world()), 'from=2026-06-01&to=2026-06-30');
     expect(june.card).toEqual({ takingsSen: 5000, transitSen: 5000, codes: ['326-0000', '326-0010'] });
@@ -201,14 +203,15 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     };
     expect(r.layout.stored).toBe(false);
     expect(r.layout.tree.map((n) => [n.kind, n.id, n.flow, n.totalLabel, n.amountSen])).toEqual([
-      ['category', 'side:in', 'in', 'Total receipts', 50000],
+      ['category', 'side:in', 'in', 'Total receipts', 80000],
       ['category', 'side:out', 'out', 'Total payments', 111000],
+      ['unassigned', 'unassigned:out', 'out', 'Total unassigned payments', 300],
     ]);
     /* The transfer moved 200.00 between the two columns: the tree drops it on both sides, so in − out still equals receipts − payments. */
     expect(r.layout.inSen - r.layout.outSen).toBe(r.totals.receiptsTotalSen - r.totals.paymentsTotalSen);
     const [receipts, payments] = r.layout.tree as [Laid, Laid];
     expect(receipts.children.map((n) => [n.label, n.amountSen, n.pct, n.children.map((k) => [k.key, k.amountSen, k.pct])])).toEqual([
-      ['CURRENT ASSETS', 50000, 100, [['300-0000', 50000, 100]]],
+      ['CURRENT ASSETS', 80000, 100, [['300-0000', 50000, 62.5], ['300-0000:CARD-TRANSIT', 30000, 37.5]]],
     ]);
     const byLabel = (label: string) => payments.children.find((n) => n.label === label)!;
     expect(payments.children.some((n) => n.children.some((k) => String(k.key).startsWith('XFER:')))).toBe(false);
@@ -218,8 +221,8 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(byLabel('COST OF GOODS SOLD').children.map((n) => n.key)).toEqual(['601-0001', '601-0003']);
     expect(byLabel('COST OF GOODS SOLD').cells).toEqual({ '310-0010': 70000 });
     expect(byLabel('EXPENSES').cells).toEqual({ '310-0010': 5000, '320-0000': 6000 });
-    /* % of the out side: 700.00 of 1,110.00. */
-    expect(byLabel('COST OF GOODS SOLD').pct).toBe(63.1);
+    /* % of the out side: 700.00 of 1,113.00 (the card fee is out too). */
+    expect(byLabel('COST OF GOODS SOLD').pct).toBe(62.9);
   });
 
   test('by party, the control account\'s rows print together where the control sits', async () => {
