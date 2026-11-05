@@ -37,7 +37,7 @@ import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '.
 import { closeCommissionMonthHandler, eventCommissionHandler, reopenCommissionMonthHandler } from './acc-event-commission';
 import { logisticsCostHandler } from './acc-logistics';
 import {
-  logisticsPnlHandler, saveAreaRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
+  logisticsPnlHandler, saveAreaRateHandler, saveFairIncomeRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
 } from './acc-logistics-pnl';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -130,6 +130,7 @@ accEvents.post('/commission/reopen', reopenCommissionMonthHandler);
 accEvents.get('/logistics', logisticsCostHandler);
 accEvents.get('/logistics/pnl', logisticsPnlHandler);
 accEvents.put('/logistics/income-rate', saveIncomeRateHandler);
+accEvents.put('/logistics/fair-income-rate', saveFairIncomeRateHandler);
 accEvents.put('/logistics/area-rate', saveAreaRateHandler);
 accEvents.put('/logistics/spread', saveSpreadHandler);
 accEvents.put('/logistics/trip', saveTripMarkHandler);
