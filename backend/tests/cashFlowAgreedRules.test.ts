@@ -47,6 +47,11 @@ const world = () => fakeSb({
     /* Topping the trade-finance account up from the bank: an own-account transfer. */
     gl('JE-3', '2026-09-20', 'PV', 'PV-3', '310-0060', 'CASH AT BANK - MAYBANK (TRADE FINANCE)', 25000, 0),
     gl('JE-3', '2026-09-20', 'PV', 'PV-3', '310-0010', 'CASH AT BANK - MAYBANK', 0, 25000),
+    /* 1.00 out of the bank on three equal lines: each share rounds to 33 sen. */
+    gl('JE-4', '2026-09-25', 'PV', 'PV-4', '600-0001', 'STOCKS AT THE BEGINNING OF YEAR - CUSTOMER', 1, 0),
+    gl('JE-4', '2026-09-25', 'PV', 'PV-4', '900-A002', 'TOLL', 1, 0),
+    gl('JE-4', '2026-09-25', 'PV', 'PV-4', '900-A003', 'PARKING', 1, 0),
+    gl('JE-4', '2026-09-25', 'PV', 'PV-4', '310-0010', 'CASH AT BANK - MAYBANK', 0, 100),
   ],
   payment_vouchers: [
     { id: 'pv-1', company_id: CO, pv_number: 'PV-1', status: 'POSTED' },
@@ -90,6 +95,16 @@ const get = async (from: string, to: string): Promise<Report> => {
 const keysOn = (nodes: Laid[]): string[] => nodes.flatMap((n) => [...(n.key ? [n.key] : []), ...keysOn(n.children)]);
 
 describe('Cash Flow: the rules of 2026-11-05', () => {
+  /* Owner 2026-11-05: 310-0060 read 5,708.18 against the ledger's 5,708.17. A leg's rows each round on
+     their own; the sen they miss goes back onto the largest, so a column moves by exactly the leg. */
+  test('a leg split three ways still moves its bank by exactly the leg', async () => {
+    const r = await get('2026-09-01', '2026-09-30');
+    const pv4 = (r as unknown as { entries: Array<{ jeNo: string; sen: number; side: string }> }).entries.filter((e) => e.jeNo === 'JE-4');
+    expect(pv4.reduce((s, e) => s + (e.side === 'R' ? e.sen : -e.sen), 0)).toBe(-100);
+    expect(pv4.map((e) => e.sen).sort()).toEqual([33, 33, 34]);
+  });
+
+
   test('the opening journal dated inside the period is Balance b/f, not a receipt or a transfer', async () => {
     const r = await get('2026-08-01', '2026-08-31');
     expect(r.opening).toEqual({ '310-0010': 100000, '310-0060': 50000 });
@@ -114,7 +129,7 @@ describe('Cash Flow: the rules of 2026-11-05', () => {
   test('the top-up between the two banks stays in the rows and the balances but is off the tree', async () => {
     const r = await get('2026-09-01', '2026-09-30');
     expect(r.payments.find((x) => x.key === 'XFER:310-0060')?.cells).toEqual({ '310-0010': 25000 });
-    expect(r.totals.closing).toEqual({ '310-0010': 100000 - 40000 - 25000, '310-0060': 50000 - 30000 + 25000 });
+    expect(r.totals.closing).toEqual({ '310-0010': 100000 - 40000 - 25000 - 100, '310-0060': 50000 - 30000 + 25000 });
     expect(keysOn(r.layout.tree).filter((k) => k.startsWith('XFER:'))).toEqual([]);
     expect(keysOn(r.layout.tree)).toContain(TRADE_FINANCE_AP);
   });
