@@ -62,6 +62,7 @@ import { useSoConversionSource } from '../../vendor/scm/lib/delivery-order-queri
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
+import { sourceDocPath } from '../../lib/returnToSource';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -503,9 +504,9 @@ export const SalesInvoiceNew = () => {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
             return;
           }
-          if (fromDo && failed === 0) toast.success(`Invoice ${res.invoiceNumber} created.`);
+          if ((fromDo || fromSo) && failed === 0) toast.success(`Invoice ${res.invoiceNumber} created.`);
           navigate(
-            siAfterSavePath(res.id, fromDo, failed),
+            siAfterSavePath(res.id, fromDo, failed, sourceDocPath.salesOrder(fromSo)),
             { state: failed > 0 ? paymentRetryNavigationState('si', res.id, failedDrafts) : undefined },
           );
         },

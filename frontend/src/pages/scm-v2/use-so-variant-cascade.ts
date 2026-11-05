@@ -64,10 +64,12 @@ export function useSoVariantCascade(args: {
         category: editingDrafts[id]!.itemGroup,
         variants: editingDrafts[id]!.variants,
         persisted: true,
+        itemCode: editingDrafts[id]!.itemCode,
       })),
       ...addingDrafts.map((row) => ({
         category: row.draft.itemGroup,
         variants: row.draft.variants,
+        itemCode: row.draft.itemCode,
       })),
     ];
     if (lines.length === 0) return;

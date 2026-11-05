@@ -2,7 +2,7 @@
 // module list. Corners turn the run (owner 2026-09-28, HC-SO-2609-221: a U with
 // two CNRs was drawn as one straight row).
 import { describe, expect, it } from 'vitest';
-import { cellEdges } from './sofa-build';
+import { cellEdges, findModule, moduleFootprint } from './sofa-build';
 import { buildDefaultSofaCells, consoleAttachOptions } from './sofa-default-layout';
 
 const mods = (...ids: string[]) => ids.map((moduleId) => ({ moduleId, attachTo: null }));
@@ -87,6 +87,22 @@ describe('buildDefaultSofaCells — separate sofas and Console joins', () => {
       { moduleId: 'Console', attachTo: '2S' },
       { moduleId: '1A(RHF)', attachTo: null },
     ], '24'))).toEqual([['1A(LHF)', 'Console', '1A(RHF)']]);
+  });
+
+  it('HC-0184: a STOOL stands free in front, the corner run keeps 1A(LHF) as its leg', () => {
+    const cells = buildDefaultSofaCells(mods('1A(LHF)', 'CNR', '2NA', 'Console', 'STOOL'), '28');
+    const at = (id: string) => cells.find((c) => c.moduleId === id)!;
+    expect([at('1A(LHF)').x, at('1A(LHF)').rot]).toEqual([0, 270]);
+    expect(at('CNR').y).toBe(0);
+    expect(at('2NA').y).toBe(0);
+    expect(at('Console').x).toBeGreaterThan(at('2NA').x);
+    // Just in front of the 2NA it sits before, not below the 1A(LHF) leg.
+    const back = moduleFootprint(findModule('2NA')!, 0, '28').h;
+    const leg = at('1A(LHF)');
+    const legFp = moduleFootprint(findModule('1A(LHF)')!, 270, '28');
+    expect(at('STOOL').y).toBe(back + 30);
+    expect(at('STOOL').y).toBeLessThan(leg.y + legFp.h);
+    expect(at('STOOL').x).toBeGreaterThanOrEqual(leg.x + legFp.w);
   });
 
   it('offers a Console line the other modules of the same model only', () => {

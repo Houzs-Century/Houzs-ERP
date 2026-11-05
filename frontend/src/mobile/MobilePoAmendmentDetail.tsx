@@ -27,7 +27,7 @@ import {
   TYPE_LABEL,
   type AmendmentFieldKind,
 } from "../vendor/scm/lib/amendment-routing";
-import { humanApiError } from "../vendor/scm/lib/authed-fetch";
+import { failedWriteTail, humanApiError } from "../vendor/scm/lib/authed-fetch";
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
@@ -262,7 +262,7 @@ export function MobilePoAmendmentDetail({
       const warnings = (res?.warnings ?? []) as string[];
       notify({ title: "PO amendment approved", body: warnings.length > 0 ? warnings.join(" ") : undefined });
     } catch (e) {
-      notify({ title: "Could not approve", body: `${plainError(e)} The PO was NOT changed — please try again.`, tone: "error" });
+      notify({ title: "Could not approve", body: `${plainError(e)}${failedWriteTail(e, "The PO was NOT changed — please try again.")}`, tone: "error" });
     }
   };
 

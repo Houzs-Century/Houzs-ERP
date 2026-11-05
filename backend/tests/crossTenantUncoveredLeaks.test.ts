@@ -229,6 +229,20 @@ describe('sofa combo PUT /:id — source combo read is company-scoped', () => {
     expect(res.status).toBe(201);
     expect(t.sofa_combo_pricing.some((r) => r.company_id === CO_A && r.selling_prices_by_height?.['40'] === 120)).toBe(true);
   });
+
+  // HC-0178: the Backend cost editor sends only pricesByHeight; a combo whose
+  // stored selling grid is {} (column default) still charges its cost.
+  test('cost-only edit of a combo with an empty selling grid saves', async () => {
+    const t = { sofa_combo_pricing: combos().map((r) => (r.id === 'sc-a' ? { ...r, selling_prices_by_height: {} } : r)) };
+    const res = await jsonPut(harness(t, CO_A, ['*']).app, '/sofa-combos/sc-a', {
+      pricesByHeight: { '24': 210000, '28': 220000, '30': 230000 },
+      effectiveFrom: '2026-10-29',
+    });
+    expect(res.status).toBe(201);
+    const minted = t.sofa_combo_pricing.find((r) => r.company_id === CO_A && r.effective_from === '2026-10-29');
+    expect(minted?.prices_by_height).toEqual({ '24': 210000, '28': 220000, '30': 230000 });
+    expect(minted?.selling_prices_by_height).toEqual({});
+  });
 });
 
 // ── Finding 5 — rack create validates the target warehouse's company ─────────
@@ -284,6 +298,23 @@ describe('suppliers POST /:id/bindings[/batch] — supplier ownership', () => {
     });
     expect(res.status).toBe(404);
     expect(t.supplier_material_bindings).toHaveLength(0);
+  });
+
+  test("a batch row arriving as main demotes the item's other main in this company only (one main per item)", async () => {
+    const t = {
+      suppliers: [...suppliersRows(), { id: 'sup-a2', company_id: CO_A }],
+      supplier_material_bindings: [
+        { id: 'old', supplier_id: 'sup-a2', company_id: CO_A, material_kind: 'mfg_product', item_code: 'X', is_main_supplier: true },
+        { id: 'other-co', supplier_id: 'sup-b', company_id: CO_B, material_kind: 'mfg_product', item_code: 'X', is_main_supplier: true },
+      ] as Row[],
+    };
+    const res = await jsonPost(harness(t, CO_A, ['*']).app, '/suppliers/sup-a/bindings/batch', {
+      bindings: [{ ...bindingBody(), isMainSupplier: true }],
+    });
+    expect(res.status).toBeLessThan(300);
+    const mainsA = t.supplier_material_bindings.filter((r) => r.company_id === CO_A && r.item_code === 'X' && r.is_main_supplier);
+    expect(mainsA.map((r) => r.supplier_id)).toEqual(['sup-a']);
+    expect(t.supplier_material_bindings.find((r) => r.id === 'other-co')!.is_main_supplier).toBe(true);
   });
 });
 

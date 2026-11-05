@@ -89,6 +89,7 @@ export function TeamMemberProfile({
 
   // Assignment draft — starts from the live row, saved as one PATCH diff.
   const [draft, setDraft] = useState(() => ({
+    name: member.name ?? "",
     department_id: member.department_id,
     division: divisionOf(member) ?? "",
     position_id: member.position_id,
@@ -98,6 +99,7 @@ export function TeamMemberProfile({
   }));
 
   const dirty =
+    (draft.name.trim() || null) !== (member.name?.trim() || null) ||
     draft.department_id !== member.department_id ||
     (draft.division.trim() || null) !== divisionOf(member) ||
     draft.position_id !== member.position_id ||
@@ -165,6 +167,8 @@ export function TeamMemberProfile({
     setSaving(true);
     try {
       const patch: Record<string, unknown> = {};
+      if ((draft.name.trim() || null) !== (member.name?.trim() || null))
+        patch.name = draft.name.trim() || null;
       if (draft.department_id !== member.department_id)
         patch.department_id = draft.department_id;
       if ((draft.division.trim() || null) !== divisionOf(member))
@@ -333,9 +337,22 @@ export function TeamMemberProfile({
                 size={56}
               />
               <div className="min-w-0">
-                <div className="truncate font-serif text-[20px] font-semibold text-ink">
-                  {member.name || member.email}
-                </div>
+                {canManage ? (
+                  // Editable in place — folded into the same draft/Save as Assignment,
+                  // so renaming a member needs no separate panel. Empty falls back to
+                  // the email as the display name (member.name || member.email).
+                  <input
+                    aria-label="Name"
+                    value={draft.name}
+                    onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                    placeholder={member.email}
+                    className="-mx-1.5 w-full rounded-md border border-transparent px-1.5 py-0.5 font-serif text-[20px] font-semibold text-ink outline-none hover:border-border focus:border-primary"
+                  />
+                ) : (
+                  <div className="truncate font-serif text-[20px] font-semibold text-ink">
+                    {member.name || member.email}
+                  </div>
+                )}
                 <div className="font-mono text-[11px] text-ink-muted">{empCode(member.id)}</div>
                 <div className="mt-1.5">
                   <Badge tone={status.tone}>{status.label}</Badge>

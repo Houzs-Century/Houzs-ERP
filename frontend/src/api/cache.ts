@@ -103,8 +103,16 @@ export function clearAll(): void {
   invalidate("/api");
 }
 
+/** Families whose writes change what another family reads: a bill on an event's
+ *  sales report is read back through the Books not complete report and the P&L,
+ *  both under /api/projects. */
+const ALSO_INVALIDATES: Record<string, string> = { "/api/project-sales-bills": "/api/projects" };
+
 /** A mutation on `/api/<resource>/...` invalidates that whole resource. */
 export function invalidateForMutation(path: string): void {
   const m = path.match(/^(\/api\/[^/?]+)/);
-  if (m) invalidate(m[1]);
+  if (!m) return;
+  invalidate(m[1]);
+  const also = ALSO_INVALIDATES[m[1]];
+  if (also) invalidate(also);
 }

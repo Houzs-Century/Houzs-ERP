@@ -53,11 +53,12 @@ import { fmtSen } from "@2990s/shared";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3";
+type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3" | "PRICE_4";
 const TIER_LABELS: Record<Tier, string> = {
   PRICE_1: "Tier 1",
   PRICE_2: "Tier 2",
   PRICE_3: "Tier 3",
+  PRICE_4: "Tier 4",
 };
 
 type ProductModel = {
@@ -159,7 +160,7 @@ export function VariantsTab() {
       new Set(modelSkus.map((s) => s.size_code ?? "").filter(Boolean)),
     ).sort();
   }, [selectedModel, modelSkus]);
-  const allTiers: Tier[] = ["PRICE_1", "PRICE_2", "PRICE_3"];
+  const allTiers: Tier[] = ["PRICE_1", "PRICE_2", "PRICE_3", "PRICE_4"];
   const allColours = useMemo<string[]>(() => {
     return [...(selectedModel?.allowed_options?.fabrics ?? [])].sort();
   }, [selectedModel]);

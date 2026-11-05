@@ -11,7 +11,7 @@
 // bar and point carries a tooltip with the figure AND its share; a partial
 // period's label already wears its " *" when the card hands it in.
 // ----------------------------------------------------------------------------
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 
 export type ChartSeries = {
   key: string;
@@ -39,6 +39,19 @@ export type DashboardChartProps = {
   unit?: 'sen' | 'pct' | 'ratio';
   height?: number;
   ariaLabel: string;
+  /* ── The report charts (the owner's Claude Design, batch 6 §4.1) ── */
+  /** Periods inside the chosen range: shaded behind their bars, labels petrol and bold. */
+  shaded?: boolean[];
+  /** A press on a period's column (the reports open that month). */
+  onPick?: (i: number) => void;
+  /** The card a pointed column shows beside it — never over its bars. */
+  hoverCard?: (i: number) => ReactNode;
+  /** A line under each period's label (the net under the bars); a loss reads red. */
+  notes?: Array<{ text: string; loss?: boolean } | null>;
+  /** The words a column's button reads for a screen reader. */
+  pickLabel?: (i: number) => string;
+  /** The legend under the chart; a report chart draws its own above it. */
+  legend?: boolean;
 };
 
 /** An axis tick as short as it can be: 1.2m, 120k, 1,234; a % as 40%. */
@@ -83,8 +96,14 @@ const DEFAULT_W = 760;
 const MIN_W = 700;
 const PAD = { top: 14, right: 16, bottom: 34, left: 60 };
 
-export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit = 'sen', height = 260, ariaLabel }: DashboardChartProps) => {
+export const DashboardChart = ({
+  labels, bars, stacked = false, lines = [], unit = 'sen', height = 260, ariaLabel, shaded, onPick, hoverCard, notes, pickLabel, legend = true,
+}: DashboardChartProps) => {
   const n = labels.length;
+  /* The column a pointer rests on (report charts): tinted, with its card beside it. */
+  const [hover, setHover] = useState<number | null>(null);
+  const picking = Boolean(onPick || hoverCard);
+  const hasNotes = Boolean(notes?.some((x) => x));
   /* Drawn at the card's own width, one SVG unit per CSS pixel. The canvas used
      to be a fixed 760 scaled to the card, so a wide screen blew the chart up
      and its 11px labels with it while the table beneath stayed 13px (owner
@@ -104,8 +123,10 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
   const rightLines = lines.filter((l) => l.axis === 'right');
   const leftLines = lines.filter((l) => l.axis !== 'right');
   const padRight = rightLines.length > 0 ? 48 : PAD.right;
+  /* A second line under the labels needs its own room. */
+  const padBottom = hasNotes ? PAD.bottom + 16 : PAD.bottom;
   const plotW = W - PAD.left - padRight;
-  const plotH = height - PAD.top - PAD.bottom;
+  const plotH = height - PAD.top - padBottom;
   /* The columns a period draws: one pile of every series, or a pile per named stack and a column per loose series, in first appearance. */
   const columns: ChartSeries[][] = stacked ? [bars] : (() => {
     const piles = new Map<string, ChartSeries[]>();
@@ -158,9 +179,24 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
 
   const axisColor = 'var(--c-line, rgba(34,31,32,0.25))';
   const textStyle = { fontSize: 12, fill: 'currentColor', opacity: 0.75 } as const;
+  /* Report charts: the shaded period's labels in petrol, bold. */
+  const labelStyle = (i: number) => (shaded?.[i] ? { ...textStyle, fill: 'var(--fin-petrol, #16695f)', opacity: 1, fontWeight: 700 } : textStyle);
+  const colX = (i: number): number => PAD.left + slot * i;
+  /* The card sits beside the pointed column, on the side with room, never over its bars. */
+  const cardPos = (i: number) => (i < n / 2 ? { left: colX(i) + slot + 6 } : { right: W - colX(i) + 6 });
   return (
-    <figure ref={holder} style={{ margin: 0, overflowX: 'auto' }}>
+    <figure ref={holder} style={{ margin: 0, overflowX: 'auto', position: 'relative' }}>
       <svg viewBox={`0 0 ${W} ${height}`} width={W} height={height} role="img" aria-label={ariaLabel} style={{ display: 'block', color: 'inherit', maxWidth: 'none' }}>
+        {/* The chosen period, shaded behind its columns; the pointed column tinted, underlined. */}
+        {shaded?.map((on, i) => (on ? (
+          <rect key={`s${i}`} x={colX(i) + 2} y={PAD.top} width={Math.max(slot - 4, 1)} height={plotH} rx={5} style={{ fill: 'var(--fin-info-bg, #eaf3f1)' }} data-shade={i} />
+        ) : null))}
+        {hover !== null && (
+          <g data-hover={hover}>
+            <rect x={colX(hover) + 2} y={PAD.top} width={Math.max(slot - 4, 1)} height={plotH} rx={5} style={{ fill: '#e3efec' }} />
+            <line x1={colX(hover) + 2} x2={colX(hover) + slot - 2} y1={PAD.top + plotH} y2={PAD.top + plotH} style={{ stroke: 'var(--fin-petrol, #16695f)' }} strokeWidth={2} />
+          </g>
+        )}
         {/* The left axis' ticks and grid. */}
         {left.ticks.map((t) => (
           <Fragment key={`l${t}`}>
@@ -171,10 +207,16 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
         {rightLines.length > 0 && right.ticks.map((t) => (
           <text key={`r${t}`} x={W - padRight + 6} y={yOf(t, right) + 4} textAnchor="start" style={textStyle}>{fmtAxis(t, 'pct')}</text>
         ))}
-        {/* The periods. */}
+        {/* The periods, and the line under each where the chart has one. */}
         {labels.map((label, i) => (
-          <text key={`x${i}`} x={xCenter(i)} y={height - PAD.bottom + 16} textAnchor="middle" style={textStyle}>{label}</text>
+          <text key={`x${i}`} x={xCenter(i)} y={height - padBottom + 16} textAnchor="middle" style={labelStyle(i)}>{label}</text>
         ))}
+        {notes?.map((note, i) => (note ? (
+          <text key={`n${i}`} x={xCenter(i)} y={height - padBottom + 31} textAnchor="middle" data-note={i}
+            style={{ fontSize: 10.5, fill: note.loss ? 'var(--fin-late-fg, #a83434)' : 'var(--fin-petrol-ink, #0c3f39)', fontVariantNumeric: 'tabular-nums' }}>
+            {note.text}
+          </text>
+        ) : null))}
         {/* The bars. */}
         {barRects.map((r) => (
           <rect key={r.key} x={r.x} y={r.y} width={r.w} height={Math.max(r.h, r.h === 0 ? 0 : 1)} fill={r.color} rx={1.5} data-group={r.group} data-period={r.period}>
@@ -194,15 +236,48 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
             ))}
           </g>
         ))}
+        {/* Report charts: a column is one target — pointed, it shows its card; pressed, it opens. */}
+        {picking && labels.map((label, i) => (
+          <rect
+            key={`h${i}`}
+            x={colX(i)}
+            y={PAD.top}
+            width={slot}
+            height={plotH + padBottom - 4}
+            fill="transparent"
+            data-pick={i}
+            role={onPick ? 'button' : undefined}
+            tabIndex={onPick ? 0 : undefined}
+            aria-label={onPick ? (pickLabel?.(i) ?? label) : undefined}
+            style={{ cursor: onPick ? 'pointer' : 'default', outline: 'none' }}
+            onClick={() => onPick?.(i)}
+            onKeyDown={(e) => { if (onPick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPick(i); } }}
+            onMouseEnter={() => setHover(i)}
+            onMouseLeave={() => setHover((h) => (h === i ? null : h))}
+            onFocus={() => setHover(i)}
+            onBlur={() => setHover((h) => (h === i ? null : h))}
+          />
+        ))}
       </svg>
-      <figcaption style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', padding: '4px 2px 0' }}>
-        {bars.map((s) => (
-          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: 'inline-block' }} />{s.label}</span>
-        ))}
-        {lines.map((l) => (
-          <span key={l.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 16, height: 0, borderTop: `2px ${l.dashed ? 'dashed' : 'solid'} ${l.color}`, display: 'inline-block' }} />{l.label}</span>
-        ))}
-      </figcaption>
+      {hoverCard && hover !== null && (
+        <div role="tooltip" data-hover-card={hover} style={{
+          position: 'absolute', top: 4, ...cardPos(hover), zIndex: 3, pointerEvents: 'none', boxSizing: 'border-box', minWidth: 212, maxWidth: 300,
+          padding: '10px 12px', background: 'var(--fin-surface, #ffffff)', border: '1px solid var(--fin-line, #d6d9d2)', borderRadius: 8,
+          boxShadow: '0 1px 0 rgba(17,24,16,0.06), 0 12px 28px -12px rgba(17,24,16,0.32)', fontSize: 12, color: 'var(--fin-ink, #11140f)',
+        }}>
+          {hoverCard(hover)}
+        </div>
+      )}
+      {legend && (
+        <figcaption style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', padding: '4px 2px 0' }}>
+          {bars.map((s) => (
+            <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: 'inline-block' }} />{s.label}</span>
+          ))}
+          {lines.map((l) => (
+            <span key={l.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 16, height: 0, borderTop: `2px ${l.dashed ? 'dashed' : 'solid'} ${l.color}`, display: 'inline-block' }} />{l.label}</span>
+          ))}
+        </figcaption>
+      )}
     </figure>
   );
 };

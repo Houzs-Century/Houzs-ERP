@@ -9,8 +9,9 @@
 // scm/lib/fair-options.ts — this file renders what it is given and never
 // re-derives it.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { useDebouncedValue } from './hooks';
 import { writeFailedAs } from './mutation-error';
 import { fmtDayMonthRange } from '../../shared/format';
 
@@ -144,6 +145,30 @@ export function useFairDefault(enabled: boolean) {
     queryFn: () => authedFetch<FairDefaultResponse>('/mfg-sales-orders/fair-default'),
     enabled,
     staleTime: 60_000,
+  });
+}
+
+/** What POST /fair-booth is asked about: the picked event, and the order — an
+ *  edit by its number, a new one by its lines (the brand comes from them). */
+export type FairBoothRequest = {
+  fairVenue: string; fairOrganizer: string; fairStart: string; fairEnd: string | null;
+  docNo: string | null;
+  items: ReadonlyArray<{ itemCode: string; itemGroup: string | null }>;
+};
+
+/** Whether the form asks which BOOTH of the picked event (owner 2026-10-27):
+ *  `ask` only when the save could not tell, with the event's booths to offer. */
+export type FairBoothResponse = { ask: boolean; booths: FairBooth[]; message: string | null };
+
+export function useFairBooth(req: FairBoothRequest | null) {
+  const body = useDebouncedValue(req ? JSON.stringify(req) : null, 400);
+  return useQuery({
+    queryKey: ['fair-booth', body],
+    queryFn: () => authedFetch<FairBoothResponse>('/mfg-sales-orders/fair-booth', { method: 'POST', body: body! }),
+    enabled: body != null,
+    staleTime: 60_000,
+    /* A line edit re-asks; the pick stays on screen meanwhile. */
+    placeholderData: keepPreviousData,
   });
 }
 

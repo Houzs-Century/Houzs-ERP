@@ -301,6 +301,14 @@ describe('mandatory Sales Order header compare-and-swap', () => {
     expect(row).toMatchObject({ proceeded_at: '2026-07-20T01:00:00.000Z', version: 1 });
   });
 
+  test('a name/phone edit without recustomer still re-resolves the customer (PWP codes follow)', async () => {
+    const { app, getCasArgs } = harness();
+
+    const response = await patchHeader(app, { debtorName: 'New Customer', phone: '+60129999999', version: 1 });
+    expect(response.status).toBe(200);
+    expect(getCasArgs()).toMatchObject({ p_recustomer: true, p_customer_name: 'New Customer' });
+  });
+
   test('a follower failure rolls back the header CAS as one transaction', async () => {
     const { app, row } = harness({ followerApplied: false });
 

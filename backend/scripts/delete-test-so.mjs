@@ -61,7 +61,7 @@ import postgres from "postgres";
    postgres:16 can run it first — tests-pg/deleteTestSoRefs.pg.test.ts. */
 import {
   AUDIT, AUDIT_KEEP, CHILD, DOWNSTREAM, UNCLASSIFIED,
-  classifyReference, controlDrift, controlSnapshot, sweepReferences,
+  classifyReference, controlDrift, ledgerBlockers, controlSnapshot, sweepReferences,
 } from "./lib/delete-test-so-refs.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -103,11 +103,21 @@ const refuse = (msg) => { throw new Refused(msg); };
 // schema, so a rename downgrades to "skip" rather than silently counting 0 —
 // which is what made the payments guard below unreachable before.
 const CHILD_TABLES = [
+  /* Made from the order's one payment (acc/receipts.ts, acc/deposit-invoices.ts),
+     so they go with it - and BEFORE it, so nothing ever points at a deleted
+     payment. ledgerBlockers() has already refused on a posted journal or a FORMAL
+     receipt by the time these run. */
+  { table: "scm.acc_official_receipts",    cols: ["doc_no"] },
+  { table: "scm.acc_deposit_invoices",     cols: ["so_doc_no"] },
   { table: "scm.mfg_sales_order_items",    cols: ["doc_no"] },
   { table: "scm.mfg_sales_order_payments", cols: ["so_doc_no", "doc_no"] },
   { table: "scm.mfg_sales_order_activity", cols: ["doc_no"] },
   { table: "scm.so_amendments",            cols: ["so_doc_no"] },
+  /* "Request cancellation" on the order. The table also holds PO and DO requests,
+     so only the SO's own rows go. */
+  { table: "scm.document_cancel_requests", cols: ["doc_number"], where: "doc_type = 'SO'" },
 ];
+const andWhere = (t) => (t.where ? ` AND ${t.where}` : "");
 
 // Resolve which of `cols` actually exists on (schema, table) in THIS database.
 // Returns null when the table or every candidate column is absent (D1 mirror,
@@ -255,6 +265,12 @@ async function main() {
     console.log("");
   }
 
+  const ledger = await ledgerBlockers(db, DOC_NO);
+  for (const l of ledger) console.log(`LEDGER  : ${l}`);
+  if (ledger.length > 0) {
+    refuse(`${ledger.length} posted ledger item(s) would be stranded by this delete - see the LEDGER lines above.`);
+  }
+
   // (3) Discover every row that references it. Print BEFORE deleting so the
   // dry-run is a complete picture, not a summary that hides something.
   // A (table, col) that isn't in the live schema logs "skip" rather than
@@ -269,7 +285,7 @@ async function main() {
       childCounts[t.table] = null;
       continue;
     }
-    const rows = await db.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+    const rows = await db.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
     childCounts[t.table] = rows[0].n;
     console.log(`Child   : ${t.table.padEnd(40)} ${col.padEnd(12)} rows=${rows[0].n}`);
   }
@@ -383,7 +399,7 @@ async function main() {
     for (const t of CHILD_TABLES) {
       const col = childCols[t.table];
       if (!col) continue;
-      const r = await sql.unsafe(`DELETE FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+      const r = await sql.unsafe(`DELETE FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
       console.log(`Deleted : ${t.table.padEnd(40)} rows=${r.count}`);
     }
     const r = await sql`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO}`;
@@ -408,7 +424,7 @@ async function main() {
     for (const t of CHILD_TABLES) {
       const col = childCols[t.table];
       if (!col) continue;
-      const [r] = await verify.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+      const [r] = await verify.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
       console.log(`  ${t.table.padEnd(40)} ${col.padEnd(12)} rows=${r.n}`);
       if (r.n !== 0) shape.push(`${t.table}.${col} still has ${r.n} row(s)`);
     }

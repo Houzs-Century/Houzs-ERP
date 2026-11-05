@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { isDefaultMrpView, MRP_REFRESH_COMPANY_IDS } from '../src/scm/lib/mrp-snapshot';
+import { describe, expect, it, vi } from 'vitest';
+import { deferMrpSnapshotRefresh, isDefaultMrpView, MRP_REFRESH_COMPANY_IDS } from '../src/scm/lib/mrp-snapshot';
+
+const { computeMrp } = vi.hoisted(() => ({ computeMrp: vi.fn() }));
+vi.mock('../src/scm/routes/mrp', () => ({ computeMrp }));
+vi.mock('../src/services/agents/procurement-learning', () => ({
+  loadLeadBuffers: async () => ({ supplierBufferDays: {}, seasonBufferDays: {} }),
+}));
 
 /* The snapshot is served ONLY for the exact params it was computed with (no
    category/warehouse filter, undated hidden) — catFilter/whFilter change the
@@ -21,5 +27,45 @@ describe('isDefaultMrpView', () => {
 describe('MRP_REFRESH_COMPANY_IDS', () => {
   it('covers the two live tenants', () => {
     expect([...MRP_REFRESH_COMPANY_IDS].sort()).toEqual([1, 2]);
+  });
+});
+
+describe('deferMrpSnapshotRefresh', () => {
+  function ctx() {
+    const waited: Promise<unknown>[] = [];
+    const upserts: Array<Record<string, unknown>> = [];
+    const sb = { from: () => ({ upsert: async (row: Record<string, unknown>) => { upserts.push(row); return { error: null }; } }) };
+    const c = { env: { DB: {} }, executionCtx: { waitUntil: (p: Promise<unknown>) => waited.push(p) } };
+    return { c, sb, waited, upserts };
+  }
+
+  it('recomputes and stores the default view for a cron-refreshed company', async () => {
+    computeMrp.mockReset().mockResolvedValue({ skus: [], sofaSets: [] });
+    const { c, sb, waited, upserts } = ctx();
+    deferMrpSnapshotRefresh(c, sb, 2, 'po-cancel');
+    expect(waited).toHaveLength(1);
+    await waited[0];
+    expect(computeMrp.mock.calls[0][1]).toMatchObject({ catFilter: null, whFilter: null, includeUndated: false, companyId: 2 });
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({ company_id: 2, result: { skus: [], sofaSets: [] } });
+  });
+
+  it('never seeds a snapshot for a company the cron does not keep fresh', () => {
+    computeMrp.mockReset();
+    const { c, sb, waited } = ctx();
+    deferMrpSnapshotRefresh(c, sb, 99, 'po-cancel');
+    expect(waited).toHaveLength(0);
+    expect(computeMrp).not.toHaveBeenCalled();
+  });
+
+  it('a failed recompute is swallowed and stores nothing', async () => {
+    computeMrp.mockReset().mockRejectedValue(new Error('boom'));
+    const { c, sb, waited, upserts } = ctx();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    deferMrpSnapshotRefresh(c, sb, 1, 'po-cancel');
+    await expect(waited[0]).resolves.toBeUndefined();
+    expect(upserts).toHaveLength(0);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
   });
 });

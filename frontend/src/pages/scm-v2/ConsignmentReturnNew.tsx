@@ -51,6 +51,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -302,7 +303,7 @@ export const ConsignmentReturnNew = () => {
       },
       {
         onSuccess: (res: { id: string; returnNumber: string }) => {
-          navigate(`/scm/consignment-returns/${res.id}`);
+          navigate(afterCreatePath(`/scm/consignment-returns/${res.id}`, sourceDocPath.consignmentNote(fromConsignmentNote)));
         },
         onError: (err) => notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
       },

@@ -49,6 +49,9 @@ export interface RawTripRow {
   helper_2_id: string | null;
   warehouse_id: string | null;
   total_distance_km: number | string | null;
+  planned_depart_at: string | null;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
 }
 
 /** A trip_stop row, dual-read already resolved. */
@@ -103,6 +106,11 @@ export interface DayTrip {
   status: string;
   is_outsourced: boolean;
   total_distance_km: number | null;
+  /** Planned departure (mig 20261101T0900) vs the actual clock-in / clock-out
+   *  departure (mig 0053). ISO strings; null until set. */
+  planned_depart_at: string | null;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   lorry: MasterLorry | null;
   driver: MasterName | null;
   helpers: MasterName[];
@@ -228,6 +236,9 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
       status: (t.status ?? 'PLANNED').toUpperCase(),
       is_outsourced: t.is_outsourced === true,
       total_distance_km: distKm,
+      planned_depart_at: t.planned_depart_at ?? null,
+      clock_in_at: t.clock_in_at ?? null,
+      clock_out_at: t.clock_out_at ?? null,
       lorry,
       driver,
       helpers,

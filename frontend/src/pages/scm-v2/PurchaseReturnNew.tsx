@@ -55,6 +55,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -356,7 +357,7 @@ export const PurchaseReturnNew = () => {
       if (!createRes.movementErrors?.length) {
         await notify({ title: `Purchase Return ${createRes.returnNumber} created + posted`, body: 'Stock OUT recorded.' });
       }
-      navigate(`/scm/purchase-returns/${createRes.id}`);
+      navigate(afterCreatePath(`/scm/purchase-returns/${createRes.id}`, sourceDocPath.goodsReceipt(grnId) ?? sourceDocPath.purchaseOrder(poId)));
     } catch (err) {
       notify({ title: 'Save failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' });
     }

@@ -212,6 +212,9 @@ export interface DataTableProps<T, L = never> {
    *  persists it and feeds it back through `defaultSort`. Rows are draggable
    *  ONLY while no column sort is active — a column sort owns the order then. */
   onRowReorder?: (orderedKeys: string[]) => void;
+  /** Excel-style range on number cells (HC-0164): press a number cell and drag
+   *  (or Shift+click) to mark a block; a pill shows its Sum / Count / Average. */
+  cellRangeSum?: boolean;
   /** Show the "drag a column header here to group" banner (SCM DataGrid
    *  parity): the user groups by any number of columns, outermost first, and
    *  the grouping is saved with the layout. Overrides `groupBy` while set. */
@@ -224,6 +227,9 @@ export interface DataTableProps<T, L = never> {
    *  in the Columns picker, team-wide. A layout manager may overwrite one for
    *  everyone ("Update with current columns") and reset it back. */
   layoutSeeds?: LayoutSeed[];
+  /** Fired with the seed's own `id` when the user picks one of `layoutSeeds`,
+   *  so a page can narrow its rows to match (SG Order -> SG region chip). */
+  onApplyLayoutSeed?: (seedId: string) => void;
   /** Column keys hidden on screen only, never saved (a board narrowing itself
    *  while its map is open). */
   overlayHidden?: readonly string[];
@@ -235,6 +241,10 @@ export interface DataTableProps<T, L = never> {
   /** Compact grid inside another table's expanded row: no toolbar, no card
    *  view, tighter cells. Header menus still work. */
   embedded?: boolean;
+  /** Show a Fit toggle that shrinks the grid until every visible column fits
+   *  the screen width, so a wide board reads (and screenshots) without
+   *  scrolling sideways. A personal preference per table. */
+  fitToWidth?: boolean;
   /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
   exportName?: string;
   /** Toolbar button text, default "Export" — override when a second export

@@ -38,6 +38,7 @@ import {
   type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow, groupEarliestDate,
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
+import { isSofaAccessory } from './mrp-sofa-accessory';
 import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -540,14 +541,18 @@ export const Mrp = () => {
            batches that can never ship together;
          · the set already has units ON ORDER (the plan names its PO) — a
            second PO for the missing module is a second batch. Complete THAT PO
-           instead (PO amendment), which is what the chip is pointing at. */
-    const lineByItem = new Map<string, { line: MrpLine; suppliers: MrpSku['suppliers'] }>();
-    for (const s of skus) for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, suppliers: s.suppliers });
+           instead (PO amendment), which is what the chip is pointing at.
+       Both refusals look at the sofa MODULES only (HC-0203, Sim 2026-11-02): a
+       Sofa Accessory (stool, pillow) is not part of the dye lot the allocator
+       binds, and po-grouping already splits a different-supplier accessory onto
+       its own PO — STOOL 1 is made by Dorsettloft only, the set by Hookka. */
+    const lineByItem = new Map<string, { line: MrpLine; accessory: boolean }>();
+    for (const s of skus) for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, accessory: isSofaAccessory(s.category) });
     const supplierBySo = new Map<string, Set<string>>();
     const onOrderBySo = new Map<string, string>();
     for (const p of picks) {
       const hit = lineByItem.get(p.soItemId);
-      if (!hit) continue;
+      if (!hit || hit.accessory) continue;
       const sup = supplierBySo.get(hit.line.soDocNo) ?? new Set<string>();
       sup.add(p.supplierId ?? '');
       supplierBySo.set(hit.line.soDocNo, sup);
@@ -559,7 +564,7 @@ export const Mrp = () => {
         picks: [], orderedCodes, units: 0,
         blocked: {
           title: 'One supplier per sofa set',
-          body: `A sofa set is one dye lot, so every module of an order goes on ONE purchase order. Pick the same supplier for all modules of:\n${splitDocs.map((d) => `• ${d}`).join('\n')}`,
+          body: `A sofa set is one dye lot, so every sofa module of an order goes on ONE purchase order (pillows and stools may use their own supplier). Pick the same supplier for all sofa modules of:\n${splitDocs.map((d) => `• ${d}`).join('\n')}`,
         },
       };
     }

@@ -1,13 +1,16 @@
-// Item Groups tab (GL redesign item 1). What is pinned:
+// Item Groups tab (GL redesign item 1), in the redesign (Finance-1a-Setup,
+// batch 6 §6.2). What is pinned:
 //   • an unbound group arrives PRE-FILLED with the suggested defaults and says
 //     so — the sign-off flow: nothing writes until Save;
 //   • Save sends exactly the four drafted accounts for the active company;
-//   • a bound, untouched group says bound and its Save stays disabled;
-//   • the New-group dialog refuses to create until code, name and all four
-//     accounts are given (born bound), and upper-cases the code.
+//   • a bound, untouched group says Bound and offers no Save; a change to it
+//     says so and Undo brings it back;
+//   • Turn off / Turn on sit in the row's ⋯ and its right-click menu;
+//   • the New item group modal refuses until code, name and all four accounts
+//     are given (born bound), and upper-cases the code.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { ItemGroup } from './accounting-phase1-queries';
 
 const bindMutate = vi.fn();
@@ -20,6 +23,7 @@ const GROUPS: ItemGroup[] = [
     bindings: { '2': { purchase: '601-0003', sales: '501-0000', salesReturn: '510-0000', purchaseReturn: '612-0000' } },
   },
   { code: 'BEDLINES', name: 'Bedlines', isActive: true, bindings: {} },
+  { code: 'LAMP', name: 'Lamp', isActive: false, bindings: {} },
 ];
 
 vi.mock('./accounting-phase1-queries', async (importOriginal) => ({
@@ -57,8 +61,13 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
 }));
 
 vi.mock('../../lib/activeCompany', () => ({ getActiveCompanyId: () => 2 }));
+/* The backfill card below the groups has its own test (PiBackfill.test.tsx). */
+vi.mock('./PiBackfill', () => ({ PiBackfillCard: () => null }));
 
 import { ItemGroupsTab } from './ItemGroups';
+
+const rowOf = (code: string) => document.querySelector(`tr[data-group="${code}"]`) as HTMLElement;
+const saveIn = (row: HTMLElement) => within(row).queryByRole('button', { name: /^Save/ });
 
 beforeEach(() => {
   bindMutate.mockClear();
@@ -67,18 +76,25 @@ beforeEach(() => {
 });
 
 describe('the sign-off flow', () => {
-  test('an unbound group arrives pre-filled with the suggestion, marked unsaved', () => {
+  test('the design’s line and the company the bindings are for', () => {
+    render(<ItemGroupsTab />);
+    expect(screen.getByText('Each product group’s ledger accounts · nothing is written until a row is saved')).toBeTruthy();
+    expect(screen.getByText(/^For 2990\. Purchase and purchase-return slots take cost and expense accounts/)).toBeTruthy();
+  });
+
+  test('an unbound group arrives pre-filled with the suggestion, marked not saved', () => {
     render(<ItemGroupsTab />);
     // BEDLINES has no saved binding for company 2 → suggested defaults shown.
-    expect(screen.getByText('建议 · unsaved')).toBeTruthy();
+    expect(within(rowOf('BEDLINES')).getByText('Suggested · not saved')).toBeTruthy();
     const purchase = screen.getByLabelText('BEDLINES Purchase account') as HTMLInputElement;
     expect(purchase.value).toContain('602-0000');
+    /* A group with no suggestion and no binding is plainly unbound. */
+    expect(within(rowOf('LAMP')).getByText('Unbound')).toBeTruthy();
   });
 
   test('Save on the suggested row sends the four drafted accounts for the active company', () => {
     render(<ItemGroupsTab />);
-    const row = screen.getByText('BEDLINES').closest('tr') as HTMLElement;
-    const save = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'Save')!;
+    const save = saveIn(rowOf('BEDLINES'))!;
     expect(save.hasAttribute('disabled')).toBe(false);
     fireEvent.click(save);
     expect(bindMutate).toHaveBeenCalledTimes(1);
@@ -89,21 +105,42 @@ describe('the sign-off flow', () => {
     });
   });
 
-  test('a bound, untouched group says bound and cannot be re-saved', () => {
+  test('a bound, untouched group says Bound and offers no Save', () => {
     render(<ItemGroupsTab />);
-    expect(screen.getByText('bound')).toBeTruthy();
-    const row = screen.getByText('SOFA').closest('tr') as HTMLElement;
-    const save = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'Save')!;
-    expect(save.hasAttribute('disabled')).toBe(true);
+    expect(within(rowOf('SOFA')).getByText('Bound')).toBeTruthy();
+    expect(saveIn(rowOf('SOFA'))).toBeNull();
   });
 
-  test('turning a group off goes through the patch, bindings untouched', () => {
+  test('a change to a bound group says so, Save appears, Undo brings it back', () => {
     render(<ItemGroupsTab />);
-    const row = screen.getByText('SOFA').closest('tr') as HTMLElement;
-    const off = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'Turn off')!;
-    fireEvent.click(off);
-    expect(patchMutate).toHaveBeenCalledWith({ code: 'SOFA', isActive: false });
+    const input = screen.getByLabelText('SOFA Purchase account');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '602-0000' } });
+    fireEvent.mouseDown(screen.getAllByText(/^602-0000 — /)[0]!);
+    expect(within(rowOf('SOFA')).getByText('Changed · not saved')).toBeTruthy();
+    expect(saveIn(rowOf('SOFA'))).not.toBeNull();
+    fireEvent.click(within(rowOf('SOFA')).getByText('Undo'));
+    expect(within(rowOf('SOFA')).getByText('Bound')).toBeTruthy();
     expect(bindMutate).not.toHaveBeenCalled();
+  });
+
+  test('turning a group off goes through the patch from the row’s ⋯, bindings untouched', () => {
+    render(<ItemGroupsTab />);
+    fireEvent.click(screen.getByLabelText('More for SOFA'));
+    const off = screen.getByRole('menuitem', { name: 'Turn off' });
+    expect(off.getAttribute('title')).toBe('Hide from new products (bindings stay)');
+    fireEvent.click(off);
+    expect(patchMutate.mock.calls[0][0]).toEqual({ code: 'SOFA', isActive: false });
+    expect(bindMutate).not.toHaveBeenCalled();
+  });
+
+  test('right-click on an off group offers Turn on', () => {
+    render(<ItemGroupsTab />);
+    fireEvent.contextMenu(rowOf('LAMP'));
+    const on = screen.getByRole('menuitem', { name: 'Turn on' });
+    expect(on.getAttribute('title')).toBe('Offer to new products again');
+    fireEvent.click(on);
+    expect(patchMutate.mock.calls[0][0]).toEqual({ code: 'LAMP', isActive: true });
   });
 
   test('the picker offers only its ledger side, under section headers (owner 2026-09-05)', () => {
@@ -117,7 +154,7 @@ describe('the sign-off flow', () => {
     expect(screen.queryByText(/CASH AT BANK/)).toBeNull();
     expect(screen.queryByText(/SALES OF FURNITURE/)).toBeNull();
     fireEvent.blur(purchase);
-    const sales = screen.getByLabelText('BEDLINES Sales Return account');
+    const sales = screen.getByLabelText('BEDLINES Sales return account');
     fireEvent.focus(sales);
     /* INCOME list: 510 files under SALES ADJUSTMENTS; expense rows stay out. */
     expect(screen.getByText('SALES ADJUSTMENTS')).toBeTruthy();
@@ -125,29 +162,35 @@ describe('the sign-off flow', () => {
   });
 });
 
-describe('new group — born bound', () => {
-  test('Create stays disabled until code, name and all four accounts are given, then upper-cases the code', () => {
+describe('new item group — born bound', () => {
+  test('the modal names what is missing until code, name and all four accounts are given, then upper-cases the code', () => {
     render(<ItemGroupsTab />);
     fireEvent.click(screen.getByText('New group'));
-    const dialog = screen.getByRole('dialog');
-    const createBtn = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Create')!;
-    expect(createBtn.hasAttribute('disabled')).toBe(true);
+    const dialog = screen.getByRole('dialog', { name: 'New item group' });
+    const create = within(dialog).getByText('Create group');
+    fireEvent.click(create);
+    expect(within(dialog).getByRole('alert').textContent).toBe('The code is letters, digits or _, starting with a letter, e.g. CURTAIN.');
+
+    fireEvent.change(screen.getByLabelText('Group code'), { target: { value: 'sofa' } });
+    fireEvent.click(create);
+    expect(within(dialog).getByRole('alert').textContent).toBe('SOFA already exists.');
 
     fireEvent.change(screen.getByLabelText('Group code'), { target: { value: 'curtain' } });
     fireEvent.change(screen.getByLabelText('Group name'), { target: { value: 'Curtain' } });
-    expect(createBtn.hasAttribute('disabled')).toBe(true); // accounts still missing
+    fireEvent.click(create);
+    expect(within(dialog).getByRole('alert').textContent).toBe('A new group needs all four accounts.');
+    expect(createMutate).not.toHaveBeenCalled();
 
     for (const [slot, code] of [
-      ['Purchase', '601-0003'], ['Sales', '501-0000'], ['Sales Return', '510-0000'], ['Purchase Return', '612-0000'],
+      ['Purchase', '601-0003'], ['Sales', '501-0000'], ['Sales return', '510-0000'], ['Purchase return', '612-0000'],
     ] as const) {
       const input = screen.getByLabelText(`New group ${slot} account`);
       fireEvent.focus(input);
       fireEvent.change(input, { target: { value: code } });
       // The combo picks on MOUSEDOWN (click fires after blur closes the list).
-      fireEvent.mouseDown(screen.getAllByText(new RegExp(`^${code} — `))[0]);
+      fireEvent.mouseDown(screen.getAllByText(new RegExp(`^${code} — `))[0]!);
     }
-    expect(createBtn.hasAttribute('disabled')).toBe(false);
-    fireEvent.click(createBtn);
+    fireEvent.click(create);
     expect(createMutate).toHaveBeenCalledTimes(1);
     expect(createMutate.mock.calls[0][0]).toMatchObject({
       code: 'CURTAIN', name: 'Curtain', companyId: 2,

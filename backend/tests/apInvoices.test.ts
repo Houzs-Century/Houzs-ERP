@@ -189,6 +189,58 @@ describe('the Finance list — both kinds', () => {
     const only = await (await app.request('/ap-invoices?kind=PI')).json() as { rows: Array<Row> };
     expect(only.rows.map((r) => r.kind)).toEqual(['PI']);
   });
+
+  test('each row names its control by the supplier code, and a held purchase invoice says so (Supplier bills)', async () => {
+    /* The fake reads no embeds: each row carries its supplier the way PostgREST hands it over. */
+    const { app } = harness({
+      acc_account_roles: [{ company_id: CO, role: 'AP_OTHER', account_code: '405-0000' }, { company_id: CO, role: 'AP', account_code: '400-0000' }],
+      purchase_invoices: [
+        { id: 'pi-h', company_id: CO, invoice_number: '2990-PI-2609-010', supplier_id: 'sup-t', invoice_date: '2026-09-03', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: true, hold_reason: 'Short delivery', supplier: SUPPLIERS[1] },
+        { id: 'pi-o', company_id: CO, invoice_number: '2990-PI-2609-011', supplier_id: 'sup-t', invoice_date: '2026-09-02', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: false, supplier: SUPPLIERS[1] },
+      ],
+      ap_invoices: [
+        { id: 'api-1', company_id: CO, invoice_number: `2990-API-${yymm}-001`, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 0, status: 'POSTED', supplier: SUPPLIERS[0] },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices')).json() as { rows: Array<Row> };
+    expect(b.rows.map((r) => [r.invoiceNumber, r.controlRole, r.controlCode, r.held, r.holdReason])).toEqual([
+      ['2990-PI-2609-010', 'AP', '400-0000', true, 'Short delivery'],
+      ['2990-PI-2609-011', 'AP', '400-0000', false, null],
+      [`2990-API-${yymm}-001`, 'AP_OTHER', '405-0000', false, null],
+    ]);
+  });
+});
+
+describe('the bill page (batch 4, step 6 — read c7)', () => {
+  test('a bill says what paid it — vouchers by stage, an advance knocked off, a credit note — its journal and its control', async () => {
+    const no = `2990-API-${yymm}-001`;
+    const { app } = harness({
+      ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: no, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 300_000, status: 'PARTIALLY_PAID' }],
+      pv_allocations: [
+        { id: 'al-1', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 200_000, from_advance: false },
+        { id: 'al-2', company_id: CO, pv_id: 'pv-2', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 50_000, from_advance: true },
+        { id: 'al-x', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-other', pi_id: null, amount_sen: 1, from_advance: false },
+      ],
+      payment_vouchers: [
+        { id: 'pv-1', company_id: CO, pv_number: '2990-PV-2609-004', voucher_date: '2026-09-20', status: 'POSTED' },
+        { id: 'pv-2', company_id: CO, pv_number: '2990-PV-2608-001', voucher_date: '2026-08-30', status: 'DRAFT', submitted_at: 'x', checked_at: 'y' },
+      ],
+      acc_credit_note_allocations: [{ id: 'cn-al', company_id: CO, note_id: 'scn-1', ap_invoice_id: 'api-1', amount_sen: 60_000, applied_sen: 50_000 }],
+      acc_credit_notes: [{ id: 'scn-1', company_id: CO, note_number: '2990-SCN-2609-002', note_date: '2026-09-25', status: 'POSTED' }],
+      journal_entries: [
+        { id: 'je-old', company_id: CO, je_no: '2990-JE-2609-0010', source_type: 'API', source_doc_no: no, reversed: true },
+        { id: 'je-new', company_id: CO, je_no: '2990-JE-2609-0031', source_type: 'API', source_doc_no: no, reversed: false },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices/api-1')).json() as { invoice: Row; payments: Row[]; controlCode: string };
+    expect(b.invoice.je_no).toBe('2990-JE-2609-0031');
+    expect(b.controlCode).toBe('405-0000');
+    expect(b.payments.map((p) => [p.kind, p.number, p.stage, p.amountSen, p.fromAdvance])).toEqual([
+      ['PV', '2990-PV-2608-001', 'Checked', 50_000, true],
+      ['PV', '2990-PV-2609-004', 'Approved', 200_000, false],
+      ['SCN', '2990-SCN-2609-002', 'Posted', 50_000, false],
+    ]);
+  });
 });
 
 describe('an AP Payment allocation may name an AP invoice', () => {
@@ -308,5 +360,36 @@ describe('the number follows the document date (owner 2026-09-07: 要根据文�
     const res = await json(app, '/ap-invoices', 'POST', { ...BILL, invoiceDate: '2026-03-31', dueDate: '2026-04-30' });
     expect(res.status, await res.clone().text()).toBe(201);
     expect(((await res.json()) as { invoice: Row }).invoice.invoice_number).toBe('2990-API-2603-001');
+  });
+});
+
+/* A supplier's debit note (owner 2026-10-28: Supplier & Other Creditor CN / DN — 再加
+   supplier DN): the same bill — it raises what we owe, as AutoCount's A/P Debit
+   Note — with doc_kind DN, its own series and its own name in the journal. */
+describe('a supplier debit note is an AP invoice of its own kind', () => {
+  test('mints {co}SDN-YYMM-NNN, posts Dr the line / Cr the AP control as "Supplier debit note", and lists alone with docKind=DN', async () => {
+    const { app, sb } = harness({
+      purchase_invoices: [{ id: 'pi-1', company_id: CO, invoice_number: '2990-PI-2609-001', supplier_id: 'sup-t', invoice_date: '2026-09-02', total_sen: 5_000, paid_sen: 0, status: 'POSTED' }],
+    });
+    expect((await json(app, '/ap-invoices', 'POST', BILL)).status).toBe(201);
+    const res = await json(app, '/ap-invoices', 'POST', {
+      ...BILL, docKind: 'DN', supplierInvoiceRef: 'DN-INV-2609001', lines: [{ description: 'Price difference', debitAccountCode: '900-A002', amountSen: 30_000 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const dn = (await res.json() as { invoice: Row }).invoice;
+    expect(dn).toMatchObject({ invoice_number: `2990-SDN-${yymm}-001`, doc_kind: 'DN', status: 'DRAFT', total_sen: 30_000 });
+    expect((await json(app, `/ap-invoices/${dn.id}/post`, 'POST')).status).toBe(200);
+    const je = sb.tables.journal_entries.find((j) => j.source_doc_no === `2990-SDN-${yymm}-001`)!;
+    expect(je).toMatchObject({ source_type: 'API', posted: true });
+    expect(String(je.narration)).toMatch(/^Supplier debit note 2990-SDN-2609-001 — HOUZS VENTURE HOLDING SDN BHD/);
+    const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(lines.map((l) => [l.account_code, Number(l.debit_sen), Number(l.credit_sen)])).toEqual([['900-A002', 30_000, 0], ['405-0000', 0, 30_000]]);
+    const dns = await (await json(app, '/ap-invoices?docKind=DN', 'GET')).json() as { rows: Row[] };
+    expect(dns.rows.map((r) => [r.invoiceNumber, r.docKind])).toEqual([[`2990-SDN-${yymm}-001`, 'DN']]);
+    const bills = await (await json(app, '/ap-invoices?docKind=INV', 'GET')).json() as { rows: Row[] };
+    expect(bills.rows.map((r) => [r.invoiceNumber, r.docKind]).sort()).toEqual([[`2990-API-${yymm}-001`, 'INV'], ['2990-PI-2609-001', 'INV']]);
+    const bad = await json(app, '/ap-invoices', 'POST', { ...BILL, docKind: 'XX' });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { error: string }).error).toBe('bad_doc_kind');
   });
 });

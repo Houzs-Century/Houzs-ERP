@@ -18,7 +18,7 @@
 // uploaded rather than the calendar.
 
 import { describe, it, expect } from 'vitest';
-import { assembleMonth, monthWindow, monthOf, previousMonth, nextMonth, type MonthStatement } from './bank-month';
+import { assembleMonth, monthWindow, monthOf, previousMonth, nextMonth, printedClosingOf, type MonthStatement } from './bank-month';
 import type { StatementMovement } from './bank-reconcile';
 
 const stmt = (over: Partial<MonthStatement> = {}): MonthStatement => ({
@@ -305,5 +305,55 @@ describe('a month whose files print no balance, with the figures typed (docs/bug
     expect(nextMonth('2026-12')).toBe('2027-01');
     expect(previousMonth('rubbish')).toBeNull();
     expect(nextMonth('2026-13')).toBeNull();
+  });
+});
+
+/* Rule 5 (owner 2026-11-03: 「不能9月close了就直接带bank balance过来吗」): a month
+   opens where the last one closed, however that closing was known. Maybank
+   310-0010: September's PDF printed RM 26,311.45; October's Account Activity
+   Report prints nothing; October's closing was typed. */
+describe('a month opens where the last one closed — printed or typed (rule 5)', () => {
+  const sep = stmt({ id: 7, fileName: 'MBBcurrent_2026-09-30.pdf', periodFrom: '2026-09-01', periodTo: '2026-09-30', openingBalanceSen: 4405961, closingBalanceSen: 2631145 });
+  const oct = stmt({ id: 8, fileName: 'ACCOUNTACTIVITYREPORT.csv', periodFrom: '2026-10-01', periodTo: '2026-10-31', openingBalanceSen: null, closingBalanceSen: null });
+  const octMoves = [
+    mov({ id: 1, bookedOn: '2026-10-02', amountSen: 3891053 }),
+    mov({ id: 2, bookedOn: '2026-10-20', amountSen: -4600738 }),
+  ];
+  const typedOct = { month: '2026-10', closingSen: 1921460, typedBy: 'Chew', typedAt: '2026-11-03T02:00:00Z', note: null };
+
+  it("reads a month's printed closing off its own last file", () => {
+    expect(printedClosingOf([sep, oct], '2026-09')).toEqual({ month: '2026-09', closingSen: 2631145, statementId: 7, fileName: 'MBBcurrent_2026-09-30.pdf', on: '2026-09-30' });
+    expect(printedClosingOf([sep, oct], '2026-10')).toBeNull();
+  });
+
+  it("opens October at September's printed closing, says where it came from, and is whole when the movements reach the typed closing", () => {
+    const a = assembleMonth('2026-10', [oct], octMoves, { closing: typedOct, previousClosing: null, previousPrinted: printedClosingOf([sep, oct], '2026-09') })!;
+    expect(a.statementOpeningSen).toBe(2631145);
+    expect(a.openingFrom).toMatchObject({ statementId: 7, fileName: 'MBBcurrent_2026-09-30.pdf', carried: { month: '2026-09' } });
+    expect(a.gaps).toEqual([]);
+    expect(a.complete).toBe(true);
+  });
+
+  it('checks a carried opening against the movements, the way a typed one is', () => {
+    const a = assembleMonth('2026-10', [oct], octMoves, { closing: { ...typedOct, closingSen: 1921000 }, previousClosing: null, previousPrinted: printedClosingOf([sep], '2026-09') })!;
+    expect(a.complete).toBe(false);
+    expect(a.gaps.join(' ')).toContain("2026-10 opens at RM 26,311.45 (2026-09's closing)");
+  });
+
+  it('lets a printed closing win over a typed one, and a file printing the opening win over both', () => {
+    const typedSep = { month: '2026-09', closingSen: 1, typedBy: 'Chew', typedAt: '2026-10-01T00:00:00Z', note: null };
+    const carried = assembleMonth('2026-10', [oct], octMoves, { closing: typedOct, previousClosing: typedSep, previousPrinted: printedClosingOf([sep], '2026-09') })!;
+    expect(carried.statementOpeningSen).toBe(2631145);
+    const printedOct = { ...oct, openingBalanceSen: 2631100 };
+    const own = assembleMonth('2026-10', [printedOct], octMoves, { closing: typedOct, previousClosing: typedSep, previousPrinted: printedClosingOf([sep], '2026-09') })!;
+    expect(own.statementOpeningSen).toBe(2631100);
+    expect(own.openingFrom?.carried).toBeUndefined();
+  });
+
+  it("carries nothing from a file that runs past the end of the month, or from another month's figure", () => {
+    const spanning = { ...sep, periodTo: '2026-10-03' };
+    expect(printedClosingOf([spanning], '2026-09')).toBeNull();
+    const a = assembleMonth('2026-10', [oct], octMoves, { closing: typedOct, previousClosing: null, previousPrinted: { month: '2026-08', closingSen: 5, statementId: 1, fileName: 'x', on: '2026-08-31' } })!;
+    expect(a.statementOpeningSen).toBeNull();
   });
 });

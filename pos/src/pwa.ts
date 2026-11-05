@@ -60,3 +60,37 @@ export function applyUpdate(): void {
 export function checkForUpdate(): void {
   navigator.serviceWorker?.getRegistration().then((r) => r?.update().catch(() => {})).catch(() => {});
 }
+
+/* ── Install on this device (the Install button, like the ERP's) ─────────
+ * Chrome fires beforeinstallprompt once the app qualifies; we keep the event
+ * and the Install button calls prompt() on it. Listening starts at module
+ * load so the event is never missed. Hidden once the app runs installed. */
+type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
+let installEvent: InstallPromptEvent | null = null;
+const installListeners = new Set<(can: boolean) => void>();
+const tellInstall = () => { for (const fn of installListeners) fn(installEvent !== null); };
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvent = e as InstallPromptEvent; tellInstall(); });
+  window.addEventListener("appinstalled", () => { installEvent = null; tellInstall(); });
+}
+
+/** Running as the installed app (own window), not in a browser tab. */
+export const isStandalone = (): boolean =>
+  typeof window !== "undefined" && (window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
+
+export function onInstallAvailable(fn: (can: boolean) => void): () => void {
+  installListeners.add(fn);
+  fn(installEvent !== null);
+  return () => installListeners.delete(fn);
+}
+
+/** Open the browser's own Install box; true when the user accepted. */
+export async function promptInstall(): Promise<boolean> {
+  const e = installEvent;
+  if (!e) return false;
+  await e.prompt();
+  const choice = await e.userChoice;
+  if (choice.outcome === "accepted") { installEvent = null; tellInstall(); return true; }
+  return false;
+}

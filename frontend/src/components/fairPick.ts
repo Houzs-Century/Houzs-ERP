@@ -15,17 +15,18 @@ import { fairLabel, type LinkedFair } from '../vendor/scm/lib/fair-options-queri
 
 export type { LinkedFair };
 
-/** The event half of a pick, plus the DAY of it the order was written on (null
- *  until one is picked). Null for a place alone: Others, a clear, or an order
- *  with no fair link. */
-export type FairEvent = Pick<LinkedFair, 'venue' | 'organizer' | 'startDate' | 'endDate'> & { day: string | null };
+/** The event half of a pick, plus the DAY of it the order was written on and
+ *  the BOOTH picked where the system cannot tell (FairPicker rule 9) — each null
+ *  until picked. Null for a place alone: Others, a clear, or an order with no
+ *  fair link. */
+export type FairEvent = Pick<LinkedFair, 'venue' | 'organizer' | 'startDate' | 'endDate'> & { day: string | null; booth: number | null };
 
 const normText = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 const sameText = (a: string, b: string) => normText(a) === normText(b);
 
 export function fairEventOf(v: FairPickValue): FairEvent | null {
   return v.venue && v.organizer && v.startDate
-    ? { venue: v.venue, organizer: v.organizer, startDate: v.startDate, endDate: v.endDate, day: v.day }
+    ? { venue: v.venue, organizer: v.organizer, startDate: v.startDate, endDate: v.endDate, day: v.day, booth: v.booth ?? null }
     : null;
 }
 
@@ -41,7 +42,7 @@ export function linkedEvent(
   day: string | null,
 ): FairEvent | null {
   if (!orderVenue || !linked || !sameText(orderVenue, linked.venue)) return null;
-  return { venue: orderVenue, organizer: linked.organizer, startDate: linked.startDate, endDate: linked.endDate, day };
+  return { venue: orderVenue, organizer: linked.organizer, startDate: linked.startDate, endDate: linked.endDate, day, booth: null };
 }
 
 /** "Placed at: IOIGECC — MLE (10/09 - 10/11) · Venue differs" — the fair an order
@@ -64,14 +65,15 @@ export function fairPickValue(venue: string | null, event: FairEvent | null): Fa
     startDate: event?.startDate ?? null,
     endDate: event?.endDate ?? null,
     day: event?.day ?? null,
+    booth: event?.booth ?? null,
   };
 }
 
-/** The keys an edit save ALWAYS carries — the picked event and its day, or nulls.
- *  Always all five, so the seeded-vs-current header diff sends them only when the
+/** The keys an edit save ALWAYS carries — the picked event, its day and booth, or
+ *  nulls. Always all six, so the seeded-vs-current header diff sends them only when the
  *  pick changed, and a switch to Others (nulls) is a change like any other. */
 export function fairEditPatch(event: FairEvent | null): {
-  fairVenue: string | null; fairOrganizer: string | null; fairStart: string | null; fairEnd: string | null; fairDate: string | null;
+  fairVenue: string | null; fairOrganizer: string | null; fairStart: string | null; fairEnd: string | null; fairDate: string | null; fairProjectId: number | null;
 } {
   return {
     fairVenue: event?.venue ?? null,
@@ -79,6 +81,7 @@ export function fairEditPatch(event: FairEvent | null): {
     fairStart: event?.startDate ?? null,
     fairEnd: event?.endDate ?? null,
     fairDate: event?.day ?? null,
+    fairProjectId: event?.booth ?? null,
   };
 }
 

@@ -106,6 +106,10 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
   compression (`image-compress.ts`), and the known-reps list — each is one
   shared module; do not hand-copy into either shell.
 
+- The model is the `SCAN_SO_MODEL` secret (`scanSoModel` in `scan-ocr.ts`):
+  `claude-sonnet-4-6` when unset, or `claude-sonnet-5-5`. Changing the secret
+  switches `scan_so` and `cache_warm` without a deploy; distill stays on 4.6.
+
 ## Where the code is
 
 - `backend/src/scm/routes/scan-so.ts` — the pipeline, prompts, endpoints.

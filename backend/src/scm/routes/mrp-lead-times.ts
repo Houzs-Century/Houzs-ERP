@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { bustProcurementOverview } from './procurement-overview';
 import type { Env, Variables } from '../env';
 
 export const mrpLeadTimes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -97,6 +98,11 @@ mrpLeadTimes.put('/', async (c) => {
       { onConflict: 'company_id,warehouse_id,category' },
     );
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  // HC-0145: the Procurement Overview is cached (swr:procov) with these settings inside it.
+  const companyId = activeCompanyId(c);
+  if (companyId != null) {
+    try { await bustProcurementOverview(c.env?.SESSION_CACHE, companyId); } catch (e) { console.warn('[mrp-lead-times] procov cache bust failed:', (e as Error)?.message ?? e); }
+  }
   return c.json({
     ok: true,
     warehouseId: parsed.data.warehouseId,

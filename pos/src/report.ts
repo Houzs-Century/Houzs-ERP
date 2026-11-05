@@ -9,13 +9,18 @@ import { center, lr, receiptColumns, type ReceiptLine } from "./receipt";
 import { mytDate, type SaleRecord } from "./sale";
 import type { DeviceState } from "./types";
 
-export type ReportRange = { kind: "today" } | { kind: "date"; date: string } | { kind: "event" };
+export type ReportRange = { kind: "today" } | { kind: "date"; date: string } | { kind: "range"; from: string; to: string } | { kind: "event" };
 
 /** The Malaysia-day bounds of a range: [from, to] inclusive, as yyyy-mm-dd. */
 export function rangeDays(r: ReportRange, event: { start_date: string | null; end_date: string | null }, todayIso: string): { from: string; to: string; label: string } {
   const today = mytDate(todayIso);
   if (r.kind === "today") return { from: today, to: today, label: `Today ${today}` };
   if (r.kind === "date") return { from: r.date, to: r.date, label: r.date };
+  if (r.kind === "range") {
+    /* Typed backwards is still a range: the owner picks two days, not an order. */
+    const [from, to] = r.from <= r.to ? [r.from, r.to] : [r.to, r.from];
+    return { from, to, label: from === to ? from : `${from} to ${to}` };
+  }
   const from = event.start_date?.slice(0, 10) ?? "0000-01-01";
   const to = event.end_date?.slice(0, 10) ?? "9999-12-31";
   return { from, to, label: `Full event ${from} to ${to}` };

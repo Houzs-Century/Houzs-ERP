@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   partyTypeFor, emptySnapshot,
-  snapshotFromWarehouse, snapshotFromWorkshop, snapshotFromWorkshopName,
+  snapshotFromWarehouse, snapshotFromThreepl, snapshotFromSavedLocation,
+  snapshotFromWorkshop, snapshotFromWorkshopName,
   type DpJobType,
 } from './dp-party';
 
@@ -64,6 +65,59 @@ describe('snapshotFromWarehouse — the destination of a transfer', () => {
     const snap = snapshotFromWarehouse({ ...row, contact_name: 'ignored', phone: '0123456789' });
     expect(snap.contact_name).toBeNull();
     expect(snap.contact_phone).toBeNull();
+  });
+});
+
+describe('snapshotFromThreepl — an outsourced warehouse destination', () => {
+  const row = {
+    code: '3PL-003', name: 'MSJ TRANSPORT SDN BHD',
+    contact_name: 'Encik Rahman', contact_phone: '0127778888', office_phone: '075551234',
+    address: 'No 3, Jalan Perdagangan, Johor Bahru',
+  };
+
+  it('is still a WAREHOUSE party — an outsourced warehouse groups like our own', () => {
+    const snap = snapshotFromThreepl(row);
+    expect(snap.party_type).toBe('WAREHOUSE');
+    expect(snap.party_name).toBe('MSJ TRANSPORT SDN BHD');
+    expect(snap.address1).toBe('No 3, Jalan Perdagangan, Johor Bahru');
+    expect([snap.address2, snap.city, snap.postcode, snap.state]).toEqual([null, null, null, null]);
+  });
+
+  it('prefers the named contact, falling back to the office line', () => {
+    expect(snapshotFromThreepl(row).contact_phone).toBe('0127778888');
+    expect(snapshotFromThreepl({ ...row, contact_phone: null }).contact_phone).toBe('075551234');
+    expect(snapshotFromThreepl({ ...row, contact_phone: '' }).contact_phone).toBe('075551234');
+  });
+
+  it('falls back to the code for a carrier with no name', () => {
+    expect(snapshotFromThreepl({ ...row, name: '   ' }).party_name).toBe('3PL-003');
+  });
+});
+
+describe('snapshotFromSavedLocation — a kept delivery point (方案2)', () => {
+  const row = {
+    name: 'Sunway Pyramid Loading Bay', contact_name: 'Mr Lee', contact_phone: '0123334444',
+    address1: 'Lot B1, Jalan PJS 11/15', address2: 'Bandar Sunway',
+    city: 'Petaling Jaya', postcode: '47500', state: 'Selangor',
+  };
+
+  it('fills the full structured address + contact straight through', () => {
+    const snap = snapshotFromSavedLocation(row);
+    expect(snap).toEqual({
+      party_type: 'WAREHOUSE',
+      party_name: 'Sunway Pyramid Loading Bay',
+      contact_name: 'Mr Lee',
+      contact_phone: '0123334444',
+      address1: 'Lot B1, Jalan PJS 11/15', address2: 'Bandar Sunway', address3: null, address4: null,
+      city: 'Petaling Jaya', postcode: '47500', state: 'Selangor',
+    });
+  });
+
+  it('blanks collapse to null', () => {
+    const snap = snapshotFromSavedLocation({ name: 'Bare point', address1: 'Somewhere' });
+    expect(snap.contact_name).toBeNull();
+    expect(snap.address2).toBeNull();
+    expect(snap.city).toBeNull();
   });
 });
 

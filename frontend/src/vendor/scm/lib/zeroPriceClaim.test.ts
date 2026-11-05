@@ -17,7 +17,7 @@
  * surfaces, and the customer was invoiced for it.
  */
 import { describe, expect, it } from "vitest";
-import { priceBoxAuthored, zeroPriceClaim } from "./zeroPriceClaim";
+import { priceBoxAuthored, unpricedExtraSen, zeroPriceClaim } from "./zeroPriceClaim";
 
 describe("zeroPriceClaim", () => {
   it("claims a typed zero", () => {
@@ -55,5 +55,14 @@ describe("priceBoxAuthored", () => {
 
   it("a typed 0 is still an authored price", () => {
     for (const t of ["0", "0.00", "0.", "250", "1,250.50"]) expect(priceBoxAuthored(t)).toBe(true);
+  });
+});
+
+describe('unpricedExtraSen (HC-0198)', () => {
+  it('adds the variant surcharges only to a blank, untyped, non-sofa price', () => {
+    expect(unpricedExtraSen(0, false, 25000, false)).toBe(25000);
+    expect(unpricedExtraSen(0, true, 25000, false)).toBe(0);
+    expect(unpricedExtraSen(10000, false, 25000, false)).toBe(0);
+    expect(unpricedExtraSen(0, false, 25000, true)).toBe(0);
   });
 });

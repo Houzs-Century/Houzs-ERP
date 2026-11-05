@@ -49,11 +49,14 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
   const totalSen = Number(d.bill.total_sen) || lines.reduce((s, l) => s + Number(l.amount_sen), 0);
   const receivedSen = Number(d.bill.received_sen);
   const dueSen = Math.max(0, totalSen - receivedSen);
+  /* A debit note to the debtor (2026-10-28) is the same paper under its own name. */
+  const dn = d.bill.doc_kind === 'DN';
+  const noLabel = dn ? 'Debit Note No' : 'Invoice No';
 
   let y = drawHeader(doc, {
-    docTitle: 'INVOICE',
+    docTitle: dn ? 'DEBIT NOTE' : 'INVOICE',
     rightMeta: [
-      { label: 'Invoice No', value: d.bill.bill_number },
+      { label: noLabel, value: d.bill.bill_number },
       { label: 'Date', value: fmtDocDate(d.bill.bill_date) },
     ],
   });
@@ -73,9 +76,9 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
       ],
     },
     {
-      title: 'INVOICE DETAILS',
+      title: dn ? 'DEBIT NOTE DETAILS' : 'INVOICE DETAILS',
       rows: [
-        ['Invoice No', d.bill.bill_number],
+        [noLabel, d.bill.bill_number],
         ['Date', fmtDocDate(d.bill.bill_date)],
         ['Amount', fmtRm(totalSen)],
         ['Received', fmtRm(receivedSen)],

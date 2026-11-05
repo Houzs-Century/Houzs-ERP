@@ -93,7 +93,7 @@ describe("DeliveryOrderNewV2 edit — Pull from SO (HC-0146)", () => {
 
     await userEvent.click(screen.getAllByRole("button", { name: "Save changes" })[0]);
     await waitFor(() => expect(posts().length).toBe(1));
-    const body = JSON.parse(String((posts()[0][1] as RequestInit).body));
+    const body = JSON.parse(String((posts()[0][1] as RequestInit).body)).items[0];
     expect(body).toMatchObject({ itemCode: "9058-CNR", soItemId: "cnr", qty: 1 });
   });
 
@@ -104,6 +104,6 @@ describe("DeliveryOrderNewV2 edit — Pull from SO (HC-0146)", () => {
     await waitFor(() => expect(screen.getByText("9058-CNR")).toBeTruthy());
     await userEvent.click(screen.getAllByRole("button", { name: "Save changes" })[0]);
     await waitFor(() => expect(posts().length).toBe(1));
-    expect(JSON.parse(String((posts()[0][1] as RequestInit).body))).toMatchObject({ soItemId: "cnr" });
+    expect(JSON.parse(String((posts()[0][1] as RequestInit).body)).items[0]).toMatchObject({ soItemId: "cnr" });
   });
 });

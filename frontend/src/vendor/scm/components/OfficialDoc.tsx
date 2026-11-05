@@ -10,8 +10,13 @@
 // remark can be rewritten while still owed (owner 2026-10-08: 可能是performa
 // invoice, 所以finance 这样也要可以remark 要follow up actual invoice); the
 // requester reads it on the request and on the PMS row it came from.
+// The marks are Finance's alone, so their words are English (the redesign's
+// rule); the chip is read by requesters too and keeps both languages. A page in
+// the redesign (Money out › Official invoices owed) shows the state as its own
+// status tag and dresses the buttons in its own class.
 // ----------------------------------------------------------------------------
 
+import type { ReactNode } from 'react';
 import { OFFICIAL_LABEL, isOfficialState, useMarkOfficialDoc } from '../lib/official-doc-queries';
 import { usePrompt } from './ConfirmDialog';
 
@@ -31,8 +36,13 @@ export function OfficialDocChip({ state, note }: { state: string | null | undefi
   );
 }
 
-/** Finance's marks on one payment — a voucher (PV) or an AP invoice (API). */
-export function OfficialDocActions({ kind, id, state, note }: { kind: 'PV' | 'API'; id: string; state: string | null | undefined; note?: string | null }) {
+/** Finance's marks on one payment — a voucher (PV) or an AP invoice (API).
+    `stateTag` shows the state in place of the chip and `buttonClassName`
+    dresses the buttons; without them, the chip and today's link buttons. */
+export function OfficialDocActions({ kind, id, state, note, stateTag, buttonClassName }: {
+  kind: 'PV' | 'API'; id: string; state: string | null | undefined; note?: string | null;
+  stateTag?: ReactNode; buttonClassName?: string;
+}) {
   const mark = useMarkOfficialDoc();
   const askPrompt = usePrompt();
   /* Owed, with Finance's remark: blank keeps the one there (or none). */
@@ -41,26 +51,27 @@ export function OfficialDocActions({ kind, id, state, note }: { kind: 'PV' | 'AP
     if (remark == null) return;
     mark.mutate({ kind, id, state: 'OWED', note: remark || null });
   };
+  const btn = buttonClassName ? { className: buttonClassName } : { style: linkBtn };
   return (
     <span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-      <OfficialDocChip state={state} note={note} />
+      {stateTag ?? <OfficialDocChip state={state} note={note} />}
       {!state && (
-        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => void markOwed('Official invoice owed · 欠正式单')}>
-          Mark: official invoice owed · 欠正式单
+        <button type="button" {...btn} disabled={mark.isPending} onClick={() => void markOwed('Official invoice owed')}>
+          Mark: official invoice owed
         </button>
       )}
       {state === 'OWED' && (
-        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => void markOwed('Remark — what to follow up')}>
+        <button type="button" {...btn} disabled={mark.isPending} onClick={() => void markOwed('Remark — what to follow up')}>
           {note ? 'Change the remark' : 'Add a remark'}
         </button>
       )}
       {(state === 'RECEIVED' || state === 'OWED') && (
-        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: 'CHECKED' })}>
-          Checked ✓ · 核对好了
+        <button type="button" {...btn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: 'CHECKED' })}>
+          Checked ✓
         </button>
       )}
       {state === 'OWED' && (
-        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: null })}>
+        <button type="button" {...btn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: null })}>
           Clear the mark
         </button>
       )}

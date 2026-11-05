@@ -15,10 +15,18 @@
 // legend says why a small figure is not a fall; a period without a
 // forecast draws no line (null, never 0); a tooltip carries the RM and the
 // % share; the closing stock of the open month is provisional and says so.
+//
+// In the owner's Claude Design (batch 6 §5.10, step 15): inside the report
+// shell — Monthly / Quarterly, From / To and Reset in the toolbar; the cards
+// in the Finance dress (tabs as segments, Show pills as chips, the figures
+// tables without monospace); a period named "Oct 2026" or "Q3 26", " *" when
+// not finished, its hover saying Not finished / Forecast only. The ERP's
+// rules above and every card's figures stay as they were.
 // ----------------------------------------------------------------------------
 import { Fragment, useMemo, useState } from 'react';
-import { Button } from '@2990s/design-system';
-import { PageHeader } from '../../components/Layout';
+import { ReportShell } from './reports/ReportShell';
+import { ReportMessage, ReportTool, ReportToolbar, useReportSubtitle } from './reports/reportParts';
+import { monthName } from './reports/statementColumns';
 import { fmtSenPlain } from '../../vendor/shared/format';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 import {
@@ -28,19 +36,24 @@ import {
 import { DashboardChart, type ChartLine, type ChartSeries } from './DashboardChart';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
-const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)' };
-const th: React.CSSProperties = { padding: '5px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'right' };
-const td: React.CSSProperties = { padding: '4px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px dashed var(--border-weak, #f0eee8)', whiteSpace: 'nowrap' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' };
-const shaded: React.CSSProperties = { background: 'var(--c-surface-2, #f6f5f0)', fontWeight: 600 };
-const danger = 'var(--c-festive-b, #B8331F)';
-const good = 'var(--c-secondary-a, #2F5D4F)';
-const input: React.CSSProperties = { padding: '4px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6 };
+const soft: React.CSSProperties = { fontSize: 12, color: 'var(--fin-muted)' };
+const card: React.CSSProperties = { minWidth: 0, background: 'var(--fin-surface)', border: '1px solid var(--fin-line)', borderRadius: 10, boxShadow: 'var(--fin-card-shadow)', padding: '14px 16px 12px' };
+const th: React.CSSProperties = { padding: '7px 10px', fontSize: 12, fontWeight: 600, color: 'var(--fin-text)', background: 'var(--fin-paper)', borderBottom: '1px solid var(--fin-line)', whiteSpace: 'nowrap', textAlign: 'right' };
+const td: React.CSSProperties = { padding: '6px 10px', fontSize: 12.5, borderBottom: '1px solid var(--fin-rule-soft)', whiteSpace: 'nowrap', color: 'var(--fin-ink)' };
+const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+const shaded: React.CSSProperties = { background: 'var(--fin-row)', fontWeight: 600 };
+const danger = 'var(--fin-late-fg)';
+const good = '#2f8a5b';
+const input: React.CSSProperties = { height: 30, boxSizing: 'border-box', padding: '0 8px', border: '1px solid var(--fin-line)', borderRadius: 6, background: 'var(--fin-surface)', font: "600 12.5px 'IBM Plex Sans', system-ui, sans-serif", color: 'var(--fin-ink)' };
+const resetBtn: React.CSSProperties = { height: 30, padding: '0 12px', border: '1px solid var(--fin-line)', borderRadius: 6, background: 'var(--fin-surface)', color: 'var(--fin-text)', font: "600 12.5px 'IBM Plex Sans', system-ui, sans-serif", cursor: 'pointer' };
+/** A segment of the grey track: the one in use white (the report shell's Segmented). */
 const tabBtn = (active: boolean): React.CSSProperties => ({
-  padding: '3px 10px', fontSize: 'var(--fs-12)', borderRadius: 'var(--radius-sm, 4px)', cursor: 'pointer',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))', background: active ? 'var(--c-ink, #221f20)' : 'transparent', color: active ? 'var(--c-cream, #fff)' : 'inherit',
+  height: 26, padding: '0 10px', border: 0, borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
+  font: `${active ? 600 : 500} 12.5px 'IBM Plex Sans', system-ui, sans-serif`,
+  background: active ? 'var(--fin-surface)' : 'transparent', color: active ? 'var(--fin-petrol-ink)' : 'var(--fin-detail)',
+  boxShadow: active ? '0 1px 2px rgba(17, 24, 16, 0.14)' : 'none',
 });
+const tabTrack: React.CSSProperties = { display: 'inline-flex', gap: 2, flexWrap: 'wrap', padding: 3, borderRadius: 8, background: 'var(--fin-rule-soft)' };
 /** The chart's dress (owner 2026-09-22: 跟 app 的 petrol 主题, then 我不要黑色):
     the theme's own Theme C values (vendor/design-system/tokens.css), as hex
     because SVG presentation attributes take no var(). The ledger's ACTUAL is
@@ -75,15 +88,25 @@ const fmtRatio = (r: number | null | undefined): string => (r == null ? '—' : 
 const fmtPp = (pp: number | null): string => (pp == null ? '—' : `${pp > 0 ? '+' : ''}${pp.toFixed(1)} pp`);
 const fmtSigned = (sen: number | null): string => (sen == null ? '—' : sen === 0 ? '0.00' : `${sen > 0 ? '+' : ''}${fmtSenPlain(sen)}`);
 const fmtOrDash = (sen: number | null | undefined): string => (sen == null ? '—' : fmtSenPlain(sen));
+/** A period as the cards name it: a month "Oct 2026", a quarter "Q3 26" (the redesign's names). */
+export const periodName = (p: Pick<DashboardPeriod, 'months' | 'label'>): string => {
+  const first = p.months[0];
+  if (!first) return p.label;
+  if (p.months.length === 1) return monthName(first);
+  return `Q${Math.floor((Number(first.slice(5, 7)) - 1) / 3) + 1} ${first.slice(2, 4)}`;
+};
 /** The period's label as the cards print it — " *" on one not finished. */
-const labelOf = (p: DashboardPeriod): string => (p.partial ? `${p.label} *` : p.label);
+const labelOf = (p: DashboardPeriod): string => (p.partial ? `${periodName(p)} *` : periodName(p));
+/** The head of a period's hover: its name and, when it is not finished, which way. */
+const tipHead = (p: DashboardPeriod): string => `${periodName(p)}${p.partial ? (p.actual == null ? ' · Forecast only' : ' · Not finished') : ''}`;
 
 /* ── The pieces every card shares ────────────────────────────────────────── */
 
 /** A Show pill (owner 2026-09-22: 我要这样的按钮，而不是打勾): a bordered button with the series' colour swatch, pressed = on the chart, dimmed when off. */
 const pillBtn = (on: boolean): React.CSSProperties => ({
-  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', fontSize: 'var(--fs-11)', borderRadius: 'var(--radius-sm, 4px)', cursor: 'pointer', font: 'inherit',
-  border: '1px solid var(--border-weak, #e3e1da)', background: on ? 'var(--c-paper, #fff)' : 'var(--c-surface-2, #f0ece9)', color: on ? 'inherit' : 'var(--fg-muted)',
+  display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, boxSizing: 'border-box', padding: '0 10px', borderRadius: 999, cursor: 'pointer',
+  font: "600 12px 'IBM Plex Sans', system-ui, sans-serif", whiteSpace: 'nowrap',
+  border: `1px solid ${on ? 'var(--fin-petrol-line)' : 'var(--fin-line)'}`, background: on ? 'var(--fin-info-bg)' : 'var(--fin-surface)', color: on ? 'var(--fin-info-fg)' : 'var(--fin-muted)',
 });
 const ShowPills = ({ options, on, onToggle, onAll, onNone }: { options: Array<{ key: string; label: string; color: string }>; on: Set<string>; onToggle: (k: string) => void; onAll: () => void; onNone: () => void }) => {
   const offCount = options.filter((o) => !on.has(o.key)).length;
@@ -94,18 +117,18 @@ const ShowPills = ({ options, on, onToggle, onAll, onNone }: { options: Array<{ 
         const isOn = on.has(o.key);
         return (
           <button key={o.key} type="button" aria-pressed={isOn} aria-label={`Show ${o.label}`} title={isOn ? `Hide ${o.label} from the chart` : `Show ${o.label} on the chart`} style={pillBtn(isOn)} onClick={() => onToggle(o.key)}>
-            <span style={{ width: 8, height: 8, background: isOn ? o.color : 'var(--c-line, #d8d3ce)', borderRadius: 2, display: 'inline-block' }} />{o.label}
+            <span style={{ width: 8, height: 8, background: isOn ? o.color : 'var(--fin-line)', borderRadius: 2, display: 'inline-block' }} />{o.label}
           </button>
         );
       })}
-      {offCount > 0 && <button type="button" style={{ ...pillBtn(true), color: 'var(--c-secondary-a, #2F5D4F)' }} onClick={onAll}>Show all</button>}
-      {offCount < options.length && <button type="button" style={{ ...pillBtn(true), color: 'var(--fg-muted)' }} onClick={onNone}>Clear</button>}
+      {offCount > 0 && <button type="button" style={{ ...pillBtn(false), color: 'var(--fin-petrol)' }} onClick={onAll}>Show all</button>}
+      {offCount < options.length && <button type="button" style={{ ...pillBtn(false), color: 'var(--fin-muted)' }} onClick={onNone}>Clear</button>}
     </div>
   );
 };
 
 const Tabs = ({ options, value, onChange }: { options: Array<{ key: string; label: string }>; value: string; onChange: (k: string) => void }) => (
-  <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+  <div role="tablist" style={tabTrack}>
     {options.map((o) => (
       <button key={o.key} type="button" role="tab" aria-selected={o.key === value} style={tabBtn(o.key === value)} onClick={() => onChange(o.key)}>{o.label}</button>
     ))}
@@ -148,9 +171,9 @@ type SideSource = { key: string; label: string };
 type SideCell = { text: string; pct: number | null };
 /** A line: cells[period][reading]. */
 type SideRow = { id: string; label: string; strong?: boolean; cells: SideCell[][] };
-const periodEdge = '1px solid var(--border-weak, #e3e1da)';
-const stickyLabel: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 1, background: 'var(--c-paper, #fff)' };
-const pctDress: React.CSSProperties = { fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginLeft: 6 };
+const periodEdge = '1px solid var(--fin-rule)';
+const stickyLabel: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 1, background: 'var(--fin-surface)' };
+const pctDress: React.CSSProperties = { fontSize: 11, color: 'var(--fin-muted)', marginLeft: 6 };
 const SideBySideTable = ({ periods, sources, rows, spans, ariaLabel }: { periods: DashboardPeriod[]; sources: SideSource[]; rows: SideRow[]; spans: TableRow[]; ariaLabel: string }) => (
   <div style={{ overflowX: 'auto', marginTop: 'var(--space-2)' }}>
     <table aria-label={ariaLabel} style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -161,7 +184,7 @@ const SideBySideTable = ({ periods, sources, rows, spans, ariaLabel }: { periods
         </tr>
         <tr>
           {periods.map((p) => sources.map((s, j) => (
-            <th key={`${p.key}:${s.key}`} data-source={s.key} style={{ ...th, textAlign: 'right', textTransform: 'none', letterSpacing: 0, fontWeight: 500, borderLeft: j === 0 ? periodEdge : undefined }}>{s.label}</th>
+            <th key={`${p.key}:${s.key}`} data-source={s.key} style={{ ...th, textAlign: 'right', fontWeight: 500, color: 'var(--fin-muted)', borderLeft: j === 0 ? periodEdge : undefined }}>{s.label}</th>
           )))}
         </tr>
       </thead>
@@ -194,7 +217,7 @@ const SideBySideTable = ({ periods, sources, rows, spans, ariaLabel }: { periods
 const CardShell = ({ title, controls, children }: { title: string; controls?: React.ReactNode; children: React.ReactNode }) => (
   <section style={card} aria-label={title}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-2)' }}>
-      <h2 style={{ fontSize: 'var(--fs-14)', fontWeight: 700, margin: 0 }}>{title}</h2>
+      <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, color: 'var(--fin-ink)' }}>{title}</h2>
       <span style={{ flex: 1 }} />
       {controls}
     </div>
@@ -231,8 +254,8 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     const cur = actual[i]; const prev = i > 0 ? actual[i - 1] : null;
     return cur != null && prev != null && prev !== 0 ? Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10 : null;
   });
-  const bars: ChartSeries[] = [{ key: 'actual', label: `Actual ${metric.label}`, color: ACTUAL, values: actual, tips: periods.map((p, i) => (actual[i] == null ? null : `${labelOf(p)} · Actual ${metric.label}: RM ${fmtSenPlain(actual[i])} (${fmtPct(actualPct[i])} of revenue)`)) }];
-  const lines: ChartLine[] = [{ key: 'forecast', label: `Forecast ${metric.label}`, color: RED, dashed: true, values: forecast, tips: periods.map((p, i) => (forecast[i] == null ? null : `${labelOf(p)} · Forecast ${metric.label}: RM ${fmtSenPlain(forecast[i])} (${fmtPct(forecastPct[i])} of forecast revenue)`)) }];
+  const bars: ChartSeries[] = [{ key: 'actual', label: `Actual ${metric.label}`, color: ACTUAL, values: actual, tips: periods.map((p, i) => (actual[i] == null ? null : `${tipHead(p)} · Actual ${metric.label}: RM ${fmtSenPlain(actual[i])} (${fmtPct(actualPct[i])} of revenue)`)) }];
+  const lines: ChartLine[] = [{ key: 'forecast', label: `Forecast ${metric.label}`, color: RED, dashed: true, values: forecast, tips: periods.map((p, i) => (forecast[i] == null ? null : `${tipHead(p)} · Forecast ${metric.label}: RM ${fmtSenPlain(forecast[i])} (${fmtPct(forecastPct[i])} of forecast revenue)`)) }];
   /* The table, side by side (owner 2026-09-29: Income Statement 也改 — the sample's
      own shape): every line of the statement a row — Revenue, COGS, Gross
      Profit, Staff Cost, Other Expenses, Net Profit — and under each period
@@ -303,11 +326,11 @@ const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; grou
     ? present.map((g) => ({
       key: g.key, label: g.label, color: colorOf(g.key), stack: 'performance',
       values: periods.map((p) => { const x = groupOf(p, g.key); return x ? perfOf(x) : null; }),
-      tips: periods.map((p) => { const x = groupOf(p, g.key); return x && x.performanceSalesSen != null ? `${labelOf(p)} · Performance · ${g.label}: sales RM ${fmtSenPlain(x.performanceSalesSen)} · cost RM ${fmtSenPlain(x.performanceCostSen ?? 0)} · GP ${fmtPct(x.performanceGpPct)}` : null; }),
+      tips: periods.map((p) => { const x = groupOf(p, g.key); return x && x.performanceSalesSen != null ? `${tipHead(p)} · Performance · ${g.label}: sales RM ${fmtSenPlain(x.performanceSalesSen)} · cost RM ${fmtSenPlain(x.performanceCostSen ?? 0)} · GP ${fmtPct(x.performanceGpPct)}` : null; }),
     }))
     : [{ key: 'performance', label: `Performance ${metricLabel}`, color: PERF, values: metric === 'sales' ? perfSales : metric === 'gp' ? perfGp : perfGpPct }];
   const bars: ChartSeries[] = metric === 'sales'
-    ? [{ key: 'actual', label: 'Actual sales (P&L)', color: ACTUAL, values: actualSales, tips: periods.map((p, i) => (actualSales[i] == null ? null : `${labelOf(p)} · Actual sales (P&L) · ${groupLabel}: RM ${fmtSenPlain(actualSales[i])}`)) }, ...perfBars]
+    ? [{ key: 'actual', label: 'Actual sales (P&L)', color: ACTUAL, values: actualSales, tips: periods.map((p, i) => (actualSales[i] == null ? null : `${tipHead(p)} · Actual sales (P&L) · ${groupLabel}: RM ${fmtSenPlain(actualSales[i])}`)) }, ...perfBars]
     : perfBars;
   const lines: ChartLine[] = [
     metric === 'sales'
@@ -418,7 +441,7 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
   });
   const onLabel = onGroups.length === present.length ? 'all groups' : onGroups.map((g) => g.label).join(' + ');
   const lines: ChartLine[] = measure === 'purchase'
-    ? [{ key: 'forecast', label: 'Forecast purchase', color: RED, dashed: true, values: forecastPurchase, tips: periods.map((p, i) => (forecastPurchase[i] == null ? null : `${labelOf(p)} · Forecast purchase (${onLabel}): RM ${fmtSenPlain(forecastPurchase[i])}`)) }]
+    ? [{ key: 'forecast', label: 'Forecast purchase', color: RED, dashed: true, values: forecastPurchase, tips: periods.map((p, i) => (forecastPurchase[i] == null ? null : `${tipHead(p)} · Forecast purchase (${onLabel}): RM ${fmtSenPlain(forecastPurchase[i])}`)) }]
     : [];
   const rows: TableRow[] = [
     ...present.map((g) => ({ id: g.key, label: g.label, cells: periods.map((p) => (p.costStructure ? fmtSenPlain(measureOf(groupOf(p, g.key) ?? { key: g.key, label: g.label, spendSen: 0, purchaseSen: 0, closingStockSen: 0 }, measure)) : '—')) })),
@@ -462,7 +485,7 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     })) : []),
   ];
   return (
-    <CardShell title="Cash Flow" controls={<><Tabs options={CASH_TABS} value={tab} onChange={setTab} /><Button variant="ghost" size="sm" onClick={() => setDetail((d) => !d)}>{detail ? 'Summary' : 'Detail'}</Button></>}>
+    <CardShell title="Cash Flow" controls={<><Tabs options={CASH_TABS} value={tab} onChange={setTab} /><button type="button" style={resetBtn} onClick={() => setDetail((d) => !d)}>{detail ? 'Summary' : 'Detail'}</button></>}>
       <DashboardChart labels={periods.map(labelOf)} bars={bars} ariaLabel={`Cash ${tab} per period`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Cash flow figures" />
     </CardShell>
@@ -526,7 +549,17 @@ const RatiosCard = ({ periods }: { periods: DashboardPeriod[] }) => {
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-export const FinanceDashboard = () => {
+/** In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
+export const FinanceDashboard = () => (
+  <ReportShell report="dashboard">
+    <DashboardBody />
+  </ReportShell>
+);
+
+const SUBTITLE = 'The statements’ actuals (petrol) beside the Forecast P&L’s targets (red, dashed), per month or quarter, from the first month with sales. '
+  + 'Every figure is the report’s own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes.';
+
+function DashboardBody() {
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -534,24 +567,27 @@ export const FinanceDashboard = () => {
   const q = useFinanceDashboard({ granularity, from: ranged ? from : null, to: ranged ? to : null });
   const periods = useMemo(() => q.data?.periods ?? [], [q.data]);
   const provisional = periods.filter((p) => p.actual != null && p.stock.closingProvisional).map(labelOf);
+  useReportSubtitle(SUBTITLE);
 
   return (
-    <div className="space-y-4">
-      <PageHeader eyebrow="Finance · Forecasting" title="Dashboard"
-        description="The statements' actuals (petrol) beside the Forecast P&L's targets (red, dashed), per month or quarter, from the first month with sales. Every figure is the report's own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes." />
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+    <>
+      <ReportToolbar>
         <Tabs options={[{ key: 'month', label: 'Monthly' }, { key: 'quarter', label: 'Quarterly' }]} value={granularity} onChange={(k) => setGranularity(k as Granularity)} />
-        <span style={soft}>Period</span>
-        <input type="month" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From month" style={input} />
-        <span style={soft}>→</span>
-        <input type="month" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To month" style={input} />
-        <Button variant="ghost" size="sm" onClick={() => { setFrom(''); setTo(''); }} disabled={!from && !to}>Reset</Button>
-        <span style={{ flex: 1 }} />
+        <ReportTool label="From">
+          <input type="month" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From month" style={input} />
+        </ReportTool>
+        <ReportTool label="To">
+          <input type="month" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To month" style={input} />
+        </ReportTool>
+        <button type="button" style={{ ...resetBtn, opacity: !from && !to ? 0.55 : 1 }} onClick={() => { setFrom(''); setTo(''); }} disabled={!from && !to}>Reset</button>
         {q.isFetching && <span style={soft}>Loading…</span>}
+      </ReportToolbar>
+      <div style={soft}>
+        * this period is not finished — a small figure is not a fall.
+        {provisional.length > 0 && ` Closing stock for ${provisional.join(', ')} is what the shelves hold today — provisional until the month-end close books it.`}
       </div>
-      <div style={soft}>* this period is not finished — a small figure is not a fall.{provisional.length > 0 && ` Closing stock for ${provisional.join(', ')} is what the shelves hold today — provisional until the month-end close books it.`}</div>
-      {q.isError && <div role="alert" style={{ color: danger }}>{errText(q.error)}</div>}
-      {!q.isError && q.data && periods.length === 0 && <div style={soft}>Nothing to show for this window.</div>}
+      {q.isError && <ReportMessage tone="error">{errText(q.error)}</ReportMessage>}
+      {!q.isError && q.data && periods.length === 0 && <ReportMessage>Nothing to show for this window.</ReportMessage>}
       {q.data && periods.length > 0 && (
         <>
           <IncomeStatementCard periods={periods} />
@@ -562,6 +598,6 @@ export const FinanceDashboard = () => {
           <RatiosCard periods={periods} />
         </>
       )}
-    </div>
+    </>
   );
-};
+}

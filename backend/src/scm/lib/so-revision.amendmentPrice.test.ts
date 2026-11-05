@@ -825,3 +825,28 @@ describe('applySoAmendment — a changed code takes the new SKU\'s group', () =>
     expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.item_group).toBe('accessory');
   });
 });
+
+/* ── HC-0122: the first delivery date may arrive through an amendment ───────
+   SO ZNT5268 was confirmed with no Delivery Date; the amendment set one, and
+   every later reschedule moved the Sales Exemption Expiry with it. */
+describe('applySoAmendment — Sales Exemption Expiry freezes on the first amended delivery date', () => {
+  const amendDate = async (store: Record<string, Row[]>, date: string) => {
+    store.so_amendments[0] = { ...store.so_amendments[0], status: 'SUPPLIER_PENDING', header_changes: { customerDeliveryDate: date } };
+    await apply(store);
+  };
+  const so = (store: Record<string, Row[]>) => store.mfg_sales_orders[0];
+
+  it('seeds the expiry from the first date, then keeps it on the next reschedule', async () => {
+    const store = baseStore();
+    Object.assign(so(store), { status: 'CONFIRMED', customer_delivery_date: null, sales_exemption_expiry: null });
+
+    await amendDate(store, '2026-11-10');
+    expect(so(store).sales_exemption_expiry).toBe('2026-11-10');
+
+    /* apply() asserts the version and lease the approve route claimed; the first apply spent them. */
+    Object.assign(so(store), { version: 3, edit_lease_token: 'lease-1', edit_lease_expires_at: '2099-01-01T00:00:00.000Z' });
+    await amendDate(store, '2026-11-20');
+    expect(so(store).customer_delivery_date).toBe('2026-11-20');
+    expect(so(store).sales_exemption_expiry).toBe('2026-11-10');
+  });
+});

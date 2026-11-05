@@ -129,7 +129,7 @@ describe('the four downstream document types queue an edit on every line and hea
        registration BELOW the body. The pin still spans the same handler. */
     /* The add DECLARES the row it inserted (2026-08-31), so AutoCount appends it
        instead of refusing the document for a line it cannot match. */
-    expect(between(DO, 'export const addDeliveryOrderItemHandler', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id, [],');
+    expect(between(DO, 'const addOneDeliveryOrderItem', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id, [],');
     expect(between(DO, "deliveryOrdersMfg.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });

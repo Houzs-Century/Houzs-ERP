@@ -11,6 +11,7 @@ import {
   printedPoWhy,
   splitInnerLocation,
   setLinesBySo,
+  supplierOfPrintedPo,
   normalizeCode,
   pickBySpec,
   normalizeSupplierName,
@@ -756,7 +757,7 @@ describe('a set row naming our SO number (DO-2610-046)', () => {
   test('drafts every piece of that SO on the PO', () => {
     const res = matchGrnScanToPoLines('S/O1893', do046, po080, [], 'sup-1');
     expect(res.picks).toEqual([{ poItemId: 'pi-2a', qty: 1 }, { poItemId: 'pi-l', qty: 1 }]);
-    expect(res.soMatches).toEqual([{ line: do046[0], soDocNo: 'HC-SO-013339' }]);
+    expect(res.soMatches).toEqual([{ line: do046[0], soDocNo: 'HC-SO-013339', poItemIds: ['pi-2a', 'pi-l'] }]);
     expect(res.qtyMismatch).toBeNull();
     expect(res.unmatched).toEqual([]);
   });
@@ -798,6 +799,83 @@ describe('set rows of one SO split by the model number they print (DO-2610-009)'
 
   test('a row naming no SO is not a set', () => {
     expect(setLinesBySo(scan({ itemCode: 'DSL9058', description: 'no order number here', qty: 1 }), po)).toBeNull();
+  });
+});
+
+describe("a supplier's way of printing our PO", () => {
+  const pos = [{ poNumber: 'HC-PO-2610-257' }, { poNumber: 'HC-PO-2610-243' }];
+  test('a revision suffix is still that PO (Hookka)', () => {
+    expect(resolvePrintedPo('HC-PO-2610-257_R1', pos, true)?.poNumber).toBe('HC-PO-2610-257');
+  });
+  test('a misread lead digit still ends in our number (Dunlopillo)', () => {
+    expect(resolvePrintedPo('102610-243', pos, true)?.poNumber).toBe('HC-PO-2610-243');
+    expect(resolvePrintedPo('102610-243', pos, false)).toBeNull();
+  });
+});
+
+describe('supplierOfPrintedPo', () => {
+  const pos = [{ poNumber: 'HC-PO-2610-084', supplierId: 'eadeco' }, { poNumber: 'HC-PO-2610-090', supplierId: 'hookka' }];
+  test('our PO number names the supplier the letterhead did not', () => {
+    expect(supplierOfPrintedPo({ poNo: 'HC-PO-2610-084', lines: [] }, pos)).toBe('eadeco');
+    expect(supplierOfPrintedPo({ poNo: null, lines: [{ poNo: 'HC-PO-2610-090' }] }, pos)).toBe('hookka');
+  });
+  test('the location inside our number still names it (DIGLANT)', () => {
+    expect(supplierOfPrintedPo({ poNo: 'HC-SBH-PO-2610-084', lines: [] }, pos)).toBe('eadeco');
+  });
+  test('a foreign reference, or POs of two suppliers, names nobody', () => {
+    expect(supplierOfPrintedPo({ poNo: 'S/O 1878', lines: [] }, pos)).toBeNull();
+    expect(supplierOfPrintedPo({ poNo: 'HC-PO-2610-084', lines: [{ poNo: 'HC-PO-2610-090' }] }, pos)).toBeNull();
+  });
+});
+
+// Our own PO scanned (2990-PO-2609-046): every row prints the supplier's code, which
+// the PO line carries, though our code says BANGGAU.
+describe('a row printing the supplier SKU of the PO line', () => {
+  test('lands on that line of that PO', () => {
+    const po = [
+      line({ poItemId: 'a', poNumber: '2990-PO-2609-046', itemCode: 'BANGGAU-2A(LHF)', supplierSku: 'DSL8075-2A(LHF)', remaining: 1 }),
+      line({ poItemId: 'b', poNumber: '2990-PO-2609-046', itemCode: 'BANGGAU-L(RHF)', supplierSku: 'DSL8075-L(RHF)', remaining: 1 }),
+    ];
+    const res = matchGrnScanToPoLines('2990-PO-2609-046', [scan({ itemCode: 'DSL8075-2A(LHF)', qty: 1 }), scan({ itemCode: 'DSL8075-L(RHF)', qty: 1 })], po, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'a', qty: 1 }, { poItemId: 'b', qty: 1 }]);
+  });
+});
+
+// Dorsettloft DO-2610-01 (2026-11-04): one "2 + L" row, our SO in the new numbering,
+// our PO in Remark 1, their own "S/O 1878" in the header. We call the model BANGGAU;
+// only the supplier's code holds 8075.
+describe('a set row in the new SO numbering (DO-2610-01)', () => {
+  const piece = (poItemId: string, poNumber: string, itemCode: string, supplierSku: string, soDocNo: string) =>
+    line({ poItemId, poNumber, itemCode, supplierSku, soDocNo, remaining: 1 });
+  const po: OpenPoLine[] = [
+    piece('a2', '2990-PO-2609-046', 'BANGGAU-2A(LHF)', 'DSL8075-2A(LHF)', '2990-SO-2609-045'),
+    piece('aL', '2990-PO-2609-046', 'BANGGAU-L(RHF)', 'DSL8075-L(RHF)', '2990-SO-2609-045'),
+    piece('b2', '2990-PO-2610-014', 'BANGGAU-2A(LHF)', 'DSL8075-2A(LHF)', '2990-SO-2610-012'),
+    piece('c2', '2990-PO-2609-051', 'BANGGAU-2A(RHF)', 'DSL8075-2A(RHF)', '2990-SO-2609-047'),
+  ];
+  const row = (poNo: string | null) => scan({ itemCode: 'DSL 8075(28")-2+1', description: 'DSL 8075(28") -2+1 COL:M2402-4-EZ002 SAND *2+1 *FABRIC B *LEG 6.5" *2990-SO-2609-045 *****', qty: 1, poNo });
+
+  test('the SO alone finds both pieces, though their P.O. is not ours', () => {
+    const res = matchGrnScanToPoLines('S/O 1878', [row(null)], po, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }]);
+    expect(res.soMatches[0].soDocNo).toBe('2990-SO-2609-045');
+  });
+
+  test('so does the PO printed in Remark 1', () => {
+    expect(matchGrnScanToPoLines('S/O 1878', [row('2990-PO-2609-046')], po, [], 'sup-1').picks).toEqual([{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }]);
+  });
+
+  test('two orders of one month are two orders', () => {
+    expect(setLinesBySo(row(null), po)?.lines.map((l) => l.poItemId)).toEqual(['a2', 'aL']);
+  });
+
+  test('an unknown supplier gets nothing from an SO number alone', () => {
+    expect(matchGrnScanToPoLines('S/O 1878', [row(null)], po, [], null).picks).toEqual([]);
+  });
+
+  test('the model number on the supplier code narrows a sales order with two sofas', () => {
+    const other = piece('z1', '2990-PO-2609-046', 'OTHER-1S', 'DSL9001-1S', '2990-SO-2609-045');
+    expect(setLinesBySo(row(null), [...po, other])?.lines.map((l) => l.poItemId)).toEqual(['a2', 'aL']);
   });
 });
 
@@ -893,7 +971,27 @@ describe('a delivery order across seven POs and three warehouses (NICE FUTURE 20
     expect(nameMatchItem('ERGOTEX FLEXICARE-C MATT - W152 X L190 X H30CM', [open[5]])).toBeNull();
   });
 
+  test('FLEXICARE C (hyphen lost) is not the lone FLEXICARE-S', () => {
+    expect(nameMatchItem('ERGOTEX FLEXICARE C MATT - W152 X L190 X H30CM', [open[5]])).toBeNull();
+    expect(nameMatchItem('ERGOTEX FLEXICARE S MATT - W152 X L190 X H30CM', [open[5]])).toBe('EG-FLEXICARE-S MATT (Q)');
+  });
+
   test('a gift naming the brand alone still matches nothing', () => {
     expect(nameMatchItem('ERGOTEX PILLOW', [open[0]])).toBeNull();
+  });
+
+  // HC-0137 review: the -C suffix only tells items apart when another item shares the base.
+  test('a lone ECOZONE-C matches a row that leaves the -C out', () => {
+    expect(nameMatchItem('ERGOTEX ECOZONE W183 X L190', [open[0]])).toBe('EG-ECOZONE-C MATT (K)');
+  });
+
+  test('two items that differ only by item group still tell apart', () => {
+    const akemi = [
+      line({ itemCode: 'AKB1', materialName: 'AKEMI BULWARK MATTRESS', itemGroup: 'MATTRESS' }),
+      line({ itemCode: 'AKB2', materialName: 'AKEMI BULWARK PILLOW', itemGroup: 'PILLOW' }),
+    ];
+    expect(nameMatchItem('AKEMI BULWARK MATTRESS', akemi)).toBe('AKB1');
+    expect(nameMatchItem('AKEMI BULWARK PILLOW', akemi)).toBe('AKB2');
+    expect(nameMatchItem('AKEMI BULWARK', akemi)).toBeNull();
   });
 });

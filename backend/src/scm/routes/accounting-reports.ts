@@ -54,6 +54,13 @@
 // else (the open month, a mid-month date) the closing is flagged
 // PROVISIONAL — it is what the shelves hold today, not yet a journal.
 //
+// BOOKS START (mig 20261028T2100; Houzs, owner 2026-10-28: 31/08 之前我都是
+// soft launch 的…账的opening也是01/09/2026). A company whose books start on a
+// day counts nothing dated before it but its opening (the views' rule), and
+// its stock follows acc/books-opening.ts: a range that begins on or before the
+// start opens on the books' OPENING STOCK, not on the engine's replay of the
+// soft launch; the balance sheet's earnings start from that same figure.
+//
 // BUILDERS (2026-09-21, the Dashboard): each statement is a pure-ish builder
 // — buildPnl, buildBalanceSheet — over a ReportSources object that says
 // where the reads come from. The routes hand it the database (dbSources);
@@ -72,7 +79,8 @@ import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import { resolveRoles, STOCK_BUCKET_ROLES, type AccountRole } from '../../acc/rules';
 import { stockValueByBucketAsOf } from '../../acc/stock-close';
-import { STOCK_BUCKETS, emptyBuckets, type StockBucket } from '../lib/stock-bucket';
+import { balanceSheetStockFrom, loadBooksOpening, pnlStockFrom, type BooksOpening, type StockFrom } from '../../acc/books-opening';
+import { STOCK_BUCKETS, type StockBucket } from '../lib/stock-bucket';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
@@ -166,6 +174,8 @@ export type ReportSources = {
   /** Whether the ledger carries an active STOCKADJ closing entry for the month ending on `monthEnd`. */
   closingBooked: (monthEnd: string) => Promise<{ ok: true; booked: boolean } | Fail>;
   layout: (report: ReportKey) => Promise<({ ok: true } & ResolvedLayout) | Fail>;
+  /** The day the company's books start and the stock they opened with; null = no start day. */
+  booksOpening: () => Promise<{ ok: true; opening: BooksOpening | null } | Fail>;
 };
 
 /** The database, as the routes read it. */
@@ -182,12 +192,11 @@ export const dbSources = (sb: Sb, companyId: number, layoutIds: number[]): Repor
     return { ok: true, booked: ((data ?? []) as Array<{ reversed: boolean | null }>).some((j) => !j.reversed) };
   },
   layout: (report) => resolveLayout(sb, layoutIds, report),
+  booksOpening: () => loadBooksOpening(sb, companyId),
 });
 
 /* ── The stock lines, from the engine ─────────────────────────────────────── */
 
-/** The day before a date, YYYY-MM-DD. */
-const dayBefore = (iso: string): string => new Date(Date.parse(`${iso}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 /** The last day of a date's month, YYYY-MM-DD. */
 const monthEndOf = (iso: string): string => {
   const [y, m] = iso.split('-').map(Number) as [number, number];
@@ -213,29 +222,41 @@ type StockLines = {
   opening: Record<StockBucket, number>; closing: Record<StockBucket, number>;
   /** The engine's total on the last day — what the balance sheet's stock reads. */
   closingTotalSen: number;
+  /** What the range opened on, in total: the balance sheet's earnings start from it (0 since always; the
+      books' opening stock for a company whose books start on a day). */
+  openingTotalSen: number;
   /** True unless the ledger has booked a closing for that very month-end. */
   closingProvisional: boolean;
   roles: Record<AccountRole, string>;
   codes: Set<string>;
 };
 
-/** The engine's opening and closing per bucket for [from, to]; a null from = since always (no opening). */
+/** The opening and closing per bucket for [from, to] — the engine's, or the
+    books' opening stock where the books start (acc/books-opening.ts); a null
+    from = since always (the balance sheet). */
 async function loadStockLines(src: ReportSources, from: string | null, to: string): Promise<{ ok: true; stock: StockLines } | Fail> {
-  const roles = await src.roles();
-  const [openingR, closingR] = await Promise.all([
-    from ? src.stockByBucket(dayBefore(from)) : Promise.resolve({ ok: true as const, buckets: emptyBuckets(), totalSen: 0 }),
-    src.stockByBucket(to),
-  ]);
+  const [roles, books] = await Promise.all([src.roles(), src.booksOpening()]);
+  if (!books.ok) return { ok: false, reason: books.reason };
+  const plan = from ? pnlStockFrom(books.opening, from, to) : balanceSheetStockFrom(books.opening, to);
+  const read = (s: StockFrom) => (s.from === 'engine' ? src.stockByBucket(s.date) : Promise.resolve({ ok: true as const, buckets: s.buckets, totalSen: s.totalSen }));
+  const [openingR, closingR] = await Promise.all([read(plan.opening), read(plan.closing)]);
   if (!openingR.ok) return { ok: false, reason: `opening stock: ${openingR.reason}` };
   if (!closingR.ok) return { ok: false, reason: `closing stock: ${closingR.reason}` };
-  /* Booked = an active STOCKADJ closing entry for the month AND the date is that month's end. */
+  /* Booked = an active STOCKADJ closing entry for the month AND the date is
+     that month's end. A figure the books fix is never provisional. */
   let booked = false;
-  if (to === monthEndOf(to)) {
+  if (plan.closing.from === 'engine' && to === monthEndOf(to)) {
     const b = await src.closingBooked(to);
     if (!b.ok) return { ok: false, reason: b.reason };
     booked = b.booked;
   }
-  return { ok: true, stock: { opening: openingR.buckets, closing: closingR.buckets, closingTotalSen: closingR.totalSen, closingProvisional: !booked, roles, codes: stockCodesOf(roles) } };
+  return {
+    ok: true,
+    stock: {
+      opening: openingR.buckets, closing: closingR.buckets, closingTotalSen: closingR.totalSen, openingTotalSen: openingR.totalSen,
+      closingProvisional: plan.closing.from === 'engine' && !booked, roles, codes: stockCodesOf(roles),
+    },
+  };
 }
 
 /** A stock line on the statement: the role's account, its chart name (or the role's own when the chart lacks the row). */
@@ -384,8 +405,11 @@ export async function buildBalanceSheet(src: ReportSources, companyId: number, a
      entry, and splitting it out is how the standard statement reads. */
   const earningsSen = inSections(rows, sectionsOfType('INCOME')).reduce((s, x) => s + credit(x.r), 0)
     - inSections(rows, sectionsOfType('EXPENSE')).reduce((s, x) => s + debit(x.r), 0)
-    /* The engine's closing stock is the stock effect on earnings to this date — the GL's pair was taken out of `rows` above. */
-    + stock.closingTotalSen;
+    /* The closing stock less the stock the books opened with is the stock
+       effect on earnings to this date — the GL's own stock lines (the close
+       pairs, the opening journal's STOCKS AT THE BEGINNING) were taken out of
+       `rows` above. */
+    + stock.closingTotalSen - stock.openingTotalSen;
 
   const assetsSen = total(assets);
   const liabilitiesSen = total(liabilities);

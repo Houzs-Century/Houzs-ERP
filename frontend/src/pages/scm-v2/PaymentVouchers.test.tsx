@@ -10,15 +10,26 @@
    here the mutateAsyncs are canned and the arithmetic around them is what is
    under test. */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 const prepareAsync = vi.fn(async (_id: string) => ({}));
 const checkAsync = vi.fn(async (_id: string) => ({}));
 const approveAsync = vi.fn(async (_id: string) => ({}));
+type RemindOut = { reminded: Array<{ id: string; pvNumber: string }>; refused: Array<{ id: string; pvNumber: string | null; error: string; message: string }>; approvers: number; nextAt: string };
+const remindAsync = vi.fn(async (_ids: string[]): Promise<RemindOut> => ({ reminded: [], refused: [], approvers: 1, nextAt: '' }));
+/* Keys this viewer lacks (every key is held unless named here). */
+const denied = new Set<string>();
+const toastSuccess = vi.fn((_m: string) => undefined);
+const toastError = vi.fn((_m: string) => undefined);
+vi.mock('../../hooks/useToast', () => ({ useToastOptional: () => ({ success: toastSuccess, error: toastError, info: vi.fn(), warning: vi.fn() }) }));
+/* The list (with the server's stage counts), or — asked with q — what the server's search found. */
+const searched = vi.fn((q: string) => [{ id: 'old', pv_number: 'HCMPV-2601-004', payee_name: 'Found Co', status: 'POSTED', voucher_date: '2026-01-04', total_sen: 7000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: `about ${q}`, je_no: 'HC-JE-2601-0007' }]);
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
-  usePaymentVouchers: () => ({ data: { paymentVouchers: [
+  usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
+    ? { data: { paymentVouchers: searched(opts.q), q: opts.q }, isLoading: false, error: null }
+    : { data: { counts: { all: 61, DRAFT: 11, PREPARED: 12, CHECKED: 13, POSTED: 14, ADVANCE: 15, CANCELLED: 16 }, paymentVouchers: [
     { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
@@ -31,12 +42,15 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useSubmitPaymentVoucher: () => ({ mutateAsync: prepareAsync, isPending: false }),
   useCheckPaymentVoucher: () => ({ mutateAsync: checkAsync, isPending: false }),
   useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }),
+  useRemindApprover: () => ({ mutateAsync: remindAsync, isPending: false }),
   /* Batch-print fetches — never called here (no test clicks Print), stubbed
      because this factory replaces the WHOLE module. */
   fetchPvPrintDetail: vi.fn(),
   fetchPvPrintBundle: vi.fn(),
 }));
-vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (key: string) => !denied.has(key) }) }));
+/* Pay from names its account (code, name below). */
+vi.mock('../../vendor/scm/lib/accounting-queries', () => ({ useAccounts: () => ({ data: { accounts: [{ account_code: '310-0001', account_name: 'HONG LEONG BANK' }] } }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 const notifyFn = vi.fn((_a: unknown) => undefined);
@@ -60,7 +74,7 @@ describe('批量 tick yes', () => {
 
     fireEvent.click(boxes[3]!); // posted — printable, not approvable
     expect(screen.getByText('Print 1 + files')).toBeTruthy();
-    expect(screen.getByText('Save PDF')).toBeTruthy();
+    expect(screen.getByText('Save as PDF')).toBeTruthy();
     /* The files toggle (owner 2026-09-04: 批量那边也要有这个选) — default ON;
        unticking flips the button to vouchers-only. */
     fireEvent.click(screen.getByLabelText("Include each voucher's attached files"));
@@ -127,10 +141,13 @@ describe('批量 tick yes', () => {
 });
 
 describe('an advance not yet knocked off (owner 2026-09-06)', () => {
-  test('the row wears the open amount beside its pill, and the Advance open chip keeps only such rows', () => {
+  test('the row says the open amount on its For line and wears the Advance open tag, and the chip keeps only such rows', () => {
     render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
-    expect(screen.getByText(/预付未冲 RM 2,143\.74/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Advance open'));
+    expect(screen.getByText('RM 2,143.74 not knocked off')).toBeTruthy();
+    /* The chip comes first, the row's tag after it. */
+    const [chip, tag] = screen.getAllByText('Advance open');
+    expect(tag).toBeTruthy();
+    fireEvent.click(chip!);
     expect(screen.getByText('PV-2609-005')).toBeTruthy();
     expect(screen.queryByText('PV-2609-004')).toBeNull();
     expect(screen.queryByText('PV-2609-001')).toBeNull();
@@ -151,10 +168,10 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
   });
 });
 
-describe('the Notes column (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
-  test('each row shows its Notes, whole on hover; a voucher without notes reads —', () => {
+describe('the For column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
+  test('each row shows its Notes under For, whole on hover; a voucher without notes reads —', () => {
     draw();
-    expect(screen.getByRole('columnheader', { name: /Notes/ })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /^For/ })).toBeTruthy();
     const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
     const cell = screen.getByText(note).closest('td');
     expect(cell?.getAttribute('title')).toBe(note);
@@ -162,19 +179,131 @@ describe('the Notes column (owner 2026-10-14: pv 那边的 list，可以让他�
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
   });
 
-  test('the search box finds a voucher by its notes', async () => {
+  test('the search box asks the server for any voucher, every stage and month, and says what it found', async () => {
     draw();
-    fireEvent.change(screen.getByPlaceholderText('Search voucher no, payee, notes…'), { target: { value: 'penang' } });
-    await waitFor(() => expect(screen.queryByText('PV-2609-002')).toBeNull());
-    expect(screen.getByText('PV-2609-001')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Find any voucher'), { target: { value: 'penang' } });
+    /* The newest-500 list makes way for what the search found — an older voucher too. */
+    expect(await screen.findByText('HCMPV-2601-004')).toBeTruthy();
+    expect(screen.queryByText('PV-2609-002')).toBeNull();
+    expect(searched).toHaveBeenLastCalledWith('penang');
+    expect(screen.getByText(/Search “penang” · 1 voucher across every stage and month/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Clear the search'));
+    expect(await screen.findByText('PV-2609-002')).toBeTruthy();
   });
 });
 
-describe('the third New (§14)', () => {
-  test('New Customer Refund stands beside the other two', () => {
+describe('the header (the redesign)', () => {
+  test('four doors in, in the design\'s words: Scan bills, New customer refund, New payment voucher, New AP payment', () => {
     draw();
-    expect(screen.getByText('New Customer Refund')).toBeTruthy();
-    expect(screen.getByText('New AP Payment')).toBeTruthy();
-    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+    expect(screen.getByText('Payment vouchers')).toBeTruthy();
+    for (const label of ['Scan bills', 'New customer refund', 'New payment voucher', 'New AP payment']) expect(screen.getByText(label)).toBeTruthy();
+  });
+
+  test('the chips carry the server\'s counts over the whole company', () => {
+    draw();
+    const chip = screen.getAllByText('Draft')[0]!.closest('button') as HTMLElement;
+    expect(chip.textContent).toBe('Draft11');
+  });
+
+  test('the stage says what it means', () => {
+    draw();
+    expect(screen.getByText(/Every voucher in any stage/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
+    /* The chip, not the row tag of the same word. */
+    fireEvent.click(screen.getAllByText('Checked')[0]!);
+    expect(screen.getByText(/Locked and reserved\. Approving posts the journal in the same step/)).toBeTruthy();
+  });
+});
+
+describe('the next step on each row (the redesign)', () => {
+  test('a draft offers Prepare and runs it without a dialog, through the same door', async () => {
+    prepareAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const row = screen.getByText('PV-2609-001').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Prepare'));
+    await waitFor(() => expect(prepareAsync).toHaveBeenCalledWith('raw'));
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  test('a checked voucher offers Approve & post, asks first, and an approved one offers Print', async () => {
+    approveAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Approve & post'));
+    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith('chk'));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/300\.00/);
+    const done = screen.getByText('PV-2609-004').closest('tr') as HTMLElement;
+    expect(within(done).getByText('Print')).toBeTruthy();
+    expect(within(done).queryByText('Approve & post')).toBeNull();
+  });
+
+  test('⋯ opens the row menu: Edit only while the voucher can still change', () => {
+    draw();
+    fireEvent.click(screen.getByLabelText('More for PV-2609-002'));
+    let menu = screen.getByRole('menu');
+    for (const label of ['Open', 'Edit', 'Print', 'Print + files', 'Copy as new', 'Cancel…']) expect(within(menu).getByText(label)).toBeTruthy();
+    fireEvent.click(within(menu).getByText('Open'));
+    fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
+    menu = screen.getByRole('menu');
+    expect(within(menu).queryByText('Edit')).toBeNull();
+  });
+});
+
+describe('Remind approver (the design\'s e8; owner 2026-11-03: 主要是付款吧)', () => {
+  const APPROVE = 'scm.payment_voucher.approve';
+  const NEXT = '2026-11-03T08:05:00Z'; // 16:05 in Malaysia
+
+  test('the approver sees Approve & post on a checked voucher, never Remind approver', () => {
+    denied.clear();
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Approve & post')).toBeTruthy();
+    expect(screen.queryByText('Remind approver')).toBeNull();
+  });
+
+  test('whoever cannot approve gets Remind approver on the checked row only; the toast names the voucher and the hour', async () => {
+    denied.clear(); denied.add(APPROVE);
+    remindAsync.mockClear(); toastSuccess.mockClear();
+    remindAsync.mockResolvedValueOnce({ reminded: [{ id: 'chk', pvNumber: 'PV-2609-003' }], refused: [], approvers: 1, nextAt: NEXT });
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Approve & post')).toBeNull();
+    expect(screen.getAllByText('Remind approver')).toHaveLength(1);
+    fireEvent.click(within(row).getByText('Remind approver'));
+    await waitFor(() => expect(remindAsync).toHaveBeenCalledWith(['chk']));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(toastSuccess.mock.calls[0]![0]).toBe('Reminder sent to the approver · PV-2609-003 · RM 300.00. One reminder per voucher an hour — the next after 16:05.');
+    denied.clear();
+  });
+
+  test('a reminder refused within the hour says so in the toast, in the server\'s own words', async () => {
+    denied.clear(); denied.add(APPROVE);
+    toastError.mockClear();
+    const said = 'PV-2609-003 was reminded at 15:05 by Mika. One reminder per voucher an hour — the next can go after 16:05.';
+    remindAsync.mockRejectedValueOnce(new Error(said));
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Remind approver'));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(said));
+    denied.clear();
+  });
+
+  test('the batch bar sends ONE request for the ticked checked vouchers, and says the right is someone else\'s', async () => {
+    denied.clear(); denied.add(APPROVE);
+    remindAsync.mockClear(); toastSuccess.mockClear();
+    remindAsync.mockResolvedValueOnce({ reminded: [{ id: 'chk', pvNumber: 'PV-2609-003' }], refused: [], approvers: 3, nextAt: NEXT });
+    draw();
+    const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
+    fireEvent.click(boxes[1]!); // prepared
+    fireEvent.click(boxes[2]!); // checked
+    expect(screen.getByText('Check 1')).toBeTruthy();
+    expect(screen.queryByText(/Approve & post \d/)).toBeNull();
+    expect(screen.getByText(/Approving needs the approve right\. Remind approver sends one note for them all, once an hour per voucher\./)).toBeTruthy();
+    fireEvent.click(screen.getByText('Remind approver · 1'));
+    await waitFor(() => expect(remindAsync).toHaveBeenCalledTimes(1));
+    expect(remindAsync).toHaveBeenCalledWith(['chk']);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(toastSuccess.mock.calls[0]![0]).toBe('Reminder sent to 3 approvers · PV-2609-003 · RM 300.00. One reminder per voucher an hour — the next after 16:05.');
+    denied.clear();
   });
 });

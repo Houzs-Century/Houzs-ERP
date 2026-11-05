@@ -67,14 +67,18 @@ export function reportVerdict(
   return { kind: "elsewhere", sighting: seen[0]! };
 }
 
-/** The evidence from each fair's chat messages. Pure. */
+/** The evidence from each fair's chat messages. Pure.
+ *  attendeeEmailsOf: per-project attendee user emails (lowercased), REQUIRED so
+ *  a new caller cannot forget it and silently drop attendees' chat (owner
+ *  2026-10-30). Pass an empty Map when the caller has no attendees to supply. */
 export function buildReportEvidence(
   notesByProject: ReadonlyMap<number, readonly NoteRow[]>,
   startDateOf: ReadonlyMap<number, string | null>,
+  attendeeEmailsOf: ReadonlyMap<number, ReadonlySet<string>>,
 ): ReportEvidence {
   const out: ReportEvidence = new Map();
   for (const [projectId, notes] of notesByProject) {
-    const report = collectReport(notes, startDateOf.get(projectId) ?? null);
+    const report = collectReport(notes, startDateOf.get(projectId) ?? null, attendeeEmailsOf.get(projectId) ?? null);
     for (const b of report.bills) {
       const list = out.get(b.ref_token) ?? [];
       list.push({ projectId, reportDate: b.report_date, amountSen: b.amount_sen, salesperson: b.salesperson_name });
@@ -144,5 +148,28 @@ export async function loadReportEvidence(
     });
     notesByProject.set(pid, list);
   }
-  return buildReportEvidence(notesByProject, startDateOf);
+  /* Per-event attendee emails — same join as projectOverview.ts, scoped by the
+     caller's company predicate on the fair's company_id. An attendee without a
+     login row contributes nothing. Lowercased so the Set.has lookup matches. */
+  const attRes = await db
+    .prepare(
+      `SELECT psa.project_id AS project_id, LOWER(TRIM(u.email)) AS email
+         FROM project_sales_attendees psa
+         JOIN projects p ON p.id = psa.project_id
+         JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+         JOIN users u ON u.id = sr.user_id
+        WHERE u.email IS NOT NULL AND u.email <> '' AND ${where}${companySql}`,
+    )
+    .bind(...binds)
+    .all<Record<string, unknown>>();
+  const attendeeEmailsOf = new Map<number, Set<string>>();
+  for (const r of (attRes.results ?? []) as Array<Record<string, unknown>>) {
+    const pid = Number(r.project_id);
+    const email = text(r.email);
+    if (!Number.isInteger(pid) || !email) continue;
+    const bag = attendeeEmailsOf.get(pid) ?? new Set<string>();
+    bag.add(email);
+    attendeeEmailsOf.set(pid, bag);
+  }
+  return buildReportEvidence(notesByProject, startDateOf, attendeeEmailsOf);
 }

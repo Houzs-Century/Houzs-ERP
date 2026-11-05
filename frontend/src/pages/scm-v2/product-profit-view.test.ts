@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'vitest';
 import type { ProductProfitData, ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import {
-  donutOf, gpOf, productProfitSheet, profitNotes, rankingOf, showsFreeBedframes, totalsOf, viewRows, waterfallOf, type ProfitView,
+  donutOf, gpOf, productProfitSheet, profitNotes, profitPeriod, rankingOf, showsFreeBedframes, totalsOf, viewRows, waterfallOf, type ProfitView,
 } from './product-profit-view';
 
 const row = (model: string, category: ProductProfitRow['category'], units: number, salesSen: number, costSen: number, giftSen: number, over: Partial<ProductProfitRow> = {}): ProductProfitRow => ({
@@ -92,13 +92,34 @@ describe('product-profit-view', () => {
   test('Excel and PDF draw the rows as shown, with the gifts column only when they count', () => {
     const rows = viewRows(DATA, view(['mattress']));
     const on = productProfitSheet(DATA, view(['mattress']), rows);
-    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['Category', 'Sold', 'Avg price', 'Sales', 'Product cost', 'Gifts', 'Gross profit', 'Margin', 'Free bedframes']);
+    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['Category', 'Sold', 'Avg price', 'Sales', 'Product cost', 'Gifts', 'Gross profit', 'Margin · % of sales', 'Free bedframes']);
     expect(on.tables[0].rows[0]).toMatchObject({ label: '1. ULTIMATE · AKEMI', cells: ['Mattress', '89 pcs', 673_256, 59_919_800, 14_650_000, 11_200_300, 34_069_500, expect.any(Number), '87 pcs · 54,038.00'] });
     expect(on.tables[0].rows.at(-1)).toMatchObject({ kind: 'total' });
-    expect(on.subtitle).toBe('2026-09 · Mattress · gifts included · RM');
+    expect(on.title).toBe('Product profit');
+    expect(on.subtitle).toBe('September 2026 · by SO date · Mattress · gifts included · RM');
+    expect(on.meta[0]).toEqual({ label: 'Month', value: 'September 2026' });
     const off = productProfitSheet(DATA, view(['mattress'], false), rows);
     expect(off.tables[0].columns.map((c) => c.label)).not.toContain('Gifts');
     expect(profitNotes(DATA, view([], false), rows).some((n) => n.startsWith('Gifts are not counted this time'))).toBe(true);
     expect(profitNotes(DATA, view([]), rows).some((n) => n.includes('2 order(s) carry gifts but no paid product'))).toBe(true);
+  });
+});
+
+describe('several months (c8; owner 2026-11-03 「要」)', () => {
+  test('the period names one month alone, or the first and last of several, across a year end too', () => {
+    expect(profitPeriod('2026-09-01', '2026-09-30')).toBe('September 2026');
+    expect(profitPeriod('2026-09-01', '2026-10-31')).toBe('September 2026 – October 2026');
+    expect(profitPeriod('2025-11-01', '2026-02-28')).toBe('November 2025 – February 2026');
+  });
+
+  test('the sheet and the notes say how many months were added together', () => {
+    const range: ProductProfitData = { ...DATA, month: '2026-08', from: '2026-08-01', to: '2026-10-31' };
+    const rows = viewRows(range, view([]));
+    const sheet = productProfitSheet(range, view([]), rows);
+    expect(sheet.meta[0]).toEqual({ label: 'Months', value: 'August 2026 – October 2026' });
+    expect(profitNotes(range, view([]), rows)[0]).toMatch(/^3 months added together, each order in the month of its SO date\./);
+    /* One month reads as it always did. */
+    expect(productProfitSheet(DATA, view([]), viewRows(DATA, view([]))).meta[0]).toEqual({ label: 'Month', value: 'September 2026' });
+    expect(profitNotes(DATA, view([]), viewRows(DATA, view([])))[0]).toMatch(/^By SO date\./);
   });
 });

@@ -29,6 +29,7 @@ import {
   usePurchaseOrderDetail,
   useSuppliers,
   useSupplierDetail,
+  useSupplierPriceHistory,
   useSuppliersForMaterial,
   type BindingRow,
   type NewPoItem,
@@ -42,6 +43,9 @@ import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabe
 import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { activeOptions, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { useSofaCombos } from '../../vendor/scm/lib/sofa-combos-queries';
+import { bindingAsOf } from './poBindingAsOf';
+import { applySupplierCombos } from './poComboCost';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -169,6 +173,7 @@ export const PurchaseOrderNew = () => {
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
+  const priceHistoryQ   = useSupplierPriceHistory(supplierId || null);
   const warehouses      = useWarehouses();
   const supplier        = supplierDetail.data?.supplier ?? null;
   const bindings        = useMemo(() => supplierDetail.data?.bindings ?? [], [supplierDetail.data?.bindings]);
@@ -592,14 +597,16 @@ export const PurchaseOrderNew = () => {
      surcharges, instead of the flat binding.unit_price_sen. Falls back to
      the flat binding price when there's no binding / matrix / maint, and is a
      no-op (returns the line's current cost) when the operator has manually
-     overridden the price (priceTouched). Combos are OUT OF SCOPE this phase —
-     PO lines are per-SKU, so there's no combo override here. */
+     overridden the price (priceTouched). Sofa SETS matching a supplier combo are
+     re-spread across the matched lines by the effect below (2990-0013). */
   const recomputeLineCost = (line: DraftLine): number => {
     // Find the line's binding: by id when known, else by item_code.
-    const binding = line.bindingId
+    const current = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.item_code === line.itemCode);
-    if (!binding) return line.unitPriceSen;
+    if (!current) return line.unitPriceSen;
+    // The supplier price in force on the PO date; the current price when none is dated.
+    const binding = bindingAsOf(current, priceHistoryQ.data?.history ?? [], poDate || todayMyt());
     // No maint config loaded yet (or none seeded) → don't crash / zero out;
     // computeMfgPoUnitCost still returns the matrix/flat base with no
     // surcharges, which is the right fallback.
@@ -671,6 +678,10 @@ export const PurchaseOrderNew = () => {
       return { ...l, variants };
     }));
 
+  // The picked supplier's own sofa combos (cost side), every effective date, so the
+  // one in force on the PO date can be chosen (supplier-scoped; master combos excluded).
+  const supplierCombosQ = useSofaCombos({ supplierId: supplierId || undefined, includeAll: true, enabled: !!supplierId });
+
   /* Phase 3 (2026-05-29) — Auto-fill each line's unit COST from the supplier
      price table + maintenance surcharges whenever a binding is picked
      (pickBinding / the two item-first effects) or variants change (setVariant).
@@ -681,9 +692,22 @@ export const PurchaseOrderNew = () => {
   useEffect(() => {
     setLines((prev) => {
       let changed = false;
+      const base = new Map(prev.map((l) => [l.rid, l.priceTouched ? l.unitPriceSen : recomputeLineCost(l)]));
+      const comboCost = applySupplierCombos(
+        prev.map((l) => ({
+          rid: l.rid, itemCode: l.itemCode, category: l.category, qty: l.qty,
+          unitPriceSen: base.get(l.rid) ?? l.unitPriceSen, priceTouched: l.priceTouched,
+          tier: fabricTierForLine(l), variants: l.variants,
+        })),
+        (supplierCombosQ.data ?? []).map((r) => ({
+          id: r.id, baseModel: r.baseModel, modules: r.modules, tier: r.tier, customerId: r.customerId,
+          pricesByHeight: r.pricesByHeight, effectiveFrom: r.effectiveFrom, createdAt: r.createdAt, deletedAt: r.deletedAt,
+        })),
+        poDate || todayMyt(),
+      );
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
-        const cost = recomputeLineCost(l);
+        const cost = comboCost.get(l.rid) ?? base.get(l.rid) ?? l.unitPriceSen;
         if (cost === l.unitPriceSen) return l;
         changed = true;
         return { ...l, unitPriceSen: cost };
@@ -693,7 +717,7 @@ export const PurchaseOrderNew = () => {
     // recomputeLineCost closes over bindings / fabrics / maint; re-run when any
     // of those (or the lines' pricing-relevant fields) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindings, fabrics, maint, lines]);
+  }, [bindings, fabrics, maint, lines, supplierCombosQ.data, poDate, priceHistoryQ.data]);
 
   const subtotalSen = useMemo(
     () => lines.reduce(

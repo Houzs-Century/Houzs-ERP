@@ -9,7 +9,19 @@ import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
+import { earliestLorryDate } from "./earliest-lorry-date";
+import { applyProjectFleetDates } from "./project-fleet-dates";
+
+/** LIKE patterns for a word typed as a name's initials: SCCC reads Setia City
+ *  Convention Centre. Letters only, 3 to 6 of them. */
+export function initialsLikes(word: string): string[] {
+  if (!/^[a-z]{3,6}$/i.test(word)) return [];
+  const body = [...word].join("% ");
+  return [`${body}%`, `% ${body}%`];
+}
 export { deriveProjectCode, deriveProjectName };
+// Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
+export { earliestLorryDate };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
 export async function uniqueProjectCode(env: Env, base: string): Promise<string> {
@@ -496,6 +508,19 @@ export async function patchProject(
     if (synced) body.name = synced;
   }
 
+  // Keep the project-level window date in step with the per-lorry dates the
+  // crew editor now owns. Only override when at least one lorry carries a date,
+  // so editing a legacy project's crew (lorries saved before per-lorry dates
+  // existed) never silently wipes its existing setup_start_at / dismantle_start_at.
+  if ("setup_crew" in body) {
+    const d = earliestLorryDate(body.setup_crew);
+    if (d) body.setup_start_at = d;
+  }
+  if ("dismantle_crew" in body) {
+    const d = earliestLorryDate(body.dismantle_crew);
+    if (d) body.dismantle_start_at = d;
+  }
+
   const sets: string[] = [];
   const binds: any[] = [];
   for (const k of PATCH_FIELDS) {
@@ -555,6 +580,14 @@ export async function patchProject(
     );
     shifted = out.shifted;
     deltaDays = out.deltaDays;
+  }
+
+  // Auto-fill the fleet window from the event dates on confirm (owner 2026-10-31),
+  // so a confirmed project reaches the Delivery Planning board without re-keying
+  // setup/dismantle. Fill-only + confirmed-only (see project-fleet-dates.ts); only
+  // when the patch could newly enable it.
+  if ("status" in body || "start_date" in body || "end_date" in body) {
+    await applyProjectFleetDates(env, id);
   }
 
   return {
@@ -1047,7 +1080,7 @@ export function stripSetupDismantle<
 
   // Document rows are identified by their cloned section NAME. Owner
   // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
-  // "SALES PIC" (Setup Image / Defect List / Event Complete Image) — stay
+  // "SALES PIC" (Setup Image / Defect List) — stay
   // on the wire for the stripped caller (this strip only ever runs for
   // sales-role callers); the DRIVER / PURCHASER document rows and the crew
   // editor stay hidden. A Setup & Dismantle section is dropped outright
@@ -1766,11 +1799,16 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // correlated subquery to users (mirroring the `pic.name` display join at
     // the SELECT) so it also works inside the COUNT(*) query, which does NOT
     // join users. Additive — keeps code/name/venue/organizer.
-    where.push(
-      "(p.code LIKE ? OR p.name LIKE ? OR p.venue LIKE ? OR p.organizer LIKE ? OR p.brand LIKE ? OR (SELECT u.name FROM users u WHERE u.id = p.pic_id) LIKE ?)"
-    );
-    const like = `%${f.search}%`;
-    binds.push(like, like, like, like, like, like);
+    // Each word on its own, in any order and any field: "mle dataran" (owner
+    // 2026-11-04). A short word also reads as the venue's initials: "sccc".
+    for (const word of String(f.search).trim().split(/\s+/).filter(Boolean)) {
+      const like = `%${word}%`;
+      const initials = initialsLikes(word);
+      where.push(
+        `(p.code LIKE ? OR p.name LIKE ? OR p.venue LIKE ? OR p.organizer LIKE ? OR p.brand LIKE ? OR (SELECT u.name FROM users u WHERE u.id = p.pic_id) LIKE ?${initials.map(() => " OR p.venue LIKE ?").join("")})`
+      );
+      binds.push(like, like, like, like, like, like, ...initials);
+    }
   }
   // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
   // within a company, any user with the projects permission sees ALL that

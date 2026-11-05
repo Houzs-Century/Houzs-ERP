@@ -27,7 +27,11 @@ export const MESSAGE_KINDS = [
   'delivery_completed',
   'balance_reminder',
   'postpone',
+  // One-way production-delay heads-up (apology only; no new date, not an opener).
+  'overdue_order',
   'postage',
+  // Service Case (ASSR) legs only — sent by assr-arrangement-message.ts (HC-0171).
+  'assr_arrangement',
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 
@@ -42,13 +46,33 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
   delivery_completed: 'Delivery Completed',
   balance_reminder: 'Balance Reminder',
   postpone: 'Postpone',
+  overdue_order: 'Overdue Order',
   postage: 'Postage Confirm',
+  assr_arrangement: 'Service Arrangement',
+};
+
+/** The Delivery Message Status a sent order lands on (owner 2026-10-21: every
+ *  send lands the row on its "Done X"; values from HC_MESSAGE_STATUS_VALUES).
+ *  Service Arrangement is not here: an ASSR job has no SO status column, its row
+ *  reads its state off the WhatsApp record. Overdue Order is not here either: a
+ *  one-way production-delay heads-up moves no status (guarded in /send). */
+export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order'>, string> = {
+  delivery: 'Done Send',
+  amend: 'Done Amend',
+  postpone: 'Done Postpone Reason',
+  driver_info: 'Done Driver Information',
+  balance_reminder: 'Done Balance Collection',
+  reminder_1: 'Done Remind (1)',
+  reminder_2: 'Done Remind (2)',
+  reminder_3: 'Done Remind (3)',
+  postage: 'Done Postage',
+  delivery_completed: 'Done Delivered',
 };
 
 /** Kinds that OPEN a Confirm / Amend conversation. Only these reset the
  *  contact's button_status & co. — a Driver Info or Balance Reminder sent to a
  *  customer who already confirmed must not unlock the Delivery Lock guard. */
-export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone']);
+export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone', 'assr_arrangement']);
 
 export interface DriverInfoInput {
   driverName: string;
@@ -160,6 +184,24 @@ export function kindAttributes(
         },
       };
     }
+
+    case 'overdue_order': {
+      // One-way production-delay heads-up. Its template prints OUR reason as
+      // {{amend_date_reason}} — the board's staff-picked Amend Reason, the same
+      // column Postpone reads. It is NOT an opener, so the send does not reset
+      // the contact (connect.ts CONNECT_RESET_ATTRIBUTES), which means an absent
+      // value would leave a stale reason, or the literal "{amend_date_reason}",
+      // in the customer's message. Skip the group when the reason is blank
+      // rather than send either.
+      const reason = clean(first.amend_reason);
+      if (!reason) return { attributes: {}, skip: 'overdue_order_needs_reason' };
+      return { attributes: { amend_date_reason: reason } };
+    }
+
+    case 'assr_arrangement':
+      // Not an SO message: an order sent with this kind is skipped, never
+      // handed a Service Case template.
+      return { attributes: {}, skip: 'assr_only' };
 
     case 'postage': {
       const address = joinDeliveryAddress(first);

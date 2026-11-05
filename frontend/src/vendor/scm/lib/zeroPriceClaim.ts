@@ -41,3 +41,15 @@ export const priceBoxAuthored = (text: string): boolean => {
   const t = text.replace(/,/g, '').trim();
   return t !== '' && Number.isFinite(Number(t));
 };
+
+/* HC-0198: a blank / untyped Unit Price is "no price", so the server saves the
+ * catalogue base PLUS the director-set variant surcharges (divan, leg, specials).
+ * A typed 0 (`authored`) saves RM 0 and a typed price is never topped up. Sofas
+ * are priced from their modules server-side, so the client cannot preview them.
+ * The editor adds this to the line total so the screen shows what will be saved. */
+export const unpricedExtraSen = (
+  unitPriceSen: number,
+  authored: boolean,
+  extraSen: number,
+  isSofa: boolean,
+): number => (unitPriceSen === 0 && !authored && !isSofa ? extraSen : 0);

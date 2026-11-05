@@ -37,8 +37,22 @@ const fabricWriteFailed = (err: unknown) => {
 };
 
 export type FabricCategoryValue = 'B.M-FABR' | 'S-FABR' | 'S.M-FABR' | 'LINING' | 'WEBBING';
-export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';
+export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 export type FabricTierField = 'sofaPriceTier' | 'bedframePriceTier';
+
+/* 2990-0024: supplier sofa lists price Half Leather and Full Leather as their own
+   grades, so a sofa fabric may be Price 3 / Price 4. Bedframe has no such grade. */
+export const FABRIC_TIER_OPTIONS: Record<FabricTierField, readonly FabricTier[]> = {
+  sofaPriceTier:     ['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4'],
+  bedframePriceTier: ['PRICE_1', 'PRICE_2'],
+};
+
+const SOFA_TIER_NAMES: Partial<Record<FabricTier, string>> = { PRICE_3: 'Price 3 (HL)', PRICE_4: 'Price 4 (FL)' };
+
+export const fabricTierLabel = (t: FabricTier | null, field: FabricTierField): string => {
+  if (!t) return '—';
+  return (field === 'sofaPriceTier' ? SOFA_TIER_NAMES[t] : undefined) ?? `Price ${t.replace('PRICE_', '')}`;
+};
 
 export type FabricTrackingRow = {
   id: string;

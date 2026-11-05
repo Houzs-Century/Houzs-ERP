@@ -41,6 +41,18 @@
 // and coming back finds every other bill as read — each bill opened says so,
 // and the AP / voucher pages offer "Back to Scan bills (N left)". A refresh or
 // a closed tab empties it; Clear the pile empties it on purpose.
+//
+// SEVERAL BILLS IN ONE PDF (HC-0204, Siti 2026-11-02: our attachment is a
+// single PDF containing multiple invoices): a PDF in the pile can be split
+// by page — each page becomes its own bill, still one file = one bill, and the
+// person (not the reader) says so by pressing Split. An invoice that runs two
+// pages is merged back with the same Merge.
+//
+// NOT EVERY PAGE IS A BILL (owner 2026-11-03, a staff claim PDF split by page:
+// 我要claim 3,427.29，但是读出来怪怪的): the reader says what each page is, and
+// a bank transfer slip, a summary page, or a page repeating a receipt already
+// in the pile (same number, same total) is SET ASIDE — kept, attachable to the
+// ticked voucher as evidence, never a line. The person can overrule it.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -53,6 +65,8 @@ import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { splitPdfPages } from '../../vendor/scm/lib/pdf-split-request';
+import { NOT_A_BILL_LABEL, isNotABill, repeatsOf, voucherLinesOf } from '../../vendor/scm/lib/bill-pile-sort';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
 import { fmtDate } from '../../vendor/shared/format';
@@ -97,6 +111,8 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const [splitGroups, setSplitGroups] = useState<Set<string>>(new Set());
   /* Case 4: the read bills (by index) ticked for ONE voucher across groups. */
   const [tickedForOne, setTickedForOne] = useState<Set<number>>(new Set());
+  /* Set-aside pages the person said ARE bills after all. */
+  const [treatAsBill, setTreatAsBill] = useState<Set<number>>(new Set());
   const [note, setNote] = useState<string | null>(null);
   /* While the reader has bills the pile holds still — an answer lands by its
      place in the pile, so the pile may not shift under it. */
@@ -153,6 +169,35 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     setTicked(new Set());
   };
 
+  /* One PDF of several bills → one bill per page, in the PDF's place in the pile. */
+  const [splitting, setSplitting] = useState<string | null>(null);
+  const splitPdf = async (rid: string) => {
+    const f = picked.find((p) => p.rid === rid);
+    if (!f || busy || splitting) return;
+    setSplitting(rid);
+    let pages: File[];
+    try {
+      pages = await splitPdfPages(f.file);
+    } catch (e) {
+      setNote(`${f.file.name}: ${e instanceof Error ? e.message : 'it could not be split.'} Read it as one bill, or save each invoice as its own file.`);
+      return;
+    } finally {
+      setSplitting(null);
+    }
+    if (pages.length < 2) { setNote(`${f.file.name} has one page — nothing to split.`); return; }
+    if (getPile(key).picked.length - 1 + pages.length > MAX_PILE_FILES) {
+      setNote(`${f.file.name} has ${pages.length} pages — the pile holds at most ${MAX_PILE_FILES} files. Read the rest first, then split it.`);
+      return;
+    }
+    const next = pages.map((page, i) => ({ rid: `${rid}-p${i + 1}`, file: page, merged: false, page: i + 1 }));
+    pileChanged((p) => ({
+      picked: p.picked.flatMap((x) => (x.rid === rid ? next : [x])),
+      billGroups: p.billGroups.flatMap((g) => (g.length === 1 && g[0] === rid ? next.map((n) => [n.rid]) : [g])),
+    }));
+    setTicked((prev) => { const n = new Set(prev); n.delete(rid); return n; });
+    setNote(`${f.file.name} split into ${pages.length} bills, one per page. An invoice on two pages: tick its pages and merge.`);
+  };
+
   const removeFile = (rid: string) => {
     if (busy) return;
     pileChanged((p) => ({
@@ -201,6 +246,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     const runId = getPile(key).run + 1;
     set((p) => ({ ...p, run: runId, results: [], billFiles: [], opened: [], progress: { done: 0, total: bills.length } }));
     setTickedForOne(new Set());
+    setTreatAsBill(new Set());
     setNote(null);
     let next = 0;
     /* READ_AT_ONCE lanes, each taking the next bill as its last one lands. */
@@ -233,10 +279,24 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
 
   /* Group the READ bills by matched supplier; unmatched ones group by the
      printed vendor name so two TNB bills still sit together. */
+  const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
+  /* The three heaps: receipts (grouped below), and the set-aside pages — not
+     a bill, or a repeat of a receipt already in the pile (bill-pile-sort.ts). */
+  const { receipts, setAside, asideWhy } = useMemo(() => {
+    const counted = okBills.filter((b) => !isNotABill(b.extraction) || treatAsBill.has(b.index));
+    const repeats = repeatsOf(counted);
+    const why = new Map<number, string>();
+    for (const b of okBills) {
+      if (treatAsBill.has(b.index)) continue;
+      const of = repeats.get(b.index);
+      if (isNotABill(b.extraction)) why.set(b.index, NOT_A_BILL_LABEL[b.extraction.documentKind] ?? 'not a bill');
+      else if (of != null) why.set(b.index, `repeats bill ${of + 1} — same number and total, likely its next page`);
+    }
+    return { receipts: okBills.filter((b) => !why.has(b.index)), setAside: okBills.filter((b) => why.has(b.index)), asideWhy: why };
+  }, [okBills, treatAsBill]);
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; supplierId: string | null; bills: Array<Extract<ExtractedBill, { ok: true }>> }>();
-    for (const b of results ?? []) {
-      if (!b.ok) continue;
+    for (const b of receipts) {
       const key = b.supplierMatch ? `s:${b.supplierMatch.id}` : `v:${(b.extraction.vendorName ?? `bill-${b.index}`).toUpperCase()}`;
       const cur = map.get(key) ?? {
         label: b.supplierMatch?.name ?? b.extraction.vendorName ?? `Unnamed bill ${b.index + 1}`,
@@ -247,7 +307,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
       map.set(key, cur);
     }
     return [...map.entries()].map(([key, g]) => ({ key, ...g }));
-  }, [results]);
+  }, [receipts]);
 
   const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; files?: PvFilePayload[]; eventSuggestions?: EventSuggestion[] }) => {
     /* The bill's own bytes ride ALONG (module stash, not location.state — see
@@ -281,31 +341,28 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   };
 
   /* Case 4 — the ticked receipts, whatever shop each came from, as ONE voucher. */
-  const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
   const failedCount = (results ?? []).length - okBills.length;
   const labelOf = (b: Extract<ExtractedBill, { ok: true }>) => b.supplierMatch?.name ?? b.extraction.vendorName ?? `Unnamed bill ${b.index + 1}`;
-  const tickedBills = okBills.filter((b) => tickedForOne.has(b.index));
+  const tickedBills = receipts.filter((b) => tickedForOne.has(b.index));
+  const tickedAside = setAside.filter((b) => tickedForOne.has(b.index));
+  const tickedLines = tickedBills.flatMap((b) => voucherLinesOf(b.extraction, [labelOf(b), b.extraction.invoiceNumber].filter(Boolean).join(' ')));
+  const tickedTotalSen = tickedLines.every((l) => l.amountSen != null) ? tickedLines.reduce((s, l) => s + (l.amountSen ?? 0), 0) : null;
   const tickedCurrencies = new Set(tickedBills.map((b) => b.extraction.currency));
+  /* Every receipt as a line, every set-aside page as attached evidence. */
+  const tickEveryReceipt = () => setTickedForOne(new Set(okBills.map((b) => b.index)));
   const openTickedAsOne = () => {
-    if (tickedBills.length < 2 || tickedCurrencies.size > 1) return;
+    if (tickedLines.length < 2 || tickedCurrencies.size > 1) return;
     /* One line per receipt, at the receipt's total, described by WHAT WAS
        BOUGHT — the item descriptions the reader found, joined — not by the
        shop (owner 2026-09-08, seeing "99 SPEEDMART" where the pile had shown
        "EVEREADY SHD AAA…": 他 detect 的 description 是对的, 但是转去 voucher 就变
        名字了). The shop + number is the fallback for a receipt with no
-       readable item; the shop is always on the attached page. */
-    const lines = tickedBills.map((b) => {
-      const bought = b.extraction.lines
-        .filter((l) => l.description && l.amountSen != null && l.amountSen > 0)
-        .map((l) => l.description!.trim()).filter(Boolean).join(' · ');
-      return {
-        description: bought ? bought.slice(0, 200) : [labelOf(b), b.extraction.invoiceNumber].filter(Boolean).join(' '),
-        amountSen: b.extraction.totalSen,
-      };
-    });
+       readable item; the shop is always on the attached page. A page of
+       several purchases gives one line each (bill-pile-sort.ts). */
+    const lines = tickedLines;
     const first = tickedBills[0]!;
     const dates = tickedBills.map((b) => b.extraction.invoiceDate).filter((d): d is string => !!d).sort();
-    markOpened(tickedBills.map((b) => b.index));
+    markOpened([...tickedBills, ...tickedAside].map((b) => b.index));
     openVoucher(
       {
         ...first.extraction,
@@ -314,14 +371,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
         vendorName: null, vendorRegNo: null, documentKind: 'receipt', sstSen: null, dueDate: null,
         invoiceDate: dates.length > 0 ? dates[dates.length - 1]! : null,
         invoiceNumber: tickedBills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null,
-        totalSen: tickedBills.every((b) => b.extraction.totalSen != null)
-          ? tickedBills.reduce((s, b) => s + (b.extraction.totalSen ?? 0), 0)
-          : null,
+        totalSen: tickedTotalSen,
         lines,
       },
-      /* Every ticked receipt's pages, in bill order — the voucher carries all
-         its evidence. */
-      { lines, memory: null, files: tickedBills.flatMap((b) => billFiles[b.index] ?? []) },
+      /* Every ticked receipt's pages and every ticked set-aside page (the
+         slips, the summary), in pile order — the voucher carries all its evidence. */
+      { lines, memory: null, files: [...tickedBills, ...tickedAside].sort((x, y) => x.index - y.index).flatMap((b) => billFiles[b.index] ?? []) },
     );
   };
 
@@ -344,7 +399,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
 
   return (
     <div className="space-y-4">
-      <PageHeader back eyebrow="Finance" title={ap ? 'Scan bills — AP invoices' : 'Scan bills'} />
+      <PageHeader back eyebrow="Finance · Money out" title={ap ? 'Scan bills — Supplier bills' : 'Scan bills'} />
 
       <section
         className={styles.card}
@@ -356,7 +411,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>The pile</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {ap ? 'one file = one bill = one AP invoice, however many pages' : 'one file = one bill, however many pages'} · Merge is only for ONE bill photographed in pieces{ap ? '' : ' · several receipts on ONE voucher: read them, then tick them below'}
+            {ap ? 'one file = one bill = one AP invoice, however many pages' : 'one file = one bill, however many pages'} · Merge is only for ONE bill photographed in pieces · several bills in ONE PDF: Split it by page{ap ? '' : ' · several receipts on ONE voucher: read them, then tick them below'}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -400,6 +455,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                   <FileText {...ICON} />
                   <span>{p.file.name}</span>
                   {p.merged && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>(merged page)</span>}
+                  {!p.merged && p.page == null && docFileMime(p.file) === 'application/pdf' && (
+                    <Button variant="ghost" size="sm" onClick={() => void splitPdf(p.rid)} disabled={busy || splitting != null}
+                      aria-label={`Split ${p.file.name} into one bill per page`}>
+                      {splitting === p.rid ? 'Splitting…' : 'Several bills inside — split by page'}
+                    </Button>
+                  )}
                   <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)} disabled={busy}
                     style={{ border: 'none', background: 'none', cursor: busy ? 'default' : 'pointer', color: 'var(--fg-muted)' }}>
                     <X size={14} strokeWidth={1.75} />
@@ -422,9 +483,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
           {!ap && okBills.length > 1 && (
             <section className={styles.card}>
               <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
-                <span style={{ color: 'var(--fg-muted)' }}>Different receipts on ONE voucher (petty cash): tick them below, then</span>
-                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={busy || tickedBills.length < 2 || tickedCurrencies.size > 1}>
-                  Open ticked as ONE voucher ({tickedBills.length} lines)
+                <span style={{ color: 'var(--fg-muted)' }}>Different receipts on ONE voucher (petty cash, a staff claim): tick them below, or</span>
+                <Button variant="secondary" size="sm" onClick={tickEveryReceipt} disabled={busy}>
+                  Tick every receipt
+                </Button>
+                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={busy || tickedLines.length < 2 || tickedCurrencies.size > 1}>
+                  Open ticked as ONE voucher ({tickedLines.length} lines{tickedLines.length > 0 ? `, ${fmtRm(tickedTotalSen)}` : ''})
                 </Button>
                 {tickedCurrencies.size > 1
                   ? <span style={{ color: 'var(--c-festive-b, #B8331F)' }}>the ticked receipts are in different currencies</span>
@@ -458,13 +522,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                             onChange={(e) => setTickedForOne((prev) => { const n = new Set(prev); if (e.target.checked) n.add(b.index); else n.delete(b.index); return n; })}
                             style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
                         )}
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                        <span style={{ fontWeight: 700 }}>
                           {b.extraction.invoiceNumber ?? '(no number)'}
                           {opened.includes(b.index) && <span style={{ fontFamily: 'inherit', fontWeight: 400, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginLeft: 6 }}>· opened</span>}
                         </span>
                         <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
+                        <span style={{ fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {ap ? (
                           <Button variant="primary" size="sm" onClick={() => openApInvoice(b)} disabled={busy}>
                             Open as AP invoice
@@ -492,7 +556,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           {b.extraction.lines.map((l, i) => (
                             <div key={i} style={{ display: 'contents' }}>
                               <span style={{ color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description ?? '—'}</span>
-                              <span style={{ fontFamily: 'var(--font-mono)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(l.amountSen)}</span>
+                              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(l.amountSen)}</span>
                             </div>
                           ))}
                         </div>
@@ -534,6 +598,37 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
               </section>
             );
           })}
+          {setAside.length > 0 && (
+            <section className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2 className={styles.cardTitle}>Set aside — not bills</h2>
+                <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                  {setAside.length} page(s) · never a line{ap ? '' : ' · tick one to attach it to the ONE voucher as evidence'}
+                </span>
+              </div>
+              <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {setAside.map((b) => (
+                  <div key={b.index} style={{ display: 'grid', gridTemplateColumns: `${ap ? '' : '18px '}minmax(0, 1fr) 130px auto`, gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)' }}>
+                    {!ap && (
+                      <input type="checkbox" aria-label={`Attach set-aside bill ${b.index + 1} to the voucher`}
+                        checked={tickedForOne.has(b.index)}
+                        onChange={(e) => setTickedForOne((prev) => { const n = new Set(prev); if (e.target.checked) n.add(b.index); else n.delete(b.index); return n; })}
+                        style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
+                    )}
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      Bill {b.index + 1}{namesOf(b.index) ? ` (${namesOf(b.index)})` : ''}
+                      <span style={{ color: 'var(--fg-muted)' }}> · {asideWhy.get(b.index)}</span>
+                    </span>
+                    <span style={{ color: 'var(--fg-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
+                    <Button variant="ghost" size="sm" disabled={busy}
+                      onClick={() => setTreatAsBill((prev) => new Set(prev).add(b.index))}>
+                      It is a bill
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           {results.filter((b) => !b.ok).map((b) => (
             <section key={`fail-${b.index}`} className={styles.card}>
               <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>

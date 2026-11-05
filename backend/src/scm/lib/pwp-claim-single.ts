@@ -28,7 +28,7 @@
 //   if restoring to RESERVED also nulls source_doc_no (we stamped it on claim).
 // ---------------------------------------------------------------------------
 
-import { matchComboSubset } from '../shared';
+import { matchComboBuild } from '../shared';
 import type { SofaComboRow } from '../shared/sofa-build';
 import { loadLiveCombosByIds } from './pos-sofa-combos';
 
@@ -185,7 +185,9 @@ export function checkPwpEligibility(args: PureEligibilityArgs): PureEligibilityR
     const candidate = sofaCombos.filter(
       (c) => rewardComboIds.includes(c.id) && (!product.base_model || c.baseModel === product.base_model),
     );
-    if (!candidate.some((c) => matchComboSubset(sofaModules, c.modules) != null)) {
+    // This single-line endpoint cannot submit or verify accessory child lines.
+    // Inclusive packages are redeemed through the complete cart create path.
+    if (!candidate.some((c) => matchComboBuild({ modules: sofaModules }, c) != null)) {
       return { ok: false, reason: "sofa build doesn't match the voucher's reward combo" };
     }
     return { ok: true, grantPwpPrice: 0, grantSofaComboIds: rewardComboIds };
@@ -320,6 +322,7 @@ export async function claimPwpForSingleLine(
       id,
       baseModel: r.base_model,
       modules: r.modules,
+      accessories: r.accessories,
       tier: null,
       customerId: null,
       pricesByHeight: {},

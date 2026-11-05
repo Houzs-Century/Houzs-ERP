@@ -274,6 +274,34 @@ describe('the voucher that answers a request', () => {
     expect((await fin(`/payment-requests/${id}/return`, 'POST', { note: 'no' })).status).toBe(409);
   });
 
+  /* Owner 2026-11-04: combine payment request 做一张pv — 不同人也可以. */
+  test('one voucher answers several requests: each claimed for it, each one\'s bill carried', async () => {
+    const w = world();
+    const a = await raised(w);
+    const b = await raised(w);
+    const fin = as(w, FINANCE);
+    const pv = await fin('/payment-vouchers', 'POST', { ...voucherFor(a.id), paymentRequestId: undefined, paymentRequestIds: [a.id, b.id, a.id] });
+    expect(pv.status).toBe(201);
+    expect(w.sb.tables.acc_payment_requests.map((r) => [r.status, r.pv_id])).toEqual([['VOUCHERED', pv.body.id], ['VOUCHERED', pv.body.id]]);
+    expect(w.sb.tables.acc_pv_files).toHaveLength(2);
+    expect((await a.james(`/payment-requests/${b.id}`)).body.request).toMatchObject({ stage: 'PROCESSING', voucher: { id: pv.body.id } });
+  });
+
+  test('if one of the requests is already answered, nothing is created and the others stay waiting', async () => {
+    const w = world();
+    const a = await raised(w);
+    const b = await raised(w);
+    const fin = as(w, FINANCE);
+    expect((await fin('/payment-vouchers', 'POST', voucherFor(b.id))).status).toBe(201);
+    const both = await fin('/payment-vouchers', 'POST', { ...voucherFor(a.id), paymentRequestId: undefined, paymentRequestIds: [a.id, b.id] });
+    expect(both.status).toBe(409);
+    expect(both.body.error).toBe('request_has_voucher');
+    expect(w.sb.tables.payment_vouchers).toHaveLength(1);
+    const left = w.sb.tables.acc_payment_requests.find((r) => r.id === a.id)!;
+    expect(left.status).toBe('SUBMITTED');
+    expect(left.pv_id ?? null).toBeNull();
+  });
+
   test('a withdrawn or returned request takes no voucher; an unknown one is refused', async () => {
     const w = world();
     const { james, id } = await raised(w);

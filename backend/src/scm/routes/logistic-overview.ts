@@ -16,10 +16,13 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { serveSwr, type SwrBuild } from '../lib/kv-swr';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
+import { downDates, loadDownWindows } from '../lib/lorry-down-days';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
 const SO_NOT_LIVE = `(${['DRAFT', 'CANCELLED'].join(',')})`;
+import { unreleasedOrders } from '../lib/so-unreleased';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { procurementCategory, PROCUREMENT_CATEGORY_LABEL } from '../lib/procurement-overview';
 
 export const logisticOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -118,6 +121,11 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
     .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0')), c).order('id').range(f, t));
   if (noCost.error) return fail('delivery orders without cost', noCost.error);
+  /* HC-0159: confirmed orders nobody has released (no Processing Date) for over 30 days. */
+  const unreleased = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+    .select('so_date, status, on_hold, processing_date').eq('status', 'CONFIRMED').is(SO_PROCESSING_DATE_COLUMN, null).lt('so_date', monthAgo), c).order('doc_no').range(f, t));
+  if (unreleased.error) return fail('unreleased orders', unreleased.error);
+  const soNoProcessing = unreleasedOrders((unreleased.data ?? []) as Parameters<typeof unreleasedOrders>[0], today);
   const doNotClosed = { count: 0, amountSen: 0, over30: 0, over30Sen: 0 };
   for (const d of notClosed.data ?? []) {
     doNotClosed.count += 1; doNotClosed.amountSen += num(d.local_total_sen);
@@ -176,12 +184,17 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     const fee = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
     return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : PROCUREMENT_CATEGORY_LABEL[procurementCategory(raw, str(l.item_group))], sen: num(l.line_total_sen) };
   });
+  /* A day in the workshop is not a day the lorry could have gone out. */
+  const pEnd = pTo < today ? pTo : today;
+  const down = await loadDownWindows(sb, pFrom, pEnd, today);
+  if (down.error) return fail('lorry down days', { message: down.error });
+  const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
   const period = {
     from: pFrom, to: pTo,
     doCount: pDos.length,
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
-    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today),
+    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate),
     /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),
@@ -192,7 +205,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   return { ok: true, body: {
     today, thisMonday,
     period,
-    doNotClosed, doNoCost,
+    doNotClosed, doNoCost, soNoProcessing,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,
