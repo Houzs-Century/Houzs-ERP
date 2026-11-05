@@ -1173,10 +1173,6 @@ export interface ListProjectsFilters {
    *  Cancelled events are excluded from both. */
   phase?: "setup" | "dismantle";
   brand?: string;
-  /** Organizer name(s) — COMMA-SEPARATED, multi-select (owner 2026-10-22,
-   *  "add on organizer"). Matches projects.organizer (free text) exactly, the
-   *  same way `brand` matches projects.brand. A single value collapses to
-   *  equality; unset ⇒ all organizers. */
   organizer?: string;
   event_type_id?: number;
   search?: string;
@@ -1362,25 +1358,17 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     );
     binds.push(todayMyt());
   }
-  // brand / status / year / month accept COMMA-SEPARATED lists since
-  // 2026-08-07 (owner: "add multiple choice for all dropdown also"). A single
-  // value still behaves exactly as before — csvList() yields one element and
-  // the IN (?) collapses to equality.
-  const brandList = csvList(f.brand);
-  if (brandList.length) {
-    where.push(`p.brand IN (${brandList.map(() => "?").join(",")})`);
-    binds.push(...brandList);
-  }
-  const statusList = csvList(f.status);
-  if (statusList.length) {
-    where.push(`p.status IN (${statusList.map(() => "?").join(",")})`);
-    binds.push(...statusList);
-  }
-  const organizerList = csvList(f.organizer);
-  if (organizerList.length) {
-    where.push(`p.organizer IN (${organizerList.map(() => "?").join(",")})`);
-    binds.push(...organizerList);
-  }
+  // brand / status / organizer / year / month accept COMMA-SEPARATED lists
+  // (owner 2026-08-07; organizer 2026-10-22). A lone value collapses to IN (?).
+  const addInFilter = (col: string, raw: string | undefined) => {
+    const list = csvList(raw);
+    if (!list.length) return;
+    where.push(`${col} IN (${list.map(() => "?").join(",")})`);
+    binds.push(...list);
+  };
+  addInFilter("p.brand", f.brand);
+  addInFilter("p.status", f.status);
+  addInFilter("p.organizer", f.organizer);
   if (f.event_type_id != null) {
     where.push("p.event_type_id = ?");
     binds.push(f.event_type_id);
