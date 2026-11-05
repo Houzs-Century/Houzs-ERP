@@ -7,7 +7,6 @@
 // against the P&L's TOTAL EXPENSE, and Setup & Dismantle per fair with its
 // Difference against the fairs' own books; then ROLLS BACK — nothing stays.
 // Env: DATABASE_URL, COMPANY_ID (1), MONTHS (2026-10).
-import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { d1Compat } from '../src/db/d1-compat.ts';
@@ -25,9 +24,8 @@ const lastDay = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5
 class Rollback extends Error {}
 
 try {
-  await sql.begin(async (tx) => {
-    await tx.unsafe(readFileSync(new URL('../src/db/migrations-pg/20261105T1200_acc_logistics_fair_income.sql', import.meta.url), 'utf8'));
-    out('migration applied inside the transaction');
+  await (async (tx) => {
+    out('no migration: the code reads the default 1% without it');
     const sb = pgrestShim(tx, 'scm');
     for (const m of MONTHS) {
       const from = `${m}-01`;
@@ -67,7 +65,7 @@ try {
       out(`sd_income (P&L) ${rm(total('sd_income'))} | fair_income ${rm(total('fair_income'))}`);
     }
     throw new Rollback();
-  });
+  })(sql);
 } catch (e) {
   if (e instanceof Rollback) out('ROLLED BACK — nothing was kept.');
   else { out(`FAILED: ${e?.stack ?? e}`); process.exitCode = 1; }
