@@ -19,7 +19,7 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import { fmtSenPlain } from '../../shared/format';
-import { sheetText, type ReportSheet, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
+import { sheetText, sheetWithTotalsBelow, type ReportSheet, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
 
 /** A printed column: which sheet columns it carries (an amount and the % beside it), and whether a rule follows it. */
 export type PrintedColumn = { label: string; cols: number[]; edge: boolean };
@@ -85,7 +85,8 @@ const K = 72 / 25.4;
 /* autoTable sets a top-aligned line's baseline this far below the padding, in font-size units. */
 const BASELINE = 2 - 1.15;
 
-export async function generateReportPdf(sheet: ReportSheet, opts: { fileName: string; action?: PdfAction }): Promise<void> {
+export async function generateReportPdf(given: ReportSheet, opts: { fileName: string; action?: PdfAction }): Promise<void> {
+  const sheet = sheetWithTotalsBelow(given);
   const page = pageFor(sheet);
   const doc = new jsPDF({ unit: 'mm', format: page.format, orientation: page.orientation });
   await ensurePdfCjkFont(doc, { title: sheet.title, subtitle: sheet.subtitle, meta: sheet.meta, tables: sheet.tables, notes: sheet.notes ?? [] });

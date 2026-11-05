@@ -40,24 +40,27 @@ describe('sheetMatrix', () => {
     expect(m[3]![1]).toMatchObject({ fontWeight: 'bold', align: 'right', bottomBorderStyle: 'thin' });
     /* A block title spans the row, bold; nothing to add up. */
     expect(m[4]).toEqual([{ value: 'Expenses', type: String, indent: 0, fontWeight: 'bold', fontSize: 11, span: 3 }]);
-    /* A category is bold and indented one; an account row two. */
+    /* A category is bold and indented one, its figures on its Total row below its rows
+       (owner 2026-11-05: the file as the screen); an account row two. */
     expect(m[5]![0]).toMatchObject({ value: 'General expense', indent: 1, fontWeight: 'bold' });
-    expect(m[5]![1]).toMatchObject({ value: 173_358.06, type: Number, format: AMOUNT_FORMAT, align: 'right', fontWeight: 'bold' });
-    expect(m[5]![2]).toMatchObject({ value: 0.287, type: Number, format: PCT_FORMAT });
+    expect(m[5]!.slice(1).every((c) => c == null || c.value == null)).toBe(true);
+    expect(m[8]![0]).toMatchObject({ value: 'Total General expense', indent: 1 });
+    expect(m[8]![1]).toMatchObject({ value: 173_358.06, type: Number, format: AMOUNT_FORMAT, align: 'right', fontWeight: 'bold' });
+    expect(m[8]![2]).toMatchObject({ value: 0.287, type: Number, format: PCT_FORMAT });
     expect(m[6]![0]).toMatchObject({ value: '900-S100 · STAFF SALARIES & OVERTIME', indent: 2 });
     expect(m[6]![0]).not.toHaveProperty('fontWeight');
     /* A negative stays a number — the format brackets it; nothing prints a dash. */
     expect(m[7]![1]).toMatchObject({ value: -15, type: Number, format: AMOUNT_FORMAT });
     expect(m[7]![2]).toMatchObject({ value: '-', type: String, align: 'right' });
-    expect(m[8]![0]).toMatchObject({ value: 'Unassigned', fontStyle: 'italic' });
+    expect(m[9]![0]).toMatchObject({ value: 'Unassigned', fontStyle: 'italic' });
     /* A total is shaded with a rule above; a net line darker with a heavier rule. */
-    expect(m[9]![0]).toMatchObject({ value: 'Total expenses', fontWeight: 'bold', backgroundColor: '#eceeea', topBorderStyle: 'thin' });
-    expect(m[9]![1]).toMatchObject({ backgroundColor: '#eceeea' });
-    expect(m[10]![0]).toMatchObject({ value: 'NET PROFIT', fontWeight: 'bold', backgroundColor: '#e3e6e0', topBorderStyle: 'medium' });
-    expect(m[10]![1]).toMatchObject({ value: -415 });
+    expect(m[10]![0]).toMatchObject({ value: 'Total expenses', fontWeight: 'bold', backgroundColor: '#eceeea', topBorderStyle: 'thin' });
+    expect(m[10]![1]).toMatchObject({ backgroundColor: '#eceeea' });
+    expect(m[11]![0]).toMatchObject({ value: 'NET PROFIT', fontWeight: 'bold', backgroundColor: '#e3e6e0', topBorderStyle: 'medium' });
+    expect(m[11]![1]).toMatchObject({ value: -415 });
     /* The notes at the foot. */
-    expect(m[11]).toEqual([]);
-    expect(m[12]![0]).toMatchObject({ value: 'Expenses as booked.', span: 3 });
+    expect(m[12]).toEqual([]);
+    expect(m[13]![0]).toMatchObject({ value: 'Expenses as booked.', span: 3 });
   });
 
   it('sizes the columns — the name wide, an amount, a % narrow — and names the sheet within Excel\'s rules', () => {
@@ -77,10 +80,11 @@ describe('sheetMatrix', () => {
     expect(grid[0]![0]).toBe('P&L');
     /* An empty header cell reads back as nothing at all. */
     expect(grid[3]!.slice(1)).toEqual(['Amount', '% of sales']);
-    expect(grid[5]).toEqual(['General expense', 173_358.06, 0.287]);
+    expect(grid[5]).toEqual(['General expense']);
+    expect(grid[8]).toEqual(['Total General expense', 173_358.06, 0.287]);
     expect(grid[7]).toEqual(['900-A014 · ADVERT - SHOWROOM', -15, '-']);
-    expect(grid[10]).toEqual(['NET PROFIT', -415, -0.069]);
-    expect(ws.B6!.z).toBe(AMOUNT_FORMAT);
-    expect(ws.C6!.z).toBe(PCT_FORMAT);
+    expect(grid[11]).toEqual(['NET PROFIT', -415, -0.069]);
+    expect(ws.B9!.z).toBe(AMOUNT_FORMAT);
+    expect(ws.C9!.z).toBe(PCT_FORMAT);
   });
 });
