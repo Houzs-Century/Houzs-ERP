@@ -425,6 +425,23 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     entries.push({ ...e, side, rowKey: key, column, sen: amount });
   };
 
+  /* The rows a leg was read as must move its column by exactly the leg. A gap no
+     bigger than one sen per row is the rounding of the shares: it goes onto the
+     leg's largest row. A bigger gap is not rounding and is left to show. */
+  const settleRounding = (from: number, legSen: number, column: string): void => {
+    const mine = entries.slice(from);
+    if (mine.length === 0) return;
+    const gap = legSen - mine.reduce((s, e) => s + (e.side === 'R' ? e.sen : -e.sen), 0);
+    if (gap === 0 || Math.abs(gap) > mine.length) return;
+    const e = mine.reduce((a, b) => (Math.abs(b.sen) > Math.abs(a.sen) ? b : a));
+    const d = e.side === 'R' ? gap : -gap;
+    e.sen += d;
+    const row = (e.side === 'R' ? receipts : payments).get(e.rowKey);
+    if (!row) return;
+    row.cells[column] = (row.cells[column] ?? 0) + d;
+    row.totalSen += d;
+  };
+
   for (const [jeNo, lines] of byJe) {
     const moneyLegs = lines.filter((l) => colSet.has(l.account_code));
     if (moneyLegs.length === 0) continue;
@@ -434,9 +451,12 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     const others = lines.filter((l) => !colSet.has(l.account_code));
     const base = String(first.source_type ?? '').replace(/_REVERSAL$/, '');
 
-    for (const leg of moneyLegs) {
+    /* One money leg read as its rows. Each row's share is rounded on its own, so the
+       shares can miss the leg by a sen; settleRounding puts that sen back (owner
+       2026-11-05: 310-0060 read 5,708.18 against the ledger's 5,708.17). */
+    const readLeg = (leg: GlLine): void => {
       const legSen = sen(leg);              // > 0 money in, < 0 money out
-      if (legSen === 0) continue;
+      if (legSen === 0) return;
       const side: 'R' | 'P' = legSen > 0 ? 'R' : 'P';
       const magnitude = Math.abs(legSen);
       /* The other money legs of this journal (a transfer): each is the other
@@ -486,7 +506,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         for (const l of counterparts.filter((l) => !apControls.has(l.account_code))) {
           add(side, l.account_code, l.account_code, String(l.account_name ?? l.account_code), leg.account_code, shareOf(Math.abs(sen(l))), { ...meta, party: l.party_name ?? null });
         }
-        continue;
+        return;
       }
 
       /* A swipe into the Card column: the share its statement has paid into a bank by
@@ -526,6 +546,11 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         add(side, `${key}:${CARD_IN_BANK}`, l.account_code, cardName(CARD_IN_BANK_NAME), leg.account_code, banked, lineMeta);
         add(side, `${key}:${CARD_NOT_IN_BANK}`, l.account_code, cardName(CARD_NOT_IN_BANK_NAME), leg.account_code, amt - banked, lineMeta);
       }
+    };
+    for (const leg of moneyLegs) {
+      const from = entries.length;
+      readLeg(leg);
+      settleRounding(from, sen(leg), leg.account_code);
     }
   }
 
