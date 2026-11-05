@@ -553,6 +553,7 @@ type AddressRow = {
   assigned_user_name: string | null;
   assigned_dept: string | null;
   assigned_position: string | null;
+  department_id: number | null;
   active: number | boolean | null;
   created_at: string | null;
 };
@@ -565,6 +566,7 @@ function rowToAddress(r: AddressRow) {
     assignedUserId: r.assigned_user_id ?? undefined,
     assignedUserName: r.assigned_user_name ?? undefined,
     assignedDept: r.assigned_dept ?? undefined,
+    departmentId: r.department_id ?? null,
     assignedPosition: r.assigned_position ?? undefined,
     active: Number(r.active ?? 0) === 1,
     createdAt: r.created_at ?? "",
@@ -588,18 +590,20 @@ function rowToLabel(r: LabelRow) {
 }
 
 // ---------------------------------------------------------------------------
-// Hierarchical mailbox visibility. Super-admin (permissions "*" or
-// mail_center.manage) always sees every thread/address. Every other user has a
-// VISIBILITY LEVEL in mail_user_scope (default 'personal'):
+// Hierarchical mailbox visibility. Every user has a VISIBILITY LEVEL in
+// mail_user_scope; no row = 'department' (HC-0157: Mail Center follows the
+// Org Chart):
 //   • 'personal'   — own assigned alias(es) + shared mailboxes granted via
 //                    email_address_access.
-//   • 'department' — the personal set PLUS every active mailbox whose
-//                    assigned_dept matches the caller's own dept.
+//   • 'department' — the personal set PLUS every active department mailbox
+//                    (no owner) linked to the caller's Org Chart department
+//                    (email_addresses.department_id = users.department_id).
 //   • 'company'    — every active mailbox.
 // Inherently scoped to the caller — no broad RBAC grant required.
 // ---------------------------------------------------------------------------
 const MAIL_SCOPE_LEVELS = ["personal", "department", "company"] as const;
 type MailScopeLevel = (typeof MAIL_SCOPE_LEVELS)[number];
+export const DEFAULT_MAIL_SCOPE_LEVEL: MailScopeLevel = "department";
 
 // A user is a Mail Center admin (sees all) if they hold the "*" wildcard or the
 // mail_center.manage permission.
@@ -639,55 +643,12 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     levelRow?.level ?? "",
   )
     ? (levelRow!.level as MailScopeLevel)
-    : "personal";
+    : DEFAULT_MAIL_SCOPE_LEVEL;
 
-  // Sales Director → own-department mailbox tier (owner 2026-07, rule 5): the
-  // personal set PLUS every active mailbox whose assigned_dept matches the
-  // director's ORG department (Sales). This ADDS the Sales mailboxes on top of
-  // 'personal' WITHOUT granting the all-mailbox 'company' view — non-Sales
-  // mailboxes stay hidden. Keyed off the STABLE ORG FIELD department_name, not
-  // the mailbox-owner's assigned_dept (a director may not own a dept mailbox),
-  // so it's distinct from the generic 'department' tier below. Never DOWNGRADES
-  // an explicitly-set 'company' scope. isMailAdmin (mail_center.manage / `*`)
-  // is handled by the caller and is unaffected.
+  // Sales Director (owner 2026-07, rule 5) always gets their own department's
+  // mailboxes, even when set to 'personal'; never downgrades 'company'.
   const user = c.get("user");
-  const salesDirDept = isSalesDirectorUser(user)
-    ? (user?.department_name ?? "").trim() || "Sales"
-    : null;
-  if (salesDirDept && level !== "company") {
-    const own = await c.env.DB.prepare(
-      `SELECT address FROM email_addresses
-         WHERE active = 1${coSql} AND (
-           assigned_user_id = ?
-           OR id IN (SELECT address_id FROM email_address_access WHERE user_id = ?)
-         )`,
-    )
-      .bind(userId, userId)
-      .all<{ address: string }>();
-    /* Go-live review #12 — the bidirectional substring LIKE over-matched: a
-       "Sales" director captured "Presales" / "Wholesales" mailboxes (either
-       direction of the LIKE). Tighten to a NORMALIZED equality (case-insensitive,
-       trimmed) on the department name so a Sales director sees exactly the Sales
-       department's mailboxes and nothing whose name merely contains "sales". */
-    const deptRows = await c.env.DB.prepare(
-      `SELECT address FROM email_addresses
-         WHERE active = 1${coSql}
-           AND assigned_dept IS NOT NULL AND trim(assigned_dept) <> ''
-           AND lower(trim(assigned_dept)) = lower(trim(?))`,
-    )
-      .bind(salesDirDept)
-      .all<{ address: string }>();
-    const addrs = [
-      ...(own.results ?? []).map((r) => r.address),
-      ...(deptRows.results ?? []).map((r) => r.address),
-    ];
-    return {
-      isAdmin: false,
-      userId,
-      addresses: dedupeLower(addrs),
-      level: "department",
-    };
-  }
+  if (isSalesDirectorUser(user) && level === "personal") level = "department";
 
   // 'company' — every active mailbox.
   if (level === "company") {
@@ -714,32 +675,20 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     .all<{ address: string }>();
   const addresses = (own.results ?? []).map((r) => r.address);
 
-  // 'department' — additionally every active mailbox in the caller's own dept.
+  // 'department' — the department mailboxes of the caller's Org Chart
+  // department. Matched by id: the old name match compared "Sales" with
+  // "Sales Department" and never hit. Owned (personal) rows are excluded so
+  // a department never reaches a colleague's personal mail.
   if (level === "department") {
-    /* Go-live review #12 — the caller's department is the caller's OWN org
-       department_name, not whatever dept happens to be stamped on a mailbox they
-       were granted access to. Deriving it from an owned mailbox row let a member
-       whose only assigned mailbox carries an unrelated assigned_dept scope to the
-       WRONG department. Prefer the caller's org department_name; fall back to the
-       mailbox-derived dept only when the org field is absent (legacy rows). */
-    let dept = (user?.department_name ?? "").trim();
-    if (!dept) {
-      const deptRow = await c.env.DB.prepare(
-        `SELECT assigned_dept FROM email_addresses
-           WHERE assigned_user_id = ?${coSql}
-             AND assigned_dept IS NOT NULL AND assigned_dept <> '' LIMIT 1`,
-      )
-        .bind(userId)
-        .first<{ assigned_dept?: string | null }>();
-      dept = (deptRow?.assigned_dept ?? "").trim();
-    }
-    if (dept) {
+    const departmentId = user?.department_id ?? null;
+    if (departmentId != null) {
       const deptRows = await c.env.DB.prepare(
         `SELECT address FROM email_addresses
            WHERE active = 1${coSql}
-             AND lower(trim(assigned_dept)) = lower(trim(?))`,
+             AND assigned_user_id IS NULL
+             AND department_id = ?`,
       )
-        .bind(dept)
+        .bind(departmentId)
         .all<{ address: string }>();
       addresses.push(...(deptRows.results ?? []).map((r) => r.address));
     } else {
@@ -1515,6 +1464,35 @@ app.post("/test-inject", async (c) => {
 // ---------------------------------------------------------------------------
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// HC-0157: a department mailbox links to its Org Chart department by id; the
+// name stays in assigned_dept for the Inbox's department grouping. A caller
+// that sends only a name ("Sales") is linked to the one department whose name
+// contains it, or to none when that is ambiguous.
+async function resolveMailboxDepartment(
+  db: D1Database,
+  departmentId: number | null | undefined,
+  assignedDept: string | null | undefined,
+): Promise<{ departmentId: number | null; assignedDept: string | null } | "unknown" | undefined> {
+  const name = assignedDept === undefined ? undefined : assignedDept?.trim() || null;
+  if (departmentId !== undefined) {
+    if (departmentId === null) return { departmentId: null, assignedDept: name ?? null };
+    const dept = await db
+      .prepare(`SELECT id, name FROM departments WHERE id = ? LIMIT 1`)
+      .bind(Number(departmentId))
+      .first<{ id: number; name: string }>();
+    if (!dept) return "unknown";
+    return { departmentId: Number(dept.id), assignedDept: name ?? dept.name };
+  }
+  if (name === undefined) return undefined;
+  if (name === null) return { departmentId: null, assignedDept: null };
+  const matches = await db
+    .prepare(`SELECT id FROM departments WHERE lower(name) LIKE '%' || lower(?) || '%' LIMIT 2`)
+    .bind(name)
+    .all<{ id: number }>();
+  const rows = matches.results ?? [];
+  return { departmentId: rows.length === 1 ? Number(rows[0].id) : null, assignedDept: name };
+}
+
 // POST /api/mail-center/addresses — create an alias for a user.
 app.post("/addresses", async (c) => {
   if (!isMailAdmin(c.get("user"))) {
@@ -1527,6 +1505,7 @@ app.post("/addresses", async (c) => {
     assignedUserId?: number | null;
     assignedUserName?: string;
     assignedDept?: string;
+    departmentId?: number | null;
     assignedPosition?: string;
   };
   const body: CreateBody = await c.req
@@ -1553,6 +1532,10 @@ app.post("/addresses", async (c) => {
     return c.json({ error: `address must end with @${domain}` }, 400);
   }
 
+  const owned = body.assignedUserId != null;
+  const dept = owned ? undefined : await resolveMailboxDepartment(c.env.DB, body.departmentId, body.assignedDept);
+  if (dept === "unknown") return c.json({ error: "That department no longer exists." }, 400);
+
   const userId = c.get("userId") ?? null;
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -1564,8 +1547,8 @@ app.post("/addresses", async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO email_addresses
          (id, address, label, assigned_user_id, assigned_user_name,
-          assigned_dept, assigned_position, active, created_at, created_by${stampCo ? ", company_id" : ""})
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?${stampCo ? ", ?" : ""})`,
+          assigned_dept, department_id, assigned_position, active, created_at, created_by${stampCo ? ", company_id" : ""})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?${stampCo ? ", ?" : ""})`,
     )
       .bind(
         id,
@@ -1573,7 +1556,8 @@ app.post("/addresses", async (c) => {
         body.label?.trim() || null,
         body.assignedUserId ?? null,
         body.assignedUserName ?? null,
-        body.assignedDept ?? null,
+        dept?.assignedDept ?? null,
+        dept?.departmentId ?? null,
         body.assignedPosition?.trim() || null,
         now,
         userId,
@@ -1613,6 +1597,7 @@ app.patch("/addresses/:id", async (c) => {
     assignedUserId?: number | null;
     assignedUserName?: string | null;
     assignedDept?: string | null;
+    departmentId?: number | null;
     assignedPosition?: string | null;
     active?: boolean;
   };
@@ -1634,9 +1619,16 @@ app.patch("/addresses/:id", async (c) => {
     sets.push("assigned_user_name = ?");
     binds.push(body.assignedUserName ?? null);
   }
-  if (body.assignedDept !== undefined) {
-    sets.push("assigned_dept = ?");
-    binds.push(body.assignedDept?.trim() || null);
+  if (body.assignedUserId != null) {
+    // An owned mailbox is personal: no department reaches it.
+    sets.push("department_id = NULL");
+  } else {
+    const dept = await resolveMailboxDepartment(c.env.DB, body.departmentId, body.assignedDept);
+    if (dept === "unknown") return c.json({ error: "That department no longer exists." }, 400);
+    if (dept) {
+      sets.push("assigned_dept = ?", "department_id = ?");
+      binds.push(dept.assignedDept, dept.departmentId);
+    }
   }
   if (body.assignedPosition !== undefined) {
     sets.push("assigned_position = ?");
@@ -1758,7 +1750,8 @@ app.delete("/access", async (c) => {
 
 // ---------------------------------------------------------------------------
 // Hierarchical mail-visibility levels. Admin sets a per-user level in
-// mail_user_scope: 'personal' | 'department' | 'company'. Absent row = personal.
+// mail_user_scope: 'personal' | 'department' | 'company'. Absent row =
+// DEFAULT_MAIL_SCOPE_LEVEL.
 // ---------------------------------------------------------------------------
 
 // GET /api/mail-center/scope-levels — every per-user level row.

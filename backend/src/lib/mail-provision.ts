@@ -350,6 +350,7 @@ export async function isPersonalAddressTaken(db: D1Database, address: string, us
        SELECT 1 FROM email_addresses
         WHERE lower(address) = ?
           AND ((assigned_user_id IS NOT NULL AND assigned_user_id <> ?)
+               OR department_id IS NOT NULL
                OR (assigned_dept IS NOT NULL AND trim(assigned_dept) <> ''))
        LIMIT 1`,
     )
