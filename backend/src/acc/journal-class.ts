@@ -35,6 +35,7 @@ const FIXED: Record<string, JournalClass> = {
   STOCKADJ: 'GENERAL',
   MANUAL: 'GENERAL',
   SOCONV: 'GENERAL', // money moved from a cancelled order to a new one (docs/bugs/0927)
+  OPENING: 'GENERAL', // the books' opening balances (Houzs 31/08/2026, from AutoCount)
 };
 
 const MONEY_SIDE = new Set(['SOPAY', 'SIPAY', 'PV']);

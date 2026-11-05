@@ -11,13 +11,17 @@
 // ----------------------------------------------------------------------------
 
 import {
+  boothsOf,
   companyUsesKeyerFair,
   editFairPick,
+  fairBoothAskMessage,
+  fairBoothOf,
   fairEditUnlinkedMessage,
   fairEventKey,
   fairKeyPart,
   fairMissingMessage,
   fairPickedPeriod,
+  isPickableFair,
   keyerFairDefault,
   linkedFairOf,
   lookbackWindow,
@@ -25,6 +29,8 @@ import {
   resolveFairWithKeyer,
   sameVenue,
   venueDiffersMessage,
+  withBoothPick,
+  type FairBooth,
   type FairMatch,
   type FairProjectRow,
   type FairResolution,
@@ -351,13 +357,17 @@ const KEYER_ON_PROJECT = `(p.pic_id = ? OR EXISTS (
  *
  * @param keyerId `public.users.id` of the person keying the order (the scan
  *   uploader on a scan) — not the order's salesperson (owner: 「看打单的人」).
+ * @param booth The booth the operator picked under Fair (`fairBoothOf`), used
+ *   only where neither the brand nor the keyer decides (`withBoothPick`).
  */
-export async function resolveFairForCreate(args: FairSaveArgs & { keyerId: number }): Promise<FairResolution> {
+export async function resolveFairForCreate(args: KeyerFairArgs): Promise<FairResolution> {
   return (await resolveWithKeyer(args)).fair;
 }
 
+type KeyerFairArgs = FairSaveArgs & { keyerId: number; booth: number | null };
+
 /** `resolveFairForCreate`, plus the rows it chose between (the edit names them). */
-async function resolveWithKeyer(args: FairSaveArgs & { keyerId: number }): Promise<{ fair: FairResolution; candidates: FairProjectRow[] }> {
+async function resolveWithKeyer(args: KeyerFairArgs): Promise<{ fair: FairResolution; candidates: FairProjectRow[] }> {
   const venue = (args.venue ?? '').trim();
   const pending = { fair: { projectId: null, match: 'PENDING' as const, candidateIds: [] }, candidates: [] };
   if (!venue) return pending;
@@ -370,7 +380,33 @@ async function resolveWithKeyer(args: FairSaveArgs & { keyerId: number }): Promi
   /* Not knowing where the keyer stands is not a reason to drop the brand's
      answer: on a failed read the plain rule still runs, with no keyer step. */
   const keyerProjectIds = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, candidates).catch(() => new Set<number>());
-  return { fair: resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds }), candidates };
+  const fair = resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
+  /* A booth is picked inside an EVENT; a place alone spans several fairs. */
+  const event = args.picked != null && (args.organizer ?? '').trim() !== '';
+  return { fair: event ? withBoothPick(fair, candidates, args.booth) : fair, candidates };
+}
+
+/**
+ * Whether the form must ask which BOOTH of a picked event the order is for
+ * (owner 2026-10-27: only when the system cannot tell) — the same rule the save
+ * runs, with no booth picked. `booths` are what the form offers, and `message`
+ * says why it asks. Never an error: a failed read asks nothing, and the save
+ * and Fair Links still stand behind it.
+ */
+export async function fairBoothQuestion(args: {
+  db: FairDb;
+  companySql: string;
+  event: { venue: string; organizer: string; startDate: string; endDate: string | null };
+  brand: string | null;
+  keyerId: number;
+}): Promise<{ ask: boolean; booths: FairBooth[]; message: string | null }> {
+  const { fair, candidates } = await resolveWithKeyer({
+    db: args.db, companySql: args.companySql, venue: args.event.venue, organizer: args.event.organizer,
+    picked: { startDate: args.event.startDate, endDate: args.event.endDate },
+    soDate: args.event.startDate, brand: args.brand, keyerId: args.keyerId, booth: null,
+  });
+  const message = fair.projectId == null ? fairBoothAskMessage(fair.match, candidates, args.brand) : null;
+  return message ? { ask: true, booths: boothsOf(candidates.filter(isPickableFair)), message } : { ask: false, booths: [], message: null };
 }
 
 /** The projects among `rows` the keyer stands at (PIC or Sales Attending).
@@ -686,7 +722,7 @@ export async function fairLinkOnCreate(args: {
     /* The PICKED row's period — the only way to know WHICH occurrence was meant:
        the order date is the day it was keyed, not a day the fair was on. */
     picked: fairPickedPeriod(body),
-    soDate: args.soDate, brand: args.brand,
+    soDate: args.soDate, brand: args.brand, booth: fairBoothOf(body),
   });
   const linkedId = fair.projectId ?? (keyerRule ? null : args.bindingProjectId);
   return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, step: null };
@@ -858,6 +894,7 @@ export async function fairLinkForEdit(args: {
     soDate: String(args.stored.so_date ?? '').slice(0, 10),
     brand,
     keyerId: await args.keyerId(),
+    booth: fairBoothOf(args.body),
   });
   if (fair.projectId != null) return { project_id: fair.projectId, fair_match: 'PICKED', problem: null };
   const message = fairEditUnlinkedMessage({ match: fair.match, booths: candidates, brand });

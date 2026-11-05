@@ -35,6 +35,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
 import { canonicalizeLayoutModulesForStorage, type ComboSlots } from '../shared';
+import { validateSofaSavedLayout } from '../lib/sofa-saved-layout';
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -50,6 +51,7 @@ type Row = {
   label: string | null;
   modules: ComboSlots;   // jsonb string[][]
   depth: string;
+  layout: Record<string, unknown> | null;
   sort_order: number;
   deleted_at: string | null;
   created_at: string;
@@ -57,7 +59,7 @@ type Row = {
 };
 
 const SELECT_COLS =
-  'id, company_id, owner_user_id, base_model, label, modules, depth, sort_order, deleted_at, created_at, updated_at';
+  'id, company_id, owner_user_id, base_model, label, modules, depth, layout, sort_order, deleted_at, created_at, updated_at';
 
 function rowToWire(r: Row) {
   return {
@@ -66,6 +68,7 @@ function rowToWire(r: Row) {
     label: r.label,
     modules: r.modules ?? [],
     depth: r.depth,
+    layout: r.layout ?? null,
     sortOrder: r.sort_order,
     createdAt: r.created_at,
   };
@@ -115,7 +118,10 @@ personalQuickPicks.get('/', async (c) => {
 
   const { data, error } = await scopeToCompany(query, c);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ picks: ((data ?? []) as unknown as Row[]).map(rowToWire) });
+  const includeAccessories = c.req.query('includeAccessories') === '1';
+  const rows = ((data ?? []) as unknown as Row[]).filter((r) => includeAccessories
+    || !Array.isArray(r.layout?.accessories) || r.layout.accessories.length === 0);
+  return c.json({ picks: rows.map(rowToWire) });
 });
 
 // ── POST / ─────────────────────────────────────────────────────────────
@@ -135,6 +141,7 @@ personalQuickPicks.post('/', async (c) => {
   let body: {
     baseModel?: string;
     modules?: unknown;
+    layout?: unknown;
     depth?: string;
     label?: string | null;
     sortOrder?: number;
@@ -151,6 +158,9 @@ personalQuickPicks.post('/', async (c) => {
   const modules = validateModules(body.modules);
   if (!modules) return c.json({ error: 'modules_required' }, 400);
 
+  const layout = validateSofaSavedLayout(body.layout, modules);
+  if (layout === false) return c.json({ error: 'layout_invalid' }, 400);
+
   const depth = (body.depth ?? '').trim();
   if (!depth) return c.json({ error: 'depth_required' }, 400);
 
@@ -163,6 +173,7 @@ personalQuickPicks.post('/', async (c) => {
       base_model: baseModel,
       label: body.label ?? null,
       modules,
+      layout,
       depth,
       sort_order: Number.isFinite(body.sortOrder) ? Math.round(body.sortOrder!) : 0,
     })

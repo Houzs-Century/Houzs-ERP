@@ -26,7 +26,7 @@ import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
-import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
+import { resolveDeliveryScope, scopeMatchesAssignment, podWriteScopeCompany } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
@@ -309,7 +309,7 @@ async function prepareSoAmendMirrorAudit(
 const HEADER =
   'id, do_number, so_doc_no, debtor_code, debtor_name, do_date, expected_delivery_at, ' +
   'customer_delivery_date, signed_at, delivered_at, dispatched_at, ' +
-  'driver_id, driver_name, vehicle, m3_total_milli, ' +
+  'driver_id, driver_name, vehicle, time_range, m3_total_milli, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
@@ -4234,12 +4234,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-/* Exported so the outbound-category suite can drive the ADD path directly:
-   supabaseAuth cannot run in the vitest harness. Registration unchanged. */
-export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
+const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>, it0: Record<string, unknown>, batchSoItemIds: string[]): Promise<Response> => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-  let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let it = it0;
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
 
   /* Edge #4 — itemCode catalog guard. */
@@ -4261,7 +4258,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
      B's stock out. The selected company_id feeds the audit row, not a predicate. */
   const { data: header, error: headerErr } = await scopeToCompany(
     sb.from('delivery_orders')
-      .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id), c,
+      .select('id, status, warehouse_id, do_number, company_id, so_doc_no, debtor_code, debtor_name').eq('id', id), c,
   ).maybeSingle();
   if (headerErr) return c.json({ error: 'lookup_failed', reason: headerErr.message }, 500);
   if (!header) return c.json({ error: 'not_found' }, 404);
@@ -4283,6 +4280,31 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
        path: the stock check below, the commitment planner and buildItemRow all
        read this one object. */
     it = (await resolveItemGroups(sb, [linked.items[0] as typeof it], activeCompanyId(c) ?? null))[0]!;
+  }
+
+  /* A DO ships to ONE customer — the /from-sos rule. Edit-mode "Pull from SO"
+     takes a typed SO number, so the SO line named here may belong to someone else. */
+  if (it.soItemId) {
+    const { data: soLine, error: soLineErr } = await sb.from('mfg_sales_order_items').select('doc_no').eq('id', it.soItemId as string).maybeSingle();
+    if (soLineErr) return c.json({ error: 'lookup_failed', reason: soLineErr.message }, 500);
+    const { data: soHead, error: soHeadErr } = soLine
+      ? await scopeToCompany(sb.from('mfg_sales_orders').select('debtor_code, debtor_name').eq('doc_no', (soLine as { doc_no: string }).doc_no), c).maybeSingle()
+      : { data: null, error: null };
+    if (soHeadErr) return c.json({ error: 'lookup_failed', reason: soHeadErr.message }, 500);
+    const so = soHead as { debtor_code: string | null; debtor_name: string | null } | null;
+    const doH = header as { debtor_code: string | null; debtor_name: string | null };
+    const norm = (v: string | null | undefined) => (v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+    /* Refuse only on a clear difference: both codes and they differ, or neither has a
+       code and both names exist and differ. A misspelt name on a code-less DO is not proof. */
+    const [cs, cd, ns, nd] = so ? [norm(so.debtor_code), norm(doH.debtor_code), norm(so.debtor_name), norm(doH.debtor_name)] : ['', '', '', ''];
+    const same = !so ? false : cs && cd ? cs === cd : (cs || cd || !ns || !nd) ? true : ns === nd;
+    if (!same) {
+      return c.json({
+        error: 'mixed_customers',
+        message: 'This Sales Order line belongs to a different customer than the Delivery Order.',
+        customers: [doH.debtor_name ?? doH.debtor_code ?? '(none)', so?.debtor_name ?? so?.debtor_code ?? '(unknown)'],
+      }, 400);
+    }
   }
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
   /* The added line ships from ITS OWN SO line's warehouse — the same order the
@@ -4399,6 +4421,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
     const soIds = [
       ...((existingDoLines ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id),
       (it.soItemId as string | null) ?? null,
+      ...batchSoItemIds,
     ];
     const partial = await findIncompleteSofaSets(sb, soIds, activeCompanyId(c));
     if (partial.length > 0) return c.json(sofaIncompleteSetResponse(partial), 409);
@@ -4467,6 +4490,28 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
 
   await queueAcDoEdit(c, id, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
   return c.json({ item: data }, 201);
+};
+
+/* Exported so the outbound-category suite can drive the ADD path directly:
+   supabaseAuth cannot run in the vitest harness. Registration unchanged. */
+/* Body is one line, or { items: [...] } so the modules of one sofa set arrive
+   together — the set check counts the whole batch, not each line alone. */
+export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  if (!Array.isArray(body.items)) return addOneDeliveryOrderItem(c, body, []);
+  const lines = body.items as Array<Record<string, unknown>>;
+  const batchSoItemIds = lines.map((l) => l?.soItemId).filter((x): x is string => typeof x === 'string' && !!x);
+  const items: unknown[] = [];
+  for (const [i, l] of lines.entries()) {
+    const res = await addOneDeliveryOrderItem(c, l ?? {}, batchSoItemIds);
+    if (res.status >= 400) {
+      /* Lines before this one are already saved; say which line stopped the batch. */
+      return c.json({ ...((await res.json()) as object), failedIndex: i, failedItemCode: l?.itemCode ?? null, savedBefore: i }, res.status as 400);
+    }
+    items.push(((await res.json()) as { item: unknown }).item);
+  }
+  return c.json({ items }, 201);
 };
 deliveryOrdersMfg.post('/:id/items', addDeliveryOrderItemHandler);
 
@@ -4934,10 +4979,44 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      the inventory deduct/reverse, the SO delivered-qty resync, a customer-facing
      DO email and the rack return, so the flip is the right place to stop a
      cross-company caller. */
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  /* COMPANY TO ACT IN. A bypassed driver completing their OWN POD acts on the
+     DO's OWN company, not the active one — one lorry carries both companies'
+     goods and a driver has no company switcher, so a 2990 drop on a HOUZS-active
+     driver's phone must still complete. The caller's company GRANT (resolved by
+     scopeToAllowedCompanies — a driver granted only HOUZS still gets a plain
+     "not your job", nothing leaks) PLUS the crew-ownership check below are the
+     authorization; the active company does not gate a driver's own delivery.
+     Every other caller stays strictly active-company — tenancy isolation is
+     unchanged, and the money/stock side-effects below are unaffected either way
+     because they key off the DO id / so_doc_no and so always book to the DO's
+     own company. */
+  const bypassPod = c.get('scmWriteBypassed') && POD_STATES.has(toStatus);
+  // For a driver POD, the DO's own company read through the caller's GRANT
+  // (scopeToAllowedCompanies); null when the DO is in no company they are
+  // granted (a plain "not your job", never confirming another tenant's id).
+  let doCompanyIdWhenGranted: number | null = null;
+  if (bypassPod) {
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
+      sb.from('delivery_orders').select('company_id').eq('id', id), c,
+    ).maybeSingle();
+    // A READ failure is not "you are not granted it" — surface it, never let a DB
+    // blip silently become a 403 that blocks the driver from their own delivery.
+    if (ownErr) return c.json({ error: 'load_failed', reason: ownErr.message }, 500);
+    doCompanyIdWhenGranted = (own as { company_id?: number | null } | null)?.company_id ?? null;
+  }
+  const podCo = podWriteScopeCompany(bypassPod, doCompanyIdWhenGranted);
+  let scopeCompanyId: number;
+  if (podCo.kind === 'not_your_job') {
+    return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
+  } else if (podCo.kind === 'do_company') {
+    scopeCompanyId = podCo.companyId;
+  } else {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    scopeCompanyId = co.companyId;
+  }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), co.companyId,
+    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -4947,7 +5026,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      DO crew; an admin on behalf resolves to 'all'). prev MUST be stock-out, so
      a POD records arrival and never triggers a first ship. See do-status-
      capability.ts + deliveryScope.ts. Never reached by a real-access caller. */
-  if (c.get('scmWriteBypassed') && POD_STATES.has(toStatus)) {
+  if (bypassPod) {
     if (!(DO_STOCK_OUT_STATES as readonly string[]).includes((prevStatus ?? '').toUpperCase()))
       return c.json({ error: 'illegal_status_transition', reason: 'A delivery can only be completed after it has been dispatched.' }, 409);
     const podScope = await resolveDeliveryScope(sb, c.get('houzsUser'));
@@ -5113,7 +5192,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
       .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
-      .eq('id', id), co.companyId).neq('status', 'CANCELLED')
+      .eq('id', id), scopeCompanyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     // HC-0004 T2: an SI line raced in after the doHasDownstream check above.
     const dbLock = doCancelDbRefusal(error);
@@ -5127,7 +5206,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId).select('id, status').single();
     if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
@@ -5181,7 +5260,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
     /* REC P4 — put the physical rack stock back. Best-effort; never blocks cancel. */
     try {
-      const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), co.companyId).maybeSingle();
+      const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), scopeCompanyId).maybeSingle();
       const doNo = (doRow as { do_number?: string } | null)?.do_number ?? null;
       if (doNo) await returnDoRacksOnCancel(sb, id, doNo, user.id, (doRow as { company_id?: number | null } | null)?.company_id ?? null);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] cancel reversal failed:', e); }
@@ -5199,7 +5278,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
        so this can never ask AutoCount to cancel an invoiced delivery. */
     const { data: doRow } = await sb.from('delivery_orders').select('do_number').eq('id', id).maybeSingle();
     await enqueueCancel(sb, {
-      companyId: co.companyId,
+      companyId: scopeCompanyId,
       docType: 'DO',
       docNo: (doRow as { do_number?: string } | null)?.do_number ?? id,
       docId: id,

@@ -35,6 +35,7 @@ import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
 import { columnDescription } from "../lib/columnDescriptions";
 import { rowsToTsv } from "./dataTableClipboard";
+import { useCellRange } from "./dataTableCellRange";
 import { tickedOrAll } from "./dataTableTicked";
 import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
 import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
@@ -51,6 +52,7 @@ import { withSingleActive } from "./LayoutSection";
 import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { FitWidthButton, useTableFitWidth } from "./useTableFitWidth";
 import { useInVisitClientSearch, useInVisitColFilters, useKeptColFilters } from "./dataTableColFilterMemory";
 import { useFrozenTableHeader } from "./useFrozenTableHeader";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -70,6 +72,8 @@ import {
   saveMyLayout,
   saveSharedLayout,
   deleteSharedLayout,
+  sharedPresetRows,
+  makeLayoutShareActions,
   serializeLayout,
   dataGridIdKey,
   dataGridTableKey,
@@ -155,11 +159,14 @@ function DataTableInner<T, L>({
   getRowStyle,
   initialRowLimit,
   onRowReorder,
+  cellRangeSum = false,
   defaultSort,
   embedded = false,
+  fitToWidth = false,
   groupBanner = false,
   legacyGridKey,
   layoutSeeds,
+  onApplyLayoutSeed,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
@@ -658,6 +665,7 @@ function DataTableInner<T, L>({
       /** A code-shipped page seed; `overridden` = a manager's team-wide copy. */
       seed?: boolean;
       overridden?: boolean;
+      shared?: boolean; // team-published, not a code seed
     }> = [];
     const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
     const sharedLayouts = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
@@ -680,6 +688,7 @@ function DataTableInner<T, L>({
         overridden: override != null,
       });
     }
+    out.push(...sharedPresetRows(sharedLayouts, baseIdKey, new Set((layoutSeeds ?? []).map((s) => s.id))));
     // Typed as possibly-missing: a company with no saved default has no entry.
     type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
     const defaults = layoutStore.defaults as ByKey<StoredLayout>;
@@ -1036,7 +1045,8 @@ function DataTableInner<T, L>({
         companyId: p.companyId,
         seed: p.seed,
         overridden: p.overridden,
-        readOnly: p.seed ? !layoutStore.canManageLayouts : undefined,
+        shared: p.shared,
+        readOnly: p.seed || p.shared ? !layoutStore.canManageLayouts : undefined,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
@@ -1097,6 +1107,7 @@ function DataTableInner<T, L>({
     setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
     if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
     if (groupBanner) setUserGroups(keep(layout.groupBy));
+    if (preset.seed) onApplyLayoutSeed?.(preset.id.slice("seed:".length));
   }
 
   /* ── Sync this table's layout to the account ──────────────────────────────
@@ -1333,6 +1344,7 @@ function DataTableInner<T, L>({
      COMPANY row goes through the same publish path the footer button uses. */
   const updateLayout = useCallback(
     async (id: string) => {
+      if (id.startsWith("shared:")) return saveSharedLayout(baseIdKey, id.slice("shared:".length), renderedLayout);
       if (id.startsWith("seed:")) return saveSharedLayout(baseIdKey, id.slice("seed:".length), renderedLayout);
       const target = resolvedPresets.find((p) => p.id === id);
       if (target?.savedId != null && target.tableKey) {
@@ -1366,6 +1378,8 @@ function DataTableInner<T, L>({
     },
     [baseIdKey, legacyGridKey, layoutStore.sharedLayouts]
   );
+
+  const { share: shareLayout, unshare: unshareLayout } = makeLayoutShareActions(baseIdKey, resolvedPresets, presetLayout);
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
    *  Column KEYS and sizes only; no rows, nothing from the data. */
@@ -1431,7 +1445,8 @@ function DataTableInner<T, L>({
     const onMove = (ev: MouseEvent) => {
       const r = resizeRef.current;
       if (r !== gesture) return;
-      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX));
+      // Pointer px are screen px; a fitted grid draws each column px smaller.
+      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX) / fit.scaleRef.current);
       updateWidths((prev) => ({ ...prev, [r.key]: next }), false);
     };
     const onUp = () => finish();
@@ -1893,6 +1908,8 @@ function DataTableInner<T, L>({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
   }, [layoutFixed, showTable, effectiveLoading, sortedRows, idKey]);
 
+  const fit = useTableFitWidth(idKey, fitToWidth && showTable && !isSmallViewport, () => scrollWrapRef.current, fixedTableWidth);
+
   // ── Group-by (opt-in) ──────────────────────────────────────
   // Flatten the sorted rows into a list of render instructions — a group
   // header followed by its rows (unless collapsed). Single level only (the
@@ -2102,8 +2119,9 @@ function DataTableInner<T, L>({
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
       const rh = rowHeightRef.current || ROW_HEIGHT_ESTIMATE;
-      const top = el.getBoundingClientRect().top; // tbody top relative to viewport
-      const vh = window.innerHeight;
+      // tbody top relative to viewport, both in table px (a fitted table is zoomed)
+      const top = el.getBoundingClientRect().top / fit.scaleRef.current;
+      const vh = window.innerHeight / fit.scaleRef.current;
       const first = Math.max(0, Math.floor(-top / rh) - VIRTUAL_OVERSCAN);
       const count = Math.ceil(vh / rh) + VIRTUAL_OVERSCAN * 2;
       const last = Math.min(renderList.length, first + count);
@@ -2118,7 +2136,8 @@ function DataTableInner<T, L>({
       window.removeEventListener("resize", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [canVirtualize, renderList.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fit.scaleRef is a ref
+  }, [canVirtualize, renderList.length, fit.fitScale]);
   const vStart = canVirtualize ? winRange.start : 0;
   const vEnd = canVirtualize ? Math.min(renderList.length, winRange.end) : renderList.length;
 
@@ -2134,6 +2153,8 @@ function DataTableInner<T, L>({
     boxStyle: freezeBoxStyle,
     scrollStyle: freezeScrollStyle,
   } = useFrozenTableHeader(showTable && freezeHeight !== "off", freezeFrom ?? "toolbar", freezeHeight === "screen");
+  const shownRows = useMemo(() => renderList.flatMap((it) => (it.kind === "row" ? [it.row] : [])), [renderList]);
+  const cellRange = useCellRange({ enabled: cellRangeSum, scrollRef: scrollWrapRef, rows: shownRows, columns: visibleColumns, getRowKey });
 
   return (
     <div ref={freezeRootRef}>
@@ -2273,6 +2294,7 @@ function DataTableInner<T, L>({
             <WrapText size={13} />
             Wrap
           </button>
+          {fitToWidth && <FitWidthButton fit={fit} className={toolbarBtn} />}
           <ColumnsButton
             visibleCount={visibleCount}
             totalCount={chooserOptions.length}
@@ -2305,6 +2327,8 @@ function DataTableInner<T, L>({
         onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
         onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
         onResetLayout={layoutStore.canManageLayouts ? resetSeedLayout : undefined}
+        onShareLayout={layoutStore.canManageLayouts ? shareLayout : undefined}
+        onUnshareLayout={layoutStore.canManageLayouts ? unshareLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}
@@ -2344,6 +2368,7 @@ function DataTableInner<T, L>({
           <div
             ref={scrollWrapRef}
             onKeyDown={handleCopyKey}
+            {...cellRange.wrapProps}
             className="thin-scroll overflow-x-auto overflow-y-auto"
             style={freezeScrollStyle}
           >
@@ -2351,7 +2376,7 @@ function DataTableInner<T, L>({
             className="w-full border-separate border-spacing-0 text-sm"
             // Fixed: every column holds its width; the table is at least their
             // sum (it scrolls) and at least the container (the filler takes it).
-            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
+            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth, zoom: fit.fitOn ? fit.fitScale : undefined } : undefined}
           >
             {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
                 opens a stacking context, so a frozen header <th>'s inline z-30 is
@@ -3508,6 +3533,7 @@ function DataTableInner<T, L>({
       {showTable && freezeBox && freezeBox.runway > 0 && (
         <div ref={runwaySpacerRef} aria-hidden style={{ height: freezeBox.runway }} />
       )}
+      {cellRange.overlay}
     </div>
   );
 }

@@ -35,6 +35,7 @@ import {
   useUpdateDriver,
   type DriverRow,
 } from '../../vendor/scm/lib/drivers-queries';
+import { driverEditPatch, driverEditUnchanged, driverInHouse } from './driverEdit';
 import {
   useHelpers,
   useCreateHelper,
@@ -105,9 +106,18 @@ export const Fleet = ({ embedded = false }: { embedded?: boolean } = {}) => {
 const DriversSection = () => {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Row-click opens the detail drawer to edit name / phone / IC / vehicle — the
+  // Fleet + Active ticks stay inline (their cells stopPropagation). Mirrors the
+  // Lorries section, which has carried a row-click editor from the start.
+  const [editId, setEditId] = useState<string | null>(null);
   const drivers = useDrivers({ includeInactive });
   const update = useUpdateDriver();
   const notify = useNotify();
+
+  const editDriver = useMemo(
+    () => (editId ? (drivers.data ?? []).find((d) => d.id === editId) : undefined),
+    [editId, drivers.data],
+  );
 
   /* This toggle used to fire and forget. When the server started refusing to
      mark a 3PL's driver in-house (409 linked_to_carrier — the row would
@@ -253,9 +263,11 @@ const DriversSection = () => {
         groupBanner={false}
         isLoading={drivers.isLoading}
         emptyMessage="No drivers yet."
+        onRowClick={(d) => setEditId(d.id)}
       />
 
       {creating && <CreateDriverDrawer onClose={() => setCreating(false)} />}
+      {editDriver && <EditDriverDrawer driver={editDriver} onClose={() => setEditId(null)} />}
     </section>
   );
 };
@@ -306,6 +318,71 @@ const CreateDriverDrawer = ({ onClose }: { onClose: () => void }) => {
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
           <Button variant="primary" size="md" onClick={submit} disabled={create.isPending}>
             {create.isPending ? 'Creating…' : 'Create Driver'}
+          </Button>
+        </footer>
+      </aside>
+    </>
+  );
+};
+
+const EditDriverDrawer = ({ driver, onClose }: { driver: DriverRow; onClose: () => void }) => {
+  const update = useUpdateDriver();
+  const notify = useNotify();
+  // Pre-fill from the row; phone is the stored E.164 so an untouched value
+  // diffs clean (the server re-normalises on save either way).
+  const [form, setForm] = useState({
+    name: driver.name,
+    phone: driver.phone,
+    icNumber: driver.ic_number ?? '',
+    vehicle: driver.vehicle ?? '',
+  });
+  const [inHouse, setInHouse] = useState(driverInHouse(driver));
+  const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
+
+  const submit = () => {
+    if (!form.name.trim()) { void notify({ title: 'Name required.', tone: 'error' }); return; }
+    if (!form.phone.trim()) { void notify({ title: 'Phone required.', tone: 'error' }); return; }
+    const patch = driverEditPatch(driver, { ...form, inHouse });
+    if (driverEditUnchanged(patch)) { onClose(); return; }
+    update.mutate(patch, {
+      onSuccess: onClose,
+      onError: (err) => {
+        const msg = err instanceof Error ? err.message : '';
+        void notify(/linked_to_carrier|3PL company/i.test(msg)
+          ? {
+              title: 'This driver belongs to a 3PL company',
+              body: 'Detach them from the carrier first, then mark them in-house.',
+              tone: 'error',
+            }
+          : { title: 'Could not save', body: msg || 'Something went wrong.', tone: 'error' });
+      },
+    });
+  };
+
+  return (
+    <>
+      <div className={styles.backdrop} onClick={onClose} />
+      <aside className={styles.drawer}>
+        <header className={styles.drawerHeader}>
+          <h2 className={styles.drawerTitle}>Edit Driver · {driver.driver_code}</h2>
+          <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON} /></button>
+        </header>
+        <div className={styles.drawerBody}>
+          <div className={styles.formGrid}>
+            <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} />
+            <Field label="Phone *" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+60 12-345-6789" />
+            <Field label="IC Number" value={form.icNumber} onChange={(v) => set('icNumber', v)} />
+            <Field label="Vehicle" value={form.vehicle} onChange={(v) => set('vehicle', v)} placeholder="e.g. Hilux WMN1234" />
+            <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <input type="checkbox" checked={inHouse} onChange={(e) => setInHouse(e.target.checked)} />
+              <span className={styles.fieldLabel}>In-house (uncheck for outsourced)</span>
+            </label>
+          </div>
+        </div>
+        <footer className={styles.drawerFooter}>
+          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="md" onClick={submit} disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save changes'}
           </Button>
         </footer>
       </aside>

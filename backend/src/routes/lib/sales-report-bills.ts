@@ -49,6 +49,7 @@ export type ReportSummary = {
 export function collectReport(
   notes: readonly NoteRow[],
   projectStartDate: string | null,
+  attendeeEmails: ReadonlySet<string> | null,
 ): { bills: BillRow[]; report_activity_ids: number[]; summary: ReportSummary | null } {
   const ordered = [...notes].sort((a, b) =>
     (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id - b.id,
@@ -57,10 +58,11 @@ export function collectReport(
   const contributing = new Set<number>();
   let summary: ReportSummary | null = null;
   for (const n of ordered) {
-    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position })) continue;
+    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position }, attendeeEmails)) continue;
     const parsed = parseSalesReport(n.note);
     if (parsed.bills.length > 0) {
       const reportDate = reportDateFor(parsed.date, projectStartDate);
+      dropCorrected(byToken, new Set(parsed.bills.map((b) => b.ref_token)), reportDate);
       for (const b of parsed.bills) {
         byToken.set(b.ref_token, {
           key: `${n.id}:${b.line}`,
@@ -88,6 +90,29 @@ export function collectReport(
   );
   const live = new Set(bills.map((b) => b.source_activity_id));
   return { bills, report_activity_ids: [...contributing].filter((id) => live.has(id)), summary };
+}
+
+/** A report posted again to fix a typo replaces the first: same day, as many bills,
+ *  and at least half of the earlier message's repeat, so the mistyped bill goes with
+ *  it. A later message correcting one bill, or of new bills, adds to it. */
+function dropCorrected(byToken: Map<string, BillRow>, tokens: ReadonlySet<string>, reportDate: string | null): void {
+  if (reportDate === null) return;
+  const bySource = new Map<number, BillRow[]>();
+  for (const b of byToken.values()) {
+    if (b.report_date === reportDate) bySource.set(b.source_activity_id, [...(bySource.get(b.source_activity_id) ?? []), b]);
+  }
+  for (const rows of bySource.values()) {
+    if (tokens.size < rows.length || rows.filter((b) => tokens.has(b.ref_token)).length * 2 < rows.length) continue;
+    for (const b of rows) if (!tokens.has(b.ref_token)) byToken.delete(b.ref_token);
+  }
+}
+
+/** The message with one bill's reference changed, or null when it does not print
+ *  that reference as a whole word. */
+export function renameRef(note: string, from: string, to: string): string | null {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const whole = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`);
+  return whole.test(note) ? note.replace(whole, to) : null;
 }
 
 /** The Sales Order columns the match reads — see routes/project-sales-bills.ts. */
@@ -154,21 +179,38 @@ export type BillTotals = {
 };
 
 /* ── who may save ──────────────────────────────────────────────────────────
-   Owner 2026-10-14: "ummu, owner, weisiang". Named people, not a role — the
-   same shape as canCreateEvent (routes/projects.ts): the Owner position, and
-   two accounts by email. Mirrored in frontend/src/auth/salesAccess.ts
-   canSaveSalesReport, which only decides whether the button shows; this is
-   the authority. Reading the saved report needs only the Sales section's own
-   gate — the whole point is that every attending rep sees their red number. */
-const SAVE_EMAILS = new Set(["weisiang329@gmail.com", "ummuaimanlm@gmail.com"]);
+   Owner 2026-10-14: "ummu, owner, weisiang". Owner 2026-10-30: add Peter
+   (Sales Director, yzhe212@gmail.com) and every Sales Attending of THIS
+   project. The admin tier stays named (Owner position + emails); the per-event
+   path takes a Set<string> of attendee emails the caller resolved from
+   project_sales_attendees. Mirrored in frontend/src/auth/salesAccess.ts
+   canSaveSalesReport, which only decides whether the chat shows the Save
+   button; this is the authority. Reading the saved report needs only the Sales
+   section's own gate — every attending rep sees their red number. */
+const SAVE_EMAILS = new Set([
+  "weisiang329@gmail.com",
+  "ummuaimanlm@gmail.com",
+  "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
+]);
 
+/* attendeeEmails is REQUIRED (CLAUDE.md: a parameter that decides something is
+   not optional). Pass a lowercased Set of this project's attendee emails when
+   the gate is per-event, or null when the gate is being asked without an event
+   context (e.g. "would this user's chat ever count"). Making it required stops
+   a new caller from forgetting it and silently dropping attendees — which was
+   the bug behind the "No chat report" marker on project overview and the empty
+   SALES REPORT (CHAT) panel on KLCC 31/10. */
 export function canSaveSalesReport(
   user: { email?: string | null; position_name?: string | null } | null | undefined,
+  attendeeEmails: ReadonlySet<string> | null,
 ): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
   const email = (user.email ?? "").trim().toLowerCase();
-  return position === "owner" || SAVE_EMAILS.has(email);
+  if (position === "owner") return true;
+  if (SAVE_EMAILS.has(email)) return true;
+  if (attendeeEmails && email && attendeeEmails.has(email)) return true;
+  return false;
 }
 
 /* ── bill ↔ order ──────────────────────────────────────────────────────────
@@ -203,7 +245,7 @@ const NOT_OPENED: BillMatch = {
   unlinked: false,
 };
 
-function orderAmountSen(o: OrderRow): number {
+export function orderAmountSen(o: OrderRow): number {
   const rev = Number(o.total_revenue_sen ?? 0);
   return rev > 0 ? rev : Number(o.local_total_sen ?? 0);
 }
@@ -212,8 +254,38 @@ function orderAmountSen(o: OrderRow): number {
  *  same booklet number typed on two orders), the one linked to THIS event
  *  wins, then an unlinked one, then any — so a wrong-fair duplicate can never
  *  hide a right one. Ties break on doc_no so the answer is stable. */
+/** One order, one booklet number that differs from the report by a single letter
+ *  of the prefix: the report's ZNF6767 is the order's ZNT6767. Several such orders
+ *  name nobody. */
+function typedWrong(token: string, index: Map<string, OrderRow[]>): OrderRow[] {
+  const m = /^([A-Z]+)(\d{4,})$/.exec(token);
+  if (!m) return [];
+  const near = [...index.entries()].filter(([t]) => {
+    const o = /^([A-Z]+)(\d{4,})$/.exec(t);
+    return !!o && o[2] === m[2] && o[1].length === m[1].length && o[1][0] === m[1][0];
+  }).flatMap(([, rows]) => rows);
+  return new Set(near.map((o) => o.doc_no)).size === 1 ? near : [];
+}
+
+/** An order carrying two booklet numbers (ZNT1234+HC1234) is one sale of two
+ *  brands: either event may hold it. */
+export function isBinding(o: Pick<OrderRow, "customer_so_no" | "ref">): boolean {
+  return new Set([...extractRefTokens(o.customer_so_no), ...extractRefTokens(o.ref)]).size > 1;
+}
+
+export type BoothRef = { venue: string | null; start: string | null; end: string | null };
+
+/** Two brands' booths of one fair: one venue, dates that overlap. A sale can sit
+ *  under either, so it is not "under another event". */
+export function sameFair(a: BoothRef | undefined, b: BoothRef | undefined): boolean {
+  if (!a?.venue || !b?.venue || !a.start || !b.start) return false;
+  const key = (v: string) => v.trim().toUpperCase();
+  return key(a.venue) === key(b.venue) && a.start.slice(0, 10) <= (b.end ?? b.start).slice(0, 10) && b.start.slice(0, 10) <= (a.end ?? a.start).slice(0, 10);
+}
+
 export function matchBill(token: string, projectId: number, index: Map<string, OrderRow[]>): BillMatch {
-  const candidates = index.get(token) ?? [];
+  const exact = index.get(token) ?? [];
+  const candidates = exact.length > 0 ? exact : typedWrong(token, index);
   if (candidates.length === 0) return NOT_OPENED;
   const rank = (o: OrderRow): number =>
     o.project_id === projectId ? 0 : o.project_id == null ? 1 : 2;

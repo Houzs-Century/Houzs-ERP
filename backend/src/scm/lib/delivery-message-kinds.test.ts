@@ -21,11 +21,13 @@ describe('message kinds → Connect automation names', () => {
     expect(KIND_AUTOMATION.amend).toBe('New Amend');
     expect(KIND_AUTOMATION.driver_info).toBe('Driver Info');
     expect(KIND_AUTOMATION.postage).toBe('Postage Confirm');
+    // Must equal the Connect automation name byte-for-byte (houzs-connect #157).
+    expect(KIND_AUTOMATION.overdue_order).toBe('Overdue Order');
     expect(new Set(Object.values(KIND_AUTOMATION)).size).toBe(MESSAGE_KINDS.length);
   });
 
   it('only the conversation openers reset the contact (Delivery Lock must survive a reminder)', () => {
-    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'delivery', 'postpone']);
+    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'postpone']);
     expect(OPENER_KINDS.has('driver_info')).toBe(false);
     expect(OPENER_KINDS.has('balance_reminder')).toBe(false);
   });
@@ -87,6 +89,14 @@ describe('kindAttributes', () => {
       amend_date_reason_2: 'Our strict quality control checks',
       new_delivery_date: '2026/10/12',
     });
+  });
+
+  it('overdue order sends the board Amend Reason as amend_date_reason; skips when blank', () => {
+    // No Amend Reason on the row -> skipped, never sent as the literal "{amend_date_reason}".
+    expect(kindAttributes('overdue_order', row, '2026-10-08', 0, undefined).skip).toBe('overdue_order_needs_reason');
+    const r = kindAttributes('overdue_order', { ...row, amend_reason: 'Our strict quality control checks' }, '2026-10-08', 0, undefined);
+    expect(r.attributes).toEqual({ amend_date_reason: 'Our strict quality control checks' });
+    expect(r.skip).toBeUndefined();
   });
 
   it('postage sends the phone and the joined address, and skips an order with no address', () => {

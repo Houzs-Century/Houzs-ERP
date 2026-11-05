@@ -70,9 +70,13 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
-import { extractBillsHandler } from './pv-extract';
+import { extractBillsHandler, splitPdfHandler } from './pv-extract';
+import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { remindApproverHandler } from './payment-vouchers-remind';
+/* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
+export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
-import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
+import { paymentRequestsLinkGuard, linkPaymentRequests } from '../lib/payment-request';
 import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { pvEventAccountRefusal } from '../lib/event-accounts';
@@ -101,8 +105,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['bankChargeSen', 'bank_charge_sen'],
 ];
 
-const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
+/* The header's columns live with the list (payment-vouchers-list.ts). */
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -384,36 +387,8 @@ const ALLOCATION_ON_HOLD = (ids: string[]) => ({
    List / get
    ──────────────────────────────────────────────────────────────────────── */
 
-/* GET / — the list. Each row also says what remains of its ADVANCE (owner
-   2026-09-06: 如果这个 prepay 还没有 knock off 单,在 listing 要特别显示):
-   acc_supplier_advances for the page's vouchers, remaining = amount − applied,
-   only when > 0 — the list paints those rows and offers a chip for them. */
-export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
-  const sb = c.get('supabase');
-  let q = sb.from('payment_vouchers')
-    .select(`${HEADER}, supplier:suppliers(id, code, name)`)
-    .order('voucher_date', { ascending: false })
-    // Bound the result so PostgREST's default 1000-row cap can't silently
-    // truncate the list — matches the PI/SI/DO list convention.
-    .limit(500);
-  const status = c.req.query('status'); if (status) q = q.eq('status', status);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  const { data, error } = await q;
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
-  const remaining = new Map<string, number>();
-  if (rows.length > 0) {
-    const { data: adv, error: advErr } = await scopeToCompany(
-      sb.from('acc_supplier_advances').select('pv_id, amount_sen, applied_sen').in('pv_id', rows.map((r) => r.id)), c,
-    );
-    if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
-    for (const a of (adv ?? []) as Array<{ pv_id: string; amount_sen: number; applied_sen: number }>) {
-      const left = Number(a.amount_sen) - Number(a.applied_sen);
-      if (left > 0) remaining.set(a.pv_id, (remaining.get(a.pv_id) ?? 0) + left);
-    }
-  }
-  return c.json({ paymentVouchers: rows.map((r) => ({ ...r, advance_remaining_sen: remaining.get(r.id) ?? 0 })) });
-};
+/* GET / — the list, its search (?q=) and its stage counts (?counts=1):
+   payment-vouchers-list.ts (the redesign, batch 4). */
 paymentVouchers.get('/', listPaymentVouchersHandler);
 
 /* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE
@@ -421,6 +396,7 @@ paymentVouchers.get('/', listPaymentVouchersHandler);
 /* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
 paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
+paymentVouchers.post('/remind', remindApproverHandler); // Remind approver: a note in the approver's bell, posts nothing (payment-vouchers-remind.ts)
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
 paymentVouchers.get('/:id/files', listPvFilesHandler);
 paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
@@ -464,7 +440,10 @@ paymentVouchers.get('/:id', async (c) => {
       status: inv?.status ?? null,
     };
   });
-  return c.json({ paymentVoucher: h.data, lines: i.data ?? [], allocations });
+  /* The journal its approval posted — the page's books line and Journal fact (the redesign). */
+  const jn = await journalNumbers(sb, c, [String((h.data as { pv_number: string }).pv_number)]);
+  if (!jn.ok) return c.json({ error: 'load_failed', reason: jn.reason }, 500);
+  return c.json({ paymentVoucher: { ...h.data, je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations });
 });
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -621,8 +600,8 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   }
   const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
   if (eventErr) return eventErr;
-  /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
-  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'PV', body });
+  /* 申请付款: the request(s) this voucher answers, still waiting (lib/payment-request.ts). */
+  const prq = await paymentRequestsLinkGuard(c, body.paymentRequestIds ?? body.paymentRequestId, { kind: 'PV', body });
   if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
@@ -719,7 +698,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
-      ...pvBillFields(body, prq.request), // the bill's own number and date (lib/bill-matches.ts)
+      ...pvBillFields(body, prq.requests.length === 1 ? prq.requests[0] : null), // the bill's own number and date (lib/bill-matches.ts)
       ...officialOwedFields(body, officialActor(c)), // 欠正式单 — paid on a proforma (lib/official-doc.ts)
     }).select(HEADER).single(),
   );
@@ -746,8 +725,8 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
   }
-  if (prq.request) { /* claimed only if still waiting; else this voucher never stood */
-    const linked = await linkPaymentRequest(c, prq.request, { kind: 'PV', id: h.id, number: h.pv_number });
+  if (prq.requests.length > 0) { /* claimed only if still waiting; else this voucher never stood */
+    const linked = await linkPaymentRequests(c, prq.requests, { kind: 'PV', id: h.id, number: h.pv_number });
     if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 
@@ -1935,8 +1914,9 @@ export const applyAdvanceHandler = async (c: any) => {
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
 /* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
-export { extractBillsHandler };
+export { extractBillsHandler, splitPdfHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
+paymentVouchers.post('/split-pdf', splitPdfHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to

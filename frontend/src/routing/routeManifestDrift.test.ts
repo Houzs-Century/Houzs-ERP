@@ -109,7 +109,28 @@ describe("executable route contract", () => {
     // the module dashboards, each first in its Sidebar group.
     // 179 since 2026-10-21: /scm/delivery-planning-driver — the driver run-sheet
     // ("Last Mile Delivery (Driver)") brought to desktop beside the admin board.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(179);
+    // 180 since 2026-10-21: /hr/employees, Employees & Attendance (HC-0125).
+    // 181 since 2026-10-28: /scm/opening-balance, Finance › Setup › Opening Balance.
+    // 182 since 2026-10-28: /scm/supplier-notes, Finance › Money out › Supplier &
+    // Other Creditor CN / DN — the supplier's notes moved off /scm/credit-notes.
+    // 183 since 2026-11-02: /scm/finance/rules, Finance › Setup › To do rules —
+    // the To do's rule switches, routines and groups (Claude Design redesign).
+    // 184 since 2026-11-02: /scm/saved-locations, the transfer from/to address book (方案2).
+    // 187 since 2026-11-03: /scm/ap-invoices/:id, /scm/credit-notes/:id and
+    // /scm/supplier-notes/:id — the bill and note pages (batch 4, step 6).
+    // 190 since 2026-11-03: /scm/ar-invoices/deposit/:id, /bills/:id and /sales/:id —
+    // Money in's invoice documents as pages (Claude Design, batch 5 step 1).
+    // 192 since 2026-11-03: /scm/receipts/official/:id and /scm/receipts/debtor/:id —
+    // the official and the other-debtor receipt as pages (Claude Design, batch 5 step 3).
+    // 194 since 2026-11-03: /scm/receipts/sundry/:id and /scm/other-debtors/:id —
+    // a sundry receipt and an other debtor as pages (Claude Design, batch 5 step 2).
+    // 193 since 2026-11-03: /scm/official-receipts folded into Receipts — a
+    // legacy redirect now (Claude Design, batch 5 step 4), so the contract's
+    // count below stays.
+    // 193 still since 2026-11-03: /scm/deposit-invoices folded into Invoices (a
+    // legacy redirect now) and /scm/finance/deposit-invoices, Setup › Deposit
+    // invoices, holds its switch (Claude Design, batch 5 step 5).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(193);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -164,7 +185,18 @@ describe("executable route contract", () => {
     // 185 — /ocr (DEV-35).
     // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
     // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(188);
+    // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
+    // 190 since 2026-10-28 — /scm/opening-balance; see the staff-route count above.
+    // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
+    // 192 since 2026-11-02 — /scm/finance/rules; see the staff-route count above.
+    // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
+    // 196 since 2026-11-03 — the bill and note pages (batch 4, step 6); see the staff-route count above.
+    // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
+    // 201 since 2026-11-03 — the two receipt document pages; see the staff-route count above.
+    // 203 since 2026-11-03 — the sundry receipt and other debtor pages; see the staff-route count above.
+    // 203 still since 2026-11-03 — /scm/official-receipts moved from page to legacy redirect.
+    // 204 since 2026-11-03 — Setup › Deposit invoices (+1), /scm/deposit-invoices a legacy redirect.
+    expect(ROUTE_CONTRACT).toHaveLength(204);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -211,7 +243,9 @@ describe("mobile route drift gate", () => {
     // first in Logistics and in Procurement & MRP, as on the desktop Sidebar.
     // 43 since 2026-10-21: /scm/delivery-planning-driver, "Last Mile Delivery
     // (Driver)", beside Last Mile Delivery in the Logistics group.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(43);
+    // 44 since 2026-10-22: /hr/punch, Punch In / Out (HC-0125), the Attendance
+    // group's one row: the employee's own clock.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(44);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
@@ -219,9 +253,9 @@ describe("mobile route drift gate", () => {
     // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
     // the row shows only where IT Support is connected, as on desktop.
     expect(PROFILE_ORG_ITEMS).toHaveLength(8);
-    expect(allMobile).toHaveLength(51);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(51);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(50);
+    expect(allMobile).toHaveLength(52);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(52);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(51);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

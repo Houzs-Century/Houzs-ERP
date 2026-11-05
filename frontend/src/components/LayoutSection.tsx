@@ -41,6 +41,9 @@ export interface LayoutPresetOption {
   /** This seed currently shows an admin's company-shared override, so the row
    *  offers "Reset to default" back to the code seed. */
   overridden?: boolean;
+  /** A team-published named layout (user_id NULL, is_shared) that is NOT a code
+   *  seed: every member picks it, a manager updates or stops sharing it. */
+  shared?: boolean;
 }
 
 export interface LayoutDefaultManager {

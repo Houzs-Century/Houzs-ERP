@@ -87,6 +87,12 @@ export function NonSellingWarehouseNoteMobile({
   );
 }
 
+/* HC-0159, phone twin of the "No Processing Date" note under SoStockPill. */
+export function NoProcessingDateNoteMobile({ show }: { show?: boolean }) {
+  if (!show) return null;
+  return <div style={{ marginTop: 4, color: "#8a6116", fontSize: 10.5, fontWeight: 800, textTransform: "uppercase" }}>No Processing Date — stock is set aside once the order has one</div>;
+}
+
 export function StockAdjChipMobile() {
   return (
     <span

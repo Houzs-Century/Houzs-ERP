@@ -139,3 +139,46 @@ export async function orderSupplierCode(
   const so = await soItemSupplierCode(sb, docNo, itemCode, companyId);
   return so ? { code: so, source: "so" } : null;
 }
+
+export const poKey = (companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
+
+/* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
+   that SO line. 3 reads per company, whatever the number of cases. Read error
+   -> empty set (the fill just does not run). */
+export async function itemsWithLivePo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: Array<Record<string, any>>,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const byCompany = new Map<number, Array<Record<string, any>>>();
+  for (const r of rows) {
+    const cid = Number(r.company_id);
+    if (!Number.isInteger(cid) || cid <= 0 || !r.doc_no || !r.item_code) continue;
+    byCompany.set(cid, [...(byCompany.get(cid) ?? []), r]);
+  }
+  await Promise.all([...byCompany].map(async ([cid, group]) => {
+    try {
+      const docs = [...new Set(group.map((r) => r.doc_no))];
+      const lines = await sb.from("mfg_sales_order_items").select("id, doc_no, item_code")
+        .eq("company_id", cid).in("doc_no", docs);
+      const wanted = new Set(group.map((r) => `${r.doc_no}|${r.item_code}`));
+      const ls = ((lines.data ?? []) as Array<{ id: string; doc_no: string; item_code: string }>)
+        .filter((l) => wanted.has(`${l.doc_no}|${l.item_code}`));
+      if (lines.error || ls.length === 0) return;
+      const links = await sb.from("purchase_order_items").select("so_item_id, purchase_order_id")
+        .eq("company_id", cid).in("so_item_id", ls.map((l) => l.id)).not("purchase_order_id", "is", null);
+      const poIds = [...new Set(((links.data ?? []) as Array<{ purchase_order_id: string }>).map((l) => l.purchase_order_id))];
+      if (links.error || poIds.length === 0) return;
+      const pos = await sb.from("purchase_orders").select("id, status").eq("company_id", cid).in("id", poIds);
+      const live = new Set(((pos.data ?? []) as Array<{ id: string; status: string | null }>)
+        .filter((p) => (p.status ?? "").toUpperCase() !== "CANCELLED").map((p) => p.id));
+      const lineOf = new Map(ls.map((l) => [l.id, l]));
+      for (const l of (links.data ?? []) as Array<{ so_item_id: string; purchase_order_id: string }>) {
+        const line = lineOf.get(l.so_item_id);
+        if (line && live.has(l.purchase_order_id)) out.add(poKey(cid, line.doc_no, line.item_code));
+      }
+    } catch { /* fail-soft */ }
+  }));
+  return out;
+}

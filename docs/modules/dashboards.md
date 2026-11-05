@@ -171,3 +171,4 @@
 - 首页的 "项目营业额、净利" 用的是同一套算法。
 
 代码：`backend/src/routes/projectOverview.ts`、`frontend/src/pages/projects/projectOverviewModel.ts`、`frontend/src/pages/projects/ProjectOverviewPage.tsx`
+- Home watchlist flags CONFIRMED orders with no Processing Date older than 30 days (`soNoProcessing`, `scm/lib/so-unreleased.ts`, HC-0159); a missing date is allowed, this only makes it visible.

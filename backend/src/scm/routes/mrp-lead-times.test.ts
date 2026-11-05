@@ -56,7 +56,7 @@ function app(who: Who) {
 
 const ENV = {} as Env;
 const json = (body: unknown) => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const put = (who: Who, body: unknown) => app(who).request('/mrp-lead-times', { method: 'PUT', ...json(body) }, ENV);
+const put = (who: Who, body: unknown, env: Env = ENV) => app(who).request('/mrp-lead-times', { method: 'PUT', ...json(body) }, env);
 const get = (who: Who) => app(who).request('/mrp-lead-times', undefined, ENV);
 
 const VALID = { warehouseId: null, category: 'sofa', leadDays: 7 };
@@ -101,5 +101,30 @@ describe('GET /mrp-lead-times — stays open (the MRP order-by-date read)', () =
     expect(res.status).toBe(200);
     const body = (await res.json()) as { leadTimes: Record<string, Record<string, number>> };
     expect(body.leadTimes['null'].sofa).toBe(3);
+  });
+});
+
+/* HC-0145: Procurement Overview is cached in KV (swr:procov) with the lead-time
+   settings inside it; a successful write must drop this company's copies. */
+describe('PUT /mrp-lead-times — busts the Procurement Overview cache', () => {
+  it("deletes this company's swr:procov keys only", async () => {
+    const store = new Map<string, string>([
+      ['swr:procov:v1:1:2026-10-29:a', '1'], ['swr:procov:v1:1:2026-10-29:b:refreshing', '1'],
+      ['swr:procov:v1:10:2026-10-29:a', '1'], ['swr:procov:v1:2:2026-10-29:a', '1'],
+    ]);
+    const kv = {
+      list: async ({ prefix }: { prefix: string }) => ({ keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })), list_complete: true }),
+      delete: async (k: string) => { store.delete(k); },
+    };
+    const res = await put(CONFIG_WRITER, VALID, { SESSION_CACHE: kv } as unknown as Env);
+    expect(res.status).toBe(200);
+    expect([...store.keys()].sort()).toEqual(['swr:procov:v1:10:2026-10-29:a', 'swr:procov:v1:2:2026-10-29:a']);
+  });
+
+  it('leaves the cache alone when the write is refused', async () => {
+    const store = new Map([['swr:procov:v1:1:x', '1']]);
+    const kv = { list: async () => ({ keys: [...store.keys()].map((name) => ({ name })), list_complete: true }), delete: async (k: string) => { store.delete(k); } };
+    expect((await put(SALES, VALID, { SESSION_CACHE: kv } as unknown as Env)).status).toBe(403);
+    expect(store.size).toBe(1);
   });
 });

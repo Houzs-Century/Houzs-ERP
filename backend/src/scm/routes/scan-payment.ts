@@ -57,7 +57,12 @@ import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
-import { paginateAll } from '../lib/paginate-all';
+import {
+  loadPaymentOptions,
+  snapPaymentOption,
+  type PaymentOptionCategory as OptionCategory,
+  type CatalogOptions,
+} from '../lib/payment-vocab';
 import { getBranding } from '../../services/branding';
 import { recordAi, requestAiTag } from '../../services/aiUsage';
 import { slipBindings, expiresInOneHour } from '../lib/slip';
@@ -106,52 +111,12 @@ function stripJsonFences(text: string): string {
 }
 
 // ===========================================================================
-// Live payment vocabularies — the four payment-cascade categories the
-// Payments panel actually cascades over. Pulled live + active-only from
-// so_dropdown_options on every /extract (mirrors scan-so's loadCatalog).
+// Live payment vocabularies — the four payment-cascade categories the Payments
+// panel cascades over. The loader + the "never invent" snap now live in
+// scm/lib/payment-vocab (loadPaymentOptions / snapPaymentOption), shared with
+// the Houzs Connect payment push so both validate against the SAME active
+// so_dropdown_options. formatOptions (OCR prompt text) stays here.
 // ===========================================================================
-const OPTION_CATEGORIES = [
-  'payment_method',     // L1 — Merchant / Online / Cash (3-method model)
-  'payment_merchant',   // L2 merchant banks (MBB / CIMB / Public / AEON / …)
-  'online_type',        // L2 online sub-types (Bank Transfer / TNG / Cheque / DuitNow)
-  'installment_plan',   // L2 Merchant plans (One Shot / 3 / 6 / 12 / 24 / 36 months)
-] as const;
-type OptionCategory = (typeof OPTION_CATEGORIES)[number];
-type CatalogOption = { value: string; label: string };
-type CatalogOptions = Record<OptionCategory, CatalogOption[]>;
-
-const emptyOptions = (): CatalogOptions => ({
-  payment_method:   [],
-  payment_merchant: [],
-  online_type:      [],
-  installment_plan: [],
-});
-
-async function loadOptions(sb: SupabaseClient, companyId?: number | null): Promise<CatalogOptions> {
-  const options = emptyOptions();
-  // Page through so PostgREST's 1000-row cap can't drop option rows.
-  // Multi-company (mig 0089): the payment vocabulary is per-company — scope to
-  // the caller's active company; null/undefined (unresolved) stays global.
-  const { data } = await paginateAll((from, to) => {
-    let q = sb
-      .from('so_dropdown_options')
-      .select('category, value, label')
-      .eq('active', true)
-      .in('category', OPTION_CATEGORIES as unknown as string[])
-      .order('category', { ascending: true })
-      .order('sort_order', { ascending: true })
-      .order('label', { ascending: true });
-    if (companyId != null) q = q.eq('company_id', companyId);
-    return q.range(from, to);
-  });
-  for (const row of (data as Array<{ category: string; value: string; label: string }> | null) ?? []) {
-    if ((OPTION_CATEGORIES as readonly string[]).includes(row.category)) {
-      options[row.category as OptionCategory].push({ value: row.value, label: row.label });
-    }
-  }
-  return options;
-}
-
 function formatOptions(o: CatalogOptions): string {
   const lines: string[] = [];
   const section = (title: string, cat: OptionCategory) => {
@@ -311,8 +276,7 @@ function validateReceipt(rec: ExtractedReceipt, options: CatalogOptions): Warnin
   for (const { field, category } of fields) {
     const m = rec[field];
     if (!m) continue;
-    const canon = new Map(options[category].map((o) => [o.value.toUpperCase(), o.value]));
-    const hit = canon.get(m.value.toUpperCase());
+    const hit = snapPaymentOption(options[category], m.value);
     if (hit) {
       m.value = hit;
     } else {
@@ -497,7 +461,11 @@ scanPayment.post('/extract', async (c) => {
 
   // Live active payment vocabularies via the user-scoped client (RLS applies).
   const sb = c.get('supabase');
-  const options = await loadOptions(sb, activeCompanyId(c));
+  // A vocabulary read error leaves `options` empty here, exactly as before the
+  // loader was factored out: validateReceipt then clears every match (with a
+  // warning) rather than failing the OCR — the operator still gets the raw
+  // fields to key. The Connect push treats the same error as fatal instead.
+  const { options } = await loadPaymentOptions(sb, activeCompanyId(c) ?? null);
   const optionsText = formatOptions(options);
 
   // Company name from the central Branding config (anchors the prompt).

@@ -31,6 +31,7 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The "Bill a Goods-Received Note" picker's search only matches loaded rows — check the response's `truncated` flag rather than assuming the visible list is complete.
 - FOC (free) lines show in the Amount cell here (purchase documents have no Discount column) — unlike sales documents, where the same badge sits in the Discount cell. Don't move the badge to match the sales layout.
 - The desktop list's Export writes one row per LINE for every document matching the current tab/search/sort — not just the loaded page — in AutoCount's own column layout by default; a sofa line is one ERP piece per row even though AutoCount holds one set line, so quantities and totals differ from the book by design.
+- The list ticks several drafts and Confirm (N) posts them in turn through the same `/:id/post`; a refused one stays a draft and the summary names it. Invoice Amount and PO Amount sit side by side, PO Price and PI Price likewise; PO Amount counts only lines with a PO price and says how many. PO Price and PO Amount are screen-only, so the default export stays AutoCount's.
 - The mobile list has no export and no import — importing is desktop-only by design.
 
 ## Where the code is
@@ -43,3 +44,14 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - `frontend/src/pages/scm-v2/PurchaseInvoiceDetailV2.tsx`, `PurchaseInvoiceDetail.tsx`, `PurchaseInvoiceNew.tsx`, `PurchaseInvoiceFromGrn.tsx` — desktop surfaces.
 - `frontend/src/mobile/MobilePurchaseDocNew.tsx`, `MobileLinePoRef.tsx`, `MobileAddLine.tsx` — mobile surfaces.
 - `frontend/src/vendor/scm/lib/pi-payment-path.ts` — AP payment routing/permission rule.
+
+## Scan, check, then create (`/scan-pi/check/*`, `routes/scan-pi-check.ts`)
+
+The desktop scan works as for goods receipts (`docs/modules/scan-to-gr.md`; shared handlers in
+`routes/scan-check-shared.ts`, modal in `ScanCheckModal.tsx`): a PDF is split into its invoices, each is
+read in the background, and waits as an editable copy (`lib/pi-scan-check.ts`) until the operator creates
+the drafts or deletes it. Rows bill GRN lines; unplaced rows are tied by name on the anchored GRNs. Create
+is `createDraftPiFromGrnItems`: DRAFT only, from posted GRN lines, at the supplier's printed price (the receipt's when none was read), never over what
+is left to bill. A printed price that differs is shown on the row. `duplicateOf` = a non-cancelled PI of the
+supplier with that `supplier_invoice_ref`. Codes confirmed are saved in `supplier_scan_codes`, shared with
+the delivery-order scanner. Mobile (`MobileScanInvoice`) still uses `/enqueue`.

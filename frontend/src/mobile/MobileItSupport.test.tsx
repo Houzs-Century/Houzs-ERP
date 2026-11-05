@@ -131,6 +131,10 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     expect(api.postForm).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "Cannot print DO" } });
+    // No page to go by on a phone: "Not sure" until they pick one.
+    const module = screen.getByLabelText("Which part of the system") as HTMLSelectElement;
+    expect(module.value).toBe("");
+    fireEvent.change(module, { target: { value: "Supply Chain · Sales Order" } });
     fireEvent.click(screen.getByText("Send"));
     await waitFor(() => expect(api.postForm).toHaveBeenCalledTimes(1));
     const [path, form] = api.postForm.mock.calls[0] as [string, FormData];
@@ -138,6 +142,7 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     expect(form.get("title")).toBe("Cannot print DO");
     expect(form.get("type")).toBe("bug");
     expect(form.get("priority")).toBe("medium");
+    expect(form.get("module")).toBe("Supply Chain · Sales Order");
     expect(Number.isNaN(Date.parse(String(form.get("occurred_at"))))).toBe(false);
     expect(await screen.findByText("IT request")).toBeTruthy();
   });

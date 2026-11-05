@@ -20,6 +20,8 @@ export type PiPoPriceSummary = {
   /** Lines that HAD a PO price to compare (a PO line priced above 0). */
   comparableLines: number;
   lines: number;
+  /** Those comparable lines at the PO's price: qty x PO unit price. */
+  poAmountSen: number;
 };
 
 export type PoPriceMarker = { label: string; tone: 'differs' | 'matches' | 'none'; diffSen: number };

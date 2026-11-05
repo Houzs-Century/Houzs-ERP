@@ -27,8 +27,11 @@ let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, nu
 let refundSource: Record<string, unknown> | undefined;
 /* Each read of the refund source: the document and the request left out of the held money (owner 2026-10-14). */
 const refundSourceAsks: Array<[string, string | null]> = [];
+const submitAsync = vi.fn(async (_id: string) => ({}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  /* Save & prepare: the voucher's own Prepare after the create (the redesign). */
+  useSubmitPaymentVoucher: () => ({ mutateAsync: submitAsync, isPending: false }),
   usePvReservations: () => ({ data: reservations, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
@@ -45,24 +48,28 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   ], totalRemainingSen: 50000 }, isLoading: false }),
 }));
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 /* The AP invoices (non-stock bills) the picker lists BESIDE the PIs. */
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: () => ({ data: { rows: [
     { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
   ] }, isLoading: false }),
 }));
+/* The company's pay-from bank (BANK_PAY_DEFAULT); unset = the receive bank. */
+let payFromRole: string | null = null;
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '320-1000', account_name: 'Cash in hand', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
     { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', ...(payFromRole ? { BANK_PAY_DEFAULT: payFromRole } : {}), AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -95,11 +102,14 @@ const EVENT_OPTIONS = [
 const retagMutate = vi.fn();
 /* 申请付款 — the request a voucher may answer (?fromRequest=); set by that test only. */
 let requestDetail: Record<string, unknown> | undefined;
+/* Several requests one voucher answers (?fromRequests=, owner 2026-11-04). */
+let manyRequests: Record<string, Record<string, unknown>> = {};
 /* 同一张单 (2026-10-01): other documents carrying the typed bill number and date. */
 let billMatches: Array<Record<string, unknown>> = [];
 const billMatchAsks: Array<[string, string, string | null]> = [];
 vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
   usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+  usePaymentRequestsByIds: (ids: string[]) => ({ requests: ids.length > 0 ? ids.map((id) => manyRequests[id]).filter(Boolean) : null, error: null }),
   useBillMatches: (no: string, date: string, excludeRequest: string | null) => {
     billMatchAsks.push([no, date, excludeRequest]);
     return { data: no && date ? { matches: billMatches } : undefined };
@@ -124,7 +134,7 @@ const draw = (url: string) => render(
 describe('the AP Payment (?type=ap)', () => {
   test('supplier required, no hand-written lines, tick pays in full, and the save debits AP', async () => {
     draw('/scm/payment-vouchers/new?type=ap');
-    expect(screen.getByText('New AP Payment')).toBeTruthy();
+    expect(screen.getByText('New AP payment')).toBeTruthy();
     /* No expense-lines card — the GL line is composed, not typed. */
     expect(screen.queryByText('Lines')).toBeNull();
 
@@ -143,7 +153,7 @@ describe('the AP Payment (?type=ap)', () => {
     expect(screen.getByText(/Applying RM 2,550\.00/)).toBeTruthy();
     expect(screen.getByText(/Books: Dr 400-0000 Account Payable RM 2,550\.00/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.purpose).toBe('SUPPLIER_PAYMENT');
@@ -163,7 +173,7 @@ describe('the AP Payment (?type=ap)', () => {
     const books = String(screen.getByText(/Books:/).textContent);
     expect(books).toContain('Dr 405-0000');
     expect(books).toContain('16,440.00');
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.supplierId).toBe('sup-405');
@@ -184,7 +194,7 @@ describe('the AP Payment (?type=ap)', () => {
     fireEvent.click(tick);
     expect(screen.getByText(/Applying RM 0\.00/)).toBeTruthy();
     /* Nothing applied -> the save is not even offered. */
-    expect((screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('Save draft').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 });
@@ -198,7 +208,7 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
     expect(screen.getByText('2990-API-2609-001')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-001 in full'));
     expect(screen.getByText(/Applying RM 420\.00/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 42000 }]);
@@ -212,7 +222,7 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
     requestDetail = { id: 'prq-2', request_no: 'HC-PRQ-2610-002', requested_by_name: 'James Seow', payee_name: 'Foshan Chairs', amount_sen: 30000, purpose: 'Balance — rent', project_id: null, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null, parent_request_id: 'prq-1', installment_no: 2 };
     draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=api-1&amount=30000&fromRequest=prq-2');
     expect(await screen.findByText(/Applying RM 300\.00/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 30000 }]);
@@ -232,7 +242,7 @@ describe('opened from a purchase invoice', () => {
     expect((screen.getByLabelText('Pay 2990-PI-2609-001 in full') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Pay 2990-PI-2609-002 in full') as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText(/Applying RM 2,550\.00/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.supplierId).toBe('sup-1');
@@ -254,7 +264,7 @@ describe('opened from a purchase invoice', () => {
 
   test('a plain Payment Voucher ignores both', () => {
     draw('/scm/payment-vouchers/new?supplier=sup-1&pi=pi-1');
-    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+    expect(screen.getByText('New payment voucher')).toBeTruthy();
     expect(screen.queryByLabelText('Pay 2990-PI-2609-001 in full')).toBeNull();
   });
 });
@@ -278,7 +288,7 @@ describe('paying ahead (预付) on the AP Payment', () => {
     fireEvent.blur(prepay);
     expect(screen.getByText(/incl\. prepay RM 1,000\.00/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText('Create AP Payment'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.lines).toEqual([
@@ -293,12 +303,12 @@ describe('paying ahead (预付) on the AP Payment', () => {
     fireEvent.focus(screen.getByLabelText(/Supplier \*/));
     fireEvent.mouseDown(screen.getByText('S002 · Empty Hands Sdn Bhd'));
     /* The empty-list sentence no longer swallows the box. */
-    expect(screen.getByText(/no outstanding invoices — a prepay below/)).toBeTruthy();
+    expect(screen.getByText(/No outstanding bill from this supplier/)).toBeTruthy();
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '500.00' } });
     fireEvent.blur(prepay);
-    const save = screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement;
+    const save = screen.getByText('Save draft').closest('button') as HTMLButtonElement;
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -339,19 +349,30 @@ describe('copy as new (?copyFrom=…)', () => {
 describe('the plain Payment Voucher (/new)', () => {
   test('expense lines only — no supplier, no PI section, and Paid From offers only money', () => {
     draw('/scm/payment-vouchers/new');
-    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+    expect(screen.getByText('New payment voucher')).toBeTruthy();
     expect(screen.getByText('Lines')).toBeTruthy();
     expect(screen.queryByLabelText(/Supplier/)).toBeNull();
-    expect(screen.queryByText('Apply to PI')).toBeNull();
+    expect(screen.queryByText('Outstanding bills')).toBeNull();
 
     /* The Paid From combobox: pre-filled with the default bank's label, and
        its open list offers money accounts only — expense and AP are gone. */
-    const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
+    const paidFrom = screen.getByLabelText(/Pay from/) as HTMLInputElement;
     expect(paidFrom.value).toBe('310-0010 · Bank — Maybank');
     fireEvent.focus(paidFrom);
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
     expect(screen.queryByText(/900-A002/)).toBeNull();
     expect(screen.queryByText(/400-0000/)).toBeNull();
+  });
+
+  /* Owner 2026-11-04: Houzs Century receives in Maybank, pays from Hong Leong. */
+  test('Paid From pre-fills the pay-from bank when the company has one, not the receive bank', () => {
+    payFromRole = '310-0020';
+    try {
+      draw('/scm/payment-vouchers/new');
+      expect((screen.getByLabelText(/Pay from/) as HTMLInputElement).value).toBe('310-0020 · Bank — Hong Leong');
+    } finally {
+      payFromRole = null;
+    }
   });
 
   test('a scanned bill with vendor memory pre-fills payee AND account — 记忆自动帮我填', () => {
@@ -370,8 +391,8 @@ describe('the plain Payment Voucher (/new)', () => {
     );
     /* The operator's own casing beats the print, and the account is what THEY
        saved last time — shown resolved, still editable. */
-    expect((screen.getByLabelText(/Payee/) as HTMLInputElement).value).toBe('TNB');
-    expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
+    expect((screen.getByLabelText(/Pay to/) as HTMLInputElement).value).toBe('TNB');
+    expect((screen.getByLabelText('Account (debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
   });
 
   /* 普通 payment scan bill 可以 default 放今天吗 → 做 (owner 2026-09-08): the
@@ -392,10 +413,10 @@ describe('the plain Payment Voucher (/new)', () => {
       }]}><PaymentVoucherNew /></MemoryRouter>,
     );
     const [y, m, d] = todayMyt().split('-');
-    const date = screen.getByLabelText(/Voucher Date/) as HTMLInputElement;
+    const date = screen.getByLabelText(/Voucher date/) as HTMLInputElement;
     expect(date.value).toBe(`${y}/${m}/${d}`);
     expect(date.value).not.toBe('2026/08/25');
-    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
+    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
   });
 
   test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
@@ -423,14 +444,16 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.getByText(/2 scanned file\(s\) will be attached/)).toBeTruthy();
     expect(screen.getByText(/tnb-page-1\.pdf, tnb-page-2\.jpg/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText('Create Voucher'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(uploadPvAsync).toHaveBeenCalledTimes(2));
     /* AFTER the create, onto ITS id, in scan order — sort_no is print order. */
     expect(uploadPvAsync.mock.calls.map((c) => [c[0].pvId, c[0].file.name])).toEqual([
       ['pv-1', 'tnb-page-1.pdf'],
       ['pv-1', 'tnb-page-2.jpg'],
     ]);
-    await waitFor(() => expect(screen.getByText(/2 scanned file\(s\) attached/)).toBeTruthy());
+    /* Saved cleanly: no dialog stands in the way — the redesign opens the
+       voucher and says it in a toast. */
+    await waitFor(() => expect(screen.queryByText(/did not attach/)).toBeNull());
   });
 
   test('Insert adds a line and lands on its account; Enter on an amount moves down, adding a line at the end (owner 2026-09-06)', () => {
@@ -524,7 +547,7 @@ describe('the plain Payment Voucher (/new)', () => {
 
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
-    const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
+    const paidFrom = screen.getByLabelText(/Pay from/) as HTMLInputElement;
     fireEvent.focus(paidFrom);
     fireEvent.change(paidFrom, { target: { value: 'cash' } });
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
@@ -601,12 +624,46 @@ describe('the event a scanned bill names (6a — suggest, never bind)', () => {
   });
 });
 
+describe('answering several payment requests with ONE voucher (?fromRequests=)', () => {
+  const req = (id: string, no: string, payee: string, purpose: string, amount: number) => ({
+    id, request_no: no, payee_name: payee, purpose, amount_sen: amount, project_id: null,
+    bank_name: 'Maybank', bank_account_no: '5232', bank_account_name: payee, status: 'SUBMITTED', stage: 'SUBMITTED',
+  });
+  test('one line per request; different payees leave the payee blank; the save names every request', async () => {
+    mutateAsync.mockClear();
+    manyRequests = {
+      a: req('a', '2990-PRQ-2611-002', 'CHOW WAI MAN', 'lalamove to Armani', 3320),
+      b: req('b', '2990-PRQ-2611-010', 'LOO WEN WEI', 'meta ads invoice', 11786),
+    };
+    draw('/scm/payment-vouchers/new?fromRequests=a,b');
+    expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('');
+    expect(screen.getByText(/Answering 2 payment requests, RM 151.06 in all/)).toBeTruthy();
+    expect(screen.getByText(/They name different payees/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^Pay to/), { target: { value: 'STAFF CLAIMS' } });
+    for (const n of [1, 2]) {
+      const account = screen.getByLabelText(`line ${n} amount`).closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
+      fireEvent.focus(account);
+      fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
+    }
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.paymentRequestIds).toEqual(['a', 'b']);
+    expect(payload.paymentRequestId).toBeUndefined();
+    expect((payload.lines as Array<{ description: string; amountSen: number }>).map((l) => [l.description, l.amountSen])).toEqual([
+      ['2990-PRQ-2611-002 lalamove to Armani', 3320],
+      ['2990-PRQ-2611-010 meta ads invoice', 11786],
+    ]);
+    manyRequests = {};
+  });
+});
+
 describe('answering a payment request (?fromRequest=, 申请付款)', () => {
   test('the payee, the asked amount, the purpose, the event and the request fill in; the save names the request', async () => {
     mutateAsync.mockClear();
     requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: 'Maybank', bank_account_no: '5123', bank_account_name: 'MLE EVENTS SDN BHD', status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null };
     draw('/scm/payment-vouchers/new?fromRequest=prq-1');
-    expect((screen.getByLabelText(/^Payee/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+    expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
     expect(screen.getByText(/Answering HC-PRQ-2609-004 from James Seow/)).toBeTruthy();
     expect((screen.getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
     expect((screen.getByLabelText('Event for all lines') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
@@ -651,7 +708,7 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     draw('/scm/payment-vouchers/new?fromRequest=prq-1');
     expect(await screen.findByText(/The bill reads RM 8,000\.00 but James Seow asked for RM 8,500\.00 — check which is right\./)).toBeTruthy();
     expect(extractRequestAsync).toHaveBeenCalledWith('prq-1');
-    expect((screen.getByLabelText(/^Payee/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+    expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const payload = mutateAsync.mock.calls[0]![0];
@@ -741,10 +798,10 @@ describe('the Customer Refund (?type=refund, §14)', () => {
       deposits: { count: 2, standingSen: 150000 },
     };
     draw('/scm/payment-vouchers/new?type=refund');
-    expect(screen.getByText('New Customer Refund')).toBeTruthy();
+    expect(screen.getByText('New customer refund')).toBeTruthy();
     /* No lines card, no payee box, no transfer toggle — the body is the document. */
     expect(screen.queryByText('Lines')).toBeNull();
-    expect(screen.queryByText('内部转账 Transfer')).toBeNull();
+    expect(screen.queryByText('Internal transfer')).toBeNull();
     const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
     fireEvent.change(doc, { target: { value: ' 2990-SO-2607-001 ' } });
     fireEvent.keyDown(doc, { key: 'Enter' });
@@ -764,7 +821,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     fireEvent.change(amount, { target: { value: '120' } });
     fireEvent.blur(amount);
     expect(screen.getByText(/Books: Dr 300-0000 Trade Debtors \(Ah Meng\) RM 120\.00 · Cr 310-0010 RM 120\.00/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Create Refund'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload).toMatchObject({
@@ -790,7 +847,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     fireEvent.blur(doc);
     await waitFor(() => expect(screen.getByText(/still stands/)).toBeTruthy());
     expect((screen.getByLabelText('Refund amount') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByText('Create Refund').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('Save draft').closest('button') as HTMLButtonElement).disabled).toBe(true);
     refundSource = undefined;
   });
 
@@ -820,7 +877,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     expect(refundSourceAsks.some(([d, ex]) => d === 'HC-SO-2610-144' && ex === 'r9')).toBe(true);
     expect(screen.getByText(/Waiting on other refund requests/)).toBeTruthy();
     expect(extractRequestAsync).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText('Create Refund'));
+    fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload).toMatchObject({

@@ -261,6 +261,12 @@ export function reportSlowRequest(method: string, path: string, ms: number): voi
   reportRequest(`slow ${slowBucket(ms)}`, method, path);
 }
 
+/** A request the browser gave up on. It never resolves, so reportSlowRequest
+ *  never sees it — and it is the slowest kind there is (HC-0167). */
+export function reportTimedOutRequest(method: string, path: string): void {
+  reportRequest("timeout", method, path);
+}
+
 /** 5xx only. A 4xx is a decision the app already handles (the same reasoning
  *  queryClient's retry policy rests on); a 5xx is the server breaking, and it
  *  is what a user sees as "failed to load". */

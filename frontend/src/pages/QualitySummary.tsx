@@ -25,6 +25,7 @@ type Overdue = {
   complaint: string | null; issueCategory: string | null;
   enteredAt: string; targetDays: number; daysInStage: number; daysOver: number; caseAgeDays: number;
 };
+export type QualityOptions = { suppliers: Array<{ code: string; name: string }>; categories: string[]; companies: number[] };
 type Quality = {
   opened: number; closed: number; ongoingNow: number; openedStillOpen: number;
   avgDaysToClose: number | null; avgDaysToCloseCases: number; avgDaysToClosePrev30: number | null; stageDays: StageDays;
@@ -32,6 +33,7 @@ type Quality = {
   ages: Array<{ label: string; count: number }>;
   trend: Array<{ month: string; opened: number; closed: number; backlog: number; avgDaysToClose: number | null }>;
   overdue: Overdue[]; suppliers: Supplier[]; unattributed: number; rateFrom: string;
+  options: QualityOptions;
   caseList: CaseRow[];
 };
 type CaseRow = {
@@ -55,10 +57,11 @@ const AGE_COLOR = ["#4f8a5b", "#7fa86a", "#c9a77c", "#d9b25c", TONE.warn, TONE.b
 /** `breakdowns` (issue categories, resolution mix) sit under the trend;
  *  `repeats` (items / customers coming back) under the suppliers; the long
  *  overdue list is last (owner 2026-10-17). */
-export function QualitySummary({ from, to, periodLabel, breachNow, funnel, breakdowns, repeats, onDrill }: {
-  from: string; to: string; periodLabel: string; breachNow: number | null; funnel: ReactNode; breakdowns: ReactNode; repeats: ReactNode; onDrill: (metric: string) => void;
+/** `fq`: the page's filters as `&fSupplier=…`; `filters` draws them from the choices this read returns. */
+export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, funnel, breakdowns, repeats, onDrill }: {
+  from: string; to: string; fq: string; filters: (options: QualityOptions | null) => ReactNode; periodLabel: string; breachNow: number | null; funnel: ReactNode; breakdowns: ReactNode; repeats: ReactNode; onDrill: (metric: string) => void;
 }) {
-  const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}`), [from, to]);
+  const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}${fq}`), [from, to, fq]);
   const d = q.data;
   const enough = (d?.suppliers ?? []).filter((x) => x.receivedQty >= MIN_RECEIVED);
   /* Click a header to rank the suppliers by it (owner 2026-10-23). */
@@ -95,6 +98,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   const overdue = d ? d.overdue.filter((o) => stageTab === "all" || o.stage === stageTab) : [];
   return (
     <div className="mb-4 space-y-4">
+      {filters(d?.options ?? null)}
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load the quality summary: {q.error}</div>}
       {/* The headline on the dark slab the home page and Project Overview use. */}
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">

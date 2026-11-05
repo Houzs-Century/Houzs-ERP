@@ -18,6 +18,7 @@
 
 import {
   deriveVehicleStatus,
+  isCaseGrounding,
   canDispatch,
   currentDocsByType,
   VEHICLE_STATUS_LABELS,
@@ -103,7 +104,7 @@ export async function loadAvailableLorries(
     sb.from('lorry_service_records').select('lorry_id, service_date, odometer_km, next_service_km, next_service_date').in('lorry_id', ids).order('service_date', { ascending: false }),
     sb.from('lorry_maintenance_plans').select('lorry_id, component, interval_km, interval_months, last_done_date, last_done_km, active').eq('active', true).in('lorry_id', ids),
     sb.from('lorry_mileage_readings').select('lorry_id, odometer_km, reading_date').in('lorry_id', ids).order('reading_date', { ascending: false }),
-    sb.from('lorry_breakdown_cases').select('lorry_id, severity, status').neq('status', 'RESOLVED').in('lorry_id', ids),
+    sb.from('lorry_breakdown_cases').select('lorry_id, severity, status, still_drivable').neq('status', 'RESOLVED').in('lorry_id', ids),
   ] as const);
   const rows = (r: PromiseSettledResult<{ data?: Row[] | null }>): Row[] =>
     r.status === 'fulfilled' ? ((r.value?.data ?? []) as Row[]) : [];
@@ -157,7 +158,7 @@ export async function loadAvailableLorries(
     const lid = String(dual(b, 'lorryId', 'lorry_id'));
     const severity = String(dual(b, 'severity', 'severity') ?? '');
     const status = String(dual(b, 'status', 'status') ?? '');
-    if (severity === 'CRITICAL' && status !== 'RESOLVED') breakdownByLorry.set(lid, true);
+    if (isCaseGrounding({ severity, status, stillDrivable: dual<boolean | null>(b, 'stillDrivable', 'still_drivable') ?? true })) breakdownByLorry.set(lid, true);
   }
 
   return lorries.map((l): AvailableLorry => {

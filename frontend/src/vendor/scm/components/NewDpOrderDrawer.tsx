@@ -21,8 +21,8 @@
 // NotifyDialog only.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@2990s/design-system';
@@ -37,9 +37,13 @@ import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
 import { useLorries } from '../lib/lorries-queries';
 import { useStockTransfers } from '../lib/stock-queries';
 import { useWarehouses } from '../lib/inventory-queries';
-import { SearchableSelect } from './SearchableSelect';
+import { useThreePLCompanies } from '../lib/threepl-companies-queries';
+import { useSavedLocations } from '../lib/saved-locations-queries';
+import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
+import { projectRowParts } from '../lib/project-picker-row';
+import { splitHighlight } from '../lib/split-highlight';
 // App-level client for the PMS project list (/api/projects lives outside the
 // /api/scm mount that the vendored authed-fetch targets). Same app-import
 // precedent as DataGrid's activeCompany subscription.
@@ -66,7 +70,10 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
   }
 }
 
-/* The slice of a PMS project row this picker needs (GET /api/projects → { data }). */
+/* The slice of a PMS project row this picker needs (GET /api/projects → { data }).
+   code / name / venue / state / brand / start_date / end_date all come back on the
+   list row already (snake_case, the same spelling the Projects list reads); the
+   row is composed from them in project-picker-row.ts. */
 type ProjectPickRow = {
   id: number;
   code: string | null;
@@ -74,6 +81,9 @@ type ProjectPickRow = {
   venue: string | null;
   organizer: string | null;
   state: string | null;
+  brand: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 /* The slice of the workshop master this picker needs — mig 0241, served by
@@ -103,6 +113,10 @@ type WorkshopPickRow = {
   isActive: boolean;
 };
 
+/* Which master a TRANSFER's From / To is picked from (owner 2026-11-02): our own
+   warehouse, an outsourced 3PL carrier, or a saved location (方案2). */
+type DestKind = 'warehouse' | 'threepl' | 'saved';
+
 export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDpOrder();
   const schedule = useScheduleDelivery();
@@ -129,14 +143,29 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
        the job's subject and is the lorry taken off the road when the job is
        scheduled. Every other job type leaves it empty. */
     lorryId: '',
-    /* TRANSFER only — the DESTINATION warehouse. Like the lorry above it is a
-       second reference rather than the source: the transfer document (if any)
-       says what is being moved, this says where the fleet is driving to, and it
-       is the party the address comes from. */
+    /* TRANSFER only — the DESTINATION. Like the lorry above it is a second
+       reference rather than the source: the transfer document (if any) says what
+       is being moved, this says where the fleet is driving to, and it is the party
+       the address comes from. The destination is one of our own warehouses, an
+       outsourced 3PL (owner 2026-11-02), or a saved location (方案2) — destKind
+       switches which, and only the matching id is sent. */
+    destKind: 'warehouse' as DestKind,
     warehouseId: '',
+    threeplCompanyId: '',
+    savedLocationId: '',
     partyName: '', contactName: '', contactPhone: '',
     address1: '', address2: '', address3: '', address4: '',
     city: '', postcode: '', state: '',
+    /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1) — the pickup point, picked
+       the same way as the destination (our warehouse / 3PL / saved location), its
+       address editable. Optional: a plain depot-loaded transfer leaves it blank. */
+    fromKind: 'warehouse' as DestKind,
+    fromWarehouseId: '',
+    fromThreeplCompanyId: '',
+    fromSavedLocationId: '',
+    fromName: '',
+    fromAddress1: '', fromAddress2: '',
+    fromCity: '', fromPostcode: '', fromState: '',
     requestedDate: '', remark: '',
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
@@ -189,13 +218,57 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     () => (suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
     [suppliersQ.data],
   );
-  const projectOptions = useMemo(
-    () => (projectsQ.data?.data ?? []).map((p) => ({
-      value: String(p.id),
-      label: `${p.code ?? p.id} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
-    })),
-    [projectsQ.data],
+  /* Project / venue dropdown rows (owner spec 2026-10-29): the date first, then
+     [BRAND], the title, and the state — newest event first. Parts are kept in a
+     Map so the custom row renderer looks them up by id without rebuilding, while
+     the plain label still fills the closed input and `search` keeps the hidden
+     code findable. */
+  const projectParts = useMemo(() => {
+    const rows = (projectsQ.data?.data ?? []).map((p) => ({ id: String(p.id), parts: projectRowParts(p) }));
+    rows.sort((a, b) => b.parts.sortKey.localeCompare(a.parts.sortKey));
+    return rows;
+  }, [projectsQ.data]);
+  const projectPartsById = useMemo(
+    () => new Map(projectParts.map((r) => [r.id, r.parts])),
+    [projectParts],
   );
+  /* Monospace date column width = the longest date in the list (in ch), so every
+     title lines up whichever events are loaded. */
+  const dateColCh = useMemo(
+    () => projectParts.reduce((w, r) => Math.max(w, r.parts.date.length), 10),
+    [projectParts],
+  );
+  const projectOptions = useMemo(
+    () => projectParts.map((r) => ({ value: r.id, label: r.parts.plain, search: r.parts.search })),
+    [projectParts],
+  );
+  /* Row renderer: date (monospace, fixed width, never cut) then [BRAND] (never
+     cut) then title + state, which truncate with an ellipsis at the end. The live
+     query is highlighted wherever it shows. */
+  const renderProjectOption = (opt: SearchableSelectOption, query: string): ReactNode => {
+    const parts = projectPartsById.get(opt.value);
+    if (!parts) return opt.label;
+    const hl = (t: string) =>
+      splitHighlight(t, query).map((seg, i) =>
+        seg.hit
+          ? <mark key={i} style={{ background: 'rgba(242, 201, 76, 0.45)', color: 'inherit', borderRadius: 2, padding: '0 1px' }}>{seg.text}</mark>
+          : <Fragment key={i}>{seg.text}</Fragment>,
+      );
+    return (
+      <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <span style={{
+          flex: `0 0 ${dateColCh}ch`,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}>{parts.date}</span>
+        {parts.brand && <span style={{ flexShrink: 0, fontWeight: 600 }}>[{hl(parts.brand)}]</span>}
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {hl(parts.title)}
+          {parts.state && <span style={{ color: 'var(--c-muted, #767b6e)' }}> · {hl(parts.state)}</span>}
+        </span>
+      </span>
+    );
+  };
 
   /* Workshops + lorries — LORRY_SERVICE only. The workshop master lives outside
      the /api/scm mount (same app-import precedent as the project list above) and
@@ -229,6 +302,14 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
      is the mistake this filter exists to prevent. */
   const transfersQ = useStockTransfers({ status: 'POSTED' });
   const warehousesQ = useWarehouses();
+  /* 3PL carriers — the outsourced-warehouse destinations for a TRANSFER (owner
+     2026-11-02). Fetched unconditionally like the warehouse list above (a small,
+     cached master); only shown when the destination toggle is on "Outsourced". */
+  const threeplQ = useThreePLCompanies();
+  /* Saved locations — the kept from/to address book (owner 2026-11-02 方案2). Like
+     the warehouse / 3PL lists it is fetched unconditionally (small, cached) and
+     only shown when a From / To toggle is on "Saved location". */
+  const savedLocationsQ = useSavedLocations();
 
   const transferOptions = useMemo(
     () => (transfersQ.data ?? []).map((t) => ({
@@ -243,6 +324,18 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       label: `${w.code}${w.name && w.name !== w.code ? ` — ${w.name}` : ''}`,
     })),
     [warehousesQ.data],
+  );
+  const threeplOptions = useMemo(
+    () => (threeplQ.data ?? [])
+      .filter((t) => t.isActive)
+      .map((t) => ({ value: t.id, label: `${t.name}${t.code ? ` (${t.code})` : ''}` })),
+    [threeplQ.data],
+  );
+  const savedLocationOptions = useMemo(
+    () => (savedLocationsQ.data ?? [])
+      .filter((l) => l.isActive)
+      .map((l) => ({ value: l.id, label: `${l.name}${l.city ? ` — ${l.city}` : ''}` })),
+    [savedLocationsQ.data],
   );
 
   /* Supplier prefill — the DETAIL row (the list view predates the structured
@@ -325,6 +418,82 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   };
   const pickWarehouse = (id: string) => setForm((s) => applyWarehouse(id, s));
 
+  /* 3PL destination prefill — mirrors backend dp-party.ts snapshotFromThreepl: the
+     carrier's single free-text address is the only street line, the name falls
+     back to the code, and the named contact leads the office line. */
+  const pickThreepl = (id: string) => {
+    const t = (threeplQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      threeplCompanyId: id,
+      partyName: (t?.name ?? t?.code ?? '').trim(),
+      contactName: (t?.contactName ?? '').trim(),
+      contactPhone: (t?.contactPhone ?? t?.officePhone ?? '').trim(),
+      address1: (t?.address ?? '').trim(),
+      address2: '', address3: '', address4: '',
+      city: '', postcode: '', state: '',
+    }));
+  };
+
+  /* Saved-location destination prefill (方案2) — a kept point with a full
+     structured address and contact, filled straight through; stays editable. */
+  const pickSavedLocation = (id: string) => {
+    const l = (savedLocationsQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      savedLocationId: id,
+      partyName: (l?.name ?? '').trim(),
+      contactName: (l?.contactName ?? '').trim(),
+      contactPhone: (l?.contactPhone ?? '').trim(),
+      address1: (l?.address1 ?? '').trim(),
+      address2: (l?.address2 ?? '').trim(),
+      address3: '', address4: '',
+      city: (l?.city ?? '').trim(),
+      postcode: (l?.postcode ?? '').trim(),
+      state: (l?.state ?? '').trim(),
+    }));
+  };
+
+  /* ORIGIN ("from") prefills — mirror the destination pickers, writing the from_*
+     fields instead. Same masters (our warehouse / 3PL), same field precedence; the
+     address stays editable. (owner 2026-11-02 方案1) */
+  const pickFromWarehouse = (id: string) => {
+    const w = (warehousesQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      fromWarehouseId: id,
+      fromName: (w?.name ?? w?.code ?? '').trim(),
+      fromAddress1: (w?.location ?? '').trim(),
+      fromAddress2: '',
+      fromCity: (w?.city ?? '').trim(),
+      fromPostcode: (w?.postcode ?? '').trim(),
+      fromState: (w?.state ?? '').trim(),
+    }));
+  };
+  const pickFromThreepl = (id: string) => {
+    const t = (threeplQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      fromThreeplCompanyId: id,
+      fromName: (t?.name ?? t?.code ?? '').trim(),
+      fromAddress1: (t?.address ?? '').trim(),
+      fromAddress2: '', fromCity: '', fromPostcode: '', fromState: '',
+    }));
+  };
+  const pickFromSavedLocation = (id: string) => {
+    const l = (savedLocationsQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      fromSavedLocationId: id,
+      fromName: (l?.name ?? '').trim(),
+      fromAddress1: (l?.address1 ?? '').trim(),
+      fromAddress2: (l?.address2 ?? '').trim(),
+      fromCity: (l?.city ?? '').trim(),
+      fromPostcode: (l?.postcode ?? '').trim(),
+      fromState: (l?.state ?? '').trim(),
+    }));
+  };
+
   /* Picking a transfer document fills the destination FROM the document, then
      the party from that destination — the same two steps the server takes when
      only stockTransferId is sent. The operator can still change the warehouse
@@ -376,10 +545,39 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       else if (src.kind === 'so') body.soDocNo = ref;
     }
     /* The destination rides alongside the transfer document, not instead of it:
-       an ad-hoc move has a warehouse and no document, and a document-backed one
+       an ad-hoc move has a destination and no document, and a document-backed one
        records where the fleet was actually sent even if the document's
-       destination is edited later. */
-    if (form.jobType === 'TRANSFER' && form.warehouseId) body.warehouseId = form.warehouseId;
+       destination is edited later. Only the picked kind's id is sent — our
+       warehouse or an outsourced 3PL, never both. */
+    if (form.jobType === 'TRANSFER') {
+      if (form.destKind === 'saved') {
+        if (form.savedLocationId) body.savedLocationId = form.savedLocationId;
+      } else if (form.destKind === 'threepl') {
+        if (form.threeplCompanyId) body.threeplCompanyId = form.threeplCompanyId;
+      } else if (form.warehouseId) {
+        body.warehouseId = form.warehouseId;
+      }
+      /* ORIGIN ("from") — optional, only the picked kind's id, plus any typed-over
+         origin fields as fromOverrides (snapshot keys). */
+      if (form.fromKind === 'saved') {
+        if (form.fromSavedLocationId) body.fromSavedLocationId = form.fromSavedLocationId;
+      } else if (form.fromKind === 'threepl') {
+        if (form.fromThreeplCompanyId) body.fromThreeplCompanyId = form.fromThreeplCompanyId;
+      } else if (form.fromWarehouseId) {
+        body.fromWarehouseId = form.fromWarehouseId;
+      }
+      const fromOv: Record<string, string | null> = {};
+      const fromMap: Array<[keyof typeof form, string]> = [
+        ['fromName', 'party_name'],
+        ['fromAddress1', 'address1'], ['fromAddress2', 'address2'],
+        ['fromCity', 'city'], ['fromPostcode', 'postcode'], ['fromState', 'state'],
+      ];
+      for (const [fk, col] of fromMap) {
+        const v = String(form[fk]).trim();
+        if (v) fromOv[col] = v;
+      }
+      if (Object.keys(fromOv).length) body.fromOverrides = fromOv;
+    }
     /* The serviced lorry rides alongside the source, not instead of it: the
        workshop is the party, this is the job's subject. Sent for LORRY_SERVICE
        only, so switching type can never smuggle a stale lorry onto a setup job. */
@@ -451,9 +649,21 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   jobType: next.mode === 'create' ? next.jobType : s.jobType,
                   source: '',
                   // Same reasoning for the serviced lorry: it only means
-                  // anything on a LORRY_SERVICE, so it clears with the rest.
+                  // anything on a LORRY_SERVICE, so it clears with the rest. The
+                  // transfer destination (warehouse/3PL) clears back to our own
+                  // warehouse too.
                   lorryId: '',
+                  destKind: 'warehouse',
                   warehouseId: '',
+                  threeplCompanyId: '',
+                  savedLocationId: '',
+                  fromKind: 'warehouse',
+                  fromWarehouseId: '',
+                  fromThreeplCompanyId: '',
+                  fromSavedLocationId: '',
+                  fromName: '',
+                  fromAddress1: '', fromAddress2: '',
+                  fromCity: '', fromPostcode: '', fromState: '',
                   partyName: '', contactName: '', contactPhone: '',
                   address1: '', address2: '', address3: '', address4: '',
                   city: '', postcode: '', state: '',
@@ -550,7 +760,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 value={form.source}
                 onChange={pickProject}
                 options={projectOptions}
-                placeholder={projectsQ.isLoading ? 'Loading projects…' : 'Search project by code, name or venue…'}
+                renderOption={renderProjectOption}
+                placeholder={projectsQ.isLoading ? 'Loading projects…' : 'Search by date, brand, venue, state or code…'}
                 className={styles.searchInput}
                 ariaLabel="Project / venue"
               />
@@ -613,32 +824,189 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             </label>
           )}
 
+          {/* ORIGIN ("from") — TRANSFER only, OPTIONAL (owner 2026-11-02 方案1). A
+              partner delivery is "from A to B"; this is A, the pickup point, picked
+              the same way as the destination (our warehouse / outsourced 3PL). Its
+              OWN address fields live in this box — the shared Party fields lower
+              down are the DESTINATION. Leave blank for a plain depot-loaded move. */}
+          {form.jobType === 'TRANSFER' && (
+            <div style={{ ...fieldRow, padding: 'var(--space-3)', border: '1px solid var(--border, rgba(34,31,32,0.12))', borderRadius: '6px' }}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional, for a partner / point-to-point move</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-from-kind" checked={form.fromKind === 'warehouse'}
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'warehouse', fromThreeplCompanyId: '', fromSavedLocationId: '' }))} />
+                  Our warehouse
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-from-kind" checked={form.fromKind === 'threepl'}
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'threepl', fromWarehouseId: '', fromSavedLocationId: '' }))} />
+                  Outsourced (3PL)
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-from-kind" checked={form.fromKind === 'saved'}
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'saved', fromWarehouseId: '', fromThreeplCompanyId: '' }))} />
+                  Saved location
+                </label>
+              </div>
+              {form.fromKind === 'warehouse' ? (
+                warehousesQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="warehouse id — the warehouse list could not be loaded"
+                    value={form.fromWarehouseId} onChange={(e) => set('fromWarehouseId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.fromWarehouseId}
+                    onChange={pickFromWarehouse}
+                    options={warehouseOptions}
+                    placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : 'Search by code or name…'}
+                    className={styles.searchInput}
+                    ariaLabel="Origin warehouse"
+                  />
+                )
+              ) : form.fromKind === 'threepl' ? (
+                threeplQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="3PL company id — the carrier list could not be loaded"
+                    value={form.fromThreeplCompanyId} onChange={(e) => set('fromThreeplCompanyId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.fromThreeplCompanyId}
+                    onChange={pickFromThreepl}
+                    options={threeplOptions}
+                    placeholder={threeplQ.isLoading ? 'Loading 3PL companies…' : 'Search by name or code…'}
+                    className={styles.searchInput}
+                    ariaLabel="Origin 3PL"
+                  />
+                )
+              ) : (
+                savedLocationsQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="saved location id — the list could not be loaded"
+                    value={form.fromSavedLocationId} onChange={(e) => set('fromSavedLocationId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.fromSavedLocationId}
+                    onChange={pickFromSavedLocation}
+                    options={savedLocationOptions}
+                    placeholder={savedLocationsQ.isLoading ? 'Loading saved locations…' : 'Search saved locations…'}
+                    className={styles.searchInput}
+                    ariaLabel="Origin saved location"
+                  />
+                )
+              )}
+              <label style={{ ...fieldRow, marginTop: 'var(--space-2)' }}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From name</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromName} onChange={(e) => set('fromName', e.target.value)} />
+              </label>
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From address line 1</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromAddress1} onChange={(e) => set('fromAddress1', e.target.value)} />
+              </label>
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From address line 2</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromAddress2} onChange={(e) => set('fromAddress2', e.target.value)} />
+              </label>
+              <div style={row2}>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
+                </label>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From postcode</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromPostcode} onChange={(e) => set('fromPostcode', e.target.value)} />
+                </label>
+              </div>
+              <label style={{ ...fieldRow, marginBottom: 0 }}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From state</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromState} onChange={(e) => set('fromState', e.target.value)} />
+              </label>
+            </div>
+          )}
+
           {/* Where the goods are going. TRANSFER only, and required for the same
               reason the lorry is on a service job: a move with no destination
-              has no address, so the driver has nowhere to be sent. Picking a
-              transfer document fills this in; an ad-hoc move sets it directly. */}
+              has no address, so the driver has nowhere to be sent. The destination
+              is one of OUR warehouses or an OUTSOURCED 3PL warehouse (owner
+              2026-11-02); the toggle switches the picker, and either pick fills the
+              address below, which stays editable. The shared Party fields below are
+              this destination. */}
           {form.jobType === 'TRANSFER' && (
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
-                Destination warehouse <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
+                Destination <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
               </div>
-              {warehousesQ.isError ? (
-                <input className={styles.searchInput} style={inputStyle}
-                  placeholder="warehouse id — the warehouse list could not be loaded"
-                  value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-dest-kind" checked={form.destKind === 'warehouse'}
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'warehouse', threeplCompanyId: '', savedLocationId: '' }))} />
+                  Our warehouse
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-dest-kind" checked={form.destKind === 'threepl'}
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'threepl', warehouseId: '', savedLocationId: '' }))} />
+                  Outsourced (3PL)
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-dest-kind" checked={form.destKind === 'saved'}
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'saved', warehouseId: '', threeplCompanyId: '' }))} />
+                  Saved location
+                </label>
+              </div>
+              {form.destKind === 'warehouse' ? (
+                warehousesQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="warehouse id — the warehouse list could not be loaded"
+                    value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.warehouseId}
+                    onChange={pickWarehouse}
+                    options={warehouseOptions}
+                    placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : 'Search by code or name…'}
+                    className={styles.searchInput}
+                    ariaLabel="Destination warehouse"
+                  />
+                )
+              ) : form.destKind === 'threepl' ? (
+                threeplQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="3PL company id — the carrier list could not be loaded"
+                    value={form.threeplCompanyId} onChange={(e) => set('threeplCompanyId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.threeplCompanyId}
+                    onChange={pickThreepl}
+                    options={threeplOptions}
+                    placeholder={threeplQ.isLoading ? 'Loading 3PL companies…' : 'Search by name or code…'}
+                    className={styles.searchInput}
+                    ariaLabel="Outsourced 3PL warehouse"
+                  />
+                )
               ) : (
-                <SearchableSelect
-                  value={form.warehouseId}
-                  onChange={pickWarehouse}
-                  options={warehouseOptions}
-                  placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : 'Search by code or name…'}
-                  className={styles.searchInput}
-                  ariaLabel="Destination warehouse"
-                />
+                savedLocationsQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="saved location id — the list could not be loaded"
+                    value={form.savedLocationId} onChange={(e) => set('savedLocationId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.savedLocationId}
+                    onChange={pickSavedLocation}
+                    options={savedLocationOptions}
+                    placeholder={savedLocationsQ.isLoading ? 'Loading saved locations…' : 'Search saved locations…'}
+                    className={styles.searchInput}
+                    ariaLabel="Destination saved location"
+                  />
+                )
               )}
               <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
-                The warehouse master carries no contact — fill one in below if the
-                driver needs someone to call on arrival.
+                {form.destKind === 'warehouse'
+                  ? 'The warehouse master carries no contact — fill one in below if the driver needs someone to call on arrival.'
+                  : form.destKind === 'threepl'
+                    ? "The carrier's registered address auto-fills below — edit it if the drop-off differs."
+                    : 'The saved location’s address auto-fills below — edit it if this drop-off differs. Maintain the list on Saved Locations.'}
               </div>
             </label>
           )}
@@ -717,7 +1085,10 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             disabled={create.isPending || schedule.isPending
               || (isSchedule && (!docId || !jobDate))
               || (!isSchedule && form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
-              || (!isSchedule && form.jobType === 'TRANSFER' && !form.warehouseId.trim())
+              || (!isSchedule && form.jobType === 'TRANSFER'
+                && !(form.destKind === 'saved' ? form.savedLocationId.trim()
+                  : form.destKind === 'threepl' ? form.threeplCompanyId.trim()
+                  : form.warehouseId.trim()))
               /* No address typed and no source the server could fill it from.
                  With a source picked the server decides and says why. */
               || (!isSchedule && !form.source.trim()

@@ -18,7 +18,7 @@ import soListRows from '../src/scm/lib/so-list-rows.ts?raw';
 import listEnrichmentRoute from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import listEnrichmentLib from '../src/scm/lib/so-list-mrp-enrichment.ts?raw';
 import liveMrpMemo from '../src/scm/lib/live-mrp-memo.ts?raw';
-import { effectiveLineStockStatus } from '../src/scm/lib/so-line-effective-stock';
+import { effectiveLineStockStatus, soLineStockVerdict } from '../src/scm/lib/so-line-effective-stock';
 import { summariseReadiness } from '../src/scm/lib/so-readiness';
 const mfgSalesOrders = soRouterSource();
 
@@ -251,5 +251,15 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(0);
     expect(listEnrichmentRoute.split('sharedLiveMrp(').length - 1).toBe(1);
     expect(listEnrichmentRoute).toContain('mrpLineCoverage(mrp)');
+  });
+});
+
+describe('soLineStockVerdict — why a line is PENDING (HC-0159)', () => {
+  const row = { stock_status: 'PENDING', item_group: 'MATTRESS', item_code: 'M1', warehouse_id: null };
+  it('says the order is awaiting its Processing Date when it has none', () => {
+    expect(soLineStockVerdict(row, null, false, new Map()).awaiting_processing_date).toBe(true);
+  });
+  it('does not say it once the order carries a date', () => {
+    expect(soLineStockVerdict(row, null, true, new Map()).awaiting_processing_date).toBe(false);
   });
 });

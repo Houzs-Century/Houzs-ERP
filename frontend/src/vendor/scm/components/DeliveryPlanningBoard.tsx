@@ -28,6 +28,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
+import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
 import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
@@ -36,10 +37,12 @@ import {
   useScheduleDelivery,
   useUpdateDeliveryFields,
   useAssignDoCrew,
+  useDpCrew,
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
   sxeDateOf,
   MESSAGE_STATUSES,
+  messageStatusChip,
   AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
@@ -49,7 +52,7 @@ import {
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
-import { deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
+import { compareByDeliverySlot, deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
 import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
@@ -57,8 +60,10 @@ import { useHelpers, type HelperRow } from '../lib/helpers-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
-import { deliveryDateChange } from "../lib/delivery-date-edit";
+import { deliveryDateChange, invalidDeliveryDate } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
+import { crewToCopy, seatsForTarget, type CrewSeats } from "../lib/crew-paste";
+import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-queries";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
 
@@ -140,6 +145,11 @@ export const isAssr = (o: PlanningOrder): boolean => o.row_type === 'assr';
 /* DP-Order rows (manual setup / dismantle / supplier-pickup jobs). */
 export const isDp = (o: PlanningOrder): boolean => o.row_type === 'dp';
 export const isProject = (o: PlanningOrder): boolean => o.row_type === 'project';
+/* A DP row's so_doc_no is the synthetic key `DP:<id>`; the backend date / fields
+   endpoints want the bare dp_order id. Same shape ScheduleDpOrderDrawer uses. */
+export const dpIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^DP:/, '');
+/* A project row's key is `PRJ:<projectId>#SETUP|DISMANTLE`; the write needs the project id. */
+export const projectIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^PRJ:/, '').replace(/#.*$/, '');
 /* A friendly label for a DP job type — resolved from the SHARED canonical map
    (dpJobTypeLabel) so the board's Type chip and the New-DP-Order dropdown always
    read the same wording. Empty job_type falls back to a generic 'DP job'. */
@@ -294,6 +304,17 @@ const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: 
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
 
+/* The fields hook paints the pick at once and rolls it back on failure; say so,
+   or the cell just jumps back with no reason. */
+const fieldNotSaved = (err: unknown) => serviceNotify({
+  title: 'Not saved',
+  body: err instanceof Error ? err.message : 'Something went wrong.',
+  tone: 'error',
+});
+
+/* An option inherits the select's chip colour unless it sets its own. */
+const plainOption = { backgroundColor: '#fff', color: '#11140f' };
+
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -301,12 +322,25 @@ type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
    through useUpdateDeliveryFields; the blank option clears it. */
 function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
   const { fields } = useContext(BoardPendingContext);
-  if (isAssr(order) || isDp(order) || isProject(order)) {
-    return <NotApplicable />;
-  }
+  // Project (SETUP/DISMANTLE) rows are a read-only PMS mirror — no message here.
+  if (isProject(order)) return <NotApplicable />;
+  /* SO rows write their own column; DP (manual job) rows write
+     scm.dp_orders.delivery_message_status; service-case rows write
+     assr_cases.delivery_message_status (owner 2026-10-29 — the non-SO job types
+     adjust it too, so the ASSR row is an editable select, not a read-only chip).
+     For a service case the Service-Arrangement WhatsApp reply still overlays its
+     own value when the customer has answered, so a hand-set status shows until
+     then. */
+  const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
+    : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
+    : { type: 'so' as const, id: order.so_doc_no };
+  // The workflow status shows as a coloured chip, on the editable select too.
+  const chip = messageStatusChip(order.delivery_message_status);
+  const chipStyle = chip ? { backgroundColor: chip.bg, color: chip.fg } : undefined;
   return (
     <select
-      className={styles.inlineEdit}
+      className={chip ? `${styles.inlineEdit} ${styles.messageChip}` : styles.inlineEdit}
+      style={chipStyle}
       value={order.delivery_message_status ?? ''}
       disabled={fields}
       title="Customer-message workflow status"
@@ -314,18 +348,19 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.delivery_message_status ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null });
+        onUpdateFields({ ...target, deliveryMessageStatus: next || null }, { onError: fieldNotSaved });
       }}
     >
-      <option value="">—</option>
+      <option value="" style={plainOption}>—</option>
       {/* Keep an off-list current value selectable (robustness). */}
       {order.delivery_message_status
         && !(MESSAGE_STATUSES as readonly string[]).includes(order.delivery_message_status)
-        ? <option value={order.delivery_message_status}>{order.delivery_message_status}</option>
+        ? <option value={order.delivery_message_status} style={plainOption}>{order.delivery_message_status}</option>
         : null}
-      {MESSAGE_STATUSES.map((s) => (
-        <option key={s} value={s}>{s}</option>
-      ))}
+      {MESSAGE_STATUSES.map((s) => {
+        const c = messageStatusChip(s);
+        return <option key={s} value={s} style={c && { backgroundColor: c.bg, color: c.fg }}>{s}</option>;
+      })}
     </select>
   );
 }
@@ -340,16 +375,23 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
   const current = (order.amended_delivery_date ?? '').slice(0, 10);
   const [val, setVal] = useState(current);
   const { sched: schedPending } = useContext(BoardPendingContext);
+  const notify = useNotify();
   // Follow the row when its date changes underneath (optimistic save, poll).
   useEffect(() => { setVal(current); }, [current]);
-  if (isDp(order) || isProject(order)) {
+  /* Project (SETUP/DISMANTLE) rows stay a read-only PMS mirror — the date is
+     edited in the project editor (owner's standing rule). */
+  if (isProject(order)) {
     return detail(fmtDateOrDash(order.amended_delivery_date));
   }
   /* A service case's Delivery Date is the date Logistics CONFIRMS (owner
-     2026-10-26): typed here like an SO's, it moves the leg to Pending Delivery. */
+     2026-10-26): typed here like an SO's, it moves the leg to Pending Delivery.
+     A DP (manual job) row writes scm.dp_orders.requested_date (and moves its
+     trip's date when it rides one) — owner 2026-10-29. */
   const commit = (value: string | null) => (isAssr(order)
     ? onSchedule({ type: 'assr', id: String(order.assr_id ?? ''), scheduleDate: value, jobKind: order.job_kind })
-    : onSchedule({ type: 'so', id: order.so_doc_no, scheduleDate: value }));
+    : isDp(order)
+      ? onSchedule({ type: 'dp', id: dpIdOf(order), scheduleDate: value })
+      : onSchedule({ type: 'so', id: order.so_doc_no, scheduleDate: value }));
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <DateField
@@ -361,6 +403,13 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
         onBlur={() => {
           const next = deliveryDateChange(current, val);
           if (next.changed) commit(next.value);
+        }}
+        /* HC-0164 (Syu, 2026-10-28): a wrong format pops up and empties the
+           cell, as the HC Delivery sheet does. */
+        onInvalid={(text) => {
+          const { clear, body } = invalidDeliveryDate(current, text, order.so_doc_no);
+          if (clear) commit(null);
+          void notify({ title: 'Invalid date format', body, tone: 'error' });
         }}
       />
     </span>
@@ -383,7 +432,7 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.amend_reason ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null });
+        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>
@@ -398,13 +447,19 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 }
 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
-   Disposal Request, Remarks). SO rows only; commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string;
+   Disposal Request, Remarks). SO rows only, EXCEPT when allowNonSo — the Time Slot
+   is editable on DP rows too (owner 2026-10-31, scm.dp_orders.time_range) and on
+   service-case legs (HC-0194) — and allowProject (Remarks: the project's board
+   remark). Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false, allowProject = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean; allowProject?: boolean;
 }) {
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  if ((isProject(order) && !allowProject) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
+      // Remount when the saved value changes: an uncontrolled box would keep the
+      // old text, and a blur would save it back over the newer value.
+      key={value ?? ''}
       className={styles.inlineEdit}
       defaultValue={value ?? ''}
       placeholder={placeholder}
@@ -452,7 +507,9 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
   const [val, setVal] = useState(chosen);
   const { crew: pending } = useContext(BoardPendingContext);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  // A DP job writes its RUN's crew via useDpCrew (writeSeat below), which puts a
+  // trip-less job on a run first — so the cell is editable with or without a trip
+  // (owner 2026-10-31), like an SO row.
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
@@ -491,8 +548,11 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   const [val, setVal] = useState(chosen);
   const { crew: pending } = useContext(BoardPendingContext);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isDp(order) && !order.trip_id) return <NotApplicable />;
-  if (isProject(order) || isDp(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
+  // A DP job's lorry is set on its RUN via useDpCrew (writeSeat below): picking a
+  // lorry puts a trip-less job on a run and mints its DP number, so the cell is
+  // editable with or without a trip (owner 2026-10-31), like an SO row.
+  // Project rows are a read-only PMS mirror (edit in Projects).
+  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
@@ -517,11 +577,13 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   );
 }
 
-/* Helper 1 / Helper 2 — a type-to-search picker that writes the DO crew helper
-   seat (owner 2026-09-26). SO rows only: helpers live on delivery_order_crew, so
-   ASSR / DP / project rows have no seat to write. */
-function HelperPickCell({ order, helpers, writeSeat, slot }: {
-  order: PlanningOrder; helpers: HelperRow[]; writeSeat: CrewSeatWrite; slot: 1 | 2;
+/* Helper 1 / Helper 2 — a type-to-search picker. SO + DP(on a trip) write the
+   crew seat (delivery_order_crew for an SO, the trip for a DP, both via
+   writeSeat); a service-case leg writes the trip crew through the schedule path
+   (type:'assr'), like its Driver / Lorry cells (owner 2026-10-29). A DP job with
+   no trip yet, and project rows, have no seat — dash / read-only mirror. */
+function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
+  order: PlanningOrder; helpers: HelperRow[]; onSchedule: ScheduleMutate; writeSeat: CrewSeatWrite; slot: 1 | 2;
 }) {
   // SCROLL PERF: memoise the option list (see DriverPickCell).
   const items = useMemo(() => helpers.map((h) => ({ id: h.id, label: h.name })), [helpers]);
@@ -532,9 +594,11 @@ function HelperPickCell({ order, helpers, writeSeat, slot }: {
   const { crew: pending } = useContext(BoardPendingContext);
   useEffect(() => { setVal(chosen); }, [chosen]);
   // Project rows are a read-only PMS mirror — show the helper the project crewed
-  // (owner 2026-10-21), like the Driver / Lorry cells. ASSR / DP have no seat.
+  // (owner 2026-10-21), like the Driver / Lorry cells.
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
-  if (isAssr(order) || isDp(order)) return <NotApplicable />;
+  // A DP job's helper is set on its RUN via useDpCrew (writeSeat below), which puts
+  // a trip-less job on a run first — editable with or without a trip (owner 2026-10-31).
+  const assrLeg = isAssr(order);
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
@@ -545,6 +609,14 @@ function HelperPickCell({ order, helpers, writeSeat, slot }: {
         onChange={(picked) => {
           if (picked === KEEP_CURRENT) return;
           const helperId = picked || null;
+          if (assrLeg) {
+            setVal(picked);
+            onSchedule({
+              type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind,
+              ...(slot === 1 ? { helper1Id: helperId } : { helper2Id: helperId }),
+            });
+            return;
+          }
           const seat = slot === 1 ? { helper1Id: helperId } : { helper2Id: helperId };
           setVal(writeSeat(order, seat) ? picked : chosen);
         }}
@@ -558,6 +630,25 @@ function HelperPickCell({ order, helpers, writeSeat, slot }: {
    present, else the header's stored balance_sen. */
 const liveBalance = (o: PlanningOrder): number =>
   typeof o.balance_sen_live === 'number' ? o.balance_sen_live : o.balance_sen;
+
+/* The ticked bills added up for the bulk bar (HC-0164, Syu: "see the total
+   amount of bill I selected", as a sheet's status bar does). Sales orders only -
+   a job row's total is a structural 0, as in the Total Amount column. */
+export function selectedBillTotals(
+  orders: readonly PlanningOrder[],
+  selectedKeys: ReadonlySet<string>,
+): { count: number; totalSen: number; balanceSen: number } {
+  let count = 0;
+  let totalSen = 0;
+  let balanceSen = 0;
+  for (const o of orders) {
+    if (o.row_type !== 'so' || !selectedKeys.has(rowIdOf(o))) continue;
+    count += 1;
+    totalSen += o.local_total_sen;
+    balanceSen += liveBalance(o);
+  }
+  return { count, totalSen, balanceSen };
+}
 
 /* The days_left cell renderer lived here until the owner's 2026-08-04 column
    pass removed that column. It is gone rather than left dangling — the Overdue
@@ -763,6 +854,8 @@ export type DeliveryPlanningBoardProps = {
      by the full Delivery Planning board (the date/time/crew sub-pages have their
      own storage keys and narrower views). */
   layoutPresets?: LayoutSeed[];
+  /* Picking one of `layoutPresets` — the page moves the region chip to match. */
+  onApplyLayoutPreset?: (presetId: string) => void;
   /* First-page row cap (owner 2026-09-26): the full board renders this many rows
      with a "Load more" for the rest; passed only by the main Delivery Planning
      page. Omitted on the sub-pages (they render their whole, narrower queue). */
@@ -821,6 +914,7 @@ export function DeliveryPlanningBoard({
   emptyMessage = 'No orders need delivering in this view.',
   defaultSort,
   layoutPresets,
+  onApplyLayoutPreset,
   initialRowLimit,
   onRowReorder,
   resetFilters,
@@ -838,7 +932,10 @@ export function DeliveryPlanningBoard({
      Helpers are fetched here (like updateFields) rather than threaded as a prop. */
   const assignCrew = useAssignDoCrew();
   const updateTrip = useUpdateTrip();
+  const dpCrew = useDpCrew();
   const helpers = useHelpers().data ?? [];
+  const localities = useLocalities().data;
+  const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
 
   /* PERF (2026-10-23): the inline-editor accessors must NOT close over these
      mutation objects — react-query gives them a new identity every render and on
@@ -851,6 +948,7 @@ export function DeliveryPlanningBoard({
   const updateFieldsRef = useRef(updateFields); updateFieldsRef.current = updateFields;
   const assignCrewRef = useRef(assignCrew); assignCrewRef.current = assignCrew;
   const updateTripRef = useRef(updateTrip); updateTripRef.current = updateTrip;
+  const dpCrewRef = useRef(dpCrew); dpCrewRef.current = dpCrew;
   const notifyRef = useRef(notify); notifyRef.current = notify;
   const scheduleMutate = useCallback<ScheduleMutate>((...args) => schedRef.current.mutate(...args), []);
   const updateFieldsMutate = useCallback<UpdateFieldsMutate>((...args) => updateFieldsRef.current.mutate(...args), []);
@@ -860,11 +958,20 @@ export function DeliveryPlanningBoard({
      Stable identity (reads the mutations through refs) so it lives in a column
      accessor without re-triggering the columns memo. */
   const writeCrewSeat = useCallback<CrewSeatWrite>((order, seat) => {
-    /* A DP job has no DO: its crew IS its run's crew (the server copies it to
-       the run's DOs, and the driver's phone follows the run). */
-    if (isDp(order) && order.trip_id) {
-      updateTripRef.current.mutate({ id: order.trip_id, ...(seat.driver1Id !== undefined ? { driverId: seat.driver1Id } : {}),
-        ...(seat.helper1Id !== undefined ? { helper1Id: seat.helper1Id } : {}), ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}) });
+    /* A DP job has no DO: its crew IS its RUN's crew. The endpoint puts a trip-less
+       job on a run first (owner 2026-10-31), so the cell writes with or without a
+       trip — no "Schedule…" drawer. A DP run has one driver, so driver2Id is n/a. */
+    if (isDp(order)) {
+      dpCrewRef.current.mutate({
+        id: dpIdOf(order),
+        ...(seat.driver1Id !== undefined ? { driverId: seat.driver1Id } : {}),
+        ...(seat.lorryId !== undefined ? { lorryId: seat.lorryId } : {}),
+        ...(seat.helper1Id !== undefined ? { helper1Id: seat.helper1Id } : {}),
+        ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}),
+      }, {
+        onSuccess: (res) => { if (res.tripStop.failed) void notifyRef.current({ title: 'Crew saved', body: `The crew saved but the job was NOT attached to its run: ${res.tripStop.reason ?? 'unknown error'}.`, tone: 'error' }); },
+        onError: (e) => void notifyRef.current({ title: 'Crew not saved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
       return true;
     }
     const doId = latestDoId(order.delivery_orders);
@@ -875,7 +982,51 @@ export function DeliveryPlanningBoard({
     assignCrewRef.current.mutate({ doId, ...seat });
     return true;
   }, []);
-  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending;
+  /* HC-0191 Copy / Paste crew: copy the one ticked row's lorry + driver(s) + helper(s),
+     then tick the other bills and paste. Each target is written through the same
+     paths as its own inline pick (writeCrewSeat / the schedule write), so the
+     permission checks and audit are those of a normal edit. */
+  const [copiedCrew, setCopiedCrew] = useState<{ seats: CrewSeats; fromKey: string; label: string } | null>(null);
+  const copyCrew = () => {
+    const src = orders.find((o) => selectedKeys.has(rowIdOf(o)));
+    if (!src || selectedKeys.size !== 1 || isProject(src)) return;
+    const { seats, unresolved } = crewToCopy(src, drivers, lorries, helpers);
+    if (Object.keys(seats).length === 0) {
+      void notify({ title: 'Nothing to copy', body: unresolved.length ? `${unresolved.join(', ')} could not be matched to the driver / lorry / helper lists.` : 'This row has no lorry, driver or helper yet.' });
+      return;
+    }
+    const label = [src.crew?.lorry_plate, src.crew?.driver_1_name].filter(Boolean).join(' · ');
+    setCopiedCrew({ seats, fromKey: rowIdOf(src), label });
+    if (unresolved.length) void notify({ title: 'Copied (partly)', body: `${unresolved.join(', ')} could not be matched to the driver / lorry / helper lists and will not be pasted.` });
+  };
+  const pasteCrew = async () => {
+    if (!copiedCrew) return;
+    const targets = orders.filter((o) => selectedKeys.has(rowIdOf(o)) && rowIdOf(o) !== copiedCrew.fromKey && !isProject(o));
+    if (targets.length === 0) return;
+    const ok = await askConfirm({
+      title: `Paste crew onto ${targets.length} row${targets.length === 1 ? '' : 's'}?`,
+      body: `${copiedCrew.label || 'The copied crew'} replaces the lorry, driver and helper on the ticked rows.`,
+      confirmLabel: 'Paste crew',
+    });
+    if (!ok) return;
+    let noDo = 0;
+    for (const o of targets) {
+      const seats = seatsForTarget(copiedCrew.seats, o);
+      if (isAssr(o)) {
+        scheduleMutate({
+          type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind,
+          ...(seats.driver1Id ? { driverId: seats.driver1Id } : {}), ...(seats.lorryId ? { lorryId: seats.lorryId } : {}),
+          ...(seats.helper1Id ? { helper1Id: seats.helper1Id } : {}), ...(seats.helper2Id ? { helper2Id: seats.helper2Id } : {}),
+        });
+      } else if (!isDp(o) && !latestDoId(o.delivery_orders)) {
+        noDo += 1;
+      } else {
+        writeCrewSeat(o, seats);
+      }
+    }
+    if (noDo > 0) void notify({ title: 'Some rows skipped', body: `${noDo} row${noDo === 1 ? ' has' : 's have'} no delivery order yet, so crew cannot be saved there. Create the DO first, then paste again.` });
+  };
+  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending || dpCrew.isPending;
   /* The volatile "a save is running" flags for the inline editors — recomputed
      only when a mutation's isPending actually toggles, so the context value (and
      the editors' disabled state) changes on save start / stop and nothing else. */
@@ -905,6 +1056,7 @@ export function DeliveryPlanningBoard({
   );
 
   const selectedSoDocNos = (): string[] => soDocNosFromSelection(selectedKeys);
+  const selectedTotals = useMemo(() => selectedBillTotals(orders, selectedKeys), [orders, selectedKeys]);
 
   /* ── Pending Schedule sub-split (owner pipeline, 2026-08-07) ────────────────
      Counts of the DERIVED arrangement stages across the Pending Schedule rows in
@@ -1036,11 +1188,11 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.phone ?? '',
     },
     {
-      /* Latest WhatsApp (Seampify) send for this SO, from scm.wa_message_log —
-         '—' until a send exists. SO-only (the send action is SO-only too). */
+      /* Latest WhatsApp send for this SO / ASSR job, from scm.wa_message_log —
+         '—' until a send exists. */
       key: 'wa_message', label: 'Send Status', width: 130,
       accessor: (o) => {
-        if (o.row_type !== 'so') return '—';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '—';
         const s = msgStatuses?.[o.so_doc_no];
         // Default "Done All" (owner 2026-09-22): no send needed, or the last send
         // was OK. Only a FAILED latest send shows a problem.
@@ -1052,12 +1204,12 @@ export function DeliveryPlanningBoard({
         );
       },
       searchValue: (o) => {
-        if (o.row_type !== 'so') return '';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '';
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },
       exportValue: (o) => {
-        if (o.row_type !== 'so') return '';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '';
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },
@@ -1098,8 +1250,10 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'postcode', label: 'Postcode', width: 100,
-      accessor: (o) => detail(o.postcode ?? '—'),
-      searchValue: (o) => o.postcode ?? '',
+      // HC-0196: the area name beside the number, from the localities table.
+      accessor: (o) => detail(o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : '—'),
+      searchValue: (o) => (o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : ''),
+      exportValue: (o) => (o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : ''),
     },
     /* `building_type` ("Property") was REMOVED in the owner's 2026-08-04 column
        pass, and `house_type` took over its NAME — one "Building Type" column
@@ -1244,13 +1398,24 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'disposal_request', label: 'Disposal Request', width: 180,
-      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v })} placeholder="Disposal…" />,
+      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v }, { onError: fieldNotSaved })} placeholder="Disposal…" />,
       searchValue: (o) => o.disposal_request ?? '',
       exportValue: (o) => o.disposal_request ?? '',
     },
     {
       key: 'dp_remark', label: 'Remarks', width: 200, defaultHidden: true,
-      accessor: (o) => <TextEditCell order={o} value={o.dp_remark} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, dpRemark: v })} placeholder="Remarks…" />,
+      /* Every row type takes a remark, each on its own record: SO header, DP job,
+         the service-case leg, or the project's board remark. */
+      accessor: (o) => (
+        <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject={!o.remark_locked}
+          onCommit={(v) => updateFieldsMutate(
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), dpRemark: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, dpRemark: v }
+              : isProject(o) ? { type: 'project', id: projectIdOf(o), dpRemark: v }
+              : { type: 'so', id: o.so_doc_no, dpRemark: v },
+            { onError: fieldNotSaved },
+          )} />
+      ),
       searchValue: (o) => o.dp_remark ?? '',
       exportValue: (o) => o.dp_remark ?? '',
     },
@@ -1311,15 +1476,20 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
-      /* Inline free-text (owner 2026-09-26: 可以输入文本) → the DO's time_range via
-         useUpdateDeliveryFields. SO rows only; no DO yet → the server saves nothing
-         and returns no_do_hint, which we surface. */
+      key: 'time_range', label: 'Time Slot', width: 130, sortable: true, defaultHidden: true,
+      sortFn: compareByDeliverySlot,
+      /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
+         time_range via useUpdateDeliveryFields (no DO yet → the server saves
+         nothing and returns no_do_hint, which we surface); a DP row (owner
+         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed; a
+         service-case leg (HC-0194) writes its own per-leg column on the case. */
       accessor: (o) => (
-        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm"
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowNonSo
           onCommit={(v) => updateFieldsMutate(
-            { type: 'so', id: o.so_doc_no, timeRange: v },
-            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, timeRange: v }
+              : { type: 'so', id: o.so_doc_no, timeRange: v },
+            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); }, onError: fieldNotSaved },
           )} />
       ),
       searchValue: (o) => o.time_range ?? '',
@@ -1443,13 +1613,13 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'helper_1', label: 'Helper 1', width: 160, defaultHidden: true,
-      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} slot={1} />,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} onSchedule={scheduleMutate} writeSeat={writeCrewSeat} slot={1} />,
       searchValue: (o) => o.crew?.helper_1_name ?? '',
       exportValue: (o) => o.crew?.helper_1_name ?? '',
     },
     {
       key: 'helper_2', label: 'Helper 2', width: 160, defaultHidden: true,
-      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} slot={2} />,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} onSchedule={scheduleMutate} writeSeat={writeCrewSeat} slot={2} />,
       searchValue: (o) => o.crew?.helper_2_name ?? '',
       exportValue: (o) => o.crew?.helper_2_name ?? '',
     },
@@ -1543,7 +1713,7 @@ export function DeliveryPlanningBoard({
   // rides BoardPendingContext — so a mutation's identity / isPending no longer
   // rebuilds this array. (eslint-disable: those stable callbacks are intentionally
   // omitted from the deps.)
-  }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf, pcIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Map-open column narrowing: everything NOT in the override hides at render
      time (DataGrid overlayHidden). The user's persisted layout is untouched —
@@ -1680,6 +1850,28 @@ export function DeliveryPlanningBoard({
             Clear
           </button>
 
+          <span className={styles.bulkSep}>·</span>
+          <span className={styles.bulkLabel}>Crew</span>
+          <Button variant="ghost" disabled={selectedKeys.size !== 1} onClick={copyCrew} title="Copy the lorry, driver and helpers of the one ticked row">Copy crew</Button>
+          <Button
+            variant="ghost"
+            disabled={!copiedCrew || [...selectedKeys].every((k) => k === copiedCrew.fromKey)}
+            onClick={() => void pasteCrew()}
+            title={copiedCrew ? `Paste ${copiedCrew.label || 'the copied crew'} onto the other ticked rows` : 'Copy a row crew first'}
+          >
+            Paste crew
+          </Button>
+
+          {selectedTotals.count > 0 && (
+            <>
+              <span className={styles.bulkSep}>·</span>
+              <span className={styles.bulkLabel}>Total Amount</span>
+              <span className={styles.bulkCount} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(selectedTotals.totalSen)}</span>
+              <span className={styles.bulkLabel}>Balance</span>
+              <span className={styles.bulkCount} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(selectedTotals.balanceSen)}</span>
+            </>
+          )}
+
           <span className={styles.bulkSpacer} />
 
           {bulkExtras}
@@ -1703,8 +1895,14 @@ export function DeliveryPlanningBoard({
           label: 'Reset layout',
         }}
         layoutPresets={layoutPresets}
+        onApplyLayoutPreset={onApplyLayoutPreset}
         initialRowLimit={initialRowLimit}
         onRowReorder={onRowReorder}
+        /* Drag over the Total Amount / Balance cells to add them up, like Excel
+           (HC-0164, Syu). */
+        cellRangeSum
+        /* Whole row on one screen for review and screenshots (Delivery, 11-02). */
+        fitToWidth
         exportName={exportName}
         rowKey={rowIdOf}
         /* The full board scrolls its tabs and toolbar away so the grid fills the

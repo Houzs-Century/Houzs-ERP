@@ -2,10 +2,10 @@
  * same rule as SalesOrderDetail.frozenLines.test.tsx, on the other surface.
  *
  * MobileNewSO is MOUNTED in edit mode under a real QueryClient. It loads the
- * order through authedFetch itself, so that one module is faked: the detail and
- * the payments ledger answer, every other request stays pending.
+ * order through authedFetch itself, so that one module is faked: the detail, the
+ * payments ledger, validate and the save PATCHes answer, every other request stays pending.
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,9 +13,12 @@ const { detailBody } = vi.hoisted(() => ({ detailBody: { current: null as unknow
 
 vi.mock("../vendor/scm/lib/authed-fetch", async (orig) => ({
   ...(await orig<typeof import("../vendor/scm/lib/authed-fetch")>()),
-  authedFetch: vi.fn((path: string) => {
+  authedFetch: vi.fn((path: string, init?: { method?: string }) => {
+    if (path === "/mfg-sales-orders/validate") return Promise.resolve({ problems: [] });
     if (/\/mfg-sales-orders\/[^/?]+\/payments$/.test(path)) return Promise.resolve({ payments: [] });
+    if (/\/mfg-sales-orders\/[^/?]+$/.test(path) && init?.method === "PATCH") return Promise.resolve({ ok: true, version: 4 });
     if (/\/mfg-sales-orders\/[^/?]+$/.test(path)) return Promise.resolve(detailBody.current);
+    if (/\/items\//.test(path) && init?.method === "PATCH") return Promise.resolve({ ok: true });
     return new Promise(() => undefined);
   }),
 }));
@@ -29,8 +32,9 @@ vi.mock("../vendor/scm/lib/auth", async (orig) => ({
 }));
 
 import { MobileNewSO } from "./MobileNewSO";
+import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.mocked(authedFetch).mockClear(); });
 
 const DOC = "HC-SO-2609-001";
 
@@ -52,7 +56,7 @@ const mount = (so: Record<string, unknown>, items: unknown[]) => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MobileNewSO mode="edit" docNo={DOC} openAddLine={false} onBack={() => undefined} />
+      <MobileNewSO mode="edit" docNo={DOC} openAddLine={false} onBack={() => undefined} onSaved={() => undefined} />
     </QueryClientProvider>,
   );
 };
@@ -84,5 +88,18 @@ describe("phone SO editor — a partly delivered order", () => {
     await waitFor(() => expect(screen.getByText(/line items can no longer be changed/i)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /add line/i })).toBeNull();
     expect(container.querySelector('[data-frozen="true"]')).toBeNull();
+  });
+
+  /* HC-0159 (Azza, 2026-10-29): an imported AutoCount line keeps its remark in
+     the remark column only. The seed copies it into variants, so the delivered
+     DISPOSE line read as edited and its PATCH 409'd every save of the order. */
+  it("a save never writes the delivered line, even an imported one with a remark", async () => {
+    const delivered = { ...item("line-delivered", "DISPOSE", true), item_group: "others", variants: null, remark: "账本原文: dispose old mattress" };
+    mount(header, [delivered, item("line-open", "MT-QUEEN", false)]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Changes" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await new Promise((r) => setTimeout(r, 200));
+    const lineWrites = vi.mocked(authedFetch).mock.calls.filter(([p, init]) => /\/items/.test(p) && (init as { method?: string } | undefined)?.method);
+    expect(lineWrites).toEqual([]);
   });
 });

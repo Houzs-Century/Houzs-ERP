@@ -171,9 +171,13 @@ export function findByBarcode(items: readonly BundleItem[], code: string): Bundl
   return items.find((i) => i.barcodes.includes(c)) ?? items.find((i) => i.code.toUpperCase() === c.toUpperCase()) ?? null;
 }
 
-/** One box searches barcode, code and name; at least two characters. */
+/** One box searches barcode, code and name; at least two characters. An
+ *  EMPTY box lists the whole catalog by code, so the booth can browse what it
+ *  sells without knowing a code (owner 2026-10-29). One character is still
+ *  nothing: too many hits to mean anything. */
 export function searchItems(items: readonly BundleItem[], q: string, limit = 50): BundleItem[] {
   const t = q.trim().toLowerCase();
+  if (t.length === 0) return [...items].sort((a, b) => a.code.localeCompare(b.code));
   if (t.length < 2) return [];
   const starts: BundleItem[] = [];
   const contains: BundleItem[] = [];

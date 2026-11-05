@@ -21,7 +21,7 @@
  *      CREATE audit row (the caller records that at its own final moment).
  */
 import { describe, expect, test } from 'vitest';
-import { createDraftPisFromGrnItemsCore } from '../src/scm/lib/pi-from-grn-core';
+import { RECEIPT_PRICES, createDraftPisFromGrnItemsCore } from '../src/scm/lib/pi-from-grn-core';
 import { parsePgrestInList } from '../src/scm/lib/pgrest-in-list';
 
 const CO_A = 1; // HOUZS
@@ -104,7 +104,7 @@ class FakeQuery {
    handler wires from its real Hono context. companyId is the isolation boundary;
    allowedCompanyIds stays undefined (single active company). rpc answers `true`,
    which the doc-no counter reads as suffix 1. */
-const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, body: unknown) => {
+const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, body: unknown, prices: ReadonlyMap<string, number> = RECEIPT_PRICES) => {
   const log: string[] = [];
   const sb = {
     from: (t: string) => new FakeQuery((tables[t] ||= []), t, log),
@@ -121,7 +121,7 @@ const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, b
   return createDraftPisFromGrnItemsCore({
     req: { json: async () => body },
     get: get as never,
-  });
+  }, prices);
 };
 
 /* A billable GRN LINE. grn is the !inner-embedded parent: POSTED + not held so
@@ -157,6 +157,21 @@ const tables = (): Record<string, Row[]> => ({
 });
 
 describe('createDraftPisFromGrnItemsCore — creates a DRAFT, never books AP', () => {
+  test('a scan bills the price the supplier printed, and the header follows', async () => {
+    const t = tables();
+    const res = await runCore(t, CO_A, { picks: [{ grnItemId: 'gi-a', qty: 3 }] }, new Map([['gi-a', 130]]));
+    expect(res.ok).toBe(true);
+    expect(t.purchase_invoice_items[0]!.unit_price_sen).toBe(130);
+    expect(t.purchase_invoice_items[0]!.line_total_sen).toBe(390);
+    expect(t.purchase_invoices[0]!.total_sen).toBe(390);
+  });
+
+  test('a price in the request body sets nothing: only the scan path passes prices', async () => {
+    const t = tables();
+    await runCore(t, CO_A, { picks: [{ grnItemId: 'gi-a', qty: 3, unitPriceSen: 1 }] });
+    expect(t.purchase_invoice_items[0]!.unit_price_sen).toBe(100);
+  });
+
   test('one pick -> one DRAFT PI, linked to its GRN, money rolled up, GRN NOT consumed', async () => {
     const t = tables();
     const res = await runCore(t, CO_A, { picks: [{ grnItemId: 'gi-a', qty: 3 }] });
@@ -265,7 +280,7 @@ describe('createDraftPisFromGrnItemsCore — creates a DRAFT, never books AP', (
       if (key === 'companyCode') return 'HOUZS';
       return undefined;
     };
-    await createDraftPisFromGrnItemsCore({ req: { json: async () => ({ picks: [{ grnItemId: 'gi-a', qty: 0 }] }) }, get: get as never });
+    await createDraftPisFromGrnItemsCore({ req: { json: async () => ({ picks: [{ grnItemId: 'gi-a', qty: 0 }] }) }, get: get as never }, RECEIPT_PRICES);
     expect(log).toContain('grn_items.select:eq:company_id');
   });
 

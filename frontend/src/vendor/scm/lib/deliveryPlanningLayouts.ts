@@ -114,3 +114,12 @@ export const DELIVERY_PLANNING_LAYOUT_PRESETS: LayoutSeed[] = [
     ]),
   },
 ];
+
+/** The region chip each 3PL layout belongs to (HC-0168): ops read "SG Order" as
+ *  their SG Excel tab — SG orders only — so picking it also moves the board to
+ *  that region. Applied only when the chip exists (SG is a Delivery Regions row
+ *  the owner adds; until then the pick changes columns alone). */
+export const LAYOUT_PRESET_REGION: Readonly<Record<string, string>> = {
+  "sg-order": "SG",
+  "em-order": "EM",
+};

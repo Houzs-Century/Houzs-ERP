@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrOpenCaseGuardSql } from "../src/scm/lib/assr-board-scope";
+import { assrBoardUnionSql, assrLegGuardSql } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -92,19 +92,19 @@ describe("Delivery Planning board — Service Case rows follow the caller's comp
 describe("Delivery Planning board — scheduling a Service Case is scoped too", () => {
   test("the open-case guard carries the same company predicate as the read", () => {
     for (const allowed of [[1], [2], [1, 2], []]) {
-      expect(assrOpenCaseGuardSql(ctx(allowed))).toContain(assrCompanySql(ctx(allowed)));
+      expect(assrLegGuardSql(ctx(allowed))).toContain(assrCompanySql(ctx(allowed)));
     }
   });
 
-  test("the guard keeps its original open/exists conditions", () => {
-    const sql = assrOpenCaseGuardSql(ctx([1]));
+  test("the guard keeps the exists and archived conditions, and no longer the whole-case closed one (HC-0193)", () => {
+    const sql = assrLegGuardSql(ctx([1]));
     expect(sql).toContain("id = ?");
-    expect(sql).toContain("closed_at IS NULL");
+    expect(sql).not.toContain("closed_at IS NULL");
     expect(sql).toContain("archived_at IS NULL");
   });
 
   test("unresolved company context does not blank the guard", () => {
     // A single-company install (or a cold start) must still be able to schedule.
-    expect(assrOpenCaseGuardSql(ctx(undefined))).not.toContain("1=0");
+    expect(assrLegGuardSql(ctx(undefined))).not.toContain("1=0");
   });
 });

@@ -389,7 +389,7 @@ export function isSensitiveChecklistItem(
 /**
  * The project-checklist section(s) governed by SETUP_DISMANTLE — the
  * "SETUP & DISMANTLE DOCUMENTS" template section (mig 066: Setup Image,
- * Defect List, Exchange List, Event Complete Image, Dismantle Image, …). A
+ * Defect List, Exchange List, Dismantle Image, …). A
  * position whose PMS role lacks SETUP_DISMANTLE (getPmsAccess().canSetupDismantle
  * === false) must not receive those rows — nor the setup/dismantle crew JSON —
  * in the project-detail payload; they are stripped server-side, the same way

@@ -61,6 +61,10 @@ export type MapRoute = {
   depot: MapLatLng | null;
   stops: MapRouteStop[];
   allRefs: string[];
+  /** Last Mile per-lorry routes: the run's delivered / total drop counts, shown
+   *  in the legend as "VQE9058 5/8". Absent on the Date/Time proposal routes. */
+  delivered?: number | null;
+  total?: number | null;
 };
 
 /** Trip focus (owner rule: click a trip card / polyline → dim the others, zoom
@@ -422,6 +426,10 @@ export type MapLegendRow = {
   crewLabel: string | null;
   /** EVERY order on the trip (allRefs — an unpinned stop still counts). */
   stopCount: number;
+  /** Delivered / total drop counts for a per-lorry route ("5/8"); null when the
+   *  route does not carry them (Date/Time proposal routes). */
+  delivered: number | null;
+  total: number | null;
   /** First window's start → last window's end ("09:40 → 12:55"; ETA offsets
    *  read "+30m → +2h 5m"). Null when no stop carries a window — never a
    *  fabricated clock. */
@@ -451,6 +459,8 @@ export function legendFromRoutes(routes: readonly MapRoute[]): MapLegendRow[] {
       title: r.title,
       crewLabel: r.crewLabel,
       stopCount: r.allRefs.length,
+      delivered: r.delivered ?? null,
+      total: r.total ?? null,
       timeRange,
       stops: r.stops.map((s) => ({ ref: s.ref, order: s.order, windowLabel: s.windowLabel })),
     };

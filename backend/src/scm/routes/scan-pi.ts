@@ -158,6 +158,7 @@ scanPi.post('/enqueue', async (c) => {
       uploadedImages,
       firstBuffer,
       imageKeys,
+      review: false,
     });
     try {
       c.executionCtx.waitUntil(pipeline);
@@ -171,7 +172,7 @@ scanPi.post('/enqueue', async (c) => {
 
 // Rebuild the reaper/queue file inputs, run the PI pipeline. Shared by the queue
 // consumer and the stale-job reaper.
-async function runPiJobFromRow(
+export async function runPiJobFromRow(
   env: Env,
   id: string,
   r: Record<string, unknown>,
@@ -189,6 +190,7 @@ async function runPiJobFromRow(
   await runPiScanJob(env, {
     id, userId, houzsUserId, companyId,
     fileBlocks: files.fileBlocks, uploadedImages: files.uploadedImages, firstBuffer: files.firstBuffer, imageKeys,
+    review: (r.reviewState ?? r.review_state) != null,
   });
   return 'ran';
 }
@@ -204,7 +206,7 @@ export async function processPiScanQueueMessage(env: Env, jobId: string): Promis
   const svc = serviceClient(env);
   const { data: row, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson_id, houzs_user_id, image_keys, company_id, document_type')
+    .select('id, status, salesperson_id, houzs_user_id, image_keys, company_id, document_type, review_state')
     .eq('id', id)
     .single();
   if (error) {
@@ -225,7 +227,7 @@ export async function processPiScanQueueMessage(env: Env, jobId: string): Promis
 // Stale-job reaper for PI jobs, scoped to document_type='PI' so it and the SO/GR
 // reapers never touch each other's rows. One automatic re-run (retry_count
 // 0->1), then terminal error — same policy as the SO/GR reapers.
-async function reapStalePiScanJobs(
+export async function reapStalePiScanJobs(
   env: Env,
   svc: SupabaseClient,
   runInBackground: (p: Promise<unknown>) => void,
@@ -235,7 +237,7 @@ async function reapStalePiScanJobs(
     const cutoff = new Date(Date.now() - SCAN_JOB_STALE_MINUTES * 60 * 1000).toISOString();
     const { data: retryRows, error: retryErr } = await svc
       .from('scan_jobs')
-      .select('id, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
+      .select('id, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type, review_state')
       .eq('document_type', 'PI')
       .in('status', ['queued', 'running'])
       .lt('updated_at', cutoff)

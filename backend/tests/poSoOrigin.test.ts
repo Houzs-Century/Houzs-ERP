@@ -209,6 +209,8 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
       new Map([["BF-15", [a("SO-DELIVERED", true)]]]),
       new Map([["BF-15", [a("SO-ORIGIN", true)]]]),
       new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+      new Set(),
+      false,
     );
     expect(merged).toEqual([
       // `provenance` (PR-3) rides beside the winner: always layer (b) verbatim.
@@ -223,14 +225,14 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
   test("storedLink is reported independently of the winning layer", () => {
     const linked = new Set(["BF-15"]);
     const delivered = mergeAssignments(
-      ["BF-15"], new Map([["BF-15", [a("SO-DELIVERED", true)]]]), new Map(), new Map(), linked,
+      ["BF-15"], new Map([["BF-15", [a("SO-DELIVERED", true)]]]), new Map(), new Map(), linked, false,
     );
     expect(delivered[0].storedLink).toBe(true);
 
     // MRP-only coverage on a SKU whose PO lines carry NO so_item_id: an
     // assignment is shown, and storedLink says there is nothing behind it.
     const guessed = mergeAssignments(
-      ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]), new Set(),
+      ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]), new Set(), false,
     );
     expect(guessed[0].assignments[0].locked).toBe(false);
     expect(guessed[0].storedLink).toBe(false);
@@ -242,6 +244,8 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
       new Map(),
       new Map([["BF-15", [a("SO-ORIGIN", true)]]]),
       new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+      new Set(),
+      false,
     );
     expect(merged[0].assignments[0].soDocNo).toBe("SO-ORIGIN");
     expect(merged[0].assignments[0].locked).toBe(true);
@@ -253,17 +257,19 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
       new Map(),
       new Map(),
       new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+      new Set(),
+      false,
     );
     expect(merged[0].assignments[0].soDocNo).toBe("SO-FLOAT");
     expect(merged[0].assignments[0].locked).toBe(false); // floating
   });
 
   test("(d) a true stock PO with no demand at any layer yields no assignment (dash)", () => {
-    expect(mergeAssignments(["STOCK-99"], new Map(), new Map(), new Map())).toEqual([]);
+    expect(mergeAssignments(["STOCK-99"], new Map(), new Map(), new Map(), new Set(), false)).toEqual([]);
   });
 
   test("null-safe on undefined inputs", () => {
-    expect(mergeAssignments(undefined as never, new Map(), new Map(), new Map())).toEqual([]);
+    expect(mergeAssignments(undefined as never, new Map(), new Map(), new Map(), new Set(), false)).toEqual([]);
   });
 
   /* ── PR-3 (2026-08-07): the parallel `provenance` slot ────────────────────
@@ -276,12 +282,11 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
     test("precedence untouched: with stored origin populated, (b) still wins over floating AND provenance mirrors it", () => {
       /* NOTE the structural fact this pins: under TODAY's precedence (a>b>c) a
          per-SKU FLOATING winner implies the stored layer was empty for that
-         SKU, so `provenance` is empty with it — the floating-winner-beside-
-         bought-for state becomes reachable per SKU only when PR-4 flips the
-         precedence. The wire and the frontends are ready for it now; nothing
-         about the winner moved in PR-3. */
+         SKU, so `provenance` is empty with it. For a POOLED company the
+         floating-winner-beside-bought-for state is reachable since 2990-0023
+         — see the "pooled company" block below. */
       const merged = mergeAssignments(
-        ["BF-15"], new Map(), stored, new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+        ["BF-15"], new Map(), stored, new Map([["BF-15", [a("SO-FLOAT", false)]]]), new Set(), false,
       );
       expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["SO-BOUGHT"]);
       expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
@@ -294,6 +299,7 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
         stored,
         new Map([["BF-15", [a("SO-FLOAT", false)]]]),
         new Set(["BF-15"]),
+        false,
       );
       expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["SO-DELIVERED"]);
       expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
@@ -301,17 +307,58 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
     });
 
     test("when STORED origin wins, provenance === assignments content (frontend dedupes to one chip)", () => {
-      const merged = mergeAssignments(["BF-15"], new Map(), stored, new Map());
+      const merged = mergeAssignments(["BF-15"], new Map(), stored, new Map(), new Set(), false);
       expect(merged[0].assignments).toEqual(merged[0].provenance);
       expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
     });
 
     test("EMPTY when the SKU has no stored links — an MRP-only SKU carries no bought-for chip", () => {
       const merged = mergeAssignments(
-        ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+        ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]), new Set(), false,
       );
       expect(merged[0].assignments[0].soDocNo).toBe("SO-FLOAT");
       expect(merged[0].provenance).toEqual([]);
+    });
+  });
+
+  /* 2990-0023 (Sim, 2026-10-28): 2990-PO-2610-059 was raised from SO-2610-049
+     (XAMMAR 2A(LHF) + L(RHF) + SQUARE PILLOW). The pooled walk gave the two
+     XAMMAR units to SO-2609-040 (delivery 11-22 vs 049's 11-24); the pillow
+     stayed with 049. Every PO view still named 049 on all three lines. */
+  describe("pooled company: MRP floating outranks the stored raise-link", () => {
+    const raisedFor = (code: string) => [code, [a("2990-SO-2610-049", true)]] as const;
+    const stored = new Map([raisedFor("XAMMAR-2A(LHF)"), raisedFor("XAMMAR-L(RHF)"), raisedFor("SQUARE PILLOW")]);
+    const floating = new Map([
+      ["XAMMAR-2A(LHF)", [a("2990-SO-2609-040", false)]],
+      ["XAMMAR-L(RHF)", [a("2990-SO-2609-040", false)]],
+      ["SQUARE PILLOW", [a("2990-SO-2610-049", false)]],
+    ]);
+    const skus = ["XAMMAR-2A(LHF)", "XAMMAR-L(RHF)", "SQUARE PILLOW"];
+
+    test("each line names the SO MRP gives it, with the raised-for SO as provenance", () => {
+      const merged = mergeAssignments(skus, new Map(), stored, floating, new Set(skus), true);
+      const byCode = new Map(merged.map((o) => [o.itemCode, o]));
+      expect(byCode.get("XAMMAR-2A(LHF)")!.assignments).toEqual([a("2990-SO-2609-040", false)]);
+      expect(byCode.get("XAMMAR-L(RHF)")!.assignments).toEqual([a("2990-SO-2609-040", false)]);
+      expect(byCode.get("SQUARE PILLOW")!.assignments).toEqual([a("2990-SO-2610-049", false)]);
+      for (const o of merged) expect(o.provenance).toEqual([a("2990-SO-2610-049", true)]);
+    });
+
+    test("stored link still answers when MRP has nothing for the SKU (received / stock)", () => {
+      const merged = mergeAssignments(skus, new Map(), stored, new Map(), new Set(skus), true);
+      expect(merged.every((o) => o.assignments[0].soDocNo === "2990-SO-2610-049")).toBe(true);
+    });
+
+    test("delivered still wins over MRP", () => {
+      const merged = mergeAssignments(
+        ["XAMMAR-L(RHF)"], new Map([["XAMMAR-L(RHF)", [a("SO-DELIVERED", true)]]]), stored, floating, new Set(), true,
+      );
+      expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["SO-DELIVERED"]);
+    });
+
+    test("hard-bound company (pooled=false) keeps the stored link first", () => {
+      const merged = mergeAssignments(["XAMMAR-L(RHF)"], new Map(), stored, floating, new Set(), false);
+      expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["2990-SO-2610-049"]);
     });
   });
 });

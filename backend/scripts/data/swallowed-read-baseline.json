@@ -242,7 +242,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
-      "reads": 34,
+      "reads": 32,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-rate-cards.ts": {
@@ -294,7 +294,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/lorry-capacity.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/routes/lorry-service-records.ts": {
@@ -346,7 +346,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/product-models.ts": {
-      "reads": 13,
+      "reads": 12,
       "catches": 5
     },
     "backend/src/scm/routes/purchase-consignment-orders.ts": {
@@ -382,7 +382,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
-      "reads": 2,
+      "reads": 1,
       "catches": 1
     },
     "backend/src/scm/routes/scan-so.ts": {

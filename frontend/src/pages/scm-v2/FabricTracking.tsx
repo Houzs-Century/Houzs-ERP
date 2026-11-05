@@ -2,7 +2,7 @@
 // Fabric Converter — minimal master view (renamed from Fabric Tracking 2026-05-26).
 //
 // 5 columns: Fabric Code · Description (editable) · Supplier Code (editable) ·
-// Sofa Tier · Bedframe Tier · (delete). Tiers cycle PRICE_1 → 2 → 3 on click.
+// Sofa Tier · Bedframe Tier · (delete). Tiers are picked from a list.
 //
 // Commander 2026-05-26 history:
 //   • Drop "All Categories" dropdown
@@ -25,6 +25,8 @@ import {
   useFabricTrackings,
   useCreateFabric,
   useBulkUpsertFabrics,
+  FABRIC_TIER_OPTIONS,
+  fabricTierLabel,
   type FabricTier,
 } from '../../vendor/scm/lib/fabric-queries';
 import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
@@ -148,7 +150,7 @@ export const FabricTracking = () => {
         <Info size={15} strokeWidth={1.75} className="mt-px flex-none text-primary" />
         <span>
           Codes here are per company. The Sofa / Bedframe tiers feed the <strong className="font-semibold text-ink">Fabrics</strong> pool
-          in Maintenance and the sofa / bedframe fabric surcharge (Price&nbsp;1 vs Price&nbsp;2). Adding colours makes the fabric pickable on POS.
+          in Maintenance and the supplier cost the PO is priced at (sofa Price&nbsp;1 to Price&nbsp;4, where 3 = Half Leather and 4 = Full Leather; bedframe Price&nbsp;1 / 2). Adding colours makes the fabric pickable on POS.
         </span>
       </div>
 
@@ -260,18 +262,15 @@ const NewFabricDialog = ({ onClose }: { onClose: () => void }) => {
               onChange={(e) => set('colours', e.target.value)} />
           </label>
 
-          {/* Commander 2026-05-27 (Fix 6): only Price 1 and Price 2 are in
-              commercial use today. PRICE_3 dropped from the dropdown but
-              retained in the enum so historical rows still render their
-              tier; click-cycle on the table collapses to a 2-state toggle. */}
           <div className="grid grid-cols-2 gap-3">
             <label>
               <div className={FIELD_LABEL}>Sofa Tier</div>
               <select className={FIELD}
                 value={form.sofaPriceTier}
                 onChange={(e) => set('sofaPriceTier', e.target.value as FabricTier)}>
-                <option value="PRICE_1">Price 1</option>
-                <option value="PRICE_2">Price 2</option>
+                {FABRIC_TIER_OPTIONS.sofaPriceTier.map((t) => (
+                  <option key={t} value={t}>{fabricTierLabel(t, 'sofaPriceTier')}</option>
+                ))}
               </select>
             </label>
             <label>
@@ -279,8 +278,9 @@ const NewFabricDialog = ({ onClose }: { onClose: () => void }) => {
               <select className={FIELD}
                 value={form.bedframePriceTier}
                 onChange={(e) => set('bedframePriceTier', e.target.value as FabricTier)}>
-                <option value="PRICE_1">Price 1</option>
-                <option value="PRICE_2">Price 2</option>
+                {FABRIC_TIER_OPTIONS.bedframePriceTier.map((t) => (
+                  <option key={t} value={t}>{fabricTierLabel(t, 'bedframePriceTier')}</option>
+                ))}
               </select>
             </label>
           </div>

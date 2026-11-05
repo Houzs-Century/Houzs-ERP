@@ -24,6 +24,7 @@ import { USD_TO_MYR_EST, mytDate, mytMonth, mytMonthRangeUtc, taskFamily } from 
 export interface ModelPrice { input: number; output: number; cacheRead: number; cacheWrite: number }
 export const AI_PRICES_USD_PER_MTOK: Record<string, ModelPrice> = {
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 };
 const DEFAULT_PRICE_MODEL = "claude-sonnet-4-6";
 

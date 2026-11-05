@@ -59,8 +59,9 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies
   to must be excluded/reduced in the picker (`pendingReservations`) — else two
   vouchers can apply the same invoice in full.
-- Paid From must be a money account (`acc_money`, company `BANK_DEFAULT`
-  role); server refuses any non-money credit account.
+- Paid From must be a money account (`acc_money`); server refuses any non-money
+  credit account. It pre-fills the company's `BANK_PAY_DEFAULT` (Settlement
+  Setup "Pay from"), which is `BANK_DEFAULT` (where transfers are received) until set.
 - Lines take only LEAF, non-control accounts (`requireLeafAccount`) — except
   the AP control debit (AP Payment) or AR debit (Customer Refund), which are
   the one exempted line each.
@@ -120,6 +121,7 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   /payment-requests/bill-matches`) is said on the voucher form, beside each
   read bill in the pile, and on the AP invoice form — a warning, never a block;
   an AP invoice being edited is never its own match (`excludeApInvoice`).
+- One voucher may answer several waiting payment requests (Payment requests To do: tick, **Make ONE voucher**; `?fromRequests=`, body `paymentRequestIds`): one line per request, the payee only when all name the same one; every request is claimed for the voucher or none is (`linkPaymentRequests`). Refund requests and balances on an AP invoice cannot be ticked.
 - A payment request raised from a PMS row (owner 2026-10-08) keeps the row
   (`acc_payment_requests.checklist_item_id`,
   `backend/src/scm/lib/pms-checklist-source.ts`): only an event's CONTRACT row,

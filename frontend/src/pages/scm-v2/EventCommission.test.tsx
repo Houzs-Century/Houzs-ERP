@@ -88,7 +88,13 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmAsk }));
 afterEach(() => { current = null; vi.useRealTimers(); });
 
-import { EventCommissionTab, basisOf, brandsOf, eventCommissionCsv, fairLines, fairPlace, forBrand } from './EventCommission';
+import { MemoryRouter } from 'react-router-dom';
+import { EventCommissionTab, basisOf, brandsOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand } from './EventCommission';
+
+/* The report reads the shared range (the report shell's): no dates in the address → This month. */
+const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
+/** A tile's label and the figure under it (the redesign's tiles: no RM on the figure). */
+const tile = (label: string) => within(screen.getByRole('group', { name: 'Totals' })).getByText(label).parentElement!.textContent;
 
 const tables = () => screen.getAllByRole('table');
 const rowOf = (table: HTMLElement, text: string) => within(table).getByText(text).closest('tr')!;
@@ -96,7 +102,7 @@ const cellsOf = (row: HTMLElement) => [...row.querySelectorAll('td')].map((td) =
 
 describe('the Event Commission tab', () => {
   test('each fair: brand, organizer, venue and state a column each, its rate, the event page estimate and what its orders earned', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     const cells = cellsOf(rowOf(tables()[0]!, 'MID VALLEY'));
     for (const t of ['AKEMI', 'BIGHOME', 'MID VALLEY', 'Kuala Lumpur', '14%', '484,746.00', '67,864.44', '140.00']) expect(cells).toContain(t);
     /* A fair with no orders yet is folded away under the table — open it to see
@@ -106,11 +112,11 @@ describe('the Event Commission tab', () => {
     const idle = rowOf(tables()[0]!, 'IOI MALL KULAI');
     expect(idle.textContent).toContain('no rate card');
     expect(cellsOf(idle)).toEqual(expect.arrayContaining(['NOCARD', 'HOMELOVE', 'Johor']));
-    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 153.00');
+    expect(tile('Total commission')).toContain('153.00');
   });
 
   test('a fair opens to its orders: paid share, the day 30% was reached, and the upsales / drops — an opening-day fix marked not counted', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
     const first = within(tables()[0]!).getByText('HC-SO-2610-001').closest('tr')!;
     expect(first.textContent).toContain('36.4%');
@@ -121,7 +127,7 @@ describe('the Event Commission tab', () => {
   });
 
   test('earlier orders read once each: what happened, Original → Latest, Amended, the commission it moved', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     const earlier = tables()[1]!;
     const reached = rowOf(earlier, 'HC-SO-2609-050');
     expect(reached.textContent).toContain('Reached 30%');
@@ -135,7 +141,7 @@ describe('the Event Commission tab', () => {
   });
 
   test('every order the range changed, once: its final amount, + green / − red, the effect at the brand rate, not yet 30% says so', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     const changes = tables()[2]!;
     const up = rowOf(changes, 'HC-SO-2610-001');
     expect(cellsOf(up)).toEqual(expect.arrayContaining(['850.00', '1,000.00', '+150.00', '14%', '21.00']));
@@ -156,7 +162,7 @@ describe('the Event Commission tab', () => {
   });
 
   test('By SO date asks for the orders opened in the range: the words change, the fair-wide Total Sales and estimate drop out', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     expect(screen.getByRole('button', { name: 'By fair' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
     expect(asked.at(-1)).toBe('so_date');
@@ -180,9 +186,30 @@ describe('the Event Commission tab', () => {
 /* Owner 2026-10-21: 这个页面优化，很乱 → 1 可以，2 不要，3 要，做，要有header.
    2026-10-25: 这个header，table 要和 pv 那边一样能调整，能换位 / 这个点开排版好看一点.
    2026-10-26: 做宽一点 / brand, organizer, venue 全部一个column. */
+describe('the redesign (batch 6 §5.11)', () => {
+  test('Excel and PDF draw the parts as shown, each with its total; the CSV sits under the header’s ⋯; an order number opens its order', () => {
+    const sheet = eventCommissionSheet(REPORT, 'October 2026', '');
+    expect(sheet.title).toBe('Event commission');
+    expect(sheet.subtitle).toBe('October 2026 · by fair · all brands · total 153.00 · RM');
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Dates', 'Rate', 'Total sales', 'Estimate', 'Orders', 'Commission']);
+    expect(sheet.tables[0]!.rows.at(-1)).toMatchObject({ kind: 'total', cells: [null, null, null, null, null, 140_00] });
+    expect(sheet.tables[1]!.rows.at(-1)).toMatchObject({ kind: 'total', label: 'Earlier fairs' });
+    /* By SO date drops the fair-wide Total sales and Estimate, as the screen does. */
+    expect(eventCommissionSheet(BY_SO_DATE, 'October 2026', '').tables[0]!.columns.map((c) => c.label)).toEqual(['Dates', 'Rate', 'Orders', 'Commission']);
+
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'CSV' })).toBeTruthy();
+    fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
+    expect(within(tables()[0]!).getByRole('button', { name: 'HC-SO-2610-001' }).getAttribute('title')).toBe('Open HC-SO-2610-001');
+    /* The % says what it is a % of (headers read in Title Case app-wide). */
+    expect(within(tables()[0]!).getByText('Paid · % of Order')).toBeTruthy();
+  });
+});
+
 describe('the Event Commission layout', () => {
   test('the tables are the system table: Columns to hide or move them, a Total row at the foot, set widths that fit the page', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     expect(screen.getAllByRole('button', { name: /columns/i }).length).toBeGreaterThanOrEqual(3);
     const fairs = tables()[0]!;
     const foot = fairs.querySelector('tfoot')!;
@@ -196,7 +223,7 @@ describe('the Event Commission layout', () => {
   });
 
   test('a fair opens to a compact table of its orders: what they came to, Paid and Paid % apart, upsales green, drops red, a subtotal', () => {
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
     expect(screen.getByText(/reached 30%/).parentElement!.textContent).toContain('2 orders · 1 reached 30% · commission RM 140.00');
     const first = within(tables()[0]!).getByText('HC-SO-2610-001').closest('tr')!;
@@ -229,9 +256,9 @@ describe('the Event Commission layout', () => {
     expect(z.totals).toEqual({ payableSen: 0, adjustmentsSen: 13_00, monthAdjustmentsSen: 0, totalSen: 13_00 });
     expect(forBrand(REPORT, '')).toBe(REPORT);
 
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     fireEvent.click(screen.getByRole('button', { name: 'ZANOTTI' }));
-    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 13.00');
+    expect(tile('Total commission')).toContain('13.00');
     expect(screen.getByText('No fair starts in this range.')).toBeTruthy();
     expect(screen.queryByText('MID VALLEY')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'All brands' }));
@@ -250,7 +277,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
       ...REPORT, from: '2026-09-01', to: '2026-09-30',
       closed: { month: '2026-09', closedAt: '2026-10-26T09:00:00Z', closedBy: 'Finance Chew' }, closes: { months: ['2026-09'], openFrom: '2026-10' },
     };
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     expect(screen.getByText('2026/09 is closed')).toBeTruthy();
     expect(screen.getByText(/by Finance Chew/).textContent).toContain('paid in 2026/10');
     fireEvent.click(screen.getByRole('button', { name: 'Reopen 2026/09' }));
@@ -262,9 +289,11 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-26T04:00:00Z'));
     current = { ...REPORT, closes: { months: [], openFrom: null } };
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     expect(screen.getByText('No month closed yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Close / })).toBeNull(); // October has not ended
+    /* Last month is one of the shared picker's presets now. */
+    fireEvent.click(screen.getByRole('button', { name: /^Report dates/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close 2026/09' }));
     await waitFor(() => expect(closeMonth).toHaveBeenCalledWith('2026-09'));
@@ -276,10 +305,10 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
       ...REPORT, monthAdjustments: MONTH_ADJ, closes: { months: ['2026-09'], openFrom: '2026-10' },
       totals: { ...REPORT.totals, monthAdjustmentsSen: 130_00, totalSen: 283_00 },
     };
-    render(<EventCommissionTab />);
+    renderTab(<EventCommissionTab />);
     expect(screen.getByText('Closed up to 2026/09.')).toBeTruthy();
-    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 283.00');
-    expect(screen.getByText('Closed months — adjustments', { selector: 'div' }).parentElement!.textContent).toContain('1 order · 2026/09');
+    expect(tile('Total commission')).toContain('283.00');
+    expect(tile('Closed months — adjustments')).toContain('1 order · 2026/09');
     const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
     for (const t of ['2026/09', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
     const csv = eventCommissionCsv(current);

@@ -67,11 +67,17 @@
 //     records which day it was written on, not just which event. `FairDayPicker`
 //     below is that second column. Picking another event, Others or a clear
 //     empties the day; nothing guesses it from today's date.
+//  9. THE BOOTH ONLY WHEN THE SYSTEM CANNOT TELL (owner 2026-10-27, HC-0161 /
+//     Lim). An event can have several brand booths; the brand of the order's
+//     lines, then the keyer's own booth, decide which (rule 3). When neither
+//     does — a pillow-only order at a 3-booth MLE, a bedframe at an AKEMI-only
+//     fair — a Booth pick appears under the row. The server answers when to ask
+//     (POST /fair-booth, the save's own rule) and takes the pick only then.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  useFairDefault, useFairOptions, fairLabel, type FairOption, type FairWhy,
+  useFairBooth, useFairDefault, useFairOptions, fairLabel, type FairBoothRequest, type FairOption, type FairWhy,
 } from '../vendor/scm/lib/fair-options-queries';
 import { fmtDayMonth } from '../vendor/shared/format';
 import { fairDaysOf, soleFairDay } from './fairPick';
@@ -97,6 +103,9 @@ export type FairPickValue = {
   /** The DAY of the picked event the order was written on (rule 8), `YYYY-MM-DD`.
    *  Null until one is picked, and for any value that is not an event. */
   day: string | null;
+  /** The BOOTH the operator picked (rule 9), a project id. Absent or null until
+   *  one is picked; every new event, Others or a clear drops it. */
+  booth?: number | null;
 };
 
 export type FairPickerProps = {
@@ -114,6 +123,9 @@ export type FairPickerProps = {
   /** Rendered under the control — the auto-fill hint on the SO form. */
   hint?: ReactNode;
   id?: string;
+  /** The order the Booth pick is asked for (rule 9): an edit by its number, a
+   *  new order by its lines. Absent where a form never asks. */
+  boothFor?: Pick<FairBoothRequest, 'docNo' | 'items'>;
 };
 
 const OTHERS = '__others__';
@@ -138,7 +150,7 @@ function matches(o: FairOption, v: FairPickValue): boolean {
 }
 
 export function FairPicker(props: FairPickerProps) {
-  const { value, soDate, onChange, disabled, selectClassName, wrapClassName, hint, id } = props;
+  const { value, soDate, onChange, disabled, selectClassName, wrapClassName, hint, id, boothFor } = props;
   const q = useFairOptions(soDate);
   const running = q.data?.running ?? [];
   const earlier = q.data?.earlier ?? [];
@@ -164,6 +176,12 @@ export function FairPicker(props: FairPickerProps) {
     ? fairLabel({ venue: place, organizer: value.organizer, startDate: value.startDate, endDate: value.endDate })
     : value.organizer ? `${place} — ${value.organizer}` : place;
   const showPlaceList = !picked && choosingPlace;
+  const boothReq = boothFor && place && value.organizer && value.startDate
+    ? { fairVenue: place, fairOrganizer: value.organizer, fairStart: value.startDate, fairEnd: value.endDate, ...boothFor }
+    : null;
+  const boothQ = useFairBooth(boothReq);
+  const askBooth = boothReq && boothQ.data?.ask ? boothQ.data : null;
+  const booth = askBooth?.booths.some((b) => b.projectId === value.booth) ? value.booth! : null;
 
   /* An order can carry a venue the master no longer lists (renamed, deactivated,
      or imported from AutoCount). Offer it as its own row rather than dropping
@@ -260,6 +278,26 @@ export function FairPicker(props: FairPickerProps) {
             <option key={v.id} value={v.name}>{v.name}</option>
           ))}
         </select>
+      )}
+
+      {askBooth && (
+        <select
+          id={id ? `${id}-booth` : undefined}
+          className={selectClassName}
+          value={booth ?? ''}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, booth: e.target.value ? Number(e.target.value) : null })}
+          aria-label="Booth"
+          style={{ marginTop: '6px' }}
+        >
+          <option value="">— pick the booth —</option>
+          {askBooth.booths.map((b) => (
+            <option key={b.projectId} value={b.projectId}>{b.brand ?? 'No brand'} booth</option>
+          ))}
+        </select>
+      )}
+      {askBooth && booth == null && askBooth.message && (
+        <span role="note" style={{ display: 'block', fontSize: '11px', marginTop: '4px', color: 'var(--c-festive-b, #B8331F)' }}>{askBooth.message}</span>
       )}
 
       {hint}

@@ -22,6 +22,26 @@
  *  Must equal the automation's name in chat.houzscentury.com exactly. */
 export const CONNECT_DELIVERY_AUTOMATION = 'New Delivery Follow-up';
 
+/** The Connect automation fired when a Service Case (ASSR) is created, matched
+ *  BY NAME — must equal the automation's name in chat.houzscentury.com exactly.
+ *  Its flow sends the button-less template hc_service_case_received (params
+ *  full_name + ref_1 = the case/ASSR number) acknowledging the request. */
+export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
+
+/** The Connect automation fired for the weekly Service Case status update,
+ *  matched BY NAME — must equal the automation's name in chat.houzscentury.com
+ *  exactly. Its flow sends the button-less template hc_service_case_status_update
+ *  (params full_name + assr_no + case_status). */
+export const CONNECT_SERVICE_CASE_STATUS_AUTOMATION = 'Service Case Status Update';
+
+/** A sentinel automation name that matches NO enabled Connect automation. The
+ *  "Sync to Connect" action POSTs the contact's full field set under this name:
+ *  handleErpWebhook upserts the attributes BEFORE it matches automations, and
+ *  when a name IS given it matches only that name — so an unmatched name stores
+ *  the fields and fires nothing (no WhatsApp). Never give a real Connect
+ *  automation this name, or a sync would start sending. */
+export const CONNECT_SYNC_AUTOMATION = '__erp_contact_sync__';
+
 export interface ConnectConfig {
   CONNECT_WEBHOOK_URL?: string;
   CONNECT_WEBHOOK_KEY?: string;
@@ -43,6 +63,16 @@ export interface ConnectOrder {
   /** Outstanding balance in sen (local_total − Σpayments) from the SO list's
    *  own view; null when the view had no row for the doc. Drives `amount`. */
   balanceSen?: number | null;
+  /** The order's gross value in sen (local_total_sen) from the SO list's own
+   *  view; null when the view had no row for the doc. Drives `order_amount`,
+   *  the panel-only total Connect shows — distinct from the owed `amount`. */
+  totalSen?: number | null;
+  /** The order's ERP company code, uppercase (`HOUZS` / `2990`); null when the
+   *  company is unresolved. Drives `company_code` — the signal Connect routes
+   *  the balance send on so a 2990 order is not auto-sent HOUZS's bank account.
+   *  It is the ORDER's company, not the sending user's; delivery-messages.ts
+   *  groups a send by company, so every order in one build shares it. */
+  companyCode?: string | null;
 }
 
 /** Everything the ERP must tell Connect on EVERY send besides the order lines. */
@@ -88,12 +118,16 @@ export function formatRm(sen: number): string {
  *  new conversation: a stale `button_status=Confirm` makes the Delivery Lock
  *  guard refuse the new order's Amend tap, a stale `amount` prints a balance
  *  that was settled months ago, a stale `amended_delivery_date` rides into the
- *  amend callback when the date form is skipped. '' reads as "unset" to
- *  Connect's criteria_router. */
+ *  amend callback when the date form is skipped, a stale `company_code` routes
+ *  the send by the PREVIOUS order's company. '' reads as "unset" to Connect's
+ *  criteria_router. */
 export const CONNECT_RESET_ATTRIBUTES = [
   'button_status',
   'last_button',
   'amount',
+  'order_amount',
+  'orders_json',
+  'company_code',
   'amended_delivery_date',
   'amend_date_reason',
   'date_amended',
@@ -202,6 +236,35 @@ export function buildDeliveryFollowUp(
   // amount '' and the flow's has_balance branch stays quiet.
   const owedSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.balanceSen ?? 0)), 0);
   if (owedSen > 0) attributes.amount = formatRm(owedSen);
+  // The order card's gross value: the sum over EVERY bundled order, panel-only.
+  // Unlike `amount` (template text, so formatRm with commas), this is a PLAIN
+  // decimal — no thousands separators — so Connect's own Number()/money() parses
+  // it. Unknown/zero leaves it the empty reset, so the card shows nothing.
+  const totalSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.totalSen ?? 0)), 0);
+  if (totalSen > 0) attributes.order_amount = (totalSen / 100).toFixed(2);
+  // The order card lists EVERY bundled order, NOT capped at CONNECT_ORDER_LINES
+  // (that cap bounds only the template's ref_N params). One entry per order,
+  // primary first: its SO doc_no (same as ref_1), its customer Ref No., and its
+  // own gross value as a PLAIN decimal — the amounts sum to order_amount. A send
+  // with no orders leaves the empty reset, so a prior longer list cannot leak.
+  if (orders.length > 0) {
+    attributes.orders_json = JSON.stringify(
+      orders.map((o) => ({
+        so: o.ref,
+        ref: o.orderRef,
+        amount: (Math.max(0, Number(o.totalSen ?? 0)) / 100).toFixed(2),
+      })),
+    );
+  }
+  // The order-batch's ERP company code (uppercase, e.g. HOUZS / 2990) — the
+  // signal Connect routes the balance send on, because the Houzs balance
+  // template bakes HOUZS's bank account and a 2990 order must be tagged for
+  // manual collection instead of auto-sent that account. PER ORDER-BATCH's
+  // company (delivery-messages groups a send by company, so every bundled order
+  // carries the same code), never the sending user's active company. Unset when
+  // unresolved — Connect then falls back to the SO doc_no prefix (`2990-SO…`).
+  const companyCode = orders.find((o) => o.companyCode)?.companyCode ?? '';
+  if (companyCode) attributes.company_code = companyCode;
   attributes.callback_url = ctx.callbackUrl;
   if (profile) {
     attributes.company_signature = profile.signature;
@@ -210,6 +273,96 @@ export function buildDeliveryFollowUp(
   }
   if (ctx.extra) Object.assign(attributes, ctx.extra);
   return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
+}
+
+/** Build the /api/webhooks/erp body for the one-off acknowledgement sent to the
+ *  customer when a Service Case (ASSR) is created. Unlike the delivery follow-up
+ *  this opens no Confirm / Amend conversation: the template is button-less, so
+ *  there is no callback_url and no conversation reset — just the customer name,
+ *  the Sales Order the case is about (ref_1, the delivery convention) and the
+ *  service case number, which the template features as its focus. The case number
+ *  rides in assr_no, its OWN dedicated Connect field (not a shared ref_* slot) so
+ *  it never collides with a delivery ref. */
+export function buildServiceCaseReceived(
+  phone: string,
+  name: string,
+  soNo: string,
+  assrNo: string,
+): ConnectContact {
+  return {
+    phone,
+    name,
+    automation: CONNECT_SERVICE_CASE_AUTOMATION,
+    attributes: { full_name: name, ref_1: soNo, assr_no: assrNo },
+  };
+}
+
+/** Build the /api/webhooks/erp body for the weekly Service Case status update.
+ *  Button-less like the ack: no callback_url, no conversation reset — just the
+ *  customer name, the case number (assr_no, the dedicated field) and the current
+ *  status as a customer-facing line (case_status). */
+export function buildServiceCaseStatus(
+  phone: string,
+  name: string,
+  assrNo: string,
+  status: string,
+): ConnectContact {
+  return {
+    phone,
+    name,
+    automation: CONNECT_SERVICE_CASE_STATUS_AUTOMATION,
+    attributes: { full_name: name, assr_no: assrNo, case_status: status },
+  };
+}
+
+/** The SO-header columns the contact-info sync reads for the single-value
+ *  "headline" fields the Connect panel shows (Reference No. / Brand / Purchase
+ *  Venue / Sales Person / Delivery State / House Type / Disposal / Delivery
+ *  Message Status). These are the fields the delivery bundle's per-order
+ *  ref_N / brand_N slots do NOT fill, which is why the panel sat mostly empty. */
+export interface SyncHeadlineRow {
+  doc_no?: unknown;
+  ref?: unknown;
+  branding?: unknown;
+  venue?: unknown;
+  agent?: unknown;
+  customer_state?: unknown;
+  house_type?: unknown;
+  disposal_request?: unknown;
+  delivery_message_status?: unknown;
+}
+
+/** The headline contact fields built from a customer's FIRST order (the panel
+ *  shows one value per contact, as the single-order templates do). Only NON-EMPTY
+ *  values are returned, so a sync FILLS a field and never blanks one the customer
+ *  or an earlier message already set. `clientDeliveryDate` is the order's
+ *  effective (amended ?? original) delivery date as yyyy/mm/dd; `phone` the E.164
+ *  number the caller already resolved. Keys are Connect's contact-field keys. */
+export function buildSyncHeadline(
+  first: SyncHeadlineRow,
+  phone: string,
+  clientDeliveryDate: string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const put = (key: string, value: unknown): void => {
+    const s = String(value ?? '').trim();
+    if (s) out[key] = s;
+  };
+  // The customer Reference No. (ref, e.g. "HC 11063"); the SO doc_no when blank.
+  put('reference_no', String(first.ref ?? '').trim() || first.doc_no);
+  put('brand', first.branding);
+  put('purchase_venue', first.venue);
+  put('sales_person', first.agent);
+  // "Delivery State" on the panel is the Malaysian state the order ships to
+  // (customer_state), NOT the ERP's delivery_state status enum.
+  put('delivery_state', first.customer_state);
+  put('house_type', first.house_type);
+  put('disposal', first.disposal_request);
+  put('delivery_message_status', first.delivery_message_status);
+  const digits = phone.replace(/\D/g, '');
+  if (digits) out.customer_phone = `+${digits}`;
+  if (clientDeliveryDate) out.client_delivery_date = clientDeliveryDate;
+  return out;
 }
 
 /** Connect's /api/webhooks/erp answer when it fired nothing for the named
@@ -236,6 +389,7 @@ export function connectUntriggeredReason(bodyText: string, automation: string): 
 export async function postConnectContact(
   env: ConnectConfig,
   contact: ConnectContact,
+  opts?: { expectTrigger?: boolean },
 ): Promise<ConnectResult> {
   const base = String(env.CONNECT_WEBHOOK_URL ?? '').replace(/\/+$/, '');
   try {
@@ -249,6 +403,10 @@ export async function postConnectContact(
     });
     const text = (await res.text().catch(() => '')).slice(0, 2000);
     if (res.ok) {
+      // A SYNC (expectTrigger false) names the CONNECT_SYNC_AUTOMATION sentinel
+      // on purpose, so an empty `triggered` is the success case — it upserted the
+      // contact's fields and sent nothing. A real send leaves expectTrigger unset.
+      if (opts?.expectTrigger === false) return { ok: true, httpCode: res.status, error: null };
       // 200 means Connect ACCEPTED the event, not that a message went out: it
       // upserts the contact and answers `triggered: [names]` — an EMPTY list
       // when no enabled automation carries that name (still DRAFT, disabled,

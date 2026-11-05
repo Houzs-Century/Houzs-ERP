@@ -44,9 +44,8 @@
 // orders open in the page under it rather than in a box of their own.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, Lock } from 'lucide-react';
-import { Button } from '@2990s/design-system';
+import { useMemo, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import {
   useCloseCommissionMonth, useEventCommission, useReopenCommissionMonth,
   type CommissionAdjustment, type CommissionBasis, type CommissionChange, type CommissionChangedOrder, type CommissionEarlierOrder,
@@ -54,10 +53,18 @@ import {
 } from '../../vendor/scm/lib/event-queries';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
-import { DateField } from '../../vendor/scm/components/DateField';
-import { Panel, Toggle } from '../../components/scm-v2/OverviewKit';
+import { AMOUNT_COLUMN, type ReportSheet, type SheetRow, type SheetTable, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { FinanceDateRange } from './reports/FinanceDateRange';
+import {
+  ReportExports, ReportHeaderActions, ReportMessage, ReportMore, ReportTiles, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
+  type ReportTile,
+} from './reports/reportParts';
+import { periodLabel } from './reports/statementColumns';
+import { useReportRange } from './reports/useReportRange';
+import ec from './EventCommission.module.css';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthOf = (day: string, shift = 0): { from: string; to: string } => {
@@ -219,13 +226,15 @@ const downloadText = (name: string, text: string) => {
 const sum = <T,>(rows: readonly T[], pick: (r: T) => number): number => rows.reduce((s, r) => s + pick(r), 0);
 const num = (text: string) => <span className="tabular-nums">{text}</span>;
 
-const Kpi = ({ label, value, sub, main }: { label: string; value: string; sub?: string; main?: boolean }) => (
-  <div className="rounded-lg border border-border bg-surface px-4 py-3">
-    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted">{label}</div>
-    <div className={cn('mt-1 font-semibold tabular-nums leading-tight text-ink', main ? 'text-[24px]' : 'text-[18px]')}>{value}</div>
-    {sub && <div className="mt-0.5 text-[11.5px] text-ink-muted">{sub}</div>}
-  </div>
-);
+/** An order number opens the sales order in a workspace tab with Back (the redesign's document link). */
+const soHref = (docNo: string): string => `/scm/sales-orders/${encodeURIComponent(docNo)}`;
+const OrderLink = ({ docNo }: { docNo: string }) => {
+  const open = useOpenDocInTab();
+  return (
+    <button type="button" className={ec.docLink} title={`Open ${docNo}`}
+      onClick={(e) => { e.stopPropagation(); open(soHref(docNo)); }}>{docNo}</button>
+  );
+};
 
 /* Brand, organizer, venue and state as columns (owner 2026-10-26), on the fairs
    and on every order list. Widths add up to fit the page at his size (about
@@ -299,7 +308,7 @@ const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.lengt
   ));
 
 const ORDER_COLUMNS: Column<CommissionSoRow>[] = [
-  { key: 'order', label: 'Order', render: (s) => <span className="whitespace-nowrap font-mono">{s.docNo}</span>, getValue: (s) => s.docNo },
+  { key: 'order', label: 'Order', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   { key: 'soDate', label: 'SO date', render: (s) => <span className="whitespace-nowrap">{fmtDateOrDash(s.soDate)}</span>, getValue: (s) => s.soDate },
   { key: 'salesperson', label: 'Salesperson', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
   { key: 'customer', label: 'Customer', render: (s) => s.customer ?? '—', getValue: (s) => s.customer },
@@ -312,7 +321,7 @@ const ORDER_COLUMNS: Column<CommissionSoRow>[] = [
     exportValue: (s) => s.paidSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.paidSen))),
   },
   {
-    key: 'paidPct', label: 'Paid %', align: 'right', description: 'Paid ÷ the order total. Commission is earned once it reaches 30%.',
+    key: 'paidPct', label: 'Paid · % of order', align: 'right', description: 'Paid ÷ the order total. Commission is earned once it reaches 30%.',
     render: (s) => <span className={cn('tabular-nums', s.paidPct < 30 && 'text-ink-muted')}>{s.paidPct}%</span>, getValue: (s) => s.paidPct,
     total: (rows) => {
       const total = sum(rows, (s) => s.totalSen);
@@ -370,7 +379,7 @@ const moneyColumns = <R extends { originalSen: number; latestSen: number; amende
 const EARLIER_COLUMNS: Column<CommissionEarlierOrder>[] = [
   { key: 'date', label: 'Date', width: '85px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastDate)}</span>, getValue: (o) => o.lastDate },
   { key: 'what', label: 'What', width: '170px', render: (o) => <span className="whitespace-normal">{whatOf(o)}{historyTag(o.fromHistory)}</span>, getValue: (o) => whatOf(o) },
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <span className="whitespace-nowrap font-mono">{o.docNo}</span>, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   ...placeColumns<CommissionEarlierOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }).map((c) => (c.key === 'state' ? { ...c, defaultHidden: true } : c)),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (o) => o.salesperson ?? '—', getValue: (o) => o.salesperson },
   ...moneyColumns<CommissionEarlierOrder>(),
@@ -384,7 +393,7 @@ const EARLIER_COLUMNS: Column<CommissionEarlierOrder>[] = [
 
 const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
   { key: 'lastChange', label: 'Last change', width: '90px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastChange)}{historyTag(o.fromHistory)}</span>, getValue: (o) => o.lastChange },
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <span className="whitespace-nowrap font-mono">{o.docNo}</span>, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   ...placeColumns<CommissionChangedOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }).map((c) => (c.key === 'state' ? { ...c, defaultHidden: true } : c)),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (o) => o.salesperson ?? '—', getValue: (o) => o.salesperson },
   ...moneyColumns<CommissionChangedOrder>(),
@@ -402,7 +411,7 @@ const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
 
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
-  { key: 'order', label: 'Order', width: '125px', render: (a) => <span className="whitespace-nowrap font-mono">{a.docNo}</span>, getValue: (a) => a.docNo },
+  { key: 'order', label: 'Order', width: '125px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
   ...placeColumns<CommissionMonthAdjustment>((a) => fairPlace({ name: a.fairName, brand: a.brand }), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })
     .map((c) => (c.key === 'state' ? { ...c, defaultHidden: true } : c)),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
@@ -421,60 +430,154 @@ const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   },
 ];
 
-/** Where the range stands on closing: a closed month as closed (Reopen when it
-    is the latest), else which months are closed and, for a whole month that has
-    ended and is next in line, Close. Finance only — the server refuses anyone else. */
-const MonthCloseBar = ({ r, range }: { r: EventCommission; range: { from: string; to: string } }) => {
-  const askConfirm = useConfirm();
-  const close = useCloseCommissionMonth();
-  const reopen = useReopenCommissionMonth();
+/** Where the range stands on closing (owner 2026-10-26, 关月): the months closed,
+    the latest of them, and whether the range is the whole month next in line
+    and has ended (Close) or the latest closed month (Reopen). Finance only —
+    the server refuses anyone else. */
+function closeState(r: EventCommission, range: { from: string; to: string }) {
   const months = r.closes?.months ?? [];
   const latest = months.length > 0 ? months[months.length - 1]! : null;
   const whole = wholeMonthOf(range);
+  const overlap = months.filter((m) => `${m}-01` <= range.to && monthOf(`${m}-01`).to >= range.from);
+  const nextUp = latest ? monthOf(`${latest}-01`, 1).from.slice(0, 7) : whole;
+  return {
+    latest, overlap,
+    closeMonth: !r.closed && whole != null && whole === nextUp && monthOf(`${whole}-01`).to < myt() ? whole : null,
+    reopenMonth: r.closed && latest === r.closed.month ? r.closed.month : null,
+  };
+}
+
+/** The month close's line under the toolbar: a closed month as closed, else which months are. */
+const MonthCloseNote = ({ r, range }: { r: EventCommission; range: { from: string; to: string } }) => {
+  const st = closeState(r, range);
   if (r.closed) {
     const next = monthOf(`${r.closed.month}-01`, 1).from.slice(0, 7);
     return (
-      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-ink-secondary">
-        <Lock size={14} strokeWidth={1.75} className="text-ink" />
-        <span><span className="font-semibold text-ink">{monthLabel(r.closed.month)} is closed</span>
+      <div className={`${ec.closeNote} ${ec.closeNoteClosed}`}>
+        <Lock size={14} strokeWidth={1.75} className={ec.closeIcon} aria-hidden />
+        <span><span className={ec.strong}>{monthLabel(r.closed.month)} is closed</span>
           {' — '}{fmtDateOrDash(new Date(Date.parse(r.closed.closedAt) + 8 * 3600_000).toISOString().slice(0, 10))}{r.closed.closedBy ? ` by ${r.closed.closedBy}` : ''}.
           {' '}These are its figures as closed; what changes for its orders later is paid in {monthLabel(next)}.</span>
-        <span className="flex-1" />
-        {latest === r.closed.month && (
-          <Button variant="ghost" size="sm" disabled={reopen.isPending} onClick={() => {
-            void askConfirm({
-              title: `Reopen ${monthLabel(r.closed!.month)}?`,
-              body: `It is recalculated from today's data again, and ${monthLabel(next)} stops carrying its adjustments until it is closed again.`,
-              confirmLabel: 'Reopen',
-            }).then((ok) => { if (ok) reopen.mutate(r.closed!.month); });
-          }}>{reopen.isPending ? 'Reopening…' : `Reopen ${monthLabel(r.closed.month)}`}</Button>
-        )}
       </div>
     );
   }
-  const overlap = months.filter((m) => `${m}-01` <= range.to && monthOf(`${m}-01`).to >= range.from);
-  const nextUp = latest ? monthOf(`${latest}-01`, 1).from.slice(0, 7) : whole;
-  const canClose = whole != null && whole === nextUp && monthOf(`${whole}-01`).to < myt();
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
-      <Lock size={13} strokeWidth={1.75} />
-      <span>{latest ? `Closed up to ${monthLabel(latest)}.` : 'No month closed yet.'}</span>
-      {overlap.length > 0 && <span className="text-ink-secondary">This range takes in {overlap.map(monthLabel).join(', ')} — recalculated here, not as closed.</span>}
-      {canClose && (
-        <Button variant="ghost" size="sm" disabled={close.isPending} onClick={() => {
-          void askConfirm({
-            title: `Close ${monthLabel(whole)}?`,
-            body: `Its commission is kept as it stands now — RM ${fmtRm(r.totals.totalSen)} on this view. From then on it never changes: what changes for its orders later is paid in the next month as an adjustment.`,
-            confirmLabel: `Close ${monthLabel(whole)}`,
-          }).then((ok) => { if (ok) close.mutate(whole); });
-        }}>{close.isPending ? 'Closing…' : `Close ${monthLabel(whole)}`}</Button>
-      )}
+    <div className={ec.closeNote}>
+      <Lock size={13} strokeWidth={1.75} aria-hidden />
+      <span>{st.latest ? `Closed up to ${monthLabel(st.latest)}.` : 'No month closed yet.'}</span>
+      {st.overlap.length > 0 && <span>This range takes in {st.overlap.map(monthLabel).join(', ')} — recalculated here, not as closed.</span>}
     </div>
   );
 };
 
+/** Close / Reopen, in the header before Excel (the redesign keeps the month close where Finance reaches it). */
+const MonthCloseAction = ({ r, range }: { r: EventCommission; range: { from: string; to: string } }) => {
+  const askConfirm = useConfirm();
+  const close = useCloseCommissionMonth();
+  const reopen = useReopenCommissionMonth();
+  const st = closeState(r, range);
+  if (st.reopenMonth) {
+    const month = st.reopenMonth;
+    const next = monthOf(`${month}-01`, 1).from.slice(0, 7);
+    return (
+      <button type="button" className={ec.closeBtn} disabled={reopen.isPending} onClick={() => {
+        void askConfirm({
+          title: `Reopen ${monthLabel(month)}?`,
+          body: `It is recalculated from today's data again, and ${monthLabel(next)} stops carrying its adjustments until it is closed again.`,
+          confirmLabel: 'Reopen',
+        }).then((ok) => { if (ok) reopen.mutate(month); });
+      }}>
+        <Lock size={14} strokeWidth={1.75} aria-hidden />{reopen.isPending ? 'Reopening…' : `Reopen ${monthLabel(month)}`}
+      </button>
+    );
+  }
+  if (!st.closeMonth) return null;
+  const month = st.closeMonth;
+  return (
+    <button type="button" className={ec.closeBtn} disabled={close.isPending} onClick={() => {
+      void askConfirm({
+        title: `Close ${monthLabel(month)}?`,
+        body: `Its commission is kept as it stands now — RM ${fmtRm(r.totals.totalSen)} on this view. From then on it never changes: what changes for its orders later is paid in the next month as an adjustment.`,
+        confirmLabel: `Close ${monthLabel(month)}`,
+      }).then((ok) => { if (ok) close.mutate(month); });
+    }}>
+      <Lock size={14} strokeWidth={1.75} aria-hidden />{close.isPending ? 'Closing…' : `Close ${monthLabel(month)}`}
+    </button>
+  );
+};
+
+/** A part of the report as a card: its title, a grey hint, then the table. */
+const Card = ({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) => (
+  <section className={ec.card} aria-label={title}>
+    <div className={ec.cardHead}><h3 className={ec.cardTitle}>{title}</h3>{hint && <span className={ec.cardHint}>{hint}</span>}</div>
+    <div className={ec.cardBody}>{children}</div>
+  </section>
+);
+
+const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/10/2026 (1–19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate.';
+
+/** The report as the screen shows it, for Excel and PDF: the fairs (or the
+    orders opened, by fair), the earlier orders, the closed months'
+    adjustments when any, the upsales / drop sales — each with its total. */
+export function eventCommissionSheet(r: EventCommission, period: string, brand: string): ReportSheet {
+  const byFair = basisOf(r) === 'fair';
+  const words = BASIS_WORDS[basisOf(r)];
+  const text = (v: string | number | null | undefined): SheetValue => (v == null || v === '' ? null : String(v));
+  const fairs: SheetTable = {
+    columns: [
+      { label: 'Dates', kind: 'text' }, { label: 'Rate', kind: 'text' },
+      ...(byFair ? [AMOUNT_COLUMN('Total sales'), AMOUNT_COLUMN('Estimate')] : []),
+      { label: 'Orders', kind: 'text' }, AMOUNT_COLUMN('Commission'),
+    ],
+    rows: [
+      ...r.fairs.map((f): SheetRow => ({
+        kind: 'row', depth: 0, label: f.name,
+        cells: [
+          fmtDayMonthRange(f.startDate, f.endDate), f.ratePct == null ? 'no rate card' : `${f.ratePct}%`,
+          ...(byFair ? [f.totalSalesRm == null ? null : Math.round(f.totalSalesRm * 100), f.estimateRm == null ? null : Math.round(f.estimateRm * 100)] : []),
+          String(f.sos.length), f.payableSen,
+        ],
+      })),
+      { kind: 'total', depth: 0, label: words.inRange, cells: [null, null, ...(byFair ? [null, null] : []), null, r.totals.payableSen] },
+    ],
+  };
+  const earlier: SheetTable = {
+    columns: [{ label: 'Date', kind: 'text' }, { label: 'What', kind: 'text' }, { label: 'Fair', kind: 'text' }, { label: 'Salesperson', kind: 'text' },
+      AMOUNT_COLUMN('Original'), AMOUNT_COLUMN('Latest'), AMOUNT_COLUMN('Amended'), AMOUNT_COLUMN('Commission')],
+    rows: [
+      ...earlierOf(r).map((o): SheetRow => ({ kind: 'row', depth: 0, label: o.docNo, cells: [fmtDateOrDash(o.lastDate), whatOf(o), o.fairName, text(o.salesperson), o.originalSen, o.latestSen, o.amendedSen, o.commissionSen] })),
+      { kind: 'total', depth: 0, label: words.earlier, cells: [null, null, null, null, null, null, null, r.totals.adjustmentsSen] },
+    ],
+  };
+  const tables: SheetTable[] = [fairs, earlier];
+  if (monthAdjOf(r).length > 0) {
+    tables.push({
+      columns: [{ label: 'Month', kind: 'text' }, { label: 'Fair', kind: 'text' }, { label: 'Salesperson', kind: 'text' }, AMOUNT_COLUMN('Paid'), AMOUNT_COLUMN('Now'), AMOUNT_COLUMN('Adjustment')],
+      rows: [
+        ...monthAdjOf(r).map((a): SheetRow => ({ kind: 'row', depth: 0, label: a.docNo, cells: [monthLabel(a.month), a.fairName, text(a.salesperson), a.wasSen, a.nowSen, a.adjustmentSen] })),
+        { kind: 'total', depth: 0, label: 'Closed months — adjustments', cells: [null, null, null, null, null, r.totals.monthAdjustmentsSen ?? 0] },
+      ],
+    });
+  }
+  tables.push({
+    columns: [{ label: 'Last change', kind: 'text' }, { label: 'Fair', kind: 'text' }, { label: 'Salesperson', kind: 'text' },
+      AMOUNT_COLUMN('Original'), AMOUNT_COLUMN('Latest'), AMOUNT_COLUMN('Amended'), { label: 'Rate', kind: 'text' }, AMOUNT_COLUMN('Commission effect')],
+    rows: changedOf(r).map((o): SheetRow => ({
+      kind: 'row', depth: 0, label: o.docNo,
+      cells: [fmtDateOrDash(o.lastChange), o.fairName, text(o.salesperson), o.originalSen, o.latestSen, o.amendedSen, o.ratePct == null ? null : `${o.ratePct}%`, o.reachedOn == null ? null : o.effectSen],
+    })),
+  });
+  return {
+    title: 'Event commission',
+    subtitle: `${period} · ${words.toggle.toLowerCase()} · ${brand || 'all brands'} · total ${fmtRm(r.totals.totalSen)} · RM`,
+    meta: [{ label: 'Period', value: period }, { label: 'View', value: words.toggle }],
+    tables,
+    notes: [RULE_NOTE],
+  };
+}
+
 export const EventCommissionTab = () => {
-  const [range, setRange] = useState(() => monthOf(myt()));
+  const range = useReportRange();
   const [basis, setBasis] = useState<CommissionBasis>('fair');
   const [brand, setBrand] = useState('');
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -482,8 +585,9 @@ export const EventCommissionTab = () => {
   const q = useEventCommission(range.from, range.to, basis);
   const full = q.data;
   const brands = useMemo(() => brandsOf(full), [full]);
-  /* One filtered report feeds the cards, both tables and the export. */
-  const r = useMemo(() => (full ? forBrand(full, brands.includes(brand) ? brand : '') : undefined), [full, brand, brands]);
+  const brandNow = brands.includes(brand) ? brand : '';
+  /* One filtered report feeds the tiles, every table and the exports. */
+  const r = useMemo(() => (full ? forBrand(full, brandNow) : undefined), [full, brandNow]);
   const words = BASIS_WORDS[basis];
   const byFair = basis === 'fair';
   const toggle = (id: string) => setOpen((prev) => {
@@ -498,55 +602,55 @@ export const EventCommissionTab = () => {
   const earlierRows = r ? earlierOf(r) : [];
   const changedRows = r ? changedOf(r) : [];
   const monthAdjRows = r ? monthAdjOf(r) : [];
+  const period = range.usable ? periodLabel(range.from, range.to) : '';
+  useReportSubtitle(range.usable ? `${period} · ${words.toggle.toLowerCase()} · ${brandNow || 'all brands'}` : 'Pick dates.');
+  const fileBase = `event-commission-${byFair ? 'by-fair' : 'by-so-date'}${brandNow ? `-${brandNow.toLowerCase()}` : ''}-${range.from}-${range.to}`;
+
+  const tiles: ReportTile[] = r ? [
+    { key: 'total', label: 'Total commission', value: fmtRm(r.totals.totalSen), sub: brandNow || 'all brands', tone: 'good' },
+    { key: 'in', label: BASIS_WORDS[basisOf(r)].inRange, value: fmtRm(r.totals.payableSen), sub: `${active.reduce((t, f) => t + f.sos.length, 0)} orders` },
+    { key: 'earlier', label: BASIS_WORDS[basisOf(r)].earlier, value: fmtRm(r.totals.adjustmentsSen), sub: `${earlierRows.length} order${earlierRows.length === 1 ? '' : 's'}` },
+    ...(monthAdjRows.length > 0 ? [{
+      key: 'monthAdj', label: 'Closed months — adjustments', value: fmtRm(r.totals.monthAdjustmentsSen ?? 0),
+      sub: `${monthAdjRows.length} order${monthAdjRows.length === 1 ? '' : 's'} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`,
+    }] : []),
+    { key: 'fairs', label: 'Fairs', value: String(r.fairs.length), sub: idle.length > 0 ? `${idle.length} with no orders yet` : 'all with orders' },
+  ] : [];
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Toggle<CommissionBasis> value={basis} options={[['fair', BASIS_WORDS.fair.toggle], ['so_date', BASIS_WORDS.so_date.toggle]]} onChange={setBasis} />
-        <span className="ml-1 text-[12px] text-ink-muted">From</span>
-        <DateField value={range.from} aria-label="From date" onChange={(iso) => { if (iso) setRange((x) => ({ ...x, from: iso })); }} />
-        <span className="text-[12px] text-ink-muted">to</span>
-        <DateField value={range.to} aria-label="To date" onChange={(iso) => { if (iso) setRange((x) => ({ ...x, to: iso })); }} />
-        <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt()))}>This month</Button>
-        <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt(), -1))}>Last month</Button>
-        <span className="flex-1" />
-        <Button variant="ghost" size="sm" disabled={!r} onClick={() => {
-          if (r) downloadText(`event-commission-${basisOf(r) === 'fair' ? 'by-fair' : 'by-so-date'}${brand ? `-${brand.toLowerCase()}` : ''}-${range.from}-${range.to}.csv`, eventCommissionCsv(r));
-        }}>
-          <Download size={16} strokeWidth={1.75} /> Export
-        </Button>
-      </div>
+    <>
+      <ReportHeaderActions>
+        {full && range.usable && <MonthCloseAction r={full} range={range} />}
+        <ReportExports sheet={() => (r ? eventCommissionSheet(r, period, brandNow) : null)} fileBase={fileBase} />
+        <ReportMore items={[{ label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r)); } }]} />
+      </ReportHeaderActions>
+      <ReportToolbar>
+        <FinanceDateRange />
+        <ReportTool label="View">
+          <Segmented<CommissionBasis> options={[{ value: 'fair', label: BASIS_WORDS.fair.toggle }, { value: 'so_date', label: BASIS_WORDS.so_date.toggle }]}
+            value={basis} onChange={setBasis} label="View" />
+        </ReportTool>
+        {brands.length > 1 && (
+          <ReportTool label="Brand">
+            <Segmented<string> options={[{ value: '', label: 'All brands' }, ...brands.map((b) => ({ value: b, label: b }))]} value={brandNow} onChange={setBrand} label="Brand" />
+          </ReportTool>
+        )}
+      </ReportToolbar>
 
-      {full && <MonthCloseBar r={full} range={range} />}
-
-      {r && (
-        <div className={cn('grid grid-cols-2 gap-3', monthAdjRows.length > 0 ? 'md:grid-cols-5' : 'md:grid-cols-4')}>
-          <Kpi main label="Total commission" value={`RM ${fmtRm(r.totals.totalSen)}`} sub={brand ? brand : 'all brands'} />
-          <Kpi label={BASIS_WORDS[basisOf(r)].inRange} value={`RM ${fmtRm(r.totals.payableSen)}`}
-            sub={`${active.reduce((s, f) => s + f.sos.length, 0)} orders`} />
-          <Kpi label={BASIS_WORDS[basisOf(r)].earlier} value={`RM ${fmtRm(r.totals.adjustmentsSen)}`}
-            sub={`${earlierRows.length} order${earlierRows.length === 1 ? '' : 's'}`} />
-          {monthAdjRows.length > 0 && (
-            <Kpi label="Closed months — adjustments" value={`RM ${fmtRm(r.totals.monthAdjustmentsSen ?? 0)}`}
-              sub={`${monthAdjRows.length} order${monthAdjRows.length === 1 ? '' : 's'} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`} />
-          )}
-          <Kpi label="Fairs" value={String(r.fairs.length)} sub={idle.length > 0 ? `${idle.length} with no orders yet` : 'all with orders'} />
+      {full && range.usable && <MonthCloseNote r={full} range={range} />}
+      {!range.usable && <ReportMessage>Pick dates.</ReportMessage>}
+      {q.isLoading && (
+        <div className={ec.skeleton} aria-label="Reading the orders">
+          {[0, 1, 2].map((i) => <div key={i} className={`skeleton ${ec.skeletonBar}`} style={{ width: `${90 - i * 14}%` }} />)}
         </div>
       )}
-      <p className="text-[11.5px] text-ink-muted">
-        An order earns its goods (no delivery or service) × the fair&apos;s brand rate once 30% of the order is paid.
-        Upsales and drop sales count from 1/10/2026 (1–19 October read from each order&apos;s modification history), each in the month it happened, at the fair&apos;s brand rate.
-      </p>
+      {q.isError && <ReportMessage tone="error">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>}
 
-      {q.isLoading && <div className="text-[12px] text-ink-muted">Reading the orders…</div>}
-      {q.isError && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</div>}
+      {r && <ReportTiles tiles={tiles} label="Totals" />}
 
       {r && (
-        <Panel title={words.part1} hint={`as at ${fmtDateOrDash(r.to)} · amounts in RM`}
-          right={brands.length > 1 && (
-            <Toggle<string> value={brands.includes(brand) ? brand : ''} options={[['', 'All brands'], ...brands.map((b): [string, string] => [b, b])]} onChange={setBrand} />
-          )}>
-          {r.fairs.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part1Empty}</div> : (
+        <Card title={words.part1} hint={`as at ${fmtDateOrDash(r.to)} · amounts in RM`}>
+          {r.fairs.length === 0 ? <p className={ec.empty}>{words.part1Empty}</p> : (
             <>
               <DataTable<CommissionFairRow>
                 tableId="event-commission-fairs" exportName={`event-commission-fairs-${range.from}-${range.to}`} freezeHeight="screen"
@@ -556,47 +660,47 @@ export const EventCommissionTab = () => {
                 expandable={{ render: (f) => <FairOrders fair={f} />, rowKey: (f) => String(f.id), expandedIds: open, onExpandedChange: setOpen }}
               />
               {idle.length > 0 && (
-                <button type="button" aria-expanded={showIdle} onClick={() => setShowIdle((v) => !v)}
-                  className="mt-2 inline-flex items-center gap-1 text-[12px] text-ink-secondary hover:text-primary">
-                  {showIdle ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <button type="button" className={ec.idle} aria-expanded={showIdle} onClick={() => setShowIdle((v) => !v)}>
+                  {showIdle ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
                   {idle.length} fair{idle.length === 1 ? '' : 's'} with no orders yet
                 </button>
               )}
             </>
           )}
-        </Panel>
+        </Card>
       )}
 
       {r && (
-        <Panel title={words.part2} hint="one row per order · amounts in RM">
-          {earlierRows.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part2Empty}</div> : (
+        <Card title={words.part2} hint="one row per order · amounts in RM">
+          {earlierRows.length === 0 ? <p className={ec.empty}>{words.part2Empty}</p> : (
             <DataTable<CommissionEarlierOrder>
               tableId="event-commission-earlier-orders" exportName={`event-commission-earlier-${range.from}-${range.to}`} freezeHeight="screen"
               columns={EARLIER_COLUMNS} rows={earlierRows} getRowKey={(o) => o.docNo}
             />
           )}
-        </Panel>
+        </Card>
       )}
 
       {r && monthAdjRows.length > 0 && (
-        <Panel title="Closed months — adjustments" hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
+        <Card title="Closed months — adjustments" hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
           <DataTable<CommissionMonthAdjustment>
             tableId="event-commission-month-adjustments" exportName={`event-commission-month-adjustments-${range.from}-${range.to}`} freezeHeight="screen"
             columns={MONTH_ADJ_COLUMNS} rows={monthAdjRows} getRowKey={(a) => `${a.month}-${a.docNo}`}
           />
-        </Panel>
+        </Card>
       )}
 
       {r && (
-        <Panel title="Upsales / Drop sales" hint="each order once, its final amount in the range · the effect is already inside the commission above">
-          {changedRows.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">No upsale or drop sale in this range.</div> : (
+        <Card title="Upsales / Drop sales" hint="each order once, its final amount in the range · the effect is already inside the commission above">
+          {changedRows.length === 0 ? <p className={ec.empty}>No upsale or drop sale in this range.</p> : (
             <DataTable<CommissionChangedOrder>
               tableId="event-commission-changes" exportName={`event-commission-upsales-drops-${range.from}-${range.to}`} freezeHeight="screen"
               columns={CHANGED_COLUMNS} rows={changedRows} getRowKey={(o) => o.docNo}
             />
           )}
-        </Panel>
+        </Card>
       )}
-    </div>
+      {r && <p className={ec.notes}>{RULE_NOTE}</p>}
+    </>
   );
 };

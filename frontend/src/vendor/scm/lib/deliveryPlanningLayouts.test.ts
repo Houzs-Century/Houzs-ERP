@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DELIVERY_PLANNING_LAYOUT_PRESETS } from "./deliveryPlanningLayouts";
+import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from "./deliveryPlanningLayouts";
 
 /* The full Delivery Planning board column set, AFTER the 2026-09-24 pass that
    dropped delivery_state / arrangement_stage / em_delivered_date as columns.
@@ -64,5 +64,14 @@ describe("Delivery Planning layout presets", () => {
       expect(new Set(p.layout.hidden).size, `${id} has duplicate hidden keys`).toBe(p.layout.hidden.length);
       expect(p.layout.order.length - p.layout.hidden.length, `${id} visible count`).toBe(visible);
     }
+  });
+});
+
+describe("LAYOUT_PRESET_REGION", () => {
+  it("maps only real preset ids", () => {
+    const ids = new Set(DELIVERY_PLANNING_LAYOUT_PRESETS.map((p) => p.id));
+    for (const id of Object.keys(LAYOUT_PRESET_REGION)) expect(ids.has(id)).toBe(true);
+    expect(LAYOUT_PRESET_REGION["sg-order"]).toBe("SG");
+    expect(LAYOUT_PRESET_REGION["em-order"]).toBe("EM");
   });
 });

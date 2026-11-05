@@ -1,0 +1,360 @@
+// Fold duplicate Product Models into the one the business keeps. PLAN BY
+// DEFAULT: nothing is written unless MODE=apply and CONFIRM repeats the phrase
+// this run prints.
+//
+// The groups are not typed on the command line: TICKET names an entry in
+// data/duplicate-model-merges.json, which carries them and who ruled on them.
+// HC-0202 (2026-11-02): Sim's "check duplicate" sheet of mattress / bedframe
+// Models. The rules live once, in lib/duplicate-model-merge-plan.mjs; two codes
+// for one SKU go through the duplicate-SKU merge (lib/duplicate-sku-merge-*.mjs).
+//
+// WHAT IT WRITES
+//   1. each duplicate-SKU pair, in its own transaction, exactly as
+//      merge-duplicate-skus.mjs: lines, stock ledger, lots, racks re-keyed onto
+//      the surviving code, the absorbed row set INACTIVE;
+//   2. per group, in one transaction, only when all its pairs committed: the new
+//      Model (when the ruling names one), the surviving SKUs moved under the kept
+//      Model (model_id, base_model, a blank size_code), a survivor without a main
+//      supplier given the absorbed code's main binding, its blank prices / cost
+//      filled from that code, the kept Model's size pool widened and switched on,
+//      the folded Models switched off;
+//   3. per idle Model, in one transaction: the Model and its ACTIVE SKUs off.
+// WHAT IT NEVER TOUCHES: descriptions, qty, variants, order-line prices already
+// written; AutoCount - a raw SQL change queues no write-back. The moved main
+// binding carries its supplier_sku, which is what AutoCount calls the item.
+//
+// OUTPUT: counts, Model / product / supplier codes and the row ids written (the
+// undo), because this repository's Actions logs are public: no document
+// numbers, no money.
+//
+//   DATABASE_URL  required
+//   TICKET        required, a key of data/duplicate-model-merges.json (e.g. HC-0202)
+//   MODE          plan (default, writes nothing) | apply
+//   CONFIRM       on apply, the phrase this run prints; it carries the counts it
+//                 measured, so a phrase copied from an older run cannot fire
+//   COMPANY_ID    default 1
+//
+// RE-RUN: convergent. After an apply the absorbed codes are INACTIVE (left out of
+// the size sort), the survivors already sit on the kept Model and the folded
+// Models are off, so a second plan finds nothing to do and the apply writes
+// nothing. Every UPDATE re-asserts the value it replaces, so a row changed in
+// between fails the in-transaction count and rolls its group back.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+
+import { PRODUCT_CODE_CASCADE } from "../src/scm/lib/product-code-rename.ts";
+import { planDuplicateSkuMerge } from "./lib/duplicate-sku-merge-plan.mjs";
+import { readMergeColumns, readMergeWorld, applyMerge, verifyMerge, rekeyIds } from "./lib/duplicate-sku-merge-run.mjs";
+import { planModelGroup, planIdleModel, confirmPhrase, sizeOf } from "./lib/duplicate-model-merge-plan.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const DST = process.env.DATABASE_URL;
+const MODE = (process.env.MODE || "plan").toLowerCase();
+const APPLY = MODE === "apply";
+const CONFIRM = process.env.CONFIRM ?? "";
+const TICKET = (process.env.TICKET || "").trim();
+const CO = Number(process.env.COMPANY_ID || 1);
+
+if (!DST) { console.error("REFUSED: DATABASE_URL not set."); process.exit(2); }
+if (!["plan", "apply"].includes(MODE)) { console.error(`REFUSED: MODE must be plan or apply, got "${MODE}".`); process.exit(2); }
+const BOOK = JSON.parse(fs.readFileSync(path.join(HERE, "data", "duplicate-model-merges.json"), "utf8"));
+if (!BOOK[TICKET]) { console.error(`REFUSED: TICKET must be one of ${Object.keys(BOOK).join(", ")}, got "${TICKET}".`); process.exit(2); }
+const ENTRY = BOOK[TICKET];
+
+const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const jarr = (xs) => JSON.stringify([...new Set(xs)]);
+const anyOf = (sql, xs) => sql`ARRAY(SELECT jsonb_array_elements_text(${jarr(xs)}::text::jsonb))`;
+
+async function readWorld(sql) {
+  const groups = ENTRY.groups;
+  const idle = ENTRY.deactivateIfIdle ?? [];
+  const codes = [...groups.flatMap((g) => [g.keep, g.newModel, ...g.drops].filter(Boolean)), ...idle.map((x) => x.model)];
+  const models = await sql`
+    SELECT id::text AS id, model_code, name, branding, category::text AS category, active, allowed_options
+      FROM scm.product_models WHERE company_id = ${CO} AND model_code = ANY(${anyOf(sql, codes)})`;
+  const found = new Set(models.map((m) => m.model_code));
+  const near = new Map();
+  for (const c of codes.filter((x) => !found.has(x) && !groups.some((g) => g.newModel === x))) {
+    const head = c.split(/\s+/).slice(0, 2).join(" ");
+    const rows = await sql`SELECT model_code, category::text AS category FROM scm.product_models
+                            WHERE company_id = ${CO} AND upper(model_code) LIKE ${`${head.toUpperCase()}%`} ORDER BY model_code LIMIT 8`;
+    near.set(c, rows.map((r) => `"${r.model_code}" (${r.category})`));
+  }
+  const ids = models.map((m) => m.id);
+  const rows = await sql`
+    SELECT p.id::text AS id, p.code, p.status::text AS status, p.size_code, p.model_id::text AS model_id, p.base_model, to_jsonb(p) AS master
+      FROM scm.mfg_products p WHERE p.company_id = ${CO} AND p.model_id::text = ANY(${anyOf(sql, ids)})`;
+  const skuCodes = rows.map((r) => r.code);
+  const so = await sql`
+    SELECT i.item_code, COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE i.cancelled IS NOT TRUE
+                              AND h.status::text NOT IN ('DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'))::int AS open
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no AND h.company_id = i.company_id
+     WHERE i.company_id = ${CO} AND i.item_code = ANY(${anyOf(sql, skuCodes)}) GROUP BY i.item_code`;
+  const po = await sql`
+    SELECT item_code, COUNT(*)::int AS total FROM scm.purchase_order_items
+     WHERE company_id = ${CO} AND item_code = ANY(${anyOf(sql, skuCodes)}) GROUP BY item_code`;
+  const stock = await sql`
+    SELECT item_code, SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
+                                             WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END)::int AS qty
+      FROM scm.inventory_movements WHERE company_id = ${CO} AND item_code = ANY(${anyOf(sql, skuCodes)}) GROUP BY item_code`;
+  const bindings = await sql`
+    SELECT b.id::text AS id, b.item_code, b.supplier_id::text AS supplier_id, b.is_main_supplier AS main,
+           b.supplier_sku, s.code AS supplier, s.name AS supplier_name
+      FROM scm.supplier_material_bindings b LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
+     WHERE b.company_id = ${CO} AND b.item_code = ANY(${anyOf(sql, skuCodes)}) AND b.material_kind::text = 'mfg_product'`;
+  const n = (xs, code, f) => Number(xs.find((r) => r.item_code === code)?.[f] ?? 0);
+  const skus = rows.map((r) => {
+    const mainB = bindings.find((b) => b.item_code === r.code && b.main);
+    return {
+      ...r,
+      main: mainB?.supplier ?? null,
+      use: { lines: n(so, r.code, "total") + n(po, r.code, "total"), stock: n(stock, r.code, "qty"), openSo: n(so, r.code, "open"),
+             so: n(so, r.code, "total"), po: n(po, r.code, "total") },
+    };
+  });
+  return { models, near, skus, bindings };
+}
+
+function bindingFill(world, f) {
+  const donor = world.bindings.find((b) => b.item_code === f.from && b.main);
+  const same = world.bindings.find((b) => b.item_code === f.code && b.supplier_id === donor?.supplier_id);
+  return same ? { kind: "star", bindingId: same.id } : { kind: "move", bindingId: donor.id };
+}
+
+async function main() {
+  log(`mode=${MODE} ticket=${TICKET} company=${CO}; ${ENTRY.groups.length} group(s), ${(ENTRY.deactivateIfIdle ?? []).length} idle Model(s)`);
+  log(`ruling: ${ENTRY.ruling}`);
+
+  const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  const world = await readWorld(sql);
+  const sup = new Map(world.bindings.map((b) => [b.supplier, b.supplier_name]));
+
+  let groups = ENTRY.groups.map((group) => ({ group, plan: planModelGroup({ group, models: world.models, skus: world.skus }) }));
+  const cols = await readMergeColumns(sql, PRODUCT_CODE_CASCADE);
+  const allPairs = groups.flatMap((g) => g.plan.pairs.map(({ drop, keep }) => ({ drop, keep })));
+  const skuWorld = await readMergeWorld(sql, { co: CO, pairs: allPairs, cascade: PRODUCT_CODE_CASCADE, cols });
+  for (const m of skuWorld.missing) log(`   cascade column ${m} is not on this database - skipped`);
+  const skuPlan = planDuplicateSkuMerge({ pairs: allPairs, products: skuWorld.products, refs: skuWorld.refs, stock: skuWorld.stock, stockTakeLines: skuWorld.stockTakeLines });
+  const pairPlan = new Map(skuPlan.pairs.map((p) => [p.drop, p]));
+  for (const g of groups) {
+    const bad = g.plan.pairs.map((p) => pairPlan.get(p.drop)).filter((p) => p.refusals.length > 0);
+    if (bad.length > 0) {
+      g.plan = { ...g.plan, refusals: bad.flatMap((p) => p.refusals.map((r) => `SKU merge "${p.drop}" -> "${p.keep}": ${r}`)),
+                 pairs: [], moves: [], fills: [], addSizes: [], foldModels: [], createModel: null, activateKept: false };
+    }
+  }
+  const acting = groups.filter((g) => g.plan.refusals.length === 0);
+  const idle = (ENTRY.deactivateIfIdle ?? []).map((entry) => planIdleModel({ entry, models: world.models, skus: world.skus }));
+
+  const skuById = new Map(world.skus.map((s) => [s.id, s]));
+  const skuByCode = new Map(world.skus.map((s) => [s.code, s]));
+  const useTxt = (code) => { const s = skuByCode.get(code); return s ? `SO ${s.use.so}, PO ${s.use.po}, stock ${s.use.stock}, main supplier ${s.main ?? "none"}` : ""; };
+
+  log("");
+  log("PER GROUP");
+  groups.forEach(({ group, plan }, i) => {
+    const tag = `G${String(i + 1).padStart(2, "0")}`;
+    log(`${tag} ${group.category} keep ${group.keep ? `"${group.keep}"` : `NEW "${group.newModel}"`}${plan.refusals.length ? "  REFUSED" : ""}`);
+    for (const r of plan.refusals) log(`     REFUSED: ${r}`);
+    if (plan.refusals.length) {
+      const mains = [...new Set(world.skus.filter((s) => s.main && plan.refusals.some((r) => r.includes(`"${s.code}"`))).map((s) => s.main))];
+      if (mains.length) log(`     main suppliers: ${mains.map((c) => `${c} ${sup.get(c) ?? ""}`).join("; ")}`);
+    }
+    for (const c of [group.keep, ...group.drops].filter((x) => x && world.near.has(x))) log(`     "${c}" not found; Models starting alike: ${world.near.get(c).join(", ") || "none"}`);
+    if (plan.refusals.length) return;
+    if (plan.createModel) log(`     create Model "${plan.createModel.code}" (pool copied from "${plan.createModel.template?.model_code ?? "-"}")`);
+    if (plan.activateKept) log("     switch the kept Model on (it is off today)");
+    for (const p of plan.pairs) log(`     size ${p.size}: merge "${p.drop}" (${useTxt(p.drop)}) INTO "${p.keep}" (${useTxt(p.keep)})`);
+    for (const m of plan.moves) log(`     size ${m.size}: move "${m.code}" under the kept Model`);
+    for (const f of plan.fills) log(`     "${f.code}": take ${f.field}${f.supplier ? ` ${f.supplier} ${sup.get(f.supplier) ?? ""}` : ""} from "${f.from}"`);
+    if (plan.addSizes.length) log(`     size pool + ${plan.addSizes.join("/")}`);
+    for (const f of plan.foldModels) log(`     switch off Model "${f.code}"`);
+    if (plan.leftInactive.length) log(`     left as they are (INACTIVE): ${plan.leftInactive.join(", ")}`);
+  });
+
+  log("");
+  log("IDLE MODELS (switch off with their ACTIVE SKUs when no stock and no open SO line)");
+  for (const x of idle) log(`   "${x.label}": ${x.refusals.length ? `stays on - ${x.refusals.join("; ")}` : x.modelId ? `off, with ${x.skuIds.length} SKU(s)` : `already off; ${x.skuIds.length} SKU(s) off`}`);
+
+  const actingPairs = acting.flatMap((g) => g.plan.pairs.map((p) => pairPlan.get(p.drop)));
+  const t = {
+    groups: acting.length,
+    pairs: actingPairs.length,
+    moves: acting.reduce((a, g) => a + g.plan.moves.length, 0),
+    fills: acting.reduce((a, g) => a + g.plan.fills.length, 0),
+    folds: acting.reduce((a, g) => a + g.plan.foldModels.length + (g.plan.createModel ? 1 : 0), 0),
+    idleModels: idle.filter((x) => x.modelId).length,
+    idleSkus: idle.reduce((a, x) => a + x.skuIds.length, 0),
+  };
+  const rekeyRows = actingPairs.reduce((a, p) => a + p.rekey.reduce((b, r) => b + r.rows, 0), 0);
+  const units = actingPairs.reduce((a, p) => a + p.unitsMoved, 0);
+  const phrase = confirmPhrase(t);
+  log("");
+  log(`TOTALS groups ${groups.length} (acting ${t.groups}, refused ${groups.length - t.groups}); SKU merges ${t.pairs} (re-key ${rekeyRows} row(s), move ${units} unit(s)); SKU moves ${t.moves}; fills ${t.fills}; Models created+folded ${t.folds}; idle off ${t.idleModels} Model(s) / ${t.idleSkus} SKU(s)`);
+  log(`to apply: MODE=apply CONFIRM="${phrase}"`);
+
+  if (!APPLY) { log("PLAN ONLY - nothing was written."); await sql.end(); return; }
+  if (CONFIRM !== phrase) {
+    log(`REFUSED: apply needs CONFIRM="${phrase}" - measured by this run. Nothing was written.`);
+    await sql.end();
+    process.exit(2);
+  }
+
+  log("");
+  log("UNDO (before any write)");
+  for (const p of actingPairs) {
+    for (const r of p.rekey) log(`   undo pair "${p.drop}" scm.${r.table}.${r.col} = '${p.drop}' WHERE id IN ${JSON.stringify(rekeyIds(skuWorld, p, r))}`);
+    if (p.retire) log(`   undo pair "${p.drop}" scm.mfg_products ${p.dropRowId} status ACTIVE`);
+  }
+  for (const { plan } of acting) {
+    for (const m of plan.moves) { const s = skuById.get(m.id); log(`   undo move ${m.id}: model_id ${s.model_id}, base_model ${JSON.stringify(s.base_model)}, size_code ${JSON.stringify(s.size_code)}`); }
+    for (const f of plan.fills.filter((x) => x.field === "main supplier")) { const b = bindingFill(world, f); log(`   undo main supplier on "${f.code}": binding ${b.bindingId} ${b.kind === "star" ? "is_main_supplier false" : `item_code '${f.from}'`}`); }
+    for (const f of plan.fills.filter((x) => x.field !== "main supplier")) log(`   undo fill "${f.code}".${f.field}: back to blank`);
+    const kept = world.models.find((m) => m.id === plan.keptModelId);
+    if (kept && (plan.addSizes.length || plan.activateKept)) log(`   undo Model ${kept.id}: allowed_options.sizes ${JSON.stringify(kept.allowed_options?.sizes ?? null)}, active ${kept.active}`);
+    for (const f of plan.foldModels) log(`   undo Model ${f.id}: active true`);
+  }
+  for (const x of idle.filter((y) => y.modelId || y.skuIds.length)) log(`   undo idle "${x.label}": Model ${x.modelId ?? "-"} active true; SKUs ${JSON.stringify(x.skuIds)} ACTIVE`);
+
+  const { committed, problems, rekeyed } = await applyMerge(sql, {
+    co: CO, plan: { pairs: actingPairs }, world: skuWorld, cascade: PRODUCT_CODE_CASCADE, audit: null,
+  });
+  log(`WRITTEN SKU merges: ${rekeyed} row(s) re-keyed, ${committed.length} of ${actingPairs.filter((p) => p.rekey.length || p.retire).length} pair(s) committed`);
+  const done = new Set(committed.map((p) => p.drop));
+
+  const groupsDone = [];
+  for (const g of acting) {
+    const { plan } = g;
+    if (plan.pairs.some((p) => !done.has(p.drop) && (pairPlan.get(p.drop).rekey.length || pairPlan.get(p.drop).retire))) {
+      problems.push(`group "${plan.label}" NOT written: one of its SKU merges rolled back`);
+      continue;
+    }
+    try {
+      let modelId = plan.keptModelId;
+      await sql.begin(async (tx) => {
+        if (plan.createModel) {
+          const tpl = plan.createModel.template;
+          const opts = { ...(tpl?.allowed_options ?? {}), sizes: plan.addSizes };
+          const [m] = await tx`
+            INSERT INTO scm.product_models (company_id, branding, model_code, name, category, allowed_options, active)
+            VALUES (${CO}, ${tpl?.branding ?? null}, ${plan.createModel.code}, ${plan.createModel.code}, ${plan.category}, ${JSON.stringify(opts)}::text::jsonb, true)
+            RETURNING id::text AS id`;
+          modelId = m.id;
+          log(`   created Model "${plan.createModel.code}" ${modelId} (undo: DELETE it after the moves are undone)`);
+        } else if (plan.addSizes.length || plan.activateKept) {
+          const kept = world.models.find((m) => m.id === modelId);
+          const pool = Array.isArray(kept.allowed_options?.sizes) ? kept.allowed_options.sizes : [];
+          const r = await tx`
+            UPDATE scm.product_models
+               SET allowed_options = jsonb_set(COALESCE(allowed_options, '{}'::jsonb), '{sizes}', ${JSON.stringify([...pool, ...plan.addSizes])}::text::jsonb),
+                   active = true, updated_at = now()
+             WHERE company_id = ${CO} AND id::text = ${modelId}
+               AND COALESCE(allowed_options -> 'sizes', 'null'::jsonb) = ${JSON.stringify(kept.allowed_options?.sizes ?? null)}::text::jsonb
+            RETURNING id`;
+          if (r.length !== 1) throw new Error(`kept Model "${plan.label}" changed since the plan`);
+        }
+        const keptCode = plan.createModel ? plan.createModel.code : world.models.find((m) => m.id === modelId).model_code;
+        for (const m of plan.moves) {
+          const r = await tx`
+            UPDATE scm.mfg_products
+               SET model_id = ${modelId}::uuid, base_model = ${keptCode}, size_code = COALESCE(NULLIF(size_code, ''), ${m.size}), updated_at = now()
+             WHERE company_id = ${CO} AND id::text = ${m.id} AND status = 'ACTIVE' AND model_id::text IS NOT DISTINCT FROM ${m.fromModelId}
+            RETURNING id`;
+          if (r.length !== 1) throw new Error(`"${m.code}" changed since the plan`);
+        }
+        for (const f of plan.fills) {
+          const target = skuByCode.get(f.code);
+          if (f.field === "main supplier") {
+            const b = bindingFill(world, f);
+            const r = b.kind === "star"
+              ? await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = true
+                          WHERE company_id = ${CO} AND id::text = ${b.bindingId} AND item_code = ${f.code} AND is_main_supplier IS NOT TRUE RETURNING id`
+              : await tx`UPDATE scm.supplier_material_bindings SET item_code = ${f.code}
+                          WHERE company_id = ${CO} AND id::text = ${b.bindingId} AND item_code = ${f.from} RETURNING id`;
+            if (r.length !== 1) throw new Error(`main supplier binding for "${f.code}" changed since the plan`);
+            continue;
+          }
+          const r = await tx`
+            UPDATE scm.mfg_products SET ${tx(f.field)} = ${f.value}, updated_at = now()
+             WHERE company_id = ${CO} AND id::text = ${target.id} AND (${tx(f.field)} IS NULL OR ${tx(f.field)} = 0)
+            RETURNING id`;
+          if (r.length !== 1) throw new Error(`"${f.code}".${f.field} is not blank any more`);
+        }
+        for (const f of plan.foldModels) {
+          const r = await tx`UPDATE scm.product_models SET active = false, updated_at = now()
+                              WHERE company_id = ${CO} AND id::text = ${f.id} AND active = true RETURNING id`;
+          if (r.length !== 1) throw new Error(`Model "${f.code}" was not on any more`);
+        }
+      });
+      groupsDone.push({ ...g, modelId });
+    } catch (e) {
+      problems.push(`group "${plan.label}" ROLLED BACK, its Model writes did not land (its SKU merges did): ${String(e?.message ?? e)}`);
+    }
+  }
+  log(`WRITTEN groups: ${groupsDone.length} of ${acting.length}`);
+
+  const idleDone = [];
+  for (const x of idle.filter((y) => y.modelId || y.skuIds.length)) {
+    try {
+      await sql.begin(async (tx) => {
+        if (x.modelId) {
+          const r = await tx`UPDATE scm.product_models SET active = false, updated_at = now() WHERE company_id = ${CO} AND id::text = ${x.modelId} AND active = true RETURNING id`;
+          if (r.length !== 1) throw new Error("the Model was not on any more");
+        }
+        const r = await tx`UPDATE scm.mfg_products SET status = 'INACTIVE', updated_at = now()
+                            WHERE company_id = ${CO} AND id::text = ANY(${anyOf(tx, x.skuIds)}) AND status = 'ACTIVE' RETURNING id`;
+        if (r.length !== x.skuIds.length) throw new Error(`switched off ${r.length} of ${x.skuIds.length} SKU(s) - one changed since the plan`);
+      });
+      idleDone.push(x);
+    } catch (e) {
+      problems.push(`idle "${x.label}" ROLLED BACK: ${String(e?.message ?? e)}`);
+    }
+  }
+  log(`WRITTEN idle: ${idleDone.length} Model(s)`);
+  await sql.end();
+
+  const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  problems.push(...await verifyMerge(v, { co: CO, committed, world: skuWorld }));
+  for (const g of groupsDone) {
+    const { plan, modelId } = g;
+    const [m] = await v`SELECT active, allowed_options FROM scm.product_models WHERE company_id = ${CO} AND id::text = ${modelId}`;
+    const pool = (m?.allowed_options?.sizes ?? []).map((z) => String(z).toUpperCase());
+    if (!m?.active) problems.push(`kept Model "${plan.label}" is not on`);
+    for (const z of plan.addSizes) if (!pool.includes(z)) problems.push(`kept Model "${plan.label}" pool lacks ${z}`);
+    for (const mv of plan.moves) {
+      const [s] = await v`SELECT model_id::text AS model_id, size_code FROM scm.mfg_products WHERE company_id = ${CO} AND id::text = ${mv.id}`;
+      if (s?.model_id !== modelId || sizeOf({ code: mv.code, size_code: s?.size_code }) !== mv.size) problems.push(`"${mv.code}" is not under "${plan.label}" with size ${mv.size}`);
+    }
+    for (const f of plan.fills.filter((x) => x.field === "main supplier")) {
+      const [b] = await v`SELECT COUNT(*)::int AS n FROM scm.supplier_material_bindings WHERE company_id = ${CO} AND item_code = ${f.code} AND is_main_supplier = true AND material_kind::text = 'mfg_product'`;
+      if (b.n < 1) problems.push(`"${f.code}" has no main supplier`);
+    }
+    for (const f of plan.foldModels) {
+      const [x] = await v`SELECT active FROM scm.product_models WHERE company_id = ${CO} AND id::text = ${f.id}`;
+      if (x?.active !== false) problems.push(`Model "${f.code}" is still on`);
+    }
+  }
+  for (const x of idleDone) {
+    const [n] = await v`SELECT COUNT(*)::int AS n FROM scm.mfg_products WHERE company_id = ${CO} AND id::text = ANY(${anyOf(v, x.skuIds)}) AND status = 'ACTIVE'`;
+    if (n.n !== 0) problems.push(`idle "${x.label}": ${n.n} SKU(s) still ACTIVE`);
+  }
+  await v.end();
+  if (problems.length > 0) {
+    for (const x of problems) log(`   VERIFY FAILED: ${x}`);
+    log("FAILED. The UNDO lists above cover every write that landed.");
+    process.exit(1);
+  }
+  log("VERIFIED on a fresh connection: merged codes INACTIVE and re-keyed, survivors under their kept Model, pools widened, folded and idle Models off.");
+  log("NEXT: run 'Recompute SO stock allocation (DRY-RUN gated)'. A direct SQL write does not recompute the allocation projection (docs/bugs/0675).");
+}
+
+main().catch((e) => {
+  console.error(String(e?.message ?? e).replace(/postgres(ql)?:\/\/\S+/g, "postgres://<redacted>"));
+  process.exit(1);
+});

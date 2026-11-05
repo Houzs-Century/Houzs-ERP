@@ -1,15 +1,16 @@
-/* The Self-check card for a payment that reached the ledger and then stopped
-   agreeing with it. Pinned: a clean answer over ZERO entries must not borrow
-   the words of a clean answer over four thousand — "nothing to compare" is a
-   different statement from "all of them agree", and the card that says the
-   second one over an empty ledger is telling the owner he is safe when nobody
-   has checked anything. Also pinned: both sides of every disagreement are on
-   screen, so the difference can be read without opening the entry. */
+/* Self-check's row for a payment that reached the ledger and then stopped
+   agreeing with it, in the owner's redesign (batch 6 §3). Pinned: a clean
+   answer over ZERO entries must not borrow the words of a clean answer over
+   four thousand — "nothing to compare" is a different statement from "all of
+   them agree", and the row that says the second one over an empty ledger is
+   telling the owner he is safe when nobody has checked anything. Also pinned:
+   both sides of every disagreement are on screen, so the difference can be
+   read without opening the entry; and the row offers no fix. */
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
-import { PaymentDriftCard } from './Accounting';
+import { DriftRowCheck } from './SelfCheck';
 import type { PaymentDrift, PaymentDriftRow } from './accounting-phase1-queries';
 
 const row = (over: Partial<PaymentDriftRow> = {}): PaymentDriftRow => ({
@@ -20,20 +21,21 @@ const row = (over: Partial<PaymentDriftRow> = {}): PaymentDriftRow => ({
   ...over,
 });
 
-const draw = (d: PaymentDrift) => render(<PaymentDriftCard d={d} />);
+const draw = (d: PaymentDrift) => render(<DriftRowCheck d={d} />);
 
-describe('the payment-drift card', () => {
+describe('the payment-drift row', () => {
   test('an empty ledger says nothing to compare, not that everything agrees', () => {
     draw({ rows: [], scanned: 0, ok: true });
     expect(screen.getByText('nothing to compare')).toBeTruthy();
-    expect(screen.getByText(/No payment has reached the ledger in this company yet/)).toBeTruthy();
+    expect(screen.getByText(/No payment has reached the ledger yet/)).toBeTruthy();
     expect(screen.queryByText(/^all /)).toBeNull();
+    expect(screen.queryByText('Clean')).toBeNull();
   });
 
   test('a clean answer counts what it read', () => {
     draw({ rows: [], scanned: 4_281, ok: true });
     expect(screen.getByText('all 4281')).toBeTruthy();
-    expect(screen.getByText(/Comparing 4281 payments against the journal entry/)).toBeTruthy();
+    expect(screen.getByText('4,281 payments compared with their journal entries')).toBeTruthy();
   });
 
   test('an amount disagreement shows both sides', () => {
@@ -49,8 +51,8 @@ describe('the payment-drift card', () => {
   test('a method change is named in words the owner uses', () => {
     draw({ rows: [row({ fields: ['method'], paymentMethod: 'merchant', entryMethod: 'cash', paymentAmountSen: 150_000 })], scanned: 12, ok: false });
     expect(screen.getByText('how it was paid')).toBeTruthy();
-    expect(screen.getByText(/2026-09-01 · merchant/)).toBeTruthy();
-    expect(screen.getByText(/2026-09-01 · cash/)).toBeTruthy();
+    expect(screen.getByText(/2026\/09\/01 · merchant/)).toBeTruthy();
+    expect(screen.getByText(/2026\/09\/01 · cash/)).toBeTruthy();
   });
 
   test('an entry whose method could not be read says so, rather than naming one', () => {
@@ -66,10 +68,11 @@ describe('the payment-drift card', () => {
   test('it offers no fix, and says why', () => {
     draw({ rows: [row()], scanned: 12, ok: false });
     expect(screen.getByText(/Nothing here is corrected automatically/)).toBeTruthy();
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: /fix|correct|book|post/i })).toBeNull();
+    expect(document.querySelectorAll('button')).toHaveLength(0);
   });
 
-  test('a check that could not run says so instead of reading green', () => {
+  test('a check that could not run says so instead of reading clean', () => {
     draw({ rows: [], scanned: 0, ok: false, error: 'journal scan: timeout' });
     expect(screen.getByText(/The check could not run: journal scan: timeout/)).toBeTruthy();
     expect(screen.queryByText('nothing to compare')).toBeNull();

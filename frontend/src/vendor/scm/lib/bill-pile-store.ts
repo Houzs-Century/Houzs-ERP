@@ -19,7 +19,8 @@ import { useSyncExternalStore } from 'react';
 import type { ExtractedBill, PvFilePayload } from './payment-voucher-queries';
 
 export type PileTarget = 'pv' | 'ap';
-export type PickedFile = { rid: string; file: File; merged: boolean };
+/** `page`: the page number when the file was cut from a PDF of several bills (HC-0204). */
+export type PickedFile = { rid: string; file: File; merged: boolean; page?: number };
 
 export type PileState = {
   picked: PickedFile[];

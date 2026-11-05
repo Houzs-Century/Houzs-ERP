@@ -11,6 +11,24 @@
 // ---------------------------------------------------------------------------
 
 export const CLAUDE_MODEL = 'claude-sonnet-4-6';
+
+// SO scanning's model (scan_so and its cache_warm), read from the SCAN_SO_MODEL
+// secret so trying a newer model, and switching back, needs no deploy. A secret,
+// not a [vars] entry, because a dashboard variable is wiped by the next deploy.
+// Unset or not in this list => CLAUDE_MODEL.
+export const SCAN_SO_MODELS = ['claude-sonnet-4-6', 'claude-sonnet-5-5'];
+export function scanSoModel(env: { SCAN_SO_MODEL?: string }): string {
+  const model = (env.SCAN_SO_MODEL ?? '').trim();
+  return SCAN_SO_MODELS.includes(model) ? model : CLAUDE_MODEL;
+}
+
+// The request fields that differ by model. Sonnet 4.6 does not think unless asked
+// and takes temperature 0. Sonnet 5.5 rejects temperature 0 (400) and thinks by
+// default; between_tools is its lowest setting, which on a single call with no
+// tools means no thinking at all, so a scan costs and reads as it did on 4.6.
+export function modelRequestFields(model: string): Record<string, unknown> {
+  return model === 'claude-sonnet-5-5' ? { thinking: { type: 'between_tools' } } : { temperature: 0 };
+}
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 

@@ -21,10 +21,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Save, Trash2, X } from 'lucide-react';
+import { Save, Trash2, X, Send } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, useSubmitPaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
@@ -47,7 +47,8 @@ import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-quer
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
-import { useBillMatches, usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { useBillMatches, usePaymentRequest, usePaymentRequestsByIds } from '../../vendor/scm/lib/payment-request-queries';
+import { prefillFromRequests, requestIdsOf } from './pv-from-requests';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
@@ -57,6 +58,9 @@ import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
+import { useToastOptional } from '../../hooks/useToast';
+import { useAuth as useHouzsAuthNew } from '../../auth/AuthContext';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -149,10 +153,11 @@ export const PaymentVoucherNew = () => {
      plain cash-out. The old three-way dropdown is gone with the split. */
   const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
-  /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
-     the role the owner maintains in Recon Setup). Only while untouched. */
+  /* Pre-fill Paid From with the company's own pay-from bank (BANK_PAY_DEFAULT —
+     the role the owner maintains in Settlement Setup, apart from the bank money
+     is received into). Only while untouched. */
   useEffect(() => {
-    const dflt = rolesQ.data?.roles.BANK_DEFAULT;
+    const dflt = rolesQ.data?.roles.BANK_PAY_DEFAULT ?? rolesQ.data?.roles.BANK_DEFAULT;
     if (!dflt || creditAccountCode) return;
     if (moneyAccounts.some((a) => a.account_code === dflt)) setCreditAccountCode(dflt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,6 +285,7 @@ export const PaymentVoucherNew = () => {
           ? `Account ${bill.memory.debitAccountCode} filled from your last ${bill.memory.payeeName ?? 'same-vendor'} voucher — check it.`
           : null,
         bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
+        'Nothing is saved until you press Save.',
       ].filter(Boolean).join(' '));
     } catch (e) {
       setScanNote(e instanceof Error ? e.message : 'The bill could not be read.');
@@ -306,7 +312,7 @@ export const PaymentVoucherNew = () => {
   /* The header's event (5a): picking one sets every line, and each line added
      after takes it; a line can still name its own. */
   const [defaultEvent, setDefaultEvent]           = useState<number | null>(null);
-  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
   /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
      Enter on the input); the source is read from the server by that number. */
   const [refundType, setRefundType]         = useState<'SO' | 'SI'>('SO');
@@ -410,6 +416,24 @@ export const PaymentVoucherNew = () => {
     setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. Reading its bill…`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromRequest, requestQ.data]);
+  /* ── Answering SEVERAL requests with one voucher (owner 2026-11-04: combine
+     payment request 做一张pv — 不同人也可以): ?fromRequests=a,b,c — one line per
+     request, the payee only when they share one (pv-from-requests.ts). Their
+     bills are not read here; each is attached on save. */
+  const fromRequests = requestIdsOf(searchParams.get('fromRequests'));
+  const manyQ = usePaymentRequestsByIds(fromRequests);
+  const manyApplied = useRef(false);
+  useEffect(() => {
+    if (manyApplied.current || !manyQ.requests || isAp || isRefund) return;
+    manyApplied.current = true;
+    const pre = prefillFromRequests(manyQ.requests);
+    setPayeeName(pre.payeeName);
+    setNotes(pre.notes);
+    setLines(pre.lines.map((l) => ({ ...newLine(), ...l })));
+    setScanNote(`Answering ${manyQ.requests.length} payment requests, ${fmtRm(pre.totalSen)} in all — one line each; every request's bill is attached to this voucher when you save.${pre.payeeName ? '' : ' They name different payees: type the payee yourself.'} Pick each line's account.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manyQ.requests]);
+
   /* …and its bill is READ on opening (owner 2026-09-30, 6.2 — the server reads
      the request's own files): the bill's lines replace the one asked for, each
      on the request's event, under the account this vendor was last paid from;
@@ -683,6 +707,10 @@ export const PaymentVoucherNew = () => {
   const showBill = !isAp && !isRefund && !transferMode;
   const billMatchesQ = useBillMatches(showBill ? billRef : '', billDate, fromRequest);
   const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
+  /* Save & prepare (the redesign): the same create, then the voucher's own
+     Prepare — offered with the write key only, and a failed prepare says the
+     voucher was saved all the same. */
+  const prepareAfter = useRef(false);
   const onSave = async () => {
     if (isRefund) {
       if (!refundSrc) { setDialog({ title: 'Name the document', body: 'Type the Sales Order or Sales Invoice number this refunds, then press Enter.' }); return; }
@@ -750,6 +778,7 @@ export const PaymentVoucherNew = () => {
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
+        ...(fromRequests.length > 0 ? { paymentRequestIds: fromRequests } : {}),
         ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
         ...(showBill && officialOwed ? { officialDocOwed: true, ...(officialNote.trim() ? { officialDocNote: officialNote.trim() } : {}) } : {}),
       });
@@ -771,14 +800,27 @@ export const PaymentVoucherNew = () => {
         }
       }
       if (attached > 0) setPendingFiles((prev) => prev.slice(attached));
+      let prepareErr: string | null = null;
+      if (prepareAfter.current) {
+        try { await submitPv.mutateAsync(res.id); } catch (e) { prepareErr = e instanceof Error ? e.message : 'Something went wrong.'; }
+      }
+      const goTo = afterCreatePath(`/scm/payment-vouchers/${res.id}`, sourceDocPath.paymentRequest(refundForRequest ? null : fromRequest));
+      /* Saved cleanly: straight to the voucher (or back to its request), the
+         word in a toast. Anything that did not go through keeps the dialog. */
+      if (!attachErr && !prepareErr) {
+        toast?.success(`${res.pvNumber} saved${prepareAfter.current ? ' and prepared' : ' as a draft'}${attached > 0 ? ` · ${attached} file(s) attached` : ''}`);
+        navigate(goTo);
+        return;
+      }
       setDialog({
-        title: `Voucher ${res.pvNumber} created`,
+        title: `Voucher ${res.pvNumber} saved`,
         body: [
-          'Saved as a draft — open it to post to the GL.',
+          prepareErr ? `Saved as a draft, but it was not prepared: ${prepareErr}` : 'Saved as a draft — open it to post to the GL.',
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
           attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the voucher's Files card.` : null,
         ].filter(Boolean).join(' '),
-        goTo: `/scm/payment-vouchers/${res.id}`,
+        goTo,
+        goLabel: fromRequest && !refundForRequest ? 'Back to Request' : undefined,
       });
     } catch (err) {
       setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' });
@@ -787,13 +829,17 @@ export const PaymentVoucherNew = () => {
 
   /* F3 / Ctrl+S = the Create button (owner 2026-09-08: 像 autocount 按 f3);
      onSave keeps its own sentences for what is still missing. */
-  useSaveHotkey(() => { void onSave(); }, !saving);
+  useSaveHotkey(() => { prepareAfter.current = false; void onSave(); }, !saving);
+  const toast = useToastOptional();
+  const submitPv = useSubmitPaymentVoucher();
+  const { can: canNew } = useHouzsAuthNew();
+  const mayPrepare = canNew('scm.payment_voucher.write');
 
   return (
     <div className="space-y-4">
       <PageHeader back
-        eyebrow="Finance"
-        title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
+        eyebrow="Finance · Money out"
+        title={isRefund ? 'New customer refund' : isAp ? 'New AP payment' : 'New payment voucher'}
         actions={
           <div className={styles.actions}>
             {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
@@ -802,28 +848,34 @@ export const PaymentVoucherNew = () => {
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
             </Button>
-            <Button variant="primary" size="md" onClick={onSave} disabled={saving || !canSave}>
+            <Button variant={mayPrepare ? 'secondary' : 'primary'} size="md" onClick={() => { prepareAfter.current = false; void onSave(); }} disabled={saving || !canSave}>
               <Save {...ICON} />
-              {saving ? 'Saving…' : isRefund ? 'Create Refund' : isAp ? 'Create AP Payment' : 'Create Voucher'}
+              {saving && !prepareAfter.current ? 'Saving…' : 'Save draft'}
             </Button>
+            {mayPrepare && (
+              <Button variant="primary" size="md" onClick={() => { prepareAfter.current = true; void onSave(); }} disabled={saving || !canSave}>
+                <Send {...ICON} />
+                {saving && prepareAfter.current ? 'Saving…' : 'Save & prepare'}
+              </Button>
+            )}
           </div>
         }
       />
 
       <section className={styles.card}>
-        <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
+        <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Details</h2></div>
         <div className={styles.cardBody}>
           {!isAp && !isRefund && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-3)' }}>
               {/* 付给供应商/其他 vs 内部转账 (item 10) — same paper, same chain. */}
-              <Button variant={!isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(false)}>付款 Payment</Button>
-              <Button variant={isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(true)}>内部转账 Transfer</Button>
+              <Button variant={!isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(false)}>Payment</Button>
+              <Button variant={isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(true)}>Internal transfer</Button>
             </div>
           )}
           <div className={styles.formGrid2}>
             {transferMode ? (
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Transfer to *</span>
+                <span className={styles.fieldLabel}>Into which of our accounts *</span>
                 <select value={toAccountCode} onChange={(e) => setToAccountCode(e.target.value)} className={styles.fieldInput}>
                   <option value="">— which of our accounts receives it —</option>
                   {moneyAccounts.filter((a) => a.account_code !== creditAccountCode).map((a) => (
@@ -840,9 +892,9 @@ export const PaymentVoucherNew = () => {
             </label>
             ) : (
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Payee *</span>
+              <span className={styles.fieldLabel}>Pay to *</span>
               <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
-                placeholder="Who are we paying? (e.g. ABC Freight Forwarding)" className={styles.fieldInput} required />
+                placeholder="Payee, e.g. TENAGA NASIONAL BERHAD" className={styles.fieldInput} required />
             </label>
             )}
             <label className={styles.field}>
@@ -869,12 +921,12 @@ export const PaymentVoucherNew = () => {
               </label>
             )}
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Voucher Date *</span>
+              <span className={styles.fieldLabel}>Voucher date *</span>
               <DateField fullWidth value={voucherDate} onChange={(iso) => setVoucherDate(iso)} className={styles.fieldInput} />
             </label>
 
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Paid From (Credit) *</span>
+              <span className={styles.fieldLabel}>Pay from *</span>
               <AccountSelect
                 accounts={moneyAccounts}
                 value={creditAccountCode}
@@ -884,13 +936,13 @@ export const PaymentVoucherNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+              <span className={styles.fieldLabel}>Bank charges (MYR, not in the total)</span>
               <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
                 onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
                 inputClassName={styles.fieldInput} selectOnFocus />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Notes</span>
+              <span className={styles.fieldLabel}>Note</span>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
             {showBill && (
@@ -943,7 +995,7 @@ export const PaymentVoucherNew = () => {
                 onto the foreign PI it knocks off and re-costs that PI's GRN. */}
             {isForeign && (
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Actual MYR paid (optional)</span>
+                <span className={styles.fieldLabel}>MYR actually paid (optional)</span>
                 <MoneyInput bare valueSen={myrPaidSen ?? 0}
                   onCommit={(sen) => {
                     const v = sen ?? 0;
@@ -970,13 +1022,13 @@ export const PaymentVoucherNew = () => {
           <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Amount</h2></div>
           <div className={styles.cardBody}>
             <label className={styles.field} style={{ maxWidth: 260 }}>
-              <span className={styles.fieldLabel}>How much moves (RM) *</span>
+              <span className={styles.fieldLabel}>Amount (RM) *</span>
               <input type="number" min="0" step="0.01" value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)} className={styles.fieldInput}
                 placeholder="0.00" aria-label="Transfer amount" />
             </label>
             <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-              过账时:Dr {toAccountCode || '收方'} / Cr {creditAccountCode || 'Paid From'} — approve 才进 GL,和付款单同一条审批链。
+              Posts at approval · Dr {toAccountCode || 'the receiving account'} · Cr {creditAccountCode || 'Pay from'}. Same paper and the same approval chain as a payment; the money moves between our own accounts when it is approved.
             </div>
           </div>
         </section>
@@ -1037,22 +1089,22 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{fmtDate(p.paidOn)}</td>
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(p.amountSen)}</td>
                         <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
-                  <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
+                  <span>Paid <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
+                  <span>Already on refund vouchers <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>
                   {/* Other refund requests still waiting hold their money (owner 2026-10-14). */}
                   {(refundSrc.requestedSen ?? 0) > 0 && (
-                    <span>Waiting on {refundForRequest ? 'other ' : ''}refund requests <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.requestedSen ?? 0)}</b></span>
+                    <span>Waiting on {refundForRequest ? 'other ' : ''}refund requests <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(refundSrc.requestedSen ?? 0)}</b></span>
                   )}
-                  <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
+                  <span>Refundable <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
                 </div>
                 {/* The deposit-invoice half (docs/bugs/0860): said before the
                     voucher is raised, because a credit note is a document the
@@ -1104,7 +1156,7 @@ export const PaymentVoucherNew = () => {
           )}
           {pendingFiles.length > 0 && (
             <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-              📎 {pendingFiles.length} scanned file(s) will be attached to this voucher on save:{' '}
+              {pendingFiles.length} scanned file(s) will be attached to this voucher on save:{' '}
               {pendingFiles.map((f) => f.name).join(', ')}
             </div>
           )}
@@ -1144,7 +1196,7 @@ export const PaymentVoucherNew = () => {
                   bill already keep; Tab follows the DOM. */}
               <div className={styles.formGrid2}>
                 <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Account (Debit) *</span>
+                  <span className={styles.fieldLabel}>Account (debit) *</span>
                   <AccountSelect
                     accounts={accounts}
                     value={l.debitAccountCode}
@@ -1162,7 +1214,7 @@ export const PaymentVoucherNew = () => {
 
               <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Amount (MYR)</span>
+                  <span className={styles.fieldLabel}>Amount ({currency === 'MYR' ? 'RM' : currency})</span>
                   <MoneyInput bare valueSen={l.amountSen} aria-label={`line ${idx + 1} amount`}
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                     onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
@@ -1188,20 +1240,20 @@ export const PaymentVoucherNew = () => {
       {isAp && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Apply to PI</h2>
+            <h2 className={styles.cardTitle}>Outstanding bills</h2>
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
               {applyToPi
                 ? `Applying ${fmtRm(allocatedSen)}`
-                : 'Pick a supplier above to list outstanding invoices'}
+                : 'Pick the supplier above'}
             </span>
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {!applyToPi ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
-                Choose a supplier in the header to settle their outstanding purchase invoices with this voucher.
+                Pick the supplier above to list their outstanding bills.
               </p>
             ) : piListQ.isLoading ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
+              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Reading outstanding bills…</p>
             ) : (
               <>
                 {/* No open invoice is NOT a dead end: the prepay box below
@@ -1210,15 +1262,17 @@ export const PaymentVoucherNew = () => {
                     prepay is the whole point (owner 2026-09-06: AP payment 时
                     如何 advance pay). */}
                 {allocations.length === 0 ? (
-                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding invoices — a prepay below still books as their advance.</p>
+                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No outstanding bill from this supplier. A prepay below still books as their advance.</p>
                 ) : (
+                <>
+                <p style={{ margin: 0, color: 'var(--fg-muted)', fontSize: 'var(--fs-12)' }}>Tick what this payment settles. Type a smaller amount to pay a bill in part.</p>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                       <th style={{ padding: '6px 8px', width: 34 }} aria-label="Pay in full" />
-                      <th style={{ padding: '6px 8px' }}>Invoice</th>
+                      <th style={{ padding: '6px 8px' }}>Bill</th>
                       <th style={{ padding: '6px 8px' }}>Date</th>
-                      <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
+                      <th style={{ padding: '6px 8px' }}>Supplier ref</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
@@ -1242,7 +1296,7 @@ export const PaymentVoucherNew = () => {
                             style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }}
                           />
                         </td>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                        <td style={{ padding: '6px 8px', fontVariantNumeric: 'tabular-nums' }}>
                           {a.invoiceNumber}
                           {a.kind === 'API' && (
                             <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
@@ -1250,8 +1304,8 @@ export const PaymentVoucherNew = () => {
                         </td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(a.totalSen)}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(a.totalSen)}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                           <MoneyInput bare valueSen={a.amountSen}
                             onCommit={(sen) => {
@@ -1264,13 +1318,14 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                </>
                 )}
                 {/* 预付 — money for this supplier AHEAD of any invoice. Rides
                     the same voucher; the server records it as their advance,
                     knocked off later from the voucher that holds it. */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
                   <b style={{ fontSize: 'var(--fs-13)' }}>Prepay (advance)</b>
-                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>pay ahead of any invoice — hangs on this supplier until knocked off</span>
+                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Paid ahead of a bill, knocked off later from the voucher</span>
                   <span style={{ flex: 1 }} />
                   <label style={{ width: 160 }}>
                     <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Prepay amount</span>
@@ -1290,7 +1345,7 @@ export const PaymentVoucherNew = () => {
                 {/* What the save will book — spelled out so the automatic AP
                     debit is never a surprise. */}
                 <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                  Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(totalSen)}{advanceSen > 0 ? ` (incl. prepay ${fmtRm(advanceSen)})` : ''} · Cr {creditAccountCode || 'Paid From'} {fmtRm(totalSen)}
+                  Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(totalSen)}{advanceSen > 0 ? ` (incl. prepay ${fmtRm(advanceSen)})` : ''} · Cr {creditAccountCode || 'Pay from'} {fmtRm(totalSen)}
                 </div>
               </>
             )}
@@ -1303,13 +1358,13 @@ export const PaymentVoucherNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700 }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(totalSen, currency)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(totalSen, currency)}</span>
             </div>
             {/* Multi-currency (Phase 1-A) — MYR posted to GL for a foreign PV. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>≈ posted to GL</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')}</span>
               </div>
             )}
           </div>
@@ -1320,7 +1375,7 @@ export const PaymentVoucherNew = () => {
         <ActionResultDialog
           title={dialog.title}
           body={dialog.body}
-          primaryLabel={dialog.goTo ? 'Open Voucher' : undefined}
+          primaryLabel={dialog.goTo ? (dialog.goLabel ?? 'Open Voucher') : undefined}
           onPrimary={dialog.goTo ? () => { const g = dialog.goTo!; setDialog(null); navigate(g); } : undefined}
           onClose={() => setDialog(null)}
         />

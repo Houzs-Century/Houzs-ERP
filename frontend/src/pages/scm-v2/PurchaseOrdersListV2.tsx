@@ -171,9 +171,11 @@ const statusFor = (
    shape — a chip with nowhere to go should not pretend to be a link. */
 const grnRefsOf = (
   raw: PoHeaderRow["transfer_to_grns"]
-): Array<{ id: string | null; grnNumber: string }> =>
+): Array<{ id: string | null; grnNumber: string; receivedAt: string | null }> =>
   (raw ?? []).map((g) =>
-    typeof g === "string" ? { id: null, grnNumber: g } : { id: g.id, grnNumber: g.grnNumber }
+    typeof g === "string"
+      ? { id: null, grnNumber: g, receivedAt: null }
+      : { id: g.id, grnNumber: g.grnNumber, receivedAt: g.receivedAt ?? null }
   );
 
 /* The Goods Received doc(s) this PO was received into. Styled as the sibling of
@@ -221,6 +223,26 @@ function GrnNoCell({
           </span>
         ),
       )}
+    </span>
+  );
+}
+
+/* HC-0179: the received date of each GRN in the GRN No column, one per line in
+   the same order. Each line sits in the chip's own box (transparent border, same
+   padding) so a date lines up with its GRN when the two columns are adjacent. */
+function GrnDateCell({ grns }: { grns: PoHeaderRow["transfer_to_grns"] }) {
+  const list = grnRefsOf(grns);
+  if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      {list.map((g) => (
+        <span
+          key={g.grnNumber}
+          className="w-fit rounded border border-transparent px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary"
+        >
+          {g.receivedAt ? fmtDate(g.receivedAt) : "—"}
+        </span>
+      ))}
     </span>
   );
 }
@@ -1348,6 +1370,18 @@ export function PurchaseOrdersListV2() {
           onOpenGrn={(grnId) => navigate(`/scm/grns/${grnId}`)}
         />
       ),
+    },
+    {
+      key: "grn_date",
+      label: "GRN Date",
+      width: "108px",
+      defaultHidden: true,
+      disableSort: true,
+      getValue: (r) =>
+        grnRefsOf(r.transfer_to_grns)
+          .map((g) => (g.receivedAt ? fmtDate(g.receivedAt) : "—"))
+          .join(", "),
+      render: (r) => <GrnDateCell grns={r.transfer_to_grns} />,
     },
     {
       // Owner 2026-07-31: what has been DELIVERED against this PO — the DO(s) that

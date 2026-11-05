@@ -10,7 +10,7 @@
 //
 // CONFIRMED FORMULAS (owner-approved 2026-06-25 — implemented EXACTLY):
 //   working_days   = calendar days Mon–Sat (exclude Sundays) in [from,to] incl.
-//   repair_days    = Σ overlapping Mon–Sat days of the lorry's lorry_maintenance
+//   repair_days    = Mon–Sat days down: lorry_maintenance windows and grounding breakdowns,
 //                    windows, each clipped to [from,to].
 //   available_days = max(0, working_days − repair_days).
 //   total_trips    = non-CANCELLED trips with trip_date in [from,to].
@@ -59,6 +59,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jobs';
+import { downDays, loadDownWindows } from '../lib/lorry-down-days';
 import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
 
 export const lorryCapacity = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -286,26 +287,16 @@ lorryCapacity.get('/', async (c) => {
     });
   }
 
-  /* 2. Repair days — lorry_maintenance windows overlapping [from,to]. Σ the
-        clipped Mon–Sat days per lorry. Paginated. (We over-read [from,to]-
-        overlapping rows: a window overlaps if its start <= to AND its end >=
-        from.) */
+  /* 2. Repair days — the Mon–Sat days a lorry was down: its maintenance windows
+        and the breakdowns that took it off the road, clipped to [from,to]. A
+        lorry in the workshop has no capacity (owner 2026-11-04). */
   {
-    const { data: maint } = await paginateAll<Record<string, unknown>>((lo, hi) =>
-      sb.from('lorry_maintenance')
-        .select('lorry_id, unavailable_from, unavailable_to')
-        .lte('unavailable_from', to)
-        .gte('unavailable_to', from)
-        .range(lo, hi),
-    );
-    for (const m of (maint ?? [])) {
-      const lid = dual<string>(m, 'lorry_id');
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const down = await loadDownWindows(sb, from, to, today);
+    if (down.error) return c.json({ error: 'load_failed', reason: `lorry down days: ${down.error}` }, 500);
+    for (const [lid, n] of downDays(down.windows, from, to)) {
       const acc = byLorry.get(lid);
-      if (!acc) continue;
-      const wf = dayMs(dual<string>(m, 'unavailable_from'));
-      const wt = dayMs(dual<string>(m, 'unavailable_to'));
-      if (wf == null || wt == null) continue;
-      acc.repairDays += clippedWorkingDays(wf, wt, fromMs, toMs);
+      if (acc) acc.repairDays = n;
     }
   }
 

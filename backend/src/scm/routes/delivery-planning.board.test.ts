@@ -358,6 +358,9 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
               phone: '011', location: 'KL', customer_pickup_at: null, inspection_visit_at: null,
               inspection_by: null, do_date: '2026-09-05', addr1: '1 Jln', addr2: null, addr3: null, addr4: null,
               so_state: 'Selangor', so_postcode: '40000', so_country: 'Malaysia',
+              // Hand-set message status (owner 2026-10-29) — surfaces on the row,
+              // and survives here because the fake has no wa_message_log to overlay.
+              delivery_message_status: 'Pending Customer Reply (D)',
             }],
       }),
     }),
@@ -375,6 +378,8 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
         address1: 'Jln Setup', address2: null, address3: null, address4: null, city: 'KL', postcode: '50000',
         state: 'Selangor', requested_date: '2026-09-08', status: 'PENDING', trip_id: null,
         so_doc_no: null, assr_case_id: null, do_id: null,
+        // Hand-set message status (owner 2026-10-29) — surfaces on the DP row.
+        delivery_message_status: 'To Send Delivery Date',
       }],
     });
     const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -394,7 +399,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
     type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; crew: Crew }> };
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; delivery_message_status: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
@@ -421,6 +426,11 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(projCrew?.helper_1_name).toBe('Helper One');
     expect(projCrew?.helper_2_name).toBe('Helper Two');
     expect(projCrew?.lorry_plate).toBe('VRH1');
+    // Owner 2026-10-29: the non-SO job types carry the message status too — a DP
+    // job from its own column, a service case from assr_cases (the overlay leaves
+    // it when there is no WhatsApp reply to supersede it).
+    expect(byType('dp')[0]?.delivery_message_status).toBe('To Send Delivery Date');
+    expect(byType('assr')[0]?.delivery_message_status).toBe('Pending Customer Reply (D)');
   });
 });
 
