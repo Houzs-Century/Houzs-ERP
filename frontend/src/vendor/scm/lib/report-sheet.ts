@@ -14,7 +14,7 @@
 import { fmtSenPlain } from '../../shared/format';
 import { flattenLaid, fmtPct, linesVisible, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
-import type { RpReport } from './rp-report-queries';
+import { balanceParts, type RpReport } from './rp-report-queries';
 import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
 
 export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
@@ -101,8 +101,12 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
   const surplusPer = Object.fromEntries(r.columns.map((c) => [c.code, (r.totals.receipts[c.code] ?? 0) - (r.totals.payments[c.code] ?? 0)]));
   const surplus = r.totals.receiptsTotalSen - r.totals.paymentsTotalSen;
   rows.push({ kind: 'net', depth: 0, label: 'Cash surplus / (deficit)', cells: cellsOf(surplusPer, surplus, pctOf(surplus, r.totals.receiptsTotalSen)) });
+  const parts = (per: Record<string, number>, total: number): SheetRow[] =>
+    balanceParts(r, 'bal', per, total).map((p) => ({ kind: 'row', depth: 1, label: p.label, cells: cellsOf(p.per, p.sen, null) }));
   rows.push({ kind: 'total', depth: 0, label: 'Balance b/f', cells: cellsOf(r.opening, r.totals.openingTotalSen, null) });
+  rows.push(...parts(r.opening, r.totals.openingTotalSen));
   rows.push({ kind: 'net', depth: 0, label: 'Balance c/f', cells: cellsOf(r.totals.closing, r.totals.closingTotalSen, null) });
+  rows.push(...parts(r.totals.closing, r.totals.closingTotalSen));
   return { columns, rows };
 }
 

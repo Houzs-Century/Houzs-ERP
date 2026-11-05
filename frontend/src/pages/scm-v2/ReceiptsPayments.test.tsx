@@ -3,7 +3,7 @@
    the Accounts picker adding an account's own column beside it, the tree's top
    categories as sections with their own subtotal names, a running subtotal as
    a bold line, the unassigned groups last, then Cash surplus / (deficit),
-   Balance b/f and Balance c/f and the card memo lines; rows in the owner's
+   Balance b/f and Balance c/f, each split into Bank and Card; rows in the owner's
    accounts or by debtor / creditor; By month one read per column; a figure
    opens the entries behind it under its row. The server half is
    backend/tests/rpReport.test.ts. */
@@ -20,8 +20,8 @@ const line = (key: string, code: string, label: string, cells: Record<string, nu
 
 const report: RpReport = {
   from: '2026-07-01', to: '2026-07-31', byParty: false,
-  columns: [{ code: '310-0010', name: 'CASH AT BANK - MAYBANK' }, { code: '320-0000', name: 'CASH IN HAND' }],
-  opening: { '310-0010': -10000, '320-0000': 0 },
+  columns: [{ code: '310-0010', name: 'CASH AT BANK - MAYBANK' }, { code: '320-0000', name: 'CASH IN HAND' }, { code: 'CARD', name: 'Card money not yet in the bank' }],
+  opening: { '310-0010': -12000, '320-0000': 0, CARD: 2000 },
   receipts: [
     { key: '300-0000', code: '300-0000', name: 'ACCOUNT RECEIVEABLE', cells: { '310-0010': 50000 }, totalSen: 50000 },
     { key: 'XFER:310-0010', code: '310-0010', name: 'Transfer from 310-0010 · CASH AT BANK - MAYBANK', cells: { '320-0000': 20000 }, totalSen: 20000 },
@@ -33,7 +33,7 @@ const report: RpReport = {
   ],
   totals: {
     receipts: { '310-0010': 50000, '320-0000': 20000 }, payments: { '310-0010': 70000, '320-0000': 6000 },
-    closing: { '310-0010': -30000, '320-0000': 14000 }, openingTotalSen: -10000, receiptsTotalSen: 70000, paymentsTotalSen: 76000, closingTotalSen: -16000,
+    closing: { '310-0010': -34000, '320-0000': 14000, CARD: 4000 }, openingTotalSen: -10000, receiptsTotalSen: 70000, paymentsTotalSen: 76000, closingTotalSen: -16000,
   },
   card: { takingsSen: 12345, transitSen: 67890, codes: ['326-0000', '326-0010'] },
   entries: [
@@ -144,9 +144,10 @@ describe('the Cash Flow tab', () => {
     const closing = screen.getByText('Balance c/f').closest('tr')!;
     expect(closing.textContent).toContain('(160.00)');
     expect(closing.className).toMatch(/rowFinal/);
-    /* The card money the bank has not received (owner 2026-09-28): Total column only. */
-    expect(screen.getByText('Card takings this period (swiped, not yet in the bank)').closest('tr')!.textContent).toContain('123.45');
-    expect(screen.getByText('Card money in transit at period end').closest('tr')!.textContent).toContain('678.90');
+    /* Each balance in two parts (owner 2026-11-05): the banks, which agree with the bank
+       statements, and the card money not yet in the bank. */
+    expect(screen.getAllByText('Bank').map((e) => e.closest('tr')?.textContent)).toEqual([expect.stringContaining('(120.00)'), expect.stringContaining('(200.00)')]);
+    expect(screen.getAllByText('Card money not yet in the bank').flatMap((e) => (e.closest('tr') ? [e.closest('tr')!.textContent] : []))).toEqual([expect.stringContaining('20.00'), expect.stringContaining('40.00')]);
     /* The tree (docs/bugs/0912): the category with its per-column subtotal and its % of the side. */
     const purchases = screen.getByText('Purchases').closest('tr')!;
     expect(purchases.getAttribute('data-kind')).toBe('category');

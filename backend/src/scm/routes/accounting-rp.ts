@@ -55,6 +55,7 @@ import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
+import { inBankShares, loadCardPayoutFacts, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -90,10 +91,9 @@ export type RpReport = {
   /** The card money the bank has not received (owner 2026-09-28). */
   card: RpCard;
 };
-/** A swipe books Dr card-machine clearing / Cr the customer, and this report — a
-    bank-and-cash report — cannot count it until the acquirer pays it out (Dr bank /
-    Cr clearing). Two memo figures so a month is never blank (owner 2026-09-28: 9 月
-    刷卡的钱应该还有出现，只是还没 recon): what was swiped in the period — every
+/** A swipe books Dr card-machine clearing / Cr the customer; the acquirer's payout
+    Dr bank / Cr clearing. Since 2026-11-05 the swipes are Cash In in the Card column;
+    these two figures stay for the API's readers: what was swiped in the period — every
     movement on the clearing accounts except the settlement module's own (fees,
     payouts, moves between the clearing accounts) — and what those accounts still
     hold at the period's end. `codes` names the accounts read. */
@@ -101,6 +101,21 @@ export type RpCard = { takingsSen: number; transitSen: number; codes: string[] }
 export type RpQuery = { from: string; to: string; byParty: boolean; wanted: string[] };
 
 const ADVANCE_KEY = 'ADV';
+/* The card-machine clearing accounts as ONE money column (owner 2026-11-05): a swipe
+   is Cash In on its own day, into this column; the acquirer's payout is a transfer
+   from it to the bank (off the tree, as between any two of the report's columns), so
+   it never counts twice; the fees it keeps are payments out of it. The bank columns
+   still agree with the bank statements; this column's closing is the card money not
+   yet in the bank. */
+export const CARD_COLUMN = 'CARD';
+const CARD_COLUMN_NAME = 'Card money not yet in the bank';
+/* A swipe's receipt row, by how much of it the acquirer has paid into a bank by the period's end. */
+export const CARD_IN_BANK = 'CARD-BANK';
+export const CARD_NOT_IN_BANK = 'CARD-TRANSIT';
+const CARD_IN_BANK_NAME = 'Card - in the bank';
+const CARD_NOT_IN_BANK_NAME = 'Card - not yet in the bank';
+/* The settlement module's own journals (a fee, a payout, a move between the clearing accounts) — never a swipe. */
+const settlementOwn = (l: { source_type: string | null }): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '').startsWith('SETTLE');
 /* What a supplier is paid out of a trade-finance account (owner 2026-11-05: its own line
    under Cost of funds, apart from Accounts payable). No chart account: the layout
    places this code like any account, under Unassigned payments until it does. */
@@ -183,9 +198,11 @@ export function supplierVouchersOf(period: GlLine[], colSet: Set<string>, apCont
     and the vouchers' purpose were read again for every period). */
 export type RpSources = {
   lines: (moneyCodes: string[], clearingCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[]; clearing: GlLine[] } | Fail>;
-  /** The acquirers' transit accounts — with the chart's EDC transit role, the card-machine clearing accounts the memo reads. */
+  /** The acquirers' transit accounts — with the chart's EDC transit role, the card-machine clearing accounts (the Card column). */
   acquirerTransits: () => Promise<{ ok: true; codes: string[] } | Fail>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
+  /** The card settlement history: which statement claimed each card payment and what the bank has received on it. */
+  cardPayouts: () => Promise<{ ok: true; facts: CardPayoutFacts } | Fail>;
   /** The company's active money accounts, by code. */
   moneyAccounts: () => Promise<{ ok: true; accounts: Array<{ code: string; name: string }> } | Fail>;
   roles: () => Promise<RoleCodes>;
@@ -197,6 +214,7 @@ export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpS
   lines: (codes, clearing, from, to) => loadLines(sb, companyId, codes, clearing, from, to),
   acquirerTransits: () => loadAcquirerTransits(sb, companyId),
   layout: () => resolveLayout(sb, layoutIds, 'rp'),
+  cardPayouts: () => loadCardPayoutFacts(sb, companyId),
   moneyAccounts: async () => {
     const { data, error } = await sb.from('accounts')
       .select('account_code, account_name').eq('company_id', companyId).eq('acc_money', true).eq('is_active', true).order('account_code');
@@ -315,10 +333,8 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const money = await src.moneyAccounts();
   if (!money.ok) return { ok: false, reason: money.reason };
   const allMoney = money.accounts;
-  const columns = wanted.length > 0 ? allMoney.filter((a) => wanted.includes(a.code)) : allMoney;
+  const bankColumns = wanted.length > 0 ? allMoney.filter((a) => wanted.includes(a.code)) : allMoney;
   const moneySet = new Set(allMoney.map((a) => a.code));
-  const colSet = new Set(columns.map((a) => a.code));
-  if (columns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] } } };
 
   const roles = await src.roles();
   const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
@@ -327,17 +343,38 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const acquirers = await src.acquirerTransits();
   if (!acquirers.ok) return { ok: false, reason: acquirers.reason };
   const clearingCodes = [...new Set([String(roles.TRANSIT_EDC).trim(), ...acquirers.codes].filter(Boolean))].sort();
-  const loaded = await src.lines(columns.map((a) => a.code), clearingCodes, from, to);
+  const clearingSet = new Set(clearingCodes);
+  if (bankColumns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] } } };
+  const loaded = await src.lines(bankColumns.map((a) => a.code), clearingCodes, from, to);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
+  /* The Card column shows once a clearing account has ever moved. */
+  const cardOn = loaded.clearing.length > 0 && (wanted.length === 0 || wanted.includes(CARD_COLUMN));
+  const columns = cardOn ? [...bankColumns, { code: CARD_COLUMN, name: CARD_COLUMN_NAME }] : bankColumns;
+  const colSet = new Set(columns.map((a) => a.code));
+  const payouts = cardOn ? await src.cardPayouts() : { ok: true as const, facts: { matches: [], rows: [], batches: [], receipts: [] } };
+  if (!payouts.ok) return { ok: false, reason: payouts.reason };
+  const inBank = inBankShares(payouts.facts, to);
 
   const opening: Record<string, number> = {};
   for (const col of columns) opening[col.code] = 0;
   for (const l of loaded.money) if ((l.entry_date < from || isOpeningJournal(l)) && colSet.has(l.account_code)) opening[l.account_code] = (opening[l.account_code] ?? 0) + sen(l);
+  if (cardOn) for (const l of loaded.clearing) if (l.entry_date < from || isOpeningJournal(l)) opening[CARD_COLUMN] = (opening[CARD_COLUMN] ?? 0) + sen(l);
   const tradeFinance = new Set(allMoney.filter((a) => isTradeFinanceAccount(a.name)).map((a) => a.code));
 
-  /* Group the period by journal; keep the ones with a selected money leg. */
+  /* Group the period by journal; keep the ones with a selected money leg. With the
+     Card column on, a journal's clearing-account lines are ONE leg of it (a move
+     between two clearing accounts nets to nothing). */
   const byJe = new Map<string, GlLine[]>();
   for (const l of loaded.period) byJe.set(l.je_no, [...(byJe.get(l.je_no) ?? []), l]);
+  if (cardOn) {
+    for (const [jeNo, lines] of byJe) {
+      const onCard = lines.filter((l) => clearingSet.has(l.account_code));
+      if (onCard.length === 0) continue;
+      const net = onCard.reduce((s, l) => s + sen(l), 0);
+      const rest = lines.filter((l) => !clearingSet.has(l.account_code));
+      byJe.set(jeNo, net === 0 ? rest : [...rest, { ...onCard[0]!, account_code: CARD_COLUMN, account_name: CARD_COLUMN_NAME, debit_sen: Math.max(net, 0), credit_sen: Math.max(-net, 0) }]);
+    }
+  }
   const supplierPvs = supplierVouchersOf(loaded.period, colSet, apControls);
   const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await src.splits(supplierPvs, controlCodes);
   if (!splits.ok) return { ok: false, reason: splits.reason };
@@ -419,6 +456,10 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         continue;
       }
 
+      /* A swipe into the Card column: the share its statement has paid into a bank by
+         the period's end, and the rest (a payment no statement claims: all of it). */
+      const swipe = leg.account_code === CARD_COLUMN && !settlementOwn(first);
+      const bankShare = swipe && first.source_doc_no ? (inBank.get(paymentKey(base, first.source_doc_no)) ?? 0) : 0;
       for (const l of counterparts) {
         const amt = shareOf(Math.abs(sen(l)));
         const onControl = controlCodes.has(l.account_code);
@@ -427,7 +468,12 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
            still being what the row reads. */
         const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? l.party_name ?? '—'}` : l.account_code;
         const name = byParty && onControl ? `${l.party_name ?? '(no party)'} · ${l.account_name ?? l.account_code}` : String(l.account_name ?? l.account_code);
-        add(side, key, l.account_code, name, leg.account_code, amt, { ...meta, party: l.party_name ?? null });
+        const lineMeta = { ...meta, party: l.party_name ?? null };
+        if (!swipe) { add(side, key, l.account_code, name, leg.account_code, amt, lineMeta); continue; }
+        const banked = Math.round(amt * bankShare);
+        const cardName = (part: string) => (byParty && onControl ? `${name} · ${part}` : part);
+        add(side, `${key}:${CARD_IN_BANK}`, l.account_code, cardName(CARD_IN_BANK_NAME), leg.account_code, banked, lineMeta);
+        add(side, `${key}:${CARD_NOT_IN_BANK}`, l.account_code, cardName(CARD_NOT_IN_BANK_NAME), leg.account_code, amt - banked, lineMeta);
       }
     }
   }
@@ -459,7 +505,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
      clearing accounts' movements that are not the settlement module's own — a
      SETTLE fee, a SETTLEBANK payout, a SETTLEMOVE between the clearing accounts
      — less their reversals; the transit is the accounts' balance at `to`. */
-  const settlementOwn = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '').startsWith('SETTLE');
   const card: RpCard = {
     takingsSen: loaded.clearing.filter((l) => l.entry_date >= from && !settlementOwn(l)).reduce((s, l) => s + sen(l), 0),
     transitSen: loaded.clearing.reduce((s, l) => s + sen(l), 0),

@@ -17,6 +17,7 @@
 
 import type { LaidNode } from './report-layout';
 import { flattenLaid } from './report-layout';
+import { balanceParts, type RpColumn } from './rp-report-queries';
 
 /** One line of a report as one column printed it. */
 export type FlatLine = {
@@ -206,9 +207,10 @@ export const performanceLines = (r: PerfLike, summary: PerfSummaryLike[]): FlatL
 };
 
 type RpLike = {
+  columns: RpColumn[];
+  opening: Record<string, number>;
   layout: { tree: LaidNode[]; inSen: number; outSen: number };
-  totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number };
-  card: { takingsSen: number; transitSen: number };
+  totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number; closing: Record<string, number> };
 };
 
 /** The Cash Flow as lines, the Total column only: each top category as a
@@ -225,12 +227,13 @@ export const rpLines = (r: RpLike): FlatLine[] => {
     out.push(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct));
   }
   out.push(fixedLine('net:surplus', 'Cash surplus / (deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, pctOfBase(t.receiptsTotalSen - t.paymentsTotalSen, t.receiptsTotalSen)));
+  /* Each balance in two parts, the banks and the card money not yet in the bank (owner 2026-11-05). */
+  const parts = (id: string, per: Record<string, number>, total: number) =>
+    balanceParts(r, id, per, total).map((p): FlatLine => ({ id: p.id, label: p.label, kind: 'row', depth: 1, amountSen: p.sen, pct: null }));
   out.push(fixedLine('bal:opening', 'Balance b/f', 'total', t.openingTotalSen, null));
+  out.push(...parts('bal:opening', r.opening, t.openingTotalSen));
   out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
-  /* The card money the bank has not received (owner 2026-09-28): memo lines, so a
-     month whose bank statement is not in yet is never blank. */
-  out.push(fixedLine('memo:card-takings', 'Card takings this period (swiped, not yet in the bank)', 'memo', r.card.takingsSen, null));
-  out.push(fixedLine('memo:card-transit', 'Card money in transit at period end', 'memo', r.card.transitSen, null));
+  out.push(...parts('bal:closing', t.closing, t.closingTotalSen));
   return out;
 };
 
