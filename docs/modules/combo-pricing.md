@@ -38,6 +38,8 @@ Prices a whole COMBINATION of sofa modules instead of summing the modules indivi
 - `pickComboMatch` reads every row of a tuple, so a size emptied on a new row falls through to the older row's price. Taking a price away must retire the older rows (`POST /apply` does).
 - An Auto cost stays editable by owner ruling; the next supplier save replaces it, and the save bar says so. Changing modules on a supplier's page is allowed too and disconnects that combo from the master; the dialog says so. PWP rules are kept by hand: deleting or recomposing a combo does not update them.
 - The Products grid edits COST (`prices_by_height`), and an edit carries the selling grid forward unchanged. A master row with only a selling price shows it as the cell's hint.
+- The model list shows models with combos; Show all models or a search reaches the rest. A supplier's page leads with our model code and name, with the supplier's own code beside it.
+- A model's size columns are its own `allowed_options.sizes`, else the Maintenance `sofaSizes` master, plus any size already priced. They follow the master; nothing is listed in code.
 - The Excel file is written by `styled-xlsx.ts`, not SheetJS: the community edition drops cell fills, and the fills are the instructions. It reads back with SheetJS.
 - The route file's own header is out of date in places — it still advertises a `copy-to-customer` endpoint that was removed, and cites a migration number that belongs to a different repo's numbering. Verify against the route file itself, not the header comment.
 - The COST derivation appends a fresh effective-dated master row only when the derived cost actually changed (deduped), so a no-op supplier re-save adds no row.

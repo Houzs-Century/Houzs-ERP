@@ -84,6 +84,11 @@ export const sortSizes = (sizes: Iterable<string>): string[] =>
     return na - nb || a.localeCompare(b);
   });
 
+/** The sizes a model is sold in: its own list when it has one, else the Maintenance
+ *  master, so a size added there shows up here. A size already priced always stays. */
+export const offeredSizes = (own: readonly string[] | undefined, master: readonly string[], priced: Iterable<string>): string[] =>
+  sortSizes(new Set([...(own && own.length > 0 ? own : master), ...priced]));
+
 const familyOf = (code: string): string => code.replace(/\((LHF|RHF)\)$/, '');
 
 /** "1A(LHF) or 1A(RHF)" reads as one piece: 1A. */
@@ -122,6 +127,12 @@ export const presetSlots = (pieces: string, own: readonly string[]): string[][] 
   });
 
 export type ModuleFamily = { code: string; group: string; variants: Array<{ code: string; label: string }> };
+
+/** A piece matches on its code or on the name of any of its sides. */
+export const familyMatches = (f: ModuleFamily, query: string, names: Readonly<Record<string, string>>): boolean => {
+  const q = query.trim().toLowerCase();
+  return f.code.toLowerCase().includes(q) || f.variants.some((v) => (names[v.code] ?? '').toLowerCase().includes(q));
+};
 export const MODULE_GROUPS = ['1 seat', '2 seat', '3 seat', 'Chaise', 'Corner', 'Other'] as const;
 
 const groupOf = (family: string): string => {
@@ -144,6 +155,16 @@ export function moduleFamilies(codes: readonly string[]): ModuleFamily[] {
     map.set(family, entry);
   }
   return [...map.values()];
+}
+
+export type ModelEntry = { code: string; name: string; supplierCode: string | null; combos: number };
+
+/** The list on the left: models that have combos, unless asked for all or searching.
+ *  A search looks everywhere, and the open model never drops out from under you. */
+export function listedModels(all: readonly ModelEntry[], query: string, showAll: boolean, open: string | null): ModelEntry[] {
+  const q = query.trim().toLowerCase();
+  if (q) return all.filter((m) => `${m.code} ${m.name} ${m.supplierCode ?? ''}`.toLowerCase().includes(q));
+  return showAll ? [...all] : all.filter((m) => m.combos > 0 || m.code === open);
 }
 
 export type HistoryLine = { id: string; date: string; who: string; what: string; detail: string };
