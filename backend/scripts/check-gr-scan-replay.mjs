@@ -76,7 +76,7 @@ async function main() {
       const codes = taught.filter((t) => t.supplier_id === supplierId).map((t) => ({ supplierSku: t.printed_code, acItemCode: null, itemCode: t.item_code }));
       const name = suppliers.find((s) => s.id === supplierId)?.name ?? `(not one of ours) ${parsed.supplierName ?? ''}`;
       const match = matchGrnScanToPoLines(parsed.poNo ?? null, parsed.lines.map((l) => ({ ...l, poNo: l.poNo ?? null, rack: l.rack ?? null })), open, [...bindings, ...codes], supplierId);
-      const review = buildReview(parsed, supplierId, match, [], open.filter((l) => l.supplierId === supplierId));
+      const review = buildReview(parsed, supplierId, match, [], open.filter((l) => l.supplierId === supplierId), new Date().toISOString().slice(0, 10));
       const rows = review.lines.length;
       const tied = review.lines.filter((l) => l.poItemId).length;
       if (ONLY_SUPPLIER && !name.toUpperCase().includes(ONLY_SUPPLIER)) continue;

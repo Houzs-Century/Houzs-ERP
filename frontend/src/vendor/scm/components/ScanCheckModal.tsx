@@ -65,13 +65,13 @@ type Props<R, D extends CheckDocBase<R>, P extends { documents: D[] }> = {
   withDate: (review: R, date: string) => R;
   onEdit?: (review: R) => void;
   renderCard: (card: CardProps<R, D> & { key: string }, data: P) => ReactNode;
-  // The document number the list sorts by; still-unread documents go last.
-  docNumber: (doc: D) => string | null;
+  // What the document receives or bills, counted for the toolbar.
+  itemsOf: (review: R) => number;
   onClose: () => void;
 };
 
 export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documents: D[] }>({
-  title, noun, listName, listPath, dropText, dateLabel, queryKey, listKey, api, blockOf, withDate, onEdit, renderCard, docNumber, onClose,
+  title, noun, listName, listPath, dropText, dateLabel, queryKey, listKey, api, blockOf, withDate, onEdit, renderCard, itemsOf, onClose,
 }: Props<R, D, P>) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -95,12 +95,8 @@ export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documen
     staleTime: 0,
     refetchInterval: (query) => (query.state.data?.documents.some((d) => d.state === 'reading') ? 4000 : false),
   });
-  // By document number, on what the server holds, so a card does not jump while its number is typed.
-  const docs = useMemo(() => [...(q.data?.documents ?? [])].sort((a, b) => {
-    const x = docNumber(a); const y = docNumber(b);
-    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
-    return x.localeCompare(y, undefined, { numeric: true });
-  }), [q.data, docNumber]);
+  // As scanned: the server sends them oldest first, each PDF's documents in page order.
+  const docs = useMemo(() => q.data?.documents ?? [], [q.data]);
   const data = q.data;
   const reviewOf = useCallback((id: string) => edits[id] ?? docs.find((d) => d.id === id)?.review ?? null, [edits, docs]);
 
@@ -157,6 +153,7 @@ export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documen
   const block = (id: string) => { const r = reviewOf(id); return r && q.data ? blockOf(r, q.data) : 'Still reading.'; };
   const selected = pending.filter((d) => ticked[d.id]);
   const creatable = selected.filter((d) => !block(d.id));
+  const items = selected.reduce((sum, d) => { const r = reviewOf(d.id); return sum + (r ? itemsOf(r) : 0); }, 0);
   const reading = docs.filter((d) => d.state === 'reading').length;
 
   const remove = async (ids: string[]) => {
@@ -214,7 +211,7 @@ export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documen
           <div className={check.toolbar}>
             <label className={check.selectAll}>
               <input type="checkbox" checked={pending.length > 0 && selected.length === pending.length} onChange={(e) => setTicked(Object.fromEntries(pending.map((d) => [d.id, e.target.checked])))} />
-              {selected.length} of {pending.length} selected{reading > 0 ? ` · ${reading} still reading` : ''}
+              {selected.length} of {pending.length} selected · {items} item{items === 1 ? '' : 's'}{reading > 0 ? ` · ${reading} still reading` : ''}
             </label>
             <span style={{ flex: 1 }} />
             {selected.length > 1 && (

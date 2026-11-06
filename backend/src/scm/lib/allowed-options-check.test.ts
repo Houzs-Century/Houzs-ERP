@@ -313,6 +313,7 @@ describe('checkAllowedOptions — leg height: the zero-inch glyph is "No Leg"', 
   });
 
   it('does NOT invent "No Leg" — a pool offering neither zero spelling still refuses 0"', () => {
+    expect(checkAllowedOptions(product(), model({ leg_heights: ['6"'] }), { legHeight: 'Default' })).toBeNull();
     const m = model({ leg_heights: ['1"', '2"', '4"'] });
     expect(checkAllowedOptions(product(), m, { legHeight: '0"' })?.field).toBe('leg_height');
   });
