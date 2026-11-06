@@ -11,6 +11,7 @@
 //   GET    /profiles               POST   /profiles
 //   PATCH  /profiles/:id           DELETE /profiles/:id
 //   GET    /item-kpi               POST   /item-kpi
+//   POST   /item-kpi/batch
 //   PATCH  /item-kpi/:id           DELETE /item-kpi/:id
 //   GET    /pickers                GET    /commission
 //   GET    /override-levels        POST   /override-levels          (new)
@@ -515,6 +516,37 @@ hr.post('/item-kpi', async (c) => {
     .single();
   if (error) return c.json({ error: 'create_failed', reason: error.message }, 500);
   return c.json({ item: toItemKpiApi(data as ItemKpiRow) }, 201);
+});
+
+/* POST /item-kpi/batch — several rules in ONE insert (YH 2026-11-06). Picking
+   a fabric series made the page save 13 rules one request at a time, each
+   waiting for every HR list to reload, and a run once stopped after five. One
+   statement is all or nothing: every rule lands, or none does and the error
+   says why. Each row is still its own rule (owner 2026-07-18). */
+const itemKpiBatchSchema = z.object({ items: z.array(itemKpiCreateSchema).min(1).max(200) });
+
+hr.post('/item-kpi/batch', async (c) => {
+  if (!hasHouzsPerm(c, HR_MANAGE)) return forbidden(c, HR_MANAGE);
+  const co = requireCompany(c);
+  if (!co.ok) return co.res;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = itemKpiBatchSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'validation_failed', issues: issues(parsed.error) }, 400);
+  const sb = c.get('supabase');
+  const { data, error } = await sb
+    .from('hr_item_kpi')
+    .insert(parsed.data.items.map((it) => ({
+      flag_type: it.flagType,
+      ref: it.ref,
+      label: it.label,
+      bonus_sen: it.bonusSen,
+      active: it.active,
+      company_id: co.companyId,
+    })))
+    .select(ITEM_KPI_SELECT);
+  if (error) return c.json({ error: 'create_failed', reason: error.message }, 500);
+  return c.json({ items: ((data ?? []) as ItemKpiRow[]).map(toItemKpiApi) }, 201);
 });
 
 const itemKpiPatchSchema = z.object({

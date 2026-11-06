@@ -29,7 +29,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
   useHrConfig, useUpdateHrConfig,
   useHrProfiles, useCreateHrProfile, useUpdateHrProfile, useDeleteHrProfile,
-  useHrItemKpi, useCreateHrItemKpi, useUpdateHrItemKpi, useDeleteHrItemKpi,
+  useHrItemKpi, useCreateHrItemKpis, useUpdateHrItemKpi, useDeleteHrItemKpi,
   useHrOverrideLevels, useCreateHrOverrideLevel, useUpdateHrOverrideLevel, useDeleteHrOverrideLevel,
   useHrPickers,
   type HrConfigPatch, type HrFlagType, type HrOverrideMode, type HrPickerRef, type HrTier,
@@ -179,7 +179,7 @@ export const HrSettings = () => {
   const updateConfig = useUpdateHrConfig();
 
   const itemKpi = useHrItemKpi();
-  const createItemKpi = useCreateHrItemKpi();
+  const createItemKpis = useCreateHrItemKpis();
   const updateItemKpi = useUpdateHrItemKpi();
   const deleteItemKpi = useDeleteHrItemKpi();
 
@@ -300,7 +300,7 @@ export const HrSettings = () => {
     if (Math.round(n * 100) !== n * 100) return 'The bonus cannot be smaller than one sen.';
     return null;
   })();
-  const canAddItemKpi = flagRefs.length > 0 && bonusError === null && !createItemKpi.isPending;
+  const canAddItemKpi = flagRefs.length > 0 && bonusError === null && !createItemKpis.isPending;
 
   const addProfile = async () => {
     if (!newStaff || !newShowroom) return;
@@ -340,33 +340,21 @@ export const HrSettings = () => {
       if (!ok) return;
     }
 
-    /* Created one at a time so a mid-way failure can name EXACTLY which rules
-       exist and which do not. Reporting "could not save" after two of three
-       landed would leave the owner to guess, and re-running would duplicate the
-       two that worked. */
-    const added: string[] = [];
-    for (const c of chosen) {
-      try {
-        await createItemKpi.mutateAsync({ flagType, ref: c.ref, label: c.label, bonusSen });
-        added.push(c.label);
-      } catch (e) {
-        // Everything from the one that failed onwards is still unsaved.
-        const failed = chosen.slice(chosen.indexOf(c));
-        await notify({
-          title: added.length === 0 ? 'Could not add the bonus rule' : 'Only some rules were added',
-          body:
-            (added.length > 0
-              ? `Added: ${added.join(', ')}.\nNot added: ${failed.map((x) => x.label).join(', ')}.\n\n`
-              : '') +
-            // authed-fetch already ran the response through humanApiError and
-            // threw an Error carrying that plain sentence — do not re-wrap it.
-            `${(e as Error)?.message ?? 'The system did not say why.'}\n\nPlease add the missing ones again — the rules listed as added are already saved, so do not re-add those.`,
-          tone: 'error',
-        });
-        // Keep the failures selected so the retry is one click, not a re-pick.
-        setFlagRefs(failed.map((x) => x.ref));
-        return;
-      }
+    /* One request for the whole selection, all or nothing (YH 2026-11-06): a
+       series saved one rule at a time once stopped after five, silently. Now
+       either every rule is saved or none is, and the error says why. */
+    try {
+      await createItemKpis.mutateAsync(chosen.map((c) => ({ flagType, ref: c.ref, label: c.label, bonusSen })));
+    } catch (e) {
+      await notify({
+        title: chosen.length === 1 ? 'Could not add the bonus rule' : 'Could not add the bonus rules',
+        body:
+          // authed-fetch already ran the response through humanApiError and
+          // threw an Error carrying that plain sentence — do not re-wrap it.
+          `${(e as Error)?.message ?? 'The system did not say why.'}\n\nNothing was saved, so adding them again will not make duplicates.`,
+        tone: 'error',
+      });
+      return; // the selection stays, so the retry is one click
     }
     setFlagRefs([]);
     setFlagBonus('');
@@ -830,7 +818,7 @@ export const HrSettings = () => {
                 disabled={!canAddItemKpi}
                 onClick={addItemKpi}
               >
-                {createItemKpi.isPending
+                {createItemKpis.isPending
                   ? 'Adding…'
                   : flagRefs.length > 1
                     ? `Add ${flagRefs.length} rules`
