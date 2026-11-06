@@ -575,6 +575,36 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   );
 }
 
+/* Mark Delivered — the board's per-leg Delivered for a Service Case (owner
+   2026-11-06: "板上直接标 Delivered"). An SO/DO becomes DELIVERED from its POD;
+   a service leg had no board way to be marked done, so Logistics gets a toggle
+   here. It writes the leg's actual_* date (type:'assr' + deliveryState) and does
+   NOT close the case — closing stays a separate action in the ASSR module. The
+   leg then moves to the Delivered tab while the case stays open; other legs are
+   unaffected. n/a for SO / DP / project rows (they derive their own state). */
+export function MarkDeliveredCell({ order, onSchedule }: { order: PlanningOrder; onSchedule: ScheduleMutate }) {
+  const { crew: pending } = useContext(BoardPendingContext);
+  if (!isAssr(order)) return <NotApplicable />;
+  const delivered = order.delivery_state === 'DELIVERED';
+  return (
+    <span {...stopRow} style={{ display: 'flex', width: '100%' }}>
+      <Button
+        variant="ghost"
+        disabled={pending}
+        onClick={() => onSchedule({
+          type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind,
+          deliveryState: delivered ? 'PENDING_DELIVERY' : 'DELIVERED',
+        })}
+        title={delivered
+          ? 'Marked delivered — click to reopen this leg (does not reopen the case)'
+          : 'Mark this leg delivered (records the leg only; does not close the case)'}
+      >
+        {delivered ? 'Delivered' : 'Mark delivered'}
+      </Button>
+    </span>
+  );
+}
+
 /* Helper 1 / Helper 2 — a type-to-search picker. SO + DP(on a trip) write the
    crew seat (delivery_order_crew for an SO, the trip for a DP, both via
    writeSeat); a service-case leg writes the trip crew through the schedule path
@@ -1444,6 +1474,15 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => o.delivery_message_status ?? '(none)',
       exportValue: (o) => o.delivery_message_status ?? '',
       sortFn: (a, b) => (a.delivery_message_status ?? '').localeCompare(b.delivery_message_status ?? ''),
+    },
+    {
+      /* Service-case per-leg "Mark Delivered" (owner 2026-11-06). Only ASSR legs
+         are actionable here; SO/DO/DP derive their own delivered state. */
+      key: 'assr_delivered', label: 'Delivered', width: 130, groupable: true,
+      accessor: (o) => <MarkDeliveredCell order={o} onSchedule={scheduleMutate} />,
+      searchValue: (o) => (isAssr(o) ? (o.delivery_state === 'DELIVERED' ? 'delivered done' : 'pending') : ''),
+      groupValue: (o) => (!isAssr(o) ? '(n/a)' : o.delivery_state === 'DELIVERED' ? 'Delivered' : 'Pending'),
+      exportValue: (o) => (isAssr(o) && o.delivery_state === 'DELIVERED' ? 'Delivered' : ''),
     },
     /* delivery_state (coarse Pending/Schedule/Overdue/Delivered) and
        arrangement_stage (its Pending-Schedule sub-state) are no longer board
