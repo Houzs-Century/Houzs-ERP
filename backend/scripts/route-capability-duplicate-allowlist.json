@@ -25,5 +25,14 @@
       "backend/src/scm/routes/public-images.ts:35"
     ],
     "reason": "POS cutover #11a: modelPhotoProxyHandler is registered both by the authed product-models router and by the pre-auth publicScmImages proxy (public-images.ts) so the cross-origin 2990 POS can load Model hero photos with a plain <img> (no bearer). Same exported handler; the pre-auth mount wins by ordering. Intentional."
+  },
+  {
+    "method": "GET",
+    "path": "/api/scm/maintenance-config/sofa-compartments/:code/photo/:key",
+    "sources": [
+      "backend/src/scm/routes/public-images.ts:55",
+      "backend/src/scm/routes/sofa-compartment-photos.ts:165"
+    ],
+    "reason": "compartmentPhotoProxyHandler is registered both by the authed sofa-compartment-photos router and by the pre-auth publicScmImages proxy (public-images.ts) so the cross-origin 2990 POS and the Houzs SPA can load compartment photos with a plain <img> (no bearer). Same exported handler; the pre-auth mount wins by ordering. Intentional, same pattern as the product-models photo."
   }
 ]

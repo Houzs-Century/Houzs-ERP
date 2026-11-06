@@ -8,4 +8,4 @@
 - Read routes requiring manual capability classification: 110
 - Routes with no static authentication gate: 54
 - Routes with a handler-local credential guard: 9
-- Allowlisted duplicate method/path registrations requiring removal: 3
+- Allowlisted duplicate method/path registrations requiring removal: 4
