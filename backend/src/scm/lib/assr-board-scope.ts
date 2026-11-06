@@ -68,6 +68,15 @@ export const ASSR_CONFIRMED_COL = {
   customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
 } as const;
 
+/** The date Logistics stamps when it marks a leg DELIVERED on the board (owner
+ *  2026-11-06), independent of case closure — a board mark records THAT leg only
+ *  and never closes the case. The pickup leg reuses the existing actual_pickup_at;
+ *  inspection and delivery got their own columns (mig 20261105T0900). assrBoardLegs
+ *  reads these so a marked leg shows DELIVERED while the case stays open. */
+export const ASSR_ACTUAL_COL = {
+  customer_pickup: 'actual_pickup_at', inspection: 'actual_inspection_at', delivery: 'actual_delivery_at',
+} as const;
+
 /** The Time Slot a Service Case keeps per leg (HC-0194), typed on the board. */
 export const ASSR_LEG_TIME_COL = {
   customer_pickup: 'pickup_time_range', inspection: 'inspection_time_range', delivery: 'delivery_time_range',
@@ -105,8 +114,8 @@ export function assrCaseClosed(a: { closed_at: string | null; archived_at: strin
 export type AssrBoardCase = {
   stage: string | null;
   pickup_by: string | null; pickup_pic: string | null; customer_pickup_at: string | null; actual_pickup_at: string | null; sched_pickup_date: string | null;
-  inspection_by: string | null; inspection_visit_at: string | null; sched_inspection_date: string | null;
-  delivery_by: string | null; do_date: string | null; sched_delivery_date: string | null;
+  inspection_by: string | null; inspection_visit_at: string | null; sched_inspection_date: string | null; actual_inspection_at: string | null;
+  delivery_by: string | null; do_date: string | null; sched_delivery_date: string | null; actual_delivery_at: string | null;
 };
 export type AssrBoardLeg = {
   jobKind: 'customer_pickup' | 'delivery' | 'inspection';
@@ -135,12 +144,15 @@ export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardL
     add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || PAST_PICKUP.has(a.stage ?? ''));
   }
   if (a.inspection_by === 'own' && (a.inspection_visit_at || a.sched_inspection_date)) {
-    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || PAST_INSPECTION.has(a.stage ?? ''));
+    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || Boolean(a.actual_inspection_at) || PAST_INSPECTION.has(a.stage ?? ''));
   }
   const deliveryDated = Boolean(a.do_date || a.sched_delivery_date);
   const deliveryOwn = a.delivery_by === 'own' || (a.delivery_by == null && deliveryDated);
   if (deliveryOwn && (deliveryDated || a.stage === 'pending_delivery_service')) {
-    add('delivery', a.do_date, a.sched_delivery_date, caseClosed);
+    // The delivery leg is Delivered once the case closes OR Logistics marked it
+    // Delivered on the board (actual_delivery_at) — a board mark does NOT close
+    // the case (owner 2026-11-05).
+    add('delivery', a.do_date, a.sched_delivery_date, caseClosed || Boolean(a.actual_delivery_at));
   }
   return legs;
 }
@@ -169,6 +181,8 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_by     AS pickup_by,
               assr_cases.pickup_pic    AS pickup_pic,
               assr_cases.actual_pickup_at AS actual_pickup_at,
+              assr_cases.actual_inspection_at AS actual_inspection_at,
+              assr_cases.actual_delivery_at AS actual_delivery_at,
               assr_cases.sched_pickup_date AS sched_pickup_date,
               assr_cases.sched_inspection_date AS sched_inspection_date,
               assr_cases.sched_delivery_date AS sched_delivery_date,
