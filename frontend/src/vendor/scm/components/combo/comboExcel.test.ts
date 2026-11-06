@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import { buildStyledXlsx } from '../../lib/styled-xlsx';
 import type { SofaComboRule } from '../../lib/sofa-combos-queries';
-import { comboBook, fitSlots, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
+import { comboBook, fitSlots, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
 import { comboSheets, planComboImport, type ComboGrids } from './comboExcel';
 
 const rule = (over: Partial<SofaComboRule>): SofaComboRule => ({
@@ -15,7 +15,7 @@ const OWN = ['1A(LHF)', '1A(RHF)', '2A(LHF)', '2A(RHF)', 'CNR', 'L(LHF)', 'L(RHF
 const lines = (rules: SofaComboRule[]): ComboLine[] => [...comboBook(rules).values()].flat();
 
 function roundTrip(sheetLines: ComboLine[], supplier: string | null): ComboGrids {
-  const wb = read(buildStyledXlsx(comboSheets(sheetLines, supplier, ['24', '28'])), { type: 'array' });
+  const wb = read(buildStyledXlsx(comboSheets(sheetLines, supplier, () => ['24', '28'])), { type: 'array' });
   const grids: ComboGrids = {};
   for (const name of wb.SheetNames) {
     grids[name] = utils.sheet_to_json<unknown[]>(wb.Sheets[name]!, { header: 1, raw: false, defval: '' }).map((r) => r.map((v) => String(v).trim()));
@@ -52,6 +52,19 @@ describe('copying a combo to another model', () => {
   });
   it('reads a preset piece as both sides', () => {
     expect(presetSlots('2A + CNR', OWN)).toEqual([['2A(LHF)', '2A(RHF)'], ['CNR']]);
+  });
+});
+
+describe('the sizes of a model', () => {
+  it('follows the master when the model has no list of its own', () => {
+    expect(offeredSizes(undefined, ['24', '30', '26'], [])).toEqual(['24', '26', '30']);
+    expect(offeredSizes([], ['24'], [])).toEqual(['24']);
+  });
+  it('uses the model list when it has one', () => {
+    expect(offeredSizes(['28'], ['24', '28', '30'], [])).toEqual(['28']);
+  });
+  it('never hides a size that already has a price', () => {
+    expect(offeredSizes(['28'], ['24'], ['35'])).toEqual(['28', '35']);
   });
 });
 

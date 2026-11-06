@@ -11,32 +11,9 @@ import { comboKey, costAt, heightLabel, modulesBrief, parseRm, PRICE_TIERS, rm, 
 const MODULES_SHEET = 'Modules';
 const MIN_SLOT_COLUMNS = 4;
 
-const allSizes = (lines: readonly ComboLine[]): string[] => {
-  const sizes = new Set<string>();
-  for (const line of lines) {
-    for (const r of Object.values(line.byTier)) for (const h of Object.keys(r.pricesByHeight)) sizes.add(h);
-  }
-  return sortSizes(sizes);
-};
-
-/** The sizes a model offers in this file: those priced on any of its combos. A model
- *  with no price yet has none to go by, so every column is open to it. */
-function modelSizes(lines: readonly ComboLine[]): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
-  for (const line of lines) {
-    const set = out.get(line.baseModel) ?? new Set<string>();
-    for (const r of Object.values(line.byTier)) {
-      for (const [h, v] of Object.entries(r.pricesByHeight)) if (v != null) set.add(h);
-    }
-    out.set(line.baseModel, set);
-  }
-  return out;
-}
-
-export function comboSheets(lines: readonly ComboLine[], supplierName: string | null, fallbackSizes: readonly string[]): XlsxSheet[] {
-  const used = allSizes(lines).filter((h) => lines.some((l) => Object.values(l.byTier).some((r) => r.pricesByHeight[h] != null)));
-  const sizes = used.length > 0 ? used : sortSizes(fallbackSizes);
-  const offered = modelSizes(lines);
+export function comboSheets(lines: readonly ComboLine[], supplierName: string | null, sizesOf: (model: string) => readonly string[]): XlsxSheet[] {
+  const offered = new Map(lines.map((l) => [l.baseModel, new Set(sizesOf(l.baseModel))]));
+  const sizes = sortSizes(new Set([...offered.values()].flatMap((set) => [...set])));
   const head = [...(supplierName === null ? [] : ['Supplier']), 'Model', 'Combo', 'Modules'];
   const headerRow: XlsxCell[] = [...head, ...sizes, 'Effective from', 'Notes'].map((v) => ({ v, s: 'header' }));
 
@@ -46,7 +23,7 @@ export function comboSheets(lines: readonly ComboLine[], supplierName: string | 
     freeze: { rows: 1, cols: head.length },
     rows: [headerRow, ...lines.map((line): XlsxCell[] => {
       const rule = line.byTier[tier];
-      const has = offered.get(line.baseModel) ?? new Set<string>();
+      const has = offered.get(line.baseModel);
       return [
         ...(supplierName === null ? [] : [{ v: supplierName, s: 'read' as const }]),
         { v: line.baseModel, s: 'read' },
@@ -55,7 +32,7 @@ export function comboSheets(lines: readonly ComboLine[], supplierName: string | 
         ...sizes.map((h): XlsxCell => {
           const sen = costAt(line, tier, h);
           if (sen !== null) return { v: sen / 100, s: 'money' };
-          return { v: null, s: has.size === 0 || has.has(h) ? 'fill' : 'none' };
+          return { v: null, s: has?.has(h) ? 'fill' : 'none' };
         }),
         { v: rule ? fmtDate(rule.effectiveFrom) : '' },
         { v: '' },

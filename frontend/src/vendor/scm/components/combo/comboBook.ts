@@ -84,6 +84,11 @@ export const sortSizes = (sizes: Iterable<string>): string[] =>
     return na - nb || a.localeCompare(b);
   });
 
+/** The sizes a model is sold in: its own list when it has one, else the Maintenance
+ *  master, so a size added there shows up here. A size already priced always stays. */
+export const offeredSizes = (own: readonly string[] | undefined, master: readonly string[], priced: Iterable<string>): string[] =>
+  sortSizes(new Set([...(own && own.length > 0 ? own : master), ...priced]));
+
 const familyOf = (code: string): string => code.replace(/\((LHF|RHF)\)$/, '');
 
 /** "1A(LHF) or 1A(RHF)" reads as one piece: 1A. */

@@ -469,11 +469,11 @@ export function AdjustDialog({ chosen, tier, supplierId, today, onDone, onClose 
 
 // ─── Export ────────────────────────────────────────────────────────────
 
-export function ExportDialog({ model, book, supplierName, fallbackSizes, today, onClose }: {
+export function ExportDialog({ model, book, supplierName, sizesOf, today, onClose }: {
   model: string | null;
   book: ReadonlyMap<string, ComboLine[]>;
   supplierName: string | null;
-  fallbackSizes: readonly string[];
+  sizesOf: (model: string) => readonly string[];
   today: string;
   onClose: () => void;
 }) {
@@ -490,7 +490,7 @@ export function ExportDialog({ model, book, supplierName, fallbackSizes, today, 
   const download = async () => {
     if (scope.lines.length === 0) { void notify({ title: 'There are no combos to export here.', tone: 'error' }); return; }
     try {
-      await downloadComboWorkbook(comboSheets(scope.lines, supplierName, fallbackSizes), combosFileName(supplierName ?? 'Products', today));
+      await downloadComboWorkbook(comboSheets(scope.lines, supplierName, sizesOf), combosFileName(supplierName ?? 'Products', today));
       onClose();
     } catch (e) {
       void notify({ title: "Couldn't build the file", body: errText(e), tone: 'error' });
