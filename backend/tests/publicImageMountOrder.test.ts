@@ -1,5 +1,7 @@
 import { Hono, type Context, type Next } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { publicScmImages } from '../src/scm/routes/public-images';
+import { isCurrentCompartmentPhoto } from '../src/scm/routes/sofa-compartment-photos';
 
 /* ────────────────────────────────────────────────────────────────────────────
    Public image proxy mount order — mirrors the wiring in src/index.ts.
@@ -30,6 +32,7 @@ function buildApp() {
   const pub = new Hono();
   pub.get('/product-models/:id/photo/:key', (c) => c.text('IMG'));
   pub.get('/categories/:id/hero-blob', (c) => c.text('HERO'));
+  pub.get('/maintenance-config/sofa-compartments/:code/photo/:key', (c) => c.text('COMP'));
   app.route('/api/scm', pub);
 
   // Global gate (stand-in for `auth` + `requireScmAccess`).
@@ -42,6 +45,8 @@ function buildApp() {
   scm.get('/mfg-products', (c) => c.text('CATALOG'));
   scm.get('/product-models/:id', (c) => c.text('MODEL'));
   scm.post('/product-models/:id/photo', (c) => c.text('UPLOAD'));
+  scm.get('/maintenance-config/resolved', (c) => c.text('CONFIG'));
+  scm.post('/maintenance-config/sofa-compartments/:code/photo', (c) => c.text('COMP-UPLOAD'));
   app.route('/api/scm', scm);
 
   return app;
@@ -83,5 +88,66 @@ describe('public image proxy mount order (mirrors src/index.ts)', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('IMG');
+  });
+});
+
+describe('sofa-compartment photo proxy is public, the rest of /maintenance-config is not', () => {
+  const app = buildApp();
+  const url = '/api/scm/maintenance-config/sofa-compartments/3S/photo/sofa-compartments%2F3S%2Fu.png';
+
+  test('GET a compartment photo with no token -> 200', async () => {
+    const res = await app.request(url);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('COMP');
+  });
+
+  test('other /maintenance-config reads stay gated', async () => {
+    expect((await app.request('/api/scm/maintenance-config/resolved')).status).toBe(401);
+  });
+
+  test('uploading a compartment photo stays gated', async () => {
+    const res = await app.request('/api/scm/maintenance-config/sofa-compartments/3S/photo', { method: 'POST' });
+    expect(res.status).toBe(401);
+  });
+
+  // The stubs above prove the routing; this proves the REAL public router
+  // declares exactly the GET image paths, so the mirror can't drift from it.
+  test('the real public router exposes only GET image routes', () => {
+    const routes = publicScmImages.routes.map((r) => `${r.method} ${r.path}`).sort();
+    expect(routes).toEqual([
+      'GET /categories/:id/hero-blob',
+      'GET /maintenance-config/sofa-compartments/:code/photo/:key',
+      'GET /product-models/:id/photo/:key',
+    ]);
+  });
+});
+
+describe('isCurrentCompartmentPhoto (company picked by the key, not the request)', () => {
+  const k2 = 'sofa-compartments/3S/new.png';
+  const rows = [
+    { company_id: 2, meta: { '3S': { imageKey: k2 } } },
+    { company_id: 1, meta: { '3S': { imageKey: 'sofa-compartments/3S/houzs.png' } } },
+    { company_id: 2, meta: { '3S': { imageKey: 'sofa-compartments/3S/old.png' } } },
+  ];
+
+  test("serves company 2's current photo with no company on the request", () => {
+    expect(isCurrentCompartmentPhoto(rows, '3S', k2)).toBe(true);
+  });
+
+  test("serves another company's current photo too", () => {
+    expect(isCurrentCompartmentPhoto(rows, '3S', 'sofa-compartments/3S/houzs.png')).toBe(true);
+  });
+
+  test('refuses a key from a superseded row', () => {
+    expect(isCurrentCompartmentPhoto(rows, '3S', 'sofa-compartments/3S/old.png')).toBe(false);
+  });
+
+  test('refuses a key stored under a different compartment', () => {
+    expect(isCurrentCompartmentPhoto(rows, 'CNR', k2)).toBe(false);
+  });
+
+  test('refuses when nothing is stored', () => {
+    expect(isCurrentCompartmentPhoto([{ company_id: 2, meta: null }], '3S', k2)).toBe(false);
+    expect(isCurrentCompartmentPhoto([], '3S', k2)).toBe(false);
   });
 });

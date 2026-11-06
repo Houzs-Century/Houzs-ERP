@@ -23,11 +23,12 @@
 // Endpoints (all routed under /maintenance-config/sofa-compartments/:code):
 //   POST   /photo                    — multipart upload (auth: any signed-in staff)
 //   DELETE /photo                    — delete + null the imageKey      (auth)
-//   GET    /photo/:key               — proxy read for POS <img src>    (public)
+//   GET    /photo/:key               — proxy read for <img src>        (public:
+//          mounted outside the auth gate by public-images.ts)
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
-import { createClient } from '@supabase/supabase-js';
+import { Hono, type Context } from 'hono';
+import { getSupabaseService } from '../../db/supabase';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -85,17 +86,38 @@ type MaintenanceConfig = {
   [key: string]: unknown;
 };
 
+/** True when `key` is the photo of `code` on some company's CURRENT master row.
+ *  `rows` are master rows ordered newest effective first; the first row seen for
+ *  a company is its current one, so a key from a superseded row never matches. */
+export function isCurrentCompartmentPhoto(
+  rows: ReadonlyArray<{ company_id: number | null; meta: Record<string, CompartmentMeta> | null }>,
+  code: string,
+  key: string,
+): boolean {
+  const seen = new Set<number | null>();
+  for (const r of rows) {
+    if (seen.has(r.company_id)) continue;
+    seen.add(r.company_id);
+    if (r.meta?.[code]?.imageKey === key) return true;
+  }
+  return false;
+}
+
 // ── Public photo proxy (no auth) ─────────────────────────────────────────
 //
-// Registered BEFORE supabaseAuth so the POS catalog can render compartment
-// photos via plain <img src> tags. Security: validates the requested key
-// against the compartment's stored imageKey before streaming so a guessed
-// key can't leak a blob from another compartment's prefix or an unrelated
-// R2 object. Uses the service-role client for the read since no JWT is
-// presented.
-sofaCompartmentPhotos.get('/:code/photo/:key', async (c) => {
-  const code = decodeCode(c.req.param('code'));
-  const key  = decodeCode(c.req.param('key'));
+// Exported and mounted OUTSIDE the global auth gate by public-images.ts, so the
+// POS and the Houzs SPA can draw compartment photos with a plain <img src>
+// (which sends no bearer token). The registration below on this router is
+// shadowed by that public mount. Security: the requested key must be the
+// compartment's stored imageKey on a company's current master row before
+// anything is streamed, so a guessed key can't leak an unrelated R2 object.
+//
+// No auth means no active company (an <img> sends no X-Company-Id), so this
+// does not scopeToCompany: the key is a random uuid, and matching it against
+// each company's current row is what picks the company.
+export const compartmentPhotoProxyHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  const code = decodeCode(c.req.param('code') ?? '');
+  const key  = decodeCode(c.req.param('key') ?? '');
 
   if (!c.env.SO_ITEM_PHOTOS) {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
@@ -105,26 +127,18 @@ sofaCompartmentPhotos.get('/:code/photo/:key', async (c) => {
     return c.json({ error: 'key_not_in_compartment' }, 404);
   }
 
-  const sb = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  // Look up the current effective master-scope config row.
-  const { data: row } = await scopeToCompany(
-    sb.from('maintenance_config_history').select('id, config'),
-    c,
-  )
+  // getSupabaseService defaults to the scm schema, where this table lives; a
+  // bare createClient would query the public schema instead.
+  const { data: rows, error } = await getSupabaseService(c.env)
+    .from('maintenance_config_history')
+    .select('company_id, meta:config->sofaCompartmentMeta')
     .eq('scope', 'master')
     .lte('effective_from', todayMyt())
     .order('effective_from', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!row) return c.json({ error: 'config_not_found' }, 404);
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed' }, 500);
 
-  const cfg  = row.config as MaintenanceConfig;
-  const meta = cfg.sofaCompartmentMeta?.[code];
-  if (!meta?.imageKey || meta.imageKey !== key) {
+  if (!isCurrentCompartmentPhoto((rows ?? []) as never, code, key)) {
     return c.json({ error: 'photo_not_in_compartment' }, 404);
   }
 
@@ -147,7 +161,8 @@ sofaCompartmentPhotos.get('/:code/photo/:key', async (c) => {
       'cache-control': 'public, max-age=31536000, immutable',
     },
   });
-});
+};
+sofaCompartmentPhotos.get('/:code/photo/:key', compartmentPhotoProxyHandler);
 
 // ── Auth gate ────────────────────────────────────────────────────────────
 sofaCompartmentPhotos.use('*', supabaseAuth);
