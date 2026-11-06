@@ -313,7 +313,7 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
                   <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
                   <td style={cell}>{b.file_name}</td>
                   <td style={cell}>{b.period_from} → {b.period_to}</td>
-                  <td style={num}>{fmt(b.net_sen)}</td>
+                  <td style={num}>{fmt(payableOf(b))}</td>
                   <td style={{ ...cell, color: good }}>{b.confirmed_count} line(s) done</td>
                   <td style={cell}>
                     <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
@@ -660,7 +660,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       </div>
       {/* The period is on every line below as its own date; only the report's
           TOTAL is worth repeating here, because no single line carries it. */}
-      <div className={grid.sub}>net {fmt(batch.net_sen)}</div>
+      <div className={grid.sub}>net {fmt(payableOf(batch))}</div>
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -887,7 +887,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All reports</button>
         <b>{batch ? `${batch.acquirer_code} · ${batch.file_name}` : 'Loading…'}</b>
-        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</span>}
+        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(payableOf(batch))}</span>}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
