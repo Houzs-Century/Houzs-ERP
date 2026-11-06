@@ -10,10 +10,12 @@ vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: (
 
 const { hr } = await import('./hr');
 
+const CO = 7; // any company: the route stamps whichever one is active
+
 function app(sb: ReturnType<typeof fakeSb>, perms: string[]) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
   a.use('*', async (c, next) => {
-    c.set('companyId', 2);
+    c.set('companyId', CO);
     c.set('supabase', sb as never);
     c.set('houzsUser' as never, { id: 9, name: 'HR', permissions_set: new Set(perms) } as never);
     await next();
@@ -42,7 +44,7 @@ describe('POST /hr/item-kpi/batch', () => {
     expect(items.every((i) => i.bonusSen === 12500 && i.active)).toBe(true);
     const rows = (await sb.from('hr_item_kpi').select('ref, company_id')).data as { ref: string; company_id: number }[];
     expect(rows).toHaveLength(13);
-    expect(rows.every((r) => r.company_id === 2)).toBe(true);
+    expect(rows.every((r) => r.company_id === CO)).toBe(true);
   });
 
   it('writes nothing when one rule is invalid', async () => {
