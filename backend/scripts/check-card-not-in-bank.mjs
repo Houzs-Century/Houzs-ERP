@@ -8,6 +8,7 @@ import postgres from 'postgres';
 import { pgSslMode } from './lib/pg-ssl-mode.mjs';
 import { countsInTheBooks } from '../src/acc/reversal-pairs.ts';
 import { inBankShares, paymentKey } from '../src/acc/card-in-bank.ts';
+import { merchantKeyedAs } from '../src/acc/merchant-names.ts';
 
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL is not set'); process.exit(2); }
@@ -25,7 +26,7 @@ await sql.begin('READ ONLY', async (tx) => {
   for (const co of companies) {
     const c = Number(co.id);
     out(`==== company ${c} (${co.code}) as at ${TODAY}`);
-    const acquirers = await tx`SELECT code, display_name, transit_account_code, bank_account_code, is_active FROM scm.acc_acquirers WHERE company_id = ${c} ORDER BY code`;
+    const acquirers = await tx`SELECT code, display_name, so_names, transit_account_code, bank_account_code, is_active FROM scm.acc_acquirers WHERE company_id = ${c} ORDER BY code`;
     const [role] = await tx`SELECT account_code FROM scm.acc_account_roles WHERE company_id = ${c} AND role = 'TRANSIT_EDC'`;
     const edc = role?.account_code ?? '326-0000';
     const codes = [...new Set([edc, ...acquirers.map((a) => a.transit_account_code)].filter(Boolean))];
@@ -68,6 +69,7 @@ await sql.begin('READ ONLY', async (tx) => {
     const byMonth = new Map();
     const byMonthAcq = new Map();
     const noReportDays = new Map();
+    const notClaimed = new Map();
     let negative = 0;
     for (const l of lines) {
       const sen = Number(l.debit_sen) - Number(l.credit_sen);
@@ -83,7 +85,8 @@ await sql.begin('READ ONLY', async (tx) => {
       const pay = payById.get(String(l.source_doc_no));
       const candidates = acqOfAccount.get(l.account_code) ?? [];
       const provider = String(pay?.merchant_provider ?? '').trim();
-      const acq = row?.acquirer_code ?? (candidates.includes(provider) ? provider : candidates.find((x) => x.toUpperCase() === provider.toUpperCase()) ?? (candidates.length === 1 ? candidates[0] : provider || '(unknown)'));
+      const named = merchantKeyedAs(provider, acquirers);
+      const acq = row?.acquirer_code ?? named?.code ?? (provider ? `keyed:${provider}` : candidates.length === 1 ? candidates[0] : '(no merchant keyed)');
       const rest = sen - now;
       const stage = rest === 0 ? null
         : row ? (row.confirmed_at ? 'statementNoCredit' : 'linkedNotConfirmed')
@@ -95,8 +98,40 @@ await sql.begin('READ ONLY', async (tx) => {
         add(map, kk, 'inBankAtMonthEnd', atEnd);
         if (stage) add(map, kk, stage, rest);
       }
-      if (stage === 'noReport') add(noReportDays, `${acq} ${month}`, 'sen', rest);
+      if (stage === 'noReport') {
+        add(noReportDays, `${acq} ${month}`, 'sen', rest);
+        const r = noReportDays.get(`${acq} ${month}`);
+        r.days = r.days ?? new Set();
+        r.days.add(day.slice(8));
+      }
+      if (stage === 'reportNotClaimed') add(notClaimed, `${acq} ${month}`, 'sen', rest);
     }
+    out('-- no report for the day, by acquirer and month: RM | days');
+    for (const k of [...noReportDays.keys()].sort()) { const r = noReportDays.get(k); out(`${k} | ${rm(r.sen)} | ${[...r.days].sort().join(' ')}`); }
+    out('-- report covers the day, payment not claimed, by acquirer and month: RM');
+    for (const k of [...notClaimed.keys()].sort()) out(`${k} | ${rm(notClaimed.get(k).sen)}`);
+    const waiting = new Map();
+    for (const r of rows) {
+      if (r.confirmed_at || r.bucket === 'IGNORED') continue;
+      const k = `${r.acquirer_code} ${String(r.txn_date).slice(0, 7)} ${r.bucket}`;
+      add(waiting, k, 'n', 1);
+      add(waiting, k, 'gross', Number(r.gross_sen));
+    }
+    out('-- report lines still waiting (not confirmed, not set aside), by acquirer, swipe month and bucket: lines | gross RM');
+    for (const k of [...waiting.keys()].sort()) out(`${k} | ${waiting.get(k).n} | ${rm(waiting.get(k).gross)}`);
+    const credits = new Map();
+    for (const r of receipts) if (r.je_no) add(credits, String(r.received_on).slice(0, 7), 'sen', Number(r.amount_sen));
+    out(`-- bank credits booked against statements, by the bank's month: ${[...credits.keys()].sort().map((k) => `${k} ${rm(credits.get(k).sen)}`).join(', ')}`);
+    const openLines = await tx`
+      SELECT s.account_code, to_char(l.booked_on, 'YYYY-MM') AS month, l.kind, l.acquirer_code, count(*)::int AS n, sum(l.amount_sen)::bigint AS sen,
+             count(l.matched_batch_id)::int AS with_statement, count(l.split)::int AS with_split, min(l.booked_on)::text AS first, max(l.booked_on)::text AS last
+        FROM scm.acc_bank_statement_lines l JOIN scm.acc_bank_statements s ON s.id = l.statement_id
+       WHERE l.company_id = ${c} AND l.state = 'OPEN' AND l.amount_sen > 0 AND l.kind LIKE 'PAYOUT%'
+       GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3, 4`;
+    out('-- bank credits on the statements not booked yet: account month kind acquirer | count | RM | named statement | named split | first .. last');
+    for (const r of openLines) out(`${r.account_code} ${r.month} ${r.kind} ${r.acquirer_code ?? '-'} | ${r.n} | ${rm(r.sen)} | ${r.with_statement} | ${r.with_split} | ${r.first} .. ${r.last}`);
+    const cfg = await tx`SELECT account_code, bank_code, is_active FROM scm.acc_bank_statement_config WHERE company_id = ${c} ORDER BY account_code`;
+    out(`bank statement setups: ${cfg.map((x) => `${x.account_code} ${x.bank_code}${x.is_active ? '' : ' (off)'}`).join(', ')}`);
     out('-- by swipe month: swipes | in bank at month end (what By month shows) | in bank today | not in bank today, of which: statement confirmed but no bank credit booked | linked, not confirmed | report covers the day, payment not claimed | no report for the day');
     for (const k of [...byMonth.keys()].sort()) {
       const r = byMonth.get(k);
