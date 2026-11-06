@@ -865,7 +865,12 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
      GUID (owner 2026-11-06), the worker's path saves as the document. An iframe
      with no src fires load too, so print listens only once the real one is set. */
   void (async () => {
-    const path = await putPrintPreview(blob, filename).catch(() => null);
+    let path: string | null = null;
+    try {
+      path = await putPrintPreview(blob, filename);
+    } catch {
+      // Any storage/worker failure just means the blob, as in the preview tab.
+    }
     if (opts.print) iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); }, { once: true });
     iframe.src = path ?? blobUrl;
   })();
