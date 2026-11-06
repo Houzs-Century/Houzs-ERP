@@ -5,6 +5,7 @@
 // call. NEVER posts stock; NEVER creates a standalone GRN.
 // ---------------------------------------------------------------------------
 
+import { todayMyt } from './my-time';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { companyCodeById } from './doc-no';
@@ -150,7 +151,7 @@ export async function draftFromScan(
     companyCode,
     picks: match.picks,
     notes: [doRef, weakNote, nameNote, soNote, unmatchedNote].filter(Boolean).join(' · '),
-    receivedDate: parsed.deliveryDate ?? undefined,
+    receivedDate: todayMyt(),
     deliveryNoteRef: parsed.doNo,
   });
 
