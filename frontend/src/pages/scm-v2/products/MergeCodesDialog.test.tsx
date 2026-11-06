@@ -17,9 +17,9 @@ describe('MergeCodesDialog', () => {
     fireEvent.change(screen.getByPlaceholderText(/code that stays/i), { target: { value: 'ZZ9901-1S' } });
     fireEvent.change(screen.getByLabelText('Add a code to merge'), { target: { value: 'ZZ9901-2S' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(screen.getByText(/Keeping ZZ9901-1S, merging 1 code\(s\) into it\. Not checked yet\./)).toBeTruthy();
+    expect(screen.getByText(/Keeping ZZ9901-1S, merging 1 code\(s\) into it. Press Check next./)).toBeTruthy();
     expect(screen.getByText(/Press Check first/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: /Merge 0 code/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => expect((screen.getByRole('button', { name: /Merge 1 code/ }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByText(/Check passed\./)).toBeTruthy();

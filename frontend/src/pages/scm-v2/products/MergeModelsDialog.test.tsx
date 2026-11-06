@@ -36,7 +36,7 @@ describe('Merge models', () => {
     fetcher.mockResolvedValueOnce(plan({ refusals: ['different main suppliers'] }));
     open();
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
-    expect(await screen.findByText('Refused: different main suppliers')).toBeTruthy();
+    expect(await screen.findByText('Cannot merge: different main suppliers')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

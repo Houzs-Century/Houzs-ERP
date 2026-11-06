@@ -108,10 +108,10 @@ export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose
 
       {plan && (
         <div style={{ padding: 8, border: '1px solid var(--line)', borderRadius: 4 }}>
-          {plan.refusals.map((r) => <div key={r} role="alert" style={{ color: 'var(--c-err, #b3261e)' }}>Refused: {r}</div>)}
+          {plan.refusals.map((r) => <div key={r} role="alert" style={{ color: 'var(--c-err, #b3261e)' }}>Cannot merge: {r}</div>)}
           {plan.keptOff && <div>The kept Model is off today and switches on.</div>}
           {plan.moves.map((m) => <div key={m.code} style={mono}>Size {m.size}: {m.code} moves under the kept Model</div>)}
-          {plan.pairs.map((p) => <div key={p.drop} style={mono}>Size {p.size}: {p.drop} merges into {p.keep} ({p.lines} line(s), {p.units} unit(s))</div>)}
+          {plan.pairs.map((p) => <div key={p.drop} style={mono}>Size {p.size}: {p.drop} merges into {p.keep} ({p.lines} document line(s), {p.units} in stock)</div>)}
           {plan.fills.map((f) => <div key={`${f.code}-${f.field}`} style={mono}>{f.code} takes {f.field} from {f.from}</div>)}
           {plan.addSizes.length > 0 && <div>Sizes added to the kept Model: {plan.addSizes.join(', ')}</div>}
           {plan.foldModels.map((m) => <div key={m} style={mono}>{m} switches off</div>)}
@@ -120,7 +120,7 @@ export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose
         </div>
       )}
 
-      {!plan && <p style={hint}>Press Check first. Merge turns on only after a Check with nothing refused. Changing a Model asks for a new Check.</p>}
+      {!plan && <p style={hint}>Press Check first. It changes nothing and shows what will move. Then press Merge.</p>}
       {error && <p role="alert" style={{ color: 'var(--c-err, #b3261e)', margin: 0 }}>{error}</p>}
       {done && <p role="status" style={{ margin: 0 }}>{done}</p>}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
