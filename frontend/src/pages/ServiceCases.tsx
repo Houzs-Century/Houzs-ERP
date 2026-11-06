@@ -127,7 +127,7 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
-import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, missingCaseFields, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
@@ -2499,6 +2499,11 @@ function CreatePanel({
   // any other string → either a canonical category or a custom label.
   const [issueCategory, setIssueCategory] = useState<string>("");
   const [customCategory, setCustomCategory] = useState("");
+  const stillNeeded = missingCaseFields([
+    ["SO number", docNo],
+    ["Issue description", issue],
+    ["Issue category", issueCategory === OTHER_SENTINEL ? customCategory : issueCategory],
+  ]);
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<{ name?: string; phone?: string; location?: string } | null>(null);
@@ -3155,16 +3160,11 @@ function CreatePanel({
             #842): block Create until a category resolves — the disabled gate
             below mirrors submit()'s resolve logic, so "Other…" also requires
             the custom label. FE gate; server still accepts a null category. */}
+        {stillNeeded.length > 0 && <div role="status" className="mb-2 text-xs text-red-700">Still needed: {stillNeeded.join(", ")}</div>}
         <Button
           variant="primary"
           onClick={submit}
-          disabled={
-            submitting ||
-            !docNo.trim() ||
-            !issue.trim() ||
-            !issueCategory ||
-            (issueCategory === OTHER_SENTINEL && !customCategory.trim())
-          }
+          disabled={submitting || stillNeeded.length > 0}
         >
           {uploadProgress
             ? `Uploading ${uploadProgress.done}/${uploadProgress.total}…`
