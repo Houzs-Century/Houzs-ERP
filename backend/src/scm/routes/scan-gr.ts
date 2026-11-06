@@ -39,6 +39,7 @@ import {
 import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
 import { draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
 import { reviewOfRead } from '../lib/grn-scan-check-read';
+import { todayMyt } from '../lib/my-time';
 import { buildTeachOptions, saveScanCodes } from '../lib/grn-scan-codes';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -221,7 +222,7 @@ async function runGrnScanJob(
     await storeGrnScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
 
     if (job.review) {
-      const { review, note } = await reviewOfRead(svc, job.companyId, parsed);
+      const { review, note } = await reviewOfRead(svc, job.companyId, parsed, todayMyt());
       await touch({ status: 'done', review_state: 'pending', review, error: note });
       return;
     }
