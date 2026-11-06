@@ -22,6 +22,6 @@ describe('MergeCodesDialog', () => {
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => expect((screen.getByRole('button', { name: /Merge 1 code/ }) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getByText(/Check passed\./)).toBeTruthy();
+    expect(screen.getByText(/Ready to merge\./)).toBeTruthy();
   });
 });
