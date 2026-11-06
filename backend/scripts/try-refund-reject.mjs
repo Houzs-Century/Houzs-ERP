@@ -9,7 +9,7 @@ import postgres from 'postgres';
 import { Hono } from 'hono';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { pgSslMode } from './lib/pg-ssl-mode.mjs';
-import { paymentRequests } from '../src/scm/routes/payment-requests.ts';
+import { getPaymentRequestHandler, listPaymentRequestsHandler, returnPaymentRequestHandler, updatePaymentRequestHandler } from '../src/scm/routes/payment-requests.ts';
 import { soMoneyHandler, soMoneyRefundHandler } from '../src/scm/routes/so-money-routes.ts';
 import { ordersWithMoney } from '../src/scm/lib/so-money.ts';
 
@@ -44,7 +44,11 @@ function appFor(tx, co, code, user) {
     c.set('companyCode', code);
     await next();
   });
-  app.route('/payment-requests', paymentRequests);
+  /* The handlers themselves: the router's own sign-in step is what this harness stands in for. */
+  app.get('/payment-requests', listPaymentRequestsHandler);
+  app.get('/payment-requests/:id', getPaymentRequestHandler);
+  app.patch('/payment-requests/:id', updatePaymentRequestHandler);
+  app.post('/payment-requests/:id/return', returnPaymentRequestHandler);
   app.get('/mfg-sales-orders/:docNo/money', soMoneyHandler);
   app.post('/mfg-sales-orders/:docNo/money/refund', soMoneyRefundHandler);
   return async (path, method = 'GET', body) => {
