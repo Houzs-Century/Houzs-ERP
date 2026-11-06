@@ -211,7 +211,7 @@ describe('the header (the redesign)', () => {
     expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
     /* The chip, not the row tag of the same word. */
     fireEvent.click(screen.getAllByText('Checked')[0]!);
-    expect(screen.getByText(/Locked and reserved\. Approving posts the journal in the same step/)).toBeTruthy();
+    expect(screen.getByText(/Locked and reserved; only its words can still change\. Approving posts the journal in the same step/)).toBeTruthy();
   });
 });
 
