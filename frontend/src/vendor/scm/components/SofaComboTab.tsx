@@ -144,6 +144,10 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   const allLines = [...book.values()].flat();
   const allSizesEver = sortSizes(new Set([...heights, ...sizesInUse(allLines)]));
   const emptying = Object.values(edits).some((v) => v.trim() === '');
+  const editingAuto = Object.keys(edits).some((key) => {
+    const [lineKey, t] = JSON.parse(key) as [string, SofaPriceTier];
+    return lineByKey.get(lineKey)?.byTier[t]?.costSource === 'auto';
+  });
   const missing = allLines.filter((l) => !hasPrice(l)).length;
   const manual = allLines.filter((l) => l.byTier[tier]?.costSource === 'manual').length;
   const monthStart = `${today.slice(0, 7)}-01`;
@@ -339,6 +343,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'var(--c-warning-bg, #f6efd9)', color: 'var(--c-warning, #6e4d12)' }}>
               <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{editCount} {editCount === 1 ? 'price' : 'prices'} changed</strong>
               {emptying && <span style={{ fontSize: 'var(--fs-12)' }}>An emptied cell loses its price today, whatever the date.</span>}
+              {editingAuto && <span style={{ fontSize: 'var(--fs-12)' }}>Auto cost: the next supplier price save replaces this.</span>}
               <span style={{ fontSize: 'var(--fs-12)' }}>Effective from</span>
               <DateField value={effectiveFrom} onChange={setEffectiveFrom} aria-label="Effective from" />
               <Button variant="ghost" onClick={() => setEdits({})}>Discard</Button>
