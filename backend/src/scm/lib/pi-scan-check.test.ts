@@ -2,6 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import { billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
+import { familiesByModelWord } from './scan-word-match';
 import type { PiLineMatchResult } from './pi-scan-match';
 
 const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, supplierSku: null, description: null, remaining, unitPriceSen: 100_00 });
@@ -14,28 +15,28 @@ const row = (description: string, qty: number): PiReviewLine => ({ key: descript
 describe('pi scan check', () => {
   test('matched rows arrive tied, with what was printed; the rest stay to choose', () => {
     const match = { picks: [{ grnItemId: 'g1', qty: 2, grnNumber: 'HC-GRN-1', invoiceLineIndex: 0 }], unmatched: [{ invoiceLineIndex: 1, itemCode: 'ZZ', articleNo: null, description: 'x', qty: 1, billed: 0, reason: 'no_code_match' }], matchedLineCount: 1 } as PiLineMatchResult;
-    const r = buildPiReview(parsed, 's1', match, [], ['HC-GRN-1']);
+    const r = buildPiReview(parsed, 's1', match, [], ['HC-GRN-1'], new Map());
     expect(r).toMatchObject({ supplierId: 's1', invoiceNumber: 'INV 7', invoiceDate: '2026-11-03' });
     expect(r.lines.map((l) => [l.grnItemId, l.qty, l.read?.itemCode])).toEqual([['g1', 2, 'T1MAMJA0MK'], [null, 1, 'ZZ']]);
   });
   test('an invoice anchored to no GRN keeps every printed row', () => {
-    expect(buildPiReview(parsed, null, null, [], []).lines).toHaveLength(2);
+    expect(buildPiReview(parsed, null, null, [], [], new Map()).lines).toHaveLength(2);
   });
   test('a part billed row keeps only what the match could not bill', () => {
     const match = { picks: [], unmatched: [{ invoiceLineIndex: 0, itemCode: null, articleNo: null, description: null, qty: 2, billed: 1, reason: 'qty_short' }], matchedLineCount: 0 } as PiLineMatchResult;
-    expect(buildPiReview(parsed, 's1', match, [], []).lines[0].qty).toBe(1);
+    expect(buildPiReview(parsed, 's1', match, [], [], new Map()).lines[0].qty).toBe(1);
   });
   test('rows tie by name on the anchored GRN, never to the same SKU on another', () => {
     const lines = [row('Mattress Akemi Equinox K King', 1)];
-    suggestBills(lines, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-1', 'AKEMI EQUINOX MATT (K)', 1)], ['HC-GRN-1']);
+    suggestBills(lines, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-1', 'AKEMI EQUINOX MATT (K)', 1)], ['HC-GRN-1'], new Map());
     expect(lines[0]).toMatchObject({ grnItemId: 'y', suggested: true });
   });
   test('with no anchor, only a single fitting line of the supplier', () => {
     const one = [row('Akemi Equinox K King', 1)];
-    suggestBills(one, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1)], []);
+    suggestBills(one, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map());
     expect(one[0].grnItemId).toBe('x');
     const two = [row('Akemi Equinox K King', 1)];
-    suggestBills(two, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-3', 'AKEMI EQUINOX MATT (K)', 1)], []);
+    suggestBills(two, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-3', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map());
     expect(two[0].grnItemId).toBeNull();
   });
   test('the saved edit keeps known fields, drops a bad date and a negative qty', () => {
@@ -90,5 +91,27 @@ describe('a set billed on one row', () => {
     expect(setPieces(row(900), [piece('a', 90000), piece('b', 110000)])).toBeNull();
     expect(setPieces(row(2000, 2), [piece('a', 90000), piece('b', 110000)])).toBeNull();
     expect(setPieces(row(null), [piece('a', 90000), piece('b', 110000)])).toBeNull();
+  });
+});
+
+describe('NB prints its own code and the size in words (NBF2610-1322)', () => {
+  const row = (itemCode: string, description: string): PiReviewLine => ({ key: itemCode, grnItemId: null, grnNumber: null, qty: 1, suggested: false, read: { itemCode, description, qty: 1, unitPrice: 1380, lineTotal: 1380 } });
+  const receipt = [bill('h1', 'GRN-2', 'HILTON (A)-(Q)', 1), bill('h2', 'GRN-2', 'HILTON (A)-(Q)', 1), bill('c1', 'GRN-2', 'CODY-(Q)', 1), bill('g1', 'GRN-2', 'GOYO (A)-(K)', 1), bill('x1', 'GRN-9', 'HILTON (A)-(Q)', 1)];
+  const families = familiesByModelWord([{ supplierSku: 'NB-KHJ50(K)', itemCode: 'HILTON (A)-(K)' }, { supplierSku: 'NB-KHJ57(K)', itemCode: 'CODY-(K)' }]);
+  test('the code names the family through another size, the row names the size', () => {
+    const lines = [
+      row('SB10-B11EC-KHJ50(A)(MH-12")', 'FABRIC 3 DIVAN BED SEATER:5 FTS COL: FG66151-1'),
+      row('SB10-B11EC-KHJ57(MH-14")', 'FABRIC 3 DIVAN BED SEATER:5 FTS COL: FG66151-1'),
+      row('SB10-B14EC-KHJ50(A)(MH-12")', 'FABRIC 3 DIVAN BED SEATER:5 FTS COL: FG66151-2'),
+      row('SB12-KHB(C)-NH79(A)(MH-12")', 'FABRIC 3 DIVAN BED SEATER:6 FTS COL: FG66151-6'),
+    ];
+    suggestBills(lines, receipt, ['GRN-2'], families);
+    expect(lines.map((l) => l.grnItemId)).toEqual(['h1', 'c1', 'h2', 'g1']);
+    expect(lines.every((l) => l.suggested)).toBe(true);
+  });
+  test('with no receipt to anchor on, the last row of a size stays for a person', () => {
+    const lines = [row('SB12-KHB(C)-NH79(A)(MH-12")', '6 FTS')];
+    suggestBills(lines, receipt, [], families);
+    expect(lines[0]!.grnItemId).toBeNull();
   });
 });

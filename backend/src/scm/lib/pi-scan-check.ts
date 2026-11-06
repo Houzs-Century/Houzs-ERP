@@ -10,7 +10,7 @@
 import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
 import type { PiLineMatchResult } from './pi-scan-match';
-import { bestLines } from './scan-word-match';
+import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize } from './scan-word-match';
 
 /** A posted GRN line with something left to bill. */
 export type BillableLine = {
@@ -41,7 +41,7 @@ export type PiReview = {
   lines: PiReviewLine[];
 };
 
-export const PI_REVIEW_VERSION = 2;
+export const PI_REVIEW_VERSION = 3;
 
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -65,7 +65,7 @@ export function setPieces(row: PiReviewLine, lines: ReadonlyArray<BillableLine>)
 /** Tie rows the matcher left untied, by name: on the GRNs this invoice is
  *  anchored to, or, with none, only when exactly one line of the supplier fits.
  *  Each line takes only what is left to bill. */
-export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>): void {
+export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, families: ReadonlyMap<string, ReadonlySet<string>>): void {
   const left = new Map(open.map((l) => [l.grnItemId, l.remaining]));
   for (const l of lines) if (l.grnItemId) left.set(l.grnItemId, (left.get(l.grnItemId) ?? 0) - l.qty);
   const anchored = new Set(anchorGrns);
@@ -73,7 +73,13 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   for (const l of [...lines]) {
     if (l.grnItemId || !l.read?.description) continue;
     const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0);
-    const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode));
+    const printed = `${l.read.itemCode ?? ''} ${l.read.description}`;
+    /* NB prints SB10-B11EC-KHJ50(A)(MH-12") 5 FTS for HILTON (A)-(Q): the code names
+       the family through any size bound to this supplier, the row names the size. */
+    const printedFamilies = familiesPrinted(printed, families);
+    const size = printedSize(printed);
+    const family = owing.filter((o) => printedFamilies.has(familyOf(o.itemCode)) && (!size || lineSizeOf(o.itemCode) === size));
+    const named = family.length > 0 ? family : owing.filter((o) => nameFits(l.read?.description, o.itemCode));
     const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.description ?? ''}`);
     const scoped = anchored.size > 0 ? fits.filter((o) => anchored.has(o.grnNumber)) : fits;
     if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) continue;
@@ -88,12 +94,25 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     l.suggested = true;
     left.set(pick.grnItemId, (left.get(pick.grnItemId) ?? 0) - l.qty);
   }
+  /* What is left of an anchored receipt, one row for one line of the same size:
+     the invoice bills that receipt, so the last row of a size can only be that line. */
+  const bySize = new Map<string, PiReviewLine[]>();
+  for (const l of lines) {
+    const size = l.grnItemId || !l.read ? null : printedSize(`${l.read.itemCode ?? ''} ${l.read.description ?? ''}`);
+    if (size) bySize.set(size, [...(bySize.get(size) ?? []), l]);
+  }
+  for (const [size, rows] of bySize) {
+    const lefts = open.filter((o) => anchored.has(o.grnNumber) && lineSizeOf(o.itemCode) === size && (left.get(o.grnItemId) ?? 0) > 0);
+    if (rows.length !== 1 || lefts.length !== 1) continue;
+    rows[0]!.grnItemId = lefts[0]!.grnItemId;
+    rows[0]!.suggested = true;
+  }
 }
 
 /** The first working copy. Matched rows arrive tied to their GRN line; rows the
  *  matcher could not place arrive with what was printed, so nothing read is
  *  silently dropped. */
-export function buildPiReview(parsed: PiScanExtract | null, supplierId: string | null, match: PiLineMatchResult | null, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>): PiReview {
+export function buildPiReview(parsed: PiScanExtract | null, supplierId: string | null, match: PiLineMatchResult | null, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, families: ReadonlyMap<string, ReadonlySet<string>>): PiReview {
   const lines: PiReviewLine[] = [];
   for (const p of match?.picks ?? []) {
     const printed = parsed?.lines[p.invoiceLineIndex];
@@ -105,7 +124,7 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
     if (left > 0 && printed) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: left, suggested: false, read: readOf(printed) });
   }
   if (!match && parsed) for (const l of parsed.lines) if ((l.qty ?? 0) > 0) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: l.qty ?? 0, suggested: false, read: readOf(l) });
-  suggestBills(lines, open, anchorGrns);
+  suggestBills(lines, open, anchorGrns, families);
   // In the order the invoice prints them, so the card reads down beside the paper.
   const printedAt = new Map(parsed?.lines.map((l, i) => [l.description, i]) ?? []);
   const order = (l: PiReviewLine) => printedAt.get(l.read?.description ?? null) ?? Number.MAX_SAFE_INTEGER;
