@@ -19,6 +19,8 @@ import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
+import { focusPeriod, reportWindows } from "./logisticFocus";
+import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
@@ -35,7 +37,7 @@ const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
-  today: string; thisMonday: string; weeks: Week[];
+  today: string; thisMonday: string; weeks: Week[]; deliveredMonths: Array<{ month: string; doCount: number; doAmountSen: number }>;
   months: Array<{ month: string; doCount: number; doAmountSen: number }>;
   deliveredOwing: { count: number; balanceSen: number; oldestDays: number };
   deliveredOwingOver30: { count: number; balanceSen: number; oldestDays: number };
@@ -95,6 +97,15 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? [])
     .filter((o) => !activeCode || !o.company_code || o.company_code === activeCode)
     .filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse, activeCode]);
+  /* A region clicked on By region: every figure in this page's first and third
+     parts follows it. It lives in the URL, so a refresh or a shared link keeps it. */
+  const region = params.get("region");
+  const setRegion = (r: string | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (r) next.set("region", r); else next.delete("region");
+    return next;
+  }, { replace: true });
+  const regionRows: PlanningOrder[] = useMemo(() => (region ? allRows.filter((o) => regionOf(o.customer_state) === region) : allRows), [allRows, region]);
   const rows: PlanningOrder[] = useMemo(() => allRows.filter((o) => o.row_type === "so"), [allRows]);
   /* Every open sales order, as of today, by when it is due (owner 2026-10-17:
      3 days, a week, two weeks, a month, later), with how many are short of
@@ -128,11 +139,12 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const ready = open.filter((o) => o.is_ship_ready);
 
   const h = hist.data;
-  /* The weekly report follows the picked period, by week of the month
-     (owner 2026-10-18): W1 = 1st–7th, W2 = 8th–14th, W3 = 15th–21st,
-     W4 = 22nd–28th, W5 = 29th to the month's end. */
+  const focus = useMemo(() => (h?.period ? focusPeriod(h.period, region) : null), [h, region]);
+  /* The weekly and bi-weekly reports read Delivery Planning, not issued DOs (owner
+     2026-11-07): every order by its delivery date, confirmed with the customer or
+     not, so a week ahead is a forecast and moves as dates move on the board. */
+  const [reportSize, setReportSize] = useState<"week" | "fortnight">("week");
   const weeks = useMemo(() => {
-    const out: Array<{ key: string; label: string; from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean }> = [];
     const pad = (n: number) => String(n).padStart(2, "0");
     const months: string[] = [];
     for (let m = period.from.slice(0, 7); m <= period.to.slice(0, 7);) {
@@ -140,22 +152,16 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
       m = mm === 12 ? `${y + 1}-01` : `${y}-${pad(mm + 1)}`;
     }
-    for (const m of months) {
-      const last = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
-      [[1, 7], [8, 14], [15, 21], [22, 28], [29, last]].forEach(([a, b], i) => {
-        if (a! > last) return;
-        const from = `${m}-${pad(a!)}`; const to = `${m}-${pad(b!)}`;
-        const ds = (h?.period.doList ?? []).filter((d) => d.date >= from && d.date <= to);
-        out.push({
-          key: from, label: months.length > 1 ? `${m} · W${i + 1}` : `W${i + 1}`, from, to,
-          doCount: ds.length, doAmountSen: ds.reduce((x, d) => x + d.amountSen, 0), delivered: ds.filter((d) => d.status === "DELIVERED").length,
-          current: today >= from && today <= to,
-        });
-      });
-    }
-    return out;
-  }, [h, period.from, period.to, today]);
-  const months = h?.months ?? [];
+    const orders = regionRows.filter((o) => o.row_type === "so");
+    return reportWindows(months, reportSize).map((w) => {
+      const xs = orders.filter((o) => { const d = o.effective_delivery_date; return !!d && d >= w.from && d <= w.to; });
+      return {
+        ...w, rows: xs, doCount: xs.length, doAmountSen: xs.reduce((x, o) => x + o.local_total_sen, 0),
+        delivered: xs.filter((o) => o.delivery_state === "DELIVERED").length, current: today >= w.from && today <= w.to,
+      };
+    });
+  }, [regionRows, reportSize, period.from, period.to, today]);
+  const months = h?.deliveredMonths ?? [];
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
@@ -211,10 +217,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
-      <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
+      <LogisticPeriodSection rows={regionRows} period={period} today={today} totals={focus}
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
-      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} doList={h.period.doList} onDrill={openDos} />}
-      {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} onDrill={openDos} />}
+      {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} onDrill={openDos} />}
+      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.doCount} region={region} onDrill={openDos} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
@@ -282,38 +288,42 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
-      <Panel title="Weekly logistic report" hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
-        right={<Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />}>
+      <Panel title={`${reportSize === "week" ? "Weekly" : "Bi-weekly"} logistic report${region ? ` · ${region}` : ""}`} hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
+        right={<span className="flex items-center gap-2">
+          <Toggle value={reportSize} options={[["week", "Weekly"], ["fortnight", "Bi-weekly"]]} onChange={setReportSize} />
+          <Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />
+        </span>}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
           <Columns axes={false} valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
-            series={weekBy === "amount" ? [{ name: "DO amount", color: PALETTE[0]! }] : [{ name: "DO issued", color: PALETTE[0]! }, { name: "Marked delivered", color: TONE.good }]}
+            series={weekBy === "amount" ? [{ name: "Amount due", color: PALETTE[0]! }] : [{ name: "Orders due", color: PALETTE[0]! }, { name: "Delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
             line={weekBy === "amount" ? { name: "Average order", color: PALETTE[1]!, values: weeks.map((w) => (w.doCount ? Math.round(w.doAmountSen / w.doCount) : null)), format: rm } : null} />
           <table className="w-full border-collapse self-start">
-            <thead><tr><Th left>Week</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Marked delivered</Th></tr></thead>
+            <thead><tr><Th left>{reportSize === "week" ? "Week" : "Fortnight"}</Th><Th>Orders due</Th><Th>Amount</Th><Th>Average order</Th><Th>Delivered</Th><Th>To deliver</Th></tr></thead>
             <tbody>{weeks.map((w) => (
-              <tr key={w.key} onClick={() => openDos(`Delivered · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, (d) => d.date >= w.from && d.date <= w.to)}
+              <tr key={w.key} onClick={() => openSos(`Due · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, w.rows)}
                 className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>
                 <Td left>{w.label} <span className="text-ink-muted">{dd(w.from)} – {dd(w.to)}</span>{w.current ? " · now" : ""}</Td>
                 <Td>{w.doCount}</Td><Td>{rm(w.doAmountSen)}</Td><Td>{w.doCount ? rm(Math.round(w.doAmountSen / w.doCount)) : "—"}</Td>
-                <Td className={w.doCount > 5 && w.delivered === 0 && w.to < today ? "text-err" : ""}>{w.delivered}</Td>
+                <Td>{w.delivered}</Td>
+                <Td className={w.doCount > w.delivered && w.to < today ? "text-err" : ""}>{w.doCount - w.delivered}</Td>
               </tr>))}</tbody>
           </table>
         </div>
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Monthly delivery volume" hint="delivery orders issued each month"
+        <Panel title="Monthly delivery volume" hint="delivery orders confirmed delivered, in the month they were delivered"
           right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
           <Columns axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
-            series={[{ name: monthBy === "amount" ? "DO amount" : "DO issued", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
+            series={[{ name: monthBy === "amount" ? "Delivered amount" : "Delivered", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
             line={null} />
           <table className="mt-2 w-full border-collapse">
             <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th></tr></thead>
             <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td></tr>)}</tbody>
           </table>
-          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders raised in the ERP; months before the ERP took over delivery orders read low.</p>
+          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders confirmed delivered in the ERP; months before the ERP took over delivery orders read low.</p>
         </Panel>
         <section id="gaps">
           <Panel title="Process gaps" hint="why some figures above read low">
