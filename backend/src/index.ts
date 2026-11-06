@@ -397,7 +397,7 @@ app.route("/api/chat-callback", chatCallback);
 // public API routes above so they stay unauthenticated.
 // PUBLIC image proxies for the cross-origin POS — MUST be mounted BEFORE the
 // global `auth` + `requireScmAccess` gates so a plain <img src> (no Bearer, no
-// same-origin cookie) reaches them. Only these two GET routes are exposed; every
+// same-origin cookie) reaches them. Only these GET image routes are exposed; every
 // other /api/scm/* path is untouched and still hits the gates below. Mirrors how
 // 2990's api serves Model photos auth-free. See scm/routes/public-images.ts.
 app.route("/api/scm", publicScmImages);

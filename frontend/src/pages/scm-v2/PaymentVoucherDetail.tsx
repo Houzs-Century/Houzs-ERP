@@ -55,6 +55,7 @@ import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { PvLineEventCell } from './PvLineEventCell';
 import { AdvanceKnockOff } from './AdvanceKnockOff';
+import { PvTextEdit } from './PvTextEdit';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -220,6 +221,10 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
+  /* The first yes locks the voucher but not its words, until the second (owner
+     2026-11-06: 有时我要改 description). The list's Edit text opens with ?text=1. */
+  const mayEditText = isDraft && canWrite && isChecked && !isApprovedPv;
+  const [editingText, setEditingText] = useState(() => searchParams.get('text') === '1');
   /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
      A hook, so it sits above the loading return; onSave is defined below
      that return and the key reaches it through this ref. */
@@ -595,6 +600,11 @@ export const PaymentVoucherDetail = () => {
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
+                {mayEditText && !editingText && (
+                  <Button variant="ghost" size="md" onClick={() => setEditingText(true)} disabled={busy}>
+                    <Pencil {...ICON} /> Edit text
+                  </Button>
+                )}
                 {isDraft && canWrite && !isPrepared && (
                   <Button variant="primary" size="md" onClick={() => void onPrepare()} disabled={busy}>
                     <Send {...ICON} /> Prepare
@@ -784,6 +794,11 @@ export const PaymentVoucherDetail = () => {
           )}
         </div>
       </section>
+
+      {mayEditText && editingText && (
+        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} onClose={() => setEditingText(false)}
+          lines={lines.map((l) => ({ id: String(l.id), description: l.description ?? null }))} />
+      )}
 
       {/* ── Lines ─────────────────────────────────────────────────────── */}
       <section className={styles.card}>

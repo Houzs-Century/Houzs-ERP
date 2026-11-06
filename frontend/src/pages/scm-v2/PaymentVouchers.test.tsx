@@ -211,7 +211,7 @@ describe('the header (the redesign)', () => {
     expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
     /* The chip, not the row tag of the same word. */
     fireEvent.click(screen.getAllByText('Checked')[0]!);
-    expect(screen.getByText(/Locked and reserved\. Approving posts the journal in the same step/)).toBeTruthy();
+    expect(screen.getByText(/Locked and reserved; only its words can still change\. Approving posts the journal in the same step/)).toBeTruthy();
   });
 });
 
@@ -242,10 +242,13 @@ describe('the next step on each row (the redesign)', () => {
     fireEvent.click(screen.getByLabelText('More for PV-2609-002'));
     let menu = screen.getByRole('menu');
     for (const label of ['Open', 'Edit', 'Print', 'Print + files', 'Copy as new', 'Cancel…']) expect(within(menu).getByText(label)).toBeTruthy();
+    expect(within(menu).queryByText('Edit text')).toBeNull();
     fireEvent.click(within(menu).getByText('Open'));
     fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
     menu = screen.getByRole('menu');
     expect(within(menu).queryByText('Edit')).toBeNull();
+    /* A checked voucher takes its words only (owner 2026-11-06). */
+    expect(within(menu).getByText('Edit text')).toBeTruthy();
   });
 });
 

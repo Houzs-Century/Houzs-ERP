@@ -81,7 +81,7 @@ const CHIP_HINTS: Record<string, string> = {
   all: 'Every voucher in any stage. Tick vouchers to prepare, check, approve or print them together.',
   DRAFT: 'Still being written, so everything can change. Prepare hands it on for the check.',
   PREPARED: 'Prepared and still editable. Checking locks it, gives it its formal number and reserves the money in Money today.',
-  CHECKED: 'Locked and reserved. Approving posts the journal in the same step. Reject is on the voucher page.',
+  CHECKED: 'Locked and reserved; only its words can still change. Approving posts the journal in the same step. Reject is on the voucher page.',
   POSTED: 'Posted to the ledger. Cancel is on the voucher page: it reverses the journal and deletes nothing.',
   ADVANCE: 'Advances paid to a supplier that no bill has used yet. Applying one to a bill posts nothing new.',
   CANCELLED: 'Cancelled vouchers keep their number. Their journal was reversed by a contra entry.',
@@ -418,11 +418,15 @@ export const PaymentVouchers = () => {
   };
 
   /* ⋯ and right-click: one menu (the design's pvMenu). Edit only while the
-     voucher can still change (Draft, Prepared) — a checked one is locked. */
+     voucher can still change (Draft, Prepared) — a checked one is locked, its
+     words apart (owner 2026-11-06). */
   const menuOf = (r: PaymentVoucherRow): GridContextMenuItem[] => {
     const menu: GridContextMenuItem[] = [{ label: 'Open', onClick: () => openDoc(r) }];
     if (canWrite && (isPreparable(r) || isCheckable(r))) {
       menu.push({ label: 'Edit', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?edit=1`) });
+    }
+    if (canWrite && isApprovable(r) && r.approved_at == null) {
+      menu.push({ label: 'Edit text', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
     }
     menu.push({ divider: true });
     menu.push({ label: 'Print', onClick: () => void printVouchers([r], false, 'print') });

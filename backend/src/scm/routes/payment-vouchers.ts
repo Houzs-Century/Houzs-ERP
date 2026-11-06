@@ -73,6 +73,7 @@ import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler, splitPdfHandler } from './pv-extract';
 import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
 import { remindApproverHandler } from './payment-vouchers-remind';
+import { updatePaymentVoucherTextHandler } from './payment-vouchers-text';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
@@ -967,6 +968,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   return c.json({ paymentVoucher: data });
 };
 paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
+
+paymentVouchers.patch('/:id/text', updatePaymentVoucherTextHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    POST /:id/post — write the balanced GL entry, flip DRAFT → POSTED
