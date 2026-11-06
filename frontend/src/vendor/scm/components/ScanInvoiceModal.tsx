@@ -21,7 +21,7 @@ const API = {
   gold: markPiGold,
 };
 
-const docNumber = (d: PiCheckDoc) => d.review?.invoiceNumber ?? null;
+const billedItems = (r: PiReview) => r.lines.reduce((sum, l) => sum + (l.grnItemId ? l.qty : 0), 0);
 
 export function ScanInvoiceModal({ onClose }: { onClose: () => void }) {
   return (
@@ -37,7 +37,7 @@ export function ScanInvoiceModal({ onClose }: { onClose: () => void }) {
       api={API}
       blockOf={(r, d) => piBlock(r, new Map(d.billLines.map((l) => [l.grnItemId, l])))}
       withDate={(r, date) => ({ ...r, invoiceDate: date })}
-      docNumber={docNumber}
+      itemsOf={billedItems}
       renderCard={({ key, onOpenDoc, ...card }, data) => (
         <ScanPiCheckCard key={key} {...card} suppliers={data.suppliers} billLines={data.billLines} onOpenPi={(id) => onOpenDoc(`/scm/purchase-invoices/${id}`)} />
       )}
