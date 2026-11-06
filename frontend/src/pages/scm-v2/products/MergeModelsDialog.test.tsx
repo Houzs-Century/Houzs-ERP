@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MergeModelsDialog } from './MergeModelsDialog';
+import { MergeModelsButton, MergeModelsDialog } from './MergeModelsDialog';
 
 const fetcher = vi.hoisted(() => vi.fn());
 vi.mock('../../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: fetcher }));
@@ -19,6 +19,13 @@ const open = () => {
 
 describe('Merge models', () => {
   beforeEach(() => fetcher.mockReset());
+
+  it('opens over the page, not inside the page header', () => {
+    const { container } = render(<QueryClientProvider client={new QueryClient()}><MergeModelsButton codes={[]} /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Merge models' }));
+    expect(screen.getByPlaceholderText('Type or pick the Model that stays')).toBeTruthy();
+    expect(container.querySelector('input')).toBeNull();
+  });
 
   it('merges only after a clean Check, sending back its phrase', async () => {
     fetcher.mockResolvedValueOnce(plan({}));

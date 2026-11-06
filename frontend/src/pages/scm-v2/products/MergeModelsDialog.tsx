@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/Button';
 import { Modal } from '../../../vendor/scm/components/Modal';
@@ -30,7 +31,8 @@ export const MergeModelsButton = ({ codes }: { codes: string[] }) => {
   return (
     <>
       <Button variant="secondary" onClick={() => setOpen(true)}>Merge models</Button>
-      {open && <MergeModelsDialog codes={codes} onClose={() => setOpen(false)} />}
+      {/* On the page body: inside the page header its top sat under the app's tab bar. */}
+      {open && createPortal(<MergeModelsDialog codes={codes} onClose={() => setOpen(false)} />, document.body)}
     </>
   );
 };
