@@ -199,7 +199,7 @@ page, and the POS Admin menu. This guide carries only what is built.
   Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
   set and linked) issues a one-time 8-character code, stored as a hash with
   a 15-minute expiry (`scm/shared/pos-pairing.ts`, vendored). The device
-  (Settings, or the `?pair=` link on first open) redeems
+  (Settings, or the `?pair=` link, which also re-pairs a set-up device) redeems
   it at `POST /api/pos-device/pair` (pre-auth, no token yet): a fresh device
   token is minted, the code is spent, the bundle comes back. Pair again from
   Device setup (gear, supervisor PIN) moves a device; the old token dies.

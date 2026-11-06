@@ -97,7 +97,7 @@ import { SearchScopeHint } from "./SearchScopeHint";
 import { DataTableConditionSection } from "./DataTableConditionSection";
 import { DataTableGroupBanner } from "./DataTableGroupBanner";
 import { gridLayoutToTableLayout, readLegacyGridLayout } from "./dataTableLegacyGridLayout";
-import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
+import { buildSearchBlob, conditionToken, isConditionToken, looksLikeDateColumn, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
@@ -3169,6 +3169,7 @@ function DataTableInner<T, L>({
              See facetedFilterValues for the exact rule (0-count options drop
              unless they are fixed vocabulary or currently ticked). */
           const values = facetedFilterValues(rows ?? [], colFilters, col, allColumns);
+          const filterType = col.filterType ?? (looksLikeDateColumn(values.map(([v]) => v)) ? "date" : undefined);
           const allTokens = colFilters[col.key] ?? [];
           const conditionTokens = allTokens.filter(isConditionToken);
           const selected = new Set(allTokens.filter((v) => !isConditionToken(v)));
@@ -3265,10 +3266,10 @@ function DataTableInner<T, L>({
                 <DataTableFreezeItems className={sortBtn} anyFrozen={pinnedSet.size > 0} onFreezeUpTo={() => { freezeUpTo(col.key); setFilterMenu(null); }} onUnfreezeAll={() => { setPinned([]); setFilterMenu(null); }} />
               </div>
 
-              {col.filterType && (
+              {filterType && (
                 <DataTableConditionSection
                   key={col.key}
-                  filterType={col.filterType}
+                  filterType={filterType}
                   current={currentCondition}
                   onChange={(next) =>
                     setColumnFilter(col.key, [...(next ? [conditionToken(next)] : []), ...selected])

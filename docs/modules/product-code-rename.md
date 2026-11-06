@@ -143,6 +143,15 @@ the model, its SKUs' `mfg_products.base_model` and the company's `sofa_combo_pri
   holds the old code), `pos_combos_in_use` (2990 POS combos are append-only; retire them on the POS first).
 - A model name change needs none of this: SKU Master reads the live name through `model_id`.
 
+## 5a. Merge models (many Product Models into one)
+
+Modular -> "Merge models": pick the kept Model, add the others, Check, then Merge. Same gate.
+`POST /api/scm/mfg-products/merge/models/plan|apply` runs the planner and writer of
+`backend/scripts/merge-duplicate-models.mjs` (`scripts/lib/duplicate-model-merge-plan.mjs`, `-run.mjs`).
+Each ACTIVE SKU moves under the kept Model; two codes of one size go through the code merge below.
+INACTIVE SKUs stay where they are, folded Models switch off, a kept Model that was off switches on.
+Refused whole: twins with different main suppliers, a SKU with no size, a folded Model with sofa rows.
+
 ## 5b. Merge codes (many into one)
 
 SKU Master -> "Merge codes": pick the kept code, add the old codes one by one,

@@ -52,6 +52,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useSuppliers } from "../../vendor/scm/lib/suppliers-queries";
 import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
+import { conditionDateRange } from "../../components/dataTableConditionFilters";
 import { poPriceMarker, usePiListPoPriceMap } from "../../vendor/scm/lib/pi-list-po-price";
 import {
   usePurchaseInvoicesPaged,
@@ -625,7 +626,7 @@ export function PurchaseInvoicesListV2() {
   const supplierNames = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))], [suppliersQ.data]);
   const supplierCodes = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))], [suppliersQ.data]);
   const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
-    (cf) => ({ creditorNames: funnelValues(cf, "supplier"), creditorCodes: funnelValues(cf, "supplier_code"), currencies: funnelValues(cf, "currency") }),
+    (cf) => ({ ...conditionDateRange(cf["invoice_date"]), creditorNames: funnelValues(cf, "supplier"), creditorCodes: funnelValues(cf, "supplier_code"), currencies: funnelValues(cf, "currency") }),
     () => setPageParam(0),
   );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);

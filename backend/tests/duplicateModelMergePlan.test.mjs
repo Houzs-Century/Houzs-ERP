@@ -104,6 +104,19 @@ describe('planIdleModel', () => {
   });
 });
 
+describe('twins with different main suppliers', () => {
+  const twins = [
+    sku('DUNLOPILLO COOLSILK 2.0 VISCO BLISS MATT (K)', 'm-keep', { main: '400-D001' }),
+    sku('DUNLOPILLO CS2 VISCO BLISS MATT (K)', 'm-fold', { main: '400-E001' }),
+  ];
+  it('are refused until the owner rules they are one product', () => {
+    expect(planModelGroup({ group, models, skus: twins }).refusals).toHaveLength(1);
+    const ruled = planModelGroup({ group: { ...group, ruledOneProduct: true }, models, skus: twins });
+    expect(ruled.refusals).toEqual([]);
+    expect(ruled.pairs).toHaveLength(1);
+  });
+});
+
 describe('ruling file', () => {
   it('names no Model twice and reads its size from a code ending in "(K" too', () => {
     for (const e of Object.values(BOOK)) {
