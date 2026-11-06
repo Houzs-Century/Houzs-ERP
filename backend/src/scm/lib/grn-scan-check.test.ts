@@ -1,5 +1,6 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
+import { inSentOrder } from '../routes/scan-check-shared';
 import { REVIEW_VERSION, inPrintedOrder, blockedReason, buildReview, codesToTeach, nameFits, racksOf, suggestByName, type ReviewLine, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
@@ -10,14 +11,21 @@ const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryD
 const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], racks: { 'pi-1': 'R11-2' }, unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
 const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', materialName: null, supplierSku: null, remaining: 2, locationCode: 'KL' }]]);
 
+describe('drafts follow the scanned order', () => {
+  test('rows come back in the order the list sent them', () => {
+    expect(inSentOrder([{ id: 'c' }, { id: 'a' }, { id: 'b' }], ['a', 'b', 'c']).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
-    const r = buildReview(parsed, 's1', match, [], [...open.values()]);
-    expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-03' });
+    const r = buildReview(parsed, 's1', match, [], [...open.values()], '2026-11-06');
+    // The day of the scan, not the 2026-11-03 printed on the delivery order.
+    expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-06' });
     expect(r.lines.map((l) => [l.poItemId, l.qty, l.rack, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, 'R11-2', 'A1'], [null, 1, null, 'ZZ']]);
   });
   test('a read the matcher never saw keeps every printed line', () => {
-    expect(buildReview(parsed, null, null, [], []).lines).toHaveLength(2);
+    expect(buildReview(parsed, null, null, [], [], '2026-11-06').lines).toHaveLength(2);
   });
   test('the saved edit keeps known fields only, drops a bad date and a negative qty', () => {
     const r = cleanReview({ supplierId: 's1', doNo: ' DO 77 ', deliveryDate: '03/11/2026', lines: [{ key: 'k', poItemId: 'pi-1', qty: -3, evil: 1 }], extra: 'x' });
@@ -80,7 +88,7 @@ describe('grn scan check', () => {
     expect(codesToTeach(r, (id) => (id === 'p1' ? 'SOFA-1' : undefined))).toEqual([{ printedCode: 'T1', itemCode: 'SOFA-1' }]);
   });
   test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
-    const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }], []);
+    const r = buildReview(parsed, 's1', match, [{ printedCode: 'ZZ', itemCode: 'PILLOW-1', name: 'Pillow', qty: 1 }], [], '2026-11-06');
     expect(r.lines.find((l) => l.gift)).toMatchObject({ poItemId: null, gift: { itemCode: 'PILLOW-1', name: 'Pillow' }, qty: 1 });
   });
   test('the same delivery order twice in the waiting list: the later copy names the first', () => {
@@ -123,7 +131,7 @@ describe('a set row on the check screen (DO-2610-01)', () => {
     const printed = { itemCode: 'DSL 8075(28")-2+1', barcode: null, description: '*2990-SO-2609-045', qty: 1, poNo: null, rack: null };
     const parsed = { supplierName: 'DORSETTLOFT', poNo: 'S/O 1878', doNo: 'DO-2610-01', deliveryDate: '2026-10-05', lines: [printed] };
     const match = { picks: [{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }], unmatched: [], racks: {}, soMatches: [{ line: printed, soDocNo: '2990-SO-2609-045', poItemIds: ['a2', 'aL'] }] } as unknown as Parameters<typeof buildReview>[2];
-    const review = buildReview(parsed, 's1', match, [], []);
+    const review = buildReview(parsed, 's1', match, [], [], '2026-11-06');
     expect(review.lines.map((l) => [l.poItemId, l.read?.itemCode])).toEqual([['a2', 'DSL 8075(28")-2+1'], ['aL', 'DSL 8075(28")-2+1']]);
   });
 });

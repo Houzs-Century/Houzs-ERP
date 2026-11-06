@@ -42,7 +42,14 @@ export async function ownRows<R>(svc: SupabaseClient, c: CheckContext, documentT
   const { data, error } = await svc.from('scan_jobs').select(ROW_COLS)
     .eq('company_id', activeCompanyId(c)).eq('document_type', documentType).eq('houzs_user_id', callerId(c)).in('id', ids.slice(0, 200));
   if (error) throw new Error(`Could not load your scans: ${error.message}`);
-  return (data as unknown as Array<CheckRow<R>> | null) ?? [];
+  return inSentOrder((data as unknown as Array<CheckRow<R>> | null) ?? [], ids);
+}
+
+/** The order the check list sent them, the order they were scanned: drafts get
+ *  their numbers one after another, so the numbers follow the paper. */
+export function inSentOrder<T extends { id: string }>(rows: ReadonlyArray<T>, ids: ReadonlyArray<string>): T[] {
+  const at = new Map(ids.map((id, i) => [id, i]));
+  return [...rows].sort((a, b) => (at.get(a.id) ?? 0) - (at.get(b.id) ?? 0));
 }
 
 /** This user's documents still being read or waiting to be checked, oldest first. */
@@ -73,6 +80,8 @@ export async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promis
 export const idsOf = (body: unknown): string[] => (Array.isArray((body as { ids?: unknown } | null)?.ids) ? ((body as { ids: unknown[] }).ids).filter((x): x is string => typeof x === 'string') : []);
 
 type UploadOpts = {
+  /** What a copy reused from an earlier read of the same file carries for this new scan. */
+  scannedToday: <T extends object>(review: T) => T;
   documentType: CheckDocType;
   // The AI-usage feature the split is booked under.
   feature: string;
@@ -131,7 +140,7 @@ export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<R
     const seen = found?.review?.v === opts.reviewVersion ? found : null;
     const { data, error } = await svc.from('scan_jobs').insert({
       status: seen ? 'done' : 'queued', document_type: opts.documentType, review_state: seen ? 'pending' : 'reading', batch_id: batchId,
-      review: seen?.review ?? null, error: seen ? seen.error : null, file_hash: fileHash,
+      review: seen?.review ? opts.scannedToday(seen.review) : null, error: seen ? seen.error : null, file_hash: fileHash,
       file_name: d.name, page_from: d.pages?.[0] ?? null, page_to: d.pages?.[1] ?? null,
       salesperson: null, salesperson_id: uploaderStaffId, houzs_user_id: houzsUserId, image_keys: [], company_id: companyId,
     }).select('id').single();

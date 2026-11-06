@@ -29,9 +29,32 @@ export type SofaGuardLine = {
   itemCode: string;
   itemGroup: string | null;
   soItemId: string | null;
+  /** A line with no Sales Order: what it takes from stock. null on a line with one. */
+  fromStock: { variantKey: string; qty: number; warehouseId: string | null } | null;
 };
 
 export type SofaGuardOffender = { itemCode: string; soItemId: string | null };
+
+type StockPick = { itemCode: string; variantKey: string; qty: number };
+
+/** Is there ONE batch in this warehouse (any warehouse when null) holding every
+ *  line picked straight from stock? A delivery order with no Sales Order has no
+ *  allocator to bind a batch (owner 2026-11-06: the PO arrived, ship it), so the
+ *  rule is asked of the stock itself: one complete batch, no split dye lot. */
+export function oneBatchCovers(
+  picks: ReadonlyArray<StockPick>,
+  warehouseId: string | null,
+  stock: { remaining: ReadonlyMap<string, number>; batches: ReadonlySet<string> },
+  warehouses: ReadonlyArray<string>,
+): boolean {
+  const need = new Map<string, StockPick>();
+  for (const p of picks) {
+    const k = `${p.itemCode}|${p.variantKey}`;
+    need.set(k, { ...p, qty: (need.get(k)?.qty ?? 0) + p.qty });
+  }
+  return (warehouseId ? [warehouseId] : warehouses).some((wh) => [...stock.batches].some((batch) =>
+    [...need.values()].every((p) => (stock.remaining.get(sofaStockKey(wh, batch, p.itemCode, p.variantKey)) ?? 0) >= p.qty)));
+}
 
 /** Return the sofa/batched lines among `lines` that CANNOT ship — i.e. their set
  *  has no single production batch on hand that covers the whole line. Non-sofa
@@ -93,7 +116,13 @@ export async function findSofaLinesWithoutCompleteBatch(
 
   // 3. Live batch stock to re-validate the bound batch still covers each line
   //    (it may have been consumed by another DO since the last allocation run).
-  const sofaStock = await loadSofaBatchStock(sb, [...new Set([...soInfo.values()].map((s) => s.itemCode))]);
+  const picked = sofaLines.filter((l) => !l.soItemId && l.fromStock);
+  const sofaStock = await loadSofaBatchStock(sb, [...new Set([...[...soInfo.values()].map((s) => s.itemCode), ...picked.map((l) => l.itemCode)])]);
+  const stockWarehouses = [...new Set([...sofaStock.remaining.keys()].map((k) => k.split('|')[0]!))];
+  const pickedCovered = picked.length > 0 && oneBatchCovers(
+    picked.map((l) => ({ itemCode: l.itemCode, variantKey: l.fromStock!.variantKey, qty: l.fromStock!.qty })),
+    picked[0]!.fromStock!.warehouseId, sofaStock, stockWarehouses,
+  );
 
   // 4. Offenders. A line with no SO line / no bound batch / no warehouse can't
   //    ship — flag per line. The rest are grouped by (warehouse, batch, code,
@@ -103,6 +132,7 @@ export async function findSofaLinesWithoutCompleteBatch(
   const offenders: SofaGuardOffender[] = [];
   const coverable: Array<{ line: SofaGuardLine; info: SoInfo }> = [];
   for (const l of sofaLines) {
+    if (pickedCovered && !l.soItemId) continue;
     const info = l.soItemId ? soInfo.get(l.soItemId) : undefined;
     if (!info || !info.batch || !info.whId) {
       offenders.push({ itemCode: l.itemCode, soItemId: l.soItemId ?? null });
