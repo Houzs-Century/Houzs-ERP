@@ -89,13 +89,13 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, ASSR_ACTUAL_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { logActivity } from '../../services/assr';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
-import { scheduleDpDate, writeNonSoFields } from '../lib/delivery-planning-nonso-edit';
+import { scheduleDpDate, writeNonSoFields, writeAssrLegDelivered } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -497,9 +497,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // A CLOSED service case whose leg date is within the last 90 days surfaces on
   // the Delivered tab; older done work stays off the board (owner 2026-10-21).
   // today is YYYY-MM-DD, so the cutoff is too.
-  // Recently-done legs stay on the Delivered tab for this many days, then drop off
-  // (owner 2026-11-06: the old 90-day window kept 2-3-month-old finished service
-  // cases cluttering the board; shortened to 30). Open cases are never time-bound.
+  // Done legs stay on the Delivered tab this many days, then drop off; open cases
+  // are never time-bound (owner 2026-11-06: shortened 90 -> 30, old ones cluttered).
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 30 * 86400000).toISOString().slice(0, 10);
   const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
@@ -2252,49 +2251,24 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* The case must EXIST before ANYTHING is written. assrLegGuardSql carries the
-       caller's granted-company predicate (an out-of-scope case 404s, owner ruling
-       2026-08-21) and the not-archived gate. The per-job OPEN check (assrLegOpen)
-       gates only the date / crew / trip writes below — NOT the Mark-Delivered
-       toggle, which IS a leg's done toggle and must work on a done leg too. */
-    const legCase = (await c.env.DB.prepare(
-      assrLegGuardSql(c),
-    ).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+    /* assrLegGuardSql = company predicate (out-of-scope 404s, owner 2026-08-21) +
+       not-archived; assrLegOpen (below) gates only the date/crew/trip writes, not
+       the Mark-Delivered toggle (a leg's done toggle, which works on a done leg). */
+    const legCase = (await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
     if (!legCase) return c.json({ error: 'not_found' }, 404);
-    // "Who" for the case history. scm users are UUIDs and assr_activity.user_id is
-    // a bigint, so the numeric column stays null; the actor is kept in the note.
-    const actor = c.get('user') as { id?: string; name?: string; email?: string } | null;
+    // "Who" for the history (assr_activity.user_id is bigint but scm users are UUIDs → keep the actor in the note).
+    const actor = c.get('user') as { name?: string; email?: string } | null;
     const by = actor?.name ?? actor?.email ?? 'logistics';
 
-    /* Mark Delivered — the board's per-leg Delivered (owner 2026-11-06). Stamps
-       the leg's actual_* date; DELIVERED sets today, any other state clears it
-       (un-mark). It records THAT leg only and NEVER closes the case (closure stays
-       a separate action in the ASSR module). Allowed on any non-archived leg, done
-       or not, so it is NOT gated by assrLegOpen. */
-    if (wantsDelivered) {
-      const actualCol = ASSR_ACTUAL_COL[jobKind];
-      const markDelivered = p.deliveryState === 'DELIVERED';
-      const stamp = markDelivered ? new Date().toISOString().slice(0, 10) : null;
-      try {
-        const res = await c.env.DB.prepare(
-          `UPDATE assr_cases SET ${actualCol} = ?, updated_at = datetime('now')
-            WHERE id = ? AND archived_at IS NULL`,
-        ).bind(stamp, caseId).run();
-        if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
-        await logActivity(c.env, caseId, markDelivered ? 'leg_delivered' : 'leg_reopened', null, stamp,
-          `${jobKind} leg ${markDelivered ? 'marked delivered' : 'reopened'} on the Delivery Planning board by ${by}`, null, 'service');
-      } catch (e) {
-        return c.json({ error: 'update_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
-      }
-      // A delivered-only toggle has nothing else to write.
-      if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) {
-        return c.json({ ok: true, assr: { id: caseId, job_kind: jobKind, [actualCol]: stamp } });
-      }
+    /* Mark Delivered (owner 2026-11-06): stamp the leg's actual_* date + record it;
+       never closes the case. In the board-writes module (router size ceiling). */
+    if (wantsDelivered && p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) {
+      const r = await writeAssrLegDelivered(c, caseId, jobKind, p.deliveryState === 'DELIVERED', by);
+      return c.json(r.body, r.status);
     }
 
-    // Date / crew / trip need the job still OPEN: scheduling or crewing a leg that
-    // is already done (or whose case a sibling's POD closed) must not mint a trip,
-    // a trip_stop and a DP number for finished / absent work.
+    // Date / crew / trip need the job still OPEN — scheduling/crewing a done leg
+    // must not mint a trip + trip_stop + DP number for finished / absent work.
     if (!assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
