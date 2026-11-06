@@ -47,7 +47,8 @@ import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-quer
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
-import { useBillMatches, usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { useBillMatches, usePaymentRequest, usePaymentRequestsByIds } from '../../vendor/scm/lib/payment-request-queries';
+import { prefillFromRequests, requestIdsOf } from './pv-from-requests';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
@@ -152,10 +153,11 @@ export const PaymentVoucherNew = () => {
      plain cash-out. The old three-way dropdown is gone with the split. */
   const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
-  /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
-     the role the owner maintains in Recon Setup). Only while untouched. */
+  /* Pre-fill Paid From with the company's own pay-from bank (BANK_PAY_DEFAULT —
+     the role the owner maintains in Settlement Setup, apart from the bank money
+     is received into). Only while untouched. */
   useEffect(() => {
-    const dflt = rolesQ.data?.roles.BANK_DEFAULT;
+    const dflt = rolesQ.data?.roles.BANK_PAY_DEFAULT ?? rolesQ.data?.roles.BANK_DEFAULT;
     if (!dflt || creditAccountCode) return;
     if (moneyAccounts.some((a) => a.account_code === dflt)) setCreditAccountCode(dflt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -414,6 +416,24 @@ export const PaymentVoucherNew = () => {
     setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. Reading its bill…`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromRequest, requestQ.data]);
+  /* ── Answering SEVERAL requests with one voucher (owner 2026-11-04: combine
+     payment request 做一张pv — 不同人也可以): ?fromRequests=a,b,c — one line per
+     request, the payee only when they share one (pv-from-requests.ts). Their
+     bills are not read here; each is attached on save. */
+  const fromRequests = requestIdsOf(searchParams.get('fromRequests'));
+  const manyQ = usePaymentRequestsByIds(fromRequests);
+  const manyApplied = useRef(false);
+  useEffect(() => {
+    if (manyApplied.current || !manyQ.requests || isAp || isRefund) return;
+    manyApplied.current = true;
+    const pre = prefillFromRequests(manyQ.requests);
+    setPayeeName(pre.payeeName);
+    setNotes(pre.notes);
+    setLines(pre.lines.map((l) => ({ ...newLine(), ...l })));
+    setScanNote(`Answering ${manyQ.requests.length} payment requests, ${fmtRm(pre.totalSen)} in all — one line each; every request's bill is attached to this voucher when you save.${pre.payeeName ? '' : ' They name different payees: type the payee yourself.'} Pick each line's account.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manyQ.requests]);
+
   /* …and its bill is READ on opening (owner 2026-09-30, 6.2 — the server reads
      the request's own files): the bill's lines replace the one asked for, each
      on the request's event, under the account this vendor was last paid from;
@@ -758,6 +778,7 @@ export const PaymentVoucherNew = () => {
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
+        ...(fromRequests.length > 0 ? { paymentRequestIds: fromRequests } : {}),
         ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
         ...(showBill && officialOwed ? { officialDocOwed: true, ...(officialNote.trim() ? { officialDocNote: officialNote.trim() } : {}) } : {}),
       });

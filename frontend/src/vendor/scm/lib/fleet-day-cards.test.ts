@@ -4,6 +4,7 @@ import {
   slotKindOf,
   slotLabelOf,
   slotSortKey,
+  condenseWindow,
   runStatusOf,
   isLate,
   lateReason,
@@ -83,6 +84,24 @@ describe('slotSortKey — order a lorry\'s drops by delivery time', () => {
     const windows = ['2pm-4pm', null, 'am', '9:30am to 11am', '12:30pm to 2:30pm'];
     const sorted = windows.slice().sort((a, b) => slotSortKey(a) - slotSortKey(b));
     expect(sorted).toEqual(['am', '9:30am to 11am', '12:30pm to 2:30pm', '2pm-4pm', null]);
+  });
+});
+
+describe('condenseWindow — compact the day-map legend window text', () => {
+  test('a verbose custom window condenses to start–end (24h, :00 dropped)', () => {
+    expect(condenseWindow('10:30AM to 12:30PM')).toBe('10:30–12:30');
+    expect(condenseWindow('10 AM-1 PM')).toBe('10–13');
+    expect(condenseWindow('2pm-4pm')).toBe('14–16');
+  });
+  test('a bare AM / PM bucket stays the tag', () => {
+    expect(condenseWindow('AM')).toBe('AM');
+    expect(condenseWindow('pm')).toBe('PM');
+  });
+  test('one-sided keeps the start; unreadable-but-present is kept verbatim; blank is empty', () => {
+    expect(condenseWindow('3pm')).toBe('15');
+    expect(condenseWindow('call first')).toBe('call first');
+    expect(condenseWindow('')).toBe('');
+    expect(condenseWindow(null)).toBe('');
   });
 });
 

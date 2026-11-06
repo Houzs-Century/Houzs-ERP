@@ -8,6 +8,8 @@
 // The shell only lays out. Each document page brings its reads and its steps
 // — the same hooks and endpoints the old pop-outs used — so nothing here
 // posts, and a step the server refuses says so in the page's ask banner.
+// Print opens the ERP's one print dialog with the paper it prints on
+// (`printJob`, batch 5 step 10 — moneyInPrint.tsx).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -21,6 +23,7 @@ import { StatusTag } from './MoneyInParts';
 import type { Tag } from './moneyInStatus';
 import { moneyInListOf, type MoneyInDocKind } from './moneyInDocs';
 import { booksSentence, liveJournal, type DocJournals } from './moneyInDocQueries';
+import { useMoneyInPrint, type PrintJob } from './moneyInPrint';
 import ui from '../MoneyIn.module.css';
 import s from './MoneyInDoc.module.css';
 
@@ -148,7 +151,7 @@ export function PaperPreview({ title, draw }: { title: string; draw: (() => Prom
 const whenOf = (v: string | null | undefined): string => (v ? (v.length > 10 ? fmtDateTime(v) : fmtDate(v)) : '');
 
 export function MoneyInDocPage({
-  kind, kindLabel, number, tag, sub, taskLink, onPrint, printing = false, actions = [], ask, notice,
+  kind, kindLabel, number, tag, sub, taskLink, onPrint, printJob, printing = false, actions = [], ask, notice,
   party, amount, facts, books, trail, children,
 }: {
   kind: MoneyInDocKind;
@@ -158,6 +161,8 @@ export function MoneyInDocPage({
   sub?: ReactNode;
   taskLink: TaskLink;
   onPrint?: (() => void) | null;
+  /** Print through the print dialog: what it names and how it delivers the paper. */
+  printJob?: PrintJob | null;
   printing?: boolean;
   actions?: DocAction[];
   /** The ask banner, when a step is being asked about. */
@@ -172,6 +177,9 @@ export function MoneyInDocPage({
   children?: ReactNode;
 }) {
   const [addingTask, setAddingTask] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const printer = useMoneyInPrint((e) => setPrintError(errText(e)));
+  const print = printJob ? () => { setPrintError(null); printer.open(printJob); } : onPrint;
   return (
     <div className={s.page}>
       <DocBack kind={kind} />
@@ -186,8 +194,8 @@ export function MoneyInDocPage({
         </div>
         <div className={s.headActions}>
           <button type="button" className={ui.btn} onClick={() => setAddingTask(true)}><ListChecks size={14} /> Add task</button>
-          {onPrint && (
-            <button type="button" className={ui.btn} onClick={onPrint} disabled={printing}><Printer size={14} /> {printing ? 'Preparing…' : 'Print'}</button>
+          {print && (
+            <button type="button" className={ui.btn} onClick={print} disabled={printing}><Printer size={14} /> {printing ? 'Preparing…' : 'Print'}</button>
           )}
           {actions.map((a) => (
             <button key={a.label} type="button" title={a.refused ?? a.hint} disabled={Boolean(a.refused) || a.busy}
@@ -200,6 +208,7 @@ export function MoneyInDocPage({
       </header>
       {ask}
       {notice}
+      {printError && <div role="alert" className={`${s.note} ${s.toneLate}`}>The paper was not printed — {printError}</div>}
       <div className={s.body}>
         <div className={s.main}>
           <div className={s.card}>
@@ -249,17 +258,23 @@ export function MoneyInDocPage({
         </aside>
       </div>
       {addingTask && <VoucherTaskDrawer link={taskLink} onClose={() => setAddingTask(false)} />}
+      {printer.modal}
     </div>
   );
 }
 
-/** A document's form in place of the document (`?form=…`), with Back to it. */
-export function DocFormShell({ title, backLabel, onBack, children }: { title: string; backLabel: string; onBack: () => void; children: ReactNode }) {
+/** A document's form in place of the document (`?form=…`), with Back to it —
+ *  or a list's form in place of the list. `titleExtra` sits beside the title
+ *  (a receipt's Sundry income / Other debtor switch); `bare` leaves the form to
+ *  lay out its own cards (the design's two-column forms). */
+export function DocFormShell({ title, backLabel, onBack, titleExtra, bare = false, children }: {
+  title: string; backLabel: string; onBack: () => void; titleExtra?: ReactNode; bare?: boolean; children: ReactNode;
+}) {
   return (
     <div className={s.page}>
       <button type="button" className={s.back} onClick={onBack}><ArrowLeft size={14} /> Back to {backLabel}</button>
-      <div className={s.formHead}><h1 className={s.formTitle}>{title}</h1></div>
-      <div className={s.formBody}>{children}</div>
+      <div className={s.formHead}><h1 className={s.formTitle}>{title}</h1>{titleExtra}</div>
+      {bare ? children : <div className={s.formBody}>{children}</div>}
     </div>
   );
 }

@@ -34,7 +34,8 @@ import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, postStatementCharge,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
+  releaseSettlementRow, notThisOf,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { rematchOpenLines } from '../../acc/settlement-rematch';
@@ -81,6 +82,10 @@ type StoredRow = {
   gross_sen: number; fee_sen: number; net_sen: number;
   bucket: string; match_reason: string | null; confirmed_at: string | null;
   posted_je_no: string | null; notes: string | null;
+  /** The lead line this one was matched together with (option B), else null. */
+  matched_with_row_id?: number | null;
+  /** The payments a person said this line is NOT ("Not this"), as "SOPAY:<id>" keys. */
+  not_this?: unknown;
 };
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -882,7 +887,7 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this')
     .eq('batch_id', batchId).order('line_no');
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
@@ -951,16 +956,43 @@ export const settlementBatchDetail = guard(async (c) => {
      `settled.keys` gates the MATCHER, it does not shrink this list. */
   const paymentOf = new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, p]));
 
+  /* LINES MATCHED TOGETHER (owner 2026-11-03, option B): the payments are
+     linked once, to the group's lead; every line of the group shows them, and
+     names the lines it was matched with. */
+  const leadOf = (r: StoredRow): number => (r.matched_with_row_id == null ? Number(r.id) : Number(r.matched_with_row_id));
+  const groupOf = new Map<number, StoredRow[]>();
+  for (const r of stored) {
+    if (r.matched_with_row_id == null) continue;
+    const lead = stored.find((x) => Number(x.id) === leadOf(r));
+    if (!lead) continue;
+    if (!groupOf.has(Number(lead.id))) groupOf.set(Number(lead.id), [lead]);
+    groupOf.get(Number(lead.id))!.push(r);
+  }
+
   const rows = stored.map((r) => {
     const s = byLine.get(r.line_no);
+    const group = groupOf.get(leadOf(r));
+    /* "Not this": a payment a person said this line is not is never offered to
+       it again — not as a candidate, a pair, the pre-tick, or the clue. */
+    const notThis = new Set(notThisOf(r.not_this));
+    const keep = <P extends { source: string; id: string }>(list: P[]): P[] => list.filter((p) => !notThis.has(`${p.source}:${p.id}`));
+    const turnedDown = (s?.matched ?? []).filter((p) => notThis.has(`${p.source}:${p.id}`));
+    const turnedDownIds = new Set([...notThis].map((k) => k.slice(k.indexOf(':') + 1)));
     return {
       ...r,
       txn_date: String(r.txn_date).slice(0, 10),
+      matched_with: group
+        ? {
+          leadRowId: leadOf(r),
+          lines: group.map((g) => ({ rowId: Number(g.id), lineNo: Number(g.line_no), grossSen: Number(g.gross_sen) })),
+          grossSen: group.reduce((t, g) => t + Number(g.gross_sen), 0),
+        }
+        : null,
       /* The linked rows carry a document number and an amount. The operator is
          reading a RECONCILIATION, so the sale itself belongs here too — who it
          was, when it was paid, what code the till recorded (owner: 我希望他是显示
          transaction detail 和 sales order detail, 而不是 document 罢了). */
-      linked: (linksByRow.get(r.id) ?? []).map((l) => {
+      linked: (linksByRow.get(leadOf(r)) ?? []).map((l) => {
         const p = paymentOf.get(`${String(l.payment_source)}:${String(l.payment_id)}`);
         return {
           ...l,
@@ -987,12 +1019,14 @@ export const settlementBatchDetail = guard(async (c) => {
          linked line is not recomputed at all — and is the whole answer when it
          is not. Pre-ticked, still his to confirm: nothing posts until he
          presses. */
-      candidates: (s?.candidates.length ? s.candidates : s?.matched) ?? [],
-      comboHints: s?.comboHints ?? [],
+      candidates: keep((s?.candidates.length ? s.candidates : s?.matched) ?? []),
+      comboHints: (s?.comboHints ?? []).filter((combo) => !combo.some((id) => turnedDownIds.has(String(id)))),
       /* The system's own best answer, pre-ticked on screen. A suggestion, never
          a decision — nothing posts until he confirms. */
-      suggested: (s?.suggested.length ? s.suggested : s?.matched) ?? [],
-      clue: s?.clue ?? r.notes,
+      suggested: keep((s?.suggested.length ? s.suggested : s?.matched) ?? []),
+      clue: turnedDown.length > 0
+        ? `Not ${turnedDown.map((p) => p.docNo || p.id).join(', ')} — you said so. Choose the sale, or find it.`
+        : s?.clue ?? r.notes,
     };
   });
 
@@ -1075,6 +1109,39 @@ export const settlementConfirmRow = guard(async (c) => {
   return c.json(r);
 });
 
+/* POST /rows/confirm-together — several lines of one report confirmed against
+   several payments (owner 2026-11-03, option B: the customer swiped twice for
+   two orders, and only the totals agree). `rowIds` are the lines; the sum of
+   `payments` must be the sum of their gross, to the sen. */
+export const settlementConfirmGroup = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const rowIds = Array.isArray(body.rowIds) ? body.rowIds.map(Number).filter((n: number) => Number.isInteger(n)) : [];
+  const payments = Array.isArray(body.payments) ? body.payments : [];
+
+  const r = await confirmSettlementGroup(c.get('supabase'), {
+    companyId: co.companyId,
+    rowIds,
+    userName: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
+    payments: payments.map((p: any) => ({
+      source: p.source === 'SIPAY' ? 'SIPAY' : 'SOPAY',
+      id: String(p.id),
+      docNo: p.docNo == null ? null : String(p.docNo),
+      amountSen: Number(p.amountSen ?? 0),
+    })),
+  });
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404
+      : r.status === 'group_too_small' ? 400
+      : ['amount_mismatch', 'no_payments', 'ignored', 'already_confirmed', 'different_reports', 'line_already_matched', 'payment_already_settled', 'payment_not_found', 'not_card_payment'].includes(r.status) ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
+});
+
 /* POST /batches/:id/confirm-matched — the "全部确认" button: post every line
    the unique reference already matched. Failures are LISTED, not swallowed,
    and never stop the rest of the batch (§2.14). */
@@ -1096,7 +1163,7 @@ export const settlementConfirmMatched = guard(async (c) => {
   const b = batchRaw as { acquirer_code: string; period_from: string; period_to: string };
 
   const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, not_this')
     .eq('batch_id', batchId).eq('company_id', co.companyId);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
@@ -1152,6 +1219,8 @@ export const settlementConfirmMatched = guard(async (c) => {
       if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
       const rowId = byLine.get(d.row.lineNo);
       if (rowId == null) continue;
+      const notThis = new Set(notThisOf(unlinked.find((r) => r.id === rowId)?.not_this));
+      if (d.matched.some((p) => notThis.has(`${p.source}:${p.id}`))) continue;
       rescued.set(rowId, d.matched.map((p) => ({
         source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen,
       })));
@@ -1319,6 +1388,24 @@ export const settlementRowUnconfirm = guard(async (c) => {
   return c.json({ ok: true, ...(r.jeNo ? { reversalJeNo: r.jeNo } : {}) });
 });
 
+/* POST /rows/:id/release — "Not this" (owner 2026-11-03, batch 3 d2): an
+   unconfirmed line's match is released and the line goes back to be chosen;
+   the payments it held are not offered to it again. Posts nothing. */
+export const settlementReleaseRow = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const rowId = Number(c.req.param('id'));
+  if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  const r = await releaseSettlementRow(c.get('supabase'), co.companyId, rowId);
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404
+      : ['already_confirmed', 'ignored', 'nothing_matched'].includes(r.status) ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
+});
+
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line
    cannot be ignored: it is in the ledger, and the way out of the ledger is a
    journal, not a checkbox. */
@@ -1483,7 +1570,7 @@ export const settlementInTransit = guard(async (c) => {
     .eq('company_id', co.companyId).order('id').range(f, t));
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
   const { data: rowRaw, error: rErr } = await paginateAll<Record<string, any>>((f, t) => sb
-    .from('acc_settlement_rows').select('id, batch_id, confirmed_at, fee_sen')
+    .from('acc_settlement_rows').select('id, batch_id, confirmed_at, fee_sen, matched_with_row_id')
     .eq('company_id', co.companyId).order('id').range(f, t));
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const { data: batchRaw, error: bErr } = await paginateAll<Record<string, any>>((f, t) => sb
@@ -1550,10 +1637,18 @@ export const settlementInTransit = guard(async (c) => {
       into.set(key, (into.get(key) ?? 0) + share);
     });
   };
+  /* Lines matched together (option B) hold their payments on the lead: every
+     confirmed line's fee is spread over its lead's links. */
+  const feeOfLead = new Map<number, number>();
+  for (const r of (rowRaw ?? []) as Array<{ id: number; confirmed_at: string | null; fee_sen: number | null; matched_with_row_id?: number | null }>) {
+    if (!r.confirmed_at) continue;
+    const lead = r.matched_with_row_id == null ? Number(r.id) : Number(r.matched_with_row_id);
+    feeOfLead.set(lead, (feeOfLead.get(lead) ?? 0) + Number(r.fee_sen ?? 0));
+  }
   for (const [rowId, list] of byRow) {
     /* Only a CONFIRMED line's fee has actually left the account. */
     const row = rowInfo.get(rowId);
-    if (row?.confirmed === true) spread(row.feeSen, list, outOfTransit);
+    if (row?.confirmed === true) spread(feeOfLead.get(rowId) ?? row.feeSen, list, outOfTransit);
   }
 
   /* Two more things that have left in-transit without belonging to any single

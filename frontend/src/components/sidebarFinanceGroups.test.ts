@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NAV_TABS, type NavTab } from './Sidebar';
 import { ACCOUNTING_TABS } from '../pages/scm-v2/accounting-tabs';
+import { STAFF_LEGACY_REDIRECT_PATTERNS } from '../routing/routeManifest';
 
 /**
  * THE FINANCE SIDEBAR IS GROUPED BY THE JOB, NOT A FLAT LIST (docs/bugs/0824).
@@ -11,12 +12,14 @@ import { ACCOUNTING_TABS } from '../pages/scm-v2/accounting-tabs';
  * Books, Reports, Setup. The Accounting page's tabs are reached by deep link
  * (`/scm/accounting?tab=…`), so the sidebar can name a report directly.
  * A seventh, Forecasting, joined on 2026-09-21 (the Forecast P&L; the
- * Dashboard follows) — targets, not books, so it sits after the reports.
+ * Dashboard follows) — targets, not books, so it sat after the reports.
  *
  * The owner's Claude Design redesign (2026-11-02) puts two single entries
- * above them: To do (Finance's home, with its count) and Money today.
+ * above them: To do (Finance's home, with its count) and Money today; and
+ * Reports becomes ONE entry with its own report list (batch 6 §1.1) — the old
+ * Reports and Forecasting entries its hidden members (sidebarReportsEntry.test).
  *
- * Pinned here: the two entries, then the seven groups in the owner's order;
+ * Pinned here: the two entries, then the six groups in the owner's order;
  * every destination that existed before still exists (nothing lost in the
  * move); every deep link names a tab the page knows; no destination twice.
  */
@@ -36,13 +39,13 @@ describe('the Finance sidebar', () => {
     expect(money.children, 'Money today is a page, not a group').toBeUndefined();
   });
 
-  it('is seven groups, in the order the money moves', () => {
+  it('is six groups, in the order the money moves', () => {
     expect(finance).toBeDefined();
     expect((finance?.children ?? []).map((g) => g.label)).toEqual([
       'To do', 'Money today',
-      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Forecasting', 'Setup',
+      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Setup',
     ]);
-    expect(groups).toHaveLength(7);
+    expect(groups).toHaveLength(6);
     for (const g of groups) {
       expect(g.children?.length ?? 0, `${g.label} has entries`).toBeGreaterThan(0);
       expect(g.groupId, `${g.label} remembers its open state`).toBeTruthy();
@@ -53,12 +56,12 @@ describe('the Finance sidebar', () => {
   it('keeps every destination the flat list had', () => {
     const tos = flatten(finance?.children ?? []).map((t) => t.to).filter((t): t is string => typeof t === 'string');
     for (const to of [
-      '/scm/daily-bank', '/scm/merchant-recon', '/scm/official-receipts', '/scm/bank-recon',
+      '/scm/daily-bank', '/scm/merchant-recon', '/scm/bank-recon',
       '/scm/settlement-setup', '/scm/chart-of-accounts', '/scm/other-debtors', '/scm/ap-invoices',
       '/scm/receipts', '/scm/payment-vouchers', '/scm/outstanding', '/scm/unbilled-deliveries',
       '/scm/currencies', '/reports/fair-report',
       /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
-      '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast', '/scm/finance-dashboard',
+      '/scm/credit-notes', '/scm/forecast', '/scm/finance-dashboard',
       /* AR Invoices (2026-09-29) — the AP list's twin. */
       '/scm/ar-invoices',
       /* Card and transfer payments not matched yet, one list (2026-09-30). */
@@ -71,6 +74,35 @@ describe('the Finance sidebar', () => {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
+  });
+
+  /* The owner's Claude Design (batch 5, step 4): Official receipts folded into
+     Receipts as its first kind — the entry leaves the sidebar, its address
+     redirects, and Receipts' gate is the two old entries' together. */
+  it('folds Official receipts into Receipts: one entry, the old address a redirect', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    expect(moneyIn[0]).toMatchObject({ to: '/scm/receipts', label: 'Receipts', anyAccess: ['scm.finance.money_in'] });
+    expect(moneyIn[0]?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
+    expect(moneyIn.some((t) => t.to === '/scm/official-receipts')).toBe(false);
+    expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/official-receipts');
+  });
+
+  /* Batch 5, step 5: Deposit invoices folded into Invoices as a kind; the switch
+     they carried is Setup › Deposit invoices, gated as the old row was. */
+  it('folds Deposit invoices into Invoices, and puts their switch in Setup', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    expect(moneyIn.map((t) => t.label)).toEqual(['Receipts', 'Invoices', 'Debtor maintenance', 'Credit / debit notes', 'Outstanding', 'Not yet billed']);
+    const invoices = moneyIn.find((t) => t.to === '/scm/ar-invoices');
+    expect(invoices?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
+    expect(moneyIn.some((t) => t.to === '/scm/deposit-invoices')).toBe(false);
+    expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/deposit-invoices');
+    const setup = finance?.children?.find((g) => g.label === 'Setup')?.children ?? [];
+    const labels = setup.map((t) => t.label);
+    expect(labels.indexOf('Deposit invoices')).toBe(labels.indexOf('Currencies') + 1);
+    expect(labels.indexOf('To do rules')).toBe(labels.indexOf('Deposit invoices') + 1);
+    expect(setup.find((t) => t.label === 'Deposit invoices')).toMatchObject({
+      to: '/scm/finance/deposit-invoices', anyPerm: ['*', 'scm.access', 'scm.payment_voucher.post', 'scm.sales_order.write'], anyAccess: ['scm.finance.money_in'],
+    });
   });
 
   it('deep-links only tabs the Accounting page knows', () => {
@@ -107,9 +139,30 @@ describe('the Finance sidebar', () => {
     expect(byTo('/scm/outstanding')?.label).toBe('Outstanding');
   });
 
-  it('puts the reports together, the Corrections report among them', () => {
+  it('puts the reports together — the Corrections report, the Forecast P&L and the Dashboard among them', () => {
     const reports = finance?.children?.find((g) => g.label === 'Reports');
+    expect(reports?.collapsed, 'one entry with its own report list').toBe(true);
     const labels = (reports?.children ?? []).map((t) => t.label);
-    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report', 'Product Profit']));
+    expect(labels).toEqual(expect.arrayContaining([
+      'P&L', 'Balance sheet', 'Cash flow', 'AR aging', 'AP aging', 'Corrections', 'Sales report · fairs', 'Product profit',
+      'Forecast P&L', 'Dashboard',
+    ]));
+  });
+
+  /* The owner's Claude Design (batch 6 §1.1): Books and Setup in the design's
+     order and names, every gate as it was. */
+  it('names Books and Setup as the redesign does', () => {
+    const entries = (label: string) => finance?.children?.find((g) => g.label === label)?.children ?? [];
+    expect(entries('Books').map((t) => [t.label, t.to])).toEqual([
+      ['Journal entries', '/scm/accounting?tab=je'],
+      ['General ledger', '/scm/accounting?tab=gl'],
+      ['Trial balance', '/scm/accounting?tab=tb'],
+      ['Self-check', '/scm/accounting?tab=check'],
+      ['Stock close', '/scm/accounting?tab=close'],
+    ]);
+    for (const t of entries('Books')) expect(t, t.label).toMatchObject({ anyPerm: ['*', 'scm.access'], anyAccess: ['scm.finance.books'] });
+    expect(entries('Setup').map((t) => t.label)).toEqual([
+      'Chart of accounts', 'Opening balance', 'Item groups', 'Recon setup', 'Currencies', 'Deposit invoices', 'To do rules',
+    ]);
   });
 });

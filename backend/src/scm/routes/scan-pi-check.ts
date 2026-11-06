@@ -1,0 +1,137 @@
+// ---------------------------------------------------------------------------
+// /scan-pi/check — scan, check, then create, for supplier invoices (owner
+// 2026-11-04: "PI也是需要"). The PI twin of scan-gr-check.ts: one PDF holding many
+// invoices or many files; each is read in the background and waits as an
+// editable working copy until the operator creates the drafts or deletes it.
+// An invoice number already on a purchase invoice of that supplier is flagged,
+// and can still be created or deleted.
+//
+// SAFETY: Create converts the checked rows through createDraftPiFromGrnItems,
+// the same core as every other path: DRAFT only (no AP booked), always from
+// posted GRN lines, company-scoped, never over what is left to bill.
+// ---------------------------------------------------------------------------
+
+import { Hono } from 'hono';
+import { supabaseAuth } from '../middleware/auth';
+import type { Env, Variables } from '../env';
+import { activeCompanyId } from '../lib/companyScope';
+import { resolveCallerStaffId } from '../lib/salesScope';
+import { companyCodeById } from '../lib/doc-no';
+import { saveScanCodes } from '../lib/grn-scan-codes';
+import { loadSuppliers } from '../lib/grn-scan-load';
+import { createDraftPiFromGrnItems } from '../lib/pi-from-grn-core';
+import { loadBillableLines } from '../lib/pi-scan-run';
+import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
+import { refVariants } from '../lib/grn-scan-check';
+import { callerId, goldSamples, handleDiscard, handleFile, handleGold, handleRetry, handleUpload, idsOf, jsonBody, ownRows, svcOf, waitingRows, type CheckRow } from './scan-check-shared';
+import { reapStalePiScanJobs, runPiJobFromRow } from './scan-pi';
+
+export const scanPiCheck = new Hono<{ Bindings: Env; Variables: Variables }>();
+scanPiCheck.use('*', supabaseAuth);
+
+scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, runLocal: runPiJobFromRow }));
+
+/* GET /scan-pi/check/pending — this user's invoices still being read or waiting
+   to be checked, with the suppliers, what is left to bill on every supplier on
+   them, and per invoice whether it repeats one already made. */
+scanPiCheck.get('/pending', async (c) => {
+  const svc = svcOf(c.env);
+  const companyId = activeCompanyId(c) ?? null;
+  // A document whose queue message died comes back here even if nobody opens the old list.
+  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  const waiting = await waitingRows<PiReview>(svc, c, 'PI');
+  if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
+  const { rows } = waiting;
+
+  const [suppliers, lines] = await Promise.all([loadSuppliers(svc, companyId), loadBillableLines(svc, companyId)]);
+  if (lines === null) return c.json({ error: 'query_failed', reason: 'Could not load what is left to bill. Please try again.' }, 500);
+  const open = new Map(lines.map((l) => [l.grnItemId, l]));
+  const refs = [...new Set(rows.flatMap((r) => (r.review?.invoiceNumber ? refVariants(r.review.invoiceNumber) : [])))];
+  const existing: ExistingPi[] = [];
+  if (refs.length > 0) {
+    const { data, error } = await svc.from('purchase_invoices').select('id, invoice_number, supplier_id, supplier_invoice_ref, status, invoice_date')
+      .eq('company_id', companyId).neq('status', 'CANCELLED').in('supplier_invoice_ref', refs);
+    // Without this read no repeat could be flagged, so the list is refused rather than shown clean.
+    if (error) return c.json({ error: 'query_failed', reason: 'Could not check for invoices already billed. Please try again.' }, 500);
+    for (const x of (data as Array<{ id: string; invoice_number: string; supplier_id: string | null; supplier_invoice_ref: string | null; status: string; invoice_date: string | null }> | null) ?? []) {
+      existing.push({ id: x.id, invoiceNumber: x.invoice_number, supplierId: x.supplier_id, supplierInvoiceRef: x.supplier_invoice_ref, status: x.status, invoiceDate: x.invoice_date });
+    }
+  }
+  const gold = await goldSamples(svc, rows.map((r) => r.sample_id).filter((x): x is string => !!x));
+  const repeats = repeatedPis(rows.map((r) => ({ id: r.id, fileName: r.file_name, review: r.review })));
+  return c.json({ success: true, data: {
+    documents: rows.map((r) => ({
+      id: r.id, batchId: r.batch_id, fileName: r.file_name, pages: r.page_from != null ? [r.page_from, r.page_to] : null,
+      state: r.status === 'error' ? 'failed' : r.review_state, note: r.error, review: r.review, createdAt: r.created_at,
+      hasFile: (r.image_keys ?? []).length > 0,
+      canGold: !!r.sample_id, gold: !!r.sample_id && gold.has(r.sample_id),
+      duplicateOf: r.review ? duplicatePi(r.review, existing) : null,
+      repeatOf: repeats.get(r.id) ?? null,
+      blocked: r.review ? billBlocked(r.review, open) : null,
+    })),
+    suppliers: suppliers.map((s) => ({ id: s.id, code: s.code, name: s.name })),
+    billLines: lines,
+  } });
+});
+
+/* PATCH /scan-pi/check/:id {review} — save the operator's edit. */
+scanPiCheck.patch('/:id', async (c) => {
+  const review = cleanPiReview(((await jsonBody(c)) as { review?: unknown } | null)?.review);
+  if (!review) return c.json({ error: 'bad_request', reason: 'Nothing to save.' }, 400);
+  const svc = svcOf(c.env);
+  const row = (await ownRows<PiReview>(svc, c, 'PI', [c.req.param('id')]))[0] as CheckRow<PiReview> | undefined;
+  if (!row) return c.json({ error: 'not_found', reason: 'This scan is no longer here.' }, 404);
+  if (row.review_state !== 'pending') return c.json({ error: 'not_editable', reason: row.review_state === 'reading' ? 'Still reading this document.' : 'This scan was already handled.' }, 409);
+  const { error } = await svc.from('scan_jobs').update({ review, updated_at: new Date().toISOString() })
+    .eq('id', row.id).eq('company_id', activeCompanyId(c)).eq('review_state', 'pending');
+  if (error) return c.json({ error: 'save_failed', reason: 'Could not save. Please try again.' }, 500);
+  return c.json({ success: true });
+});
+
+const REFUSED: Record<string, string> = {
+  qty_exceeds_remaining: 'A row bills more than is left on its Goods Receipt line.',
+  item_not_found: 'A Goods Receipt line on it is not in this company.',
+};
+
+/* POST /scan-pi/check/create {ids} — make the DRAFT purchase invoices. One result
+   per document; a refused one keeps its working copy and says why. */
+scanPiCheck.post('/create', async (c) => {
+  // company-scope: rows are read with the active company and the caller; drafts go through createDraftPiFromGrnItems, whose GRN-line read is company-scoped; each row update repeats the company predicate.
+  const svc = svcOf(c.env);
+  const companyId = activeCompanyId(c) ?? null;
+  const rows = (await ownRows<PiReview>(svc, c, 'PI', idsOf(await jsonBody(c)))).filter((r) => r.review_state === 'pending' && r.review);
+  const companyCode = await companyCodeById(svc, companyId);
+  const houzsUserId = callerId(c);
+  const userId = (await resolveCallerStaffId(svc, houzsUserId)) ?? c.get('user').id;
+  const itemOfLine = new Map(((await loadBillableLines(svc, companyId)) ?? []).map((l) => [l.grnItemId, l.itemCode]));
+  const results: Array<{ id: string; ok: boolean; docNumbers?: string[]; reason?: string }> = [];
+  for (const r of rows) {
+    const review = r.review as PiReview;
+    const picks = billPicks(review);
+    if (picks.length === 0) { results.push({ id: r.id, ok: false, reason: 'No row is tied to a Goods Receipt line yet.' }); continue; }
+    const res = await createDraftPiFromGrnItems(c.env, {
+      userId, houzsUserId, companyId, allowedCompanyIds: companyId != null ? [companyId] : null, companyCode, picks,
+      supplierInvoiceNumber: review.invoiceNumber, invoiceDate: review.invoiceDate, notes: review.notes,
+    });
+    if (!res.ok || res.created.length === 0) {
+      const b = res.ok ? {} : res.body;
+      results.push({ id: r.id, ok: false, reason: (typeof b.message === 'string' && b.message) || (typeof b.reason === 'string' && b.reason) || REFUSED[String(b.error)] || 'The purchase invoice could not be created.' });
+      continue;
+    }
+    const docNumbers = res.created.map((d) => d.invoiceNumber);
+    const teach = billCodesToTeach(review, (id) => itemOfLine.get(id));
+    if (teach.length > 0 && review.supplierId && companyId != null) {
+      const saved = await saveScanCodes(svc, { companyId, supplierId: review.supplierId, userId: houzsUserId, pairs: teach });
+      if (!saved.ok) console.warn('[scan-pi check] codes not remembered:', saved.reason);
+    }
+    await svc.from('scan_jobs').update({ review_state: 'created', linked_doc_no: docNumbers.join(', '), updated_at: new Date().toISOString() })
+      .eq('id', r.id).eq('company_id', companyId);
+    results.push({ id: r.id, ok: true, docNumbers });
+  }
+  return c.json({ success: true, data: { results } });
+});
+
+scanPiCheck.post('/discard', (c) => handleDiscard(c, 'PI'));
+scanPiCheck.post('/:id/gold', (c) => handleGold(c, 'PI'));
+scanPiCheck.post('/:id/retry', (c) => handleRetry(c, 'PI'));
+scanPiCheck.get('/:id/file', (c) => handleFile(c, 'PI'));

@@ -35,6 +35,11 @@ describe('assrChatStateFromLog', () => {
     doc_no: 'A#inspection', source: 'chat-callback', success: true, created_at: '2026-10-28T09:00:00Z',
     payload: JSON.stringify({ event: 'amend', requested_delivery_date: '05/11/2026', reason: 'Date Unavailable' }),
   };
+  it('a Driver Info send reads Done Driver Information, newest wins', () => {
+    const driver = { ...send, payload: JSON.stringify({ automation: 'Driver Info' }), created_at: '2026-10-28T10:00:00Z' };
+    expect(assrChatStateFromLog([send, amend, driver]).get('A#inspection')?.delivery_message_status).toBe('Done Driver Information');
+    expect(assrChatStateFromLog([driver, { ...send, created_at: '2026-10-28T11:00:00Z' }]).get('A#inspection')?.delivery_message_status).toBe('Done Send');
+  });
   it('a send alone reads Done Send', () => {
     expect(assrChatStateFromLog([send]).get('A#inspection')).toEqual({
       delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null,
@@ -50,6 +55,23 @@ describe('assrChatStateFromLog', () => {
     expect(assrChatStateFromLog([amend, send, resend]).get('A#inspection')?.amend_date_from_customer).toBeNull();
     const failed = { ...resend, success: false };
     expect(assrChatStateFromLog([amend, send, failed]).get('A#inspection')?.delivery_message_status).toBe('Pending Reschedule (D)');
+  });
+  const pick = (status: string | null, created_at: string) => ({
+    doc_no: 'A#inspection', source: 'board-status-pick', success: true, created_at, payload: JSON.stringify({ status }),
+  });
+  it('a staff pick after a send or tap is what the row reads', () => {
+    expect(assrChatStateFromLog([send, pick('To Send Delivery Date', '2026-10-28T09:30:00Z')]).get('A#inspection')?.delivery_message_status).toBe('To Send Delivery Date');
+    expect(assrChatStateFromLog([send, amend, pick(null, '2026-10-28T09:30:00Z')]).get('A#inspection')?.delivery_message_status).toBeNull();
+  });
+  it('a staff pick keeps the customer request on the row', () => {
+    expect(assrChatStateFromLog([amend, pick('Done Scheduling', '2026-10-28T09:30:00Z')]).get('A#inspection')).toEqual({
+      delivery_message_status: 'Done Scheduling', amend_date_from_customer: '2026-11-05', amend_reason_from_customer: 'Date Unavailable',
+    });
+  });
+  it('a send or tap after a staff pick takes over again', () => {
+    const early = pick('To Send Delivery Date', '2026-10-28T07:00:00Z');
+    expect(assrChatStateFromLog([early, send]).get('A#inspection')?.delivery_message_status).toBe('Done Send');
+    expect(assrChatStateFromLog([early, amend]).get('A#inspection')?.delivery_message_status).toBe('Pending Reschedule (D)');
   });
   it('a confirm reads Done Scheduling', () => {
     const confirm = { ...amend, created_at: '2026-10-28T10:00:00Z', payload: JSON.stringify({ event: 'confirm' }) };

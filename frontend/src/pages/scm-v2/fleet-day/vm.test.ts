@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
-  docRowVM, buildRuns, buildLorryCards, applyFilters, searchMatch, latestLiveDoId,
+  docRowVM, buildRuns, buildLorryCards, buildLorryRoutes, applyFilters, searchMatch, latestLiveDoId,
   EMPTY_FILTERS, filtersActive, isoToMytTime, mytTimeToIso, type DocRowVM, type DayClock,
 } from './vm';
+import type { MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
 import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
@@ -194,6 +195,66 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
     const byPlate = Object.fromEntries(cards.map((c) => [c.plate, c] as const));
     expect(byPlate.VQE9058!.docs.map((d) => d.jobLabel)).toEqual(['Transfer item']);
     expect(byPlate.VRH9058!.docs.map((d) => d.jobLabel)).toEqual(['Service / delivery back']);
+  });
+});
+
+describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated stops', () => {
+  const drivers = new Map<string, DriverRow>([
+    ['d1', { id: 'd1', driver_code: 'DRV-1', name: 'Shamsul', phone: '019-9', ic_number: 'ic', vehicle: null, active: true, created_at: '' }],
+  ]);
+  const lorries = [
+    { id: 'l1', plate: 'VQE9058', is_internal: true, active: true },
+    { id: 'l2', plate: 'VRH9058', is_internal: true, active: true },
+  ];
+  // VQE runs three drops in delivery-time order; two geocode, one does not.
+  const docs: DocRowVM[] = [
+    docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1, time_range: 'AM', debtor_name: 'Ada' }), 'done', CLOCK),
+    docRowVM(order({ so_doc_no: 'B', trip_id: 't1', trip_stop_no: 2, time_range: '2pm-4pm', debtor_name: 'Ben' }), 'scheduled', CLOCK),
+    docRowVM(order({ so_doc_no: 'C', trip_id: 't1', trip_stop_no: 3, time_range: '2pm-4pm', debtor_name: 'Cho' }), 'scheduled', CLOCK),
+  ];
+  const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
+  const depot: MapLatLng = { lat: 3.1, lng: 101.6 };
+  const pointByRef = new Map<string, MapLatLng>([
+    ['A', { lat: 3.2, lng: 101.7 }],
+    ['C', { lat: 3.3, lng: 101.8 }],
+    // 'B' deliberately missing — it must surface, not vanish.
+  ]);
+  const { routes, unlocated } = buildLorryRoutes(cards, pointByRef, depot, (k) => `col:${k}`);
+
+  test('one route per working lorry; an empty pinned lorry has none', () => {
+    expect(routes.map((r) => r.id)).toEqual(['VQE9058']); // VRH is empty -> no route
+  });
+  test('stops are the geocoded drops in run order, numbered consecutively past a gap', () => {
+    const vqe = routes[0]!;
+    expect(vqe.stops.map((s) => s.ref)).toEqual(['A', 'C']);     // B dropped from the line
+    expect(vqe.stops.map((s) => s.order)).toEqual([1, 2]);       // renumbered 1,2 — no gap at the hole
+    expect(vqe.stops.map((s) => s.label)).toEqual(['Ada', 'Cho']);
+    expect(vqe.stops[0]!.windowLabel).toBe('AM');
+  });
+  test('route carries the plate title, driver crew line, depot, per-lorry colour and delivered/total', () => {
+    const vqe = routes[0]!;
+    expect(vqe.title).toBe('VQE9058');
+    expect(vqe.crewLabel).toBe('Shamsul');
+    expect(vqe.depot).toEqual(depot);
+    expect(vqe.color).toBe('col:VQE9058');
+    expect(vqe.delivered).toBe(1);   // A is done
+    expect(vqe.total).toBe(3);       // all three drops counted, located or not
+    expect(vqe.allRefs).toEqual(['A', 'B', 'C']); // focus still finds the ungeocoded B
+  });
+  test('the ungeocoded drop is surfaced with a reason, never dropped', () => {
+    expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: 'Address could not be located' }]);
+  });
+  test('a non-SO job with no pin says so (not a geocode miss)', () => {
+    const jobDocs: DocRowVM[] = [
+      docRowVM(order({
+        row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
+        ref: 'ASSR/1', trip_id: 't1', trip_stop_no: 1, delivery_orders: [], local_total_sen: 0,
+      }), 'scheduled', CLOCK),
+    ];
+    const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
+    const out = buildLorryRoutes(jobCards, new Map(), null, (k) => k);
+    expect(out.routes.find((r) => r.id === 'VQE9058')!.stops).toEqual([]);
+    expect(out.unlocated).toEqual([{ ref: 'ASSR/1#delivery', label: 'ASSR/1', reason: 'Non-delivery job — no location' }]);
   });
 });
 

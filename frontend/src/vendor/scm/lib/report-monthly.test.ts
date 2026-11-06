@@ -143,7 +143,7 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'sum:net')).toMatchObject({ kind: 'net', depth: 0 });
   });
 
-  test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash Surplus, Balance b/f, Balance c/f', () => {
+  test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash surplus / (deficit), Balance b/f, Balance c/f', () => {
     const top = (id: string, label: string, flow: 'in' | 'out', totalLabel: string, children: LaidNode[], pct: number | null, kind: LaidNode['kind'] = 'category'): LaidNode =>
       ({ ...cat(id, label, children, pct), kind, flow, totalLabel });
     const r = {
@@ -156,22 +156,24 @@ describe('each report as lines', () => {
           top('unassigned:out', 'Unassigned payments', 'out', 'Total unassigned payments', [{ ...acc('ADV', 30_000, 42.9), id: 'out:acc:ADV', flow: 'out' as const }], 42.9, 'unassigned'),
         ],
       },
-      totals: { openingTotalSen: -10_000, receiptsTotalSen: 50_000, paymentsTotalSen: 70_000, closingTotalSen: -30_000 },
-      card: { takingsSen: 12_300, transitSen: 45_600 },
+      columns: [{ code: '310-0010', name: 'CASH AT BANK - MAYBANK' }, { code: 'CARD', name: 'Card money not yet in the bank' }],
+      opening: { '310-0010': -12_300, CARD: 2_300 },
+      totals: { openingTotalSen: -10_000, receiptsTotalSen: 50_000, paymentsTotalSen: 70_000, closingTotalSen: -30_000, closing: { '310-0010': -75_600, CARD: 45_600 } },
     };
     const lines = rpLines(r);
     expect(lines.map((l) => l.id)).toEqual([
       'blk:side:in', 'in:acc:300-0000', 'tot:side:in', 'blk:side:out', 'out:cat:p', 'out:acc:601-0003', 'tot:side:out', 'sub:ops',
-      'blk:unassigned:out', 'out:acc:ADV', 'tot:unassigned:out', 'net:surplus', 'bal:opening', 'bal:closing',
-      'memo:card-takings', 'memo:card-transit',
+      'blk:unassigned:out', 'out:acc:ADV', 'tot:unassigned:out', 'net:surplus',
+      'bal:opening', 'bal:opening:bank', 'bal:opening:card', 'bal:closing', 'bal:closing:bank', 'bal:closing:card',
     ]);
-    /* The card money the bank has not received (owner 2026-09-28): two memo lines after the foot. */
-    expect(lines.find((l) => l.id === 'memo:card-takings')).toMatchObject({ label: 'Card takings this period (swiped, not yet in the bank)', kind: 'memo', amountSen: 12_300, pct: null });
-    expect(lines.find((l) => l.id === 'memo:card-transit')).toMatchObject({ label: 'Card money in transit at period end', kind: 'memo', amountSen: 45_600, pct: null });
+    /* Each balance in two parts, the banks and the Card column (owner 2026-11-05). */
+    expect(lines.find((l) => l.id === 'bal:opening:bank')).toMatchObject({ label: 'Bank', depth: 1, amountSen: -12_300, pct: null });
+    expect(lines.find((l) => l.id === 'bal:closing:card')).toMatchObject({ label: 'Card money not yet in the bank', depth: 1, amountSen: 45_600, pct: null });
+    expect(lines.find((l) => l.id === 'bal:closing:bank')).toMatchObject({ amountSen: -75_600 });
     expect(lines.find((l) => l.id === 'tot:side:in')).toMatchObject({ label: 'Total receipts', kind: 'total', amountSen: 50_000, pct: 100 });
     expect(lines.find((l) => l.id === 'sub:ops')).toMatchObject({ label: 'Net operation surplus / (deficit)', kind: 'net', amountSen: 10_000, pct: null });
     expect(lines.find((l) => l.id === 'tot:unassigned:out')).toMatchObject({ label: 'Total unassigned payments', kind: 'total', amountSen: 30_000, pct: 42.9 });
-    expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash Surplus / (Deficit)', kind: 'net', amountSen: -20_000, pct: null });
+    expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash surplus / (deficit)', kind: 'net', amountSen: -20_000, pct: -40 });
     expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
     expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
   });

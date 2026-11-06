@@ -141,7 +141,7 @@ type Screen =
      tab, which is right when POD was opened from a document card — but the
      delivery-planning board sends the driver here MID-RUN, and dumping them on
      the home tab loses the run sheet they were working through. */
-  | { t: "pod"; docNo: string; from?: "delivery-planning" | "delivery-planning-driver" }
+  | { t: "pod"; docNo: string; companyCode?: string | null; from?: "delivery-planning" | "delivery-planning-driver" }
   /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
@@ -1075,14 +1075,14 @@ function MobileAppInner() {
     const leavePod = fromSheet ? () => toSheet(null) : back;
     // Confirmed from the run-sheet: go back to it and on to the next stop.
     const donePod = fromSheet ? () => toSheet(screen.docNo) : back;
-    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
+    overlay = <MobilePOD docNo={screen.docNo} companyCode={screen.companyCode ?? null} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "punch") overlay = <MobilePunch onBack={back} />;
   else if (screen.t === "overview") overlay = <MobileOverview kind={screen.kind} onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
-  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
-  else if (screen.t === "delivery-planning-driver") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning-driver" })} />;
+  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber, companyCode) => setScreen({ t: "pod", docNo: doNumber, companyCode, from: "delivery-planning" })} />;
+  else if (screen.t === "delivery-planning-driver") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber, companyCode) => setScreen({ t: "pod", docNo: doNumber, companyCode, from: "delivery-planning-driver" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;

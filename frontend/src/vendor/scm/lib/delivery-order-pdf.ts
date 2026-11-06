@@ -109,6 +109,9 @@ type DoHeader = {
      screen (salesperson_name, else the staff-lookup of agent / salesperson_id).
      Optional: blank / absent ⇒ the row is omitted, like Driver / Vehicle. */
   salesperson?: string | null;
+  /* The delivery window keyed on the Delivery Planning board. Drivers work from
+     this paper, so it prints beside the date. Absent ⇒ the row is omitted. */
+  time_range?: string | null;
 };
 
 type DoItem = {
@@ -495,6 +498,9 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
       label: 'Delivery Date',
       value: header.expected_delivery_at ? fmtDocDate(header.expected_delivery_at) : null,
     },
+    ...(header.time_range && header.time_range.trim()
+      ? [{ label: 'Time Slot', value: header.time_range.trim(), bold: true }]
+      : []),
     // Who is bringing it, and in what. Printed only once the run is assigned —
     // a dashed "Driver —" on an unassigned DO is noise on the driver's sheet.
     ...(header.driver_name ? [{ label: 'Driver', value: header.driver_name }] : []),
@@ -507,14 +513,19 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   const drawRight = (draw: boolean): number => {
     let y = draw ? drawCaption(doc, 'Delivery Details', rightX, contentTop) : contentTop + pt(S.caption) + 3;
     for (const row of rows) {
-      const value = row.value || EM_DASH;
+      /* Wrapped so free text ("TIME AROUND 10:30AM TO 12:30PM") stays in the panel. */
+      font(doc, S.body, row.bold ? 'bold' : 'normal');
+      const lines = doc.splitTextToSize(row.value || EM_DASH, colW - LABEL_W - 4) as string[];
       y += ROW_GAP + pt(S.body);
       if (draw) {
         font(doc, S.body);
         doc.text(row.label, rightX, y);
         font(doc, S.body, row.bold ? 'bold' : 'normal');
-        doc.text(value, rightX + LABEL_W + 4, y);
       }
+      lines.forEach((line, i) => {
+        if (i > 0) y += pt(S.body) + 1;
+        if (draw) doc.text(line, rightX + LABEL_W + 4, y);
+      });
     }
     return y;
   };

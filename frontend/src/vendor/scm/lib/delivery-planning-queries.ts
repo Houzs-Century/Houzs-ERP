@@ -276,6 +276,8 @@ export type PlanningOrder = {
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
+  /* A project row of a company the caller is not granted: listed (shared fleet), but its Remarks cannot be saved. */
+  remark_locked?: boolean;
   region: RegionCode;   // the order's primary bucket (from customer_state)
   regions: RegionCode[];  // primary + any leg buckets
   warehouse_id: string | null;
@@ -575,15 +577,19 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr'; id: string } & HcFieldsPatch) =>
-      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr' | 'project'; id: string } & HcFieldsPatch) =>
+      authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${encodeURIComponent(id)}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     /* HC-0175: without this the inline select snapped back to the old status and
        only showed the pick after the PATCH plus the row re-read, several seconds.
-       SO-context fields only: they land on the SO whether or not a DO exists. */
+       SO-context fields only: they land on the SO whether or not a DO exists.
+       A Service Case job takes the same patch: its re-read is the whole board. */
     onMutate: async (vars) => {
-      if (vars.type !== 'so') return { snapshots: [] };
+      if (vars.type !== 'so' && vars.type !== 'assr') return { snapshots: [] };
+      const isTarget = (o: PlanningOrder) => (vars.type === 'so'
+        ? o.row_type === 'so' && o.so_doc_no === vars.id
+        : o.row_type === 'assr' && String(o.assr_id) === vars.id && o.job_kind === vars.jobKind);
       const patch: Partial<PlanningOrder> = {};
       for (const [from, to] of SO_FIELD_COLUMNS) {
         if (vars[from] !== undefined) (patch as Record<string, unknown>)[to] = vars[from] || null;
@@ -596,7 +602,7 @@ export function useUpdateDeliveryFields() {
         snapshots.push([key, prev]);
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
-          orders: prev.orders.map((o) => (o.row_type === 'so' && o.so_doc_no === vars.id ? { ...o, ...patch } : o)),
+          orders: prev.orders.map((o) => (isTarget(o) ? { ...o, ...patch } : o)),
         });
       }
       return { snapshots };
@@ -977,13 +983,15 @@ export type SendDeliveryMessagesResult = {
 export type SendMessageKind =
   | 'delivery' | 'amend'
   | 'reminder_1' | 'reminder_2' | 'reminder_3'
-  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'postage'
+  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'overdue_order' | 'postage'
   | 'assr_arrangement';
 export type SendDeliveryMessagesBody = {
   docNos: string[];
   kind?: SendMessageKind;
   driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
 };
+/* An ASSR leg's board row key, `<assr_no>#<leg>` (backend parseAssrRowKey). */
+const ASSR_ROW_KEY_RE = /#(customer_pickup|inspection|delivery)$/;
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
   return useMutation<SendDeliveryMessagesResult, Error, SendDeliveryMessagesBody>({
@@ -996,18 +1004,20 @@ export function useSendDeliveryMessages() {
     onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
       const sent = res.sent.flatMap((s) => s.docNos);
-      if (body.kind !== 'assr_arrangement') { scheduleRowRefresh(qc, sent); return; }
-      /* HC-0197: a Service Case leg's Done Send is not a column — only the full
-         board read overlays it from the send log (overlayAssrChatState), and the
-         row refresh is SO-only. Show it now, then re-read the board. */
+      const assrStatus = body.kind === 'assr_arrangement' ? 'Done Send' : body.kind === 'driver_info' ? 'Done Driver Information' : null;
+      const assrSent = sent.filter((d) => ASSR_ROW_KEY_RE.test(d));
+      if (body.kind !== 'assr_arrangement' && assrSent.length === 0) { scheduleRowRefresh(qc, sent); return; }
+      /* HC-0197: a Service Case leg's status after a send comes from the full
+         board read (overlayAssrChatState), and the row refresh is SO-only. Show
+         it now, then re-read the board (which re-reads any SO sent with it). */
       if (sent.length === 0) return;
-      const keys = new Set(sent);
+      const keys = new Set(assrSent);
       for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
         if (!prev || !Array.isArray(prev.orders)) continue;
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
           orders: prev.orders.map((o) => (o.row_type === 'assr' && keys.has(o.so_doc_no)
-            ? { ...o, delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null }
+            ? { ...o, delivery_message_status: assrStatus, amend_date_from_customer: null, amend_reason_from_customer: null }
             : o)),
         });
       }

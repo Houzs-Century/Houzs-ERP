@@ -42,6 +42,8 @@ export type OpenPoLine = {
   // Code of the warehouse the line ships into (line, else PO header), e.g.
   // "SRW WAREHOUSE". Null when the PO names none.
   locationCode: string | null;
+  // That warehouse's id, to offer its racks on the check step.
+  warehouseId?: string | null;
   // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
   // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
   description2?: string | null;
@@ -135,7 +137,7 @@ export type GrnMatchResult = {
   // with the item code each matched.
   nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
   // Rows received as a whole set: every piece on their PO of the SO they print.
-  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string }>;
+  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string; poItemIds: string[] }>;
   // poItemId -> the rack handwritten on the row(s) that line was received from.
   // A line that two rows with different racks fed is left out.
   racks: Record<string, string>;
@@ -170,7 +172,8 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   pos: T[],
   allowTail: boolean,
 ): T | null {
-  const p = normalizeCode(printed);
+  // HC-PO-2610-257_R1: a supplier's copy of a revised PO is still that PO.
+  const p = normalizeCode((printed ?? '').replace(/[_\s-]*R\d+\s*$/i, ''));
   if (!p) return null;
   const unique = (hits: T[]): T | null => {
     const byNumber = new Map(hits.map((h) => [h.poNumber, h]));
@@ -186,7 +189,28 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   });
   if (labelled.length > 0) return unique(labelled);
   if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
-  return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
+  const tail = unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
+  if (tail) return tail;
+  // A misread lead digit ("102610-243" for 2610-243) still ends in our number.
+  if (/[A-Z]/.test(p)) return null;
+  const digits = p.replace(/\D/g, '');
+  return unique(pos.filter((r) => {
+    const own = /PO-?([\d-]+)$/i.exec(r.poNumber)?.[1]?.replace(/\D/g, '') ?? '';
+    return own.length >= 7 && digits.endsWith(own);
+  }));
+}
+
+/** Our own PO number on the paper names the supplier for certain, whatever name its
+ *  letterhead carries (DIGLANT MANUFACTURING delivers for EADECO REFORM). */
+export function supplierOfPrintedPo(
+  parsed: { poNo?: string | null; lines: ReadonlyArray<{ poNo?: string | null }> },
+  allPos: Array<{ poNumber: string; supplierId?: string | null }>,
+): string | null {
+  const ids = new Set([parsed.poNo, ...parsed.lines.map((l) => l.poNo)].flatMap((po) => {
+    const hit = (resolvePrintedPo(po, allPos, false) ?? resolvePrintedPo(splitInnerLocation(po)?.po, allPos, false))?.supplierId;
+    return hit ? [hit] : [];
+  }));
+  return ids.size === 1 ? [...ids][0] : null;
 }
 
 /**
@@ -387,18 +411,26 @@ export function matchGrnScanToPoLines(
     }
 
     const hitList = [...hits.values()].filter((l) => anchorPo === null || l.poNumber === anchorPo);
+    if (hitList.length === 0) {
+      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
+      // our SO number, where our PO has one line per piece: take that SO's pieces.
+      // Our SO number anchors as surely as a PO number, so it needs no PO: their
+      // header P.O. is their own "S/O 1878". A known supplier only.
+      const pieces = anchorPo !== null ? supplierLines.filter((l) => l.poNumber === anchorPo) : supplierId !== null ? supplierLines : [];
+      const set = setLinesBySo(sl, pieces.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
+      if (set) {
+        for (const l of set.lines) {
+          anchoredPos.add(l.poNumber);
+          spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
+        }
+        soMatches.push({ line: sl, soDocNo: set.soDocNo, poItemIds: set.lines.map((l) => l.poItemId) });
+        continue;
+      }
+    }
     if (hitList.length === 0 && anchorPo !== null) {
       // The supplier's own code is unknown to us (DIGLANT prints T1MAMWA0MK for
       // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
       const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
-      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
-      // our SO number, where our PO has one line per piece: take that SO's pieces.
-      const set = setLinesBySo(sl, poLines.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
-      if (set) {
-        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
-        soMatches.push({ line: sl, soDocNo: set.soDocNo });
-        continue;
-      }
       const item = nameMatchItem(sl.description, poLines);
       const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
       const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
@@ -583,7 +615,13 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
   return pick(false) ?? pick(true);
 }
 
-const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b/i.exec(v ?? '')?.[1] ?? null;
+/** Our SO numbers in a text, keyed so a printed one meets ours: "*SO-011717" is
+ *  HC-SO-011717, and "2990-SO-2609-045" keeps its running number. Taking only the
+ *  month ("2609") would make every order of that month one order. */
+const soKeys = (v: string | null | undefined): string[] =>
+  [...(v ?? '').matchAll(/(?<![A-Z])SO-?(\d+(?:-\d+)*)/gi)]
+    .map((m) => m[1].replace(/-/g, '').replace(/^0+/, ''))
+    .filter((k) => k.length >= 4);
 
 /**
  * The PO lines a delivery-order row delivers as one set: the row prints one of
@@ -593,14 +631,14 @@ const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b
  * Null when the row names no SO, or none of `poLines` belongs to it.
  */
 export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDocNo: string; lines: OpenPoLine[] } | null {
-  const text = `${row.itemCode ?? ''} ${row.description ?? ''}`;
-  const keys = new Set([...text.matchAll(/SO-?0*(\d{4,})\b/gi)].map((m) => m[1]));
+  const keys = new Set(soKeys(`${row.itemCode ?? ''} ${row.description ?? ''}`));
   if (keys.size === 0) return null;
-  const ofSo = poLines.filter((l) => keys.has(soKey(l.soDocNo) ?? ''));
+  const ofSo = poLines.filter((l) => soKeys(l.soDocNo).some((k) => keys.has(k)));
   const docs = new Set(ofSo.map((l) => l.soDocNo));
   if (ofSo.length === 0 || docs.size !== 1) return null;
   const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
-  const ofModel = ofSo.filter((l) => models.has(/^(\d{4,})/.exec(l.itemCode)?.[1] ?? ''));
+  // Our code can name the model (BANGGAU-2A(LHF)) where the supplier's holds the number (DSL8075-2A(LHF)).
+  const ofModel = ofSo.filter((l) => [/^(\d{4,})/.exec(l.itemCode)?.[1], /(\d{4,})/.exec(l.supplierSku ?? '')?.[1]].some((n) => n !== undefined && models.has(n)));
   return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
 }
 

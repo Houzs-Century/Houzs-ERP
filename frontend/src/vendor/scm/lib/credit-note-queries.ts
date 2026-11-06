@@ -20,6 +20,8 @@ export type CreditNote = {
   supplier_id: string | null;
   /** An other-debtor note's debtor (Other Debtors registry). */
   debtor_id?: string | null;
+  /** That debtor's account code, read off the registry for the screens and the print (party_code stays blank: it goes to the journal). */
+  debtor_code?: string | null;
   so_doc_no: string | null; sales_invoice_id: string | null;
   ap_invoice_id: string | null; purchase_invoice_id: string | null; source_doc_no: string | null;
   /** The final invoice's number when the note answers one — read for the print (docs/bugs/0834). */

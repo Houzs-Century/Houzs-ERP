@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const book = (id: number, name: string, rental: number, soSen: number) => ({
   id, code: `P${id}`, name, brand: "AKEMI", endDate: "2026-09-20", soSen, soDocs: [],
-  hasReport: false, reportBills: 0, problemBills: [], rental,
+  hasReport: false, reportBills: 0, problemBills: [], rental, waived: id === 2270 ? ["rental"] : [],
 });
 const GAPS = {
   from: "2026-06-24", to: "2026-10-19", ended: 3,
@@ -27,17 +27,20 @@ vi.mock("../../hooks/useQuery", () => ({
   useQuery: () => ({ data: GAPS, loading: false, fetching: false, placeholder: false, error: null, reload: () => {} }),
 }));
 
+vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ user: null }) }));
 import { ProjectDataGapsPanel } from "./ProjectOverviewParts";
 
 describe("Books not complete — Rental missing or no sales", () => {
   it("a rental below zero shows its figure and says so; none at all is missing; keyed with no sales says that", () => {
     render(<ProjectDataGapsPanel onOpen={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /Rental missing or no sales/ }));
+    expect(screen.queryByText("JOHOR [ERGOTEX] SOLO @ SUNWAY KLUANG MALL")).toBeNull();
     const row = (name: string) => (screen.getByText(name).closest("tr") as HTMLTableRowElement).textContent;
     const negative = row("Putrajaya [AKEMI] MALL MGT @ IOI CITY MALL PUTRAJAYA");
     expect(negative).toContain("22,950.00");
     expect(negative).not.toContain("missing");
     expect(negative).toContain("Rental below zero");
+    fireEvent.click(screen.getByRole("button", { name: "Show removed (1)" }));
     expect(row("JOHOR [ERGOTEX] SOLO @ SUNWAY KLUANG MALL")).toContain("missing");
     expect(row("JOHOR [ERGOTEX] SOLO @ SUNWAY KLUANG MALL")).toContain("No rental keyed");
     expect(row("PULAU PINANG [ZANOTTI] BIGHOME @ SETIA SPICE CONVENTION CENTRE")).toContain("Rental keyed, no sales");

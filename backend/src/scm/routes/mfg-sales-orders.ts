@@ -6569,7 +6569,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   let customerIdentityChanged = false; // name or phone changed → re-detect cross-category
   let reNewName = '';
   let reNewPhone: string | null = null;
-  if (body['recustomer'] === true) {
+  /* Any name/phone edit re-resolves the customer, not only the POS opt-in
+     (recustomer): the web edit used to leave customer_id on the old record, so
+     the SO's PWP codes and the next order for the same person disagreed
+     (Hub 2990-0037). */
+  {
     const nm = typeof body['debtorName'] === 'string' ? (body['debtorName'] as string).trim()
              : typeof body['customerName'] === 'string' ? (body['customerName'] as string).trim()
              : ((beforeRowAll?.['debtor_name'] as string | null) ?? '');

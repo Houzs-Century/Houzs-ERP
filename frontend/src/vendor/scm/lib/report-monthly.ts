@@ -17,6 +17,7 @@
 
 import type { LaidNode } from './report-layout';
 import { flattenLaid } from './report-layout';
+import { balanceParts, type RpColumn } from './rp-report-queries';
 
 /** One line of a report as one column printed it. */
 export type FlatLine = {
@@ -28,6 +29,10 @@ export type FlatLine = {
   pct: number | null;
   /** An account row's code — what its lines are read by. */
   code?: string;
+  /** A grey line after the name on screen (`· 3 lines`, `· GP % = …`); not exported. */
+  caption?: string;
+  /** A group's own name for its Total line (the layout's totalLabel); else "Total <label>". */
+  totalLabel?: string;
 };
 
 export type MonthlyCell = { amountSen: number; pct: number | null };
@@ -84,6 +89,7 @@ export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
   flattenLaid(nodes, depth).map(({ node, depth: d }) => ({
     id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind === 'subtotal' ? 'net' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
     ...(node.code ? { code: node.code } : {}),
+    ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}),
   }));
 
 export const fixedLine = (id: string, label: string, kind: FlatLine['kind'], amountSen: number, pct: number | null): FlatLine =>
@@ -104,7 +110,7 @@ export function mergeColumns(columns: Array<{ key: string; lines: FlatLine[] }>)
     for (const l of col.lines) {
       let line = at.get(l.id);
       if (!line) {
-        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}) };
+        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}), ...(l.caption ? { caption: l.caption } : {}), ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}) };
         at.set(l.id, line);
         const after = prevId ? out.findIndex((x) => x.id === prevId) : -1;
         out.splice(after + 1, 0, line);
@@ -204,14 +210,15 @@ export const performanceLines = (r: PerfLike, summary: PerfSummaryLike[]): FlatL
 };
 
 type RpLike = {
+  columns: RpColumn[];
+  opening: Record<string, number>;
   layout: { tree: LaidNode[]; inSen: number; outSen: number };
-  totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number };
-  card: { takingsSen: number; transitSen: number };
+  totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number; closing: Record<string, number> };
 };
 
 /** The Cash Flow as lines, the Total column only: each top category as a
     block, its tree, its own subtotal line; a running subtotal as a bold
-    line; then Cash Surplus / (Deficit), Balance b/f and Balance c/f last
+    line; then Cash surplus / (deficit) (its % of the receipts), Balance b/f and Balance c/f last
     (owner 2026-09-18: b/f and c/f at the foot). % of the side's total. */
 export const rpLines = (r: RpLike): FlatLine[] => {
   const t = r.totals;
@@ -222,13 +229,14 @@ export const rpLines = (r: RpLike): FlatLine[] => {
     out.push(...treeLines(n.children));
     out.push(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct));
   }
-  out.push(fixedLine('net:surplus', 'Cash Surplus / (Deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, null));
+  out.push(fixedLine('net:surplus', 'Cash surplus / (deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, pctOfBase(t.receiptsTotalSen - t.paymentsTotalSen, t.receiptsTotalSen)));
+  /* Each balance in two parts, the banks and the card money not yet in the bank (owner 2026-11-05). */
+  const parts = (id: string, per: Record<string, number>, total: number) =>
+    balanceParts(r, id, per, total).map((p): FlatLine => ({ id: p.id, label: p.label, kind: 'row', depth: 1, amountSen: p.sen, pct: null }));
   out.push(fixedLine('bal:opening', 'Balance b/f', 'total', t.openingTotalSen, null));
+  out.push(...parts('bal:opening', r.opening, t.openingTotalSen));
   out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
-  /* The card money the bank has not received (owner 2026-09-28): memo lines, so a
-     month whose bank statement is not in yet is never blank. */
-  out.push(fixedLine('memo:card-takings', 'Card takings this period (swiped, not yet in the bank)', 'memo', r.card.takingsSen, null));
-  out.push(fixedLine('memo:card-transit', 'Card money in transit at period end', 'memo', r.card.transitSen, null));
+  out.push(...parts('bal:closing', t.closing, t.closingTotalSen));
   return out;
 };
 

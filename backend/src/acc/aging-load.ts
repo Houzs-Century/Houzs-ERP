@@ -139,7 +139,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const debtorIds = uniq([...bills.rows.map((b) => b.debtor_id), ...receipts.rows.map((r) => r.debtor_id), ...debtorNotes.rows.map((n) => n.debtor_id)].map((x) => (x == null ? null : String(x))));
   const [orders, debtors, imported] = await Promise.all([
     byValues(sb, companyId, 'mfg_sales_orders', 'doc_no, debtor_code, debtor_name, customer_id', 'doc_no', soNos),
-    byValues(sb, companyId, 'acc_debtors', 'id, name', 'id', debtorIds),
+    byValues(sb, companyId, 'acc_debtors', 'id, name, code', 'id', debtorIds),
     byValues(sb, companyId, 'mfg_sales_order_payments', 'id, so_doc_no, amount_sen, method', 'so_doc_no', soNos),
   ]);
   if (!orders.ok) return orders;
@@ -170,7 +170,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const debtorParty = (debtorId: unknown, l: ControlLine): AgingParty => {
     const id = debtorId == null ? null : String(debtorId);
     const d = id ? debtorById.get(id) : undefined;
-    return id ? { key: `DEBTOR:${id}`, code: null, name: d?.name ?? l.party_name ?? 'Other debtor' } : lineParty(l);
+    return id ? { key: `DEBTOR:${id}`, code: d?.code ?? null, name: d?.name ?? l.party_name ?? 'Other debtor' } : lineParty(l);
   };
 
   const entries: AgingEntry[] = [];

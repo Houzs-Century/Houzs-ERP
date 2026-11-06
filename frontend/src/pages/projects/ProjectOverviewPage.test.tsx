@@ -59,71 +59,48 @@ const show = (search: string) => render(
   <MemoryRouter initialEntries={[`/projects${search}`]}><ProjectOverviewPage /><Where /></MemoryRouter>,
 );
 const PERIOD = "?view=finances&af_from=2026-10-01&af_to=2026-10-31";
-const projectsTable = () => screen.getByText("Sales Orders daily?").closest("table") as HTMLTableElement;
-const titles = () => [...projectsTable().querySelectorAll("tbody tr td:first-child > div:first-child")].map((d) => d.firstChild?.textContent);
+const projectsTable = () => screen.getByText("Sales Orders Daily?").closest("table") as HTMLTableElement;
+const titles = () => [...projectsTable().querySelectorAll("tbody tr span.text-primary")].map((d) => d.textContent);
 
+/* Owner 2026-11-05 (这个我要做成 finance table): the shared Finance table — widths,
+   moving a column, the right-click header menu and the column chooser are DataTable's
+   own (its tests pin them); here, what this table puts in it. */
 describe("Project Overview — the project table", () => {
-  it("keeps every cost, groups the columns, names each project on two lines and shows a dash for nothing", () => {
+  it("keeps every cost, gives Project / Event type / Venue / State / Dates their own columns, and money as 1,234.56 / (1,234.56)", () => {
     show(PERIOD);
     const table = projectsTable();
-    for (const g of ["Sales", "Gross profit", "Event costs", "Result", "Collected"]) expect(within(table).getAllByText(g).length).toBeGreaterThan(0);
-    for (const c of ["Rental", "Setup", "Transport", "Commission", "Merchandise", "Others"]) expect(within(table).getByText(c)).toBeTruthy();
+    for (const c of ["Project", "Event Type", "Venue", "State", "Dates", "Rental", "Setup", "Transport", "Commission", "Merchandise", "Others", "Net Profit"]) {
+      expect(within(table).getByText(c)).toBeTruthy();
+    }
     const row = within(table).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
-    expect(row.textContent).toContain("SUNWAY PYRAMID CONVENTION CENTRE · Selangor · 10/16 - 10/18");
-    expect(row.textContent).toContain("138,358.00");
+    const cells = [...row.querySelectorAll("td")].map((td) => td.textContent);
+    expect(cells).toContain("SUNWAY PYRAMID CONVENTION CENTRE");
+    expect(cells).toContain("Selangor");
+    expect(cells).toContain("138,358.00");
     expect(row.textContent).not.toContain("RM ");
-    /* Setup and Others: nothing — a dash. */
-    expect([...row.querySelectorAll("td")].filter((td) => td.textContent === "–")).toHaveLength(3); // Service, Setup, Others
-    const loss = within(table).getByText("-10,713.76");
+    /* The name never wraps. */
+    expect(within(table).getByText("[AKEMI] MYHOME").className.split(" ")).toContain("whitespace-nowrap");
+    const loss = within(table).getByText("(10,713.76)");
     expect(loss.className).toContain("text-err");
   });
 
-  /* `cn` only joins classes, so a cell that ADDS text-left to one holding
-     text-right carries both and the stylesheet picks text-right — the Project
-     column sat right-aligned on one line and ran over the Sales figures (owner
-     2026-10-21: 这个project靠左，然后字超过格子了; sales order daily 也靠左). */
   /* Owner 2026-10-25: 这个表需要有total, 然后把venue rent 和 project 倒反位置. */
-  it("adds a Total row at the foot — each column summed, the % worked out from the sums — and comes before Venue rent", () => {
-    show(PERIOD);
-    const foot = projectsTable().querySelector("tfoot") as HTMLTableSectionElement;
-    const cells = [...foot.querySelectorAll("td")].map((td) => td.textContent);
-    expect(cells[0]).toBe("Total · 3 projects");
-    expect(cells).toContain("347,536.00");
-    expect(cells).toContain("-12,271.54");
-    expect(cells).toContain("245,704.00");
-    expect(cells).toContain("73.4%");
-    expect(foot.className.split(/\s+/)).toContain("sticky");
-    const venueRent = screen.getByText("Venue rent");
-    expect(projectsTable().compareDocumentPosition(venueRent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("the project and the daily-report columns read left, and the project wraps inside its cell", () => {
+  it("adds a Total row: each column summed, the % worked out from the sums, and comes before Venue rent", () => {
     show(PERIOD);
     const table = projectsTable();
-    const projectCell = within(table).getByText("[AKEMI] MYHOME").closest("td") as HTMLTableCellElement;
-    const classes = (el: Element) => el.className.split(/\s+/);
-    for (const el of [
-      projectCell,
-      within(table).getByText("Project"),
-      within(table).getByText("Sales Orders daily?"),
-      (projectCell.closest("tr") as HTMLTableRowElement).lastElementChild as Element,
-    ]) {
-      expect(classes(el)).toContain("text-left");
-      expect(classes(el)).not.toContain("text-right");
-    }
-    expect(classes(projectCell)).toContain("whitespace-normal");
-    expect(classes(projectCell)).not.toContain("whitespace-nowrap");
+    const total = within(table).getByText("Total · 3 projects");
+    const foot = total.closest("tr") as HTMLTableRowElement;
+    expect(foot.textContent).toContain("347,536.00");
+    expect(foot.textContent).toContain("(12,271.54)");
+    expect(foot.textContent).toContain("245,704.00");
+    expect(foot.textContent).toContain("73.4%");
+    const venueRent = screen.getByText("Venue rent");
+    expect(table.compareDocumentPosition(venueRent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("the sort is read from the URL and written back to it — Back keeps it", () => {
-    show(`${PERIOD}&ao_sort=sales`);
-    expect(titles()).toEqual(["[AKEMI] HOMELOVE", "[AKEMI] MYHOME", "[ZANOTTI] HOMELOVE"]);
-    expect(screen.getByRole("button", { name: "Sales" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Newest" }));
-    expect(screen.getByTestId("where").textContent).toBe(PERIOD);
+  it("lists the newest first", () => {
+    show(PERIOD);
     expect(titles()).toEqual(["[AKEMI] MYHOME", "[AKEMI] HOMELOVE", "[ZANOTTI] HOMELOVE"]);
-    fireEvent.click(screen.getByRole("button", { name: "Net profit" }));
-    expect(screen.getByTestId("where").textContent).toBe(`${PERIOD}&ao_sort=np`);
   });
 
   it("a filter lives in the URL too; the plain menu link has none", () => {
@@ -139,11 +116,10 @@ describe("Project Overview — the project table", () => {
 /* Owner 2026-10-21: 我点9月的project，按 back 后又跳回10月，然后会跑回最上面 —
    the project page's Back went to the bare /projects, which opens on this month. */
 describe("Project Overview — a project's Back comes back here", () => {
-  it("opening a project notes this address — the period and the sort with it — for that project's Back", () => {
-    const HERE = `${PERIOD}&ao_sort=sales`;
-    show(HERE);
+  it("opening a project notes this address, the period with it, for that project's Back", () => {
+    show(PERIOD);
     fireEvent.click(within(projectsTable()).getByText("[AKEMI] MYHOME"));
-    expect(projectBackTo(361)).toBe(`/projects${HERE}`);
+    expect(projectBackTo(361)).toBe(`/projects${PERIOD}`);
     expect(projectBackTo(2260)).toBe("/projects");
   });
 });

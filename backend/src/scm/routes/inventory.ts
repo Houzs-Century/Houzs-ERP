@@ -51,7 +51,6 @@ import { canViewScmFinance } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { isStockBucket } from '../lib/stock-bucket';
 import { NETTING_EMBED, deliveredReturnedBySoItem, nettingFromEmbedded, type EmbeddedDemandLine } from '../lib/inventory-netting';
-import { warehouseStockList } from '../lib/warehouse-stock-split';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -464,7 +463,9 @@ export const productTotalsHandler = async (
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from('v_inventory_product_totals').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate product totals to the active company (view exposes company_id, mig 0106)
-    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
+    // Barcode is searchable too (cash & carry items carry the AutoCount barcode,
+    // exposed on the view by mig 20261104T1000) — scan or type it to find the SKU.
+    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%,barcode.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
     return q.order('item_code').range(from, to);
   });
@@ -524,6 +525,10 @@ export const productTotalsHandler = async (
   type IncPo = { po_number: string; eta: string | null; qty: number };
   const incomingPos = new Map<string, IncPo[]>();
   const oldestLot = new Map<string, string>();
+  /* HC-0206 (Sim): with "All warehouses" the row summed every location, so the
+     only way to find WHERE a SKU sits was to pick each warehouse in turn. On-hand
+     per warehouse, from the same open lots as the Stock + Consignment columns. */
+  const lotsByWh = new Map<string, Map<string, { qty: number; held: number }>>();
   // Warehouse-scoped Stock override (ask A) — only populated when a warehouse is
   // chosen; otherwise the company-wide totals view figure stands.
   const whStock = new Map<string, number>();
@@ -548,12 +553,6 @@ export const productTotalsHandler = async (
      per item_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
      badge stops calling a display piece idle. */
   const nonSellingQty = new Map<string, number>();
-  /* OWNED open-lot qty per item_code per warehouse, so the all-warehouse list can
-     say WHERE the Stock figure stands. Sim (HC-0187): the 1 pc that made MRP look
-     wrong was in PG DISPLAY, and finding it meant picking KL, PG, KL DISP, PG DISP
-     in the filter one by one. */
-  const ownedByWarehouse = new Map<string, Map<string, number>>();
-  let warehouseCodeById = new Map<string, string>();
 
   if (codes.length > 0) {
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
@@ -720,6 +719,14 @@ export const productTotalsHandler = async (
       console.error('[inventory] open lots read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
     }
     for (const r of (lots ?? []) as Array<{ item_code: string; warehouse_id: string | null; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+      if (r.warehouse_id) {
+        const byWh = lotsByWh.get(r.item_code) ?? new Map<string, { qty: number; held: number }>();
+        const cur = byWh.get(r.warehouse_id) ?? { qty: 0, held: 0 };
+        cur.qty += Number(r.qty_remaining ?? 0);
+        if (isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) cur.held += Number(r.qty_remaining ?? 0);
+        byWh.set(r.warehouse_id, cur);
+        lotsByWh.set(r.item_code, byWh);
+      }
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
       // warehouse flag) and sum OWNED value only, so the list value column matches
@@ -727,11 +734,6 @@ export const productTotalsHandler = async (
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
         ownedValueSen.set(r.item_code, (ownedValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
         ownedQty.set(r.item_code, (ownedQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
-        if (r.warehouse_id) {
-          const byWh = ownedByWarehouse.get(r.item_code) ?? new Map<string, number>();
-          byWh.set(r.warehouse_id, (byWh.get(r.warehouse_id) ?? 0) + Number(r.qty_remaining ?? 0));
-          ownedByWarehouse.set(r.item_code, byWh);
-        }
         /* AGE from OWNED lots only. It used to read every open lot, so a row
            with zero owned stock aged by somebody else's consignment pieces —
            sorting by Age then buried the goods that had really sat longest.
@@ -750,17 +752,22 @@ export const productTotalsHandler = async (
         heldValueSen.set(r.item_code, (heldValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
     }
-
-    const whIds = [...new Set([...ownedByWarehouse.values()].flatMap((m) => [...m.keys()]))];
-    if (whIds.length > 0) {
-      const { data: whs, error: whErr } = await sb.from('warehouses').select('id, code').in('id', whIds);
-      if (whErr) {
-        // eslint-disable-next-line no-console
-        console.error('[inventory] warehouse codes read failed:', (whErr as { message?: unknown }).message ?? whErr);
-      }
-      warehouseCodeById = new Map(((whs ?? []) as Array<{ id: string; code: string }>).map((w) => [w.id, w.code]));
-    }
   }
+
+  const whIds = [...new Set([...lotsByWh.values()].flatMap((m) => [...m.keys()]))];
+  const whCode = new Map<string, { code: string; name: string | null }>();
+  if (whIds.length > 0) {
+    const { data: whRows, error: whErr } = await scopeToCompany(sb.from('warehouses').select('id, code, name'), c).in('id', whIds);
+    if (whErr) {
+      // eslint-disable-next-line no-console
+      console.error('[inventory] warehouse codes read failed:', (whErr as { message?: unknown }).message ?? whErr);
+    }
+    for (const w of (whRows ?? []) as Array<{ id: string; code: string; name: string | null }>) whCode.set(w.id, { code: w.code, name: w.name });
+  }
+  const stockByWarehouse = (code: string) => [...(lotsByWh.get(code) ?? new Map<string, { qty: number; held: number }>()).entries()]
+    .map(([id, v]) => ({ warehouse_id: id, code: whCode.get(id)?.code ?? '?', name: whCode.get(id)?.name ?? null, qty: Math.round(v.qty), held_qty: Math.round(v.held) }))
+    .filter((w) => w.qty !== 0)
+    .sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code));
 
   const enriched = products.map((p) => {
     const code = String(p.item_code);
@@ -784,8 +791,7 @@ export const productTotalsHandler = async (
         committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
         available_qty: 0, surplus_qty: 0,
         sellable_surplus_qty: 0, non_selling_qty: 0,
-        stock_by_warehouse: [],
-        incoming_qty: 0, incoming_pos: [], demand_sos: [],
+        incoming_qty: 0, incoming_pos: [], demand_sos: [], stock_by_warehouse: [],
         oldest_lot_at: null,
       };
     }
@@ -890,12 +896,12 @@ export const productTotalsHandler = async (
          NOT counted: dead stock is on-hand only (owner 2026-10-15). */
       sellable_surplus_qty: deadStockQty(lotOwned, committed + unsched, Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
       non_selling_qty:     nonSellingQty.get(code) ?? 0,
-      stock_by_warehouse:  warehouseStockList(ownedByWarehouse.get(code), warehouseCodeById),
       incoming_qty:        inc,
       incoming_pos:        pos,
       demand_sos:          (demandSos.get(code) ?? []).slice().sort((a, b) =>
         byDateAsc(a.delivery_date, b.delivery_date) || byDateAsc(a.so_date, b.so_date) || a.doc_no.localeCompare(b.doc_no)),
       oldest_lot_at:       oldestLot.get(code) ?? null,
+      stock_by_warehouse:  stockByWarehouse(code),
     };
   });
   // In a single-warehouse view, drop SKUs with no presence there (no stock, no

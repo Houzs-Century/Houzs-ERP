@@ -72,6 +72,8 @@ import {
   saveMyLayout,
   saveSharedLayout,
   deleteSharedLayout,
+  sharedPresetRows,
+  makeLayoutShareActions,
   serializeLayout,
   dataGridIdKey,
   dataGridTableKey,
@@ -663,6 +665,7 @@ function DataTableInner<T, L>({
       /** A code-shipped page seed; `overridden` = a manager's team-wide copy. */
       seed?: boolean;
       overridden?: boolean;
+      shared?: boolean; // team-published, not a code seed
     }> = [];
     const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
     const sharedLayouts = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
@@ -685,6 +688,7 @@ function DataTableInner<T, L>({
         overridden: override != null,
       });
     }
+    out.push(...sharedPresetRows(sharedLayouts, baseIdKey, new Set((layoutSeeds ?? []).map((s) => s.id))));
     // Typed as possibly-missing: a company with no saved default has no entry.
     type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
     const defaults = layoutStore.defaults as ByKey<StoredLayout>;
@@ -1041,7 +1045,8 @@ function DataTableInner<T, L>({
         companyId: p.companyId,
         seed: p.seed,
         overridden: p.overridden,
-        readOnly: p.seed ? !layoutStore.canManageLayouts : undefined,
+        shared: p.shared,
+        readOnly: p.seed || p.shared ? !layoutStore.canManageLayouts : undefined,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
@@ -1339,6 +1344,7 @@ function DataTableInner<T, L>({
      COMPANY row goes through the same publish path the footer button uses. */
   const updateLayout = useCallback(
     async (id: string) => {
+      if (id.startsWith("shared:")) return saveSharedLayout(baseIdKey, id.slice("shared:".length), renderedLayout);
       if (id.startsWith("seed:")) return saveSharedLayout(baseIdKey, id.slice("seed:".length), renderedLayout);
       const target = resolvedPresets.find((p) => p.id === id);
       if (target?.savedId != null && target.tableKey) {
@@ -1372,6 +1378,8 @@ function DataTableInner<T, L>({
     },
     [baseIdKey, legacyGridKey, layoutStore.sharedLayouts]
   );
+
+  const { share: shareLayout, unshare: unshareLayout } = makeLayoutShareActions(baseIdKey, resolvedPresets, presetLayout);
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
    *  Column KEYS and sizes only; no rows, nothing from the data. */
@@ -2319,6 +2327,8 @@ function DataTableInner<T, L>({
         onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
         onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
         onResetLayout={layoutStore.canManageLayouts ? resetSeedLayout : undefined}
+        onShareLayout={layoutStore.canManageLayouts ? shareLayout : undefined}
+        onUnshareLayout={layoutStore.canManageLayouts ? unshareLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}

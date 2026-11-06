@@ -53,6 +53,9 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
   even though it teaches the distillers nothing.
 - Never invent an unread field — an unreadable value is `null`, rendered as
   "unreadable — will need typing", never a guessed default like RM 0.00.
+- A draft whose lines all read unpriced but whose slip TOTAL was read carries
+  that total on its first line (`applySlipTotalToUnpricedLines`), so a scan
+  never lands at RM 0 while the slip states a figure.
 - Line pairing (`alignSoLinesToSlip`) refuses to guess across an
   unequal-length gap between anchored lines — a wrong pair is worse than no
   pair, so the line keeps the operator's own code/qty with no slip

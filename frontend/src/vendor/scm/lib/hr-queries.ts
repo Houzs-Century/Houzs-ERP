@@ -66,6 +66,8 @@ export type HrPickers = {
   categories: HrPickerRef[];
   /** Fabric SERIES (fabric_library.id, e.g. 'BF') — never individual colours. */
   fabrics: HrPickerRef[];
+  /** Named fabric series (EMBRACE, HOMELY …) and the fabric refs in each. Absent from an older API. */
+  fabricSeries?: { series: string; refs: string[] }[];
   specials: HrPickerRef[];
 };
 

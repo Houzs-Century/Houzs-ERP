@@ -55,18 +55,21 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
     { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
   ] }, isLoading: false }),
 }));
+/* The company's pay-from bank (BANK_PAY_DEFAULT); unset = the receive bank. */
+let payFromRole: string | null = null;
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '320-1000', account_name: 'Cash in hand', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
     { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', ...(payFromRole ? { BANK_PAY_DEFAULT: payFromRole } : {}), AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -99,11 +102,14 @@ const EVENT_OPTIONS = [
 const retagMutate = vi.fn();
 /* 申请付款 — the request a voucher may answer (?fromRequest=); set by that test only. */
 let requestDetail: Record<string, unknown> | undefined;
+/* Several requests one voucher answers (?fromRequests=, owner 2026-11-04). */
+let manyRequests: Record<string, Record<string, unknown>> = {};
 /* 同一张单 (2026-10-01): other documents carrying the typed bill number and date. */
 let billMatches: Array<Record<string, unknown>> = [];
 const billMatchAsks: Array<[string, string, string | null]> = [];
 vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
   usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+  usePaymentRequestsByIds: (ids: string[]) => ({ requests: ids.length > 0 ? ids.map((id) => manyRequests[id]).filter(Boolean) : null, error: null }),
   useBillMatches: (no: string, date: string, excludeRequest: string | null) => {
     billMatchAsks.push([no, date, excludeRequest]);
     return { data: no && date ? { matches: billMatches } : undefined };
@@ -358,6 +364,17 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.queryByText(/400-0000/)).toBeNull();
   });
 
+  /* Owner 2026-11-04: Houzs Century receives in Maybank, pays from Hong Leong. */
+  test('Paid From pre-fills the pay-from bank when the company has one, not the receive bank', () => {
+    payFromRole = '310-0020';
+    try {
+      draw('/scm/payment-vouchers/new');
+      expect((screen.getByLabelText(/Pay from/) as HTMLInputElement).value).toBe('310-0020 · Bank — Hong Leong');
+    } finally {
+      payFromRole = null;
+    }
+  });
+
   test('a scanned bill with vendor memory pre-fills payee AND account — 记忆自动帮我填', () => {
     render(
       <MemoryRouter initialEntries={[{
@@ -604,6 +621,40 @@ describe('the event a scanned bill names (6a — suggest, never bind)', () => {
     expect((screen.getByLabelText('Event for all lines') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
     expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
     expect(screen.getByText('✓ in use')).toBeTruthy();
+  });
+});
+
+describe('answering several payment requests with ONE voucher (?fromRequests=)', () => {
+  const req = (id: string, no: string, payee: string, purpose: string, amount: number) => ({
+    id, request_no: no, payee_name: payee, purpose, amount_sen: amount, project_id: null,
+    bank_name: 'Maybank', bank_account_no: '5232', bank_account_name: payee, status: 'SUBMITTED', stage: 'SUBMITTED',
+  });
+  test('one line per request; different payees leave the payee blank; the save names every request', async () => {
+    mutateAsync.mockClear();
+    manyRequests = {
+      a: req('a', '2990-PRQ-2611-002', 'CHOW WAI MAN', 'lalamove to Armani', 3320),
+      b: req('b', '2990-PRQ-2611-010', 'LOO WEN WEI', 'meta ads invoice', 11786),
+    };
+    draw('/scm/payment-vouchers/new?fromRequests=a,b');
+    expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('');
+    expect(screen.getByText(/Answering 2 payment requests, RM 151.06 in all/)).toBeTruthy();
+    expect(screen.getByText(/They name different payees/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^Pay to/), { target: { value: 'STAFF CLAIMS' } });
+    for (const n of [1, 2]) {
+      const account = screen.getByLabelText(`line ${n} amount`).closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
+      fireEvent.focus(account);
+      fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
+    }
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.paymentRequestIds).toEqual(['a', 'b']);
+    expect(payload.paymentRequestId).toBeUndefined();
+    expect((payload.lines as Array<{ description: string; amountSen: number }>).map((l) => [l.description, l.amountSen])).toEqual([
+      ['2990-PRQ-2611-002 lalamove to Armani', 3320],
+      ['2990-PRQ-2611-010 meta ads invoice', 11786],
+    ]);
+    manyRequests = {};
   });
 });
 

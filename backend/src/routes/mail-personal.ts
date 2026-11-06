@@ -264,6 +264,7 @@ app.post("/claim", async (c) => {
   if (change?.mailbox_id) {
     await markMailHostPending(c.env.DB, change.mailbox_id);
     if (requestedDepartmentId != null) {
+      // company-scope: the id is the mailbox this claim just provisioned for the caller.
       await c.env.DB.prepare(`UPDATE email_addresses SET requested_department_id = ? WHERE id = ?`)
         .bind(requestedDepartmentId, change.mailbox_id)
         .run();

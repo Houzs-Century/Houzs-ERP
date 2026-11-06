@@ -11,12 +11,41 @@
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  logisticsPnlHandler, saveAreaRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
+  logisticsPnlHandler, saveAreaRateHandler, saveFairIncomeRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
 } from '../src/scm/routes/acc-logistics-pnl';
 
 const CO = 1;
 type Res = { body: Record<string, any>; status: number };
-const fakeDb = (rows: Row[]) => ({ prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }) });
+/* The fairs' connection (env.DB): the fairs given, and — answered from the same
+   world the PostgREST fake holds — the outsourced lines, Finance's rates and
+   ticks (scm/lib/fair-trips.ts reads them this way). Anything else reads empty. */
+const fakeDb = (fairRows: Row[], sb?: { tables: Record<string, Row[]> }) => ({
+  prepare: (sql: string) => ({
+    bind: () => ({
+      all: async () => {
+        const t = sb?.tables ?? {};
+        if (/FROM projects p/.test(sql) && /SELECT p\.id AS id/.test(sql)) return { results: fairRows };
+        if (/FROM projects p/.test(sql)) return { results: fairRows };
+        if (/acc_logistics_area_rates/.test(sql)) return { results: (t.acc_logistics_area_rates ?? []).map((r) => ({ area: r.area, ratesen: r.rate_sen })) };
+        if (/acc_logistics_trip_marks/.test(sql)) return { results: (t.acc_logistics_trip_marks ?? []).map((r) => ({ tripkey: r.trip_key, inhouse: r.in_house })) };
+        if (/UNION ALL/.test(sql) && /threepl_bill_lines/.test(sql)) {
+          const fairRow = new Set((t.accounts ?? []).filter((a) => a.pms_row === 'transport_setup_dismantle').map((a) => a.account_code));
+          const live = (rows: Row[]) => new Set(rows.filter((x) => !['CANCELLED', 'REJECTED', 'VOID'].includes(String(x.status ?? '').toUpperCase())).map((x) => x.id));
+          const inv = live(t.ap_invoices ?? []);
+          const pv = live(t.payment_vouchers ?? []);
+          return {
+            results: [
+              ...(t.threepl_bill_lines ?? []).filter((l) => l.assign === 'event' && l.project_id != null).map((l) => ({ projectid: l.project_id, kind: l.kind, words: l.text })),
+              ...(t.ap_invoice_lines ?? []).filter((l) => fairRow.has(l.debit_account_code) && inv.has(l.invoice_id)).map((l) => ({ projectid: l.project_id, kind: null, words: l.description })),
+              ...(t.payment_voucher_lines ?? []).filter((l) => fairRow.has(l.debit_account_code) && pv.has(l.pv_id)).map((l) => ({ projectid: l.project_id, kind: null, words: l.description })),
+            ],
+          };
+        }
+        return { results: [] };
+      },
+    }),
+  }),
+});
 const ctx = (sb: unknown, { query = {}, body, perms = ['scm.payment_voucher.post'], db }: { query?: Record<string, string>; body?: unknown; perms?: string[]; db?: unknown } = {}) => ({
   env: db ? { DB: db } : {},
   req: { query: (k: string) => query[k], json: async () => body, path: '/api/scm/acc-events/logistics/pnl' },
@@ -108,7 +137,8 @@ const SEP = { from: '2026-09-01', to: '2026-09-30' };
 
 describe('GET /acc-events/logistics/pnl', () => {
   test("September from the books: income, outsource by region, in-house in KL, the trips and spreads it counted", async () => {
-    const res = await run(logisticsPnlHandler, ctx(world(), { query: SEP, db: fakeDb(fairs) }));
+    const sb = world();
+    const res = await run(logisticsPnlHandler, ctx(sb, { query: SEP, db: fakeDb(fairs, sb) }));
     expect(res.status).toBe(200);
     const b = res.body;
     const row = (k: string) => b.rows.find((r: any) => r.key === k);
@@ -142,6 +172,15 @@ describe('GET /acc-events/logistics/pnl', () => {
     expect(b.tripsProblem).toBeNull();
     expect(b.areaRates.find((a: any) => a.key === 'johor')).toMatchObject({ rateSen: 120_000, isDefault: false });
     expect(b.areaRates.find((a: any) => a.key === 'sarawak')).toMatchObject({ rateSen: null, isDefault: true });
+    /* By region & trip agrees with the P&L (owner 2026-11-05): our one trip carries the
+       whole in-house cost, 3PL is the ledger's outsource, so the Difference is 0. */
+    expect(b.fairIncomeBp).toBe(100);
+    expect(row('fair_income').label).toBe('Transport Income (1% of fair sales)');
+    expect(b.perMonth.map((m: any) => m.month)).toEqual(['2026-09']);
+    const sep = b.perMonth[0];
+    expect(sep.costTotalSen).toBe(row('total_expense').totalSen);
+    expect(sep.cost.lorries.map((l: any) => [l.plate, l.trips, l.sen.KL])).toEqual([['VRH9058', 1, row('inhouse_total').totalSen]]);
+    expect(sep.cost.carriers.map((x: any) => [x.name, x.sen])).toEqual([['Other outsource postings', { PG: 1_597_000, KL: 0, EM: 0, SG: 507_233 }]]);
   });
 
   test('without the fairs, it says so and prices no trip', async () => {
@@ -171,6 +210,16 @@ describe("Finance's settings", () => {
     expect(pnl.body.rows.find((r: any) => r.key === 'do_income').label).toBe('Transport Income (2.5% of DO)');
   });
 
+  test("the share of each fair's sales counted as income: the money right only, saved for the company", async () => {
+    const sb = world();
+    expect((await run(saveFairIncomeRateHandler, ctx(sb, { body: { pct: 1 }, perms: [] }))).status).toBe(403);
+    expect((await run(saveFairIncomeRateHandler, ctx(sb, { body: { pct: -1 } }))).status).toBe(400);
+    expect((await run(saveFairIncomeRateHandler, ctx(sb, { body: { pct: 1.5 } }))).body).toEqual({ ok: true, fairIncomeBp: 150 });
+    expect(sb.tables.acc_logistics_settings).toEqual([expect.objectContaining({ company_id: CO, fair_income_bp: 150 })]);
+    const pnl = await run(logisticsPnlHandler, ctx(sb, { query: SEP }));
+    expect(pnl.body.rows.find((r: any) => r.key === 'fair_income').label).toBe('Transport Income (1.5% of fair sales)');
+  });
+
   test('an area rate: a known area only; a rate, no rate, or the default again', async () => {
     const sb = world();
     expect((await run(saveAreaRateHandler, ctx(sb, { body: { area: 'atlantis', rateRm: 400 } }))).status).toBe(400);
@@ -198,7 +247,7 @@ describe("Finance's settings", () => {
     expect((await run(saveTripMarkHandler, ctx(sb, { body: { tripKey: 'dismantle|MIDVALLEY|2026-09-14', inHouse: true } }))).body.inHouse).toBe(true);
     expect((await run(saveTripMarkHandler, ctx(sb, { body: { tripKey: 'setup|PWCC|2026-09-25', inHouse: null } }))).body.inHouse).toBeNull();
     expect(sb.tables.acc_logistics_trip_marks.map((r) => [r.trip_key, r.in_house])).toEqual([['dismantle|MIDVALLEY|2026-09-14', true]]);
-    const pnl = await run(logisticsPnlHandler, ctx(sb, { query: SEP, db: fakeDb(fairs) }));
+    const pnl = await run(logisticsPnlHandler, ctx(sb, { query: SEP, db: fakeDb(fairs, sb) }));
     expect(pnl.body.trips.find((t: any) => t.key === 'dismantle|MIDVALLEY|2026-09-14')).toMatchObject({ outsourced: true, mark: true, inHouse: true, amountSen: 40_000 });
   });
 });

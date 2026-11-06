@@ -1,0 +1,89 @@
+/* Finance › Reports › Forecast P&L in the owner's redesign (batch 6 §5.10):
+   the bar (Add month, the hint, Show / Hide empty lines, Unsaved changes,
+   Save), the grid on the P&L's tree — the account column held while the months
+   scroll, each month an RM box and a % box, the one typed white and bold, the
+   one it implies grey — and the note under it. Colours from
+   finance/finance-ui.module.css. */
+
+.bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 9px 14px;
+  background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
+}
+.barLabel, .hint { font-size: 12px; color: var(--fin-muted); }
+.select, .monthInput {
+  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+.btn {
+  height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); color: var(--fin-text); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--fin-paper); }
+.grow { flex: 1; }
+.toggle {
+  padding: 0; border: 0; background: none; cursor: pointer; white-space: nowrap;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol);
+}
+.toggle:hover { color: var(--fin-petrol-ink); }
+.unsaved {
+  display: inline-flex; align-items: center; height: 20px; box-sizing: border-box; padding: 0 7px; border-radius: 4px;
+  background: var(--fin-warn-bg); color: var(--fin-warn-fg); font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.save {
+  height: 30px; display: inline-flex; align-items: center; padding: 0 14px; border: 1px solid var(--fin-petrol); border-radius: 6px;
+  background: var(--fin-petrol); color: #ffffff; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.saveIdle { opacity: 0.55; }
+.alert {
+  margin: 0; padding: 10px 12px; border: 1px solid #efd3d3; border-radius: 8px; background: var(--fin-late-bg);
+  font-size: 13px; color: var(--fin-late-fg);
+}
+.empty { margin: 0; font-size: 13px; color: var(--fin-muted); }
+
+/* ── The grid ── */
+.card {
+  min-width: 0; overflow: hidden; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
+}
+.scroll { overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fin-input) transparent; }
+.table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.th {
+  padding: 8px 8px 4px; background: var(--fin-paper); border-left: 1px solid var(--fin-rule); font-size: 12px; font-weight: 600;
+  color: var(--fin-text); white-space: nowrap; text-align: right;
+}
+.sub { padding: 0 8px 7px; background: var(--fin-paper); border-bottom: 1px solid var(--fin-line); font-size: 10.5px; font-weight: 500; color: var(--fin-muted); text-align: right; white-space: nowrap; }
+.monthHead { display: inline-flex; align-items: center; gap: 6px; }
+.remove {
+  width: 16px; height: 16px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: none;
+  color: var(--fin-muted); cursor: pointer;
+}
+.remove:hover { background: var(--fin-rule); }
+.name {
+  position: sticky; left: 0; z-index: 1; min-width: 280px; padding: 0 12px; background: var(--fin-surface);
+  box-shadow: inset -1px 0 0 var(--fin-rule-soft); text-align: left; white-space: nowrap; font-size: 13px;
+}
+.nameHead { z-index: 2; background: var(--fin-paper); font-size: 12px; font-weight: 600; color: var(--fin-text); vertical-align: bottom; padding-bottom: 8px; }
+.cell { padding: 3px 6px; border-left: 1px solid var(--fin-rule-soft); text-align: right; white-space: nowrap; font-size: 12.5px; }
+.pctCell { padding: 3px 8px 3px 2px; text-align: right; white-space: nowrap; font-size: 11.5px; color: var(--fin-muted); }
+.row td { height: 34px; border-top: 1px solid var(--fin-rule-soft); }
+.blockRow td { height: 32px; border-top: 1px solid var(--fin-rule); font-weight: 600; color: var(--fin-ink); }
+.catRow td { height: 32px; border-top: 1px solid var(--fin-rule); font-weight: 600; }
+.totalRow td { height: 36px; border-top: 1px solid var(--fin-rule); font-weight: 600; }
+.strongRow td { height: 36px; border-top: 1px solid var(--fin-line); background: var(--fin-row); font-weight: 700; }
+.strongRow .name { background: var(--fin-row); }
+.loss { color: var(--fin-late-fg); }
+.chevron {
+  width: 18px; display: inline-block; padding: 0 4px 0 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: inherit; color: var(--fin-muted);
+}
+
+/* The two boxes: the one typed white, bordered and bold; the one it implies grey. */
+.box {
+  width: 108px; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid transparent; border-radius: 5px; background: transparent;
+  text-align: right; font: 400 12.5px 'IBM Plex Sans', system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--fin-ink);
+}
+.box::placeholder { color: #a9ada3; opacity: 1; }
+.box:hover, .box:focus { border-color: var(--fin-input); background: var(--fin-surface); outline: none; }
+.boxTyped { border-color: var(--fin-input); background: var(--fin-surface); font-weight: 600; }
+.pctBox { width: 58px; font-size: 11.5px; }
+
+.note { padding: 10px 16px; border-top: 1px solid var(--fin-rule-soft); font-size: 12px; line-height: 1.5; color: var(--fin-muted); }

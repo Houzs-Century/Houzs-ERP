@@ -14,7 +14,7 @@ import { authedFetch } from './authed-fetch';
 export type ReportKey = 'pnl' | 'balance_sheet' | 'performance' | 'rp';
 
 export const REPORT_TITLES: Record<ReportKey, string> = {
-  pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Cash Flow',
+  pnl: 'P&L', balance_sheet: 'Balance sheet', performance: 'Performance P&L', rp: 'Cash flow',
 };
 
 /** Cash Flow: which way a line reads — money in, money out, or in − out. */
@@ -128,6 +128,33 @@ export const linesVisible = <L extends FoldableLine>(lines: L[], level: number |
   });
   return shown;
 };
+
+/** A line as the totals-below rule reads it: a folder's figures, by column. */
+export type TotalsBelowLine = FoldableLine & { label: string; kind: string; totalLabel?: string; cells: Partial<Record<string, unknown>> };
+
+/** Owner 2026-11-05 (subtotal 可以放在下面吗？): every OPEN group below the top
+ *  level prints its figures on a "Total <name>" line after its rows, its own title
+ *  line bare; a folded group keeps its figures on the title (its rows, and so its
+ *  total, are folded away). `shown` is linesVisible's output for `all`. Top-level
+ *  lines (depth 0: block titles, the report's own totals) are left as they are. */
+export function totalsBelow<L extends TotalsBelowLine>(
+  shown: L[], all: L[], level: number | 'all', open: Record<string, boolean>,
+): Array<L & { bare?: boolean; totalOf?: string }> {
+  const out: Array<L & { bare?: boolean; totalOf?: string }> = [];
+  const stack: L[] = [];
+  const close = (f: L) => out.push({ ...f, id: `sub:${f.id}`, label: f.totalLabel ?? `Total ${f.label}`, kind: 'total', totalOf: f.id });
+  for (const l of shown) {
+    while (stack.length > 0 && stack[stack.length - 1]!.depth >= l.depth) close(stack.pop()!);
+    const i = all.indexOf(l);
+    const folder = l.depth > 0 && (l.kind === 'category' || l.kind === 'unassigned') && i >= 0 && foldsChildren(all, i);
+    if (folder && folderOpen(l, level, open)) {
+      out.push({ ...l, bare: true });
+      stack.push(l);
+    } else out.push(l);
+  }
+  while (stack.length > 0) close(stack.pop()!);
+  return out;
+}
 
 /* ── reads and writes ─────────────────────────────────────────────────────── */
 

@@ -105,7 +105,7 @@ export async function loadSums(
       .eq('company_id', companyId);
     if (from) q = q.gte('entry_date', from);
     if (to) q = q.lte('entry_date', to);
-    return q.range(f, t);
+    return q.order('line_id').range(f, t);
   });
   if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
   return { ok: true, sums: sumGlRows((data ?? []) as Array<Record<string, unknown>>) };

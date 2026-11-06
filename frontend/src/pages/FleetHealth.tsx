@@ -7,6 +7,7 @@ import { DataTable, type Column } from "../components/DataTable";
 import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
+import { serviceConfirm, serviceNotify } from "../vendor/scm/lib/dialog-service";
 import { FleetHealthCharts } from "./FleetHealthCharts";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
@@ -16,7 +17,7 @@ import { BreakdownFiles } from "./FleetHealthBreakdownFiles";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { fmtDate, fmtDateTime } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
 import { NewInHouseLorry } from "./fleet/NewInHouseLorry";
@@ -567,7 +568,7 @@ export function FleetHealth() {
       <PageHeader
         eyebrow="Operations · Fleet"
         title="Fleet Health"
-        description="Lorry compliance, expiry reminders and dispatch readiness. Status is derived from compliance, service mileage and the out-of-service flag — not set by hand."
+        description="Which lorries can go out today, and what needs renewing or repairing."
         actions={
           <div className="flex gap-2">
             <Button variant="secondary" icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />} onClick={() => dash.reload()}>Refresh</Button>
@@ -640,7 +641,7 @@ export function FleetHealth() {
           <div className="mb-3 flex items-center gap-2">
             <AlertTriangle size={15} className="text-warning-text" />
             <h2 className="font-display text-[14px] font-bold text-ink">Compliance reminders</h2>
-            <span className="text-[11px] text-ink-muted">60 / 45 / 30 / 14 / 7 / 3 / 1-day ladder · expired grounds the lorry</span>
+            <span className="text-[11.5px] text-ink-muted">An expired document grounds the lorry</span>
           </div>
           <div className="flex flex-col gap-1.5">
             {reminders.slice(0, 12).map(({ v, doc }) => (
@@ -656,7 +657,7 @@ export function FleetHealth() {
                   {v.region && <span className="text-[10.5px] text-ink-muted">{v.region}</span>}
                 </span>
                 <span className="flex items-center gap-3">
-                  <span className="text-[11.5px] text-ink-secondary">{doc.expiryDate ?? "—"}</span>
+                  <span className="text-[11.5px] text-ink-secondary">{doc.expiryDate ? fmtDate(doc.expiryDate) : "—"}</span>
                   <Pill tone={doc.tone}>{doc.result === "FAIL" ? "FAILED" : fmtDays(doc.daysRemaining)}</Pill>
                 </span>
               </button>
@@ -683,9 +684,6 @@ export function FleetHealth() {
 
       {/* Fleet board */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <p className="border-b border-border bg-surface-2/40 px-3.5 py-1.5 text-[10.5px] text-ink-muted">
-          Click a row for the quick look. Double-click, or click the plate, to open the full record — the plate is a link, so it opens in a new tab too.
-        </p>
         <DataTable<VehicleRow>
           tableId="fleet-health-board"
           exportName="fleet-health"
@@ -813,7 +811,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
                   <span className="ml-1 text-[11px] font-normal text-ink-muted">km</span>
                 </div>
                 <div className="text-[10.5px] text-ink-muted">
-                  {v.mileageDate ? `read ${v.mileageDate}` : "no reading yet"}
+                  {v.mileageDate ? `read ${fmtDate(v.mileageDate)}` : "no reading yet"}
                   {v.mileageFlagged ? " · flagged" : ""}
                 </div>
               </div>
@@ -839,7 +837,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Breakdown &amp; incidents</h3>
-                <span className="text-[10.5px] text-ink-muted">a critical, unresolved case grounds the lorry</span>
+                <span className="text-[10.5px] text-ink-muted">a lorry that cannot be driven is off the road until the case is resolved</span>
               </div>
               <BreakdownSection vehicleId={v.id} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
             </div>
@@ -1064,9 +1062,8 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
   onChanged?: () => void;
 }) {
   const canWrite = !!vehicleId && !!onChanged;
-  const [adding, setAdding] = useState(false);
   const [km, setKm] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayMY());
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1081,74 +1078,66 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/mileage`, {
         odometerKm: Math.round(n), readingDate: date, source: "MANUAL", note: note.trim() || undefined,
       });
-      setAdding(false); setKm(""); setNote(""); onChanged?.();
+      setKm(""); setNote(""); onChanged?.();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
   return (
-    <div className="space-y-2">
-      {readings.length === 0 && !adding && (
-        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
-          No mileage readings yet. The driver captures the odometer on day-complete from the mobile app, and you can
-          record a weekly check here.
-        </p>
-      )}
-
-      {readings.length > 0 && (
-        <div className="space-y-1">
-          {readings.slice(0, 8).map((r) => (
-            <div key={r.id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-2.5 py-1.5 text-[12px]">
-              <span className="flex items-center gap-2.5">
-                <span className="tabular-nums font-semibold text-ink">{r.odometerKm != null ? r.odometerKm.toLocaleString() : "—"} km</span>
-                <span className="text-[10.5px] text-ink-muted">{r.readingDate ?? "—"}</span>
-                <span className="text-[10px] uppercase tracking-brand text-ink-muted">{r.source ?? ""}</span>
-              </span>
-              <span className="flex items-center gap-2">
-                {r.flagged && <Pill tone="warn">Review</Pill>}
-                {r.photoRef && <span className="text-[10.5px] text-ink-muted">photo</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {canWrite && adding && (
-        <div className="rounded-lg border border-border bg-surface p-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
+    <div className="space-y-3">
+      {canWrite && (
+        <div>
+          {/* The route refuses a lower number, and saves a very large jump flagged
+              for review, so the field states the floor before you hit it. */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[160px] flex-1">
               <label className={FIELD_LABEL}>Odometer (km)</label>
-              <input className={FIELD_CLS} inputMode="numeric" value={km} onChange={(e) => setKm(e.target.value)} placeholder={latest != null ? String(latest) : "e.g. 154300"} />
+              <input className={MILEAGE_FIELD} inputMode="numeric" value={km} onChange={(e) => setKm(e.target.value)} placeholder={latest != null ? `Above ${latest.toLocaleString()}` : "e.g. 154300"} />
             </div>
-            <div>
+            <div className="w-full sm:w-44">
               <label className={FIELD_LABEL}>Read on</label>
-              <DateField fullWidth className={FIELD_CLS} value={date} onChange={(iso) => setDate(iso)}/>
+              <DateField fullWidth className={MILEAGE_FIELD} value={date} onChange={(iso) => setDate(iso)} />
             </div>
-            <div className="col-span-2">
+            <div className="min-w-[200px] flex-[2]">
               <label className={FIELD_LABEL}>Note</label>
-              <input className={FIELD_CLS} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional — e.g. weekly check" />
+              <input className={MILEAGE_FIELD} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" />
             </div>
+            <Button variant="primary" className="h-10" onClick={() => void save()} disabled={busy || km.trim() === ""}>{busy ? "Saving…" : "Record reading"}</Button>
           </div>
-          {/* Two rules the route enforces, stated before you hit them: a reading
-              below the last one is a rollback and is REFUSED, and an abnormal
-              jump saves but is flagged for a human. */}
-          <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
-            {latest != null ? `The last reading was ${latest.toLocaleString()} km. ` : ""}
-            An odometer cannot go backwards, so a lower number is refused. A very large jump saves but is flagged for review.
-          </p>
-          {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
-          <div className="mt-3 flex gap-2">
-            <Button variant="primary" onClick={save} disabled={busy || km.trim() === ""}>{busy ? "Saving…" : "Record reading"}</Button>
-            <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
-          </div>
+          {err && <div className="mt-2 text-[12px] text-err">{err}</div>}
         </div>
       )}
 
-      {canWrite && !adding && (
-        <Button variant="secondary" onClick={() => setAdding(true)}>Record a reading</Button>
+      {readings.length === 0 ? (
+        <p className="text-[13px] text-ink-muted">No readings yet. The driver records one when closing the day.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[13px]">
+            <thead>
+              <tr className="border-b border-border text-left text-[11.5px] text-ink-muted">
+                <th className="py-2 pr-4 font-medium">Reading</th><th className="py-2 pr-4 font-medium">Date</th><th className="py-2 pr-4 font-medium">From</th><th className="py-2 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {readings.slice(0, 8).map((r) => (
+                <tr key={r.id} className="border-b border-border/60 last:border-b-0">
+                  <td className="py-2 pr-4 font-semibold tabular-nums text-ink">{r.odometerKm != null ? `${r.odometerKm.toLocaleString()} km` : "—"}</td>
+                  <td className="py-2 pr-4 tabular-nums text-ink-secondary">{r.readingDate ? fmtDate(r.readingDate) : "—"}</td>
+                  <td className="py-2 pr-4 text-ink-secondary">{r.source === "MANUAL" ? "Manual" : r.source === "DRIVER" ? "Driver" : r.source ?? "—"}</td>
+                  <td className="py-2 text-right">
+                    {r.flagged && <Pill tone="warn">Review</Pill>}
+                    {r.photoRef && <span className="ml-2 text-[12px] text-ink-muted">Photo</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
 }
+
+const MILEAGE_FIELD = "h-10 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none";
 
 // ── Phase 3 drawer sections ──────────────────────────────────────────────────
 
@@ -1552,7 +1541,7 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
       {/* Severity is not cosmetic: CRITICAL + unresolved is what grounds the
           lorry, so changing it here can put a lorry back on the road. */}
       <p className="mt-2 text-[10.5px] text-ink-muted">
-        A CRITICAL case that is not resolved grounds the lorry, so severity changes what dispatch can use.
+        Not drivable, or Critical, takes the lorry off the road until the case is resolved.
       </p>
       {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
       <div className="mt-3 flex gap-2">
@@ -1983,10 +1972,13 @@ export function AttachmentStrip({ docId, files, onChanged }: {
   };
 
   const remove = async (f: ComplianceFile) => {
+    if (!(await serviceConfirm({ title: `Remove ${f.fileName || "this document"}?`, body: "The scan is deleted from this renewal.", confirmLabel: "Remove", danger: true }))) return;
     setBusy(true);
     try {
       await api.del(`/api/fleet-maintenance/compliance-attachments/${f.id}`);
       onChanged();
+    } catch (e) {
+      void serviceNotify({ title: "Could not remove the document", body: apiErrText(e), tone: "error" });
     } finally { setBusy(false); }
   };
 

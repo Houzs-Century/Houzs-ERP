@@ -26,6 +26,13 @@
 // line on its account, knocking off the debtor's bills on the same table) and
 // Money out › Supplier & Other Creditor CN / DN (/scm/supplier-notes — SCN, its
 // scan and knock-off). One component; `side` says which page it is.
+//
+// The owner's Claude Design, batch 5 step 7: Money in's notes have their own
+// list (money-in/MoneyInNotes.tsx at /scm/credit-notes); it reuses this file's
+// note parts — the form (NoteForm, in place of the list with `inline`), the
+// note's reads and writes (useNoteDoc) and the note page (NotePage.tsx). A
+// customer note's blank account says the account it lands on (f1: the
+// SALES_RETURNS role, 510-0000 Return inwards).
 // ----------------------------------------------------------------------------
 
 import { lazy, useMemo, useRef, useState } from 'react';
@@ -43,7 +50,7 @@ import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
-import { useAccounts, leafAccounts, useOtherDebtors } from '../../vendor/scm/lib/accounting-queries';
+import { useAccountRoles, useAccounts, leafAccounts, useOtherDebtors } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useCreditNotes, useCreditNoteDetail, useCreateCreditNote, useUpdateCreditNote, usePostCreditNote, useCancelCreditNote,
@@ -429,7 +436,7 @@ export function NoteBody({ doc }: { doc: NoteDoc }) {
   return (
     <div className="space-y-3">
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
+        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{(n.party_code ?? n.debtor_code) ? <span style={soft}> · {n.party_code ?? n.debtor_code}</span> : null}</div>
         <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
         <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
         {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
@@ -498,7 +505,7 @@ const SupplierField = ({ value, onChange, disabled }: { value: string; onChange:
 const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (id: string) => void; disabled: boolean }) => {
   const debtorsQ = useOtherDebtors();
   const options = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === value).map((d) => ({ value: d.id, label: d.name })),
+    () => (debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === value).map((d) => ({ value: d.id, label: d.code ? `${d.name} · ${d.code}` : d.name })),
     [debtorsQ.data, value],
   );
   return (
@@ -508,11 +515,19 @@ const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (
   );
 };
 
-export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
+/** The note form — the pop-out by default; `inline` renders it in place of a
+ *  page (Money in's Credit / debit notes, batch 5 step 7), where the page's own
+ *  switch picks the kind. `onSaved` hears the note's id, its number when it
+ *  was raised here, and whether it was posted. */
+export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = false, onClose, onSaved }: {
+  mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; inline?: boolean;
+  onClose: () => void; onSaved: (id: string, done?: { number: string | null; posted: boolean }) => void;
+}) => {
   const [v, setV] = useState<FormValues>(initial);
   const uploadFile = useUploadCreditNoteFile();
   const [attachError, setAttachError] = useState<string | null>(null);
   const accountsQ = useAccounts();
+  const rolesQ = useAccountRoles();
   const create = useCreateCreditNote();
   const update = useUpdateCreditNote();
   const post = usePostCreditNote();
@@ -528,15 +543,27 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, o
     ? partyId !== '' && pickSen(v.knockOff ?? {}) <= totalSen
     : v.soDocNo.trim() !== '' || v.partyName.trim() !== '');
   const withEvents = knocksOff(v.kind);
+  /* What a blank account means (f1): a customer's note lands on the SALES_RETURNS
+     role (510-0000 Return inwards); a supplier's on its kind's default; an other
+     debtor's has none. */
+  const blankAccount = (() => {
+    if (v.kind === 'OCN') return '— pick the account —';
+    if (v.kind === 'SCN') return '— default for this kind —';
+    const code = rolesQ.data?.roles.SALES_RETURNS ?? '510-0000';
+    const name = (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name;
+    return `— Default · ${code}${name ? ` ${name}` : ''} —`;
+  })();
 
   /* Save as draft, or Save & post (the redesign): the same save, then the post. */
   const save = async (postAfter = false) => {
     try {
       const body = bodyOf(v);
       let noteId = id ?? '';
+      let number: string | null = null;
       if (mode === 'new') {
         const r = await create.mutateAsync(body);
         noteId = r.note.id;
+        number = r.note.note_number;
         /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
@@ -547,21 +574,23 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, o
         await update.mutateAsync({ id, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines, ...(body.allocations ? { allocations: body.allocations } : {}) });
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
-      onSaved(noteId);
+      onSaved(noteId, { number, posted: postAfter });
     } catch { /* the hook holds the error; it is shown below */ }
   };
 
-  return (
-    <Modal title={mode === 'new' ? (scan ? 'New note — from the scanned credit note' : 'New note') : `Edit ${initial.kind}`} onClose={onClose} width="min(900px, 100%)" ariaLabel="Note form">
-      <div className="space-y-3">
+  const body = (
+      <div className="space-y-3" aria-label={inline ? 'Note form' : undefined}>
         {scan && <ScanPanel scan={scan} />}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
-          <Field label="Kind">
-            {/* Switching kind drops the ticks — they were another party's documents. */}
-            <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
-              {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
-            </select>
-          </Field>
+          {/* In place of a page, the page's own switch picks the kind. */}
+          {!inline && (
+            <Field label="Kind">
+              {/* Switching kind drops the ticks — they were another party's documents. */}
+              <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
+                {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Date"><DateField value={v.noteDate} onChange={(d) => setV({ ...v, noteDate: d })} aria-label="Note date" /></Field>
           {v.kind === 'SCN' ? (
             <SupplierField value={v.supplierId} disabled={mode === 'edit'} onChange={(s) => setV({ ...v, supplierId: s, knockOff: s === v.supplierId ? v.knockOff : {} })} />
@@ -591,7 +620,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, o
             {v.lines.map((l) => (
               <tr key={l.rid}>
                 <td style={td}><input value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} aria-label={`Line ${l.rid} description`} style={{ ...input, minWidth: 220 }} /></td>
-                <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder={v.kind === 'OCN' ? '— pick the account —' : '— default for this kind —'} /></td>
+                <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder={blankAccount} /></td>
                 {/* The event the line's money is for (owner 2026-10-22). Credited
                     against an AP invoice, a blank line takes the invoice's. */}
                 {withEvents && (
@@ -626,13 +655,18 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, o
 
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Close</Button>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>{inline ? 'Cancel' : 'Close'}</Button>
           <Button variant="secondary" size="sm" onClick={() => void save()} disabled={!canSave || busy}>{busy ? 'Saving…' : mode === 'new' ? 'Save as draft' : 'Save changes'}</Button>
           <Button size="sm" onClick={() => void save(true)} disabled={!canSave || busy}>Save & post</Button>
         </div>
         {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         {attachError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{attachError}</div>}
       </div>
+  );
+  if (inline) return body;
+  return (
+    <Modal title={mode === 'new' ? (scan ? 'New note — from the scanned credit note' : 'New note') : `Edit ${initial.kind}`} onClose={onClose} width="min(900px, 100%)" ariaLabel="Note form">
+      {body}
     </Modal>
   );
 };

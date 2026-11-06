@@ -20,10 +20,12 @@ import { monthRange } from './accounting-receipts-check';
 const requirePerm = (c: any): boolean =>
   hasHouzsPerm(c, 'scm.payment_voucher.post') || hasHouzsPerm(c, 'scm.sales_order.write');
 
-/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM ─────────────────
-   Without a month: the newest `limit` receipts. With one: every receipt whose
-   payment day falls in it, oldest first, so the month reads whole beside its
-   check (accounting-receipts-check.ts). */
+/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM&all=1 ────────────
+   Without a month: the newest `limit` receipts — or, with `all=1`, every one,
+   newest first (Money in › Receipts' Any month, the owner's Claude Design batch
+   5 §2.3 c2: the book read whole, paged, so its chips count it truly). With a
+   month: every receipt whose payment day falls in it, oldest first, so the
+   month reads whole beside its check (accounting-receipts-check.ts). */
 export const receiptsList = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -43,6 +45,13 @@ export const receiptsList = async (c: any): Promise<Response> => {
       .order('paid_at', { ascending: true }).order('or_number', { ascending: true }).range(from, to));
     if (all.error) return c.json({ error: 'load_failed', reason: all.error.message }, 500);
     return c.json({ receipts: all.data ?? [] });
+  }
+  if (String(c.req.query('all') ?? '') === '1') {
+    const every = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
+      .eq('company_id', co.companyId))
+      .order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to));
+    if (every.error) return c.json({ error: 'load_failed', reason: every.error.message }, 500);
+    return c.json({ receipts: every.data ?? [] });
   }
   const { data, error } = await scoped(sb.from('acc_official_receipts').select(COLS).eq('company_id', co.companyId))
     .order('created_at', { ascending: false })

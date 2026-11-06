@@ -67,7 +67,8 @@ export type TodoJob = {
 
 export type TodoDone = { key: string; text: string; je: string | null; at: string; task?: { id: string; occursOn: string } | null };
 
-export type TodoCheck = { key: string; label: string; value: string; state: 'ok' | 'open' | 'late'; to: string | null };
+/** `detail` explains the line on hover ("Debits equal credits"). */
+export type TodoCheck = { key: string; label: string; value: string; state: 'ok' | 'open' | 'late'; to: string | null; detail?: string };
 
 export type TodoGroupDef = { id: string; label: string };
 

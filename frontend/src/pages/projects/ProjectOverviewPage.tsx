@@ -14,36 +14,17 @@ import { todayMY } from "../../vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS, SortTh, useTableSort } from "../../components/scm-v2/OverviewKit";
 import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
-import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { DateRangeButton } from "../../components/DateRangeButton";
+import { REPORT_RANGE_PRESETS } from "../../lib/dateRangePresets";
+import { ProjectOverviewTable } from "./ProjectOverviewTable";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
-import { VIEW_PARAMS, projectLines, readView, rememberOpenedFrom, tableAmount, takeScroll, writeView, type Dim, type OverviewView, type SortKey } from "./projectOverviewView";
+import { VIEW_PARAMS, readView, rememberOpenedFrom, takeScroll, writeView, type Dim, type OverviewView } from "./projectOverviewView";
 
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
 const money = formatCurrency;
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x.toFixed(1)}%`);
-/* The project table's cells (owner 2026-10-21): a group header over the
-   columns, a rule between the groups. */
-const GROUP = "whitespace-nowrap border-b border-border px-2.5 pb-1 pt-2 text-center text-[10.5px] font-semibold uppercase tracking-wider text-ink-secondary";
-/* Alignment and wrapping are NOT part of the shared strings. `cn` only joins,
-   so a cell adding `text-left` to a string that already says `text-right` gets
-   both — and the stylesheet's order, not the later class, decides which wins.
-   That right-aligned the Project column and kept its venue line on one line,
-   running over the Sales figures (owner 2026-10-21: 这个project靠左，然后字超过
-   格子了; sales order daily 也靠左). Numbers: right, one line. Text: left. */
-const TH_BASE = "border-b border-border px-2.5 py-2 text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted";
-const TD_BASE = "border-b border-border px-2.5 py-1.5 text-[12.5px] tabular-nums";
-const TH = cn(TH_BASE, "whitespace-nowrap text-right");
-const TD = cn(TD_BASE, "whitespace-nowrap text-right");
-const TH_LEFT = cn(TH_BASE, "whitespace-nowrap text-left");
-const TD_LEFT = cn(TD_BASE, "text-left");
-const SEP = "border-l border-border";
-/* The Total row stays at the foot of the table's box while the projects scroll;
-   its own strings, not TD plus a border override (cn only joins). */
-const TOT_BASE = "border-t-2 border-border bg-surface px-2.5 py-2 text-[12.5px] tabular-nums";
-const TOT = cn(TOT_BASE, "whitespace-nowrap text-right");
-const TOT_LEFT = cn(TOT_BASE, "text-left");
-
 export function ProjectOverviewPage() {
   const navigate = useNavigate();
   const today = todayMY();
@@ -54,10 +35,9 @@ export function ProjectOverviewPage() {
      them, the menu link (no parameters) starts on the defaults — this month,
      Newest, no filter, the trend on this year by month (projectOverviewView.ts). */
   const [params, setParams] = useSearchParams();
-  const { brand, type, organizer, venue, state, stage, drill, dim, pick, sort } = readView(params, today);
+  const { brand, type, organizer, venue, state, stage, drill, dim, pick } = readView(params, today);
   const setView = (patch: Partial<OverviewView>) => setParams((prev) => writeView(prev, patch, today), { replace: true });
   const setDrill = (d: Drill) => setView({ drill: d });
-  const setSort = (s: SortKey) => setView({ sort: s });
 
   /* And the place you were looking at: kept, with this page's address, when a
      project is opened; the project's Back button returns to that address
@@ -97,7 +77,8 @@ export function ProjectOverviewPage() {
   const gSort = useTableSort(groups, (g, k) =>
     k === "key" ? g.key : k === "projects" ? g.projects : k === "sales" ? g.sales : k === "gpPct" ? pctOf(g.gp, g.sales)
       : k === "rental" ? g.rental : k === "rentalPct" ? pctOf(g.rental, g.sales) : k === "cost" ? g.rental + g.otherCost : k === "np" ? g.np : pctOf(g.np, g.sales));
-  const trend = drillOf(all, drill, today);
+  /* A month that has not started is left off: a few early bookings drew a huge NP % (owner 2026-11-05). */
+  const trend = drillOf(all, drill, today).filter((b) => b.from <= today);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
   if (drill.level !== "years") {
@@ -122,24 +103,17 @@ export function ProjectOverviewPage() {
   ];
   const running = costLines.reduce((a, [, v]) => a + v, 0);
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
-  const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick)
-    .map((p) => ({ p, f: figuresOf(p) }))
-    .sort((a, b) => sort === "sales" ? b.f.sales - a.f.sales : sort === "np" ? b.f.np - a.f.np : sort === "npPct" ? (pctOf(b.f.np, b.f.sales) ?? -1e9) - (pctOf(a.f.np, a.f.sales) ?? -1e9) : (b.p.startDate ?? "").localeCompare(a.p.startDate ?? ""));
-  /* The Total row (owner 2026-10-25: 这个表需要有total): the projects listed,
-     each column added up; the % columns worked out from the added-up figures. */
-  const sumOf = (pick: (x: (typeof listed)[number]) => number) => listed.reduce((s, x) => s + pick(x), 0);
-  const tot = {
-    sales: sumOf((x) => x.f.sales), service: sumOf((x) => x.f.serviceRevenue), cogs: sumOf((x) => x.f.cogs), gp: sumOf((x) => x.f.gp),
-    rental: sumOf((x) => x.f.rental), setup: sumOf((x) => x.f.setup), transport: sumOf((x) => x.f.transport), commission: sumOf((x) => x.f.commission),
-    merchandise: sumOf((x) => x.f.merchandise), other: sumOf((x) => x.f.other), np: sumOf((x) => x.f.np),
-    paidSen: sumOf((x) => x.p.collection.paidSen), orderedSen: sumOf((x) => x.p.collection.totalSen),
-  };
+  const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
+  /* Collected: what the period's orders have been paid, of what they ordered. */
+  const paidSen = inPeriod.reduce((a, p) => a + p.collection.paidSen, 0);
+  const orderedSen = inPeriod.reduce((a, p) => a + p.collection.totalSen, 0);
   const options = (key: "brand" | "eventType" | "organizer" | "venue" | "state" | "stage") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
     <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => setPeriod(f, to)} />
+        <DateRangeButton from={period.from} to={period.to} presets={REPORT_RANGE_PRESETS} today={today} label="Event dates"
+          onChange={(f, to) => { if (f && to) setPeriod(f, to); }} />
         <select className={SELECT_CLS} value={brand} onChange={(e) => setView({ brand: e.target.value })} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
@@ -156,12 +130,11 @@ export function ProjectOverviewPage() {
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
           <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{period.label} · {t.projects} projects</div>
-          <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+          <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
             <Hero label="Sales" value={money(t.sales)} sub={t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
-            <Hero label="COGS" value={money(t.cogs)} sub={`${pctTxt(pctOf(t.cogs, t.sales))} of sales`} />
-            <Hero label="Gross profit" value={money(t.gp)} sub={`GP ${pctTxt(pctOf(t.gp, t.sales))}`} tone={t.gp >= 0 ? "good" : "bad"} />
-            <Hero label="Rental + other cost" value={money(t.rental + t.otherCost)} sub={`rental ${money(t.rental)}`} />
+            <Hero label="Gross profit %" value={pctTxt(pctOf(t.gp, t.sales))} sub={`GP ${money(t.gp)}`} tone={t.gp >= 0 ? "good" : "bad"} />
             <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
+            <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
           {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
@@ -178,7 +151,7 @@ export function ProjectOverviewPage() {
             {yearView != null && <Toggle value={drill.level === "quarters" ? "q" : "m"} options={[["m", "By month"], ["q", "By quarter"]]}
               onChange={(v) => setDrill(v === "q" ? { level: "quarters", year: yearView } : { level: "yearMonths", year: yearView })} />}
           </span>}>
-          <Columns valueLabels={false} height={230} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
+          <Columns axes valueLabels={false} height={250} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}
             values={[trend.map((b) => b.sales), trend.map((b) => Math.max(0, b.gp))]}
@@ -196,17 +169,18 @@ export function ProjectOverviewPage() {
           </div>
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={period.label}>
-          <table className="w-full border-collapse"><tbody>
-            <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="text-ink-muted">100%</Td></tr>
+          <RinggitBar sales={t.sales} parts={[["COGS", t.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, t.np), "#2f8a5b"]]} />
+          <table className="mt-3 w-full border-collapse text-[12.5px] tabular-nums"><tbody>
+            <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
             {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
-            <tr><Td left>− COGS total</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
-            <tr className="font-semibold"><Td left>= Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
-            {t.serviceRevenue !== 0 && <tr><Td left>+ Service revenue</Td><Td>{money(t.serviceRevenue)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.serviceRevenue, t.sales))}</Td></tr>}
+            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total COGS</Td><Td className="border-t border-border">{money(t.cogs)}</Td><Td className="border-t border-border">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
+            <tr className="bg-surface-2 font-bold"><Td left>Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
+            {t.serviceRevenue !== 0 && <tr><Td left className="pl-6">Service revenue</Td><Td>{money(t.serviceRevenue)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.serviceRevenue, t.sales))}</Td></tr>}
             {costLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
-            <tr><Td left>− Total cost</Td><Td>{money(running)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(running, t.sales))}</Td></tr>
-            <tr className="font-semibold"><Td left>= Net profit</Td><Td className={t.np < 0 ? "text-err" : "text-synced"}>{money(t.np)}</Td><Td>{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
+            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total cost</Td><Td className="border-t border-border">{money(running)}</Td><Td className="border-t border-border">{pctTxt(pctOf(running, t.sales))}</Td></tr>
+            <tr className="bg-primary-soft/60 font-bold"><Td left className="border-t-2 border-primary/50">Net profit</Td><Td className={cn("border-t-2 border-primary/50", t.np < 0 ? "text-err" : "text-synced")}>{money(t.np)}</Td><Td className="border-t-2 border-primary/50">{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
           </tbody></table>
-          <p className="mt-2 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing keyed in this period.</p>
+          <p className="mt-2 pb-14 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing in this period.</p>
         </Panel>
       </div>
 
@@ -236,82 +210,9 @@ export function ProjectOverviewPage() {
       {/* The project list first, the venue rent after it (owner 2026-10-25:
           把venue rent 和 project 倒反位置). */}
       <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
-        right={<span className="flex items-center gap-2">
-          {pick && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button>}
-          <Toggle value={sort} options={[["start", "Newest"], ["sales", "Sales"], ["np", "Net profit"], ["npPct", "NP %"]]} onChange={setSort} />
-        </span>}>
-        {/* Every cost kept (owner 2026-10-21: 「还是需要每个费用的明细」), made
-            readable: the name on two lines, the columns in groups, amounts
-            without "RM" and a dash for nothing, the header and the project
-            column fixed while the table scrolls. */}
-        <div ref={tableRef} className="max-h-[560px] overflow-auto">
-          <table className="w-full border-separate border-spacing-0">
-            <thead className="sticky top-0 z-20 bg-surface">
-              <tr>
-                <th className={cn(GROUP, "sticky left-0 z-30 bg-surface")} />
-                <th colSpan={2} className={cn(GROUP, SEP)}>Sales</th>
-                <th colSpan={3} className={cn(GROUP, SEP)}>Gross profit</th>
-                <th colSpan={6} className={cn(GROUP, SEP)}>Event costs</th>
-                <th colSpan={2} className={cn(GROUP, SEP)}>Result</th>
-                <th colSpan={2} className={cn(GROUP, SEP)}>Collected</th>
-                <th className={cn(GROUP, SEP)} />
-              </tr>
-              <tr>
-                <th className={cn(TH_LEFT, "sticky left-0 z-30 bg-surface")}>Project</th>
-                <th className={cn(TH, SEP)}>Sales</th><th className={TH}>Service</th>
-                <th className={cn(TH, SEP)}>COGS</th><th className={TH}>GP</th><th className={TH}>GP %</th>
-                <th className={cn(TH, SEP)}>Rental</th><th className={TH}>Setup</th><th className={TH}>Transport</th><th className={TH}>Commission</th><th className={TH}>Merchandise</th><th className={TH}>Others</th>
-                <th className={cn(TH, SEP)}>Net profit</th><th className={TH}>NP %</th>
-                <th className={cn(TH, SEP)}>Amount</th><th className={TH}>%</th>
-                <th className={cn(TH_LEFT, SEP)}>Sales Orders daily?</th>
-              </tr>
-            </thead>
-            <tbody>
-              {listed.map(({ p, f }) => {
-                const { title, detail } = projectLines(p);
-                const amount = (v: number, extra?: string) => (
-                  <td className={cn(TD, Math.abs(v) < 0.005 && "text-ink-muted", extra)}>{tableAmount(v)}</td>
-                );
-                return (
-                  <tr key={p.id} onClick={() => openProject(p.id)} className="group cursor-pointer hover:bg-surface-2/50">
-                    <td className={cn(TD_LEFT, "sticky left-0 z-10 min-w-[240px] max-w-[300px] whitespace-normal bg-surface align-top group-hover:bg-surface-2")}>
-                      <div className="break-words font-semibold text-primary" title={p.name}>
-                        {title}{p.eventType && <span className="ml-1.5 text-[10.5px] font-normal text-ink-muted">{p.eventType}</span>}
-                      </div>
-                      <div className="mt-0.5 break-words text-[11px] leading-snug text-ink-muted">{detail}</div>
-                    </td>
-                    {amount(f.sales, SEP)}{amount(f.serviceRevenue)}
-                    {amount(f.cogs, SEP)}{amount(f.gp)}<td className={cn(TD, "text-ink-secondary")}>{pctTxt(pctOf(f.gp, f.sales))}</td>
-                    {amount(f.rental, SEP)}{amount(f.setup)}{amount(f.transport)}{amount(f.commission)}{amount(f.merchandise)}{amount(f.other)}
-                    <td className={cn(TD, SEP, "font-semibold", f.np < 0 && "text-err")}>{tableAmount(f.np)}</td>
-                    <td className={cn(TD, f.np < 0 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(f.np, f.sales))}</td>
-                    <td className={cn(TD, SEP)}><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{tableAmount(p.collection.paidSen / 100)}</span></td>
-                    <td className={cn(TD, p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</td>
-                    <td className={cn(TD_LEFT, SEP, "whitespace-nowrap")}><Daily r={p.chatReport} /></td>
-                  </tr>
-                );
-              })}
-              {listed.length === 0 && <tr><td colSpan={17} className={cn(TD_LEFT, "text-ink-muted")}>No projects in this period.</td></tr>}
-            </tbody>
-            {listed.length > 0 && (
-              <tfoot className="sticky bottom-0 z-20 bg-surface font-semibold">
-                <tr>
-                  <td className={cn(TOT_LEFT, "sticky left-0 z-30 bg-surface")}>Total · {listed.length} project{listed.length === 1 ? "" : "s"}</td>
-                  <td className={cn(TOT, SEP)}>{tableAmount(tot.sales)}</td><td className={TOT}>{tableAmount(tot.service)}</td>
-                  <td className={cn(TOT, SEP)}>{tableAmount(tot.cogs)}</td><td className={TOT}>{tableAmount(tot.gp)}</td>
-                  <td className={TOT}>{pctTxt(pctOf(tot.gp, tot.sales))}</td>
-                  <td className={cn(TOT, SEP)}>{tableAmount(tot.rental)}</td><td className={TOT}>{tableAmount(tot.setup)}</td>
-                  <td className={TOT}>{tableAmount(tot.transport)}</td><td className={TOT}>{tableAmount(tot.commission)}</td>
-                  <td className={TOT}>{tableAmount(tot.merchandise)}</td><td className={TOT}>{tableAmount(tot.other)}</td>
-                  <td className={cn(TOT, SEP, tot.np < 0 && "text-err")}>{tableAmount(tot.np)}</td>
-                  <td className={cn(TOT, tot.np < 0 && "text-err")}>{pctTxt(pctOf(tot.np, tot.sales))}</td>
-                  <td className={cn(TOT, SEP)}>{tableAmount(tot.paidSen / 100)}</td>
-                  <td className={TOT}>{pctTxt(pctOf(tot.paidSen, tot.orderedSen))}</td>
-                  <td className={cn(TOT_LEFT, SEP)} />
-                </tr>
-              </tfoot>
-            )}
-          </table>
+        right={pick ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button> : undefined}>
+        <div ref={tableRef}>
+          <ProjectOverviewTable rows={listed} loading={q.loading} onOpen={openProject} />
         </div>
       </Panel>
 
@@ -333,14 +234,19 @@ function Hero({ label, value, sub, tone }: { label: string; value: string; sub: 
   );
 }
 
-/** Daily = every bill in the event's chat sales report is opened as a Sales Order
- *  under this event (owner 2026-10-19), the event page's own match. */
-function Daily({ r }: { r: OvProject["chatReport"] }) {
-  if (!r || r.bills === 0) return <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-ink-muted">No chat report</span>;
-  if (r.opened === r.bills) return <span className="rounded-full bg-synced/10 px-2 py-0.5 text-[10.5px] text-synced">Daily · {r.opened} / {r.bills} bills</span>;
+/** Where the sales went, as one bar of shares (owner 2026-11-05): each cost and the net
+ *  profit as its part of sales, the same lines as the table under it. */
+function RinggitBar({ sales, parts }: { sales: number; parts: Array<[string, number, string]> }) {
+  if (sales <= 0) return null;
+  const shown = parts.filter(([, v]) => v > 0);
   return (
-    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[10.5px] text-err" title={`${money(r.openedSen / 100)} of ${money(r.billsSen / 100)} reported is opened${r.otherEvent ? ` · ${r.otherEvent} under another event` : ""}`}>
-      Not daily · {r.opened} / {r.bills} bills{r.otherEvent ? ` · ${r.otherEvent} elsewhere` : ""}
-    </span>
+    <div>
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-2" role="img" aria-label="Share of sales">
+        {shown.map(([l, v, c]) => <div key={l} style={{ width: `${Math.min(100, (v / sales) * 100)}%`, background: c }} title={`${l}: ${pctTxt(pctOf(v, sales))}`} />)}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+        {shown.map(([l, v, c]) => <span key={l} className="inline-flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm" style={{ background: c }} />{l} {pctTxt(pctOf(v, sales))}</span>)}
+      </div>
+    </div>
   );
 }

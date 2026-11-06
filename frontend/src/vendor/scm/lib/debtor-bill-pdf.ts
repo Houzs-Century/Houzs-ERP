@@ -66,6 +66,7 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
       title: 'BILL TO',
       rows: [
         ['Name', d.debtor.name],
+        ['Account', d.debtor.code ?? null],
         /* The address as the registry holds it; a blank label keeps the continuation lines under the first. */
         ...partyAddressLines(d.debtor).map((line, i): [string, string] => [i === 0 ? 'Address' : ' ', line]),
         ['Attention', d.debtor.attention || d.debtor.contact_person || null],

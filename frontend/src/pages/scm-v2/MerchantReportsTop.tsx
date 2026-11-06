@@ -12,6 +12,7 @@ import { Search } from 'lucide-react';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './MerchantReports.module.css';
 import type { AcquirerSetup, SettlementBatch } from './settlement-queries';
+import { payableOf } from './settlement-ui';
 
 const toDecide = (b: SettlementBatch): number => (b.to_choose_count ?? 0) + (b.no_record_count ?? 0);
 const toConfirm = (b: SettlementBatch): number => b.to_confirm_count ?? 0;
@@ -193,6 +194,11 @@ export const TAB_EMPTY: Record<ReportTab, string> = {
 
 const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/* What a report takes off beyond its lines' own fees (owner 2026-11-06: 做，改四格): AEON's
+   subvention fee is the one that happens; a report paying more than its lines is a rebate. */
+const chargeLabel = (b: SettlementBatch): string =>
+  (b.adjustment_sen < 0 ? 'Rebate' : b.acquirer_code === 'AEON' ? 'Subvention fee' : 'Other charge');
+
 /** `payNote` says where an unpaid report's money stands when the acquirer has more to say than the default (Public Bank's advice). */
 export function ReportHead({ batch, counts, payNote = null }: { batch: SettlementBatch; counts: Record<ReportTab, number>; payNote?: string | null }) {
   const n = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -213,7 +219,8 @@ export function ReportHead({ batch, counts, payNote = null }: { batch: Settlemen
       state: paid ? 'done' : toGo === 0 ? 'current' : 'todo',
     },
   ];
-  const pct = batch.gross_sen > 0 ? ((batch.fee_sen / batch.gross_sen) * 100).toFixed(2) : '0.00';
+  const pctOfGross = (sen: number): string => (batch.gross_sen > 0 ? ((sen / batch.gross_sen) * 100).toFixed(2) : '0.00');
+  const charge = batch.adjustment_sen;
   return (
     <div className={styles.head} aria-label="Where this report stands">
       <ol className={styles.tracker}>
@@ -225,12 +232,18 @@ export function ReportHead({ batch, counts, payNote = null }: { batch: Settlemen
           </li>
         ))}
       </ol>
-      <div className={styles.figures}>
+      <div className={styles.figures} aria-label="The report's money">
         <span className={styles.figure}><span className={styles.figLabel}>Gross</span><b>{rm(batch.gross_sen)}</b><span className={styles.muted}>{batch.row_count} swipes</span></span>
         <span className={styles.op}>−</span>
-        <span className={styles.figure}><span className={styles.figLabel}>Fee</span><b>{rm(batch.fee_sen)}</b><span className={styles.muted}>{pct}% · booked to Merchant charges</span></span>
+        <span className={styles.figure}><span className={styles.figLabel}>Fee</span><b>{rm(batch.fee_sen)}</b><span className={styles.muted}>{pctOfGross(batch.fee_sen)}% · booked to Merchant charges</span></span>
+        {charge !== 0 && (
+          <>
+            <span className={styles.op}>{charge > 0 ? '−' : '+'}</span>
+            <span className={styles.figure}><span className={styles.figLabel}>{chargeLabel(batch)}</span><b>{rm(Math.abs(charge))}</b><span className={styles.muted}>{pctOfGross(Math.abs(charge))}% · booked to Merchant charges</span></span>
+          </>
+        )}
         <span className={styles.op}>=</span>
-        <span className={styles.figure}><span className={styles.figLabel}>{paid ? 'Net · paid out' : 'Net to be paid out'}</span><b>{rm(batch.net_sen)}</b><span className={styles.muted}>{paid ? 'In the bank' : 'Comes in through Bank statements'}</span></span>
+        <span className={styles.figure}><span className={styles.figLabel}>{paid ? 'Net · paid out' : 'Net to be paid out'}</span><b>{rm(payableOf(batch))}</b><span className={styles.muted}>{paid ? 'In the bank' : 'Comes in through Bank statements'}</span></span>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@
 //   any reject -> Draft. Bank truth stays with reconciliation.
 
 import { describe, expect, test } from 'vitest';
-import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost } from './pv-approval';
+import { pvCanEdit, pvCanEditText, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, pvCanRemind } from './pv-approval';
 
 const draft = { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null };
 const prepared = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null };
@@ -14,6 +14,19 @@ const checked = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked
 const approved = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' };
 const posted = { status: 'POSTED', submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' };
 const cancelled = { status: 'CANCELLED', submitted_at: null, checked_at: null, approved_at: null };
+
+describe('the words alone (owner 2026-11-06: 有时我要改 description)', () => {
+  test('they change until the second yes, a checked voucher included', () => {
+    for (const pv of [draft, prepared, checked]) expect(pvCanEditText(pv).ok).toBe(true);
+  });
+  test('approved, posted or cancelled: they stay', () => {
+    const errors = [approved, posted, cancelled].map((pv) => {
+      const v = pvCanEditText(pv);
+      return v.ok ? 'allowed' : v.error;
+    });
+    expect(errors).toEqual(['already_approved', 'already_posted', 'cancelled']);
+  });
+});
 
 describe('editing', () => {
   test('a raw draft is editable', () => {
@@ -115,5 +128,24 @@ describe('the gate money leaves through', () => {
   });
   test('approved posts', () => {
     expect(pvCanPost(approved).ok).toBe(true);
+  });
+});
+
+describe('reminding the approver (Remind approver)', () => {
+  test('a checked voucher waits for the approver — and so does an approval that died before its post', () => {
+    expect(pvCanRemind(checked).ok).toBe(true);
+    expect(pvCanRemind(approved).ok).toBe(true);
+  });
+  test('nothing waits for the approver before the check, and the sentence says which step is missing', () => {
+    const p = pvCanRemind(prepared);
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.message).toMatch(/not checked yet/);
+    const d = pvCanRemind(draft);
+    expect(d.ok).toBe(false);
+    if (!d.ok) expect(d.message).toMatch(/never prepared/);
+  });
+  test('posted and cancelled vouchers are history — no reminder', () => {
+    expect(pvCanRemind(posted).ok).toBe(false);
+    expect(pvCanRemind(cancelled).ok).toBe(false);
   });
 });

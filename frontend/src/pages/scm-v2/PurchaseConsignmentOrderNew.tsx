@@ -80,6 +80,9 @@ type DraftLine = {
   category?: string;
   variants: Record<string, unknown>;
   priceTouched?: boolean;
+  /** Per-line remark — purchase_consignment_order_items.notes; the PO twin is
+      DraftLine.notes on PO New. Prints as "Remark:" on the PDF. */
+  notes?: string;
 };
 
 const newLine = (): DraftLine => ({
@@ -117,8 +120,9 @@ export const PurchaseConsignmentOrderNew = () => {
      2026-10-15: one order line PER REQUEST LINE): the header's Purchase Location +
      Expected Delivery, the supplier, and a line per request line — its SKU, qty,
      fabric / seat / leg as the variant bag — are seeded once when the request
-     arrives; the line remarks ride the order notes (an order line has no remark). The Purchaser checks the prices; on save the order
-     claims the request (PCO_ISSUED). */
+     arrives; each line remark lands on its own order line (2990-0040: a Dining
+     line's model / size / colour lives only in that remark). The Purchaser checks
+     the prices; on save the order claims the request (PCO_ISSUED). */
   const [searchParams] = useSearchParams();
   const fromProductRequest = searchParams.get('fromProductRequest');
   const requestQ = useProductRequest(fromProductRequest);
@@ -131,10 +135,7 @@ export const PurchaseConsignmentOrderNew = () => {
     /* 方案 C (owner 2026-10-08): the supplier and the agreed prices the requester
        named seed the Creditor and the line prices; the Purchaser may still change them. */
     if (sourceRequest.supplier_id) setSupplierId(sourceRequest.supplier_id);
-    setNotes((prev) => prev || [
-      `From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks,
-      ...sourceRequest.lines.filter((l) => l.remarks).map((l) => `L${l.line_no}: ${l.remarks}`),
-    ].filter(Boolean).join(' · '));
+    setNotes((prev) => prev || [`From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks].filter(Boolean).join(' · '));
     const seeded = sourceRequest.lines.filter((l) => !!l.item_code).map((l): DraftLine => {
       const variants: Record<string, unknown> = {};
       if (l.fabric_code) variants.fabricCode = l.fabric_code;
@@ -144,6 +145,7 @@ export const PurchaseConsignmentOrderNew = () => {
         ...newLine(),
         itemCode: l.item_code!,
         materialName: l.model?.name ?? l.proposed_model_name ?? l.item_code!,
+        notes: l.remarks ?? '',
         qty: l.qty,
         category: l.category.toLowerCase() || undefined,
         variants,
@@ -186,6 +188,7 @@ export const PurchaseConsignmentOrderNew = () => {
         category:     it.item_group ?? undefined,
         variants:     it.variants ?? {},
         priceTouched: true,
+        notes:        it.notes ?? '',
       })));
     }
     setCopySeeded(true);
@@ -401,6 +404,7 @@ export const PurchaseConsignmentOrderNew = () => {
       warehouseId:    l.warehouseId  || undefined,
       itemGroup:      l.category,
       variants:       Object.keys(l.variants).length ? l.variants : undefined,
+      notes:          l.notes || undefined,
     }));
 
     create.mutate(
@@ -789,6 +793,18 @@ export const PurchaseConsignmentOrderNew = () => {
                     value={l.materialName}
                     onChange={(e) => setLine(l.rid, { materialName: e.target.value })}
                     placeholder="(auto-filled if bound — editable for one-off purchases)"
+                    className={styles.fieldInput}
+                  />
+                </label>
+
+                {/* Remarks — full width, same box PcLineCard renders on Edit. */}
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Remarks</span>
+                  <input
+                    type="text"
+                    value={l.notes ?? ''}
+                    onChange={(e) => setLine(l.rid, { notes: e.target.value })}
+                    placeholder="Type remarks…"
                     className={styles.fieldInput}
                   />
                 </label>
