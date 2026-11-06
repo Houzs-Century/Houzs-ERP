@@ -2175,7 +2175,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
 
   // Issue category is required (owner ruling 2026-07-19). Items may be empty (owner
   // 2026-07-22): a damaged floor or a lorry problem ties to no product.
-  const missing = missingCaseFields([["SO # / reference / customer", docNo], ["Issue description", complaint], ["Issue category", category], ["Complaint date", complainedDate]]);
+  const missing = missingCaseFields([["order or customer", docNo], ["issue description", complaint], ["issue category", category], ["complaint date", complainedDate]]);
   const valid = missing.length === 0;
 
   // FIXED + z-index 40 (the .sheet-bd pattern) — NOT absolute/z20. When
