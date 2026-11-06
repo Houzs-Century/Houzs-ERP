@@ -1,40 +1,35 @@
-/* The Delivery Planning board's per-leg "Mark Delivered" for a Service Case
-   (owner 2026-11-06: "板上直接标 Delivered"). An SO/DO becomes DELIVERED from its
-   POD; a service leg had no board way to be marked done, so Logistics gets a
-   toggle here. It writes the leg's actual_* date (type:'assr' + deliveryState)
-   and does NOT close the case — closing stays a separate action in the ASSR
-   module. The leg then moves to the Delivered tab while the case stays open; its
-   other legs are unaffected. n/a for SO / DP / project rows (they derive their
-   own state).
+/* The Delivery Planning board's per-leg status for a Service Case (owner 2026-11-06):
+   a dropdown — Delivered / Cancelled / — (pending). Delivered stamps the leg's
+   actual_* date (the leg shows Delivered on the Delivered tab); Cancelled stamps
+   cancelled_* and the leg DROPS off the board; both are leg-only and NEVER close
+   the case (closure stays a separate ASSR-module action). Every change is recorded
+   on the case. n/a for SO / DP / project rows (they derive their own state).
 
-   Its own module (not inline in DeliveryPlanningBoard.tsx) to keep that file
-   under its size ceiling. */
-import { Button } from '../../../components/Button';
+   Its own module (not inline in DeliveryPlanningBoard.tsx) to keep that file under
+   its size ceiling. */
 import type { PlanningOrder, useScheduleDelivery } from '../lib/delivery-planning-queries';
 
 export type MarkDeliveredSchedule = ReturnType<typeof useScheduleDelivery>['mutate'];
 
 export function MarkDeliveredCell({ order, onSchedule }: { order: PlanningOrder; onSchedule: MarkDeliveredSchedule }) {
   if (order.row_type !== 'assr') return <span style={{ color: '#767b6e' }}>—</span>;
-  const delivered = order.delivery_state === 'DELIVERED';
+  // A cancelled leg is already off the board, so a visible row is only pending or delivered.
+  const value: 'delivered' | 'pending' = order.delivery_state === 'DELIVERED' ? 'delivered' : 'pending';
   return (
-    <span
+    <select
+      aria-label="Leg status"
+      value={value}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
-      style={{ display: 'flex', width: '100%' }}
+      onChange={(e) => onSchedule({
+        type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind,
+        assrLegStatus: e.target.value as 'delivered' | 'cancelled' | 'pending',
+      })}
+      style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid var(--line, #d1d5db)', borderRadius: 6, background: 'var(--c-paper, #fff)', color: 'var(--c-ink, #30332b)' }}
     >
-      <Button
-        variant="ghost"
-        onClick={() => onSchedule({
-          type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind,
-          deliveryState: delivered ? 'PENDING_DELIVERY' : 'DELIVERED',
-        })}
-        title={delivered
-          ? 'Marked delivered — click to reopen this leg (does not reopen the case)'
-          : 'Mark this leg delivered (records the leg only; does not close the case)'}
-      >
-        {delivered ? 'Delivered' : 'Mark delivered'}
-      </Button>
-    </span>
+      <option value="pending">—</option>
+      <option value="delivered">Delivered</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
   );
 }
