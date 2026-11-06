@@ -125,10 +125,20 @@ describe('sales tax printed once at the bottom (Diglant)', () => {
     addSalesTax(lines, [priced('a', 155000), priced('b', 110000)], 100, 2650);
     expect(lines.map((l) => l.read?.unitPrice)).toEqual([1550, 1100]);
   });
-  test('no tax read: the PO price alone says which rows are before tax', () => {
-    const lines = [row('a', 1, 1409.09), row('b', 1, 75)];
-    addSalesTax(lines, [priced('a', 155000), priced('b', 7500)], null, null);
-    expect(lines.map((l) => l.read?.unitPrice)).toEqual([1550, 75]);
+  test('any rate works: 6% takes its rate from the invoice', () => {
+    const lines = [row('a', 2, 500), row('b', 1, 1000)];
+    addSalesTax(lines, [priced('a', 53000), priced('b', 106000)], 120, 2120);
+    expect(lines.map((l) => l.read?.unitPrice)).toEqual([530, 1060]);
+  });
+  test('tax not read: the total less the rows is the tax', () => {
+    const lines = [row('a', 1, 1000), row('b', 1, 500)];
+    expect(addSalesTax(lines, [], null, 1620)).toContain('120.00');
+    expect(lines.map((l) => l.read?.lineTotal)).toEqual([1080, 540]);
+  });
+  test('neither read: the rows stay as printed', () => {
+    const lines = [row('a', 1, 1409.09)];
+    expect(addSalesTax(lines, [priced('a', 155000)], null, null)).toBeNull();
+    expect(lines[0]!.read?.unitPrice).toBe(1409.09);
   });
   test('rows that cannot reach the total say so', () => {
     const lines = [row('a', 1, 1000)];

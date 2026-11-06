@@ -111,7 +111,6 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   }
 }
 
-const SST = 0.1;
 /** Within this much of the receipt's price (RM) a row IS that price: a printed
  *  1,409.09 plus 10% is 1,549.999, and the PO says 1,550.00. */
 const NEAR = 0.05;
@@ -122,13 +121,13 @@ const rm = (n: number) => n.toLocaleString('en-MY', { minimumFractionDigits: 2, 
  *  price is what the goods cost us, tax in (owner 2026-11-06). So each priced row
  *  takes its share by amount, a free gift stays free, and a result next to the
  *  receipt's price is that price. A row printed at the receipt's price already
- *  holds its tax, so on an invoice whose tax is not 10% of everything it takes no
- *  share. With no tax read (an older read), the price alone decides a row.
+ *  holds its tax and takes no share. No rate is assumed: the tax is the invoice's,
+ *  or its total less its rows, and neither read leaves the rows as printed.
  *  Returns what happened, for the card. */
-export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, tax: number | null, total: number | null): string | null {
+export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, taxRead: number | null, total: number | null): string | null {
   const unitOf = (l: PiReviewLine) => l.read?.unitPrice ?? (l.read?.lineTotal != null && l.qty > 0 ? l.read.lineTotal / l.qty : 0);
   const priced = lines.filter((l) => unitOf(l) > 0);
-  if (priced.length === 0 || tax === 0) return null;
+  if (priced.length === 0) return null;
   const receiptPrice = (l: PiReviewLine) => {
     const hit = open.find((o) => o.grnItemId === l.grnItemId);
     return hit ? hit.unitPriceSen / 100 : null;
@@ -136,12 +135,12 @@ export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableL
   const near = (a: number, b: number | null) => b != null && Math.abs(a - b) <= NEAR;
   const amount = (l: PiReviewLine) => unitOf(l) * l.qty;
   const printed = priced.reduce((a, l) => a + amount(l), 0);
-  const taxed = tax == null
-    ? priced.filter((l) => near(unitOf(l) * (1 + SST), receiptPrice(l)) && !near(unitOf(l), receiptPrice(l)))
-    : Math.abs(tax - printed * SST) <= 1 ? priced : priced.filter((l) => !near(unitOf(l), receiptPrice(l)));
-  if (taxed.length === 0) return tax == null ? null : `Sales tax RM ${rm(tax)} could not be placed on any row. Check the prices.`;
+  const tax = taxRead ?? (total == null ? null : sen2(total - printed));
+  if (tax == null || tax <= 0) return null;
+  const notYet = priced.filter((l) => !near(unitOf(l), receiptPrice(l)));
+  const taxed = notYet.length > 0 ? notYet : priced;
   const base = taxed.reduce((a, l) => a + amount(l), 0);
-  const rate = tax == null ? SST : tax / base;
+  const rate = tax / base;
   const free: PiReviewLine[] = [];
   for (const l of taxed) {
     const po = receiptPrice(l);
@@ -152,14 +151,14 @@ export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableL
   }
   const sum = () => sen2(priced.reduce((a, l) => a + (l.read?.lineTotal ?? 0), 0));
   /* Rounding left over goes on the biggest row the receipt does not fix. */
-  const want = total ?? (tax == null ? null : sen2(printed + tax));
-  if (want != null && free.length > 0 && sum() !== want) {
+  const want = total ?? sen2(printed + tax);
+  if (free.length > 0 && sum() !== want) {
     const big = free.reduce((a, l) => ((l.read?.lineTotal ?? 0) > (a.read?.lineTotal ?? 0) ? l : a));
     const lineTotal = sen2((big.read?.lineTotal ?? 0) + want - sum());
     big.read = { ...big.read!, lineTotal, unitPrice: sen2(lineTotal / big.qty) };
   }
-  if (want != null && Math.abs(sum() - want) > NEAR) return `The rows add to RM ${rm(sum())}, the invoice says RM ${rm(want)}. Check the prices.`;
-  return tax == null ? null : `Prices include sales tax RM ${rm(tax)}, shared across the rows.`;
+  if (Math.abs(sum() - want) > NEAR) return `The rows add to RM ${rm(sum())}, the invoice says RM ${rm(want)}. Check the prices.`;
+  return `Prices include sales tax RM ${rm(tax)}, shared across the rows.`;
 }
 
 /** The first working copy. Matched rows arrive tied to their GRN line; rows the

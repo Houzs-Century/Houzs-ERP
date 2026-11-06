@@ -3,7 +3,7 @@ import { piAmounts, type BillLine, type PiReview, type PiReviewLine } from './sc
 
 const bill = (grnItemId: string, unitPriceSen: number): BillLine => ({ supplierSku: null, grnItemId, grnNumber: 'GRN-1', supplierId: 's', poNumber: 'PO-1', itemCode: 'X', description: null, remaining: 9, unitPriceSen });
 const row = (key: string, grnItemId: string | null, qty: number, read: PiReviewLine['read']): PiReviewLine => ({ key, grnItemId, grnNumber: null, qty, suggested: false, read });
-const review = (lines: PiReviewLine[]): PiReview => ({ v: 1, supplierId: 's', supplierRead: null, invoiceNumber: 'I', invoiceDate: null, doNo: null, poNo: null, notes: null, lines });
+const review = (lines: PiReviewLine[]): PiReview => ({ v: 1, supplierId: 's', supplierRead: null, invoiceNumber: 'I', invoiceDate: null, doNo: null, poNo: null, notes: null, taxNote: null, lines });
 const read = (unitPrice: number | null, lineTotal: number | null) => ({ itemCode: null, description: null, qty: 1, unitPrice, lineTotal });
 const lines = new Map([['a', bill('a', 80_000)], ['b', bill('b', 20_000)]]);
 
