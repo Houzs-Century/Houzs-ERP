@@ -31,8 +31,21 @@ const stubFrame = (print: () => void) => {
 };
 
 describe('the in-app PDF viewer', () => {
-  it("'print' shows the PDF in the ERP and asks for the dialog once the viewer loaded", () => {
+  it('the viewer shows the named path, so the browser saves the document by its name', async () => {
+    const put = vi.fn(async () => {});
+    vi.stubGlobal('caches', { open: async () => ({ keys: async () => [], delete: vi.fn(), put }) });
+    vi.stubGlobal('fetch', async () => new Response('', { headers: { 'x-houzs-print-preview': '1' } }));
+    Object.defineProperty(navigator, 'serviceWorker', { value: { controller: {} }, configurable: true });
+    deliverPdfBlob(pdf(), 'TC-SO-2611-018.pdf', 'preview');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.body.querySelector('iframe')?.getAttribute('src')).toBe('/print-preview/TC-SO-2611-018.pdf');
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, 'serviceWorker');
+  });
+
+  it("'print' shows the PDF in the ERP and asks for the dialog once the viewer loaded", async () => {
     deliverPdfBlob(pdf(), 'payment-corrections-2026-09.pdf', 'print');
+    await vi.advanceTimersByTimeAsync(0);
     expect(openSpy).not.toHaveBeenCalled();
     expect(viewer()?.getAttribute('aria-label')).toBe('payment-corrections-2026-09');
     const print = vi.fn();
@@ -48,8 +61,9 @@ describe('the in-app PDF viewer', () => {
     expect(print).toHaveBeenCalledTimes(2);
   });
 
-  it('a viewer that refuses does not throw out of the overlay', () => {
+  it('a viewer that refuses does not throw out of the overlay', async () => {
     deliverPdfBlob(pdf(), 'x.pdf', 'print');
+    await vi.advanceTimersByTimeAsync(0);
     const frame = stubFrame(() => { throw new Error('not ready'); });
     frame.dispatchEvent(new Event('load'));
     expect(() => vi.advanceTimersByTime(400)).not.toThrow();

@@ -815,7 +815,6 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   bar.appendChild(name);
 
   const iframe = document.createElement('iframe');
-  iframe.src = blobUrl;
   iframe.title = title;
   iframe.style.cssText = 'flex:1;width:100%;border:0;display:block;background:#525659';
 
@@ -862,9 +861,19 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   });
   document.addEventListener('keydown', onKey, true);
 
-  if (opts.print) {
-    iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); });
-  }
+  /* The browser's own Save takes its name from the address: a blob saves as a
+     GUID (owner 2026-11-06), the worker's path saves as the document. An iframe
+     with no src fires load too, so print listens only once the real one is set. */
+  void (async () => {
+    let path: string | null = null;
+    try {
+      path = await putPrintPreview(blob, filename);
+    } catch {
+      // Any storage/worker failure just means the blob, as in the preview tab.
+    }
+    if (opts.print) iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); }, { once: true });
+    iframe.src = path ?? blobUrl;
+  })();
 
   panel.appendChild(bar);
   panel.appendChild(iframe);
