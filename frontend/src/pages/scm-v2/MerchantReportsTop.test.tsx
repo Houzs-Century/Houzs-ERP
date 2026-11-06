@@ -18,7 +18,7 @@ const COUNTS = { 'to-confirm': 0, 'to-choose': 1, 'no-sale': 0, done: 0, 'set-as
 
 const money = (batch: SettlementBatch): string => {
   render(<ReportHead batch={batch} counts={COUNTS} />);
-  return screen.getByLabelText("The report's money").textContent ?? '';
+  return screen.getByLabelText("The report's money").textContent;
 };
 
 describe('the report\'s money', () => {
