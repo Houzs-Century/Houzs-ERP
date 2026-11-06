@@ -23,7 +23,7 @@ function roundTrip(sheetLines: ComboLine[], supplier: string | null): ComboGrids
   return grids;
 }
 
-const ctx = (ls: ComboLine[]) => ({ lines: ls, modulesByModel: { BANGGAU: OWN }, supplierId: null, supplierName: null, today: '2026-11-06' });
+const ctx = (ls: ComboLine[]) => ({ lines: ls, modulesByModel: { BANGGAU: OWN }, sizes: ['24', '28'], supplierId: null, supplierName: null, today: '2026-11-06' });
 
 describe('a combo is one model and module set across the Prices', () => {
   it('folds the rows of each Price into one line, newest row winning', () => {
@@ -160,8 +160,36 @@ describe('the Excel file', () => {
   it("refuses another supplier's row", () => {
     const grids = edit(roundTrip(book, 'Dorsettloft'), 'Price 2', '2L', '24', '1,900.00');
     const plan = planComboImport(edit(grids, 'Price 2', '2L', 'Supplier', 'Armani'), { ...ctx(book), supplierName: 'Dorsettloft', supplierId: 's1' });
-    expect(plan.refused[0]).toContain('belongs to Armani');
+    expect(plan.refused[0]).toContain('Armani');
     expect(plan.apply).toEqual([]);
+  });
+
+  it("refuses a Products file on a supplier's page, or it would write master costs as theirs", () => {
+    const grids = edit(roundTrip(book, null), 'Price 2', '2L', '24', '1,900.00');
+    const plan = planComboImport(grids, { ...ctx(book), supplierName: 'Dorsettloft', supplierId: 's1' });
+    expect(plan.refused[0]).toContain('Products page');
+    expect(plan.apply).toEqual([]);
+  });
+
+  it('refuses a supplier file on Products, even a Delete on its Modules sheet', () => {
+    const grids = edit(roundTrip(book, 'Dorsettloft'), 'Modules', '2L', 'Delete', 'Yes');
+    const plan = planComboImport(grids, ctx(book));
+    expect(plan.refused[0]).toContain('Dorsettloft');
+    expect(plan.retire).toEqual([]);
+  });
+
+  it('a retyped combo name is a rename, and its prices are not first prices', () => {
+    let grids = edit(roundTrip(book, null), 'Modules', '2L', 'Combo', 'Two seat L');
+    grids = edit(grids, 'Price 2', '2L', 'Combo', 'Two seat L');
+    const plan = planComboImport(grids, ctx(book));
+    expect(plan.changes.map((c) => c.kind)).toEqual(['Rename']);
+    expect(plan.apply[0]).toMatchObject({ label: 'Two seat L', prices: {} });
+  });
+
+  it('refuses a column that is not a size', () => {
+    const grids = roundTrip(book, null);
+    grids['Price 2']![0]![5] = '99';
+    expect(planComboImport(grids, ctx(book)).refused[0]).toContain('column 99');
   });
 
   it('a slot that has more than four modules columns still round-trips', () => {

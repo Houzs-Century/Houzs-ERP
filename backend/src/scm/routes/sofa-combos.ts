@@ -880,7 +880,7 @@ function parseApplyItem(raw: unknown): ApplyItem | string {
 // null takes a price away. {} on a combo that does not exist yet opens it with no
 // price, which every pricing path skips (pickComboMatch needs a number), and is a
 // no-op on one that does, so assigning twice adds nothing.
-sofaCombos.post('/apply', async (c) => {
+export const sofaComboApplyHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
@@ -974,13 +974,14 @@ sofaCombos.post('/apply', async (c) => {
   const saved = (data ?? []) as unknown as Row[];
   await rederiveMasters(c, saved.filter((r) => r.supplier_id !== null && hasAnyPrice(r.prices_by_height)));
   return c.json({ applied: saved.length, skipped: items.length - saved.length });
-});
+};
+sofaCombos.post('/apply', sofaComboApplyHandler);
 
 // POST /retire — body { items: [{ baseModel, modules }], supplierId }. Takes the whole
 // combo away, every Price and every old row (retiring only the newest row would bring
 // the older one back). Without a supplier it is the master combo, and every supplier's
 // copy goes with it: a supplier combo has nothing to connect to once the combo is gone.
-sofaCombos.post('/retire', async (c) => {
+export const sofaComboRetireHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
@@ -1015,13 +1016,14 @@ sofaCombos.post('/retire', async (c) => {
   if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);
   if (supplierId !== null) await rederiveMasters(c, hit);
   return c.json({ retired: hit.length });
-});
+};
+sofaCombos.post('/retire', sofaComboRetireHandler);
 
 // POST /recompose — body { baseModel, from, to, supplierId, label? }. Changing the
 // modules makes a different tuple, so each Price's current row moves to the new one
 // with its prices, from today, and the old tuple is retired. Without a supplier every
 // supplier follows the master, or their combos would stop matching it.
-sofaCombos.post('/recompose', async (c) => {
+export const sofaComboRecomposeHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
@@ -1048,23 +1050,43 @@ sofaCombos.post('/recompose', async (c) => {
 
   const label = typeof body.label === 'string' ? body.label.trim() || null : undefined;
   const notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
-  const today = todayIso();
   const companyId = activeCompanyId(c);
   const userId = c.get('user').id;
   const userName = c.get('user').user_metadata?.name ?? null;
 
+  const tuples = new Map<string, Row[]>();
+  for (const r of old) {
+    const key = JSON.stringify([r.tier, r.customer_id, r.supplier_id]);
+    tuples.set(key, [...(tuples.get(key) ?? []), r]);
+  }
+  // A marker row on the tuple's own date, so a price dated ahead stays ahead.
+  const marker = (r: Row, modules: ComboSlots, note: string | null) => ({
+    company_id: companyId,
+    base_model: baseModel,
+    modules,
+    tier: r.tier,
+    customer_id: r.customer_id,
+    supplier_id: r.supplier_id,
+    prices_by_height: r.prices_by_height,
+    selling_prices_by_height: r.selling_prices_by_height ?? {},
+    pwp_prices_by_height: r.pwp_prices_by_height ?? {},
+    default_free_gifts: r.default_free_gifts ?? [],
+    label: label === undefined ? r.label : label,
+    effective_from: r.effective_from,
+    notes: note,
+    created_by: userId,
+    created_by_name: userName,
+  });
+  const newest = [...tuples.values()].flatMap((tuple) => {
+    const r = newestComboRow(tuple);
+    return r ? [r] : [];
+  });
+
+  const supabase = c.get('supabase');
   if (fromKey === toKey) {
-    // Only the label or the notes moved: a new row for each tuple, nothing retired.
-    const latest = new Map<string, Row[]>();
-    for (const r of old) {
-      const key = JSON.stringify([r.tier, r.customer_id, r.supplier_id]);
-      latest.set(key, [...(latest.get(key) ?? []), r]);
-    }
-    const rows = [...latest.values()].flatMap((tuple) => {
-      const r = newestComboRow(tuple);
-      return r ? [{ ...r, id: undefined, deleted_at: undefined, created_at: undefined, updated_at: undefined, company_id: companyId, label: label === undefined ? r.label : label, notes, effective_from: today, created_by: userId, created_by_name: userName }] : [];
-    });
-    const { error } = await c.get('supabase').from('sofa_combo_pricing').insert(rows);
+    const rows = newest.filter((r) => (label !== undefined && label !== r.label) || notes).map((r) => marker(r, from, notes));
+    if (rows.length === 0) return c.json({ moved: 0 });
+    const { error } = await supabase.from('sofa_combo_pricing').insert(rows);
     if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
     return c.json({ moved: rows.length });
   }
@@ -1073,14 +1095,11 @@ sofaCombos.post('/recompose', async (c) => {
     return c.json({ error: 'combo_exists', message: 'This model already has a combo with these modules.' }, 409);
   }
 
-  const tuples = new Map<string, Row[]>();
-  for (const r of old) {
-    const key = JSON.stringify([r.tier, r.customer_id, r.supplier_id]);
-    tuples.set(key, [...(tuples.get(key) ?? []), r]);
-  }
-  const inserts = [...tuples.values()].flatMap((tuple) => {
-    const r = newestComboRow(tuple);
-    return r ? [{
+  // Every row moves, not only the newest: history reads by module set, so anything
+  // left behind would vanish from it, and a price dated ahead keeps its date.
+  const moved = [...old]
+    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+    .map((r) => ({
       company_id: companyId,
       base_model: baseModel,
       modules: to,
@@ -1091,19 +1110,24 @@ sofaCombos.post('/recompose', async (c) => {
       selling_prices_by_height: r.selling_prices_by_height ?? {},
       pwp_prices_by_height: r.pwp_prices_by_height ?? {},
       default_free_gifts: r.default_free_gifts ?? [],
-      label: label === undefined ? r.label : label,
-      effective_from: today,
-      notes,
-      created_by: userId,
-      created_by_name: userName,
-    }] : [];
-  });
-  const { error } = await c.get('supabase').from('sofa_combo_pricing').insert(inserts);
-  if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+      label: r.label,
+      effective_from: r.effective_from,
+      notes: r.notes,
+      created_by: r.created_by,
+      created_by_name: r.created_by_name,
+      created_at: r.created_at,
+    }));
+  const was = from.map((slot) => slot.join(' or ')).join(' + ');
+  const inserts = [...moved, ...newest.map((r) => marker(r, to, notes ?? `Modules were ${was}`))];
+  for (let i = 0; i < inserts.length; i += ID_CHUNK) {
+    const { error } = await supabase.from('sofa_combo_pricing').insert(inserts.slice(i, i + ID_CHUNK));
+    if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
   const failed = await softDeleteRows(c, old.map((r) => r.id));
   if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);
-  return c.json({ moved: inserts.length });
-});
+  return c.json({ moved: newest.length });
+};
+sofaCombos.post('/recompose', sofaComboRecomposeHandler);
 
 // GET /assign-targets?baseModel= — who a model's combos can go to: which suppliers
 // carry the model, and the combos each already holds (comboSlotsKey values).
@@ -1113,6 +1137,7 @@ sofaCombos.get('/assign-targets', async (c) => {
   const supabase = c.get('supabase');
 
   const { data: suppliers, error: supErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c)
+    .eq('status', 'ACTIVE')
     .order('name', { ascending: true });
   if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
 

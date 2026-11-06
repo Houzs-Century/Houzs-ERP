@@ -142,6 +142,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   const hiddenSizes = inUse.size > 0 && inUse.size < allSizes.length;
 
   const allLines = [...book.values()].flat();
+  const allSizesEver = sortSizes(new Set([...heights, ...sizesInUse(allLines)]));
+  const emptying = Object.values(edits).some((v) => v.trim() === '');
   const missing = allLines.filter((l) => !hasPrice(l)).length;
   const manual = allLines.filter((l) => l.byTier[tier]?.costSource === 'manual').length;
   const monthStart = `${today.slice(0, 7)}-01`;
@@ -336,6 +338,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
           {editCount > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'var(--c-warning-bg, #f6efd9)', color: 'var(--c-warning, #6e4d12)' }}>
               <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{editCount} {editCount === 1 ? 'price' : 'prices'} changed</strong>
+              {emptying && <span style={{ fontSize: 'var(--fs-12)' }}>An emptied cell loses its price today, whatever the date.</span>}
               <span style={{ fontSize: 'var(--fs-12)' }}>Effective from</span>
               <DateField value={effectiveFrom} onChange={setEffectiveFrom} aria-label="Effective from" />
               <Button variant="ghost" onClick={() => setEdits({})}>Discard</Button>
@@ -390,7 +393,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
         <ExportDialog model={model} book={book} supplierName={supplierName} fallbackSizes={heights} today={today} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'import' && (
-        <ImportDialog lines={allLines} modulesByModel={modulesByModel} supplierId={supplierId ?? null} supplierName={supplierName} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
+        <ImportDialog lines={allLines} modulesByModel={modulesByModel} sizes={allSizesEver} supplierId={supplierId ?? null} supplierName={supplierName} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
       )}
     </div>
   );

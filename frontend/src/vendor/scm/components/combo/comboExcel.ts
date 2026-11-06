@@ -67,11 +67,12 @@ export function comboSheets(lines: readonly ComboLine[], supplierName: string | 
   const slotHeads = Array.from({ length: slotCount }, (_, i) => `Slot ${i + 1}`);
   return [...priceSheets, {
     name: MODULES_SHEET,
-    widths: [16, 26, ...slotHeads.map(() => 24), 9],
-    freeze: { rows: 1, cols: 2 },
+    widths: [...(supplierName === null ? [] : [18]), 16, 26, ...slotHeads.map(() => 24), 9],
+    freeze: { rows: 1, cols: supplierName === null ? 2 : 3 },
     rows: [
-      ['Model', 'Combo', ...slotHeads, 'Delete'].map((v): XlsxCell => ({ v, s: 'header' })),
+      [...(supplierName === null ? [] : ['Supplier']), 'Model', 'Combo', ...slotHeads, 'Delete'].map((v): XlsxCell => ({ v, s: 'header' })),
       ...lines.map((line): XlsxCell[] => [
+        ...(supplierName === null ? [] : [{ v: supplierName, s: 'read' as const }]),
         { v: line.baseModel },
         { v: line.name },
         ...slotHeads.map((_, i): XlsxCell => ({ v: (line.modules[i] ?? []).join(' | ') })),
@@ -121,6 +122,8 @@ type PlanContext = {
   lines: readonly ComboLine[];
   /** Every model this company has, with the modules it makes. */
   modulesByModel: Partial<Record<string, readonly string[]>>;
+  /** Every size the company has. A column outside these is a typing slip. */
+  sizes: readonly string[];
   supplierId: string | null;
   supplierName: string | null;
   today: string;
@@ -128,8 +131,28 @@ type PlanContext = {
 
 const parseSlotCell = (cell: string): string[] => cell.split('|').map((c) => c.trim()).filter(Boolean);
 
+/** Who a file was exported for. null = Products, which has no Supplier column. A sheet
+ *  with both is reported as the supplier, and a mix as more than one name. */
+function fileOwners(grids: ComboGrids): Array<string | null> {
+  const owners = new Set<string | null>();
+  for (const rows of Object.values(grids)) {
+    if (!rows || rows.length < 2) continue;
+    const c = (rows[0] ?? []).indexOf('Supplier');
+    if (c < 0) owners.add(null);
+    else for (const row of rows.slice(1)) if (row[c]) owners.add(row[c] ?? null);
+  }
+  return [...owners];
+}
+
 export function planComboImport(grids: ComboGrids, ctx: PlanContext): ComboImportPlan {
   const plan: ComboImportPlan = { changes: [], refused: [], recompose: [], retire: [], apply: [] };
+  // A file from another page would write that page's prices onto this one.
+  const strangers = fileOwners(grids).filter((o) => o !== ctx.supplierName);
+  if (strangers.length > 0) {
+    const whose = strangers.map((o) => o ?? 'the Products page').join(', ');
+    plan.refused.push(`This file is from ${whose}. Export from this page and try again.`);
+    return plan;
+  }
   const named = new Map(ctx.lines.map((l) => [JSON.stringify([l.baseModel, l.name]), l]));
   const nameKey = (model: string, name: string) => JSON.stringify([model, name]);
   const gone = new Set<string>();
@@ -162,7 +185,15 @@ export function planComboImport(grids: ComboGrids, ctx: PlanContext): ComboImpor
       if (slots.length === 0) { plan.refused.push(`${at}: ${name || 'this combo'} has no modules`); return; }
       const wrong = slots.flat().filter((code) => own.length > 0 && !own.includes(code));
       if (wrong.length > 0) { plan.refused.push(`${at}: ${wrong.join(', ')} is not a module of ${model}`); return; }
-      if (!line) {
+      const sameSet = ctx.lines.find((l) => l.key === comboKey(model, slots));
+      if (!line && sameSet) {
+        // The name was retyped, the modules were not: a rename, not a second combo.
+        named.set(nameKey(model, name), sameSet);
+        plan.apply.push(...PRICE_TIERS.flatMap((tier): ApplyComboItem[] => (sameSet.byTier[tier]
+          ? [{ baseModel: model, modules: sameSet.modules, tier, supplierId: ctx.supplierId, prices: {}, effectiveFrom: ctx.today, label: name }]
+          : [])));
+        plan.changes.push({ kind: 'Rename', where: model, before: sameSet.name, after: name });
+      } else if (!line) {
         plan.apply.push({ baseModel: model, modules: slots, tier: 'PRICE_1', supplierId: ctx.supplierId, prices: {}, effectiveFrom: ctx.today, label: name || null });
         fresh.set(nameKey(model, name), slots);
         plan.changes.push({ kind: 'New combo', where: `${model} ${name}`, before: 'None', after: modulesBrief(slots) });
@@ -200,7 +231,12 @@ function planPriceSheet(
   const header = rows[0] ?? [];
   const fixed = new Set(['Supplier', 'Model', 'Combo', 'Modules', 'Effective from', 'Notes']);
   const col = (name: string) => header.indexOf(name);
-  const sizeCols = header.flatMap((h, i) => (h && !fixed.has(h) ? [{ h, i }] : []));
+  const sizeCols = header.flatMap((h, i) => (h && !fixed.has(h) ? [{ h, i }] : []))
+    .filter(({ h }) => {
+      const known = ctx.sizes.includes(h);
+      if (!known) plan.refused.push(`${sheetName}: column ${h} is not a size`);
+      return known;
+    });
 
   rows.slice(1).forEach((row, i) => {
     const at = `${sheetName}, row ${i + 2}`;
@@ -208,11 +244,6 @@ function planPriceSheet(
     const name = row[col('Combo')] ?? '';
     if (!model && !name) return;
     if (known.gone.has(known.nameKey(model, name))) return;
-    const supplierCell = col('Supplier') >= 0 ? (row[col('Supplier')] ?? '') : '';
-    if (ctx.supplierName !== null && supplierCell && supplierCell !== ctx.supplierName) {
-      plan.refused.push(`${at}: this row belongs to ${supplierCell}`);
-      return;
-    }
     const line = known.named.get(known.nameKey(model, name));
     const modules = line ? (known.movedTo.get(line.key) ?? line.modules) : known.fresh.get(known.nameKey(model, name));
     if (!modules) { plan.refused.push(`${at}: ${name} is not a combo of ${model}`); return; }

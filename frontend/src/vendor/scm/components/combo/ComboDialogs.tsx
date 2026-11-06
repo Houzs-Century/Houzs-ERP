@@ -11,7 +11,7 @@ import { SearchableSelect } from '../SearchableSelect';
 import styles from './ComboScreen.module.css';
 import { errText } from './comboErrors';
 import {
-  COMBO_PRESETS, costAt, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetSlots, tierLabel,
+  COMBO_PRESETS, comboKey, costAt, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetSlots, tierLabel,
   type ComboLine,
 } from './comboBook';
 import { combosFileName, comboSheets, downloadComboWorkbook, planComboImport, readComboFile, type ComboImportPlan } from './comboExcel';
@@ -58,7 +58,7 @@ export function Dialog({ title, subtitle, width, onClose, footer, children }: {
 const PRESET = 'preset';
 const BY_HAND = 'by-hand';
 
-type Candidate = { key: string; name: string; note: string; modules: string[][]; blocked: string | null };
+type Candidate = { key: string; name: string; label?: string; note: string; modules: string[][]; blocked: string | null };
 
 export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierId, today, onHand, onClose }: {
   model: string;
@@ -87,21 +87,22 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   };
   const candidates = source === PRESET
     ? COMBO_PRESETS.map((p) => fit(p.name, p.pieces, presetSlots(p.pieces, ownModules)))
-    : (sourceBook.get(source) ?? []).map((l) => fit(l.name, modulesBrief(l.modules), l.modules));
+    : (sourceBook.get(source) ?? []).map((l) => ({ ...fit(l.name, modulesBrief(l.modules), l.modules), label: l.label }));
   const shown = candidates.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()));
   const chosen = candidates.filter((c) => !c.blocked && ticked[c.key]);
 
   const options = [
     { value: PRESET, label: 'Preset' },
     { value: BY_HAND, label: 'Build by hand' },
-    ...[...sourceBook.keys()].filter((m) => m !== model).sort().map((m) => ({ value: m, label: `Copy from model: ${m}` })),
+    // A supplier starts from the master combos of the very model it is pricing.
+    ...[...sourceBook.keys()].filter((m) => supplierId !== null || m !== model).sort().map((m) => ({ value: m, label: `Copy from model: ${m}` })),
   ];
 
   const add = async () => {
     if (chosen.length === 0) { void notify({ title: 'Tick at least one combo.', tone: 'error' }); return; }
     const items: ApplyComboItem[] = chosen.map((c) => ({
       baseModel: model, modules: c.modules, tier: 'PRICE_1', supplierId, prices: {}, effectiveFrom: today,
-      label: source === PRESET ? buildComboLabel(c.modules) : c.name,
+      label: c.label ?? buildComboLabel(c.modules),
     }));
     try {
       await apply.mutateAsync(items);
@@ -213,6 +214,12 @@ function ModulePicker({ codes, picked, onToggle }: {
   );
 }
 
+const compartmentNote = (editing: boolean, onSupplier: boolean, today: string): string => {
+  if (!editing) return 'Prices stay empty until you fill them in.';
+  if (onSupplier) return `Only this supplier changes, from ${fmtDate(today)}. It will no longer match the Products combo.`;
+  return `Prices stay. The new compartments apply from ${fmtDate(today)}, on every supplier that has this combo.`;
+};
+
 export function CompartmentDialog({ model, editing, codes, supplierId, today, onClose }: {
   model: string;
   /** null = a new combo built by hand. */
@@ -227,7 +234,7 @@ export function CompartmentDialog({ model, editing, codes, supplierId, today, on
   const recompose = useRecomposeCombos();
   const [slots, setSlots] = useState<string[][]>(() => (editing ? editing.modules.map((s) => [...s]) : [[]]));
   const [active, setActive] = useState(0);
-  const [label, setLabel] = useState(editing?.name ?? '');
+  const [label, setLabel] = useState(editing?.label ?? '');
   const [notes, setNotes] = useState('');
 
   const toggle = (index: number, code: string) =>
@@ -241,7 +248,8 @@ export function CompartmentDialog({ model, editing, codes, supplierId, today, on
     if (modules.length === 0) { void notify({ title: 'Pick at least one module.', tone: 'error' }); return; }
     try {
       if (editing) {
-        await recompose.mutateAsync([{ baseModel: model, from: editing.modules, to: modules, supplierId, label: label || null, notes: notes || null }]);
+        const same = comboKey(model, modules) === editing.key && (label || null) === editing.label && !notes;
+        if (!same) await recompose.mutateAsync([{ baseModel: model, from: editing.modules, to: modules, supplierId, label: label || null, notes: notes || null }]);
       } else {
         await apply.mutateAsync([{ baseModel: model, modules, tier: 'PRICE_1', supplierId, prices: {}, effectiveFrom: today, label: label || null, notes: notes || null }]);
       }
@@ -260,7 +268,7 @@ export function CompartmentDialog({ model, editing, codes, supplierId, today, on
       footer={(
         <>
           <span style={{ ...noteText, flex: '1 1 200px' }}>
-            {editing ? `Prices stay. The new compartments apply from ${fmtDate(today)}.` : 'Prices stay empty until you fill them in.'}
+            {compartmentNote(editing !== null, supplierId !== null, today)}
           </span>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={() => { void save(); }} disabled={apply.isPending || recompose.isPending}>{editing ? 'Save compartments' : 'Create combo'}</Button>
@@ -327,7 +335,7 @@ export function AssignDialog({ model, chosen, today, onDone, onClose }: {
     const picked = rows.filter((r) => !r.off && ticked[r.id]);
     if (picked.length === 0) { void notify({ title: 'Pick a supplier.', tone: 'error' }); return; }
     const items: ApplyComboItem[] = picked.flatMap((r) => r.fresh.map((l) => ({
-      baseModel: model, modules: l.modules, tier: 'PRICE_1' as const, supplierId: r.id, prices: {}, effectiveFrom: today, label: l.name,
+      baseModel: model, modules: l.modules, tier: 'PRICE_1' as const, supplierId: r.id, prices: {}, effectiveFrom: today, label: l.label,
     })));
     try {
       await apply.mutateAsync(items);
@@ -517,8 +525,9 @@ export function ExportDialog({ model, book, supplierName, fallbackSizes, today, 
 
 const PREVIEW_ROWS = 200;
 
-export function ImportDialog({ lines, modulesByModel, supplierId, supplierName, today, onDone, onClose }: {
+export function ImportDialog({ lines, modulesByModel, sizes, supplierId, supplierName, today, onDone, onClose }: {
   lines: readonly ComboLine[];
+  sizes: readonly string[];
   modulesByModel: Partial<Record<string, readonly string[]>>;
   supplierId: string | null;
   supplierName: string | null;
@@ -537,7 +546,7 @@ export function ImportDialog({ lines, modulesByModel, supplierId, supplierName, 
   const onFile = async (file: File) => {
     try {
       const grids = await readComboFile(file);
-      const next = planComboImport(grids, { lines, modulesByModel, supplierId, supplierName, today });
+      const next = planComboImport(grids, { lines, modulesByModel, sizes, supplierId, supplierName, today });
       setPlan(next);
     } catch (e) {
       void notify({ title: "Couldn't read this file", body: errText(e), tone: 'error' });

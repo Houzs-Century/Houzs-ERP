@@ -14,6 +14,8 @@ export type ComboLine = {
   key: string;
   baseModel: string;
   modules: string[][];
+  /** What the combo is called; `name` adds a number when a model repeats it. */
+  label: string;
   name: string;
   byTier: Partial<Record<SofaPriceTier, SofaComboRule>>;
 };
@@ -32,7 +34,7 @@ export function comboBook(rules: readonly SofaComboRule[]): Map<string, ComboLin
   for (const r of [...rules].sort(newestFirst)) {
     const key = comboKey(r.baseModel, r.modules);
     const line = lines.get(key) ?? {
-      key, baseModel: r.baseModel, modules: r.modules, name: r.label || buildComboLabel(r.modules), byTier: {},
+      key, baseModel: r.baseModel, modules: r.modules, label: r.label || buildComboLabel(r.modules), name: r.label || buildComboLabel(r.modules), byTier: {},
     };
     line.byTier[r.tier ?? 'PRICE_1'] ??= r;
     lines.set(key, line);
@@ -168,7 +170,7 @@ export function historyLines(rows: readonly SofaComboRule[]): HistoryLine[] {
       else if (now === null) detail = `${rm(was)} removed`;
       out.push({ id: `${row.id}:${h}`, date: row.effectiveFrom, who, what: `${heightLabel(h)} seat`, detail });
     }
-    if (!any) out.push({ id: row.id, date: row.effectiveFrom, who, what: row.label === prev.label ? 'Saved' : 'Renamed', detail: row.notes });
+    if (!any) out.push({ id: row.id, date: row.effectiveFrom, who, what: row.label === prev.label ? 'Changed' : 'Renamed', detail: row.notes });
   });
   return out.reverse();
 }
