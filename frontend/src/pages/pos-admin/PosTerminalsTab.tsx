@@ -88,12 +88,12 @@ export function PosTerminalsTab() {
               <div className="font-mono text-[28px] font-bold tracking-[0.18em] text-ink">{pairing.code}</div>
             </div>
             <div className="text-[11.5px] text-ink-secondary">
-              On the device open the POS app and type this code, or open this link on the device:<br />
+              Send this link to the device (WhatsApp works) and open it there: one click sets the device up, nothing to type. Or type the code in the POS app, Settings.<br />
               <a className="break-all text-accent underline" href={pairing.url} target="_blank" rel="noreferrer">{pairing.url}</a>
               <div className="mt-1 text-ink-muted">Valid until {formatDateTime(pairing.expires_at)}, one use. Pairing again later replaces the device token.</div>
             </div>
             <span className="ml-auto flex gap-1">
-              <button type="button" className={ghostBtn} onClick={() => { void navigator.clipboard.writeText(pairing.url).then(() => toast.success("Link copied")); }}>Copy link</button>
+              <button type="button" className={ghostBtn} onClick={() => { void navigator.clipboard.writeText(pairing.url).then(() => toast.success("Link copied. Paste it to the person at the device.")); }}>Copy link</button>
               <button type="button" className={ghostBtn} onClick={() => setPairing(null)}>Close</button>
             </span>
           </div>

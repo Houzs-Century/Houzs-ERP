@@ -34,13 +34,16 @@ export function App() {
         /* A stored state without a token is not a device: drop it. */
         let s = raw && raw.token ? raw : null;
         if (raw && !s) void clearDeviceState();
-        /* The ?pair= link from POS Admin > Terminals sets the device up by itself. */
+        /* The ?pair= link from POS Admin > Terminals sets the device up by
+           itself. It also re-pairs a device that was set up before (its token
+           was replaced, so it reads device_not_registered): the bills it holds
+           stay, and a link that is spent or expired leaves it as it was. */
         const code = pairingCodeFromUrl(window.location.href);
-        if (code && !s) {
+        if (code) {
           window.history.replaceState(null, "", window.location.pathname);
           try {
-            const r = await deviceApi.pair<{ token: string; bundle: PosBundle }>(code, null, platformName());
-            s = stateFromBundle(r.token, r.bundle, null, r.bundle.terminal.device_name ?? "");
+            const r = await deviceApi.pair<{ token: string; bundle: PosBundle }>(code, s?.device_name || null, platformName());
+            s = stateFromBundle(r.token, r.bundle, s, s?.device_name || r.bundle.terminal.device_name || "");
             await saveDeviceState(s);
           } catch (e) {
             console.warn("[pos] pairing link failed", e);
