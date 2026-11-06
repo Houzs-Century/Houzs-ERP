@@ -16,7 +16,7 @@
  * The rows reaching here have already been through the grid's funnel filter
  * and sort (dataTableRows.ts), so the file follows the view. */
 
-import { isoForExport } from "../lib/csv";
+import { isoForExport, type CSVColumn } from "../lib/csv";
 
 export type ExportCell = string | number | null;
 export type ExportFormat = "text" | "number" | "money" | "rate" | "date";
@@ -90,6 +90,26 @@ export function buildLineExportMatrix<T, L>(
   };
 }
 
+/** The visible columns as the CSV export reads them. */
+export function csvColumnsOf<T, L>(columns: readonly LineExportColumn<T, L>[]): CSVColumn<T>[] {
+  return columns
+    .filter((c) => typeof c.getValue === "function" || typeof c.exportValue === "function")
+    .map((c) => ({
+      key: c.key,
+      label: c.exportLabel || c.label || c.key,
+      getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
+    }));
+}
+
+/** What a table hands its PDF (`onExportPdf`): the cells its Excel would hold, each
+ *  column's key, and the rows behind them. */
+export type TablePdfView<T> = { keys: string[]; matrix: LineExportMatrix; rows: readonly T[] };
+
+export function tablePdfViewOf<T, L>(rows: readonly T[], columns: readonly LineExportColumn<T, L>[]): TablePdfView<T> {
+  const cols = exportableColumns(columns);
+  return { keys: cols.map((c) => c.key), matrix: buildLineExportMatrix(rows, () => [], cols), rows };
+}
+
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 /** yyyy-mm-dd -> the Excel day serial, timezone-free (a JS Date cell would be
  *  shifted by the browser's offset). */
@@ -107,6 +127,27 @@ const NUMBER_FORMAT: Record<ExportFormat, string | null> = {
   rate: "#,##0.00##",
   date: "yyyy/mm/dd",
 };
+
+/* A wide character takes two cells' width. */
+const widthOfText = (s: string): number => [...s].reduce((w, ch) => w + ((ch.codePointAt(0) ?? 0) > 0x2e7f ? 2 : 1), 0);
+const shownInSheet = (cell: ExportCell, format: ExportFormat): string => {
+  if (cell === null) return "";
+  if (typeof cell === "number" && (format === "money" || format === "rate")) {
+    return cell.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: format === "rate" ? 4 : 2 });
+  }
+  if (format === "date" && excelDaySerial(String(cell)) !== null) return "0000/00/00";
+  return String(cell);
+};
+
+/** Each column as wide as the longest thing in it (owner 2026-11-06: 我要看 export 出来的
+ *  成效). Read off the heading alone, a "Document" column cut every document number. */
+export function fittedColumnWidths(matrix: LineExportMatrix): number[] {
+  return matrix.header.map((heading, c) => {
+    const format = matrix.formats[c] ?? "text";
+    const widest = matrix.body.reduce((w, row) => Math.max(w, widthOfText(shownInSheet(row[c] ?? null, format))), widthOfText(heading));
+    return Math.min(42, Math.max(10, widest + 2));
+  });
+}
 
 export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: string, fileName: string): Promise<void> {
   const XLSX = await import("../lib/xlsx-runtime");
@@ -127,7 +168,7 @@ export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: s
       }
     }
   });
-  ws["!cols"] = matrix.header.map((h) => ({ wch: Math.min(42, Math.max(10, h.length + 2)) }));
+  ws["!cols"] = fittedColumnWidths(matrix).map((wch) => ({ wch }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   XLSX.writeFileXLSX(wb, fileName);

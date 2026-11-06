@@ -38,6 +38,7 @@ import { rowsToTsv } from "./dataTableClipboard";
 import { useCellRange } from "./dataTableCellRange";
 import { tickedOrAll } from "./dataTableTicked";
 import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
+import { DataTableExportItems, HEADER_MENU_ITEM_CLASS, sheetExportLabel } from "./DataTableExportItems";
 import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
 import { useInRouterContext } from "react-router-dom";
 import { ResetFiltersButton } from "./ResetFiltersButton";
@@ -83,11 +84,13 @@ import {
 } from "../lib/tableLayouts";
 import { isSharedDataGridStorageKey } from "../vendor/scm/components/dataGridLayoutStorage";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
-import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
+import { downloadCSV, toCSV } from "../lib/csv";
 import { applyColumnFilters, facetedFilterValues, sortTableRows } from "./dataTableRows";
 import {
   buildLineExportMatrix,
+  csvColumnsOf,
   exportableColumns,
+  tablePdfViewOf,
   writeLineExportFile,
   type DataTableLineExport,
   type ExportCell,
@@ -175,6 +178,7 @@ function DataTableInner<T, L>({
   onExport,
   exportLines,
   exportXlsx,
+  onExportPdf,
   toolbarExtra,
   onColFiltersChange,
   onImport,
@@ -1632,13 +1636,7 @@ function DataTableInner<T, L>({
     if (exportLines) { void handleLineExport(exportLines); return; }
     // Optional override: the caller exports a broader/full dataset (e.g. all
     // pages, ignoring a screen-only filter) with the same columns.
-    const csvCols: CSVColumn<T>[] = visibleColumns
-      .filter((c) => typeof c.getValue === "function" || typeof c.exportValue === "function")
-      .map((c) => ({
-        key: c.key,
-        label: c.exportLabel || c.label || c.key,
-        getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
-      }));
+    const csvCols = csvColumnsOf(visibleColumns as Column<T, L>[]);
     if (onExport) { onExport(csvCols); return; }
     if (!actionRows || actionRows.rows.length === 0 || csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10), outRows = actionRows.rows;
@@ -3354,8 +3352,7 @@ function DataTableInner<T, L>({
           const sortable = canSortColumn(col);
           const isPinned = pinnedSet.has(col.key);
           const canHide = !col.alwaysVisible;
-          const itemCls =
-            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-surface-dim disabled:cursor-not-allowed disabled:text-ink-muted disabled:hover:bg-transparent";
+          const itemCls = HEADER_MENU_ITEM_CLASS;
           const pos = headerMenuPos ?? { top: headerMenu.y, left: headerMenu.x };
           return createPortal(
             <div
@@ -3367,6 +3364,9 @@ function DataTableInner<T, L>({
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >
+              <DataTableExportItems className={itemCls} disabled={rowActionsDisabled || exporting || !sortedRows?.length} onSheet={() => { setHeaderMenu(null); handleExport(); }}
+                sheetLabel={sheetExportLabel({ lines: Boolean(exportLines), custom: Boolean(onExport), xlsx: exportXlsx, exportLabel, picked: actionRows?.picked ? actionRows.rows.length : null })}
+                onPdf={onExportPdf && actionRows ? () => { setHeaderMenu(null); onExportPdf(tablePdfViewOf(actionRows.rows, visibleColumns as Column<T, L>[])); } : undefined} />
               <button
                 type="button"
                 className={itemCls}
