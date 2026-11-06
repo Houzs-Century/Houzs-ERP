@@ -168,6 +168,13 @@ export async function applyMerge(sql, { co, plan, world, cascade, audit }) {
   return { committed, problems, rekeyed };
 }
 
+/** One audit row for a Model merge, before its Model writes: meta is a text column. */
+export async function recordModelMergeAudit(sql, { audit, modelId, summary, undo }) {
+  await sql`
+    INSERT INTO audit_events (actor_id, actor_email, action, entity_type, entity_id, summary, meta, request_id)
+    VALUES (${audit.actorId}, ${audit.actorEmail}, 'scm.model.merge', 'product_model', ${modelId}, ${summary}, ${JSON.stringify(undo)}, ${audit.requestId})`;
+}
+
 /** Re-read on a connection the writes did not use: what the rows now SAY. */
 export async function verifyMerge(v, { co, committed, world }) {
   const problems = [];
