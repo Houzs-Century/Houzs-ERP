@@ -17,7 +17,7 @@
                            Projects team's schedule_remark). */
 import { scopeToAllowedCompanies, allowedCompaniesSql } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_STATUS_PICK_SOURCE, ASSR_ACTUAL_COL } from './assr-board-scope';
+import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_STATUS_PICK_SOURCE, ASSR_ACTUAL_COL, ASSR_CANCELLED_COL } from './assr-board-scope';
 import { logActivity } from '../../services/assr';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
@@ -129,27 +129,35 @@ export async function writeNonSoFields(
   return { status: 200, body: { ...OK_FIELDS } };
 }
 
-/* Board "Mark Delivered" for one service-case leg (owner 2026-11-06): stamp the
-   leg's actual_* date (deliver) or clear it (reopen), record it on the case, and
-   NEVER close the case (closure stays a separate ASSR-module action). The caller
-   has already run assrLegGuardSql, so this re-reads nothing — it writes + logs.
-   Here (not in the router) to keep delivery-planning.ts under its size ceiling. */
-export async function writeAssrLegDelivered(
-  c: Ctx, caseId: number, jobKind: keyof typeof ASSR_ACTUAL_COL, deliver: boolean, by: string,
+/* Board per-leg status for one service-case leg (owner 2026-11-06), the dropdown's
+   Delivered / Cancelled / — (pending):
+     delivered -> stamp actual_* (leg shows DELIVERED), clear cancelled_*
+     cancelled -> stamp cancelled_* (leg DROPS off the board), clear actual_*
+     pending   -> clear both (leg back to pending)
+   It records the step and NEVER closes the case (closure stays a separate ASSR-
+   module action). The caller has already run assrLegGuardSql, so this re-reads
+   nothing — it writes + logs. Here (not in the router) to keep delivery-planning.ts
+   under its size ceiling. */
+export async function writeAssrLegStatus(
+  c: Ctx, caseId: number, jobKind: keyof typeof ASSR_ACTUAL_COL, status: 'delivered' | 'cancelled' | 'pending', by: string,
 ): Promise<EditResult> {
-  const stamp = deliver ? new Date().toISOString().slice(0, 10) : null;
+  const today = new Date().toISOString().slice(0, 10);
+  const deliveredAt = status === 'delivered' ? today : null;
+  const cancelledAt = status === 'cancelled' ? today : null;
+  const action = status === 'delivered' ? 'leg_delivered' : status === 'cancelled' ? 'leg_cancelled' : 'leg_reopened';
+  const verb = status === 'delivered' ? 'marked delivered' : status === 'cancelled' ? 'cancelled' : 'reopened';
   try {
     const res = await c.env.DB.prepare(
-      `UPDATE assr_cases SET ${ASSR_ACTUAL_COL[jobKind]} = ?, updated_at = datetime('now')
+      `UPDATE assr_cases SET ${ASSR_ACTUAL_COL[jobKind]} = ?, ${ASSR_CANCELLED_COL[jobKind]} = ?, updated_at = datetime('now')
         WHERE id = ? AND archived_at IS NULL`,
-    ).bind(stamp, caseId).run();
+    ).bind(deliveredAt, cancelledAt, caseId).run();
     if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
-    await logActivity(c.env, caseId, deliver ? 'leg_delivered' : 'leg_reopened', null, stamp,
-      `${jobKind} leg ${deliver ? 'marked delivered' : 'reopened'} on the Delivery Planning board by ${by}`, null, 'service');
+    await logActivity(c.env, caseId, action, null, status === 'pending' ? null : today,
+      `${jobKind} leg ${verb} on the Delivery Planning board by ${by}`, null, 'service');
   } catch (e) {
     return { status: 500, body: { error: 'update_failed', reason: String((e as Error).message).slice(0, 200) } };
   }
-  return { status: 200, body: { ok: true, assr: { id: caseId, job_kind: jobKind, [ASSR_ACTUAL_COL[jobKind]]: stamp } } };
+  return { status: 200, body: { ok: true, assr: { id: caseId, job_kind: jobKind, status, delivered_at: deliveredAt, cancelled_at: cancelledAt } } };
 }
 
 /* A project row's Remarks: projects.delivery_remark, shared by its SETUP and
