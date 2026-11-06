@@ -18,8 +18,8 @@ for (const r of rows) {
   console.log(`  ${r.due_offset_days ?? '-'} | ${r.title} | ${r.role_label ?? '-'}`);
 }
 const applied = await sql`
-  SELECT c.title, (c.due_date::date - p.start_date::date) AS offset_days, count(*)::int AS n
-    FROM project_checklist_items c JOIN projects p ON p.id = c.project_id
+  SELECT c.title, (substr(c.due_date, 1, 10)::date - substr(p.start_date, 1, 10)::date) AS offset_days, count(*)::int AS n
+    FROM project_checklist c JOIN projects p ON p.id = c.project_id
    WHERE p.archived_at IS NULL AND c.due_date IS NOT NULL AND substr(p.start_date, 1, 10) >= to_char(now(), 'YYYY-MM-DD')
    GROUP BY 1, 2 ORDER BY 1, 2`;
 console.log('APPLIED on upcoming events (title | days from start | events)');
