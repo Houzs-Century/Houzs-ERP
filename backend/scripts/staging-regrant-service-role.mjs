@@ -71,8 +71,18 @@ const roleReach = await planClient`
    WHERE r.rolname IN ('service_role', 'authenticated', 'anon')
      AND n.nspname = 'scm' AND c.relkind IN ('r', 'p', 'v', 'm')
    GROUP BY r.rolname ORDER BY r.rolname`;
+const restCallers = await planClient`
+  SELECT s.userid::regrole::text AS role_name,
+         SUM(s.calls)::bigint AS scm_calls,
+         SUM(s.calls) FILTER (WHERE s.query ILIKE '%po_receipt_so_assignments%')::bigint AS watched_calls
+    FROM extensions.pg_stat_statements s
+   WHERE s.query ILIKE '%"scm"."%'
+   GROUP BY 1 ORDER BY 2 DESC`.catch((error) => [{ role_name: `pg_stat_statements unreadable: ${error.message}`, scm_calls: 0, watched_calls: 0 }]);
 await planClient.end();
 
+for (const { role_name: roleName, scm_calls: scmCalls, watched_calls: watchedCalls } of restCallers) {
+  say(`REST-style scm queries run as ${roleName}: ${scmCalls} call(s), ${watchedCalls ?? 0} on po_receipt_so_assignments`);
+}
 for (const { role_name: roleName, can_read_watched: canReadWatched, unreadable_count: unreadableCount, relation_count: relationCount } of roleReach) {
   say(`role ${roleName}: po_receipt_so_assignments readable=${canReadWatched}; cannot read ${unreadableCount} of ${relationCount} scm relations`);
 }
