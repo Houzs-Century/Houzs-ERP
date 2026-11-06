@@ -1,1523 +1,449 @@
-// ----------------------------------------------------------------------------
-// SofaComboTab — Sofa Combo Pricing UI.
-//
-// Commander 2026-05-28 ("去查看 hookka 的 combo module 把整个 copy 过来").
-// Ported from HOOKKA's combo module spec — built fresh from the UI screenshot
-// + commander's pricing-role + height-tier decisions.
-//
-// 2026-05-28 update — commander dropped customer scoping for 2990's B2C model
-// ("2990 是不需要的。因为是 B2C 直接 apply 给全顾客的"). Removed:
-//   · Copy-to-customer button + modal + API endpoint
-//   · Customer filter dropdown
-//   · Customer picker in New Combo modal (always null = applies to all)
-//   · Customer chip on combo cards
-// The DB column `customer_id` stays for future optionality but the UI never
-// writes to it; every combo persists with customer_id = null.
-//
-// Layout:
-//   header   — "Sofa Combo Pricing" + subtitle + "+ New Combo"
-//   filters  — Base model dropdown + "N rules"
-//   list     — grouped by base model; each combo card has the module
-//              composition + tier + per-seat-height prices + Effective date
-//              + Edit/History/Delete actions.
-// ----------------------------------------------------------------------------
+// Sofa Combo Pricing, on Products (the master combos) and on a supplier's page (that
+// supplier's cost). Pick a model, pick a Price, and the combos sit in one table with
+// a cell per size; saving writes a new dated row, so the old price stays in history.
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Plus, Pencil, Trash2, History, X, CheckSquare, Square } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
+import { fmtDate, fmtSen, maintValues, normalizeCompartmentCode, SOFA_MODULES, type SofaPriceTier } from '@2990s/shared';
 import { DateField } from './DateField';
-import { buildComboLabel, fmtSen, fmtDate, maintValues, normalizeCompartmentCode, SOFA_MODULES, type SofaPriceTier } from '@2990s/shared';
+import { useNotify } from './NotifyDialog';
 import {
-  useSofaCombos,
-  useCreateSofaCombo,
-  useUpdateSofaCombo,
-  useDeleteSofaCombo,
+  useApplyCombos,
   useSofaComboHistory,
-  type SofaComboRule,
-  type NewSofaCombo,
+  useSofaCombos,
 } from '../lib/sofa-combos-queries';
 import { useMfgProducts, useMaintenanceConfig } from '../lib/mfg-products-queries';
-import { useSupplierDetail, type SupplierRow } from '../lib/suppliers-queries';
-import { useNotify } from './NotifyDialog';
-import { useConfirm } from './ConfirmDialog';
-import { EffectiveDatedHistory } from './EffectiveDatedHistory';
-import { sortByText, sortByNumeric } from '../lib/sort-options';
+import { useSupplierDetail } from '../lib/suppliers-queries';
 import { todayMyt } from '../lib/dates';
+import {
+  comboBook, costAt, editKey, hasPrice, heightLabel, historyLines, itemsFromEdits, PRICE_TIERS, sizesInUse, slotLabel, sortSizes, tierLabel,
+  type ComboLine,
+} from './combo/comboBook';
+import { errText } from './combo/comboErrors';
+import styles from './combo/ComboScreen.module.css';
+import { AdjustDialog, AssignDialog, CompartmentDialog, DeleteDialog, ExportDialog, fieldStyle, ImportDialog, NewComboDialog } from './combo/ComboDialogs';
 
-// Seat-height columns mirror the live Maintenance pool (Products → Maintenance
-// → Sofa → Sizes; config key `sofaSizes`). This fallback only shows if that
-// config fails to load — same default the rest of the app uses.
+// Seat-height columns follow the Maintenance Sizes pool; this shows only if that
+// config fails to load.
 const HEIGHTS_FALLBACK = ['24', '26', '28', '30', '32', '35'];
-const TIERS: SofaPriceTier[] = ['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4'];
-
-const ICON_PROPS = { size: 14, strokeWidth: 1.75 } as const;
-
-const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
-
-
-// Malaysia calendar date — the UTC version returned YESTERDAY before 08:00 MYT.
-const todayIso = (): string => todayMyt();
-
 const ALL_MODULE_CODES = SOFA_MODULES.map((m) => m.id).sort();
+const GREEN = 'var(--c-primary, #0f6b5c)';
+const plain = (sen: number): string => fmtSen(sen).replace(/^RM\s*/, '');
 
 type ComboTabProps = {
-  /**
-   * Supplier scope. When set, the tab reads + writes combos scoped to this
-   * supplier's purchasing side (customer_id stays null). When unset, it keeps
-   * the original sales-side / master behaviour the Products page uses.
-   */
+  /** Set on a supplier's page: reads and writes that supplier's combos. */
   supplierId?: string;
 };
 
+type Dialog =
+  | { kind: 'new' } | { kind: 'hand' } | { kind: 'edit'; line: ComboLine }
+  | { kind: 'assign' } | { kind: 'delete' } | { kind: 'adjust' } | { kind: 'export' } | { kind: 'import' };
+
+const card: CSSProperties = { background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' };
+const soft: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' };
+
+const tag = (warn: boolean): CSSProperties => ({
+  display: 'inline-block', padding: '3px 9px', borderRadius: 999, fontSize: 'var(--fs-11)', fontWeight: 600,
+  background: warn ? 'var(--c-warning-bg, #f6efd9)' : '#dcebe3', color: warn ? 'var(--c-warning, #6e4d12)' : GREEN,
+});
+
 export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
-  const [baseModelFilter, setBaseModelFilter] = useState<string>('');
-  const [composer, setComposer] = useState<{ open: boolean; editing?: SofaComboRule }>({ open: false });
+  const notify = useNotify();
+  const apply = useApplyCombos();
+  const [params, setParams] = useSearchParams();
+  const today = todayMyt();
 
-  // Batch price edit (#39) — multi-select combos then POST one fresher-effective
-  // row per selected combo with adjusted prices. Append-only: never PUT/overwrite.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [batchOpen, setBatchOpen] = useState(false);
-  const toggleSelected = (id: string) => {
-    setSelectedIds((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  // Reset selection whenever the scope changes (base-model filter or supplier),
-  // so a checkbox can't carry over to a different set of combos.
-  useEffect(() => {
-    setSelectedIds(new Set());
-    setBatchOpen(false);
-  }, [baseModelFilter, supplierId]);
-
-  // Default scope: customer_id = null (applies to all). 2990 is B2C, so we
-  // never let the UI write a customer_id. When a supplierId is supplied the
-  // reads + writes are scoped to that supplier's purchasing side instead of
-  // the sales-side / master combos.
-  const combosQ = useSofaCombos({
-    baseModel: baseModelFilter || undefined,
-    customerId: null,
-    supplierId,
-  });
+  const combosQ = useSofaCombos({ customerId: null, supplierId });
+  const masterQ = useSofaCombos({ customerId: null });
   const productsQ = useMfgProducts({ category: 'SOFA' });
-  // Seat-height columns = the live Maintenance Sizes pool (single source of
-  // truth, master scope), so a size added in Maintenance shows up here
-  // automatically — even on the supplier-scoped purchasing view.
   const heightsCfgQ = useMaintenanceConfig('master');
-  // ALL values (not just active) — existing combos may be priced on a
-  // deactivated height and those columns must keep rendering.
-  const heights = heightsCfgQ.data?.data?.sofaSizes
-    ? maintValues(heightsCfgQ.data.data.sofaSizes)
-    : HEIGHTS_FALLBACK;
+  const supplierDetailQ = useSupplierDetail(supplierId ?? null);
+  const supplierName = supplierId ? (supplierDetailQ.data?.supplier.name ?? '') : null;
 
-  const baseModels = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of productsQ.data ?? []) {
-      const bm = (p as unknown as { base_model?: string | null }).base_model;
-      if (bm) set.add(bm);
-    }
-    for (const r of combosQ.data ?? []) set.add(r.baseModel);
-    return [...set].sort();
-  }, [productsQ.data, combosQ.data]);
+  const heights = heightsCfgQ.data?.data?.sofaSizes ? maintValues(heightsCfgQ.data.data.sofaSizes) : HEIGHTS_FALLBACK;
 
-  // Per-base-model module codes sourced from the real sofa SKUs — mirrors
-  // HOOKKA's `sizesByBaseModel` (src/pages/maintenance/sofa-combos.tsx:336)
-  // which maps each baseModel → the distinct sizeCodes its SKUs carry. 2990's
-  // sofa SKU encodes the compartment in its code suffix (commander's
-  // sofaCodeFormat = '{model_code}-{compartment}'), so we slice the part after
-  // the first '-'. The suffix, the chips, the stored combo `modules` and
-  // SOFA_MODULES ids all share the ONE canonical parens vocabulary
-  // ('1A(LHF)', 2026-06-04) — normalizeCompartmentCode only spell-checks a
-  // stray legacy dash entry. The New Combo dialog's slot picker offers exactly
-  // the compartments the chosen base model actually has in SKU master — no
-  // more, no less — instead of the global ALL_MODULE_CODES list.
-  const modulesByBaseModel = useMemo(() => {
+  const book = useMemo(() => comboBook(combosQ.data ?? []), [combosQ.data]);
+  const sourceBook = useMemo(() => comboBook(masterQ.data ?? []), [masterQ.data]);
+  const lineByKey = useMemo(() => new Map([...book.values()].flat().map((l) => [l.key, l])), [book]);
+
+  // Each model's module codes, from its SKUs: the part after the first dash.
+  const modulesByModel = useMemo(() => {
     const m: Record<string, string[]> = {};
     for (const p of productsQ.data ?? []) {
       const row = p as unknown as { base_model?: string | null; code?: string | null };
-      const bm = row.base_model;
       const code = row.code ?? '';
-      if (!bm || !code) continue;
-      const dashAt = code.indexOf('-');
-      if (dashAt <= 0) continue; // orphan SKU with no compartment suffix
-      const compartment = normalizeCompartmentCode(code.slice(dashAt + 1));
+      const dash = code.indexOf('-');
+      if (!row.base_model || dash <= 0) continue;
+      const compartment = normalizeCompartmentCode(code.slice(dash + 1));
       if (!compartment) continue;
-      const arr = (m[bm] ??= []);
-      if (!arr.includes(compartment)) arr.push(compartment);
+      const list = (m[row.base_model] ??= []);
+      if (!list.includes(compartment)) list.push(compartment);
     }
-    for (const arr of Object.values(m)) arr.sort();
     return m;
   }, [productsQ.data]);
 
-  // Supplier-scoped only: derive base_model → the supplier's OWN model code so
-  // each combo card can show "Booqit · 5539" — the code Hookka recognises on
-  // their side. Source = this supplier's bindings (supplier_material_bindings).
-  // A binding's item_code equals the product code (see PurchaseOrderDetail
-  // pickProduct: itemCode = p.code), so we resolve base_model via products,
-  // then take the supplier_sku's leading code ("5539-2A(LHF)" → "5539"; bare
-  // "5539" stays "5539"). When a base_model carries several supplier codes we
-  // pick the most common one. Empty/unmapped → card just shows base_model.
-  const supplierDetailQ = useSupplierDetail(supplierId ?? null);
-
-  const supplierCodeByBaseModel = useMemo(() => {
-    if (!supplierId) return {} as Record<string, string>;
-    // code (SKU) → base_model, from the SOFA products already in hand.
-    const baseModelByCode = new Map<string, string>();
+  // The supplier's own model code, from their bindings: "5539-2A(LHF)" gives 5539.
+  const supplierCodes = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    if (!supplierId) return out;
+    const modelByCode = new Map<string, string>();
     for (const p of productsQ.data ?? []) {
       const row = p as unknown as { base_model?: string | null; code?: string | null };
-      if (row.code && row.base_model) baseModelByCode.set(row.code, row.base_model);
+      if (row.code && row.base_model) modelByCode.set(row.code, row.base_model);
     }
-    // base_model → { supplierCode → count } so we can pick the most common.
-    const tally: Record<string, Record<string, number>> = {};
     for (const b of supplierDetailQ.data?.bindings ?? []) {
-      const bm = baseModelByCode.get(b.item_code);
-      if (!bm) continue;
-      const sku = (b.supplier_sku ?? '').trim();
-      if (!sku) continue;
-      const code = sku.split('-')[0]?.trim();
-      if (!code) continue;
-      const counts = (tally[bm] ??= {});
+      const model = modelByCode.get(b.item_code);
+      const code = (b.supplier_sku ?? '').trim().split('-')[0]?.trim();
+      if (!model || !code) continue;
+      const counts = (out[model] ??= {});
       counts[code] = (counts[code] ?? 0) + 1;
-    }
-    const out: Record<string, string> = {};
-    for (const [bm, counts] of Object.entries(tally)) {
-      let best = '';
-      let bestN = -1;
-      for (const [code, n] of Object.entries(counts)) {
-        if (n > bestN) { best = code; bestN = n; }
-      }
-      if (best) out[bm] = best;
     }
     return out;
   }, [supplierId, productsQ.data, supplierDetailQ.data]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, SofaComboRule[]>();
-    for (const r of combosQ.data ?? []) {
-      const arr = map.get(r.baseModel) ?? [];
-      arr.push(r);
-      map.set(r.baseModel, arr);
-    }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [combosQ.data]);
-
-  const total = combosQ.data?.length ?? 0;
-
-  const deleteM = useDeleteSofaCombo();
-  const askConfirm = useConfirm();
-
-  // Bulk soft-delete the selected combos (commander 2026-06-20: "不能
-  // multiselect 删掉的吗?"). Same selection that feeds Batch price edit; each id
-  // is soft-deleted (History still shows it) so it's reversible.
-  const bulkDelete = async () => {
-    if (selectedIds.size === 0) return;
-    const n = selectedIds.size;
-    if (!(await askConfirm({
-      title: `Soft-delete ${n} combo${n === 1 ? '' : 's'}?`,
-      body: '(History will still show them — this is reversible.)',
-      confirmLabel: `Soft-delete ${n}`,
-      danger: true,
-    }))) return;
-    const ids = [...selectedIds];
-    await Promise.all(ids.map((id) => deleteM.mutateAsync(id).catch(() => null)));
-    setSelectedIds(new Set());
+  const supplierCodeOf = (model: string): string | null => {
+    const counts = Object.entries(supplierCodes[model] ?? {}).sort((a, b) => b[1] - a[1]);
+    return counts[0]?.[0] ?? null;
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '8px 0' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-        <div>
-          <h2 style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'var(--fs-22)',
-            color: 'var(--c-ink)',
-            margin: 0,
-          }}>
-            Sofa Combo Pricing
-          </h2>
-          <p style={{
-            fontFamily: 'var(--font-sans)',
-            fontSize: 'var(--fs-13)',
-            color: 'var(--fg-soft)',
-            margin: '4px 0 0',
-            maxWidth: 720,
-          }}>
-            Module-set combo deals with optional same-fabric-tier discount.
-            Append-only history; edits = a new row with a fresher effective date.
-            {supplierId
-              ? ' These combos are scoped to this supplier and used for purchasing (PO auto-pricing).'
-              : ' All combos apply to every customer (2990 B2C model).'}
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {selectedIds.size > 0 && (
-            <Button variant="ghost" onClick={() => setBatchOpen(true)}>
-              <Pencil {...ICON_PROPS} style={{ marginRight: 6 }} /> Batch price edit ({selectedIds.size})
-            </Button>
-          )}
-          {selectedIds.size > 0 && (
-            <Button
-              variant="ghost"
-              onClick={() => { void bulkDelete(); }}
-              disabled={deleteM.isPending}
-              style={{ color: 'var(--c-festive-b, #B8331F)' }}
-            >
-              <Trash2 {...ICON_PROPS} style={{ marginRight: 6 }} /> Delete ({selectedIds.size})
-            </Button>
-          )}
-          <Button variant="primary" onClick={() => setComposer({ open: true })}>
-            <Plus {...ICON_PROPS} style={{ marginRight: 6 }} /> New Combo
-          </Button>
-        </div>
-      </div>
+  // The models to work on: a supplier's page shows what they carry, Products every sofa.
+  const models = useMemo(() => {
+    const set = new Set<string>(book.keys());
+    for (const m of supplierId ? Object.keys(supplierCodes) : Object.keys(modulesByModel)) set.add(m);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [book, supplierCodes, modulesByModel, supplierId]);
 
-      {/* Filters */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-        background: 'var(--c-paper)', borderRadius: 'var(--radius-md)',
-        border: '1px solid var(--line)',
-      }}>
-        <select
-          value={baseModelFilter}
-          onChange={(e) => setBaseModelFilter(e.target.value)}
-          style={selectStyle}
-        >
-          <option value="">All base models</option>
-          {sortByText(baseModels).map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <div style={{ flex: 1 }} />
-        <span style={{
-          fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--fg-soft)',
-        }}>
-          {total} {total === 1 ? 'rule' : 'rules'}
-        </span>
-      </div>
+  const [search, setSearch] = useState('');
+  const model = params.get('comboModel') ?? models[0] ?? null;
+  const rawTier = params.get('comboPrice');
+  const tier: SofaPriceTier = PRICE_TIERS.find((t) => t === rawTier) ?? 'PRICE_2';
+  const setParam = (key: string, value: string) =>
+    setParams((cur) => { const next = new URLSearchParams(cur); next.set(key, value); return next; }, { replace: true });
 
-      {/* List */}
-      {combosQ.isLoading ? (
-        <p style={{ color: 'var(--fg-muted)' }}>Loading…</p>
-      ) : grouped.length === 0 ? (
-        <div style={{
-          padding: 24, textAlign: 'center',
-          background: 'var(--c-paper)', borderRadius: 'var(--radius-md)',
-          border: '1px dashed var(--line)',
-          color: 'var(--fg-muted)',
-        }}>
-          No combo rules yet. Click <strong>+ New Combo</strong> to create one.
-        </div>
-      ) : (
-        grouped.map(([model, rules]) => (
-          <section key={model} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0', flexWrap: 'wrap' }}>
-              <h3 style={{
-                fontFamily: 'var(--font-sans)',
-                fontSize: 'var(--fs-15)',
-                fontWeight: 600,
-                color: 'var(--c-ink)',
-                margin: 0,
-              }}>
-                {model} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>({rules.length} combo{rules.length !== 1 ? 's' : ''})</span>
-              </h3>
-            </div>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
-              gap: 12,
-            }}>
-              {rules.map((r) => (
-                <ComboCard
-                  key={r.id}
-                  rule={r}
-                  heights={heights}
-                  supplierCode={supplierCodeByBaseModel[r.baseModel]}
-                  selected={selectedIds.has(r.id)}
-                  onToggleSelect={() => toggleSelected(r.id)}
-                  onEdit={() => setComposer({ open: true, editing: r })}
-                  onHistory={() => setComposer({ open: true, editing: r })}
-                  onDelete={async () => {
-                    if (await askConfirm({
-                      title: 'Soft-delete this combo?',
-                      body: '(History will still show it.)',
-                      confirmLabel: 'Soft-delete',
-                      danger: true,
-                    })) {
-                      deleteM.mutate(r.id);
-                    }
-                  }}
-                />
-              ))}
-            </div>
-          </section>
-        ))
-      )}
+  const lines = useMemo(() => (model ? (book.get(model) ?? []) : []), [book, model]);
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [effectiveFrom, setEffectiveFrom] = useState(today);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [notice, setNotice] = useState('');
+  const [showAllSizes, setShowAllSizes] = useState(false);
 
-      {composer.open && (
-        <ComposerModal
-          editing={composer.editing}
-          modulesByBaseModel={modulesByBaseModel}
-          supplierCodeByBaseModel={supplierCodeByBaseModel}
-          supplierId={supplierId}
-          heights={heights}
-          onClose={() => setComposer({ open: false })}
-        />
-      )}
+  useEffect(() => { setTicked(new Set()); setNotice(''); setShowAllSizes(false); }, [model, supplierId]);
 
-      {batchOpen && (
-        <BatchEditModal
-          rules={(combosQ.data ?? []).filter((r) => selectedIds.has(r.id))}
-          supplierId={supplierId}
-          heights={heights}
-          onClose={() => setBatchOpen(false)}
-          onDone={() => {
-            setSelectedIds(new Set());
-            setBatchOpen(false);
-          }}
-          // Per-row "Edit composition…" jump from inside the batch grid
-          // (commander 2026-06-20: "Compartment edit 不到的"). Closes the batch
-          // modal and opens the single-combo Composer for that row — the ONLY
-          // place modules/compartments may change (append-only identity stays
-          // intact; selection is preserved so batch can be re-opened after).
-          onEditComposition={(r) => {
-            setBatchOpen(false);
-            setComposer({ open: true, editing: r });
-          }}
-        />
-      )}
-    </div>
-  );
-};
+  const picked = lines.find((l) => l.key === pickedKey) ?? lines[0] ?? null;
+  const chosen = lines.filter((l) => ticked.has(l.key));
+  const ownModules = model ? (modulesByModel[model] ?? []) : [];
 
-// ─── Combo card ────────────────────────────────────────────────────────
+  const inUse = sizesInUse(lines);
+  const allSizes = sortSizes(new Set([...heights, ...inUse]));
+  const sizes = showAllSizes || inUse.size === 0 ? allSizes : allSizes.filter((h) => inUse.has(h));
+  const hiddenSizes = inUse.size > 0 && inUse.size < allSizes.length;
 
-function ComboCard({
-  rule, heights, supplierCode, selected, onToggleSelect, onEdit, onHistory, onDelete,
-}: {
-  rule: SofaComboRule;
-  heights: string[];
-  /** Supplier's own model code for this base model (e.g. "5539"), shown next
-      to our internal name on the supplier-scoped page. Undefined elsewhere. */
-  supplierCode?: string;
-  /** Batch-edit selection state for this card. */
-  selected: boolean;
-  onToggleSelect: () => void;
-  onEdit: () => void;
-  onHistory: () => void;
-  onDelete: () => void;
-}) {
-  const label = rule.label || buildComboLabel(rule.modules);
-  const isActive = rule.effectiveFrom <= todayIso();
-  // Whole card is the select target (job-card behaviour, commander T8). The
-  // inner action buttons stopPropagation so Edit / History / Delete don't also
-  // toggle selection. The CheckSquare/Square icon stays as an affordance.
-  return (
-    <div
-      onClick={onToggleSelect}
-      title={selected ? 'Click to deselect for batch edit' : 'Click to select for batch edit'}
-      style={{
-        background: selected ? 'var(--c-cream)' : 'var(--c-paper)',
-        border: selected
-          ? '2px solid var(--c-orange, #c47b2f)'
-          : '1px solid var(--line)',
-        // Keep the box the same size selected vs not — compensate the extra 1px
-        // of border with 1px less padding so cards don't jump in the grid.
-        borderRadius: 'var(--radius-md)',
-        padding: selected ? 11 : 12,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        cursor: 'pointer',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <span
-          aria-hidden
-          title={selected ? 'Selected for batch edit' : 'Not selected'}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 4,
-            color: selected ? 'var(--c-orange, #c47b2f)' : 'var(--fg-muted)',
-          }}
-        >
-          {selected ? <CheckSquare size={16} strokeWidth={1.75} /> : <Square size={16} strokeWidth={1.75} />}
-        </span>
-        <span style={chipStyleStrong}>{rule.baseModel}</span>
-        {supplierCode && (
-          <span style={chipStyleSupplierCode} title="Supplier's own model code">
-            {supplierCode}
-          </span>
-        )}
-        <span style={{
-          flex: 1,
-          fontFamily: 'var(--font-sans)',
-          fontSize: 'var(--fs-13)',
-          fontWeight: 500,
-          color: 'var(--c-ink)',
-        }}>
-          {label}
-        </span>
-        {/* Friendly tier label — the raw enum ("PRICE_1") read as a bug to the
-            owner. Same vocabulary, human face. */}
-        {rule.tier && (
-          <span style={chipStyleSoft}>
-            {rule.tier.replace(/^PRICE_(\d+)$/, 'Fabric Tier $1')}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          title="Soft-delete"
-          style={iconBtnStyle}
-        >
-          <Trash2 size={14} strokeWidth={1.75} />
-        </button>
-      </div>
-
-      {/* A1 — COST derive-status (master view only; backend sets it under the
-          auto-derive flag): which supplier the cost is anchored to, or a red
-          "missing supplier price" gap, or manual. */}
-      {!rule.supplierId && rule.costSource && <DeriveStatusRow rule={rule} />}
-
-      {/* Height tiers — wrap into roomy cells instead of cramming every size
-          into one tight row (Commander 2026-06-15: "字那么小怎么看"). Cells now
-          auto-fill at a comfortable min-width and the size + price font is bumped. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(68px, 1fr))', gap: 6 }}>
-        {sortByNumeric(heights).map((h) => {
-          /* Owner 2026-07-24 ("爆掉了"): the master card used to read ONLY the
-             COST map (prices_by_height), which the backend explicitly allows
-             to be all-null — so combos whose prices live in the SELLING map
-             rendered an all-dash grid. Master view now shows selling first,
-             cost as fallback; a supplier-scoped row (supplierId set) is the
-             purchasing/PO-benchmark card and keeps showing cost. */
-          const v = rule.supplierId
-            ? rule.pricesByHeight?.[h]
-            : (rule.sellingPricesByHeight?.[h] ?? rule.pricesByHeight?.[h]);
-          return (
-            <div key={h} style={{
-              padding: '6px 8px',
-              background: 'var(--c-cream)',
-              borderRadius: 'var(--radius-sm)',
-              textAlign: 'center',
-            }}>
-              <div style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                {h}
-              </div>
-              <div style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 'var(--fs-14)',
-                fontWeight: 600,
-                color: v == null ? 'var(--fg-muted)' : 'var(--c-ink)',
-              }}>
-                {fmtRm(v ?? null)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Footer */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>
-          Effective {fmtDate(rule.effectiveFrom)}
-        </span>
-        <span style={isActive ? statusPillActive : statusPillPending}>
-          {isActive ? 'Active' : 'Pending'}
-        </span>
-        <div style={{ flex: 1 }} />
-        {/* Composition editing is Composer-only (never batch) — this opens the
-            single-combo Composer where modules/slots can change. */}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onEdit(); }}
-          title="Edit composition + price (opens the Composer)"
-          style={ghostBtnStyle}
-        >
-          <Pencil size={12} strokeWidth={1.75} /> Edit composition…
-        </button>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onHistory(); }}
-          style={ghostBtnStyle}
-        >
-          <History size={12} strokeWidth={1.75} /> History
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// A1 — the COST derive-status line under a master combo card.
-function DeriveStatusRow({ rule }: { rule: SofaComboRule }) {
-  const base: CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-    fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
-    padding: '5px 8px', borderRadius: 'var(--radius-sm)', lineHeight: 1.35,
-  };
-  if (rule.costSource === 'auto') {
-    return (
-      <div style={{ ...base, background: 'var(--c-cream)', color: 'var(--c-secondary-a, #0f4c45)' }}>
-        <span>Cost auto-derived · anchored to <strong>{rule.derivedFromSupplierName || 'supplier'}</strong>{' '}
-          <span style={{ color: 'var(--fg-muted)' }}>(highest set)</span></span>
-      </div>
-    );
-  }
-  if (rule.costSource === 'gap') {
-    return (
-      <div style={{ ...base, background: 'var(--c-festive-b-bg, #f6e2df)', color: 'var(--c-festive-b, #b0463a)', fontWeight: 600 }}>
-        Missing supplier price — set it on the supplier binding.
-      </div>
-    );
-  }
-  return (
-    <div style={{ ...base, color: 'var(--fg-soft)', border: '1px dashed var(--line)' }}>
-      Manual cost · not derived (no matching supplier combo)
-    </div>
-  );
-}
-
-// ─── Composer modal (New / Edit) ──────────────────────────────────────
-
-function ComposerModal({
-  editing, modulesByBaseModel, supplierCodeByBaseModel, supplierId, heights, onClose,
-}: {
-  editing?: SofaComboRule;
-  heights: string[];
-  modulesByBaseModel: Record<string, string[]>;
-  /** base_model → supplier's own model code (supplier-scoped page only). */
-  supplierCodeByBaseModel: Record<string, string>;
-  supplierId?: string;
-  onClose: () => void;
-}) {
-  const notify = useNotify();
-  const create = useCreateSofaCombo();
-  const update = useUpdateSofaCombo();
-
-  const [baseModel, setBaseModel] = useState(editing?.baseModel ?? '');
-
-  // Slot picker chips follow the SELECTED base model's actual SKU
-  // compartments (HOOKKA parity — combo options = that model's own size codes,
-  // not a global list). Falls back to the global ALL_MODULE_CODES only when
-  // the base model is unknown / has no SKUs, so the dialog never renders an
-  // empty chip set. Recomputes whenever the operator changes BASE MODEL.
-  const slotCodes = useMemo(() => {
-    const own = modulesByBaseModel[baseModel];
-    return own && own.length > 0 ? own : ALL_MODULE_CODES;
-  }, [modulesByBaseModel, baseModel]);
-  // Base-model options (New AND Edit). Sourced from the SAME map that drives
-  // the Module-slot chip filter (`modulesByBaseModel`) so every selectable
-  // model reliably re-renders chips on pick — and a chosen value can never be
-  // a free-typed string the chip filter wouldn't recognise (the old
-  // <input list> footgun the commander hit: "选了 model 就不能 drop 掉了吗").
-  // The leading blank option lets the operator clear / re-pick. When editing a
-  // combo whose base model no longer has SKUs in master, keep it selectable so
-  // the prefilled value doesn't render as a phantom blank.
-  const baseModelOptions = useMemo(() => {
-    const set = new Set(Object.keys(modulesByBaseModel));
-    if (editing?.baseModel) set.add(editing.baseModel);
-    return [...set].sort();
-  }, [modulesByBaseModel, editing?.baseModel]);
-  // OR-set per slot (PR combo-or-per-slot): ordered slots, each a SET of
-  // alternative codes joined by OR. e.g. [['2A(LHF)','2A(RHF)'],['L(LHF)','L(RHF)']].
-  // Deep-copied when editing so chip toggles never mutate the cached rule.
-  const [modules, setModules] = useState<string[][]>(
-    () => (editing?.modules ?? []).map((slot) => [...slot]),
-  );
-  const [tier, setTier] = useState<SofaPriceTier | ''>(editing?.tier ?? 'PRICE_2');
-  const [label, setLabel] = useState(editing?.label ?? '');
-  const [effectiveFrom, setEffectiveFrom] = useState(editing?.effectiveFrom ?? todayIso());
-  const [prices, setPrices] = useState<Record<string, string>>(() => {
-    const seed: Record<string, string> = {};
-    for (const h of heights) {
-      const v = editing?.pricesByHeight?.[h];
-      seed[h] = v == null ? '' : (v / 100).toFixed(2);
-    }
-    return seed;
+  const allLines = [...book.values()].flat();
+  const allSizesEver = sortSizes(new Set([...heights, ...sizesInUse(allLines)]));
+  const emptying = Object.values(edits).some((v) => v.trim() === '');
+  const editingAuto = Object.keys(edits).some((key) => {
+    const [lineKey, t] = JSON.parse(key) as [string, SofaPriceTier];
+    return lineByKey.get(lineKey)?.byTier[t]?.costSource === 'auto';
   });
-  const [notes, setNotes] = useState(editing?.notes ?? '');
+  const missing = allLines.filter((l) => !hasPrice(l)).length;
+  const manual = allLines.filter((l) => l.byTier[tier]?.costSource === 'manual').length;
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const changed = allLines.filter((l) => Object.values(l.byTier).some((r) => r.effectiveFrom >= monthStart)).length;
 
-  // Composition identity — order-independent canonical key (matching is
-  // order-independent; codes within a slot are an OR-set). Used only to tell
-  // the operator when an edit re-points to a DIFFERENT logical combo: same
-  // key → PUT (new effective row on the same rule, PWP carried forward);
-  // different key / base model → POST (a brand-new rule; old one stays in
-  // history untouched).
-  const compositionChanged = useMemo(() => {
-    if (!editing) return false;
-    const key = (slots: string[][]): string =>
-      JSON.stringify(
-        slots
-          .map((slot) => [...new Set(slot.map((c) => c.trim()).filter(Boolean))].sort())
-          .filter((slot) => slot.length > 0)
-          .sort((a, b) => a.join('|').localeCompare(b.join('|'))),
-      );
-    return baseModel !== editing.baseModel || key(modules) !== key(editing.modules);
-  }, [editing, baseModel, modules]);
+  const editCount = Object.keys(edits).length;
 
-  // Ordered positional slots (Hookka-style), each an OR-set of codes. A slot
-  // toggles codes on/off — the built sofa matches if each module fills a
-  // DISTINCT slot whose set contains it (set-cover, exact count). The same
-  // code may appear in multiple slots (a combo can have 2× the same piece).
-  // Order = position = array index; matching is order-independent. Empty slots
-  // are filtered out on save.
-  const toggleSlotCode = (idx: number, code: string) => {
-    setModules((cur) =>
-      cur.map((slot, i) =>
-        i === idx
-          ? (slot.includes(code) ? slot.filter((c) => c !== code) : [...slot, code])
-          : slot,
-      ),
-    );
-  };
-  const addSlot = () => setModules((cur) => [...cur, []]);
-  const removeSlot = (idx: number) => {
-    setModules((cur) => cur.filter((_, i) => i !== idx));
-  };
-
-  const submit = async () => {
-    if (!baseModel) { notify({ title: 'Base model is required.', tone: 'error' }); return; }
-    // Drop empty slots + de-dupe codes within each slot.
-    const orderedModules = modules
-      .map((slot) => [...new Set(slot.map((c) => c.trim()).filter(Boolean))])
-      .filter((slot) => slot.length > 0);
-    if (orderedModules.length === 0) { notify({ title: 'Add at least one module slot.', tone: 'error' }); return; }
-
-    const pricesByHeight: Record<string, number | null> = {};
-    for (const h of heights) {
-      const raw = (prices[h] ?? '').trim();
-      if (!raw) pricesByHeight[h] = null;
-      else {
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0) { notify({ title: `Bad price at ${h}".`, tone: 'error' }); return; }
-        pricesByHeight[h] = Math.round(n * 100);
-      }
-    }
-
-    // Label auto-derives from modules when blank. If the field still holds the
-    // OLD composition's auto label and the modules changed, drop it so the new
-    // row re-derives — a label the user actually typed is kept as-is.
-    const trimmedLabel = label.trim();
-    const finalLabel =
-      !trimmedLabel
-      || (editing && compositionChanged && trimmedLabel === buildComboLabel(editing.modules))
-        ? null
-        : trimmedLabel;
-
+  const save = async () => {
+    const { items, bad } = itemsFromEdits(edits, lineByKey, supplierId ?? null, effectiveFrom);
+    if (bad !== null) { void notify({ title: `${bad} is not a price.`, tone: 'error' }); return; }
+    if (items.length === 0) { setEdits({}); return; }
     try {
-      if (editing && !compositionChanged) {
-        // Same composition → PUT keeps the original tuple (and carries the
-        // POS-side PWP prices forward on the new effective row).
-        await update.mutateAsync({
-          id: editing.id,
-          pricesByHeight,
-          label: finalLabel,
-          effectiveFrom,
-          notes: notes || null,
-        });
-      } else if (editing) {
-        // Composition changed → append a brand-new rule for the edited
-        // module set / base model. The old rule's rows stay in history.
-        await create.mutateAsync({
-          baseModel,
-          modules: orderedModules,
-          tier: editing.tier,           // tier is locked in edit mode
-          customerId: editing.customerId,
-          supplierId: supplierId ?? editing.supplierId ?? null,
-          pricesByHeight,
-          label: finalLabel,
-          effectiveFrom,
-          notes: notes || null,
-        });
-      } else {
-        await create.mutateAsync({
-          baseModel,
-          modules: orderedModules,
-          tier: tier || null,
-          customerId: null,  // B2C: always null = applies to all customers
-          supplierId: supplierId ?? null,  // supplier scope when set, else sales-side
-          pricesByHeight,
-          label: finalLabel,
-          effectiveFrom,
-          notes: notes || null,
-        });
-      }
-      onClose();
+      await apply.mutateAsync(items);
+      setEdits({});
+      setNotice(effectiveFrom > today
+        ? `Saved. The new prices start on ${fmtDate(effectiveFrom)}; until then the table shows the current ones.`
+        : 'Saved.');
     } catch (e) {
-      /* String(e) printed "Error: <msg>" — the only surface in the tree that
-         kept the constructor-name prefix. authedFetch already humanized the
-         message itself. */
-      notify({ title: "Couldn't save this combo", body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: "Couldn't save these prices", body: errText(e), tone: 'error' });
     }
   };
 
+  const closeDone = (text: string) => { setNotice(text); setTicked(new Set()); setDialog(null); };
+  const toggleLine = (key: string) => setTicked((cur) => {
+    const next = new Set(cur);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  const kpis = [
+    { label: 'All combos', value: allLines.length, warn: false },
+    { label: 'Missing a price', value: missing, warn: missing > 0 },
+    ...(supplierId ? [] : [{ label: `Manual cost, ${tierLabel(tier)}`, value: manual, warn: false }]),
+    { label: 'Changed this month', value: changed, warn: false },
+  ];
+
+  const shownModels = models.filter((m) => m.toLowerCase().includes(search.trim().toLowerCase()));
+
   return (
-    <ModalShell title={editing ? 'Edit combo' : 'New combo'} onClose={onClose}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="Base model">
-          {/* Editable in BOTH modes (commander 2026-06-12: edit must allow
-              changing the composition). Picking a different model reloads the
-              compartment chip pool via `slotCodes`. */}
-          <select
-            value={baseModel}
-            onChange={(e) => setBaseModel(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="">— Select base model —</option>
-            {sortByText(baseModelOptions).map((m) => (
-              <option key={m} value={m}>
-                {supplierCodeByBaseModel[m] ? `${m} · ${supplierCodeByBaseModel[m]}` : m}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label={`Modules (${modules.filter((s) => s.some((c) => c.trim())).length} slot${modules.length === 1 ? '' : 's'})`}>
-          {/* SAME slot picker for New and Edit (commander 2026-06-12). Edit
-              prefills from the combo's stored slots; add/remove/re-tick away. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{
-              fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)',
-              color: 'var(--fg-muted)', padding: '2px 0',
-            }}>
-              Each slot is an OR-set — tick every module that may fill it
-              (e.g. <strong>1A(LHF)</strong> OR <strong>1A(RHF)</strong>). A built
-              sofa matches when each piece fills a distinct slot and the piece
-              count equals the slot count.
-            </div>
-            {modules.length === 0 ? (
-              <div style={{
-                fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
-                color: 'var(--fg-muted)', padding: '2px 0',
-              }}>
-                No slots yet — add the first one.
-              </div>
-            ) : (
-              modules.map((slot, idx) => (
-                <div key={idx} style={{
-                  display: 'flex', flexDirection: 'column', gap: 4,
-                  padding: 8, border: '1px solid var(--line)',
-                  borderRadius: 'var(--radius-sm)', background: 'var(--c-cream)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={slotNumberStyle}>Module {idx + 1}</span>
-                    <span style={{
-                      flex: 1, fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
-                      color: slot.length ? 'var(--c-ink)' : 'var(--fg-muted)',
-                    }}>
-                      {slot.length ? slot.join(' / ') : 'pick one or more (OR)'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeSlot(idx)}
-                      title={`Remove Module ${idx + 1}`}
-                      style={iconBtnStyle}
-                    >
-                      <X size={14} strokeWidth={1.75} />
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {slotCodes.map((c) => {
-                      const on = slot.includes(c);
-                      return (
-                        <button
-                          type="button"
-                          key={c}
-                          onClick={() => toggleSlotCode(idx, c)}
-                          style={on ? moduleChipOn : moduleChipOff}
-                        >
-                          {c}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))
-            )}
-            <div>
-              <Button variant="ghost" onClick={addSlot}>
-                <Plus {...ICON_PROPS} style={{ marginRight: 6 }} /> Add Module
-              </Button>
-            </div>
-            {compositionChanged && (
-              <div style={{
-                fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
-                color: 'var(--c-red, #c0392b)', padding: '2px 0',
-              }}>
-                Modules no longer match the original combo — saving creates a new
-                rule for this module set; the old rule stays in history.
-              </div>
-            )}
-          </div>
-        </Field>
-
-        <Field label="Tier">
-          <select
-            value={tier}
-            onChange={(e) => setTier(e.target.value as SofaPriceTier | '')}
-            style={selectStyle}
-            disabled={!!editing}
-          >
-            <option value="">— Any —</option>
-            {TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </Field>
-
-        <Field label="Cost by seat height (RM) — selling price is set by Master Admin on POS">
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${heights.length}, 1fr)`, gap: 8 }}>
-            {sortByNumeric(heights).map((h) => (
-              <div key={h}>
-                <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', textAlign: 'center' }}>{h}{/^\d/.test(h) ? '"' : ''}</div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={prices[h] ?? ''}
-                  onChange={(e) => setPrices((cur) => ({ ...cur, [h]: e.target.value }))}
-                  placeholder="—"
-                  style={{ ...inputStyle, textAlign: 'right', fontFamily: 'var(--font-mono)' }}
-                />
-              </div>
-            ))}
-          </div>
-        </Field>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
-          <Field label="Effective from">
-            <DateField value={effectiveFrom} onChange={(iso) => setEffectiveFrom(iso)} style={inputStyle}/>
-          </Field>
-          <Field label="Label (optional)">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="(auto: from modules)"
-              style={inputStyle}
-            />
-          </Field>
-        </div>
-
-        <Field label="Notes (optional)">
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
-        </Field>
-
-        {/* A1 — the combo's effective-dated history now lives inside the Edit
-            modal (past effective rows), not a separate dialog. */}
-        {editing && (
-          <Field label="History — past effective rows for this combo">
-            <ComposerHistory rule={editing} supplierId={supplierId} heights={heights} />
-          </Field>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={create.isPending || update.isPending}>
-            {(create.isPending || update.isPending) ? 'Saving…' : (editing ? 'Save new effective row' : 'Create combo')}
-          </Button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 }}>
+        <h2 style={{ flex: '1 1 260px', margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-22)', color: 'var(--c-ink)' }}>
+          {supplierId ? 'Combo Pricing' : 'Sofa Combo Pricing'}
+        </h2>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <Button variant="secondary" onClick={() => setDialog({ kind: 'export' })}>Export</Button>
+          <Button variant="secondary" onClick={() => setDialog({ kind: 'import' })}>Import</Button>
+          <Button variant="primary" onClick={() => setDialog({ kind: 'new' })} disabled={!model}>New combo</Button>
         </div>
       </div>
-    </ModalShell>
-  );
-}
 
-// A1 — the combo history timeline, rendered INSIDE the Edit modal (was a
-// standalone HistoryModal). Same effective-dated list as before, minus the
-// modal chrome.
-function ComposerHistory({ rule, supplierId, heights }: { rule: SofaComboRule; supplierId?: string; heights: string[] }) {
-  const historyQ = useSofaComboHistory({
-    baseModel: rule.baseModel,
-    modules: rule.modules,
-    tier: rule.tier,
-    customerId: rule.customerId,
-    supplierId: supplierId ?? rule.supplierId,
-  });
-  return (
-    <EffectiveDatedHistory<SofaComboRule>
-      rows={historyQ.data ?? []}
-      loading={historyQ.isLoading}
-      rowKey={(r) => r.id}
-      effectiveFrom={(r) => r.effectiveFrom}
-      isDeleted={(r) => !!r.deletedAt}
-      emptyLabel="No history rows yet."
-      renderRow={(r) => (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${heights.length}, 1fr)`, gap: 4, marginTop: 6 }}>
-            {sortByNumeric(heights).map((h) => (
-              <div key={h} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{h}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-                  {fmtRm(r.pricesByHeight?.[h] ?? null)}
-                </div>
-              </div>
-            ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        {kpis.map((k) => (
+          <div key={k.label} style={{ ...card, padding: '12px 16px' }}>
+            <div style={soft}>{k.label}</div>
+            <div style={{ fontSize: 'var(--fs-22)', fontWeight: 700, color: k.warn ? 'var(--c-festive-b, #8f2c1a)' : 'var(--c-ink)' }}>{k.value}</div>
           </div>
-          {r.notes && (
-            <div style={{ marginTop: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>
-              {r.notes}
-            </div>
-          )}
-        </>
-      )}
-    />
-  );
-}
+        ))}
+      </div>
 
-// ─── Batch price edit modal (#39) ─────────────────────────────────────
-// Multi-select combos → POST one fresher-effective row per selected combo with
-// adjusted prices. APPEND-ONLY: each combo's scope (baseModel/modules/tier/
-// customerId/supplierId) + label + notes are preserved; only the height prices
-// change. Composition is NEVER touched here (changing modules = a different
-// logical combo → that's the Composer's job, not batch). Never PUT/overwrite.
-//   · percent: round(old * (1 + pct/100)) for each non-null height
-//   · set:     setSen for each EXISTING (key present) height; null stays null
-//   · grid:    per-combo × per-height inputs — each combo's map is rebuilt from
-//              its own grid row (job-card style edit, commander T8).
-// Mirrors HOOKKA's batch price tool.
+      {combosQ.isError && <p style={{ color: 'var(--c-festive-b, #8f2c1a)' }}>Couldn't load the combos. {errText(combosQ.error)}</p>}
 
-type BatchMode = 'percent' | 'set' | 'grid';
-
-/** Compute the adjusted pricesByHeight for one combo. Keys are unchanged; only
- *  non-null values are touched. Returns integer-centi values. */
-function adjustPrices(
-  pricesByHeight: Record<string, number | null>,
-  mode: BatchMode,
-  pct: number,
-  setSen: number,
-): Record<string, number | null> {
-  const out: Record<string, number | null> = {};
-  for (const [h, v] of Object.entries(pricesByHeight)) {
-    if (v == null) { out[h] = null; continue; }
-    out[h] = mode === 'percent'
-      ? Math.round(v * (1 + pct / 100))
-      : setSen;
-  }
-  return out;
-}
-
-function BatchEditModal({
-  rules, supplierId, heights, onClose, onDone, onEditComposition,
-}: {
-  rules: SofaComboRule[];
-  supplierId?: string;
-  heights: string[];
-  onClose: () => void;
-  onDone: () => void;
-  /** Jump to the single-combo Composer for one row (composition editing is
-      never done in batch — append-only identity). Closes batch + opens it. */
-  onEditComposition: (rule: SofaComboRule) => void;
-}) {
-  const notify = useNotify();
-  const create = useCreateSofaCombo();
-
-  const [effectiveFrom, setEffectiveFrom] = useState(todayIso());
-  const [mode, setMode] = useState<BatchMode>('percent');
-  const [pctStr, setPctStr] = useState('0');
-  const [setRmStr, setSetRmStr] = useState('');
-  const [applying, setApplying] = useState(false);
-
-  // Per-combo × per-height grid (mode === 'grid'). Seeded from each combo's
-  // current pricesByHeight as RM strings ('' = leave that height null). Keyed
-  // by combo id then height. Empty inputs persist as null — same convention as
-  // the single-combo Composer.
-  const [grid, setGrid] = useState<Record<string, Record<string, string>>>(() => {
-    const seed: Record<string, Record<string, string>> = {};
-    for (const r of rules) {
-      const row: Record<string, string> = {};
-      for (const h of heights) {
-        const v = r.pricesByHeight?.[h];
-        row[h] = v == null ? '' : (v / 100).toFixed(2);
-      }
-      seed[r.id] = row;
-    }
-    return seed;
-  });
-  const setGridCell = (id: string, h: string, value: string) => {
-    setGrid((cur) => ({ ...cur, [id]: { ...(cur[id] ?? {}), [h]: value } }));
-  };
-
-  const pct = Number(pctStr);
-  const setRm = Number(setRmStr);
-  const setSen = Math.round((Number.isFinite(setRm) ? setRm : 0) * 100);
-  // Build one combo's pricesByHeight from its grid row: parse each cell to
-  // centi, blank → null. Returns null when any cell is a non-empty bad number
-  // so apply can reject before POSTing.
-  const gridMapFor = (r: SofaComboRule): Record<string, number | null> | null => {
-    const row = grid[r.id] ?? {};
-    const out: Record<string, number | null> = {};
-    // Carry any legacy height keys the heights list doesn't cover, untouched.
-    for (const [h, v] of Object.entries(r.pricesByHeight ?? {})) {
-      if (!heights.includes(h)) out[h] = v;
-    }
-    for (const h of heights) {
-      const raw = (row[h] ?? '').trim();
-      if (!raw) { out[h] = null; continue; }
-      const n = Number(raw);
-      if (!Number.isFinite(n) || n < 0) return null;
-      out[h] = Math.round(n * 100);
-    }
-    return out;
-  };
-  const gridValid =
-    mode !== 'grid' || rules.every((r) => gridMapFor(r) !== null);
-  const inputsValid =
-    mode === 'percent'
-      ? Number.isFinite(pct)
-      : mode === 'set'
-        ? Number.isFinite(setRm) && setRm >= 0 && setRmStr.trim() !== ''
-        : gridValid;
-
-  // The first representative non-null height for a combo (preview anchor).
-  const firstPricedHeight = (r: SofaComboRule): string | null => {
-    for (const h of heights) {
-      if (r.pricesByHeight?.[h] != null) return h;
-    }
-    // Fall back to any key (heights list may not cover legacy keys).
-    for (const [h, v] of Object.entries(r.pricesByHeight ?? {})) {
-      if (v != null) return h;
-    }
-    return null;
-  };
-
-  const apply = async () => {
-    if (!inputsValid || applying) return;
-    setApplying(true);
-    let ok = 0;
-    let fail = 0;
-    for (const r of rules) {
-      // Build this combo's new price map. APPEND-ONLY: identity (baseModel /
-      // modules / tier / customerId / supplierId) is carried forward verbatim;
-      // ONLY pricesByHeight + effectiveFrom change. Composition is never
-      // mutated in batch.
-      const pricesByHeight =
-        mode === 'grid'
-          ? gridMapFor(r)
-          : adjustPrices(r.pricesByHeight ?? {}, mode, pct, setSen);
-      if (pricesByHeight == null) { fail += 1; continue; } // bad grid cell
-      const newCombo: NewSofaCombo = {
-        baseModel: r.baseModel,
-        modules: r.modules,
-        tier: r.tier,
-        customerId: r.customerId,
-        supplierId: supplierId ?? r.supplierId ?? null,
-        label: r.label,
-        notes: r.notes,
-        effectiveFrom,
-        pricesByHeight,
-      };
-      try {
-        await create.mutateAsync(newCombo);
-        ok += 1;
-      } catch {
-        fail += 1;
-      }
-    }
-    setApplying(false);
-    await notify({ title: `Updated ${ok} combo${ok === 1 ? '' : 's'} (${fail} failed)` });
-    onDone();
-  };
-
-  return (
-    <ModalShell title={`Batch price edit (${rules.length})`} onClose={onClose}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <p style={{
-          fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
-          color: 'var(--fg-soft)', margin: 0,
-        }}>
-          Appends a new effective-dated row for each selected combo with the new
-          prices. Existing rows stay in history; composition, scope, label, and
-          notes are preserved — only the seat-height prices change. To change a
-          combo's modules, use <strong>Edit composition…</strong> on the card.
-        </p>
-
-        <Field label="Effective from">
-          <DateField value={effectiveFrom} onChange={setEffectiveFrom} fullWidth />
-        </Field>
-
-        <Field label="Adjustment">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="radio"
-                name="batch-mode"
-                checked={mode === 'percent'}
-                onChange={() => setMode('percent')}
-              />
-              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--c-ink)' }}>
-                Adjust by %
-              </span>
-              <input
-                type="number"
-                step="0.1"
-                value={pctStr}
-                onChange={(e) => setPctStr(e.target.value)}
-                disabled={mode !== 'percent'}
-                style={{ ...inputStyle, width: 100, textAlign: 'right', fontFamily: 'var(--font-mono)' }}
-              />
-              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--fg-soft)' }}>%</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="radio"
-                name="batch-mode"
-                checked={mode === 'set'}
-                onChange={() => setMode('set')}
-              />
-              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--c-ink)' }}>
-                Set all heights to RM
-              </span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={setRmStr}
-                onChange={(e) => setSetRmStr(e.target.value)}
-                disabled={mode !== 'set'}
-                placeholder="0.00"
-                style={{ ...inputStyle, width: 120, textAlign: 'right', fontFamily: 'var(--font-mono)' }}
-              />
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="radio"
-                name="batch-mode"
-                checked={mode === 'grid'}
-                onChange={() => setMode('grid')}
-              />
-              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', color: 'var(--c-ink)' }}>
-                Edit each height individually (grid)
-              </span>
-            </label>
+      <div className={styles.room}>
+      <div className={styles.columns}>
+        <div className={styles.models}>
+          <div style={{ padding: 10 }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search model" aria-label="Search model" style={fieldStyle} />
           </div>
-        </Field>
-
-        {mode === 'grid' ? (
-          <Field label="Per-combo prices by seat height (RM) — blank leaves that height empty">
-            {/* Per-combo × per-height grid (job-card edit). Reuses the
-                Composer's height-input markup; each combo's map is rebuilt from
-                its own row on apply. Composition is shown read-only — it is NOT
-                editable here (append-only identity stays intact). */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 360 }}>
-                <thead>
-                  <tr>
-                    <th style={gridHeadCellStickyStyle}>Combo</th>
-                    {sortByNumeric(heights).map((h) => (
-                      <th key={h} style={gridHeadCellStyle}>
-                        {h}{/^\d/.test(h) ? '"' : ''}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rules.map((r) => (
-                    <tr key={r.id}>
-                      <td style={gridLabelCellStyle}>
-                        <div style={{ fontWeight: 600, color: 'var(--c-ink)' }}>{r.baseModel}</div>
-                        {/* Full composition — wraps instead of truncating so the
-                            compartment makeup is always readable (commander
-                            2026-06-20: "被遮着了"). */}
-                        <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-soft)', lineHeight: 1.35 }}>
-                          {r.label || buildComboLabel(r.modules)}
-                          {r.tier ? ` · ${r.tier}` : ''}
-                        </div>
-                        {/* Compartment editing lives in the Composer (append-only
-                            identity). This jumps straight there for THIS combo. */}
-                        <button
-                          type="button"
-                          onClick={() => onEditComposition(r)}
-                          title="Change this combo's compartments (opens the Composer)"
-                          style={{
-                            ...ghostBtnStyle, marginTop: 4, padding: '2px 6px',
-                            fontSize: 'var(--fs-11)',
-                          }}
-                        >
-                          <Pencil size={11} strokeWidth={1.75} /> Edit composition…
-                        </button>
-                      </td>
-                      {sortByNumeric(heights).map((h) => (
-                        <td key={h} style={gridInputCellStyle}>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={grid[r.id]?.[h] ?? ''}
-                            onChange={(e) => setGridCell(r.id, h, e.target.value)}
-                            placeholder="—"
-                            style={{ ...inputStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', padding: '4px 6px' }}
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Field>
-        ) : (
-        <Field label="Preview">
-          <div style={{
-            display: 'flex', flexDirection: 'column', gap: 6,
-            padding: 8, background: 'var(--c-cream)',
-            borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)',
-          }}>
-            {rules.slice(0, 3).map((r) => {
-              const h = firstPricedHeight(r);
-              const oldV = h ? (r.pricesByHeight?.[h] ?? null) : null;
-              const newV = h
-                ? adjustPrices(r.pricesByHeight ?? {}, mode, pct, setSen)[h] ?? null
-                : null;
+          <div className={styles.modelList}>
+            {shownModels.map((m) => {
+              const list = book.get(m) ?? [];
+              const empty = list.filter((l) => !hasPrice(l)).length;
+              const code = supplierCodeOf(m);
               return (
-                <div key={r.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)', color: 'var(--c-ink)',
-                }}>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {r.label || r.baseModel}{h ? ` · ${h}` : ''}
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setParam('comboModel', m); setPickedKey(null); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', minHeight: 54, padding: '6px 14px', border: 0, borderTop: '1px solid var(--line)', background: m === model ? 'var(--c-paper)' : 'transparent', color: 'var(--c-ink)', textAlign: 'left', cursor: 'pointer' }}
+                >
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: 600 }}>{code ? `${m} · ${code}` : m}</span>
+                    <span style={soft}>{list.length} {list.length === 1 ? 'combo' : 'combos'}</span>
                   </span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-soft)' }}>{fmtRm(oldV)}</span>
-                  <span style={{ color: 'var(--fg-muted)' }}>→</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtRm(newV)}</span>
-                </div>
+                  {empty > 0 && <span title={`${empty} with no price`} style={{ minWidth: 22, padding: '2px 6px', borderRadius: 999, textAlign: 'center', fontSize: 'var(--fs-11)', fontWeight: 600, background: 'var(--c-festive-b-bg, #f7e9e9)', color: 'var(--c-festive-b, #8f2c1a)' }}>{empty}</span>}
+                </button>
               );
             })}
-            {rules.length > 3 && (
-              <div style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-                …and {rules.length - 3} more
-              </div>
-            )}
+            {shownModels.length === 0 && <p style={{ ...soft, padding: 12 }}>No model matches.</p>}
           </div>
-        </Field>
+        </div>
+
+        <div className={styles.book}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
+            <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+              <div style={{ fontSize: 'var(--fs-18)', fontWeight: 700 }}>{model ?? 'No model'}</div>
+              <div style={soft}>{tierLabel(tier)} · {supplierId ? 'used for PO auto-pricing' : 'RM cost per set'}</div>
+            </div>
+            {hiddenSizes && <Button variant="secondary" onClick={() => setShowAllSizes(!showAllSizes)}>{showAllSizes ? 'Hide empty sizes' : `Show all ${allSizes.length} sizes`}</Button>}
+          </div>
+
+          {notice && <div style={{ padding: '10px 16px', background: 'var(--c-paper)', color: GREEN, fontWeight: 600 }}>{notice}</div>}
+
+          {chosen.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 16px', background: 'var(--c-paper)' }}>
+              <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{chosen.length} {chosen.length === 1 ? 'combo' : 'combos'} selected</strong>
+              {!supplierId && <Button variant="primary" onClick={() => setDialog({ kind: 'assign' })}>Assign to supplier</Button>}
+              <Button variant="secondary" onClick={() => setDialog({ kind: 'adjust' })}>Adjust by %</Button>
+              <Button variant="secondary" onClick={() => setDialog({ kind: 'delete' })} style={{ color: 'var(--c-festive-b, #8f2c1a)' }}>Delete</Button>
+              <Button variant="ghost" onClick={() => setTicked(new Set())}>Clear</Button>
+            </div>
+          )}
+
+          <div role="tablist" aria-label="Price" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '12px 16px 0' }}>
+            {PRICE_TIERS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={t === tier}
+                onClick={() => setParam('comboPrice', t)}
+                style={{ minHeight: 40, padding: '0 14px', borderRadius: 999, fontWeight: 600, cursor: 'pointer', border: `1px solid ${t === tier ? GREEN : 'var(--line-strong)'}`, background: t === tier ? GREEN : 'var(--c-cream)', color: t === tier ? '#fff' : 'var(--c-ink)' }}
+              >
+                {tierLabel(t)}
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.tick}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all combos"
+                      checked={lines.length > 0 && chosen.length === lines.length}
+                      onChange={() => setTicked(chosen.length === lines.length ? new Set() : new Set(lines.map((l) => l.key)))}
+                      style={{ width: 18, height: 18 }}
+                    />
+                  </th>
+                  <th className={styles.name}>Combo</th>
+                  {sizes.map((h) => <th key={h} className={styles.num}>{heightLabel(h)}</th>)}
+                  <th className={styles.note}>Cost from</th>
+                  <th className={styles.note}>Last change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line) => {
+                  const rule = line.byTier[tier];
+                  const priced = !!rule && Object.values(rule.pricesByHeight).some((v) => v != null);
+                  let source = priced ? (supplierId ? 'Supplier' : 'Manual') : 'No price';
+                  if (rule?.costSource === 'auto') source = 'Auto';
+                  return (
+                    <tr key={line.key} onClick={() => setPickedKey(line.key)} className={line.key === picked?.key ? `${styles.row} ${styles.rowOn}` : styles.row}>
+                      <td className={styles.tick}>
+                        <input type="checkbox" aria-label={`Select ${line.name}`} checked={ticked.has(line.key)} onChange={() => toggleLine(line.key)} onClick={(e) => e.stopPropagation()} style={{ width: 18, height: 18 }} />
+                      </td>
+                      <td className={styles.name}>{line.name}</td>
+                      {sizes.map((h) => {
+                        const key = editKey(line, tier, h);
+                        const sen = costAt(line, tier, h);
+                        const shown = edits[key] ?? (sen === null ? '' : plain(sen));
+                        const old = rule?.sellingPricesByHeight?.[h];
+                        return (
+                          <td key={h} className={styles.num}>
+                            <input
+                              aria-label={`${line.name} at ${heightLabel(h)}`}
+                              value={shown}
+                              inputMode="decimal"
+                              placeholder={sen === null && old != null ? plain(old) : 'Add'}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => setEdits({ ...edits, [key]: e.target.value })}
+                              style={{ ...fieldStyle, minHeight: 38, textAlign: 'right', background: edits[key] === undefined ? 'var(--c-cream)' : 'var(--c-warning-bg, #f6efd9)' }}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className={styles.note}>
+                        <span title={rule?.derivedFromSupplierName ?? undefined} style={tag(source === 'Manual' || source === 'No price')}>{source}</span>
+                      </td>
+                      <td className={styles.note} style={soft}>{priced && rule ? fmtDate(rule.effectiveFrom) : 'New'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {combosQ.isLoading && <p style={{ ...soft, padding: 16 }}>Loading combos...</p>}
+            {!combosQ.isLoading && lines.length === 0 && <p style={{ ...soft, padding: 16 }}>No combos on this model yet. Press New combo to copy or build one.</p>}
+          </div>
+
+          {editCount > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'var(--c-warning-bg, #f6efd9)', color: 'var(--c-warning, #6e4d12)' }}>
+              <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{editCount} {editCount === 1 ? 'price' : 'prices'} changed</strong>
+              {emptying && <span style={{ fontSize: 'var(--fs-12)' }}>An emptied cell loses its price today, whatever the date.</span>}
+              {editingAuto && <span style={{ fontSize: 'var(--fs-12)' }}>Auto cost: the next supplier price save replaces this.</span>}
+              <span style={{ fontSize: 'var(--fs-12)' }}>Effective from</span>
+              <DateField value={effectiveFrom} onChange={setEffectiveFrom} aria-label="Effective from" />
+              <Button variant="ghost" onClick={() => setEdits({})}>Discard</Button>
+              <Button variant="primary" onClick={() => { void save(); }} disabled={apply.isPending}>Save changes</Button>
+            </div>
+          )}
+        </div>
+
+        {picked && (
+          <ComboPanel
+            line={picked}
+            tier={tier}
+            supplierId={supplierId ?? null}
+            onEdit={() => setDialog({ kind: 'edit', line: picked })}
+          />
         )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={apply} disabled={!inputsValid || applying}>
-            {applying ? 'Applying…' : `Apply (${rules.length})`}
-          </Button>
-        </div>
       </div>
-    </ModalShell>
+      </div>
+
+      {dialog?.kind === 'new' && model && (
+        <NewComboDialog
+          model={model}
+          lines={lines}
+          sourceBook={sourceBook}
+          ownModules={ownModules.length > 0 ? ownModules : ALL_MODULE_CODES}
+          supplierId={supplierId ?? null}
+          today={today}
+          onHand={() => setDialog({ kind: 'hand' })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {(dialog?.kind === 'hand' || dialog?.kind === 'edit') && model && (
+        <CompartmentDialog
+          model={model}
+          editing={dialog.kind === 'edit' ? dialog.line : null}
+          codes={ownModules.length > 0 ? ownModules : ALL_MODULE_CODES}
+          supplierId={supplierId ?? null}
+          today={today}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'assign' && model && (
+        <AssignDialog model={model} chosen={chosen} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'delete' && (
+        <DeleteDialog chosen={chosen} supplierId={supplierId ?? null} onDone={closeDone} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'adjust' && (
+        <AdjustDialog chosen={chosen} tier={tier} supplierId={supplierId ?? null} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'export' && (
+        <ExportDialog model={model} book={book} supplierName={supplierName} fallbackSizes={heights} today={today} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'import' && (
+        <ImportDialog lines={allLines} modulesByModel={modulesByModel} sizes={allSizesEver} supplierId={supplierId ?? null} supplierName={supplierName} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
+      )}
+    </div>
   );
-}
+};
 
-// ─── Small primitives ─────────────────────────────────────────────────
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function ComboPanel({ line, tier, supplierId, onEdit }: {
+  line: ComboLine; tier: SofaPriceTier; supplierId: string | null; onEdit: () => void;
+}) {
+  const rule = line.byTier[tier];
+  const historyQ = useSofaComboHistory(rule ? { baseModel: rule.baseModel, modules: rule.modules, tier: rule.tier, customerId: rule.customerId, supplierId } : null);
+  const history = historyLines(historyQ.data ?? []);
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{
-        fontFamily: 'var(--font-sans)',
-        fontSize: 'var(--fs-11)',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: 1,
-        color: 'var(--fg-soft)',
-      }}>
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function ModalShell({
-  title, onClose, children,
-}: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      padding: '5vh 16px', zIndex: 1000, overflowY: 'auto',
-    }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        background: 'var(--c-paper)', borderRadius: 'var(--radius-md)',
-        padding: 20, width: '100%', maxWidth: 720,
-        display: 'flex', flexDirection: 'column', gap: 16,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-18)' }}>
-            {title}
-          </h3>
-          <button type="button" onClick={onClose} style={iconBtnStyle}>
-            <X size={16} strokeWidth={1.75} />
-          </button>
+    <div className={styles.panel}>
+      <div className={styles.panelBody}>
+      <div>
+      <div style={{ fontSize: 'var(--fs-16)', fontWeight: 700 }}>{line.name}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+        {line.modules.map((slot, i) => (
+          <span key={i} title={slot.join(' or ')} style={{ padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--c-paper)', color: GREEN, fontSize: 'var(--fs-12)', fontWeight: 600 }}>{slotLabel(slot)}</span>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
+        <div><div style={soft}>Effective from</div><div style={{ fontWeight: 600 }}>{rule ? fmtDate(rule.effectiveFrom) : 'No price'}</div></div>
+        <div><div style={soft}>Price</div><div style={{ fontWeight: 600 }}>{tierLabel(tier)}</div></div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Button variant="primary" onClick={onEdit} style={{ width: '100%' }}>Edit compartments</Button>
+      </div>
+      </div>
+      <div>
+      <div style={{ ...soft, fontWeight: 600, marginTop: 18 }}>Edit history</div>
+      {historyQ.isError && <p style={{ ...soft, color: 'var(--c-festive-b, #8f2c1a)' }}>Couldn't load the history. {errText(historyQ.error)}</p>}
+      {!historyQ.isLoading && !historyQ.isError && history.length === 0 && <p style={soft}>No changes at {tierLabel(tier)} yet.</p>}
+      {history.map((h) => (
+        <div key={h.id} style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
+          <div style={{ ...soft, display: 'flex', gap: 8 }}>
+            <span style={{ flex: 1 }}>{fmtDate(h.date)}</span>
+            <span>{h.who}</span>
+          </div>
+          <div style={{ fontWeight: 600, marginTop: 2 }}>{h.what}</div>
+          {h.detail && <div style={{ marginTop: 2 }}>{h.detail}</div>}
         </div>
-        {children}
+      ))}
+      </div>
       </div>
     </div>
   );
 }
-
-const selectStyle: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-13)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--line-strong)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '6px 10px',
-  outline: 'none',
-};
-
-const inputStyle: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-13)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--line-strong)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '6px 8px',
-  outline: 'none',
-  width: '100%',
-};
-
-const chipStyleStrong: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-12)',
-  fontWeight: 600,
-  background: 'var(--c-cream)',
-  color: 'var(--c-ink)',
-  padding: '2px 8px',
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--line-strong)',
-};
-
-// Supplier's own model code chip — tinted so it reads as a distinct, second
-// identity next to our internal base-model chip ("Booqit · 5539").
-const chipStyleSupplierCode: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-12)',
-  fontWeight: 600,
-  background: 'var(--c-paper)',
-  color: 'var(--c-orange, #c47b2f)',
-  padding: '2px 8px',
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--c-orange, #c47b2f)',
-};
-
-const chipStyleSoft: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-11)',
-  background: 'var(--c-cream)',
-  color: 'var(--fg-soft)',
-  padding: '2px 6px',
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--line)',
-};
-
-const statusPillActive: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-11)',
-  fontWeight: 600,
-  background: 'var(--c-mint, #d4edda)',
-  color: 'var(--c-green, #1a7a3a)',
-  padding: '2px 8px',
-  borderRadius: 'var(--radius-pill, 999px)',
-};
-
-const statusPillPending: CSSProperties = {
-  ...statusPillActive,
-  background: 'var(--c-paper)',
-  color: 'var(--fg-soft)',
-  border: '1px solid var(--line)',
-};
-
-const iconBtnStyle: CSSProperties = {
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  color: 'var(--fg-soft)',
-  padding: 4,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 'var(--radius-sm)',
-};
-
-const ghostBtnStyle: CSSProperties = {
-  background: 'transparent',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '4px 8px',
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-12)',
-  color: 'var(--fg-soft)',
-  cursor: 'pointer',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 4,
-};
-
-const slotNumberStyle: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-11)',
-  fontWeight: 600,
-  textTransform: 'uppercase',
-  letterSpacing: 0.5,
-  color: 'var(--fg-soft)',
-  minWidth: 72,
-  flexShrink: 0,
-};
-
-const moduleChipOn: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-11)',
-  fontWeight: 600,
-  background: 'var(--c-orange, #c47b2f)',
-  color: 'var(--c-paper, #fff)',
-  border: '1px solid var(--c-orange, #c47b2f)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '2px 8px',
-  cursor: 'pointer',
-};
-
-const moduleChipOff: CSSProperties = {
-  ...moduleChipOn,
-  background: 'var(--c-paper)',
-  color: 'var(--c-ink)',
-  border: '1px solid var(--line-strong)',
-};
-
-// Batch per-height grid (mode === 'grid') ─────────────────────────────
-const gridHeadCellStyle: CSSProperties = {
-  // Batch 3 theme skin — the SO-sample DataTable header spec (sans 10px/700,
-  // tracking-brand, surface-dim fill, ink) on the combo grid's head row.
-  fontFamily: 'var(--font-sans)',
-  fontSize: 10,
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.18em',
-  color: 'var(--c-ink, #11140f)',
-  background: '#e3e6e0',
-  borderBottom: '2px solid #d6d9d2',
-  textAlign: 'center',
-  padding: '4px 6px',
-  whiteSpace: 'nowrap',
-};
-
-const gridHeadCellStickyStyle: CSSProperties = {
-  ...gridHeadCellStyle,
-  textAlign: 'left',
-  minWidth: 120,
-};
-
-const gridLabelCellStyle: CSSProperties = {
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-12)',
-  padding: '6px 10px 6px 0',
-  verticalAlign: 'top',
-  // Wrap the composition instead of clipping it (commander 2026-06-20). Cap the
-  // width so the height columns still get room; the text flows onto 2–3 lines.
-  whiteSpace: 'normal',
-  maxWidth: 200,
-  minWidth: 140,
-};
-
-const gridInputCellStyle: CSSProperties = {
-  padding: '2px 3px',
-  verticalAlign: 'middle',
-};

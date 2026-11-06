@@ -31,7 +31,7 @@ import { soRouterSource } from './lib/so-router-source';
 import poSource from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import { createMfgPurchaseOrderHandler } from '../src/scm/routes/mfg-purchase-orders';
 import { consignmentOverridePriceHandler } from '../src/scm/routes/consignment-orders';
-import { sofaComboPutHandler } from '../src/scm/routes/sofa-combos';
+import { sofaComboApplyHandler, sofaComboPutHandler, sofaComboRecomposeHandler, sofaComboRetireHandler } from '../src/scm/routes/sofa-combos';
 import { createWarehouseRacksHandler } from '../src/scm/routes/warehouse';
 import { createSupplierBindingHandler, createSupplierBindingsBatchHandler } from '../src/scm/routes/suppliers';
 const routeSource = soRouterSource();
@@ -117,6 +117,9 @@ function harness(
   app.post('/mfg-pos', createMfgPurchaseOrderHandler as never);
   app.post('/consignment/:docNo/items/:itemId/override', consignmentOverridePriceHandler as never);
   app.put('/sofa-combos/:id', sofaComboPutHandler as never);
+  app.post('/sofa-combos/apply', sofaComboApplyHandler as never);
+  app.post('/sofa-combos/retire', sofaComboRetireHandler as never);
+  app.post('/sofa-combos/recompose', sofaComboRecomposeHandler as never);
   app.post('/warehouse/racks', createWarehouseRacksHandler as never);
   app.post('/suppliers/:id/bindings', createSupplierBindingHandler as never);
   app.post('/suppliers/:id/bindings/batch', createSupplierBindingsBatchHandler as never);
@@ -198,6 +201,38 @@ describe('consignment line price override — permission + company scope', () =>
     );
     expect(res.status).toBe(404);
     expect(t.consignment_sales_order_items.find((r) => r.id === 'it-b')!.unit_price_sen).toBe(9900);
+  });
+});
+
+describe('sofa combo batch writes stay inside the company', () => {
+  const row = (id: string, company_id: number, supplier_id: string | null = null): Row => ({
+    id, company_id, base_model: 'M1', modules: [['A'], ['B']], tier: 'PRICE_1', customer_id: null, supplier_id,
+    prices_by_height: { 24: 100 }, selling_prices_by_height: {}, pwp_prices_by_height: {}, default_free_gifts: [],
+    label: null, effective_from: '2026-01-01', created_at: '2026-01-01T00:00:00Z', deleted_at: null, notes: null,
+  });
+  const item = { baseModel: 'M1', modules: [['A'], ['B']] };
+
+  it('apply refuses a supplier of another company', async () => {
+    const t = { sofa_combo_pricing: [row('a', CO_A)], suppliers: [{ id: 'sup-b', company_id: CO_B }] };
+    const res = await jsonPost(harness(t, CO_A).app, '/sofa-combos/apply', { items: [{ ...item, tier: 'PRICE_1', supplierId: 'sup-b', prices: { 24: 5 }, effectiveFrom: '2026-11-06' }] });
+    expect(res.status).toBe(404);
+    expect(t.sofa_combo_pricing).toHaveLength(1);
+  });
+
+  it("retire leaves the other company's same-named combo alone", async () => {
+    const t = { sofa_combo_pricing: [row('a', CO_A), row('a-sup', CO_A, 'sup-a'), row('b', CO_B)] };
+    const res = await jsonPost(harness(t, CO_A).app, '/sofa-combos/retire', { items: [item], supplierId: null });
+    expect(res.status).toBe(200);
+    expect(t.sofa_combo_pricing.find((r) => r.id === 'a')?.deleted_at).toBeTruthy();
+    expect(t.sofa_combo_pricing.find((r) => r.id === 'a-sup')?.deleted_at).toBeTruthy();
+    expect(t.sofa_combo_pricing.find((r) => r.id === 'b')?.deleted_at).toBeNull();
+  });
+
+  it("recompose never moves the other company's combo", async () => {
+    const t = { sofa_combo_pricing: [row('b', CO_B)] };
+    const res = await jsonPost(harness(t, CO_A).app, '/sofa-combos/recompose', { baseModel: 'M1', from: item.modules, to: [['A']], supplierId: null });
+    expect(res.status).toBe(404);
+    expect(t.sofa_combo_pricing).toHaveLength(1);
   });
 });
 
