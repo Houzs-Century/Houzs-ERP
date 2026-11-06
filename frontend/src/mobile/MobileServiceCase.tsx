@@ -63,6 +63,7 @@ import {
 // the intake sheet another branch is editing stays untouched.
 import {
   ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
+  missingCaseFields,
   ASSR_NOTE_AUDIENCES, assrOrderPoText,
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
@@ -2172,13 +2173,10 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
     },
   });
 
-  // Issue category is REQUIRED (owner ruling 2026-07-19): the field already
-  // carries a "*" marker, so the submit gate must actually block on it — same
-  // greyed-out disabled Create button the other required fields use.
-  //
-  // Items MAY be empty (owner 2026-07-22) — driver-damaged floor, lorry
-  // problem etc. don't tie to a specific product. Dropped from the gate.
-  const valid = docNo.trim() && complaint.trim() && complainedDate.trim() && category.trim();
+  // Issue category is required (owner ruling 2026-07-19). Items may be empty (owner
+  // 2026-07-22): a damaged floor or a lorry problem ties to no product.
+  const missing = missingCaseFields([["order or customer", docNo], ["issue description", complaint], ["issue category", category], ["complaint date", complainedDate]]);
+  const valid = missing.length === 0;
 
   // FIXED + z-index 40 (the .sheet-bd pattern) — NOT absolute/z20. When
   // Service is the active TAB this sheet renders inside the tab-content
@@ -2473,6 +2471,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
 
         {/* actbar (.actbar / .btn) */}
         <footer className="actbar">
+          {!valid && <div role="status" style={{ fontSize: 12, color: "var(--red)", marginBottom: 6 }}>Still needed: {missing.join(", ")}</div>}
           <button
             onClick={() => valid && create.mutate()}
             disabled={!valid || create.isPending}

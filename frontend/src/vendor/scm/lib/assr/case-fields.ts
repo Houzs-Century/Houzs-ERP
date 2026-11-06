@@ -61,6 +61,11 @@ export function assrNoteIsCustomerVisible(audience: string): boolean {
  * categories server-side without touching this file — do NOT treat a value
  * missing from here as invalid.
  */
+/** What a new case still needs, in form order. The Create button is grey until this
+ *  is empty, and on a phone the empty field can be a screen away from the button. */
+export const missingCaseFields = (fields: Array<[label: string, value: string]>): string[] =>
+  fields.filter(([, value]) => !value.trim()).map(([label]) => label);
+
 export const ASSR_ISSUE_CATEGORIES = [
   "Product defect",
   "Incorrect item delivered",
