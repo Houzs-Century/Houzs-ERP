@@ -103,6 +103,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
         <span>Invoice Amount <strong>{invoiceSen == null ? '—' : fmtSen(invoiceSen)}</strong></span>
         <span>PO Amount <strong className={amountsDiffer ? styles.priceOff : ''}>{oursSen == null ? '—' : fmtSen(oursSen)}</strong></span>
       </div>
+      {review.taxNote && <div className={styles.hint}>{review.taxNote}</div>}
 
       {repeat && (
         <div className={styles.banner}>

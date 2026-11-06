@@ -1,12 +1,12 @@
 /* Scan, check, then create, for supplier invoices (owner 2026-11-04): the working copy an invoice scan keeps. */
 import { describe, expect, test } from 'vitest';
-import { billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
+import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
 import { familiesByModelWord } from './scan-word-match';
 import type { PiLineMatchResult } from './pi-scan-match';
 
 const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, supplierSku: null, description: null, remaining, unitPriceSen: 100_00 });
-const parsed: PiScanExtract = { supplierName: 'DIGLANT', supplierCode: null, invoiceNumber: 'INV 7', invoiceDate: '2026-11-03', poNo: null, doNo: 'DO-1', lines: [
+const parsed: PiScanExtract = { supplierName: 'DIGLANT', supplierCode: null, invoiceNumber: 'INV 7', invoiceDate: '2026-11-03', poNo: null, doNo: 'DO-1', salesTax: null, totalAmount: null, lines: [
   { itemCode: 'T1MAMJA0MK', articleNo: null, description: 'Mattress Akemi Equinox K King', qty: 2, unitPrice: 500, salesTax: null, lineTotal: 1000 },
   { itemCode: 'ZZ', articleNo: null, description: 'Mattress Akemi Guardian Q Queen', qty: 1, unitPrice: 300, salesTax: null, lineTotal: 300 },
 ] };
@@ -91,6 +91,48 @@ describe('a set billed on one row', () => {
     expect(setPieces(row(900), [piece('a', 90000), piece('b', 110000)])).toBeNull();
     expect(setPieces(row(2000, 2), [piece('a', 90000), piece('b', 110000)])).toBeNull();
     expect(setPieces(row(null), [piece('a', 90000), piece('b', 110000)])).toBeNull();
+  });
+});
+
+describe('sales tax printed once at the bottom (Diglant)', () => {
+  const row = (grnItemId: string | null, qty: number, unitPrice: number | null): PiReviewLine => ({ key: `${grnItemId}${unitPrice}`, grnItemId, grnNumber: null, qty, suggested: false, read: { itemCode: null, description: 'x', qty, unitPrice, lineTotal: unitPrice == null ? null : unitPrice * qty } });
+  const priced = (id: string, sen: number): BillableLine => ({ ...bill(id, 'GRN-1', id, 9), unitPriceSen: sen });
+  test('DGSIZ26002253: each row reaches the PO price and the rows reach the total', () => {
+    const lines = [row('a', 3, 544.55), row('b', 1, 1181.82), row('c', 1, 727.27), row('d', 1, 1409.09), row('e', 1, null)];
+    const note = addSalesTax(lines, [priced('a', 59900), priced('b', 130000), priced('c', 80000), priced('d', 155000), priced('e', 0)], 495.18, 5447);
+    expect(lines.map((l) => l.read?.unitPrice)).toEqual([599, 1300, 800, 1550, null]);
+    expect(lines.reduce((a, l) => a + (l.read?.lineTotal ?? 0), 0)).toBeCloseTo(5447, 2);
+    expect(note).toContain('495.18');
+  });
+  test('a printed .54 and .55 of one price both reach it', () => {
+    const lines = [row('a', 1, 954.54), row('b', 1, 954.55)];
+    addSalesTax(lines, [priced('a', 105000), priced('b', 105000)], 190.91, 2100);
+    expect(lines.map((l) => l.read?.unitPrice)).toEqual([1050, 1050]);
+  });
+  test('no PO price to lean on: the rounding lands so the rows reach the total', () => {
+    const lines = [row(null, 3, 1409.09)];
+    addSalesTax(lines, [], 422.73, 4650);
+    expect(lines[0]!.read?.lineTotal).toBe(4650);
+    expect(lines[0]!.read?.unitPrice).toBe(1550);
+  });
+  test('tax of 0.00 leaves the row as printed', () => {
+    const lines = [row('a', 50, 75)];
+    expect(addSalesTax(lines, [priced('a', 7500)], 0, 3750)).toBeNull();
+    expect(lines[0]!.read?.unitPrice).toBe(75);
+  });
+  test('one row already at the PO price holds its tax, the other takes it all', () => {
+    const lines = [row('a', 1, 1550), row('b', 1, 1000)];
+    addSalesTax(lines, [priced('a', 155000), priced('b', 110000)], 100, 2650);
+    expect(lines.map((l) => l.read?.unitPrice)).toEqual([1550, 1100]);
+  });
+  test('no tax read: the PO price alone says which rows are before tax', () => {
+    const lines = [row('a', 1, 1409.09), row('b', 1, 75)];
+    addSalesTax(lines, [priced('a', 155000), priced('b', 7500)], null, null);
+    expect(lines.map((l) => l.read?.unitPrice)).toEqual([1550, 75]);
+  });
+  test('rows that cannot reach the total say so', () => {
+    const lines = [row('a', 1, 1000)];
+    expect(addSalesTax(lines, [priced('a', 110000)], 100, 1500)).toContain('invoice says RM 1,500.00');
   });
 });
 
