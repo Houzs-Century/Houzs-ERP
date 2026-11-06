@@ -29,6 +29,9 @@ const perms = (r) => { try { const p = typeof r.permissions === 'string' ? JSON.
 
 function appFor(tx, co, code, user) {
   const sb = pgrestShim(tx, 'scm');
+  /* The route's preflight only asks whether the audit log can be written; the insert that follows really writes it, inside this transaction. */
+  const realRpc = sb.rpc.bind(sb);
+  sb.rpc = async (name, args) => (name === 'entity_audit_writable' ? { data: true, error: null } : realRpc(name, args));
   const app = new Hono();
   app.onError((e, c) => c.json({ error: 'thrown', message: String(e?.stack ?? e).slice(0, 500) }, 500));
   app.use('*', async (c, next) => {
@@ -66,6 +69,15 @@ async function trial(tx, co, code, people) {
   const sales = appFor(tx, co, code, people.sales);
   const exec = appFor(tx, co, code, people.exec);
   const owner = appFor(tx, co, code, people.owner);
+  /* The real ones waiting: what pressing Reject on each would do (rolled back with the rest). */
+  const realOnes = await tx`SELECT id, request_no, refund_source_doc_no, amount_sen FROM scm.acc_payment_requests WHERE company_id = ${co} AND refund_source_doc_no IS NOT NULL AND status = 'SUBMITTED' ORDER BY created_at`;
+  for (const r of realOnes) {
+    const path = `/mfg-sales-orders/${encodeURIComponent(r.refund_source_doc_no)}/money`;
+    const was = (await owner(path)).body.money;
+    const said = await owner(`/payment-requests/${r.id}/return`, 'POST', { note: 'TRIAL: rolled back' });
+    const now = (await owner(path)).body.money;
+    check(said.status === 200 && now?.requestedSen === (was?.requestedSen ?? 0) - Number(r.amount_sen) && now?.remainingSen === (was?.remainingSen ?? 0) + Number(r.amount_sen), `Owner rejects the real ${r.request_no} (${rm(r.amount_sen)} on ${r.refund_source_doc_no}): ${said.status} ${said.body.error ?? ''} ${String(said.body.message ?? '').slice(0, 80)}; order requested ${rm(was?.requestedSen)} -> ${rm(now?.requestedSen)}, remaining ${rm(was?.remainingSen)} -> ${rm(now?.remainingSen)}`);
+  }
   const sbList = pgrestShim(tx, 'scm');
   const list = await ordersWithMoney(sbList, co, { phone: null, cancelledOnly: false });
   if (!list.ok) { check(false, `orders with money: ${list.reason}`); return; }
