@@ -46,10 +46,10 @@ describe('variantKeyLabel', () => {
 });
 
 describe('variantWords', () => {
-  it('reads a stored key in plain words', () => {
+  test('reads a stored key in plain words', () => {
     expect(variantWords('fabriccode=bf-17|gap=15"|divanheight=8"|legheight=1"')).toBe('bf-17 · gap 15" · divan 8" · leg 1"');
   });
-  it('an unclassified item has no words', () => {
+  test('an unclassified item has no words', () => {
     expect(variantWords('')).toBe('');
   });
 });
