@@ -22,7 +22,7 @@ const FAIR = 2261;
 
 await sql.begin('READ ONLY', async (tx) => {
   await tx`SET LOCAL search_path = public, scm`;
-  const pvs = await tx`SELECT * FROM scm.payment_vouchers WHERE company_id = 1 AND pv_number IN ('HC-Draft-2610-150', 'HC-HPV-2610-025', 'HC-HPV-2610-112') ORDER BY voucher_date, pv_number`;
+  const pvs = await tx`SELECT * FROM scm.payment_vouchers WHERE company_id = 1 AND (pv_number IN ('HC-Draft-2610-150', 'HC-HPV-2610-025', 'HC-HPV-2610-112') OR payee_name ILIKE '%KL CHEN%' OR pv_number ILIKE '%2610-150') ORDER BY voucher_date, pv_number`;
   for (const p of pvs) {
     const [sup] = p.supplier_id ? await tx`SELECT id, code, name FROM scm.suppliers WHERE id = ${p.supplier_id}` : [null];
     out(`PV ${p.pv_number} | ${p.status} | ${p.purpose} | supplier ${sup?.code ?? '-'} ${sup?.name ?? '-'} | pay from ${p.credit_account_code} | ${rm(p.total_sen)} | bill ${p.bill_ref ?? '-'} ${day(p.bill_date)} | notes ${String(p.notes ?? '').slice(0, 80)}`);
@@ -58,7 +58,8 @@ await sql.begin('READ ONLY', async (tx) => {
   };
   const today = withCheckedVouchers(posted, checked);
   out(`fair ${FAIR} today: ${sumRows(today.legs)}`);
-  const draft = pvs.find((p) => p.pv_number === 'HC-Draft-2610-150');
+  const draft = pvs.find((p) => p.status !== 'CANCELLED' && /KL CHEN/i.test(String(p.payee_name ?? '')));
+  out(`the live voucher: ${draft?.pv_number ?? 'none'} ${draft?.status ?? ''} submitted ${draft?.submitted_at ?? '-'} checked ${draft?.checked_at ?? '-'} approved ${draft?.approved_at ?? '-'} updated ${draft?.updated_at ?? '-'}`);
   if (draft) {
     const lines = await tx`
       SELECT l.description, l.debit_account_code, l.amount_sen, l.project_id, a.account_name, a.account_type, a.pms_row
@@ -77,7 +78,7 @@ await sql.begin('READ ONLY', async (tx) => {
 
   /* What has already happened on production: supplier payments that paid a bill tagged to a fair. */
   const paid = await tx`
-    SELECT DISTINCT pv.company_id, pv.pv_number, pv.status, pv.je_no, i.invoice_number
+    SELECT DISTINCT pv.company_id, pv.pv_number, pv.status, i.invoice_number
       FROM scm.pv_allocations a
       JOIN scm.payment_vouchers pv ON pv.id = a.pv_id
       JOIN scm.ap_invoices i ON i.id = a.ap_invoice_id
