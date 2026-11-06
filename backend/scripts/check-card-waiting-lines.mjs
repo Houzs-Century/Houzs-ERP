@@ -74,7 +74,12 @@ await sql.begin('READ ONLY', async (tx) => {
   for (const k of [...tally.keys()].sort()) out(`${k} | ${tally.get(k).n} | ${rm(tally.get(k).sen)}`);
 
   /* The AEON swipes on the days no AEON report covers, against the credits no report claims. */
-  const aeon = await tx;
+  const aeon = await tx`
+    SELECT p.paid_at, p.amount_sen, p.approval_code, p.merchant_provider, p.so_doc_no
+      FROM scm.mfg_sales_order_payments p
+     WHERE p.company_id = ${C} AND p.paid_at >= '2026-09-01' AND p.paid_at < '2026-10-01'
+       AND (p.merchant_provider ILIKE '%aeon%' OR p.merchant_provider ILIKE '%pine%')
+     ORDER BY p.paid_at`;
   const claimed = await tx`SELECT payment_id::text AS id FROM scm.acc_settlement_matches WHERE company_id = ${C}`;
   const byDay = new Map();
   for (const p of aeon) { const k = day(p.paid_at); byDay.set(k, (byDay.get(k) ?? 0) + Number(p.amount_sen)); }
