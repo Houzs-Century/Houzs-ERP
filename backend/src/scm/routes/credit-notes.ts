@@ -162,7 +162,23 @@ async function withInvoiceNumbers(c: any, rows: Row[]): Promise<{ rows: Row[] } 
     for (const s of (Array.isArray(data) ? data : []) as Array<{ id: string; invoice_number: string }>) numberOf.set(String(s.id), String(s.invoice_number));
   }
   const num = (v: unknown) => (typeof v === 'string' ? numberOf.get(v) ?? null : null);
-  return { rows: rows.map((r) => ({ ...r, sales_invoice_number: num(r.sales_invoice_id), purchase_invoice_number: num(r.purchase_invoice_id), ap_invoice_number: num(r.ap_invoice_id) })) };
+  /* An other debtor's account code (owner 2026-11-03), for the screens and the
+     print. Read here beside the note, never stored as party_code: the journal
+     line copies party_code, and the control's party fields stay as they were. */
+  const codeOfDebtor = new Map<string, string | null>();
+  const debtorIds = idsOf('debtor_id');
+  if (debtorIds.length > 0) {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return { resp: c.json(co.refusal, 409) };
+    const { data, error } = await c.get('supabase').from('acc_debtors').select('id, code').eq('company_id', co.companyId).in('id', debtorIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const d of (Array.isArray(data) ? data : []) as Array<{ id: string; code: string | null }>) codeOfDebtor.set(String(d.id), d.code ?? null);
+  }
+  return { rows: rows.map((r) => ({
+    ...r,
+    sales_invoice_number: num(r.sales_invoice_id), purchase_invoice_number: num(r.purchase_invoice_id), ap_invoice_number: num(r.ap_invoice_id),
+    debtor_code: typeof r.debtor_id === 'string' ? codeOfDebtor.get(r.debtor_id) ?? null : null,
+  })) };
 }
 
 export const listCreditNotesHandler = async (c: any): Promise<Response> => {

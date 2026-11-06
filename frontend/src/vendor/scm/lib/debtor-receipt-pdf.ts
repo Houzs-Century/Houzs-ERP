@@ -48,6 +48,7 @@ export function debtorReceiptPaper(d: DebtorReceiptPdfData): A4ReceiptPaper {
     date: r.receipt_date,
     from: [
       ['Name', debtor?.name ?? '—'],
+      ['Account', debtor?.code ?? null],
       ...address.map((line, i): [string, string] => [i === 0 ? 'Address' : ' ', line]),
       ['Phone', debtor ? [debtor.phone, debtor.mobile].filter((p) => p?.trim()).join(' / ') || null : null],
       ['Email', debtor?.email ?? null],

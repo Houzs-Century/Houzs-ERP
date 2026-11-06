@@ -436,7 +436,7 @@ export function NoteBody({ doc }: { doc: NoteDoc }) {
   return (
     <div className="space-y-3">
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
+        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{(n.party_code ?? n.debtor_code) ? <span style={soft}> · {n.party_code ?? n.debtor_code}</span> : null}</div>
         <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
         <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
         {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
@@ -505,7 +505,7 @@ const SupplierField = ({ value, onChange, disabled }: { value: string; onChange:
 const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (id: string) => void; disabled: boolean }) => {
   const debtorsQ = useOtherDebtors();
   const options = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === value).map((d) => ({ value: d.id, label: d.name })),
+    () => (debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === value).map((d) => ({ value: d.id, label: d.code ? `${d.name} · ${d.code}` : d.name })),
     [debtorsQ.data, value],
   );
   return (

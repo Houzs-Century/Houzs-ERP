@@ -179,7 +179,7 @@ export function ReceiptForm({
                   onChange={(e) => { const id = e.target.value; setV((p) => ({ ...p, debtorId: id, alloc: {} })); }}>
                   <option value="">— Pick the debtor —</option>
                   {(debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === v.debtorId).map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}{d.outstanding_sen > 0 ? ` · owes ${fmtSen(d.outstanding_sen)}` : ''}</option>
+                    <option key={d.id} value={d.id}>{d.name}{d.code ? ` · ${d.code}` : ''}{d.outstanding_sen > 0 ? ` · owes ${fmtSen(d.outstanding_sen)}` : ''}</option>
                   ))}
                 </select>
               </label>

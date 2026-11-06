@@ -6,7 +6,7 @@
 // REGISTRY (资料 lives here — the GL keeps one 305-0000 control, never per-party
 // sub-accounts; owner 2026-09-21: 他要填的资料就和 supplier 的一样), and since the
 // redesign the debtors' receipts beside it again. Two segments:
-//   · Debtors — name, registration, phone, the bills still open, what they owe
+//   · Debtors — name, account code, registration, phone, the bills still open, what they owe
 //     (sand while they owe), Active / Inactive; New bill on the row, the rest
 //     under ⋯ (Open, Edit debtor, Deactivate / Reactivate, New bill, New
 //     receipt, Open bills in Invoices).
@@ -104,9 +104,9 @@ export const OtherDebtors = () => {
 
   const needle = q.trim().toLowerCase();
   const shownDebtors = debtors.filter((d) => !needle
-    || [d.name, d.phone, d.mobile, d.business_reg_no, d.email].some((v) => String(v ?? '').toLowerCase().includes(needle)));
+    || [d.name, d.code, d.phone, d.mobile, d.business_reg_no, d.email].some((v) => String(v ?? '').toLowerCase().includes(needle)));
   const shownReceipts = receipts.filter((r) => !needle
-    || [r.number, r.payer, fmtSen(r.totalSen), (r.totalSen / 100).toFixed(2), ...(r.bills ?? []).map((b) => b.no)]
+    || [r.number, r.payer, r.payerCode, fmtSen(r.totalSen), (r.totalSen / 100).toFixed(2), ...(r.bills ?? []).map((b) => b.no)]
       .some((v) => String(v ?? '').toLowerCase().includes(needle)));
 
   const openForm = (kind: 'debtor' | 'receipt' | 'bill', patch: Record<string, string | null> = {}) =>
@@ -136,6 +136,7 @@ export const OtherDebtors = () => {
       key: 'name', label: 'Name', getValue: (d) => d.name,
       render: (d) => <FinanceDocLink to={moneyInDocHref('debtor', d.id)}>{d.name}</FinanceDocLink>,
     },
+    { key: 'code', label: 'Account code', render: (d) => <span className={ui.muted}>{d.code || '—'}</span>, getValue: (d) => d.code ?? '' },
     { key: 'reg', label: 'Registration', render: (d) => <span className={ui.muted}>{d.business_reg_no || '—'}</span>, getValue: (d) => d.business_reg_no ?? '' },
     { key: 'phone', label: 'Phone', render: (d) => <span className={ui.muted}>{d.phone || d.mobile || '—'}</span>, getValue: (d) => d.phone ?? d.mobile ?? '' },
     { key: 'openBills', label: 'Open bills', align: 'right', render: (d) => (d.openBills > 0 ? d.openBills : <span className={ui.muted}>0</span>), getValue: (d) => d.openBills },

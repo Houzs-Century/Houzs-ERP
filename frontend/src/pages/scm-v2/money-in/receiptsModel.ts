@@ -174,6 +174,7 @@ export const matchesReceipt = (x: ReceiptItem, q: string): boolean => {
   return searchText([
     x.no, x.from, x.forText, x.via, fmtSen(x.amountSen), (x.amountSen / 100).toFixed(2),
     x.receipt?.kind === 'CUSTOMER' ? soRefOfCamelStamp(x.receipt) : null,
+    x.receipt?.payerCode,
   ]).includes(needle);
 };
 
