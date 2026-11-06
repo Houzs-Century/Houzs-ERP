@@ -12,7 +12,12 @@ import { receiptHeaderLines, type SstReceiptSettings } from "@shared/pos-setting
 import { fmtMyt } from "./loginRules";
 import type { SaleRecord } from "./sale";
 
-export const receiptColumns = (paperWidth: 58 | 80): number => (paperWidth === 80 ? 48 : 32);
+/* Font A is 12 dots wide: 48 columns on 80 mm paper, 32 on 58 mm. The receipt
+ * keeps a blank margin each side on 80 mm (owner 2026-11-03: not edge to edge;
+ * 58 mm has no room to spare), so the
+ * text area is narrower and escposBytes sets the same margin on the printer. */
+export const receiptMargin = (paperWidth: 58 | 80): number => (paperWidth === 80 ? 3 : 0);
+export const receiptColumns = (paperWidth: 58 | 80): number => (paperWidth === 80 ? 48 : 32) - 2 * receiptMargin(paperWidth);
 
 const money = (sen: number): string => (sen < 0 ? `-${(-sen / 100).toFixed(2)}` : (sen / 100).toFixed(2));
 
