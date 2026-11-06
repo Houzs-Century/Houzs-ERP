@@ -61,7 +61,21 @@ const [{ current_user: currentUser }] = await planClient`SELECT current_user`;
 const ledger = await planClient`
   SELECT filename, checksum, applied_at FROM _pg_migrations WHERE filename = ${WATCHED_MIGRATION}`;
 const unreadable = await findUnreadable(planClient);
+const roleReach = await planClient`
+  SELECT r.rolname AS role_name,
+         has_table_privilege(r.rolname, 'scm.po_receipt_so_assignments', 'SELECT') AS can_read_watched,
+         COUNT(*) FILTER (WHERE NOT has_table_privilege(r.rolname, c.oid, 'SELECT'))::int AS unreadable_count,
+         COUNT(*)::int AS relation_count
+    FROM pg_roles r
+    CROSS JOIN pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE r.rolname IN ('service_role', 'authenticated', 'anon')
+     AND n.nspname = 'scm' AND c.relkind IN ('r', 'p', 'v', 'm')
+   GROUP BY r.rolname ORDER BY r.rolname`;
 await planClient.end();
+
+for (const { role_name: roleName, can_read_watched: canReadWatched, unreadable_count: unreadableCount, relation_count: relationCount } of roleReach) {
+  say(`role ${roleName}: po_receipt_so_assignments readable=${canReadWatched}; cannot read ${unreadableCount} of ${relationCount} scm relations`);
+}
 
 say(`mode=${isApply ? 'APPLY' : 'PLAN (writes nothing)'} connected as ${currentUser}`);
 say(`ledger ${WATCHED_MIGRATION}: ${ledger.length ? `applied ${ledger[0].applied_at.toISOString()} ${ledger[0].checksum}` : 'NOT IN LEDGER'}`);
