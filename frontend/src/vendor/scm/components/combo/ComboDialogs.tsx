@@ -11,7 +11,7 @@ import { SearchableSelect } from '../SearchableSelect';
 import styles from './ComboScreen.module.css';
 import { errText } from './comboErrors';
 import {
-  COMBO_PRESETS, comboKey, costAt, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetSlots, tierLabel,
+  COMBO_PRESETS, comboKey, costAt, familyMatches, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetSlots, tierLabel,
   type ComboLine,
 } from './comboBook';
 import { combosFileName, comboSheets, downloadComboWorkbook, planComboImport, readComboFile, type ComboImportPlan } from './comboExcel';
@@ -167,14 +167,13 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
 
 // ─── Compartments ──────────────────────────────────────────────────────
 
-function ModulePicker({ codes, picked, onToggle }: {
-  codes: readonly string[]; picked: readonly string[]; onToggle: (code: string) => void;
+function ModulePicker({ codes, names, picked, onToggle }: {
+  codes: readonly string[]; names: Readonly<Record<string, string>>; picked: readonly string[]; onToggle: (code: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('All');
   const families = useMemo(() => moduleFamilies(codes), [codes]);
-  const q = query.trim().toLowerCase();
-  const shown = families.filter((f) => (group === 'All' || f.group === group) && f.code.toLowerCase().includes(q));
+  const shown = families.filter((f) => (group === 'All' || f.group === group) && familyMatches(f, query, names));
 
   return (
     <div style={{ paddingBottom: 12 }}>
@@ -188,7 +187,7 @@ function ModulePicker({ codes, picked, onToggle }: {
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 8 }}>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${codes.length} modules`} aria-label="Search modules" style={fieldStyle} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${codes.length} modules by code or name`} aria-label="Search modules" style={fieldStyle} />
         <select value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Module type" style={fieldStyle}>
           <option value="All">All types</option>
           {MODULE_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -220,11 +219,13 @@ const compartmentNote = (editing: boolean, onSupplier: boolean, today: string): 
   return `Prices stay. The new compartments apply from ${fmtDate(today)}, on every supplier that has this combo.`;
 };
 
-export function CompartmentDialog({ model, editing, codes, supplierId, today, onClose }: {
+export function CompartmentDialog({ model, editing, codes, names, supplierId, today, onClose }: {
   model: string;
   /** null = a new combo built by hand. */
   editing: ComboLine | null;
   codes: readonly string[];
+  /** Module code to its name, for the search. */
+  names: Readonly<Record<string, string>>;
   supplierId: string | null;
   today: string;
   onClose: () => void;
@@ -290,7 +291,7 @@ export function CompartmentDialog({ model, editing, codes, supplierId, today, on
               Remove
             </button>
           </div>
-          {i === active && <ModulePicker codes={codes} picked={slot} onToggle={(code) => toggle(i, code)} />}
+          {i === active && <ModulePicker codes={codes} names={names} picked={slot} onToggle={(code) => toggle(i, code)} />}
         </div>
       ))}
       <button

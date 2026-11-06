@@ -18,7 +18,7 @@ import { useProductModels } from '../lib/product-models-queries';
 import { useSupplierDetail } from '../lib/suppliers-queries';
 import { todayMyt } from '../lib/dates';
 import {
-  comboBook, costAt, editKey, hasPrice, heightLabel, historyLines, itemsFromEdits, offeredSizes, PRICE_TIERS, sizesInUse, slotLabel, sortSizes, tierLabel,
+  comboBook, costAt, editKey, hasPrice, heightLabel, historyLines, itemsFromEdits, listedModels, offeredSizes, PRICE_TIERS, sizesInUse, slotLabel, sortSizes, tierLabel,
   type ComboLine,
 } from './combo/comboBook';
 import { errText } from './combo/comboErrors';
@@ -109,7 +109,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     }
     for (const b of supplierDetailQ.data?.bindings ?? []) {
       const model = modelByCode.get(b.item_code);
-      const code = (b.supplier_sku ?? '').trim().split('-')[0]?.trim();
+      // "5539-2A(LHF)" gives 5539, "DSL-8030-2A" gives DSL-8030: only the module comes off.
+      const code = (b.supplier_sku ?? '').trim().replace(/-[^-]*$/, '').trim();
       if (!model || !code) continue;
       const counts = (out[model] ??= {});
       counts[code] = (counts[code] ?? 0) + 1;
@@ -122,6 +123,15 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     return counts[0]?.[0] ?? null;
   };
 
+  const modelNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const p of productsQ.data ?? []) {
+      const row = p as unknown as { base_model?: string | null; model_name?: string | null };
+      if (row.base_model && row.model_name) out.set(row.base_model, row.model_name);
+    }
+    return out;
+  }, [productsQ.data]);
+
   // The models to work on: a supplier's page shows what they carry, Products every sofa.
   const models = useMemo(() => {
     const set = new Set<string>(book.keys());
@@ -129,8 +139,24 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [book, supplierCodes, modulesByModel, supplierId]);
 
+  const openModel = params.get('comboModel') ?? models.find((m) => book.has(m)) ?? models[0] ?? null;
+  // Module code to its names for the picker's search: the build label and the SKU name.
+  const moduleNames = useMemo(() => {
+    const out: Record<string, string> = Object.fromEntries(SOFA_MODULES.map((m) => [m.id, m.label]));
+    for (const p of productsQ.data ?? []) {
+      const row = p as unknown as { base_model?: string | null; code?: string | null; name?: string | null };
+      const code = row.code ?? '';
+      const dash = code.indexOf('-');
+      if (row.base_model !== openModel || dash <= 0 || !row.name) continue;
+      const compartment = normalizeCompartmentCode(code.slice(dash + 1));
+      if (compartment) out[compartment] = `${out[compartment] ?? ''} ${row.name}`;
+    }
+    return out;
+  }, [productsQ.data, openModel]);
+
   const [search, setSearch] = useState('');
-  const model = params.get('comboModel') ?? models[0] ?? null;
+  const [allModels, setAllModels] = useState(false);
+  const model = openModel;
   const rawTier = params.get('comboPrice');
   const tier: SofaPriceTier = PRICE_TIERS.find((t) => t === rawTier) ?? 'PRICE_2';
   const setParam = (key: string, value: string) =>
@@ -143,9 +169,9 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   const [effectiveFrom, setEffectiveFrom] = useState(today);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [notice, setNotice] = useState('');
-  const [onlyPriced, setOnlyPriced] = useState(false);
+  const [onlyPriced, setOnlyPriced] = useState(true);
 
-  useEffect(() => { setTicked(new Set()); setNotice(''); setOnlyPriced(false); }, [model, supplierId]);
+  useEffect(() => { setTicked(new Set()); setNotice(''); setOnlyPriced(true); }, [model, supplierId]);
 
   const picked = lines.find((l) => l.key === pickedKey) ?? lines[0] ?? null;
   const chosen = lines.filter((l) => ticked.has(l.key));
@@ -153,7 +179,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
 
   const inUse = sizesInUse(lines);
   const allSizes = model ? sizesOf(model) : sortSizes(heights);
-  const sizes = onlyPriced ? allSizes.filter((h) => inUse.has(h)) : allSizes;
+  const sizes = onlyPriced && inUse.size > 0 ? allSizes.filter((h) => inUse.has(h)) : allSizes;
   const canNarrow = inUse.size > 0 && inUse.size < allSizes.length;
 
   const allLines = [...book.values()].flat();
@@ -199,7 +225,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     { label: 'Changed this month', value: changed, warn: false },
   ];
 
-  const shownModels = models.filter((m) => m.toLowerCase().includes(search.trim().toLowerCase()));
+  const modelEntries = models.map((m) => ({ code: m, name: modelNames.get(m) ?? '', supplierCode: supplierCodeOf(m), combos: (book.get(m) ?? []).length }));
+  const shownModels = listedModels(modelEntries, search, allModels, model);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>
@@ -232,10 +259,10 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search model" aria-label="Search model" style={fieldStyle} />
           </div>
           <div className={styles.modelList}>
-            {shownModels.map((m) => {
-              const list = book.get(m) ?? [];
-              const empty = list.filter((l) => !hasPrice(l)).length;
-              const code = supplierCodeOf(m);
+            {shownModels.map((entry) => {
+              const m = entry.code;
+              const empty = (book.get(m) ?? []).filter((l) => !hasPrice(l)).length;
+              const count = `${entry.combos} ${entry.combos === 1 ? 'combo' : 'combos'}`;
               return (
                 <button
                   key={m}
@@ -244,22 +271,32 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', minHeight: 54, padding: '6px 14px', border: 0, borderTop: '1px solid var(--line)', background: m === model ? 'var(--c-paper)' : 'transparent', color: 'var(--c-ink)', textAlign: 'left', cursor: 'pointer' }}
                 >
                   <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: 'block', fontWeight: 600 }}>{code ? `${m} · ${code}` : m}</span>
-                    <span style={soft}>{list.length} {list.length === 1 ? 'combo' : 'combos'}</span>
+                    <span style={{ display: 'block', fontWeight: 600 }}>{supplierId ? 'Our code ' : ''}{entry.name && entry.name !== m ? `${m} · ${entry.name}` : m}</span>
+                    <span style={soft}>{supplierId ? `${entry.supplierCode ? `Supplier code ${entry.supplierCode}` : 'No supplier code'} · ${count}` : count}</span>
                   </span>
                   {empty > 0 && <span title={`${empty} with no price`} style={{ minWidth: 22, padding: '2px 6px', borderRadius: 999, textAlign: 'center', fontSize: 'var(--fs-11)', fontWeight: 600, background: 'var(--c-festive-b-bg, #f7e9e9)', color: 'var(--c-festive-b, #8f2c1a)' }}>{empty}</span>}
                 </button>
               );
             })}
-            {shownModels.length === 0 && <p style={{ ...soft, padding: 12 }}>No model matches.</p>}
+            {shownModels.length === 0 && <p style={{ ...soft, padding: 12 }}>{search ? 'No model matches.' : 'No combos yet.'}</p>}
           </div>
+          {!search && models.length > modelEntries.filter((m) => m.combos > 0).length && (
+            <div style={{ padding: 8, borderTop: '1px solid var(--line)' }}>
+              <Button variant="ghost" onClick={() => setAllModels(!allModels)} style={{ width: '100%' }}>
+                {allModels ? 'Only models with combos' : `Show all ${models.length} models`}
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className={styles.book}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
             <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-              <div style={{ fontSize: 'var(--fs-18)', fontWeight: 700 }}>{model ?? 'No model'}</div>
-              <div style={soft}>{tierLabel(tier)} · {supplierId ? 'used for PO auto-pricing' : 'RM cost per set'}</div>
+              <div style={{ fontSize: 'var(--fs-18)', fontWeight: 700 }}>{model ?? 'No model'}{model && modelNames.get(model) && modelNames.get(model) !== model ? ` · ${modelNames.get(model) ?? ''}` : ''}</div>
+              <div style={soft}>
+                {supplierId && model ? `Our code ${model} · ${supplierCodeOf(model) ? `Supplier code ${supplierCodeOf(model) ?? ''}` : 'No supplier code'} · ` : ''}
+                {tierLabel(tier)} · {supplierId ? 'used for PO auto-pricing' : 'RM cost per set'}
+              </div>
             </div>
             {canNarrow && <Button variant="secondary" onClick={() => setOnlyPriced(!onlyPriced)}>{onlyPriced ? `Show all ${allSizes.length} sizes` : 'Hide empty sizes'}</Button>}
           </div>
@@ -395,6 +432,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
           model={model}
           editing={dialog.kind === 'edit' ? dialog.line : null}
           codes={ownModules.length > 0 ? ownModules : ALL_MODULE_CODES}
+          names={moduleNames}
           supplierId={supplierId ?? null}
           today={today}
           onClose={() => setDialog(null)}

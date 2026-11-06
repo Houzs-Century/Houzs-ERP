@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import { buildStyledXlsx } from '../../lib/styled-xlsx';
 import type { SofaComboRule } from '../../lib/sofa-combos-queries';
-import { comboBook, fitSlots, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
+import { comboBook, familyMatches, fitSlots, listedModels, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
 import { comboSheets, planComboImport, type ComboGrids } from './comboExcel';
 
 const rule = (over: Partial<SofaComboRule>): SofaComboRule => ({
@@ -68,7 +68,34 @@ describe('the sizes of a model', () => {
   });
 });
 
+describe('the model list', () => {
+  const all = [
+    { code: '5030', name: 'Cloud', supplierCode: null, combos: 2 },
+    { code: '5527', name: 'Booqit', supplierCode: '8030', combos: 0 },
+    { code: '9081', name: 'Nova', supplierCode: null, combos: 0 },
+  ];
+  it('shows only models with combos by default', () => {
+    expect(listedModels(all, '', false, null).map((m) => m.code)).toEqual(['5030']);
+  });
+  it('shows every model when asked', () => {
+    expect(listedModels(all, '', true, null)).toHaveLength(3);
+  });
+  it('keeps the open model listed', () => {
+    expect(listedModels(all, '', false, '9081').map((m) => m.code)).toEqual(['5030', '9081']);
+  });
+  it('a search finds a model with no combos, by our code, our name or the supplier code', () => {
+    expect(listedModels(all, 'booq', false, null).map((m) => m.code)).toEqual(['5527']);
+    expect(listedModels(all, '8030', false, null).map((m) => m.code)).toEqual(['5527']);
+  });
+});
+
 describe('the module picker', () => {
+  it('finds a piece by name as well as by code', () => {
+    const family = moduleFamilies(['1NA'])[0]!;
+    expect(familyMatches(family, 'no arms', { '1NA': '1NA · No arms' })).toBe(true);
+    expect(familyMatches(family, '1na', {})).toBe(true);
+    expect(familyMatches(family, 'corner', { '1NA': '1NA · No arms' })).toBe(false);
+  });
   it('puts LHF and RHF of a piece on one row', () => {
     const families = moduleFamilies(OWN);
     expect(families.find((f) => f.code === '2A')?.variants.map((v) => v.label)).toEqual(['LHF', 'RHF']);
