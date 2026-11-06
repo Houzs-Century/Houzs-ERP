@@ -10,7 +10,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 /* Hoisted with the mocks that read them (vi.mock factories run before the
    file's own consts exist). */
@@ -47,7 +47,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   useUpdatePaymentVoucher: () => ({ mutateAsync: updateAsync, isPending: false }),
   useCancelPaymentVoucher: idle, useSubmitPaymentVoucher: idle, useWithdrawPaymentVoucher: idle,
   useCheckPaymentVoucher: idle, useApprovePaymentVoucher: idle, useRejectPaymentVoucher: idle,
-  useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle,
+  useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
   usePvFiles: () => ({ data: { files: [] }, isLoading: false, refetch: async () => ({ data: { files: [] } }) }),
   fetchPvFileBlobUrl: async () => ({ url: '', contentType: '' }),
@@ -112,6 +112,55 @@ const draw = () => render(
     <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
   </MemoryRouter>,
 );
+
+/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only. */
+describe('Edit text: the words of a voucher the first yes has locked', () => {
+  const atStage = (over: Record<string, unknown>) => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
+    return render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+  const MARK = '2026-11-06T03:00:00Z';
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null }); });
+
+  test('checked: Edit text and no Edit; it opens the form with the voucher\'s words, and closes', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK });
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit text' }));
+    expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Line 1 description')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit text' })).toBeTruthy();
+  });
+
+  test('prepared: the whole Edit, no Edit text', () => {
+    atStage({ submitted_at: MARK });
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+  });
+
+  test('approved or posted: neither', () => {
+    const { unmount } = atStage({ submitted_at: MARK, checked_at: MARK, approved_at: MARK });
+    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    unmount();
+    atStage({ status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK });
+    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  test('the list\'s Edit text opens straight on the form', () => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: MARK, checked_at: MARK, approved_at: null });
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9?text=1']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByLabelText('Line 1 description')).toBeTruthy();
+  });
+});
 
 describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', () => {
   test('no line editor; the supplier\'s AP invoice is on the picker with its knock-off prefilled; a prepay adds to the total; Save writes the one AP-control line and the allocation', async () => {
