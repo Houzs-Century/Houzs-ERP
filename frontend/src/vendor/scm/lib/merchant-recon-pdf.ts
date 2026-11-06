@@ -233,7 +233,7 @@ export async function generateReportLinesPdf(reports: PrintedReport[], opts: Opt
       const headedFigure = d.section === 'body' || d.section === 'foot' || d.row.index === 1;
       if (REPORT_FIGURES.has(c) && headedFigure) d.cell.styles.halign = 'right';
       /* The rule down the seam, between what the merchant said and what the ERP said. */
-      if (c === REPORT_SEAM) d.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.4 } as never;
+      if (c === REPORT_SEAM) d.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.4 };
       if (d.section !== 'body') return;
       if (t.bands.has(d.row.index)) d.cell.styles.cellPadding = { ...CELL, top: CELL.top + BAND_H };
       if (c === REPORT_STATUS) {

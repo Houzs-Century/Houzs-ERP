@@ -73,7 +73,7 @@ const printedLine = (r: SettlementRow): PrintedLine => {
     document: orders.length === 0 && r.candidates.length > 0 ? `${r.candidates.length} possible` : null,
     orders: orders.map((o) => ({
       docNo: o.docNo, customer: o.customer, sales: o.sales, sheet: o.sheet, paidOn: o.paidOn, code: o.code,
-      amountSen: o.amountSen == null ? null : Number(o.amountSen),
+      amountSen: Number(o.amountSen),
     })),
     status: LINE_STATUS_WORDS[status],
     tone: status === 'matched' ? 'good' : status === 'none' ? 'bad' : null,
