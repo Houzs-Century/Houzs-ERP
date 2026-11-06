@@ -7,7 +7,7 @@ import { MergeCodesDialog } from './MergeCodesDialog';
 
 const plan = {
   pairs: [{ drop: 'ZZ9901-2S', keep: 'ZZ9901-1S', refusals: [], rekey: [], unitsMoved: 0, retire: true, dropStock: [] }],
-  keepStock: [], totals: { pairs: 1, refused: 0, rowsToRekey: 0, unitsMoved: 0, toRetire: 1 }, confirm: 'MERGE 1', autoCount: [],
+  keepStock: [], totals: { pairs: 1, refused: 0, rowsToRekey: 0, unitsMoved: 0, toRetire: 1 }, confirm: 'MERGE 1',
 };
 vi.mock('../../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn(async () => plan) }));
 

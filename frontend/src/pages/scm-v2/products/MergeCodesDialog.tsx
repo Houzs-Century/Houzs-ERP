@@ -6,8 +6,7 @@ import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
 
 /* Merge duplicate SKU codes into one kept code (POST /mfg-products/merge/*).
    Check plans and writes nothing; Merge sends back the phrase Check returned,
-   so the server refuses if anything changed in between. AutoCount is merged by
-   hand in AutoCount - this dialog lists which AutoCount item each code sends to. */
+   so the server refuses if anything changed in between. */
 
 type Plan = {
   pairs: Array<{
@@ -19,7 +18,6 @@ type Plan = {
   keepStock: Array<{ warehouse: string; qty: number }>;
   totals: { pairs: number; refused: number; rowsToRekey: number; unitsMoved: number; toRetire: number };
   confirm: string;
-  autoCount: Array<{ code: string; acItemCode: string | null; detail: string | null }>;
 };
 
 const stockText = (s: Array<{ warehouse: string; qty: number }>) => s.map((x) => `${x.warehouse} ${x.qty}`).join(', ') || 'none';
@@ -115,12 +113,6 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
                 )}
             </div>
           ))}
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontWeight: 600 }}>AutoCount: merge these by hand in AutoCount (Change Item Code, "Perform Merge")</div>
-            {plan.autoCount.map((a) => (
-              <div key={a.code} style={mono}>{a.code}: {a.acItemCode ?? `no single AutoCount item (${a.detail ?? ''})`}</div>
-            ))}
-          </div>
         </div>
       )}
 
