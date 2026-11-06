@@ -807,6 +807,13 @@ describe("a supplier's way of printing our PO", () => {
   test('a revision suffix is still that PO (Hookka)', () => {
     expect(resolvePrintedPo('HC-PO-2610-257_R1', pos, true)?.poNumber).toBe('HC-PO-2610-257');
   });
+  test('a year typed one digit off is the same running number (Nice Future)', () => {
+    const own = [{ poNumber: 'HC-PO-2610-279' }, { poNumber: 'HC-PO-2610-360' }];
+    expect(resolvePrintedPo('HC-PO-2010-279', own, true)?.poNumber).toBe('HC-PO-2610-279');
+    expect(resolvePrintedPo('HC-PO-2010-279', own, false)).toBeNull();
+    expect(resolvePrintedPo('HC-PO-2010-280', own, true)).toBeNull();
+    expect(resolvePrintedPo('HC-PO-1910-279', own, true)).toBeNull();
+  });
   test('a misread lead digit still ends in our number (Dunlopillo)', () => {
     expect(resolvePrintedPo('102610-243', pos, true)?.poNumber).toBe('HC-PO-2610-243');
     expect(resolvePrintedPo('102610-243', pos, false)).toBeNull();

@@ -176,7 +176,8 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           {swapped && <button type="button" className={styles.bannerLink} onClick={() => set({ deliveryDate: swapped })}>Change to {fmtDate(swapped)}</button>}
         </div>
       )}
-      {!anyTied && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
+      {!anyTied && repeat === null && !doc.duplicateOf && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
+      {!anyTied && doc.duplicateOf && <div className={styles.hint}>Everything on this delivery order is already received, so nothing is left to pick.</div>}
       {anyTied && block && <div className={styles.hint}>{block}</div>}
 
       {open && (

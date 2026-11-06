@@ -237,13 +237,9 @@ export async function createDraftGrnsFromPoItemsCore(
     }
     if (!h) continue;
 
-    /* A receipt reads its lines back by created_at: one instant per line keeps the
-       order they were picked, which for a scan is the order of the paper. */
-    const insertedAt = Date.now();
-    const rows = bucket.lines.map(({ row, qty }, i) => {
+    const rows = bucket.lines.map(({ row, qty }) => {
       const discountSen = row.discount_sen ?? 0;
       return {
-        created_at: new Date(insertedAt + i).toISOString(),
         grn_id: h.id,
         purchase_order_item_id: row.id,
         material_kind: row.material_kind,
