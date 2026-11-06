@@ -16,10 +16,11 @@ const wordsOf = (s: string | null | undefined): string[] =>
 /** A word that names one model, not a kind of thing: letters and digits, SF9050. */
 const isModel = (w: string): boolean => w.length >= 4 && /[A-Z]/.test(w) && /\d/.test(w);
 
-/** The bed size a row prints, as our codes spell it: 190X152 or 5 FTS is (Q). */
+/** The bed size a row prints, as our codes spell it: 190X152, W152 X L190 or 5 FTS is (Q). */
 export function printedSize(text: string | null | undefined): string | null {
   const t = (text ?? '').toUpperCase();
-  const cm = /(?<!\d)(?:190|200)\s*X\s*(91|107|152|183|200)(?!\d)|(?<!\d)(91|107|152|183|200)\s*X\s*(?:190|200)(?!\d)/.exec(t);
+  // ERGOTEX prints W152 X L190.
+  const cm = /(?<!\d)(?:190|200)\s*X\s*[WL]?(91|107|152|183|200)(?!\d)|(?<!\d)(91|107|152|183|200)\s*X\s*[WL]?(?:190|200)(?!\d)/.exec(t);
   const width = cm?.[1] ?? cm?.[2];
   if (width) return { 91: 'S', 107: 'SS', 152: 'Q', 183: 'K', 200: 'SK' }[width] ?? null;
   const ft = /\b(3\.5|3|5|6)\s*(?:FT|FTS|FEET)\b/.exec(t)?.[1];
