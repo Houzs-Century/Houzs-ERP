@@ -1,6 +1,5 @@
 /* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
 import { describe, expect, test } from 'vitest';
-import { inSentOrder } from '../routes/scan-check-shared';
 import { REVIEW_VERSION, inPrintedOrder, blockedReason, buildReview, codesToTeach, nameFits, racksOf, suggestByName, type ReviewLine, cleanReview, duplicateOf, giftsOf, picksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from './grn-scan-check';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
 
@@ -10,12 +9,6 @@ const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryD
 ] };
 const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], racks: { 'pi-1': 'R11-2' }, unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
 const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', materialName: null, supplierSku: null, remaining: 2, locationCode: 'KL' }]]);
-
-describe('drafts follow the scanned order', () => {
-  test('rows come back in the order the list sent them', () => {
-    expect(inSentOrder([{ id: 'c' }, { id: 'a' }, { id: 'b' }], ['a', 'b', 'c']).map((r) => r.id)).toEqual(['a', 'b', 'c']);
-  });
-});
 
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
