@@ -95,7 +95,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
-import { scheduleDpDate, writeNonSoFields, writeAssrLegDelivered } from '../lib/delivery-planning-nonso-edit';
+import { scheduleDpDate, writeNonSoFields, writeAssrLegStatus } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -2140,6 +2140,9 @@ const scheduleSchema = z.object({
   // scheduleDate write-back targets the matching assr_cases column
   // (customer_pickup_at vs do_date). Ignored for so | do.
   jobKind: z.enum(ASSR_BOARD_LEGS).nullable().optional(),
+  // ASSR ONLY: the leg status dropdown — Delivered / Cancelled / pending (owner
+  // 2026-11-06). Writes the leg's actual_* / cancelled_* marker; leg-only.
+  assrLegStatus: z.enum(['delivered', 'cancelled', 'pending']).optional(),
   // ── Optional trip wiring ───────────────────────────────────────────────────
   // Scheduling an order onto a trip. Either tripId (append to an existing trip)
   // OR {lorryId, driverId, tripDate?} (find-or-create a trip for that lorry+date).
@@ -2241,8 +2244,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (type === 'assr') {
     const assrWantsTrip = p.tripId != null || p.lorryId != null;
     const assrCrewOnly = !assrWantsTrip && hasSeatPatch(p);
-    const wantsDelivered = p.deliveryState !== undefined;
-    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly && !wantsDelivered) return c.json({ error: 'no_changes' }, 400);
+    const wantsStatus = p.assrLegStatus !== undefined;
+    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly && !wantsStatus) return c.json({ error: 'no_changes' }, 400);
     const caseId = Number(id);
     if (!Number.isFinite(caseId)) return c.json({ error: 'bad_id', reason: 'assr id must be numeric' }, 400);
     const jobKind: 'customer_pickup' | 'delivery' | 'inspection' =
@@ -2251,24 +2254,22 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* assrLegGuardSql = company predicate (out-of-scope 404s, owner 2026-08-21) +
-       not-archived; assrLegOpen (below) gates only the date/crew/trip writes, not
-       the Mark-Delivered toggle (a leg's done toggle, which works on a done leg). */
+    // assrLegGuardSql = company predicate (out-of-scope 404s) + not-archived; assrLegOpen
+    // (below) gates only the date/crew/trip writes, not the status write (may touch a done leg).
     const legCase = (await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
     if (!legCase) return c.json({ error: 'not_found' }, 404);
     // "Who" for the history (assr_activity.user_id is bigint but scm users are UUIDs → keep the actor in the note).
     const actor = c.get('user') as { name?: string; email?: string } | null;
     const by = actor?.name ?? actor?.email ?? 'logistics';
 
-    /* Mark Delivered (owner 2026-11-06): stamp the leg's actual_* date + record it;
-       never closes the case. In the board-writes module (router size ceiling). */
-    if (wantsDelivered && p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) {
-      const r = await writeAssrLegDelivered(c, caseId, jobKind, p.deliveryState === 'DELIVERED', by);
+    // Leg status dropdown (owner 2026-11-06): Delivered / Cancelled / pending — records
+    // the step, never closes the case (logic in the board-writes module, size ceiling).
+    if (p.assrLegStatus !== undefined && p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) {
+      const r = await writeAssrLegStatus(c, caseId, jobKind, p.assrLegStatus, by);
       return c.json(r.body, r.status);
     }
 
-    // Date / crew / trip need the job still OPEN — scheduling/crewing a done leg
-    // must not mint a trip + trip_stop + DP number for finished / absent work.
+    // Date / crew / trip need the job still OPEN — no trip + trip_stop + DP number for a done leg.
     if (!assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).

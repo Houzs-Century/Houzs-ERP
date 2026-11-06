@@ -30,7 +30,7 @@ import { buildPiReview, type BillableLine, type PiReview } from './pi-scan-check
 import { loadOutstandingGrnLines, remainingToBill } from './outstanding-grn-lines';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
-  matchInvoiceLinesToGrnLines, docRefMatches, normalizeCode,
+  matchInvoiceLinesToGrnLines, docRefMatches, docRefsOf, normalizeCode,
   type PiMatchGrnLine,
 } from './pi-scan-match';
 import { CLAUDE_MODEL, type ContentBlock, type UploadedImage } from './scan-ocr';
@@ -296,7 +296,8 @@ async function findAnchorGrns(
 
   // DO No is the strongest anchor (one D.O. = one GRN). Prefer it; fall back to
   // PO No (which may name several GRNs — multi-GR -> one PI is supported).
-  const byDo = rows.filter((g) => docRefMatches(doNo, g.delivery_note_ref) || docRefMatches(doNo, g.grn_number));
+  const refs = docRefsOf(doNo);
+  const byDo = rows.filter((g) => refs.some((d) => docRefMatches(d, g.delivery_note_ref) || docRefMatches(d, g.grn_number)));
   if (byDo.length > 0) return byDo;
   const byPo = rows.filter((g) => docRefMatches(poNo, g.po_number));
   return byPo;

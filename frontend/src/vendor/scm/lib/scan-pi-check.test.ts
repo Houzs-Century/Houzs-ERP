@@ -22,3 +22,14 @@ describe('piAmounts', () => {
     expect(piAmounts(review([row('1', 'a', 2, read(null, null))]), lines).invoiceSen).toBeNull();
   });
 });
+
+describe('the invoice amount', () => {
+  const row = (unitPrice: number | null, qty: number) => ({ key: String(unitPrice), grnItemId: null, grnNumber: null, qty, suggested: false, read: { itemCode: null, description: 'x', qty, unitPrice, lineTotal: unitPrice == null ? null : unitPrice * qty } });
+  const review = (lines: ReturnType<typeof row>[]) => ({ v: 4, supplierId: null, supplierRead: null, invoiceNumber: null, invoiceDate: null, doNo: null, poNo: null, notes: null, taxNote: null, lines });
+  it('a free gift with no price leaves the amount standing', () => {
+    expect(piAmounts(review([row(1050, 5), row(1300, 1), row(null, 10)]), new Map()).invoiceSen).toBe(655000);
+  });
+  it('no price read at all stays unknown', () => {
+    expect(piAmounts(review([row(null, 10)]), new Map()).invoiceSen).toBeNull();
+  });
+});
