@@ -454,7 +454,8 @@ export const productTotalsHandler = async (
   // Value, Committed / Unscheduled demand and Incoming all narrow to THIS
   // warehouse (SO lines carry warehouse_id since mig 0118; PO lines fall back to
   // the PO header's purchase_location_id). Omitted → company-wide totals as before.
-  const warehouseId = c.req.query('warehouseId') || null;
+  const warehouseIds = (c.req.query('warehouseIds') ?? c.req.query('warehouseId') ?? '').split(',').filter(Boolean);
+  const scopedToWarehouses = warehouseIds.length > 0;
 
   // PostgREST's default 1000-row cap silently truncates product totals — page
   // through with .range() so the full catalogue comes back. Any ?search/?category
@@ -559,10 +560,10 @@ export const productTotalsHandler = async (
     // per-warehouse view must recompute on-hand qty (balances) for the chosen
     // warehouse only. Value is (re)computed from the open lots below for BOTH
     // scopes, so it no longer reads v_inventory_value (which counts consignment).
-    if (warehouseId) {
+    if (scopedToWarehouses) {
       const { data: bal, error: balErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
-        .eq('warehouse_id', warehouseId), 'item_code', batch).order('item_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to));
+        .in('warehouse_id', warehouseIds), 'item_code', batch).order('item_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to));
       if (balErr) {
         // eslint-disable-next-line no-console
         console.error('[inventory] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
@@ -578,8 +579,8 @@ export const productTotalsHandler = async (
        non-selling and a KL view reports none of it. Skipped entirely when the
        company has no showroom/display/service warehouse — the common case. */
     const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
-    const scopedNonSelling = warehouseId
-      ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
+    const scopedNonSelling = scopedToWarehouses
+      ? warehouseIds.filter((id) => nonSellingIds.has(id))
       : [...nonSellingIds];
     if (scopedNonSelling.length > 0) {
       const { data: nsBal, error: nsErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
@@ -619,7 +620,7 @@ export const productTotalsHandler = async (
         .select(`id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)${embedNetting ? `, ${NETTING_EMBED}` : ''}`), c), 'item_code', batch)
         .eq('cancelled', false);
       if (embedNetting) dq = dq.not('so.status', 'in', SO_DONE_SQL);
-      if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
+      if (scopedToWarehouses) dq = dq.in('warehouse_id', warehouseIds); // ask A — scope demand to these warehouses (mig 0118)
       return dq.order('id').range(from, to);
     });
     let nettingEmbedded = true;
@@ -686,7 +687,7 @@ export const productTotalsHandler = async (
       const left = Number(r.qty ?? 0) - Number(r.received_qty ?? 0);
       if (left <= 0) continue;
       const poWh = r.warehouse_id ?? po.purchase_location_id ?? null;
-      if (warehouseId && poWh !== warehouseId) continue; // ask A — scope incoming to this warehouse
+      if (scopedToWarehouses && !warehouseIds.includes(String(poWh))) continue; // ask A — scope incoming to these warehouses
       const rawEta = effectiveDelivery(r.delivery_date, r.supplier_delivery_date_2, r.supplier_delivery_date_3, r.supplier_delivery_date_4)
         ?? effectiveDelivery(po.expected_at, po.supplier_delivery_date_2, po.supplier_delivery_date_3, po.supplier_delivery_date_4)
         ?? null;
@@ -711,7 +712,7 @@ export const productTotalsHandler = async (
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
         .select('item_code, warehouse_id, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-      if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
+      if (scopedToWarehouses) lq = lq.in('warehouse_id', warehouseIds); // ask A — oldest lot within these warehouses
       return lq.order('received_at').order('id').range(from, to);
     });
     if (lotsErr) {
@@ -837,7 +838,7 @@ export const productTotalsHandler = async (
     const lotHeld = Math.round(heldQty.get(code) ?? 0);
     const stock = lotOwned + lotHeld;
     // The movement rollup, kept for comparison only — never for arithmetic.
-    const movementStock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
+    const movementStock = scopedToWarehouses ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
     // OWNED value from the open lots (consignment excluded), for BOTH scopes —
     // replaces the totals-view / v_inventory_value figures, which both counted
     // consignment. Rounded once, mirroring the drawer's buildStockBreakdown.
@@ -907,7 +908,7 @@ export const productTotalsHandler = async (
   // In a single-warehouse view, drop SKUs with no presence there (no stock, no
   // incoming, no demand) so the list reflects that warehouse instead of the
   // whole catalogue at qty 0.
-  const out = warehouseId
+  const out = scopedToWarehouses
     ? enriched.filter((r) => (r.total_qty as number) !== 0 || r.incoming_qty > 0 || r.reserved_total > 0)
     : enriched;
   return c.json({ products: out });

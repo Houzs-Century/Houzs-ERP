@@ -92,7 +92,9 @@ const isBlankVariant = (v: unknown): boolean =>
 /* The sofa Leg Height carries a standing "Default" option (RM 0.00) in the
    maintenance sofaLegHeights pool (owner 2026-07-13). Resolve its value,
    matched case-insensitively by name, so a sofa line's Leg Height auto-fills to
-   it instead of an empty required field. null when the pool has no such option. */
+   it instead of an empty required field. null when the pool has no such option.
+   A Model's own leg list never hides it: goods are bought and stocked under it,
+   so a delivery order must be able to pick it (2990-PO-2610-019, KABBIN). */
 const DEFAULT_SOFA_LEG_RE = /^\s*default\s*$/i;
 const defaultSofaLegValue = (
   maint: { sofaLegHeights?: readonly unknown[] } | null | undefined,
@@ -1267,7 +1269,7 @@ const SoLineCardInner = ({
               label="Leg Heights"
               value={String(draft.variants.legHeight ?? '')}
               disabled={!isEditing}
-              options={sortByNumeric(restrictP(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights))}
+              options={sortByNumeric(restrictPricedToPool(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights, defaultSofaLegValue(maint)))}
               onChange={(v) => setVariant('legHeight', v)}
             />
             {attachOptions ? (

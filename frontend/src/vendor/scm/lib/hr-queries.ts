@@ -66,6 +66,8 @@ export type HrPickers = {
   categories: HrPickerRef[];
   /** Fabric SERIES (fabric_library.id, e.g. 'BF') — never individual colours. */
   fabrics: HrPickerRef[];
+  /** Named fabric series (EMBRACE, HOMELY …) and the fabric refs in each. Absent from an older API. */
+  fabricSeries?: { series: string; refs: string[] }[];
   specials: HrPickerRef[];
 };
 
@@ -220,11 +222,12 @@ export function useHrItemKpi() {
   });
 }
 
-export function useCreateHrItemKpi() {
+/** Several rules in one all-or-nothing request (POST /hr/item-kpi/batch). */
+export function useCreateHrItemKpis() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { flagType: HrFlagType; ref: string; label?: string; bonusSen: number; active?: boolean }) =>
-      authedFetch<{ item: HrItemKpi }>('/hr/item-kpi', { method: 'POST', body: JSON.stringify(body) }),
+    mutationFn: (items: { flagType: HrFlagType; ref: string; label?: string; bonusSen: number }[]) =>
+      authedFetch<{ items: HrItemKpi[] }>('/hr/item-kpi/batch', { method: 'POST', body: JSON.stringify({ items }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hr'] }),
   });
 }

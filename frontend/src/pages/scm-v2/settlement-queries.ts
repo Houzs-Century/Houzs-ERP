@@ -2,6 +2,7 @@
 // (accounting phase 2B; brief §3.5 layer 3). Every rule lives on the server;
 // these are transport only, so the page cannot drift from what actually posts.
 
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
@@ -320,9 +321,8 @@ export const useSettlementBatches = () => useQuery({
   retryDelay: 800,
 });
 
-export const useSettlementBatch = (batchId: number | null) => useQuery({
+const settlementBatchQuery = (batchId: number | null) => ({
   queryKey: ['settlement-batch', batchId],
-  enabled: batchId != null,
   queryFn: () => authedFetch<{
     batch: SettlementBatch;
     acquirer: { code: string; hasUniqueRef: boolean | null; dateToleranceDays: number };
@@ -335,6 +335,21 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+export const useSettlementBatch = (batchId: number | null) => useQuery({
+  ...settlementBatchQuery(batchId),
+  enabled: batchId != null,
+});
+
+/** Several reports' lines at once, for an export: as the list already read them, so the
+    file says what the screen says; one not read yet is read now. */
+export const useReadSettlementBatches = () => {
+  const qc = useQueryClient();
+  return useCallback(
+    (ids: readonly number[]) => Promise.all(ids.map((id) => qc.ensureQueryData(settlementBatchQuery(id)))),
+    [qc],
+  );
+};
 
 export type UploadResult = {
   batchId: number;
@@ -644,7 +659,8 @@ export type Watchlist = {
   /** salespersonName: who sold it, off the order (owner 2026-09-10: 我想要看到
       salesman 的名字); null when the order names nobody or the payment is an
       invoice's. */
-  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null; salespersonName?: string | null }>;
+  /** ref / customer_so_no: the order's Ref No. (HC13025, ZNT6656), raw, for customerRefOf. */
+  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null; salespersonName?: string | null; ref?: string | null; customer_so_no?: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
 

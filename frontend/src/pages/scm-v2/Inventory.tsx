@@ -76,6 +76,7 @@ const docHrefFor = (m: InventoryMovement): string | null => {
   }
 };
 import styles from './Inventory.module.css';
+import { WarehouseFilter } from './InventoryWarehouseFilter';
 import { stockAdjustmentHref } from '../../vendor/scm/lib/stock-adjustment-link';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -139,7 +140,11 @@ const incomingPoSummary = (pos: InventoryIncomingPo[] | null | undefined): strin
 
 export const Inventory = () => {
   const [tab, setTab] = useState<Tab>('balances');
-  const [warehouseId, setWarehouseId] = useState<string | null>(null);
+  /* Balances picks any number of warehouses (owner 2026-11-06); the other tabs
+     read one, so more than one reads as All there. */
+  const [warehouseIds, setWarehouseIds] = useState<string[]>([]);
+  const warehouseId = warehouseIds.length === 1 ? warehouseIds[0]! : null;
+  const setWarehouseId = (id: string | null) => setWarehouseIds(id ? [id] : []);
   const [category, setCategory] = useState<Category>('all');
   const [search, setSearch] = useState('');
 
@@ -202,11 +207,11 @@ export const Inventory = () => {
           <div className={styles.filterRow}>
             {/* ask A (2026-07-24) — compact SEARCHABLE warehouse filter (was a
                 big-card / chip rail). Scopes Stock / Incoming / Scheduled /
-                Unscheduled to one warehouse. */}
+                Unscheduled to the picked warehouses. */}
             <WarehouseFilter
               warehouses={warehouses.data ?? []}
-              value={warehouseId}
-              onChange={setWarehouseId}
+              value={warehouseIds}
+              onChange={setWarehouseIds}
             />
             <div className={styles.searchBox} style={{ width: '100%' }}>
               <Search {...ICON} className={styles.searchIcon} />
@@ -219,7 +224,7 @@ export const Inventory = () => {
               />
             </div>
           </div>
-          <BalancesTab category={category} search={search} warehouseId={warehouseId}
+          <BalancesTab category={category} search={search} warehouseIds={warehouseIds}
             onDrilldown={(code, name) => setBreakdownFor({ code, name })} />
         </>
       )}
@@ -252,66 +257,9 @@ export const Inventory = () => {
         <ProductBreakdownDrawer
           code={breakdownFor.code}
           name={breakdownFor.name}
+          warehouseIds={warehouseIds}
           onClose={() => setBreakdownFor(null)}
         />
-      )}
-    </div>
-  );
-};
-
-/* ════════════════════════════════════════════════════════════════════════
-   WarehouseFilter — compact SEARCHABLE single-select for the Balances view
-   (ask A, owner 2026-07-24 "compact searchable dropdown, not big cards").
-   Shows the warehouse SHORT code-name (`code`, e.g. "KL WAREHOUSE") as the
-   label; the long `name` rides along as a muted sub-line inside the picker
-   only. Click to open, type to filter in place, pick or "All warehouses".
-   ════════════════════════════════════════════════════════════════════════ */
-const WarehouseFilter = ({
-  warehouses, value, onChange,
-}: {
-  warehouses: Warehouse[];
-  value: string | null;
-  onChange: (id: string | null) => void;
-}) => {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const selected = warehouses.find((w) => w.id === value) ?? null;
-  const ql = q.trim().toLowerCase();
-  const filtered = ql
-    ? warehouses.filter((w) => w.code.toLowerCase().includes(ql) || (w.name ?? '').toLowerCase().includes(ql))
-    : warehouses;
-  const close = () => { setOpen(false); setQ(''); };
-  return (
-    <div className={styles.whFilter}>
-      <button type="button" className={styles.whFilterButton} data-active={value !== null}
-        onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}>
-        <WarehouseIcon {...ICON} />
-        <span className={styles.whFilterLabel}>{selected ? selected.code : 'All warehouses'}</span>
-        <ChevronDown size={14} strokeWidth={1.75} />
-      </button>
-      {open && (
-        <>
-          <div className={styles.whFilterBackdrop} onClick={close} />
-          <div className={styles.whFilterPanel} role="listbox">
-            <input autoFocus className={styles.whFilterSearch} placeholder="Search warehouse…"
-              value={q} onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') close(); }} />
-            <div className={styles.whFilterList}>
-              <button type="button" className={styles.whFilterOption} data-active={value === null}
-                onClick={() => { onChange(null); close(); }}>
-                All warehouses
-              </button>
-              {filtered.map((w) => (
-                <button key={w.id} type="button" className={styles.whFilterOption} data-active={value === w.id}
-                  onClick={() => { onChange(w.id); close(); }}>
-                  <span className={styles.whFilterOptionCode}>{w.code}</span>
-                  {w.name && w.name !== w.code && <span className={styles.whFilterOptionSub}>{w.name}</span>}
-                </button>
-              ))}
-              {filtered.length === 0 && <div className={styles.whFilterEmpty}>No warehouse matches.</div>}
-            </div>
-          </div>
-        </>
       )}
     </div>
   );
@@ -427,11 +375,11 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
    Double-click row → per-warehouse breakdown drawer
    ════════════════════════════════════════════════════════════════════════ */
 const BalancesTab = ({
-  category, search, warehouseId, onDrilldown,
+  category, search, warehouseIds, onDrilldown,
 }: {
   category: Category;
   search: string;
-  warehouseId: string | null;
+  warehouseIds: readonly string[];
   onDrilldown: (code: string, name: string) => void;
 }) => {
   const [asOf, setAsOf] = useState(''); // 选日期 (GL item 5) — see InventoryAsOf.tsx
@@ -439,7 +387,7 @@ const BalancesTab = ({
   const { data, isLoading, isFetching, isPlaceholderData, error } = useInventoryProductTotals({
     search: requestTerm.trim() || undefined,
     category: category === 'all' ? undefined : category,
-    warehouseId: warehouseId ?? undefined,
+    warehouseIds,
   });
   const rows: InventoryProductTotal[] = useMemo(() => data ?? [], [data]);
   const searchTransition = useSearchResultTransition({
@@ -1360,8 +1308,8 @@ const ReservationsTab = ({
    per-warehouse Location | Qty | Unit Cost  +  FIFO lots underneath
    ════════════════════════════════════════════════════════════════════════ */
 const ProductBreakdownDrawer = ({
-  code, name, onClose,
-}: { code: string; name: string; onClose: () => void }) => {
+  code, name, warehouseIds, onClose,
+}: { code: string; name: string; warehouseIds: readonly string[]; onClose: () => void }) => {
   const movements = useInventoryMovements({ itemCode: code });
   const cogs = useCogsEntries({ itemCode: code });
   const warehouses = useWarehouses();
@@ -1407,7 +1355,10 @@ const ProductBreakdownDrawer = ({
      leaked PCR stock mis-posted into a normal warehouse into owned value
      (BUG-HISTORY 2026-07-25). buildStockBreakdown is the SAME transform the
      mobile Stock Card uses — one logic layer, two presentations. */
-  const lotRows = useMemo(() => reservations.data ?? [], [reservations.data]);
+  const lotRows = useMemo(() => {
+    const all = reservations.data ?? [];
+    return warehouseIds.length > 0 ? all.filter((l) => warehouseIds.includes(l.warehouse_id)) : all;
+  }, [reservations.data, warehouseIds]);
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
   // Free make-to-order units the server calls dead (service / showroom lots excluded).
   const deadMtoQty = bd.ownedLots

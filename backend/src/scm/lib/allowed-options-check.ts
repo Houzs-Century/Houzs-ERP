@@ -180,8 +180,9 @@ const isZeroLeg = (s: string): boolean => {
   const f = foldForPool(s).toLowerCase().replace(/\s+/g, '');
   return f === 'noleg' || /^0(?:\.0+)?"?$/.test(f);
 };
+/* "Default" is the standing sofa leg, offered on every Model whatever its own list says. */
 const legInPool = (pool: string[], value: string): boolean =>
-  inPool(pool, value) || (isZeroLeg(value) && pool.some(isZeroLeg));
+  inPool(pool, value) || (isZeroLeg(value) && pool.some(isZeroLeg)) || /^\s*default\s*$/i.test(value);
 
 /* Compartment codes are identifiers, not labels, and the catalogue spells the
    same module both ways: 2026-09-30, company 1 carried `8030-Console` AND

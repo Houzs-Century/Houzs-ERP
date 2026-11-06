@@ -24,6 +24,7 @@ export type PiReview = {
   doNo: string | null;
   poNo: string | null;
   notes: string | null;
+  taxNote: string | null;
   lines: PiReviewLine[];
 };
 export type PiCheckDoc = {
@@ -110,7 +111,10 @@ export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>
     if (r?.lineTotal != null) return Math.round(r.lineTotal * 100);
     return r?.unitPrice != null ? Math.round(r.unitPrice * 100 * l.qty) : null;
   });
-  const invoiceSen = rows.length > 0 && printed.every((v) => v != null) ? printed.reduce<number>((a, v) => a + v, 0) : null;
+  /* A row printed with no price is a free gift (Diglant's GWP pillow): it adds nothing,
+     it does not leave the invoice without an amount. */
+  const priced = printed.filter((v): v is number => v != null);
+  const invoiceSen = priced.length > 0 ? priced.reduce((a, v) => a + v, 0) : null;
   const ours = review.lines.map((l) => {
     const line = l.grnItemId ? lines.get(l.grnItemId) : undefined;
     return line ? Math.round(line.unitPriceSen * l.qty) : null;

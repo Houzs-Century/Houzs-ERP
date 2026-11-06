@@ -50,6 +50,9 @@ export type PiScanExtract = {
   invoiceDate: string | null; // YYYY-MM-DD or null
   poNo: string | null;
   doNo: string | null;
+  /** The invoice's Sales Tax and final amount, from its summary, in RM. */
+  salesTax: number | null;
+  totalAmount: number | null;
   lines: PiScanLine[];
 };
 
@@ -117,6 +120,8 @@ export function normalizePiExtract(raw: unknown): PiScanExtract {
     invoiceDate: coerceDate(o.invoiceDate),
     poNo: str(o.poNo),
     doNo: str(o.doNo),
+    salesTax: num(o.salesTax),
+    totalAmount: num(o.totalAmount),
     lines,
   };
 }
@@ -132,7 +137,9 @@ const PI_SCAN_PROMPT =
   '  "invoiceNumber": string|null,  // the supplier\'s own invoice number\n' +
   '  "invoiceDate": "YYYY-MM-DD"|null,\n' +
   '  "poNo": string|null,           // the Purchase Order number the invoice references (e.g. "PO-010070")\n' +
-  '  "doNo": string|null,           // the Delivery Order / D.O. number the invoice references (e.g. "DGSN26001880")\n' +
+  '  "doNo": string|null,           // the Delivery Order / D.O. number the invoice references (e.g. "DGSN26001880"); several printed: all of them, comma separated\n' +
+  '  "salesTax": number|null,       // the Sales Tax / SST amount in the invoice summary, 0 when it prints 0.00\n' +
+  '  "totalAmount": number|null,    // the final Total Amount of the invoice, after tax\n' +
   '  "lines": [\n' +
   '    {\n' +
   '      "itemCode": string|null,   // our item/stock code if printed\n' +
@@ -148,7 +155,7 @@ const PI_SCAN_PROMPT =
   'RULES:\n' +
   '- Copy numbers and codes EXACTLY as printed. Never invent an item code, PO No or DO No that is not on the page — use null when it is not there.\n' +
   '- If a value like Article No is printed separately from our item code, put each in its own field.\n' +
-  '- One object per invoice line item. Ignore subtotal / tax / grand-total summary rows — those are not lines.\n' +
+  '- One object per invoice line item. Subtotal / tax / grand-total summary rows are not lines: their tax and final amount go in salesTax and totalAmount.\n' +
   '- Prices are plain numbers in Ringgit (strip any "RM", commas or spaces).';
 
 /**

@@ -20,7 +20,8 @@ import { companyCodeById } from '../lib/doc-no';
 import { saveScanCodes } from '../lib/grn-scan-codes';
 import { loadSuppliers } from '../lib/grn-scan-load';
 import { createDraftPiFromGrnItems } from '../lib/pi-from-grn-core';
-import { loadBillableLines } from '../lib/pi-scan-run';
+import { loadBillableLines, reviewOfPiRead } from '../lib/pi-scan-run';
+import type { PiScanExtract } from '../lib/pi-scan-extract';
 import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
 import { refVariants } from '../lib/grn-scan-check';
 import { callerId, goldSamples, handleDiscard, handleFile, handleGold, handleRetry, handleUpload, idsOf, jsonBody, ownRows, svcOf, waitingRows, type CheckRow } from './scan-check-shared';
@@ -29,11 +30,31 @@ import { reapStalePiScanJobs, runPiJobFromRow } from './scan-pi';
 export const scanPiCheck = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanPiCheck.use('*', supabaseAuth);
 
-scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, runLocal: runPiJobFromRow }));
+scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, scannedToday: (review) => review, runLocal: runPiJobFromRow }));
 
 /* GET /scan-pi/check/pending — this user's invoices still being read or waiting
    to be checked, with the suppliers, what is left to bill on every supplier on
    them, and per invoice whether it repeats one already made. */
+/* A working copy of an older shape: rebuild it from the stored read, once, so a
+   waiting invoice takes the newer matching without being uploaded again. The head
+   the operator may have edited and any row they tied stay. */
+async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>): Promise<void> {
+  for (const r of rows) {
+    if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION || !r.sample_id) continue;
+    const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
+    if (error) { console.warn('[scan-pi check] read not loaded, copy left as it is:', r.id, error.message); continue; }
+    const parsed = (data as { extracted: PiScanExtract | null } | null)?.extracted ?? null;
+    if (!parsed || !Array.isArray(parsed.lines)) continue;
+    const { review, note } = await reviewOfPiRead(svc, companyId, parsed);
+    const tied = r.review.lines.filter((l) => l.grnItemId && !l.suggested);
+    const next: PiReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, invoiceNumber: r.review.invoiceNumber ?? review.invoiceNumber, invoiceDate: r.review.invoiceDate ?? review.invoiceDate, lines: tied.length > 0 ? r.review.lines : review.lines };
+    const { error: upErr } = await svc.from('scan_jobs').update({ review: next, error: note }).eq('id', r.id).eq('company_id', companyId).eq('review_state', 'pending');
+    if (upErr) { console.warn('[scan-pi check] copy not upgraded:', r.id, upErr.message); continue; }
+    r.review = next;
+    r.error = note;
+  }
+}
+
 scanPiCheck.get('/pending', async (c) => {
   const svc = svcOf(c.env);
   const companyId = activeCompanyId(c) ?? null;
@@ -42,6 +63,7 @@ scanPiCheck.get('/pending', async (c) => {
   const waiting = await waitingRows<PiReview>(svc, c, 'PI');
   if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const { rows } = waiting;
+  await upgradeCopies(svc, companyId, rows);
 
   const [suppliers, lines] = await Promise.all([loadSuppliers(svc, companyId), loadBillableLines(svc, companyId)]);
   if (lines === null) return c.json({ error: 'query_failed', reason: 'Could not load what is left to bill. Please try again.' }, 500);

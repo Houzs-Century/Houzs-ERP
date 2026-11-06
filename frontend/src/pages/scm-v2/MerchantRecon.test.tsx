@@ -70,6 +70,10 @@ const confirmMatchedBatch = vi.fn();
 const refreshAfterPosting = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
+const writeSheet = vi.fn();
+const reportLinesPdf = vi.fn();
+const waitingCardsPdf = vi.fn();
+const readBatches = vi.fn();
 
 /* The batch list, swappable: the screen draws a different conclusion from
    "3 lines still open" than from "every line decided", and both have to be
@@ -104,6 +108,7 @@ let openedBatch: Record<string, unknown> = {};
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
+  useReadSettlementBatches: () => readBatches,
   useSettlementBatches: () => ({ data: { batches: batchList }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
@@ -141,9 +146,9 @@ vi.mock('./settlement-queries', () => ({
     isLoading: false, isError: false, error: null,
   }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
-    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29, salespersonName: 'Kah Wai' },
+    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29, salespersonName: 'Kah Wai', ref: 'HC13025', customer_so_no: 'HC99999', accountSheet: 'R49241' },
     /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
-    { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63 },
+    { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63, ref: null, customer_so_no: 'ZNT6656', accountSheet: '393020' },
   ] }, isLoading: false }),
 }));
 
@@ -154,6 +159,16 @@ vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice
 /* The cards read a missing report off Finance's To do (card-missing). */
 let todoJobs: Array<Record<string, unknown>> = [];
 vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: todoJobs } }) }));
+
+/* The exports leave through these two doors; what goes through them is what is pinned here. */
+vi.mock('../../components/dataTableLineExport', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../components/dataTableLineExport')>()),
+  writeLineExportFile: (...args: unknown[]) => writeSheet(...args),
+}));
+vi.mock('../../vendor/scm/lib/merchant-recon-pdf', () => ({
+  generateReportLinesPdf: (...args: unknown[]) => reportLinesPdf(...args),
+  generateWaitingCardsPdf: (...args: unknown[]) => waitingCardsPdf(...args),
+}));
 
 import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
@@ -860,5 +875,99 @@ describe('the watchlist names the salesperson', () => {
     expect(within(w1).getByText('Kah Wai')).toBeTruthy();
     const w2 = screen.getByText('SO-2606-013').closest('tr') as HTMLElement;
     expect(within(w2).getByText('—')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-11-06: 这个 merchant report still to reconcile 和 card payment no merchant report
+   has reported yet 我要能 export; 我要有那个 reference HC, ZNT 等等; 可以 right click export; 支持 pdf. */
+describe('exporting the two lists', () => {
+  const readAll = () => readBatches.mockImplementation(async (ids: number[]) => ids.map(() => ({ rows: reportRows })));
+  const reportsMenu = () => fireEvent.contextMenu(screen.getByRole('columnheader', { name: 'Reference' }));
+  const cardsMenu = () => fireEvent.contextMenu(screen.getByRole('columnheader', { name: /customer paid on/i }));
+  const press = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+  const clear = () => [writeSheet, reportLinesPdf, waitingCardsPdf, readBatches].forEach((f) => f.mockReset());
+
+  test('the card payments list shows the order\'s Ref No., ref first, and the Account sheet', () => {
+    draw();
+    expect(screen.getByRole('columnheader', { name: /Ref No\./ })).toBeTruthy();
+    /* The reports list has one too. */
+    expect(screen.getAllByRole('columnheader', { name: /account sheet/i })).toHaveLength(2);
+    const w1 = screen.getByText('SO-2607-088').closest('tr') as HTMLElement;
+    expect(within(w1).getByText('HC13025')).toBeTruthy();
+    expect(within(w1).queryByText('HC99999')).toBeNull();
+    expect(within(w1).getByText('R49241')).toBeTruthy();
+    const w2 = screen.getByText('SO-2606-013').closest('tr') as HTMLElement;
+    expect(within(w2).getByText('ZNT6656')).toBeTruthy();
+    expect(within(w2).getByText('393020')).toBeTruthy();
+  });
+
+  test('its right click makes a PDF of the cells the Excel holds, Ref No. included', async () => {
+    clear();
+    draw();
+    cardsMenu();
+    press('Export to PDF');
+    await waitFor(() => expect(waitingCardsPdf).toHaveBeenCalledTimes(1));
+    const [view, opts] = waitingCardsPdf.mock.calls[0]!;
+    expect(view.matrix.header).toEqual(['Merchant', 'Document', 'Ref No.', 'Salesperson', 'Customer paid on', 'Days', 'Amount', 'Account sheet', 'Approval']);
+    expect(view.matrix.body[0]).toEqual(['MBB', 'SO-2607-088', 'HC13025', 'Kah Wai', '2026-07-18', 29, 350, 'R49241', 'A0900']);
+    expect(view.keys).toContain('days');
+    expect(opts).toEqual({ merchant: null });
+  });
+
+  test('its Excel goes out with the two new columns', async () => {
+    clear();
+    draw();
+    cardsMenu();
+    press('Export to Excel');
+    await waitFor(() => expect(writeSheet).toHaveBeenCalledTimes(1));
+    const [matrix, , file] = writeSheet.mock.calls[0]!;
+    expect(file).toMatch(/^card-payments-not-reported-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(matrix.header).toContain('Ref No.');
+    expect(matrix.header).toContain('Account sheet');
+  });
+
+  test('a right click on the reports list\'s header makes an Excel of every open line, read once per report', async () => {
+    clear();
+    readAll();
+    draw();
+    reportsMenu();
+    press('Export to Excel');
+    await waitFor(() => expect(writeSheet).toHaveBeenCalledTimes(1));
+    expect(readBatches).toHaveBeenCalledWith([1]);
+    const [matrix, sheet, file] = writeSheet.mock.calls[0]!;
+    expect(sheet).toBe('To reconcile');
+    expect(file).toMatch(/^merchant-reports-to-reconcile-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(matrix.header.slice(0, 5)).toEqual(['Merchant', 'Report', 'Date', 'Line', 'Reference']);
+    /* REPORT_ROWS without the line already done. */
+    expect(matrix.body.map((r: unknown[]) => r[4])).toEqual(['ZZ9', '969745', 'TYPO9', '615318040666']);
+    expect(matrix.body[0].slice(0, 2)).toEqual(['MBB', 'aug.csv']);
+    expect(screen.queryByRole('button', { name: 'Export to Excel' })).toBeNull();
+  });
+
+  test('and a PDF of the same reports, saying which merchant the list was cut to', async () => {
+    clear();
+    readAll();
+    draw();
+    reportsMenu();
+    press('Export to PDF');
+    await waitFor(() => expect(reportLinesPdf).toHaveBeenCalledTimes(1));
+    const [reports, opts] = reportLinesPdf.mock.calls[0]!;
+    expect(reports.map((r: { file: string; lines: unknown[] }) => [r.file, r.lines.length])).toEqual([['aug.csv', 4]]);
+    expect(opts).toEqual({ merchant: null });
+  });
+
+  test('a file that cannot be made says why, beside the list it was asked of', async () => {
+    clear();
+    readBatches.mockRejectedValue(new Error('The report could not be read.'));
+    draw();
+    reportsMenu();
+    press('Export to Excel');
+    expect((await screen.findByRole('alert')).textContent).toContain('The report could not be read.');
+    expect(writeSheet).not.toHaveBeenCalled();
+  });
+
+  test('the header says the right click is there', () => {
+    draw();
+    expect(screen.getByRole('columnheader', { name: 'Reference' }).closest('thead')?.getAttribute('title')).toBe('Right-click to export to Excel or PDF');
   });
 });

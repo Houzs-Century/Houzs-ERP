@@ -71,8 +71,10 @@ export const useMfgSalesOrders = (status?: string) =>
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
 /** The Sales Order list's filter as query parameters, no paging: the list request
  *  and the list's export (so-list-export.ts) send exactly these. */
-export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }): URLSearchParams {
+export function soListSearchParams(f: { from?: string; to?: string; status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }): URLSearchParams {
   const usp = new URLSearchParams();
+  if (f.from) usp.set('from', f.from);
+  if (f.to) usp.set('to', f.to);
   if (f.status && f.status !== 'all') usp.set('status', f.status.toUpperCase());
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
   if (f.sort) usp.set('sort', f.sort);
@@ -89,9 +91,9 @@ export function soListSearchParams(f: { status?: string; q?: string; sort?: stri
   return usp;
 }
 
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }) {
-  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies, brandings, cols } = params;
-  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies, brandings, cols });
+export function useMfgSalesOrdersPaged(params: { from?: string; to?: string; page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }) {
+  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies, brandings, cols, from, to } = params;
+  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies, brandings, cols, from, to });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({

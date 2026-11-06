@@ -56,41 +56,74 @@ export function parseCondition(token: string): Condition | null {
   return null;
 }
 
+export type DateRange = { from?: string; to?: string };
+
 /* Evaluated in MYT (UTC+8) like the rest of the app: a Date shifted by +8h has
    its UTC fields equal to the MYT wall clock, so the getUTC* family is exact. */
+export function presetRange(preset: DatePreset, now = Date.now()): DateRange {
+  const nowMyt = new Date(now + 8 * 3600 * 1000);
+  const shifted = (days: number): string => {
+    const t = new Date(nowMyt);
+    t.setUTCDate(t.getUTCDate() + days);
+    return t.toISOString().slice(0, 10);
+  };
+  const monthEnd = (first: Date): string => {
+    const e = new Date(first);
+    e.setUTCMonth(e.getUTCMonth() + 1, 0);
+    return e.toISOString().slice(0, 10);
+  };
+  switch (preset) {
+    case "today":
+      return { from: shifted(0), to: shifted(0) };
+    case "overdue":
+      return { to: shifted(-1) };
+    case "tomorrow":
+      return { from: shifted(1), to: shifted(1) };
+    case "thisWeek": {
+      const dow = (nowMyt.getUTCDay() + 6) % 7;
+      return { from: shifted(-dow), to: shifted(6 - dow) };
+    }
+    case "thisMonth": {
+      const first = new Date(nowMyt);
+      first.setUTCDate(1);
+      return { from: first.toISOString().slice(0, 10), to: monthEnd(first) };
+    }
+    case "lastMonth": {
+      const first = new Date(nowMyt);
+      first.setUTCDate(1);
+      first.setUTCMonth(first.getUTCMonth() - 1);
+      return { from: first.toISOString().slice(0, 10), to: monthEnd(first) };
+    }
+  }
+}
+
 export function dateMatchesPreset(iso: string | null | undefined, preset: DatePreset, now = Date.now()): boolean {
   if (!iso) return false;
   const d = String(iso).slice(0, 10);
   if (d.length < 10) return false;
-  const nowMyt = new Date(now + 8 * 3600 * 1000);
-  const today = nowMyt.toISOString().slice(0, 10);
-  switch (preset) {
-    case "today":
-      return d === today;
-    case "overdue":
-      return d < today;
-    case "tomorrow": {
-      const t = new Date(nowMyt);
-      t.setUTCDate(t.getUTCDate() + 1);
-      return d === t.toISOString().slice(0, 10);
-    }
-    case "thisWeek": {
-      const dow = (nowMyt.getUTCDay() + 6) % 7;
-      const mon = new Date(nowMyt);
-      mon.setUTCDate(mon.getUTCDate() - dow);
-      const sun = new Date(mon);
-      sun.setUTCDate(sun.getUTCDate() + 6);
-      return d >= mon.toISOString().slice(0, 10) && d <= sun.toISOString().slice(0, 10);
-    }
-    case "thisMonth":
-      return d.slice(0, 7) === today.slice(0, 7);
-    case "lastMonth": {
-      const lm = new Date(nowMyt);
-      lm.setUTCDate(1);
-      lm.setUTCMonth(lm.getUTCMonth() - 1);
-      return d.slice(0, 7) === lm.toISOString().slice(0, 7);
-    }
+  const { from, to } = presetRange(preset, now);
+  return (!from || d >= from) && (!to || d <= to);
+}
+
+/** The date range a column's funnel asks for, so a server-paged list can ask the
+ *  server for it: on such a list the grid holds one page, and a condition run
+ *  there would judge only that page. */
+export function conditionDateRange(values: readonly string[] | undefined, now = Date.now()): DateRange {
+  for (const v of values ?? []) {
+    const c = parseCondition(v);
+    if (c?.kind === "preset") return presetRange(c.preset, now);
+    if (c?.kind === "dateRange") return { ...(c.from ? { from: c.from } : {}), ...(c.to ? { to: c.to } : {}) };
   }
+  return {};
+}
+
+const DATE_CELL = /^\d{4}[-/]\d{2}[-/]\d{2}/;
+
+/** A column whose cells are all dates gets the date filter without saying so,
+ *  so a new date column cannot be left without it (owner 2026-11-06). */
+export function looksLikeDateColumn(values: readonly string[]): boolean {
+  const cells = values.filter((v) => v.trim() !== "" && v.trim() !== "—" && v.trim() !== "-");
+  return cells.length > 0 && cells.every((v) => DATE_CELL.test(v.trim()));
 }
 
 type Cell = string | number | boolean | null | undefined;
@@ -112,7 +145,7 @@ export function rowMatchesCondition<T>(row: T, c: Condition, col: ConditionColum
     return true;
   }
   const raw = col.dateValue ? col.dateValue(row) : col.getValue?.(row);
-  const iso = raw == null ? "" : String(raw).slice(0, 10);
+  const iso = raw == null ? "" : String(raw).slice(0, 10).replaceAll("/", "-");
   if (c.kind === "preset") return dateMatchesPreset(iso, c.preset);
   if (!iso) return false;
   if (c.from && iso < c.from) return false;

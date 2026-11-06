@@ -20,7 +20,8 @@
 // Models switch off (active = false). INACTIVE SKUs are left where they are.
 //
 // A GROUP IS REFUSED WHOLE when the twins of a size are bound to different main
-// suppliers: that is two products with similar names, not one under two codes.
+// suppliers: that is two products with similar names, not one under two codes,
+// unless the group says `ruledOneProduct` (the owner ruled they are one).
 //
 // NO SHEBANG: tests/duplicateModelMergePlan.test.mjs imports this module.
 
@@ -103,7 +104,7 @@ export function planModelGroup({ group, models, skus }) {
   const sizes = [];
   for (const [size, twins] of [...bySize.entries()].sort()) {
     const mains = new Set(twins.map((t) => t.main).filter(Boolean));
-    if (mains.size > 1) refusals.push(`size ${size}: ${twins.map((t) => `"${t.code}" (${t.main ?? "no main supplier"})`).join(" vs ")} - different main suppliers, so not one product`);
+    if (mains.size > 1 && !group.ruledOneProduct) refusals.push(`size ${size}: ${twins.map((t) => `"${t.code}" (${t.main ?? "no main supplier"})`).join(" vs ")} - different main suppliers, so not one product`);
     const ranked = [...twins].sort((a, b) => cmpRank(survivorRank(a, keptId), survivorRank(b, keptId)));
     const survivor = ranked[0];
     sizes.push(size);

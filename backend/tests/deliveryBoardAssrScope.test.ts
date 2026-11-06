@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrLegGuardSql } from "../src/scm/lib/assr-board-scope";
+import { assrBoardUnionSql, assrLegGuardSql, assrBoardLegs } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -106,5 +106,56 @@ describe("Delivery Planning board — scheduling a Service Case is scoped too", 
   test("unresolved company context does not blank the guard", () => {
     // A single-company install (or a cold start) must still be able to schedule.
     expect(assrLegGuardSql(ctx(undefined))).not.toContain("1=0");
+  });
+});
+
+/* A leg Logistics marks Delivered on the board (owner 2026-11-06) carries its own
+   actual_* date, so the leg shows DELIVERED while the CASE stays open — closure
+   is a separate ASSR-module action and never fires from a board mark. */
+const legCase = (o: Partial<Parameters<typeof assrBoardLegs>[0]> = {}) => ({
+  stage: null,
+  pickup_by: null, pickup_pic: null, customer_pickup_at: null, actual_pickup_at: null, sched_pickup_date: null, pickup_cancelled_at: null,
+  inspection_by: null, inspection_visit_at: null, sched_inspection_date: null, actual_inspection_at: null, inspection_cancelled_at: null,
+  delivery_by: null, do_date: null, sched_delivery_date: null, actual_delivery_at: null, delivery_cancelled_at: null,
+  ...o,
+});
+
+describe("Delivery Planning board — a board-marked Delivered leg is DELIVERED with the case still open", () => {
+  test("delivery leg: actual_delivery_at makes it DELIVERED even though caseClosed is false", () => {
+    const legs = assrBoardLegs(legCase({ delivery_by: "own", do_date: "2026-11-01", actual_delivery_at: "2026-11-06" }), false);
+    expect(legs.find((l) => l.jobKind === "delivery")?.state).toBe("DELIVERED");
+  });
+
+  test("delivery leg without an actual date is not Delivered: confirmed => PENDING_DELIVERY, request-only => PENDING_SCHEDULE", () => {
+    const confirmed = assrBoardLegs(legCase({ delivery_by: "own", sched_delivery_date: "2026-11-10" }), false);
+    expect(confirmed.find((l) => l.jobKind === "delivery")?.state).toBe("PENDING_DELIVERY");
+    const requested = assrBoardLegs(legCase({ delivery_by: "own", do_date: "2026-11-10" }), false);
+    expect(requested.find((l) => l.jobKind === "delivery")?.state).toBe("PENDING_SCHEDULE");
+  });
+
+  test("own inspection leg: actual_inspection_at makes it DELIVERED", () => {
+    const legs = assrBoardLegs(legCase({ inspection_by: "own", inspection_visit_at: "2026-11-01", actual_inspection_at: "2026-11-06" }), false);
+    expect(legs.find((l) => l.jobKind === "inspection")?.state).toBe("DELIVERED");
+  });
+
+  test("a CANCELLED leg is dropped from the board entirely (owner 2026-11-06)", () => {
+    // Delivery leg cancelled → no delivery row at all, even though it has a date.
+    const cancelled = assrBoardLegs(legCase({ delivery_by: "own", do_date: "2026-11-10", delivery_cancelled_at: "2026-11-06" }), false);
+    expect(cancelled.find((l) => l.jobKind === "delivery")).toBeUndefined();
+    // The pickup leg of the SAME case is unaffected — cancel is leg-only.
+    const mixed = assrBoardLegs(legCase({
+      pickup_by: "customer", customer_pickup_at: "2026-11-08",
+      delivery_by: "own", do_date: "2026-11-10", delivery_cancelled_at: "2026-11-06",
+    }), false);
+    expect(mixed.find((l) => l.jobKind === "customer_pickup")).toBeDefined();
+    expect(mixed.find((l) => l.jobKind === "delivery")).toBeUndefined();
+  });
+
+  test("the union selects the per-leg actual + cancelled columns the row builder reads", () => {
+    const sql = assrBoardUnionSql(ctx([1]), SINCE);
+    expect(sql).toContain("actual_inspection_at");
+    expect(sql).toContain("actual_delivery_at");
+    expect(sql).toContain("pickup_cancelled_at");
+    expect(sql).toContain("delivery_cancelled_at");
   });
 });

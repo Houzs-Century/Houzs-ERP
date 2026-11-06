@@ -29,7 +29,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
   useHrConfig, useUpdateHrConfig,
   useHrProfiles, useCreateHrProfile, useUpdateHrProfile, useDeleteHrProfile,
-  useHrItemKpi, useCreateHrItemKpi, useUpdateHrItemKpi, useDeleteHrItemKpi,
+  useHrItemKpi, useCreateHrItemKpis, useUpdateHrItemKpi, useDeleteHrItemKpi,
   useHrOverrideLevels, useCreateHrOverrideLevel, useUpdateHrOverrideLevel, useDeleteHrOverrideLevel,
   useHrPickers,
   type HrConfigPatch, type HrFlagType, type HrOverrideMode, type HrPickerRef, type HrTier,
@@ -179,7 +179,7 @@ export const HrSettings = () => {
   const updateConfig = useUpdateHrConfig();
 
   const itemKpi = useHrItemKpi();
-  const createItemKpi = useCreateHrItemKpi();
+  const createItemKpis = useCreateHrItemKpis();
   const updateItemKpi = useUpdateHrItemKpi();
   const deleteItemKpi = useDeleteHrItemKpi();
 
@@ -300,7 +300,7 @@ export const HrSettings = () => {
     if (Math.round(n * 100) !== n * 100) return 'The bonus cannot be smaller than one sen.';
     return null;
   })();
-  const canAddItemKpi = flagRefs.length > 0 && bonusError === null && !createItemKpi.isPending;
+  const canAddItemKpi = flagRefs.length > 0 && bonusError === null && !createItemKpis.isPending;
 
   const addProfile = async () => {
     if (!newStaff || !newShowroom) return;
@@ -340,33 +340,21 @@ export const HrSettings = () => {
       if (!ok) return;
     }
 
-    /* Created one at a time so a mid-way failure can name EXACTLY which rules
-       exist and which do not. Reporting "could not save" after two of three
-       landed would leave the owner to guess, and re-running would duplicate the
-       two that worked. */
-    const added: string[] = [];
-    for (const c of chosen) {
-      try {
-        await createItemKpi.mutateAsync({ flagType, ref: c.ref, label: c.label, bonusSen });
-        added.push(c.label);
-      } catch (e) {
-        // Everything from the one that failed onwards is still unsaved.
-        const failed = chosen.slice(chosen.indexOf(c));
-        await notify({
-          title: added.length === 0 ? 'Could not add the bonus rule' : 'Only some rules were added',
-          body:
-            (added.length > 0
-              ? `Added: ${added.join(', ')}.\nNot added: ${failed.map((x) => x.label).join(', ')}.\n\n`
-              : '') +
-            // authed-fetch already ran the response through humanApiError and
-            // threw an Error carrying that plain sentence — do not re-wrap it.
-            `${(e as Error)?.message ?? 'The system did not say why.'}\n\nPlease add the missing ones again — the rules listed as added are already saved, so do not re-add those.`,
-          tone: 'error',
-        });
-        // Keep the failures selected so the retry is one click, not a re-pick.
-        setFlagRefs(failed.map((x) => x.ref));
-        return;
-      }
+    /* One request for the whole selection, all or nothing (YH 2026-11-06): a
+       series saved one rule at a time once stopped after five, silently. Now
+       either every rule is saved or none is, and the error says why. */
+    try {
+      await createItemKpis.mutateAsync(chosen.map((c) => ({ flagType, ref: c.ref, label: c.label, bonusSen })));
+    } catch (e) {
+      await notify({
+        title: chosen.length === 1 ? 'Could not add the bonus rule' : 'Could not add the bonus rules',
+        body:
+          // authed-fetch already ran the response through humanApiError and
+          // threw an Error carrying that plain sentence — do not re-wrap it.
+          `${(e as Error)?.message ?? 'The system did not say why.'}\n\nNothing was saved, so adding them again will not make duplicates.`,
+        tone: 'error',
+      });
+      return; // the selection stays, so the retry is one click
     }
     setFlagRefs([]);
     setFlagBonus('');
@@ -664,9 +652,11 @@ export const HrSettings = () => {
       {/* 3 · Item KPIs */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Item KPIs</SectionHeading>
-        <div className={TABLE_WRAP_CLASS}>
+        {/* YH 2026-11-06: a series adds a dozen rules at once, so the list scrolls
+            inside its box (header pinned) instead of pushing the Add form off screen. */}
+        <div className={`${TABLE_WRAP_CLASS} max-h-[420px] overflow-y-auto`}>
           <table className="w-full text-[12px]">
-            <thead className={THEAD_CLASS}>
+            <thead className={`${THEAD_CLASS} sticky top-0 z-10`}>
               <tr>
                 <th className="px-3 py-2 text-left">Type</th>
                 <th className="px-2 py-2 text-left">Item</th>
@@ -750,7 +740,7 @@ export const HrSettings = () => {
               >
                 <option value="product">product — one specific product</option>
                 <option value="category">category — every product in a category</option>
-                <option value="fabric">fabric — a fabric series</option>
+                <option value="fabric">fabric — one fabric (pick a series to select all of it)</option>
                 <option value="special">special — a special-order option</option>
               </select>
             </label>
@@ -772,6 +762,26 @@ export const HrSettings = () => {
                   <option key={r.ref} value={r.ref} className="px-1 py-0.5">{r.label}</option>
                 ))}
               </select>
+              {flagType === 'fabric' && (pickers.data?.fabricSeries?.length ?? 0) > 0 && (
+                /* YH 2026-11-06: pick fabrics by the series staff name them by.
+                   Selecting a series highlights its fabrics; Add still makes one
+                   rule per fabric (owner 2026-07-18), so a colour added to the
+                   series later needs its own rule. */
+                <select
+                  className={INPUT_CLASS}
+                  value=""
+                  aria-label="Select every fabric in a series"
+                  onChange={(e) => {
+                    const g = pickers.data?.fabricSeries?.find((x) => x.series === e.target.value);
+                    if (g) setFlagRefs(g.refs.filter((r) => refList.some((x) => x.ref === r)));
+                  }}
+                >
+                  <option value="">Select a whole series…</option>
+                  {pickers.data!.fabricSeries!.map((g) => (
+                    <option key={g.series} value={g.series}>{g.series} ({g.refs.length})</option>
+                  ))}
+                </select>
+              )}
               <span className="text-[11px] text-ink-secondary">
                 {refList.length === 0
                   ? pickers.isLoading
@@ -810,7 +820,7 @@ export const HrSettings = () => {
                 disabled={!canAddItemKpi}
                 onClick={addItemKpi}
               >
-                {createItemKpi.isPending
+                {createItemKpis.isPending
                   ? 'Adding…'
                   : flagRefs.length > 1
                     ? `Add ${flagRefs.length} rules`

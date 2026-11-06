@@ -10,7 +10,7 @@ import { formatPairingCode, isPairingCode, normalizePairingCode } from "@shared/
 import { adminApi, deviceApi, erpReachable } from "../api";
 import { requestPersistentStorage, storageEstimate } from "../db";
 import { refreshBundle, saveDeviceState, stateFromBundle, platformName } from "../deviceStore";
-import { fmtMyt } from "../loginRules";
+import { fmtMyt, takesTerminalOver } from "../loginRules";
 import type { Manager } from "../manager";
 import { connectPrinter, onPrinterStatus, printerSupported, type PrinterStatus } from "../printer";
 import { printTestPage } from "../printing";
@@ -18,7 +18,7 @@ import { clearTestSales } from "../salesStore";
 import { APP_VERSION, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
 import type { DeviceState, PosBundle } from "../types";
 
-type Terminal = { id: number; code: string; device_name: string | null; project_id: number | null; project_name: string | null; prepared_at: string | null; active: boolean };
+type Terminal = { id: number; code: string; device_name: string | null; project_id: number | null; project_name: string | null; prepared_at: string | null; last_seen_at?: string | null; active: boolean };
 type EventRow = { project_id: number; name: string; start_date: string | null; end_date: string | null; status: string; linked?: boolean; link: unknown | null };
 
 function Dot({ tone }: { tone: "ok" | "warn" | "bad" | "none" }) {
@@ -41,6 +41,8 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
   const [projectId, setProjectId] = useState<number | "">(state.provisional ? "" : state.bundle.event.project_id);
   const [deviceName, setDeviceName] = useState(state.device_name);
   const [code, setCode] = useState("");
+  /* The terminal the manager was warned about and chose to take over anyway. */
+  const [takeOverOk, setTakeOverOk] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [printer, setPrinter] = useState<PrinterStatus>({ connected: false, name: null, transport: null, error: null });
@@ -84,8 +86,12 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
     onPrepared(next);
   }
 
+  const picked = terminals.find((t) => t.id === terminalId) ?? null;
+  const takeOver = picked != null && takesTerminalOver(picked, { provisional: state.provisional === true, terminal_id: state.bundle.terminal.id });
+
   async function setUp() {
     if (!manager || terminalId === "" || projectId === "") return;
+    if (takeOver && takeOverOk !== terminalId) { setTakeOverOk(terminalId); return; }
     setBusy("setup");
     setMsg(null);
     try {
@@ -163,7 +169,7 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
 
       <div className="card">
         <h2>{setUpAlready ? "Move this device to another terminal or fair" : "Set up this device"}</h2>
-        {manager ? (
+        {manager && !listsError ? (
           <div>
             <p className="muted" style={{ marginTop: 0 }}>Signed in as {manager.user.name}. The lists come from POS Admin: terminals from the Terminals tab, fairs that are linked to POS from the Events tab.</p>
             {listsError && <div className="banner offline">{listsError}</div>}
@@ -182,11 +188,17 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
             </label>
             {events.length === 0 && !listsError && <p className="muted small">No fair is linked to POS yet: in POS Admin, Events, open the fair and press Save; it appears here.</p>}
             <label className="field"><span>Device name</span><input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} placeholder="e.g. Laptop Lenovo" /></label>
-            <button type="button" className="btn primary" disabled={busy !== null || terminalId === "" || projectId === "" || online === false} onClick={() => void setUp()}>{busy === "setup" ? "Setting up…" : setUpAlready ? "Move this device" : "Set up this device"}</button>
+            {takeOver && picked && (
+              <div className="banner offline">
+                {picked.code} is already set up on {picked.device_name ? `"${picked.device_name}"` : "another device"}{picked.last_seen_at ? `, last seen ${fmtMyt(picked.last_seen_at)}` : ""}. Setting it up here disconnects that device: it stops syncing and shows device_not_registered until someone pairs it again. For a second device, create a new terminal in POS Admin, Terminals.
+              </div>
+            )}
+            <button type="button" className="btn primary" disabled={busy !== null || terminalId === "" || projectId === "" || online === false} onClick={() => void setUp()}>{busy === "setup" ? "Setting up…" : takeOver && picked ? (takeOverOk === terminalId ? `Yes, take ${picked.code} over` : `Take ${picked.code} over…`) : setUpAlready ? "Move this device" : "Set up this device"}</button>
           </div>
         ) : (
           <div>
-            <p className="muted" style={{ marginTop: 0 }}>No ERP sign-in on this device: in the ERP open POS Admin, Terminals, press <b>Pair device</b> on the terminal and type the code it shows.</p>
+            {manager && listsError && <div className="banner offline">The ERP sign-in saved on this device has ended ({listsError}). Pair with a code below, or use Manager sign-in on the login screen.</div>}
+            <p className="muted" style={{ marginTop: 0 }}>In the ERP open POS Admin, Terminals, press <b>Pair device</b> on the terminal and type the code it shows.</p>
             <form onSubmit={(e) => { e.preventDefault(); void pair(); }}>
               <label className="field"><span>Pairing code</span><input value={code} onChange={(e) => setCode(formatPairingCode(e.target.value))} placeholder="H7K2-9QPD" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={9} style={{ fontFamily: "ui-monospace, monospace", letterSpacing: "0.12em" }} /></label>
               <label className="field"><span>Device name</span><input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} placeholder="e.g. Tab A9 #1" /></label>

@@ -1018,6 +1018,7 @@ GET,/api/scm/hr/item-kpi,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + require
 POST,/api/scm/hr/item-kpi,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts
 DELETE,/api/scm/hr/item-kpi/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts
 PATCH,/api/scm/hr/item-kpi/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts
+POST,/api/scm/hr/item-kpi/batch,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts
 GET,/api/scm/hr/override-levels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/hr.ts
 POST,/api/scm/hr/override-levels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts
 DELETE,/api/scm/hr/override-levels/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/hr.ts

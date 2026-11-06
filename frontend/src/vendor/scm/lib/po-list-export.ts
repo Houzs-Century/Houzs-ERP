@@ -14,7 +14,7 @@ import { authedFetch } from './authed-fetch';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import type { PoListLine } from './po-line-export-columns';
 
-export type PoListFilterParams = {
+export type PoListFilterParams = { from?: string; to?: string;
   status?: string;
   supplierId?: string;
   q?: string;
@@ -33,6 +33,8 @@ export type PoListFilterParams = {
 /** The list's filter as query parameters — no paging. */
 export function poListParams(f: PoListFilterParams): URLSearchParams {
   const usp = new URLSearchParams();
+  if (f.from) usp.set('from', f.from);
+  if (f.to) usp.set('to', f.to);
   if (f.status) usp.set('status', f.status);
   if (f.supplierId) usp.set('supplierId', f.supplierId);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());

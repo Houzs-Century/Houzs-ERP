@@ -167,6 +167,15 @@ export function normalizeSupplierName(v: string | null | undefined): string {
  * `allowTail`, and only with at least 6 digits: a bare "251" never matches.
  * More than one candidate is null, never guessed.
  */
+const PO_PARTS = /^(.*?PO)-?(\d{4})-?(\d+)\s*$/i;
+
+function oneDigitOffInMonth(printed: string, own: string): boolean {
+  const a = PO_PARTS.exec(printed.trim());
+  const b = PO_PARTS.exec(own.trim());
+  if (!a || !b || a[1]!.toUpperCase() !== b[1]!.toUpperCase() || a[3] !== b[3]) return false;
+  return [...a[2]!].filter((d, i) => d !== b[2]![i]).length === 1;
+}
+
 export function resolvePrintedPo<T extends { poNumber: string }>(
   printed: string | null | undefined,
   pos: T[],
@@ -188,7 +197,12 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
     return n.length > 0 && p.endsWith(n);
   });
   if (labelled.length > 0) return unique(labelled);
-  if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
+  if (!allowTail) return null;
+  // Nice Future prints HC-PO-2010-279 for HC-PO-2610-279: same running number, one
+  // digit off in the year and month, among this supplier's POs only.
+  const typed = unique(pos.filter((r) => oneDigitOffInMonth(printed ?? '', r.poNumber)));
+  if (typed) return typed;
+  if ((p.match(/\d/g)?.length ?? 0) < 6) return null;
   const tail = unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
   if (tail) return tail;
   // A misread lead digit ("102610-243" for 2610-243) still ends in our number.

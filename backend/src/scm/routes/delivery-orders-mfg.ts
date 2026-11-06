@@ -3112,6 +3112,11 @@ deliveryOrdersMfg.post('/', async (c) => {
       itemCode: String(it.itemCode ?? ''),
       itemGroup: (it.itemGroup as string | null) ?? null,
       soItemId: (it.soItemId as string | null) ?? null,
+      fromStock: it.soItemId ? null : {
+        variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants ?? null) as VariantAttrs | null),
+        qty: Number(it.qty ?? 0),
+        warehouseId: (it.warehouseId as string | null) ?? headerWarehouseId,
+      },
     })), activeCompanyId(c));
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (port of 2990 07c45728) — supplier ships the sofa
@@ -3554,6 +3559,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       itemCode: line.itemCode,
       itemGroup: line.itemGroup ?? null,
       soItemId: line.soItemId,
+      fromStock: null,
     })), doCompanyId);
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (mig 0057) — waive Type-A only on confirmed dropShip +
@@ -4402,6 +4408,7 @@ const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Va
       itemCode: String(it.itemCode ?? ''),
       itemGroup: (it.itemGroup as string | null) ?? null,
       soItemId: (it.soItemId as string | null) ?? null,
+      fromStock: null,
     }], activeCompanyId(c));
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (mig 0057) — waive Type-A only on confirmed dropShip +

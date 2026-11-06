@@ -103,6 +103,7 @@ Merchant reconciliation
 - Candidates: card payments tagged with this acquirer or untagged, and untagged `imported` rows; never another acquirer's, never cash/transfer, never a CANCELLED order's; untagged ones list once.
 - `acc_settlement_matches` is UNIQUE on (payment_source, payment_id); a report file is unique by hash; a line already on another report (day + ref + gross) is left out and a file with nothing new refuses `already_on_report`; a failed upload deletes its batch head.
 - Unconfirmed links refresh from their payment each time a report opens; a confirmed link is changed only by a named migration.
+- Both lists on Merchant reports export from their header's right-click, Excel and PDF, as the screen shows them. "Card payments no merchant report has reported yet" carries the order's Ref No. (`customerRefOf`) and reads about 90 days back; what is older is on neither the list nor its file.
 - Confirm books the fee only; each bank credit books SETTLEBANK separately, and a credit overshooting the report's net refuses.
 - Fee and payout-charge accounts must be ACTIVE EXPENSE LEAVES of the company; a payout charge is dated the settlement day, needs a note, cannot exceed the difference, one per day.
 - An acquirer's clearing account must be a live 326-/327- account of that company; untagged card money stays on generic 326-0000.

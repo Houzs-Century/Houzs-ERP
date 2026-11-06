@@ -35,6 +35,11 @@ export function normalizeDocRef(s: string | null | undefined): string {
 /** Does a scanned reference identify our document number? Exact after
  *  normalization, or one is a suffix of the other (our "HCPO010070" ends with
  *  the supplier's "PO010070"). Empty scanned ref never matches. */
+/** Each D.O. an invoice names: it may print several in one field. */
+export function docRefsOf(printed: string | null | undefined): string[] {
+  return (printed ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+}
+
 export function docRefMatches(scanned: string | null | undefined, ours: string | null | undefined): boolean {
   const a = normalizeDocRef(scanned);
   const b = normalizeDocRef(ours);
