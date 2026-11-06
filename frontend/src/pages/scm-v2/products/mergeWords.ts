@@ -1,5 +1,5 @@
 /* What a merge moves, in the words staff use for those documents. */
-const NAMES: Record<string, [string, string]> = {
+const NAMES: Partial<Record<string, [string, string]>> = {
   mfg_sales_order_items: ['sales order line', 'sales order lines'],
   purchase_order_items: ['purchase order line', 'purchase order lines'],
   grn_items: ['goods receipt line', 'goods receipt lines'],
