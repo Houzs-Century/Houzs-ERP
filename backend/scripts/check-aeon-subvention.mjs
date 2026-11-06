@@ -31,14 +31,14 @@ await sql.begin('READ ONLY', async (tx) => {
 
   /* The payments that could be this swipe. */
   const near = await tx`
-    SELECT p.id::text AS id, p.so_doc_no, p.paid_at, p.amount_sen, p.approval_code, p.method, p.merchant_provider, p.collected_by, so.debtor_name, so.salesperson_name
+    SELECT p.id::text AS id, p.so_doc_no, p.paid_at, p.amount_sen, p.approval_code, p.method, p.merchant_provider, so.debtor_name
       FROM scm.mfg_sales_order_payments p LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = p.so_doc_no
-     WHERE p.company_id = ${C} AND (p.approval_code ILIKE '%41797%' OR (p.amount_sen = 399000 AND p.paid_at >= '2026-10-25' AND p.paid_at <= '2026-11-15'))
-     ORDER BY p.paid_at`.catch(async () => []);
+     WHERE p.company_id = ${C} AND (p.approval_code ILIKE '%41797%' OR (p.amount_sen = 399000 AND p.paid_at >= '2026-10-20' AND p.paid_at <= '2026-11-20'))
+     ORDER BY p.paid_at`;
   out(`payments with that code, or RM 3,990 near that day: ${near.length}`);
   const keys = near.map((p) => `SOPAY:${p.id}`);
   const settled = await loadSettledKeys(sb, C);
-  for (const p of near) out(`   ${p.so_doc_no} ${day(p.paid_at)} ${rm(p.amount_sen)} code ${p.approval_code ?? '-'} ${p.method ?? '-'} merchant ${p.merchant_provider ?? '-'} | ${String(p.debtor_name ?? '').slice(0, 28)} | ${String(p.salesperson_name ?? '').slice(0, 20)} | already claimed ${settled.ok && settled.keys.has(`SOPAY:${p.id}`)}`);
+  for (const p of near) out(`   ${p.so_doc_no} ${day(p.paid_at)} ${rm(p.amount_sen)} code ${p.approval_code ?? '-'} ${p.method ?? '-'} merchant ${p.merchant_provider ?? '-'} | ${String(p.debtor_name ?? '').slice(0, 28)} | already claimed ${settled.ok && settled.keys.has(`SOPAY:${p.id}`)}`);
   void keys;
 
   /* What the real matcher says about the line today. */
