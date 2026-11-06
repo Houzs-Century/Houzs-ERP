@@ -177,7 +177,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
         </div>
       )}
       {!anyTied && repeat === null && !doc.duplicateOf && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
-      {!anyTied && doc.duplicateOf && <div className={styles.hint}>Everything on this delivery order is already received, so nothing is left to pick.</div>}
+      {!anyTied && doc.duplicateOf && <div className={styles.hint}>This delivery order is on the goods receipt above, so it has no rows to pick here.</div>}
       {anyTied && block && <div className={styles.hint}>{block}</div>}
 
       {open && (
