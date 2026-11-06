@@ -463,30 +463,30 @@ Total: 1703 route registrations across 235 files.
 - L4361  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/payment-vouchers.ts  (24)
-- L392  GET    /
-- L397  POST   /print-bundle
-- L398  GET    /refund-source
-- L399  POST   /remind
-- L400  POST   /:id/files
-- L401  GET    /:id/files
-- L402  GET    /:id/files/:fileId
-- L403  DELETE /:id/files/:fileId
-- L405  GET    /:id
-- L762  POST   /
-- L969  PATCH  /:id
-- L1034  PATCH  /:id/text
-- L1450  POST   /:id/post
-- L1500  POST   /:id/submit
-- L1525  POST   /:id/withdraw
-- L1577  POST   /:id/check
-- L1610  POST   /:id/approve
-- L1639  POST   /:id/reject
-- L1848  POST   /:id/cancel
-- L1878  GET    /advances/list
-- L1879  GET    /reservations/list
-- L1979  POST   /:id/apply-advance
-- L1983  POST   /extract
-- L1984  POST   /split-pdf
+- L393  GET    /
+- L398  POST   /print-bundle
+- L399  GET    /refund-source
+- L400  POST   /remind
+- L401  POST   /:id/files
+- L402  GET    /:id/files
+- L403  GET    /:id/files/:fileId
+- L404  DELETE /:id/files/:fileId
+- L406  GET    /:id
+- L763  POST   /
+- L970  PATCH  /:id
+- L972  PATCH  /:id/text
+- L1388  POST   /:id/post
+- L1438  POST   /:id/submit
+- L1463  POST   /:id/withdraw
+- L1515  POST   /:id/check
+- L1548  POST   /:id/approve
+- L1577  POST   /:id/reject
+- L1786  POST   /:id/cancel
+- L1816  GET    /advances/list
+- L1817  GET    /reservations/list
+- L1917  POST   /:id/apply-advance
+- L1921  POST   /extract
+- L1922  POST   /split-pdf
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
 - L570  GET    /dashboard

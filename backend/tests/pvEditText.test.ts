@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { updatePaymentVoucherTextHandler } from '../src/scm/routes/payment-vouchers';
+import { updatePaymentVoucherTextHandler } from '../src/scm/routes/payment-vouchers-text';
 
 const CO = 1;
 const CHECKED: Row = {
