@@ -37,7 +37,7 @@ describe('ScanGrnModal', () => {
     mount();
     await waitFor(() => expect(screen.getByText('HC-GRN-9')).toBeTruthy());
     expect(screen.getByText('Already received')).toBeTruthy();
-    expect(screen.getByText(/1 of 2 selected · 1 still reading/)).toBeTruthy();
+    expect(screen.getByText(/1 of 2 selected · d+ items? · 1 still reading/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Create 1 goods receipt as draft/ })).toBeTruthy();
   });
   it('ticking the repeat creates it too, and the result names the drafts', async () => {

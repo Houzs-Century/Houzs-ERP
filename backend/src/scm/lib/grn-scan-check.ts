@@ -32,7 +32,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 7;
+export const REVIEW_VERSION = 8;
 
 export type GrnReview = {
   v: number;
@@ -40,6 +40,8 @@ export type GrnReview = {
   // The supplier name as printed, kept beside the resolved one.
   supplierRead: string | null;
   doNo: string | null;
+  // The day we received it: the day of the scan, never the date printed on the
+  // delivery order, which reads as goods arriving early (owner 2026-11-06).
   deliveryDate: string | null;
   notes: string | null;
   lines: ReviewLine[];
@@ -54,7 +56,7 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
 /** The first working copy, from the read and the matcher. Matched lines arrive
  *  tied to their PO line; lines the matcher could not place arrive untied with
  *  what was printed, so nothing read is silently dropped. */
-export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>): GrnReview {
+export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>, scanDate: string): GrnReview {
   const lines: ReviewLine[] = [];
   // Each piece of a set shows the one row that printed it.
   const setRow = new Map((match?.soMatches ?? []).flatMap((m) => m.poItemIds.map((id) => [id, readOf(m.line)] as const)));
@@ -76,7 +78,7 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     supplierId,
     supplierRead: parsed?.supplierName ?? null,
     doNo: parsed?.doNo ?? null,
-    deliveryDate: parsed?.deliveryDate ?? null,
+    deliveryDate: scanDate,
     notes: null,
     lines: inPrintedOrder(lines, parsed?.lines ?? [], open, new Set(setRow.keys())),
   };

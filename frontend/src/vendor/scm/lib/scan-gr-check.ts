@@ -41,6 +41,20 @@ export type CheckDoc = {
   repeatOf: string | null;
   blocked: string | null;
 };
+/** What a card receives: only rows tied to a PO line or a gift reach the draft. */
+export const receiptItems = (r: { lines: ReadonlyArray<{ poItemId: string | null; gift: unknown; qty: number }> }): number =>
+  r.lines.reduce((sum, l) => sum + (l.poItemId || l.gift ? l.qty : 0), 0);
+
+/** One tint per warehouse, the same on every card. */
+export function warehouseTone(name: string, tones: number): number {
+  const u = name.toUpperCase();
+  const fixed = ['KL', 'SBH', 'JB', 'PG', 'SRW'].findIndex((w) => u.startsWith(w));
+  if (fixed >= 0) return fixed % tones;
+  let h = 0;
+  for (const ch of u) h = (h * 31 + ch.charCodeAt(0)) % 1009;
+  return h % tones;
+}
+
 export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; warehouseId?: string | null; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
