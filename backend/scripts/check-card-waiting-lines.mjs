@@ -74,14 +74,10 @@ await sql.begin('READ ONLY', async (tx) => {
   for (const k of [...tally.keys()].sort()) out(`${k} | ${tally.get(k).n} | ${rm(tally.get(k).sen)}`);
 
   /* The AEON swipes on the days no AEON report covers, against the credits no report claims. */
-  const aeon = await tx`
-    SELECT p.payment_date, p.amount_sen, p.approval_code, p.merchant_provider, so.doc_no
-      FROM scm.mfg_sales_order_payments p LEFT JOIN scm.mfg_sales_orders so ON so.id = p.sales_order_id
-     WHERE p.company_id = ${C} AND p.payment_date BETWEEN '2026-09-01' AND '2026-09-30' AND p.merchant_provider ILIKE ANY (ARRAY['%aeon%', '%pinelabs%', '%pine labs%'])
-     ORDER BY p.payment_date`.catch((e) => { out(`aeon read failed: ${e.message}`); return []; });
-  const claimed = await tx`SELECT payment_id::text AS id FROM scm.acc_settlement_matches WHERE company_id = ${C}`.catch(() => []);
+  const aeon = await tx;
+  const claimed = await tx`SELECT payment_id::text AS id FROM scm.acc_settlement_matches WHERE company_id = ${C}`;
   const byDay = new Map();
-  for (const p of aeon) { const k = day(p.payment_date); byDay.set(k, (byDay.get(k) ?? 0) + Number(p.amount_sen)); }
+  for (const p of aeon) { const k = day(p.paid_at); byDay.set(k, (byDay.get(k) ?? 0) + Number(p.amount_sen)); }
   out(`-- AEON payments by day in September (all, claimed or not): ${[...byDay.entries()].map(([d, s]) => `${d.slice(8)} ${rm(s)}`).join(', ')}`);
   const covered = await tx`SELECT DISTINCT r.txn_date, b.file_name FROM scm.acc_settlement_rows r JOIN scm.acc_settlement_batches b ON b.id = r.batch_id WHERE r.company_id = ${C} AND r.acquirer_code = 'AEON' AND r.txn_date BETWEEN '2026-09-01' AND '2026-09-30' ORDER BY 1, 2`;
   out(`-- AEON report files by swipe day: ${covered.map((c) => `${day(c.txn_date).slice(8)}:${String(c.file_name).replace(/^\d+_0*/, '').replace(/\.csv$/i, '')}`).join(' ')}`);
