@@ -316,6 +316,7 @@
       "file": "frontend/src/components/assr/PickupTrackingFields.tsx",
       "text": "type=\"date\"",
       "why": "A type=\"date\" PROP on the InlineEdit wrapper (HC-0129 scheduled + actual pickup dates), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
-    }
+    },
+    {"file": "frontend/src/components/DataTable.tsx", "text": "const filterType = col.filterType ?? (looksLikeDateColumn(values.map(([v]) => v)) ? \"date\" : undefined);", "why": "The kind of column filter, not an input type: no date is rendered or formatted here."}
   ]
 }
