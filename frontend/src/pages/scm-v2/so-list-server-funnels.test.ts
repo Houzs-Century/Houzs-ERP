@@ -14,11 +14,12 @@ describe("Sales Order list column funnels", () => {
     expect(soServerFunnels({ branding: [], status: [] })).toEqual({ debtorNames: undefined, currencies: undefined, brandings: undefined, cols: undefined });
   });
 
-  it("keeps a date-range condition on the page and sends only plain values", () => {
+  it("sends a date range as the range and the plain values as ticks", () => {
     const cond = "dateRange:2026-01-01..2026-01-31";
     expect(soServerFunnels({ so_date: [cond] }).cols).toBeUndefined();
     expect(soServerFunnels({ so_date: [cond, "2026-02-01"] }).cols).toEqual({ so_date: ["2026-02-01"] });
-    expect(soPageOnlyFunnelKeys({ so_date: [cond] })).toEqual(["so_date"]);
+    expect(soPageOnlyFunnelKeys({ so_date: [cond] })).toEqual([]);
+    expect(soServerFunnels({ so_date: [cond] })).toMatchObject({ from: "2026-01-01", to: "2026-01-31" });
   });
 
   it("names only the set funnels the server cannot answer as page-only", () => {

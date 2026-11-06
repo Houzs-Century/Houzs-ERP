@@ -15,11 +15,13 @@ import { senToRinggit } from './grn-list-export';
 
 export { senToRinggit };
 
-export type SiListFilterParams = { status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] };
+export type SiListFilterParams = { from?: string; to?: string; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] };
 
 /** The list's filter as query parameters — no paging. */
 export function siListParams(f: SiListFilterParams): URLSearchParams {
   const usp = new URLSearchParams();
+  if (f.from) usp.set('from', f.from);
+  if (f.to) usp.set('to', f.to);
   if (f.status) usp.set('status', f.status);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
   if (f.sort) usp.set('sort', f.sort);
