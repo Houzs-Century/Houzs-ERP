@@ -951,7 +951,8 @@ posAdmin.post("/terminals/:id/pairing", async (c) => {
   const expires = new Date(Date.now() + PAIRING_MINUTES * 60_000).toISOString();
   await db.update(pos_terminals).set({ pairing_code_hash: await pairingCodeHash(code), pairing_expires_at: expires, updated_at: nowIso() }).where(eq(pos_terminals.id, id));
   await audit(db, co.companyId, c, "pos_terminal", id, "pairing_code_issued", null, expires);
-  const origin = (c.env.POS_APP_ORIGIN ?? "https://pos.houzscentury.com").replace(/\/$/, "");
+  /* The custom domain is not attached yet; the Pages address always works. */
+  const origin = (c.env.POS_APP_ORIGIN ?? "https://houzs-pos.pages.dev").replace(/\/$/, "");
   return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
 });
 

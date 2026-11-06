@@ -1,8 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { afterWrongPin, findCashierById, fmtMyt, freshLock, lockedFor, loginTiles, syncTone } from "./loginRules";
+import { afterWrongPin, findCashierById, fmtMyt, freshLock, lockedFor, loginTiles, syncTone, takesTerminalOver } from "./loginRules";
 import type { BundleCashier } from "./types";
 
 const c = (code: string, role: BundleCashier["role"] = "PARTTIME"): BundleCashier => ({ id: Number(code.slice(1)), code, name: `Name ${code}`, role, pin_hash: "x$y", max_discount_pct: 0 });
+
+describe("takesTerminalOver", () => {
+  test("a terminal another device holds is a take-over; a fresh one, or this device's own, is not", () => {
+    expect(takesTerminalOver({ id: 1, prepared_at: "2026-10-29T08:34:58Z" }, { provisional: true, terminal_id: 0 })).toBe(true);
+    expect(takesTerminalOver({ id: 1, prepared_at: "2026-10-29T08:34:58Z" }, { provisional: false, terminal_id: 2 })).toBe(true);
+    expect(takesTerminalOver({ id: 1, prepared_at: "2026-10-29T08:34:58Z" }, { provisional: false, terminal_id: 1 })).toBe(false);
+    expect(takesTerminalOver({ id: 3, prepared_at: null }, { provisional: true, terminal_id: 0 })).toBe(false);
+  });
+});
 
 describe("loginRules", () => {
   test("eight tiles, supervisors first, the rest behind Type ID", () => {
