@@ -18,7 +18,7 @@ await sql.begin('READ ONLY', async (tx) => {
   await tx`SET LOCAL search_path = public, scm`;
   const stale = await tx`
     SELECT pv.company_id, pv.pv_number, pv.approved_at, pv.checked_at, pv.updated_at, a.amount_sen, a.applied_sen, a.pi_id, a.ap_invoice_id,
-           COALESCE(i.invoice_number, p.invoice_number) AS bill, COALESCE(i.status, p.status) AS bill_status,
+           COALESCE(i.invoice_number, p.invoice_number) AS bill, COALESCE(i.status::text, p.status::text) AS bill_status,
            COALESCE(i.total_sen, p.total_sen) AS total, COALESCE(i.paid_sen, p.paid_sen) AS paid
       FROM scm.pv_allocations a JOIN scm.payment_vouchers pv ON pv.id = a.pv_id
       LEFT JOIN scm.ap_invoices i ON i.id = a.ap_invoice_id
@@ -30,7 +30,7 @@ await sql.begin('READ ONLY', async (tx) => {
     const live = s.ap_invoice_id
       ? await tx`SELECT COALESCE(sum(a.applied_sen), 0)::bigint AS s, count(*)::int AS n, string_agg(pv.pv_number || ' ' || pv.status, ', ') AS who FROM scm.pv_allocations a JOIN scm.payment_vouchers pv ON pv.id = a.pv_id WHERE a.ap_invoice_id = ${s.ap_invoice_id} AND pv.status <> 'CANCELLED'`
       : await tx`SELECT COALESCE(sum(a.applied_sen), 0)::bigint AS s, count(*)::int AS n, string_agg(pv.pv_number || ' ' || pv.status, ', ') AS who FROM scm.pv_allocations a JOIN scm.payment_vouchers pv ON pv.id = a.pv_id WHERE a.pi_id = ${s.pi_id} AND pv.status <> 'CANCELLED'`;
-    const audit = await tx`SELECT action, actor_name_snapshot, created_at, field_changes, note FROM public.entity_audit_log WHERE entity_type = 'PAYMENT_VOUCHER' AND entity_doc_no = ${s.pv_number} ORDER BY created_at`.catch(() => []);
+    const audit = await tx`SELECT action, actor_name_snapshot, created_at, field_changes, note FROM scm.entity_audit_log WHERE entity_type = 'PAYMENT_VOUCHER' AND entity_doc_no = ${s.pv_number} ORDER BY created_at`;
     out(`co ${s.company_id} ${s.pv_number} approved ${String(s.approved_at ?? '-').slice(0, 10)} applied ${rm(s.applied_sen)} of ${rm(s.amount_sen)} -> ${s.bill} ${s.bill_status} total ${rm(s.total)} paid ${rm(s.paid)} | live vouchers on it: ${live[0].n}, applied ${rm(live[0].s)} (${String(live[0].who ?? '').slice(0, 70)})`);
     for (const a of audit.slice(-3)) out(`      ${String(a.created_at).slice(0, 16)} ${a.action} by ${a.actor_name_snapshot ?? '-'} ${String(a.note ?? '').slice(0, 60)}`);
   }
