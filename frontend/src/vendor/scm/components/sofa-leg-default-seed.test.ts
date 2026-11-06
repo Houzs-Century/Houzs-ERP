@@ -66,6 +66,8 @@ const seedProps = (src: string) => src.match(/seedSofaLegDefault=\{(true|false)\
 describe('the sofa Leg Height default is a per-document decision', () => {
   test('the card gates the seed on the prop, not on the category alone', () => {
     expect(CARD).toContain('seedSofaLegDefault: boolean;');
+    // A Model's own leg list does not hide the standing Default: stock is held under it.
+    expect(CARD).toContain('allowOpts?.leg_heights, defaultSofaLegValue(maint))');
     expect(CARD).toMatch(/if \(seedSofaLegDefault && category === 'sofa'/);
     // No default value: a caller that says nothing must not compile.
     expect(CARD).not.toMatch(/seedSofaLegDefault\s*=\s*(true|false)\s*,/);
