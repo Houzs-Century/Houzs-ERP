@@ -38,10 +38,12 @@ export type PiReview = {
   doNo: string | null;
   poNo: string | null;
   notes: string | null;
+  // What the sales tax did to the rows, or why the rows do not reach the invoice total.
+  taxNote: string | null;
   lines: PiReviewLine[];
 };
 
-export const PI_REVIEW_VERSION = 3;
+export const PI_REVIEW_VERSION = 4;
 
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -109,6 +111,56 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   }
 }
 
+/** Within this much of the receipt's price (RM) a row IS that price: a printed
+ *  1,409.09 plus 10% is 1,549.999, and the PO says 1,550.00. */
+const NEAR = 0.05;
+const sen2 = (rm: number) => Math.round(rm * 100) / 100;
+const rm = (n: number) => n.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** The invoice prints rows before tax and the tax once at the bottom, and a PI
+ *  price is what the goods cost us, tax in (owner 2026-11-06). So each priced row
+ *  takes its share by amount, a free gift stays free, and a result next to the
+ *  receipt's price is that price. A row printed at the receipt's price already
+ *  holds its tax and takes no share. No rate is assumed: the tax is the invoice's,
+ *  or its total less its rows, and neither read leaves the rows as printed.
+ *  Returns what happened, for the card. */
+export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, taxRead: number | null, total: number | null): string | null {
+  const unitOf = (l: PiReviewLine) => l.read?.unitPrice ?? (l.read?.lineTotal != null && l.qty > 0 ? l.read.lineTotal / l.qty : 0);
+  const priced = lines.filter((l) => unitOf(l) > 0);
+  if (priced.length === 0) return null;
+  const receiptPrice = (l: PiReviewLine) => {
+    const hit = open.find((o) => o.grnItemId === l.grnItemId);
+    return hit ? hit.unitPriceSen / 100 : null;
+  };
+  const near = (a: number, b: number | null) => b != null && Math.abs(a - b) <= NEAR;
+  const amount = (l: PiReviewLine) => unitOf(l) * l.qty;
+  const printed = priced.reduce((a, l) => a + amount(l), 0);
+  const tax = taxRead ?? (total == null ? null : sen2(total - printed));
+  if (tax == null || tax <= 0) return null;
+  const notYet = priced.filter((l) => !near(unitOf(l), receiptPrice(l)));
+  const taxed = notYet.length > 0 ? notYet : priced;
+  const base = taxed.reduce((a, l) => a + amount(l), 0);
+  const rate = tax / base;
+  const free: PiReviewLine[] = [];
+  for (const l of taxed) {
+    const po = receiptPrice(l);
+    const gross = unitOf(l) * (1 + rate);
+    const unit = po != null && near(gross, po) ? po : sen2(gross);
+    if (unit !== po) free.push(l);
+    l.read = { ...l.read!, unitPrice: unit, lineTotal: sen2(unit * l.qty) };
+  }
+  const sum = () => sen2(priced.reduce((a, l) => a + (l.read?.lineTotal ?? 0), 0));
+  /* Rounding left over goes on the biggest row the receipt does not fix. */
+  const want = total ?? sen2(printed + tax);
+  if (free.length > 0 && sum() !== want) {
+    const big = free.reduce((a, l) => ((l.read?.lineTotal ?? 0) > (a.read?.lineTotal ?? 0) ? l : a));
+    const lineTotal = sen2((big.read?.lineTotal ?? 0) + want - sum());
+    big.read = { ...big.read!, lineTotal, unitPrice: sen2(lineTotal / big.qty) };
+  }
+  if (Math.abs(sum() - want) > NEAR) return `The rows add to RM ${rm(sum())}, the invoice says RM ${rm(want)}. Check the prices.`;
+  return `Prices include sales tax RM ${rm(tax)}, shared across the rows.`;
+}
+
 /** The first working copy. Matched rows arrive tied to their GRN line; rows the
  *  matcher could not place arrive with what was printed, so nothing read is
  *  silently dropped. */
@@ -125,6 +177,7 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
   }
   if (!match && parsed) for (const l of parsed.lines) if ((l.qty ?? 0) > 0) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: l.qty ?? 0, suggested: false, read: readOf(l) });
   suggestBills(lines, open, anchorGrns, families);
+  const taxNote = addSalesTax(lines, open, parsed?.salesTax ?? null, parsed?.totalAmount ?? null);
   // In the order the invoice prints them, so the card reads down beside the paper.
   const printedAt = new Map(parsed?.lines.map((l, i) => [l.description, i]) ?? []);
   const order = (l: PiReviewLine) => printedAt.get(l.read?.description ?? null) ?? Number.MAX_SAFE_INTEGER;
@@ -137,6 +190,7 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
     doNo: parsed?.doNo ?? null,
     poNo: parsed?.poNo ?? null,
     notes: null,
+    taxNote,
     lines: [...lines].sort((a, b) => order(a) - order(b)),
   };
 }
@@ -174,6 +228,7 @@ export function cleanPiReview(input: unknown): PiReview | null {
     doNo: str(r.doNo),
     poNo: str(r.poNo),
     notes: str(r.notes),
+    taxNote: str(r.taxNote),
     lines,
   };
 }

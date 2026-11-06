@@ -24,6 +24,7 @@ export type PiReview = {
   doNo: string | null;
   poNo: string | null;
   notes: string | null;
+  taxNote: string | null;
   lines: PiReviewLine[];
 };
 export type PiCheckDoc = {
