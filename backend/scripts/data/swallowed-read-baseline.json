@@ -545,10 +545,6 @@
       "reads": 0,
       "catches": 2
     },
-    "frontend/src/vendor/scm/components/SofaComboTab.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
     "frontend/src/vendor/scm/lib/native-location.ts": {
       "reads": 0,
       "catches": 2

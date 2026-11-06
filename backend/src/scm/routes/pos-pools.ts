@@ -371,6 +371,9 @@ export const sofaCombosPosHandler = async (c: AppContext) => {
     const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
     if (seen.has(key)) continue; // first (latest-effective) per tuple wins
     seen.add(key);
+    // A combo opened with no price yet has nothing for the POS to sell.
+    const charged = comboChargedByHeight(r.selling_prices_by_height, r.prices_by_height);
+    if (!Object.values(charged).some((v) => v !== null)) continue;
     rules.push({
       id: r.id,
       baseModel: r.base_model,
@@ -379,7 +382,7 @@ export const sofaCombosPosHandler = async (c: AppContext) => {
       customerId: r.customer_id,
       supplierId: null, // withheld — never reveal which supplier to the POS
       pricesByHeight: {}, // cost stripped; the charged value rides sellingPricesByHeight
-      sellingPricesByHeight: comboChargedByHeight(r.selling_prices_by_height, r.prices_by_height),
+      sellingPricesByHeight: charged,
       pwpPricesByHeight: r.pwp_prices_by_height ?? {},
       defaultFreeGifts: r.default_free_gifts ?? [],
       label: r.label,

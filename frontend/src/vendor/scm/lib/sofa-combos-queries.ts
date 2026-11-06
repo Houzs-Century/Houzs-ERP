@@ -37,6 +37,7 @@ export type SofaComboRule = {
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
+  createdByName?: string | null;
   /* A1 (2026-09-17) — COST derive-status, set by the backend for the MASTER
      view only (auto-derive flag ON):
        auto   — cost auto-derives from a supplier combo (derivedFromSupplier*).
@@ -46,20 +47,6 @@ export type SofaComboRule = {
   costSource?: 'auto' | 'manual' | 'gap';
   derivedFromSupplierId?: string | null;
   derivedFromSupplierName?: string | null;
-};
-
-export type NewSofaCombo = {
-  baseModel: string;
-  /** OR-set per slot: ordered slots, each an array of alternative codes. */
-  modules: string[][];
-  tier: SofaPriceTier | null;
-  customerId: string | null;
-  /** Supplier scope. null/undefined = sales-side / master combo. */
-  supplierId?: string | null;
-  pricesByHeight: Record<string, number | null>;
-  label?: string | null;
-  effectiveFrom: string;
-  notes?: string | null;
 };
 
 export type ComboFilters = {
@@ -121,55 +108,66 @@ export function useSofaComboHistory(args: {
   });
 }
 
-export function useCreateSofaCombo() {
+/** One combo at one Price. `prices` names only the cells to change; null takes a
+ *  price away; {} opens a combo with no price, or does nothing if it already exists. */
+export type ApplyComboItem = {
+  baseModel: string;
+  modules: string[][];
+  tier: SofaPriceTier;
+  supplierId: string | null;
+  prices: Record<string, number | null>;
+  effectiveFrom: string;
+  label?: string | null;
+  notes?: string | null;
+};
+
+export type ComboRef = { baseModel: string; modules: string[][] };
+export type AssignTarget = { id: string; name: string; linked: boolean; held: string[] };
+
+const APPLY_CHUNK = 200;
+
+const useComboWrite = <T,>(write: (body: T) => Promise<unknown>) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: NewSofaCombo) =>
-      authedFetch<SofaComboRule>('/sofa-combos', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+    mutationFn: write,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sofa-combos'] });
-      qc.invalidateQueries({ queryKey: ['sofa-combos-history'] });
+      void qc.invalidateQueries({ queryKey: ['sofa-combos'] });
+      void qc.invalidateQueries({ queryKey: ['sofa-combos-history'] });
+      void qc.invalidateQueries({ queryKey: ['sofa-combo-targets'] });
     },
   });
-}
+};
 
-export function useUpdateSofaCombo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id, pricesByHeight, label, effectiveFrom, notes, supplierId,
-    }: {
-      id: string;
-      pricesByHeight: Record<string, number | null>;
-      label?: string | null;
-      effectiveFrom: string;
-      notes?: string | null;
-      /** Supplier scope. Omit to keep the original row's scope. */
-      supplierId?: string | null;
-    }) =>
-      authedFetch<SofaComboRule>(`/sofa-combos/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ pricesByHeight, label, effectiveFrom, notes, supplierId }),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sofa-combos'] });
-      qc.invalidateQueries({ queryKey: ['sofa-combos-history'] });
-    },
+/** A big Excel file goes in chunks, each one atomic on the server. */
+export const useApplyCombos = () =>
+  useComboWrite(async (items: ApplyComboItem[]) => {
+    for (let i = 0; i < items.length; i += APPLY_CHUNK) {
+      await authedFetch('/sofa-combos/apply', { method: 'POST', body: JSON.stringify({ items: items.slice(i, i + APPLY_CHUNK) }) });
+    }
   });
-}
 
-export function useDeleteSofaCombo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<void>(`/sofa-combos/${id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sofa-combos'] });
-      qc.invalidateQueries({ queryKey: ['sofa-combos-history'] });
-    },
+/** No supplier = the master combo, and every supplier's copy goes with it. */
+export const useRetireCombos = () =>
+  useComboWrite(async ({ items, supplierId }: { items: ComboRef[]; supplierId: string | null }) => {
+    for (let i = 0; i < items.length; i += APPLY_CHUNK) {
+      await authedFetch('/sofa-combos/retire', { method: 'POST', body: JSON.stringify({ items: items.slice(i, i + APPLY_CHUNK), supplierId }) });
+    }
+  });
+
+export const useRecomposeCombos = () =>
+  useComboWrite(async (moves: Array<{ baseModel: string; from: string[][]; to: string[][]; supplierId: string | null; label?: string | null; notes?: string | null }>) => {
+    for (const move of moves) {
+      await authedFetch('/sofa-combos/recompose', { method: 'POST', body: JSON.stringify(move) });
+    }
+  });
+
+export function useComboAssignTargets(baseModel: string | null) {
+  return useQuery({
+    enabled: !!baseModel,
+    queryKey: ['sofa-combo-targets', baseModel],
+    queryFn: () =>
+      authedFetch<{ suppliers: AssignTarget[] }>(`/sofa-combos/assign-targets?baseModel=${encodeURIComponent(baseModel ?? '')}`)
+        .then((r) => r.suppliers),
   });
 }
 
