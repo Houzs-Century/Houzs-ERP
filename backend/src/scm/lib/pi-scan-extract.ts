@@ -137,7 +137,7 @@ const PI_SCAN_PROMPT =
   '  "invoiceNumber": string|null,  // the supplier\'s own invoice number\n' +
   '  "invoiceDate": "YYYY-MM-DD"|null,\n' +
   '  "poNo": string|null,           // the Purchase Order number the invoice references (e.g. "PO-010070")\n' +
-  '  "doNo": string|null,           // the Delivery Order / D.O. number the invoice references (e.g. "DGSN26001880")\n' +
+  '  "doNo": string|null,           // the Delivery Order / D.O. number the invoice references (e.g. "DGSN26001880"); several printed: all of them, comma separated\n' +
   '  "salesTax": number|null,       // the Sales Tax / SST amount in the invoice summary, 0 when it prints 0.00\n' +
   '  "totalAmount": number|null,    // the final Total Amount of the invoice, after tax\n' +
   '  "lines": [\n' +

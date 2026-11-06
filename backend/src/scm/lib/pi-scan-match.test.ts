@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   normalizeDocRef,
-  docRefMatches,
+  docRefsOf, docRefMatches,
   normalizeCode,
   matchInvoiceLinesToGrnLines,
   type PiMatchGrnLine,
@@ -31,6 +31,11 @@ describe('normalizeDocRef', () => {
 describe('docRefMatches — anchors a scanned ref to our doc number', () => {
   test('the supplier bare PO No matches our HC- prefixed number (suffix)', () => {
     expect(docRefMatches('PO-010070', 'HC-PO-010070')).toBe(true);
+  });
+  test('an invoice naming several D.O. reaches each of them', () => {
+    expect(docRefsOf('DO-2610-01, DO-2610-02 & DO-2610-03')).toEqual(['DO-2610-01', 'DO-2610-02', 'DO-2610-03']);
+    expect(docRefsOf('DGSN26001880')).toEqual(['DGSN26001880']);
+    expect(docRefsOf(null)).toEqual([]);
   });
   test('DO No matches delivery_note_ref exactly after normalization', () => {
     expect(docRefMatches('DGSN26001880', 'DGSN26001880')).toBe(true);
