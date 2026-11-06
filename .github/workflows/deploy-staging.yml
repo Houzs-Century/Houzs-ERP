@@ -240,7 +240,9 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          command: pages deploy ./dist --project-name=houzs-erp-staging --commit-dirty=true
+          # --branch=main: a run from the `staging` branch would otherwise publish to
+          # staging.houzs-erp-staging.pages.dev and the smoke below would read the old build.
+          command: pages deploy ./dist --project-name=houzs-erp-staging --branch=main --commit-dirty=true
       # See deploy.yml for why the script's 16s default is too tight for
       # Cloudflare Pages propagation.
       - run: npm run smoke -- "${{ vars.STAGING_FRONTEND_SMOKE_URL || 'https://houzs-erp-staging.pages.dev' }}"
