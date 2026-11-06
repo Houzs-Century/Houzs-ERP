@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
 // card-in-bank — how much of a card payment the acquirer has paid into a bank
-// by a given day (owner 2026-11-05: card money is Cash In on the swipe date,
-// split into "in the bank" and "not yet in the bank").
+// by a given day (owner 2026-11-05: card money is Cash In on the swipe date),
+// and whether the merchant's report has matched the rest (owner 2026-11-06:
+// 分多一个 condition).
 //
 // The chain is the settlement module's own: the payment row (the SOPAY / SIPAY
 // journal's source_doc_no) → acc_settlement_matches → its settlement line →
@@ -11,6 +12,11 @@
 // (credits plus what the bank kept off them, against what the statement said
 // it would pay), capped at all of it. A payment no statement claims is not in
 // the bank.
+//
+// Merchant matched is its own answer, never "in the bank": the acquirer has said
+// it will pay, and it does, usually within 3 days, but at a month end that money
+// can be a third of the month's swipes (2990 on 31/08), and the report's bank
+// columns agree with the bank statements.
 // ----------------------------------------------------------------------------
 
 import { paginateAll } from '../scm/lib/paginate-all';
@@ -18,7 +24,7 @@ import type { resolveRoles } from './rules';
 
 export type CardPayoutFacts = {
   matches: Array<{ payment_source: string; payment_id: string; settlement_row_id: number }>;
-  rows: Array<{ id: number; batch_id: number }>;
+  rows: Array<{ id: number; batch_id: number; confirmed_at: string | null }>;
   batches: Array<{ id: number; stated_net_sen: number | null; net_sen: number | null }>;
   receipts: Array<{ batch_id: number; received_on: string; amount_sen: number; charge_sen: number | null; je_no: string | null }>;
 };
@@ -53,6 +59,18 @@ export function inBankShares(facts: CardPayoutFacts, asOf: string): Map<string, 
   return out;
 }
 
+/** The payments a merchant's report has matched, keyed by paymentKey. A confirmed line
+    only: a link on a line still waiting is the machine's proposal, not an answer. */
+export function merchantMatched(facts: CardPayoutFacts): Set<string> {
+  const confirmed = new Set<number>();
+  for (const r of facts.rows) if (r.confirmed_at) confirmed.add(Number(r.id));
+  const out = new Set<string>();
+  for (const m of facts.matches) {
+    if (confirmed.has(Number(m.settlement_row_id))) out.add(paymentKey(m.payment_source, String(m.payment_id)));
+  }
+  return out;
+}
+
 /* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
@@ -61,7 +79,7 @@ export async function loadCardPayoutFacts(sb: Sb, companyId: number): Promise<{ 
   const read = <T>(table: string, cols: string) => paginateAll<T>((f, t) => sb.from(table).select(cols).eq('company_id', companyId).order('id').range(f, t));
   const [matches, rows, batches, receipts] = await Promise.all([
     read<CardPayoutFacts['matches'][number]>('acc_settlement_matches', 'payment_source, payment_id, settlement_row_id'),
-    read<CardPayoutFacts['rows'][number]>('acc_settlement_rows', 'id, batch_id'),
+    read<CardPayoutFacts['rows'][number]>('acc_settlement_rows', 'id, batch_id, confirmed_at'),
     read<CardPayoutFacts['batches'][number]>('acc_settlement_batches', 'id, stated_net_sen, net_sen'),
     read<CardPayoutFacts['receipts'][number]>('acc_settlement_receipts', 'batch_id, received_on, amount_sen, charge_sen, je_no'),
   ]);
