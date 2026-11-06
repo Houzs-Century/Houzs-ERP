@@ -98,6 +98,8 @@ const findResults = [
 const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
 const REPORT_ROWS: SettlementRow[] = [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW];
 let reportRows: SettlementRow[] = REPORT_ROWS;
+/* What differs on the report a test opens. */
+let openedBatch: Record<string, unknown> = {};
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
@@ -109,6 +111,7 @@ vi.mock('./settlement-queries', () => ({
         id: 1, acquirer_code: 'MBB', net_sen: 175100, stated_net_sen: null,
         adjustment_sen: 0, adjustment_je_no: null, received_on: null,
         received_sen: 60000, outstanding_sen: 115100,
+        ...openedBatch,
         receipts: [{ id: 9, received_on: '2026-08-05', amount_sen: 60000, bank_ref: null, note: null, je_no: 'JE-2608-0007', created_by: 'Ah Chew' }],
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
@@ -497,6 +500,20 @@ describe('confirming a pile of reports', () => {
      and one refresh at the end. */
   const NOTHING_TO_POST = { ...BATCH, id: 2, file_name: 'sep.csv', to_confirm_count: 0, to_choose_count: 2, open_count: 2 };
   const CHARGE_ONLY = { ...BATCH, id: 3, file_name: 'aeon.csv', to_confirm_count: 0, adjustment_sen: 48984, adjustment_je_no: null };
+
+  test('a report with a charge beyond its lines: its net is what the acquirer pays, on the list and above the card', () => {
+    /* AEON's subvention fee: lines net RM 1,751.00, the report pays RM 1,261.16. */
+    const charged = { stated_net_sen: 126_116, adjustment_sen: 48_984, adjustment_je_no: null };
+    setBatchList([{ ...BATCH, ...charged }]);
+    openedBatch = charged;
+    draw();
+    expect(screen.getByText('net RM 1,261.16')).toBeTruthy();
+    expect(screen.queryByText('net RM 1,751.00')).toBeNull();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getByText(/· net RM 1,261\.16/)).toBeTruthy();
+    openedBatch = {};
+    setBatchList([BATCH]);
+  });
 
   test('the work list offers one press for every matched line, sends only the reports with work in them, and refreshes once', async () => {
     confirmMatchedBatch.mockReset();
