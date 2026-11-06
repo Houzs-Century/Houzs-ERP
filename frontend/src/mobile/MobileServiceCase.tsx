@@ -2173,18 +2173,9 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
     },
   });
 
-  // Issue category is REQUIRED (owner ruling 2026-07-19): the field already
-  // carries a "*" marker, so the submit gate must actually block on it — same
-  // greyed-out disabled Create button the other required fields use.
-  //
-  // Items MAY be empty (owner 2026-07-22) — driver-damaged floor, lorry
-  // problem etc. don't tie to a specific product. Dropped from the gate.
-  const missing = missingCaseFields([
-    ["SO # / reference / customer", docNo],
-    ["Issue description", complaint],
-    ["Issue category", category],
-    ["Complaint date", complainedDate],
-  ]);
+  // Issue category is required (owner ruling 2026-07-19). Items may be empty (owner
+  // 2026-07-22): a damaged floor or a lorry problem ties to no product.
+  const missing = missingCaseFields([["SO # / reference / customer", docNo], ["Issue description", complaint], ["Issue category", category], ["Complaint date", complainedDate]]);
   const valid = missing.length === 0;
 
   // FIXED + z-index 40 (the .sheet-bd pattern) — NOT absolute/z20. When

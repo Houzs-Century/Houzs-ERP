@@ -2499,11 +2499,7 @@ function CreatePanel({
   // any other string → either a canonical category or a custom label.
   const [issueCategory, setIssueCategory] = useState<string>("");
   const [customCategory, setCustomCategory] = useState("");
-  const stillNeeded = missingCaseFields([
-    ["SO number", docNo],
-    ["Issue description", issue],
-    ["Issue category", issueCategory === OTHER_SENTINEL ? customCategory : issueCategory],
-  ]);
+  const stillNeeded = missingCaseFields([["SO number", docNo], ["Issue description", issue], ["Issue category", issueCategory === OTHER_SENTINEL ? customCategory : issueCategory]]);
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<{ name?: string; phone?: string; location?: string } | null>(null);
