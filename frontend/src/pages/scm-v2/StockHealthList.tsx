@@ -2,6 +2,7 @@
    showed 40 of 717 rows; list them all, sort, export). The page's own payload
    carries only the 50 largest; this reads the full lists of the SAME cached
    report from GET /procurement-overview/stock-health when the table is shown. */
+import { variantWords } from "../../vendor/scm/lib/variant-key-label";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -15,7 +16,7 @@ type Col<R> = { k: string; label: string; left?: boolean; value: (r: R) => numbe
 
 const DEAD_COLS = (cat: (k: string) => string): Col<DeadRow>[] => [
   { k: "item", label: "Item / variant", left: true, value: (r) => r.itemCode, show: (r) => r.itemCode },
-  { k: "variant", label: "Variant", left: true, value: (r) => r.variantKey || "", show: (r) => r.variantKey || "" },
+  { k: "variant", label: "Variant", left: true, value: (r) => variantWords(r.variantKey), show: (r) => variantWords(r.variantKey) },
   { k: "warehouse", label: "Warehouse", left: true, value: (r) => r.warehouse, show: (r) => r.warehouse },
   { k: "category", label: "Category", left: true, value: (r) => cat(r.category), show: (r) => cat(r.category) },
   { k: "qty", label: "Dead qty", value: (r) => r.qty, show: (r) => String(r.qty) },
@@ -24,7 +25,7 @@ const DEAD_COLS = (cat: (k: string) => string): Col<DeadRow>[] => [
 ];
 const BUFFER_COLS = (cat: (k: string) => string): Col<BufferRow>[] => [
   { k: "item", label: "Item / variant", left: true, value: (r) => r.itemCode, show: (r) => r.itemCode },
-  { k: "variant", label: "Variant", left: true, value: (r) => r.variantKey || "", show: (r) => r.variantKey || "" },
+  { k: "variant", label: "Variant", left: true, value: (r) => variantWords(r.variantKey), show: (r) => variantWords(r.variantKey) },
   { k: "warehouse", label: "Warehouse", left: true, value: (r) => r.warehouse, show: (r) => r.warehouse },
   { k: "category", label: "Category", left: true, value: (r) => cat(r.category), show: (r) => cat(r.category) },
   { k: "qty", label: "Buffer qty", value: (r) => r.bufferQty, show: (r) => String(r.bufferQty) },
@@ -51,7 +52,7 @@ export function StockHealthList({ kind, query, catLabel, category, warehouse }: 
   const all = useMemo(() => (((kind === "dead" ? q.data?.dead : q.data?.buffer) ?? []) as Array<DeadRow | BufferRow>)
     .filter((r) => (!category || r.category === category) && (!warehouse || r.warehouse === warehouse)), [q.data, kind, category, warehouse]);
   const needle = search.trim().toLowerCase();
-  const rows = useMemo(() => (needle ? all.filter((r) => `${r.itemCode} ${r.variantKey} ${r.name ?? ""} ${r.warehouse} ${catLabel(r.category)}`.toLowerCase().includes(needle)) : all), [all, needle, catLabel]);
+  const rows = useMemo(() => (needle ? all.filter((r) => `${r.itemCode} ${r.variantKey} ${variantWords(r.variantKey)} ${r.name ?? ""} ${r.warehouse} ${catLabel(r.category)}`.toLowerCase().includes(needle)) : all), [all, needle, catLabel]);
   const byKey = useMemo(() => new Map(cols.map((c) => [c.k, c])), [cols]);
   const { sorted, sort, toggle } = useTableSort(rows, (r, k) => byKey.get(k)?.value(r) ?? null);
   const total = rows.reduce((a, r) => a + r.valueSen, 0);
@@ -85,7 +86,7 @@ export function StockHealthList({ kind, query, catLabel, category, warehouse }: 
           <tbody>{sorted.map((r, i) => (
             <tr key={`${r.itemCode}|${r.variantKey}|${r.warehouse}|${i}`}>
               {cols.filter((c) => c.k !== "variant").map((c) => c.k === "item"
-                ? <Td key={c.k} left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
+                ? <Td key={c.k} left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{variantWords(r.variantKey)}</span>}</Td>
                 : <Td key={c.k} left={c.left} className={c.tone?.(r) ?? ""}>{c.show(r)}</Td>)}
             </tr>
           ))}</tbody>

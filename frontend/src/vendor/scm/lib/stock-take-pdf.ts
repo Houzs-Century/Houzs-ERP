@@ -30,7 +30,9 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { warehouseLabel, type WarehouseLabelSource } from './warehouse-label';
-import { variantKeyLabel } from './variant-key-label';
+import { printVariant, variantKeyLabel } from './variant-key-label';
+
+export { printVariant };
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
@@ -78,23 +80,6 @@ const SCOPE_LABEL = (scopeType: string, scopeValue: string | null): string => {
   if (scopeType === 'CODE_PREFIX') return `Prefix · ${scopeValue ?? '—'}`;
   return scopeType;
 };
-
-/* The variant as a counting sheet prints it: the same facts, short words, so a
-   bedframe row stays one or two lines instead of four. "fabriccode pc151-01 ·
-   divanheight 10\"" → "pc151-01 · divan 10\"". The screen keeps the full label. */
-const PRINT_KEY: Record<string, string> = {
-  fabriccode: '', special: '', divanheight: 'divan', legheight: 'leg',
-  totalheight: 'total', seatheight: 'seat', seatsize: 'seat',
-};
-export const printVariant = (label: string): string =>
-  label.split(' · ').map((part) => {
-    const sp = part.indexOf(' ');
-    if (sp < 0) return part;
-    const key = part.slice(0, sp).toLowerCase();
-    if (!(key in PRINT_KEY)) return part;
-    const short = PRINT_KEY[key];
-    return short ? `${short} ${part.slice(sp + 1)}` : part.slice(sp + 1);
-  }).join(' · ');
 
 /** A signed variance reads as a variance only with its sign on it. */
 const signed = (n: number): string => (n > 0 ? `+${n}` : String(n));
