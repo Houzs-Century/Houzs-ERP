@@ -81,7 +81,7 @@ export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose
   };
 
   const work = plan ? plan.totals.pairs + plan.totals.moves + plan.totals.folds + (plan.keptOff ? 1 : 0) : 0;
-  const canMerge = Boolean(plan) && plan?.refusals.length === 0 && work > 0;
+  const canMerge = plan !== null && plan.refusals.length === 0 && work > 0;
   return (
     <Modal title="Merge models" onClose={onClose} width="min(760px, 100%)">
       <datalist id="merge-model-codes">{codes.map((c) => <option key={c} value={c} />)}</datalist>

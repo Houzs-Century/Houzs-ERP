@@ -24,7 +24,7 @@ import { requireHouzsPerm } from '../lib/houzs-perms';
 import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { enqueueStockAllocationRecompute } from '../lib/stock-allocation-queue';
 import { planDuplicateSkuMerge, confirmPhrase } from '../../../scripts/lib/duplicate-sku-merge-plan.mjs';
-import { readMergeColumns, readMergeWorld, applyMerge, verifyMerge } from '../../../scripts/lib/duplicate-sku-merge-run.mjs';
+import { readMergeColumns, readMergeWorld, applyMerge, recordModelMergeAudit, verifyMerge } from '../../../scripts/lib/duplicate-sku-merge-run.mjs';
 import { planModelGroup, confirmPhrase as modelConfirmPhrase } from '../../../scripts/lib/duplicate-model-merge-plan.mjs';
 import { readModelWorld, verifyModelGroup, writeModelGroup } from '../../../scripts/lib/duplicate-model-merge-run.mjs';
 
@@ -194,13 +194,11 @@ mfgProductMerge.post('/models/apply', async (c) => {
   const { committed, problems, rekeyed } = await applyMerge(sql, { co, plan: skuPlan, world: skuWorld, cascade: PRODUCT_CODE_CASCADE, audit });
   const due = skuPlan.pairs.filter((p: any) => p.rekey.length > 0 || p.retire).length;
   if (committed.length < due) return c.json({ error: `The Model was not merged: ${problems.join(' ')}`, code: 'sku_merge_failed' }, 500);
-  /* The undo of the Model writes, on record before they run. audit_events.meta is text. */
-  const undo = JSON.stringify({ company_id: co, moves: plan.moves, folded: plan.foldModels, addSizes: plan.addSizes, activateKept: plan.activateKept, fills: plan.fills.map((f: any) => ({ code: f.code, field: f.field, from: f.from })) });
-  await sql`
-    INSERT INTO audit_events (actor_id, actor_email, action, entity_type, entity_id, summary, meta, request_id)
-    VALUES (${audit.actorId}, ${audit.actorEmail}, 'scm.model.merge', 'product_model', ${plan.keptModelId},
-            ${`Merging Models ${parsed.pairs.map((p) => `"${p.drop}"`).join(', ')} into "${plan.label}"`},
-            ${undo}, NULL)`;
+  /* The undo of the Model writes, on record before they run. */
+  await recordModelMergeAudit(sql, {
+    audit, modelId: plan.keptModelId, summary: `Merging Models ${parsed.pairs.map((p) => `"${p.drop}"`).join(', ')} into "${plan.label}"`,
+    undo: { company_id: co, moves: plan.moves, folded: plan.foldModels, addSizes: plan.addSizes, activateKept: plan.activateKept, fills: plan.fills.map((f: any) => ({ code: f.code, field: f.field, from: f.from })) },
+  });
   const modelId = await writeModelGroup(sql, { co, plan, world, log: console.log });
   const check = getSql(resolveDatabaseUrl(c.env));
   problems.push(...await verifyMerge(check, { co, committed, world: skuWorld }), ...await verifyModelGroup(check, { co, plan, modelId }));

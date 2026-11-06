@@ -24,3 +24,4 @@ export function applyMerge(sql: any, w: {
   audit: { actorId: number | null; actorEmail: string | null; requestId: string | null } | null;
 }): Promise<{ committed: MergePairPlan[]; problems: string[]; rekeyed: number }>;
 export function verifyMerge(v: any, w: { co: number; committed: MergePairPlan[]; world: MergeWorld }): Promise<string[]>;
+export function recordModelMergeAudit(sql: any, w: { audit: { actorId: number | null; actorEmail: string | null; requestId: string | null }; modelId: string; summary: string; undo: unknown }): Promise<void>;
