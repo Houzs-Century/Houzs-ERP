@@ -14,6 +14,10 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   layers; check and approve can be the same person.
 - **Prepared can still be edited**; **Checked locks editing** (409
   `not_editable` outside DRAFT).
+- **The words alone stay editable until Approve** (`PATCH /:id/text`, `pvCanEditText`,
+  `scm.payment_voucher.write`; owner 2026-11-06): notes and line descriptions only, the
+  body's other fields are ignored, the voucher stays checked, the change is on its trail.
+  Approve writes the journal with the lines' words, so approved, posted and cancelled refuse.
 - **Reject** (either check or approve key) → back to raw `DRAFT`, every mark
   cleared, reason on the audit trail.
 - **Withdraw** — preparer's own back-out — only works before Check.
