@@ -32,7 +32,7 @@ const watch = async (tx, co, qs = '') => {
     c.set('supabase', sb);
     c.set('companyId', co);
     c.set('user', { id: null });
-    c.set('houzsUser', { id: 0 });
+    c.set('houzsUser', { id: 0, role_name: 'Finance', permissions: ['scm.payment_voucher.post'], permissions_set: new Set(['scm.payment_voucher.post']) });
     c.set('allowedCompanyIds', [co]);
     c.set('companies', [{ id: co, code: String(co) }]);
     c.set('companyCode', String(co));
@@ -70,7 +70,8 @@ await sql.begin('READ ONLY', async (tx) => {
       const o = p.source === 'SOPAY' ? byDoc.get(p.docNo) : null;
       const customer = clean(o?.customer_so_no);
       const ref = clean(o?.ref);
-      return { p, customer, ref, shown: customer ?? ref };
+      /* The one display rule: customerRefOf = ref || customer_so_no. */
+      return { p, customer, ref, shown: ref ?? customer };
     });
     out(`order's customer_so_no filled ${with_.filter((x) => x.customer).length}; ref filled ${with_.filter((x) => x.ref).length}; either ${with_.filter((x) => x.shown).length}; neither ${with_.filter((x) => !x.shown).length}`);
     out(`both filled and different: ${with_.filter((x) => x.customer && x.ref && x.customer !== x.ref).length}`);
