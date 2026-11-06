@@ -25,6 +25,16 @@ const mono = { fontFamily: 'var(--font-mono)' };
 const input = { ...mono, padding: '6px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--line-strong, #8a8780)', borderRadius: 6, background: 'var(--c-paper, #fff)' };
 const hint = { margin: 0, fontSize: 'var(--fs-12, 12px)', color: 'var(--fg-muted)' };
 
+export const MergeModelsButton = ({ codes }: { codes: string[] }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>Merge models</Button>
+      {open && <MergeModelsDialog codes={codes} onClose={() => setOpen(false)} />}
+    </>
+  );
+};
+
 export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose: () => void }) => {
   const qc = useQueryClient();
   const [keep, setKeep] = useState('');

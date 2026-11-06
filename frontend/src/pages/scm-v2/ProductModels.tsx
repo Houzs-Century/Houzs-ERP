@@ -14,7 +14,7 @@ import { ProductModelDetail } from './ProductModelDetail';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { Search, Plus, Trash2, Truck, X, ImageOff, Upload, Edit3 } from 'lucide-react';
 import { Button } from '../../components/Button';
-import { MergeModelsDialog } from './products/MergeModelsDialog';
+import { MergeModelsButton } from './products/MergeModelsDialog';
 import { PageHeader } from '../../components/Layout';
 import { maintActiveValues } from '@2990s/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -94,7 +94,6 @@ export const ProductModels = () => {
   const askConfirm = useConfirm();
   const notify = useNotify();
 
-  const [merging, setMerging] = useState(false);
   const { data: models = [], isLoading, error } = useProductModels(
     filter === 'all' ? undefined : { category: filter },
   );
@@ -305,10 +304,8 @@ export const ProductModels = () => {
           `${filtered.length} models`
         }
         actions={
-          /* The search pill rides in the actions slot — the same seat it had
-             inside the old bespoke .actions rail. */
           <>
-            <Button variant="secondary" onClick={() => setMerging(true)}>Merge models</Button>
+            <MergeModelsButton codes={models.map((m) => m.model_code)} />
             <div className={styles.searchBox}>
               <Search {...ICON} />
               <input
@@ -321,7 +318,6 @@ export const ProductModels = () => {
           </>
         }
       />
-      {merging && <MergeModelsDialog codes={models.map((m) => m.model_code)} onClose={() => setMerging(false)} />}
 
       {/* Category filter chips */}
       <div className={styles.chipRow}>
