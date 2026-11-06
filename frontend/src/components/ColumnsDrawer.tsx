@@ -15,6 +15,7 @@ import {
   MoreVertical,
   Search,
   Star,
+  Users,
   X,
 } from "lucide-react";
 import { Button, IconButton, SearchInput } from "./Button";
@@ -102,6 +103,12 @@ interface Props {
   /** Drop a page seed's company-shared override, reverting it to the code
    *  default (only offered on an overridden seed). */
   onResetLayout?: (id: string) => Promise<void>;
+  /** Publish a personal saved layout to the whole company, so every member can
+   *  pick it. Offered on a personal row only, and only for a layout manager. */
+  onShareLayout?: (id: string) => Promise<void>;
+  /** Stop sharing a team-published layout, removing it from everyone's picker.
+   *  Offered on a shared row only, and only for a layout manager. */
+  onUnshareLayout?: (id: string) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
   /** True when the columns no longer match the active layout. */
   dirty?: boolean;
@@ -148,6 +155,8 @@ export function ColumnsDrawer({
   onDeleteLayout,
   onUpdateLayout,
   onResetLayout,
+  onShareLayout,
+  onUnshareLayout,
   defaultManager,
   dirty,
   udf,
@@ -657,6 +666,11 @@ export function ColumnsDrawer({
                   Default
                 </span>
               )}
+              {l.shared && (
+                <span className="rounded-full bg-primary-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] text-primary-ink">
+                  Shared
+                </span>
+              )}
             </span>
             <span className="block truncate text-[11px] text-ink-muted">
               {[l.hint, `${l.count} columns`].filter(Boolean).join(" · ")}
@@ -665,7 +679,9 @@ export function ColumnsDrawer({
           {!l.readOnly &&
             (l.seed
               ? Boolean(onUpdateLayout || (l.overridden && onResetLayout))
-              : Boolean(onDuplicateLayout || onRenameLayout)) && (
+              : l.shared
+                ? Boolean(onUpdateLayout || onUnshareLayout)
+                : Boolean(onDuplicateLayout || onRenameLayout || onShareLayout)) && (
             <span
               role="button"
               tabIndex={0}
@@ -706,7 +722,7 @@ export function ColumnsDrawer({
                       close();
                       await runLayoutAction(
                         onUpdateLayout(target.id),
-                        target.seed
+                        target.seed || target.shared
                           ? `“${target.label}” updated for everyone`
                           : `“${target.label}” now matches these columns`,
                       );
@@ -714,10 +730,27 @@ export function ColumnsDrawer({
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
                   >
                     <Check size={13} />
-                    {target.seed ? " Update for everyone (current columns)" : " Update with current columns"}
+                    {target.seed || target.shared
+                      ? " Update for everyone (current columns)"
+                      : " Update with current columns"}
                   </button>
                 )}
-                {onRenameLayout && !target.seed && (
+                {onShareLayout && !target.seed && !target.shared && target.savedId != null && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      close();
+                      await runLayoutAction(
+                        onShareLayout(target.id),
+                        `“${target.label}” shared with the team`,
+                      );
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                  >
+                    <Users size={13} /> Share to team
+                  </button>
+                )}
+                {onRenameLayout && !target.seed && !target.shared && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -730,7 +763,7 @@ export function ColumnsDrawer({
                     <Pencil size={13} /> Rename
                   </button>
                 )}
-                {onDuplicateLayout && !target.seed && (
+                {onDuplicateLayout && !target.seed && !target.shared && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -772,6 +805,28 @@ export function ColumnsDrawer({
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-err/10 hover:text-err"
                     >
                       <Trash2 size={13} /> Reset to default
+                    </button>
+                  </>
+                )}
+                {target.shared && onUnshareLayout && (
+                  <>
+                    <div className="mx-2 my-1 h-px bg-border-subtle" />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await dialog?.confirm({
+                          title: `Stop sharing “${target.label}”?`,
+                          message:
+                            "Removes this layout from every member's picker. Columns on screen stay as they are.",
+                          danger: true,
+                          confirmLabel: "Stop sharing",
+                        });
+                        close();
+                        if (ok) await runLayoutAction(onUnshareLayout(target.id), "Stopped sharing the layout");
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-err/10 hover:text-err"
+                    >
+                      <Trash2 size={13} /> Stop sharing
                     </button>
                   </>
                 )}

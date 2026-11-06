@@ -116,6 +116,7 @@ import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { fairLabel } from "../../vendor/scm/lib/fair-options-queries";
 import { linkedEvent, type LinkedFair } from "../../components/fairPick";
+import { soStreetTail } from "../../vendor/scm/lib/order-address";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -152,6 +153,8 @@ type SoHeader = {
   email: string | null;
   address1: string | null;
   address2: string | null;
+  address3?: string | null;
+  address4?: string | null;
   city: string | null;
   postcode: string | null;
   customer_state: string | null;
@@ -1485,6 +1488,7 @@ function SalesOrderDetailV2ReadOnly() {
                     {[
                       salesOrder.address1,
                       salesOrder.address2,
+                      ...soStreetTail(salesOrder),
                       [salesOrder.city, salesOrder.postcode]
                         .filter(Boolean)
                         .join(" "),

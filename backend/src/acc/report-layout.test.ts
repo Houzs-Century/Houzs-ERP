@@ -390,16 +390,16 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect(laid.outSen).toBe(48_700);
     expect(laid.inSen - laid.outSen).toBe(155_000 - 69_700);
     expect(flat(laid.nodes)).toEqual([
-      ['category', 'Source of funds', 'in', 89_000, 66.4, [
-        ['category', 'Deposit received', null, 89_000, 66.4, [
-          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 67.2],
-          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -0.7],
+      ['category', 'Source of funds', 'in', 89_000, 100, [
+        ['category', 'Deposit received', null, 89_000, 100, [
+          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 101.1],
+          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -1.1],
         ]],
       ]],
       ['category', 'Expenses', 'out', 45_000, 92.4, [['account', '900-A001 · ACCOUNTING FEE', 'out', 45_000, 92.4]]],
       ['subtotal', 'Net operation surplus / (deficit)', null, 44_000, null],
-      ['category', 'Loan From / (Repayment)', 'in', 40_000, 29.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 29.9]]],
-      ['unassigned', 'Unassigned receipts', 'in', 5_000, 3.7, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 3.7]]],
+      ['category', 'Loan From / (Repayment)', 'in', 40_000, 44.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 44.9]]],
+      ['unassigned', 'Unassigned receipts', 'in', 5_000, 5.6, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 5.6]]],
       ['unassigned', 'Unassigned payments', 'out', 3_700, 7.6, [
         ['account', '905-0000 · TRAVELLING', 'out', 700, 1.4],
         ['account', 'Supplier advances (预付)', 'out', 3_000, 6.2],
@@ -412,5 +412,39 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     const dep = laid.nodes[0]!.children[0]!;
     expect(dep.children.map((n) => n.id)).toEqual(['in:acc:300-0000', 'out:acc:300-0000']);
     expect(laid.nodes[3]!.children[0]!.id).toBe('net:acc:350-0010');
+  });
+});
+
+/* Owner 2026-11-05 (L5 with a subtotal under each): any category, in any report and
+   at any depth, may name its Total line; the name rides onto the laid node. */
+describe('a Total name at any depth', () => {
+  const nested: Layout = {
+    version: 1,
+    blocks: {
+      tradingIncome: [], costOfSales: [], otherIncome: [], taxation: [],
+      expenses: [{
+        kind: 'category', id: 'cat:wh', label: 'Warehouse expense', totalLabel: 'Total warehouse',
+        children: [{ kind: 'category', id: 'cat:wh:rent', label: 'Warehouse - Rental', totalLabel: 'Total warehouse rental', children: [{ kind: 'account', code: '900-R002' }] }],
+      }],
+    },
+  };
+
+  test('the P&L keeps a nested category’s Total name, and refuses one past the length limit', () => {
+    const ok = validateLayout('pnl', nested);
+    if (!ok.ok) throw new Error(ok.reason);
+    const top = ok.layout.blocks.expenses![0] as LayoutCategory;
+    expect(top.totalLabel).toBe('Total warehouse');
+    expect((top.children[0] as LayoutCategory).totalLabel).toBe('Total warehouse rental');
+    const long = JSON.parse(JSON.stringify(nested)) as Layout;
+    (long.blocks.expenses![0] as LayoutCategory).totalLabel = 'x'.repeat(200);
+    expect(validateLayout('pnl', long).ok).toBe(false);
+  });
+
+  test('the laid nodes carry it, the top and the nested one alike', () => {
+    const ok = validateLayout('pnl', nested);
+    if (!ok.ok) throw new Error(ok.reason);
+    const laid = layOutBlock(ok.layout.blocks.expenses!, [{ code: '900-R002', name: 'RENTAL OF WAREHOUSE', amountSen: 50_000 }], 2, null);
+    expect(laid[0]!.totalLabel).toBe('Total warehouse');
+    expect(laid[0]!.children[0]!.totalLabel).toBe('Total warehouse rental');
   });
 });

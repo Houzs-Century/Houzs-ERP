@@ -1,7 +1,7 @@
 /* Project data gaps (owner, 2026-10-17): a finished event missing its sales,
    COGS or commission line, and the Sales Orders that size what is missing. */
 import { describe, expect, test } from 'vitest';
-import { classifyProjectGaps, type GapProject } from '../src/scm/lib/project-data-gaps';
+import { classifyProjectGaps, isBooksGap, waivedByProject, type GapProject } from '../src/scm/lib/project-data-gaps';
 
 const p = (o: Partial<GapProject>): GapProject => ({
   id: 1, code: 'P1', name: 'Fair', brand: 'AKEMI', end_date: '2026-09-20', income: 0, cogs: 0, commission: 0, cost: 0, soSen: 0, ...o,
@@ -20,6 +20,17 @@ describe('project data gaps', () => {
     expect(r.noCogs.rows.map((x) => x.id)).toEqual([2]);
     expect(r.noCommission.rows.map((x) => x.id)).toEqual([3]);
     expect(r.byMonth).toEqual([{ month: '2026-08', ended: 1, withSales: 1 }, { month: '2026-09', ended: 3, withSales: 2 }]);
+  });
+
+  test('a removed gap is read per event, once, and only a known gap counts', () => {
+    const w = waivedByProject([
+      { project_id: 7, to_value: 'rental' }, { project_id: 7, to_value: 'rental' },
+      { project_id: 7, to_value: 'size' }, { project_id: 8, to_value: 'cogs' }, { project_id: 9, to_value: null },
+    ]);
+    expect(w.get(7)).toEqual(['rental', 'size']);
+    expect(w.has(8)).toBe(false);
+    expect(w.has(9)).toBe(false);
+    expect(isBooksGap('toString')).toBe(false);
   });
 
   test('events without sales are listed biggest missing first', () => {

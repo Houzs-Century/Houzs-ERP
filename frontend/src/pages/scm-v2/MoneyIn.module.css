@@ -166,3 +166,121 @@ button.card:hover { border-color: #b9d6d1; }
 .askButtonGo.askButtonWaiting { border-color: #8fb3ad; background: #8fb3ad; }
 .askButton:disabled { opacity: 0.7; cursor: default; }
 .askError { font-size: 12px; font-weight: 600; }
+
+/* ── The lists rebuilt in batch 5 steps 4–7: the segment divider and count,
+   the month nav, the batch bar's Clear and notes. ── */
+.segRule { flex: none; align-self: stretch; width: 1px; margin: 6px 4px; background: #d6d9d2; }
+.segCount { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.monthNav { display: inline-flex; align-items: center; gap: 4px; }
+.monthStep {
+  width: 30px; height: 32px; display: grid; place-items: center; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
+  color: #414539; cursor: pointer;
+}
+.monthStep:hover { background: #f4f6f3; }
+.monthLabel {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 100px; box-sizing: border-box;
+  padding: 0 10px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff; font-size: 12.5px; font-weight: 600;
+}
+.monthLabel svg { color: #767b6e; }
+.monthToggle {
+  margin-left: 6px; padding: 0; border: 0; background: none; color: #16695f; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+}
+.batchClear {
+  padding: 0; margin-left: 4px; border: 0; background: none; color: #767b6e; font: 12px 'IBM Plex Sans', system-ui, sans-serif;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.batchNote { display: inline-flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+.batchNote svg { flex: none; margin-top: 1px; color: #16695f; }
+.topRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.waiting { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* ── The month check (Receipts): the figures, the state, the rows behind a
+   difference, each with its step. ── */
+.check { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.checkHead { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.checkTitle { font-size: 15px; font-weight: 600; }
+.checkFig { display: flex; align-items: center; gap: 14px; }
+.checkOp { font-size: 16px; color: var(--faint); }
+.checkLabel { font-size: 12px; color: var(--muted); }
+.checkValue { font-size: 16px; font-weight: 600; }
+.checkGood { color: #2f8a5b; }
+.checkBad { color: #a83434; }
+.checkState { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.checkGroup { padding-top: 8px; border-top: 1px solid #eef0ec; }
+.checkGroupTitle { margin-bottom: 2px; font-size: 12.5px; font-weight: 600; color: #a83434; }
+.checkRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 4px 0; font-size: 12.5px; }
+.checkRowText { flex: 1; min-width: 200px; color: var(--text); }
+.checkAct {
+  height: 26px; padding: 0 10px; border: 1px solid #b9d6d1; border-radius: 5px; background: #e1efed; color: #0c3f39;
+  font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap; text-decoration: none;
+  display: inline-flex; align-items: center;
+}
+.checkAct:disabled { opacity: 0.55; cursor: default; }
+
+/* ── A form in place of its list (`?form=…`, the design's isForm): the fields,
+   lines and picks on the left; the total, the books line, why it cannot save
+   and the buttons on the right. ── */
+.formGrid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+@media (max-width: 960px) { .formGrid { grid-template-columns: minmax(0, 1fr); } }
+.formCol { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.formCard { min-width: 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.formCardTitle { margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+.formFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 640px) { .formFields { grid-template-columns: minmax(0, 1fr); } }
+.formFull { grid-column: 1 / -1; }
+.formField { min-width: 0; }
+.formLabel { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+.formHint { margin-top: 4px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.formHintBad { color: #a83434; }
+.formInput {
+  width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px; background: #ffffff;
+  font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.formInput:focus { outline: none; border-color: var(--petrol); }
+.formInput:disabled { background: #f4f6f3; color: var(--detail); }
+.formNote {
+  display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: #f7f1e3; color: #5a3a14;
+  font-size: 12.5px; line-height: 1.5;
+}
+.formNote svg { flex: none; margin-top: 2px; color: #7a5a1e; }
+.lineScroll { overflow-x: auto; }
+.lineHead, .lineRow { display: grid; grid-template-columns: minmax(180px, 240px) minmax(160px, 1fr) 130px 24px; gap: 8px; align-items: center; min-width: 540px; }
+.lineHead { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.lineRow { padding: 6px 0; border-bottom: 1px solid #eef0ec; }
+.lineFoot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.pickHead, .pickRow { display: grid; grid-template-columns: 16px 132px 92px minmax(120px, 1fr) 104px 136px; gap: 10px; align-items: center; min-width: 620px; }
+.pickHead { margin-top: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.pickRow { padding: 9px 0; border-bottom: 1px solid #eef0ec; font-size: 13px; }
+.pickNo { font-weight: 600; color: #0c3f39; }
+.pickFor { overflow: hidden; color: var(--detail); text-overflow: ellipsis; white-space: nowrap; }
+.pickEmpty { padding: 12px 0 2px; font-size: 12.5px; color: var(--muted); }
+.right { text-align: right; }
+.side { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.sideTotal { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sideTotalLabel { font-size: 13px; color: var(--detail); }
+.sideTotalValue { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.sideBooks { font-size: 12px; line-height: 1.5; color: var(--detail); }
+.sideWhy { padding: 7px 9px; border-radius: 6px; background: #f7f1e3; color: #7a5a1e; font-size: 12px; line-height: 1.45; }
+.sideButtons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.formTypes { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: #eef0ec; }
+
+/* Invoices (batch 5 step 5): the switch's backlogs at the head of the page;
+   a bill line with its event (the bill form's fifth column). */
+.backlog {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: #ffffff; font-size: 13px; color: var(--text);
+}
+.backlog svg { flex: none; }
+.lineHeadEvent, .lineRowEvent { grid-template-columns: minmax(180px, 220px) minmax(160px, 1fr) 130px minmax(160px, 200px) 24px; min-width: 720px; }
+
+/* Debtor maintenance (batch 5 step 6): the debtor form's address heading, and
+   More details — every other party field, folded until asked for. */
+.formSub { margin-top: 4px; padding-top: 12px; border-top: 1px solid #eef0ec; font-size: 12px; font-weight: 600; color: var(--detail); }
+.moreToggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none;
+  font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); cursor: pointer;
+}
+.moreToggle:hover { color: var(--petrol); }
+.moreToggle .muted { font-weight: 400; }
+.moreFields { margin-top: 14px; }

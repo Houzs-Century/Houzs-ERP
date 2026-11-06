@@ -31,6 +31,17 @@ describe('useUpdateDeliveryFields optimistic patch', () => {
     await waitFor(() => expect(statuses()).toEqual(['To Send Delivery Date', 'Done Send']));
   });
 
+  test('a Service Case pick lands on that job only, not its sibling job', async () => {
+    authedFetch.mockImplementation(() => new Promise(() => {}));
+    const qc = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity }, mutations: { retry: false } } });
+    const leg = (job_kind: string) => ({ row_type: 'assr', assr_id: 7, job_kind, so_doc_no: `A#${job_kind}`, delivery_message_status: 'Done Send', regions: ['KL'] } as unknown as PlanningOrder);
+    qc.setQueryData<PlanningResponse>(KEY, { orders: [leg('inspection'), leg('delivery')], counts: {} as PlanningResponse['counts'], regions: [] });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useUpdateDeliveryFields(), { wrapper });
+    result.current.mutate({ type: 'assr', id: '7', jobKind: 'delivery', deliveryMessageStatus: 'To Send Delivery Date' });
+    await waitFor(() => expect(qc.getQueryData<PlanningResponse>(KEY)!.orders.map((o) => o.delivery_message_status)).toEqual(['Done Send', 'To Send Delivery Date']));
+  });
+
   test('a rejected save puts the old status back', async () => {
     authedFetch.mockRejectedValue(new Error('403'));
     const { result, statuses } = setup();

@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, ListPlus, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,
@@ -33,7 +33,6 @@ import {
   useCheckPaymentVoucher,
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
-  useSupplierAdvances, useApplyAdvance,
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
   usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
@@ -55,6 +54,8 @@ import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/compone
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { PvLineEventCell } from './PvLineEventCell';
+import { AdvanceKnockOff } from './AdvanceKnockOff';
+import { PvTextEdit } from './PvTextEdit';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -220,6 +221,10 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
+  /* The first yes locks the voucher but not its words, until the second (owner
+     2026-11-06: 有时我要改 description). The list's Edit text opens with ?text=1. */
+  const mayEditText = isDraft && canWrite && isChecked && !isApprovedPv;
+  const [editingText, setEditingText] = useState(() => searchParams.get('text') === '1');
   /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
      A hook, so it sits above the loading return; onSave is defined below
      that return and the key reaches it through this ref. */
@@ -595,6 +600,11 @@ export const PaymentVoucherDetail = () => {
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
+                {mayEditText && !editingText && (
+                  <Button variant="ghost" size="md" onClick={() => setEditingText(true)} disabled={busy}>
+                    <Pencil {...ICON} /> Edit text
+                  </Button>
+                )}
                 {isDraft && canWrite && !isPrepared && (
                   <Button variant="primary" size="md" onClick={() => void onPrepare()} disabled={busy}>
                     <Send {...ICON} /> Prepare
@@ -784,6 +794,11 @@ export const PaymentVoucherDetail = () => {
           )}
         </div>
       </section>
+
+      {mayEditText && editingText && (
+        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} onClose={() => setEditingText(false)}
+          lines={lines.map((l) => ({ id: String(l.id), description: l.description ?? null }))} />
+      )}
 
       {/* ── Lines ─────────────────────────────────────────────────────── */}
       <section className={styles.card}>
@@ -1053,7 +1068,7 @@ export const PaymentVoucherDetail = () => {
           (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
           voucher paid ahead and money remains on it. */}
       {pv.status === 'POSTED' && pv.supplier_id && (
-        <AdvanceCard pvId={String(pv.id)} supplierId={String(pv.supplier_id)} />
+        <AdvanceKnockOff pvId={String(pv.id)} supplierId={String(pv.supplier_id)} />
       )}
 
       {/* ── Totals ────────────────────────────────────────────────────── */}
@@ -1124,113 +1139,6 @@ export const PaymentVoucherDetail = () => {
         />
       )}
     </div>
-  );
-};
-
-/* ── The advance card — money this voucher paid ahead, spent from HERE ──────
-   Knock-off only: applying settles the invoice's paid_sen and burns the
-   advance; NOTHING posts, because both legs already live in AP. The card
-   disappears when the advance is spent to zero. */
-const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string }) => {
-  const advancesQ = useSupplierAdvances(supplierId);
-  const applyM = useApplyAdvance();
-  const piListQ = usePurchaseInvoices();
-  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
-     lands on its AP INVOICES, which the purchase-invoice list never carries. */
-  const apListQ = useApInvoices('API');
-  const [amounts, setAmounts] = useState<Record<string, number>>({});
-  const [note, setNote] = useState<string | null>(null);
-
-  const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
-
-  type Open = { key: string; kind: 'PI' | 'API'; id: string; number: string; date: string | null; outSen: number };
-  const outstanding = useMemo<Open[]>(() => {
-    const pis = ((piListQ.data?.purchaseInvoices ?? []) as Array<{
-      id: string; invoice_number?: string | null; supplier_id?: string | null;
-      supplier?: { id?: string | null } | null; status?: string | null;
-      total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
-    }>)
-      .filter((r) => {
-        const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
-        const st = String(r.status ?? '').toUpperCase();
-        return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
-          && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
-      })
-      .map((r): Open => ({ key: `pi:${r.id}`, kind: 'PI', id: String(r.id), number: String(r.invoice_number ?? r.id), date: r.invoice_date ?? null, outSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) }));
-    const apis = (apListQ.data?.rows ?? [])
-      .filter((r) => r.supplierId === supplierId && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID') && r.outstandingSen > 0)
-      .map((r): Open => ({ key: `api:${r.id}`, kind: 'API', id: r.id, number: r.invoiceNumber, date: r.invoiceDate, outSen: r.outstandingSen }));
-    return [...pis, ...apis].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')));
-  }, [piListQ.data, apListQ.data, supplierId]);
-
-  if (!mine) return null;
-  const remaining = mine.remaining_sen;
-  const asked = Object.values(amounts).reduce((s, v) => s + v, 0);
-  const over = asked > remaining;
-
-  return (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}>
-        <h2 className={styles.cardTitle}>Advance on this voucher</h2>
-        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
-          {fmtRm(remaining)} unspent{asked > 0 ? ` · applying ${fmtRm(asked)}` : ''}
-        </span>
-      </div>
-      <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
-          This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
-          outstanding invoices below — purchase invoices and AP invoices alike; no money moves, both legs are already in AP.
-        </p>
-        {outstanding.length === 0 ? (
-          <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th style={{ padding: '6px 8px' }}>Invoice</th>
-                <th style={{ padding: '6px 8px' }}>Date</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Knock off</th>
-              </tr>
-            </thead>
-            <tbody>
-              {outstanding.map((r) => (
-                <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
-                  <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
-                    {r.number}
-                    {r.kind === 'API' && <span style={{ marginLeft: 6, fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-orange, #b06000)' }}>AP</span>}
-                  </td>
-                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.date)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outSen)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                    <MoneyInput bare valueSen={amounts[r.key] ?? 0}
-                      onCommit={(sen) => setAmounts((prev) => ({ ...prev, [r.key]: Math.max(0, Math.min(r.outSen, sen ?? 0)) }))}
-                      inputClassName={styles.fieldInput} selectOnFocus />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{note}</span>
-          <Button variant="primary" size="sm"
-            disabled={applyM.isPending || asked === 0 || over}
-            onClick={() => {
-              setNote(null);
-              const allocations = outstanding
-                .filter((r) => (amounts[r.key] ?? 0) > 0)
-                .map((r) => (r.kind === 'API' ? { apInvoiceId: r.id, amountSen: amounts[r.key]! } : { piId: r.id, amountSen: amounts[r.key]! }));
-              applyM.mutate({ pvId, allocations }, {
-                onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
-                onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
-              });
-            }}>
-            {applyM.isPending ? 'Applying…' : 'Apply advance'}
-          </Button>
-        </div>
-      </div>
-    </section>
   );
 };
 

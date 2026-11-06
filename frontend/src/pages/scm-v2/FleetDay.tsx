@@ -24,7 +24,7 @@ import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-col
 import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
 import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
-  pinsFromGeoPoints, geoTotals, zoneSummary, stagedRoutesFromRows, type MapFocus, type MapLatLng,
+  pinsFromGeoPoints, geoTotals, zoneSummary, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
 import { useDeliveryPlanning, type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
 import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isLastMileJobRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
@@ -42,7 +42,7 @@ import { useVehiclePositions } from '../../vendor/scm/lib/vehicle-positions';
 import { PackingListsSection } from '../../vendor/scm/components/PackingListsSection';
 import { dayStatsFrom } from '../../vendor/scm/lib/fleet-day-cards';
 import {
-  docRowVM, buildLorryCards, applyFilters, filtersActive, EMPTY_FILTERS, clockMY, platekey,
+  docRowVM, buildLorryCards, buildLorryRoutes, applyFilters, filtersActive, EMPTY_FILTERS, clockMY, platekey,
   type FleetFilters, type DocRowVM, type LorryRunVM,
 } from './fleet-day/vm';
 import { FleetDayStats } from './fleet-day/Stats';
@@ -69,7 +69,7 @@ export function FleetDay() {
   const [params, setParams] = useSearchParams();
   const date = params.get('date') || todayMY();
   const tab = (params.get('tab') as Tab | null) || 'lorries';
-  const focusedId = params.get('trip') || null;
+  const focusedPlate = params.get('lorry') || null;
   const warehouseId = params.get('warehouseId') || '';
 
   const setParam = (key: string, value: string | null) => {
@@ -216,30 +216,59 @@ export function FleetDay() {
     for (const p of geoPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
     return m;
   }, [geoPoints]);
-  const panelRoutes = useMemo(() => {
-    const depotLL = geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null;
-    const staged = stagedRoutesFromRows(boardOrders, date, pointByRef, depotLL);
-    return staged.map((r) => {
-      const run = runByTripId.get(r.id);
-      const crew = run ? [run.plate, run.driverName].filter(Boolean).join(' · ') : null;
-      return { ...r, color: routeColorFor(colors, r.id), crewLabel: crew || null };
-    });
-  }, [boardOrders, date, pointByRef, runByTripId, colors, geo.data?.depot]);
+  const depotLL = useMemo<MapLatLng | null>(
+    () => (geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null),
+    [geo.data?.depot],
+  );
+  // One stable colour per lorry: a trip-backed lorry keeps its card's trip colour
+  // (card, map and legend agree); a lorry assigned drops but no trip yet gets its
+  // own palette colour so its route still reads as distinct (its card shows grey).
+  const lorryColors = useMemo(() => assignRouteColors(runs.map((r) => platekey(r.plate))), [runs]);
+  const colorForPlate = useCallback((k: string): string => {
+    const run = runByPlate.get(k);
+    return run?.trip ? run.color : routeColorFor(lorryColors, k);
+  }, [runByPlate, lorryColors]);
+  // Per-LORRY numbered routes (owner 2026-11-04): the office board shows each
+  // lorry's run as its own numbered, coloured route — not the per-trip dots — and
+  // surfaces every drop it could not locate instead of silently dropping it.
+  const lorryRoutes = useMemo(
+    () => buildLorryRoutes(runs, pointByRef, depotLL, colorForPlate),
+    [runs, pointByRef, depotLL, colorForPlate],
+  );
+  const panelRoutes = lorryRoutes.routes;
+  // The board's own drops that could not be placed (surfaced, never dropped),
+  // then any server-ungeocoded order not already named.
+  const mapUnlocated = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ ref: string; label?: string; reason: string }> = [];
+    for (const u of lorryRoutes.unlocated) {
+      if (seen.has(u.ref)) continue;
+      seen.add(u.ref);
+      out.push({ ref: u.ref, label: u.label, reason: u.reason });
+    }
+    for (const u of geo.data?.ungeocoded ?? []) {
+      if (seen.has(u.ref)) continue;
+      seen.add(u.ref);
+      out.push({ ref: u.ref, reason: u.reason });
+    }
+    return out;
+  }, [lorryRoutes.unlocated, geo.data?.ungeocoded]);
+  // A lorry focus (the owner's by-lorry filter): the map isolates that lorry's
+  // route and the board highlights its card; click it again to clear.
   const mapFocus = useMemo<MapFocus | null>(() => {
-    if (!focusedId) return null;
-    const refs = boardOrders
-      .filter((o) => o.row_type === 'so' && o.trip_id === focusedId && lastMileSideOf(o, date) != null)
-      .map((o) => o.so_doc_no);
-    return { routeId: focusedId, refs };
-  }, [focusedId, boardOrders, date]);
+    if (!focusedPlate) return null;
+    const run = runByPlate.get(focusedPlate);
+    if (!run) return null;
+    return { routeId: focusedPlate, refs: run.docs.map((d) => d.soDocNo) };
+  }, [focusedPlate, runByPlate]);
   const vehicles = useVehiclePositions(trips, mapOpen);
-  const toggleFocus = (routeId: string) => setParam('trip', focusedId === routeId ? null : routeId);
+  const toggleFocus = (routeId: string) => setParam('lorry', focusedPlate === routeId ? null : routeId);
 
   const goPrint = (tripId?: string) => {
     const p = new URLSearchParams();
     p.set('date', date);
     if (warehouseId) p.set('warehouseId', warehouseId);
-    const t = tripId ?? focusedId;
+    const t = tripId ?? (focusedPlate ? runByPlate.get(focusedPlate)?.trip?.id ?? null : null);
     if (t) p.set('trip', t);
     navigate(`/scm/fleet-run-sheet?${p.toString()}`);
   };
@@ -261,10 +290,10 @@ export function FleetDay() {
       filtersActive={active}
       searchActive={filters.query.trim().length >= 2}
       actionable={!!r.trip}
-      focused={!!r.trip && focusedId === r.trip.id}
+      focused={focusedPlate === platekey(r.plate)}
       selectedKey={selected?.key ?? null}
       remarkKeys={remarkKeys}
-      onFocus={() => { if (r.trip) toggleFocus(r.trip.id); }}
+      onFocus={() => toggleFocus(platekey(r.plate))}
       onOpenDoc={(d) => setSelected(d)}
       onCrew={() => setCrewRun(r)}
       onRunSheet={() => { if (r.trip) goPrint(r.trip.id); }}
@@ -323,10 +352,11 @@ export function FleetDay() {
           regionKey={filters.region}
           viewKey={`${date}|${filters.region}`}
           zoneSummary={mapZones}
-          ungeocoded={geo.data?.ungeocoded ?? []}
+          ungeocoded={mapUnlocated}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading || query.isLoading}
           statusByRef={statusByRef}
+          routeStopRings
           vehicles={vehicles}
           onVehicleClick={(v) => { if (v.lorryId) navigate(`/fleet-health/${v.lorryId}`); }}
         />

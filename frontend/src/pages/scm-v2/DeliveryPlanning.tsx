@@ -57,7 +57,7 @@ import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../ve
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
-import { compareByDeliveryDate } from '../../vendor/scm/lib/delivery-date-group';
+import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -78,6 +78,9 @@ import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useAuth } from '../../auth/AuthContext';
 import { canOperateDeliveryOrders } from '../../auth/salesAccess';
+
+/* The sends that name a date with Confirm / Amend; a Service Case job has its own. */
+const ASSR_DATE_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['delivery', 'amend']);
 
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
@@ -110,16 +113,17 @@ export const DeliveryPlanning = () => {
      sort is active; a drag persists the new order of the displayed rows. The
      DEFAULT beneath it (owner follow-up 2026-10-23) is EFFECTIVE delivery date,
      earliest first — so a board nobody has dragged opens date-ordered, and
-     within each All-view month bucket the rows stay date-ordered. A manual drag
-     still wins for the rows it placed (orderComparator ranks them first; the
-     rest, and a board with no saved order, fall through to the date sort), and a
-     clicked column header overrides both as always. */
+     within each All-view month bucket the rows stay date-ordered. Inside a day
+     each lorry reads earliest Time Slot first. A manual drag still wins for the
+     rows it placed (orderComparator ranks them first; the rest, and a board with
+     no saved order, fall through to the date sort), and a clicked column header
+     overrides both as always. */
   const rowOrder = useDeliveryRowOrder().data;
   const setRowOrder = useSetRowOrder();
   const orderSort = useMemo(() => {
     const cmp = orderComparator(rowOrder ?? []);
     return (a: PlanningOrder, b: PlanningOrder) =>
-      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliveryDate(a, b);
+      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliverySlot(a, b);
   }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
@@ -347,11 +351,17 @@ export const DeliveryPlanning = () => {
   const selectedAssrRows = allOrders.filter((o) => isAssr(o) && sel.has(rowIdOf(o)));
   const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
   const openSendModal = (kind: SendMessageKind) => {
-    if (kind === 'assr_arrangement') { setSendKind(kind); setSendingRows(selectedAssrRows); return; }
     const docs = new Set(selectedSoDocNos());
-    if (docs.size === 0) return;
+    /* With only Service Case jobs ticked, Send Now / Amend Now are their date
+       message: Service Arrangement carries the same Confirm / Amend. */
+    if (kind === 'assr_arrangement' || (ASSR_DATE_KINDS.has(kind) && docs.size === 0)) {
+      setSendKind('assr_arrangement'); setSendingRows(selectedAssrRows); return;
+    }
+    // Driver Info also goes to a Service Case job: its trip's driver, its date.
+    const assr = kind === 'driver_info' ? selectedAssrRows : [];
+    if (docs.size === 0 && assr.length === 0) return;
     setSendKind(kind);
-    setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
+    setSendingRows([...allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)), ...assr]);
   };
 
   /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
@@ -458,6 +468,15 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {(() => {
+                      /* Service Arrangement, Driver Info and the two date sends
+                         reach a Service Case job; the rest read a Sales Order, so
+                         with only ASSR rows ticked they are greyed instead of doing
+                         nothing. */
+                      const soOnlyIdle = (k: SendMessageKind) =>
+                        k !== 'assr_arrangement' && k !== 'driver_info' && !ASSR_DATE_KINDS.has(k) && selectedSoDocNos().length === 0;
+                      // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
+                      const assrLeftOut = (k: SendMessageKind) =>
+                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
                       const renderKind = (
                         [k, label, hint]: readonly [SendMessageKind, string, string],
                         sub: boolean,
@@ -466,15 +485,17 @@ export const DeliveryPlanning = () => {
                           key={k}
                           type="button"
                           role="menuitem"
+                          disabled={soOnlyIdle(k)}
+                          title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
                           onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
-                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                             <MessageSquare size={14} strokeWidth={1.75} /> {label}
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{hint}</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
                         </button>
                       );
                       return (
@@ -519,6 +540,7 @@ export const DeliveryPlanning = () => {
                           </button>
                           {oneTimeOpen && ([
                             ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
+                            ['overdue_order', 'Overdue Order', 'Production delay - one-way heads-up, no new date'],
                             ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
                             ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
                             ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],

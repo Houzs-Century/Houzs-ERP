@@ -38,6 +38,7 @@ import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash, fmtSen, todayMY } from '../../vendor/shared/format';
+import { BatchBar } from './money-in/MoneyInParts';
 import { EVENTS_PATH, RequestForm } from './PaymentRequestForm';
 import {
   BalanceForm, OfficialDocPanel, RequestFilesCard, apBalanceOn, inFilter, mayEditRequest, mayWithdrawRequest, payOnInvoiceHref,
@@ -146,6 +147,15 @@ const answerDoc = (r: PaymentRequest): { kind: 'invoice' | 'voucher'; no: string
 };
 
 /** What may be done with a request now — one answer for its row, its ⋯ menu and its drawer. */
+/* Several waiting requests answered by ONE voucher (owner 2026-11-04: combine
+   payment request 做一张pv — 不同人也可以): a plain payment request only — a
+   refund takes its own Customer Refund, a balance on an AP invoice is paid on
+   that invoice. */
+export const combinable = (r: PaymentRequest): boolean => awaitsFinance(r) && !isRefundRequest(r) && !apBalanceOn(r);
+/** The tabs that tick: To do, and All (owner 2026-11-04) — a row that cannot combine shows its box disabled. */
+export const TICK_VIEWS: ReadonlySet<View> = new Set<View>(['todo', 'all']);
+export const oneVoucherHref = (ids: string[]): string => `/scm/payment-vouchers/new?fromRequests=${ids.map(encodeURIComponent).join(',')}`;
+
 const movesOf = (r: PaymentRequest, me: number) => ({
   /* Finance answers what waits: a voucher, or back with a reason. */
   answer: awaitsFinance(r),
@@ -229,6 +239,10 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
   const rows = useMemo(() => listQ.data?.requests ?? [], [listQ.data]);
   const whole = listQ.data != null && rows.length < LIST_CAP;
   const visible = useMemo(() => rows.filter((r) => inView(r, view)), [rows, view]);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  useEffect(() => { setTicked(new Set()); }, [view]);
+  const tickedRows = visible.filter((r) => ticked.has(r.id) && combinable(r));
+  const tickedPayees = new Set(tickedRows.map((r) => r.payee_name.trim().toUpperCase()));
   const labelsQ = useEventLabels(rows.map((r) => r.project_id), EVENTS_PATH);
   const today = todayMY();
   const mayRaise = listQ.data?.mayRaise ?? true;
@@ -444,7 +458,26 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
           return Object.keys(style).length > 0 ? style : undefined;
         }}
         contextMenu={(r) => menuOf(r)}
+        selection={TICK_VIEWS.has(view) ? {
+          selectedIds: ticked,
+          onToggle: (k) => setTicked((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
+          onToggleAll: (keys, all) => setTicked((p) => { const n = new Set(p); for (const k of keys) { if (all) n.delete(k); else n.add(k); } return n; }),
+          isDisabled: (k) => { const r = visible.find((x) => x.id === k); return !r || !combinable(r); },
+          rowLabel: (r) => `Tick ${r.request_no}`,
+        } : undefined}
       />
+
+      {TICK_VIEWS.has(view) && tickedRows.length > 0 && (
+        <BatchBar count={tickedRows.length} sum={fmtSen(tickedRows.reduce((s, r) => s + r.amount_sen, 0))} hidden={0}
+          notes={tickedPayees.size > 1 ? ['Different payees — the voucher leaves the payee for you to type; each one\'s bank is in its notes.'] : []}
+          onClear={() => setTicked(new Set())}>
+          <button type="button" className={look.act} disabled={tickedRows.length < 2}
+            title={tickedRows.length < 2 ? 'Tick two or more — one request uses its own Make voucher' : undefined}
+            onClick={() => navigate(oneVoucherHref(tickedRows.map((r) => r.id)))}>
+            {`Make ONE voucher · ${tickedRows.length} ›`}
+          </button>
+        </BatchBar>
+      )}
 
       {menu && (
         <>

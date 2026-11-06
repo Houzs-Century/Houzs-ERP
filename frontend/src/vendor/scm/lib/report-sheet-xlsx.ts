@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 
 import type { Cell, Row, SheetData } from 'write-excel-file';
-import type { ReportSheet, SheetColumn, SheetRow, SheetRowKind } from './report-sheet';
+import { sheetWithTotalsBelow, type ReportSheet, type SheetColumn, type SheetRow, type SheetRowKind } from './report-sheet';
 
 /* The screen's own colours (tokens.css): ink, soft text, the two shades. */
 const INK = '#11140f';
@@ -60,7 +60,8 @@ const headerCell = (label: string, align: 'left' | 'right'): Cell =>
   ({ value: label, type: String, fontWeight: 'bold', align, bottomBorderStyle: 'thin', bottomBorderColor: INK });
 
 /** The whole sheet as write-excel-file's matrix — pure, so a test reads it without a workbook. */
-export function sheetMatrix(sheet: ReportSheet): SheetData {
+export function sheetMatrix(given: ReportSheet): SheetData {
+  const sheet = sheetWithTotalsBelow(given);
   const width = 1 + Math.max(1, ...sheet.tables.map((t) => t.columns.length));
   const rows: SheetData = [
     [{ value: sheet.title, type: String, fontWeight: 'bold', fontSize: 14, span: width }],

@@ -3,29 +3,34 @@
 // owner's Claude Design, batch 5 §8; it was a card under the registry list).
 // Who they are and where the paper goes, what they owe, their bills and the
 // receipts that came in — each opening its own page — and the registry's
-// steps: Edit debtor (the party form in place of the page, `?form=edit`) and
-// Deactivate / Reactivate. Bills and receipts post to the one other-debtors
-// control; nothing here posts.
+// steps: Edit debtor (the debtor form in place of the page, `?form=edit`) and
+// Deactivate / Reactivate. New bill and New receipt (batch 5 step 6) open their
+// forms in place too (`?form=bill|receipt`): the bill posts as it does from
+// Invoices, the receipt waits for its four layers. Bills and receipts post to
+// the one other-debtors control; nothing on this page itself posts.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Plus } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   useAccountRoles, useAccounts, useDebtorDetail, useUpdateDebtor,
   type DebtorBill, type DebtorReceipt,
 } from '../../../vendor/scm/lib/accounting-queries';
-import { debtorPartyBody, debtorPartyFrom, partyAddressLines, type DebtorPartyValues } from '../../../vendor/scm/lib/debtor-party';
+import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { cancelledRowClass } from '../../../lib/scm';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
-import { DebtorPartyForm } from '../DebtorPartyForm';
 import { pvStage } from '../PvDocParts';
+import { BillFormPage } from './BillFormPage';
+import { DebtorFormPage } from './DebtorForm';
+import { DebtorReceiptFormPage } from './DebtorReceiptFormPage';
 import { StatusTag } from './MoneyInParts';
 import {
-  DocFormShell, DocSection, DocState, MoneyInDocPage, byTime,
+  DocSection, DocState, MoneyInDocPage, byTime,
   type DocAction, type DocFact, type TrailStep,
 } from './MoneyInDocPage';
 import { debtorBillTag, debtorReceiptTag, debtorTag } from './moneyInStatus';
@@ -53,6 +58,7 @@ const BILL_COLUMNS: Column<Bill>[] = [
 export const OtherDebtorDoc = () => {
   const { id = '' } = useParams();
   const toast = useToastOptional();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const q = useDebtorDetail(id || null);
   const d = q.data;
@@ -60,8 +66,10 @@ export const OtherDebtorDoc = () => {
   const rolesQ = useAccountRoles();
   const update = useUpdateDebtor();
   const { can } = useHouzsAuth();
-  /* The registry's own key (OtherDebtors.tsx; PATCH /other-debtors/:id). */
+  /* The registry's own keys (OtherDebtors.tsx; PATCH /other-debtors/:id); a bill or a receipt is raised with
+     .create — and only on an active debtor (the forms list active debtors alone). */
   const canWrite = can('scm.payment_voucher.write');
+  const canCreate = can('scm.payment_voucher.create');
   const [failure, setFailure] = useState<string | null>(null);
   const accountName = useMemo(() => {
     const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
@@ -77,25 +85,20 @@ export const OtherDebtorDoc = () => {
   const openBills = bills.filter((b) => owing(b) > 0).length;
   const received = bills.filter((b) => b.status !== 'CANCELLED').reduce((sum, b) => sum + Number(b.received_sen), 0);
   const billNo = new Map(bills.map((b) => [b.id, b.bill_number]));
-  const setForm = (mode: 'edit' | null) => {
+  const setForm = (mode: 'edit' | 'bill' | 'receipt' | null) => {
     setFailure(null);
     setParams((prev) => { const n = new URLSearchParams(prev); if (mode) n.set('form', mode); else n.delete('form'); return n; });
   };
 
-  if (params.get('form') === 'edit' && canWrite) {
-    const save = (values: DebtorPartyValues) => {
-      setFailure(null);
-      update.mutate({ id: debtor.id, ...debtorPartyBody(values) }, {
-        onSuccess: () => { setForm(null); toast?.success(`${values.name.trim() || debtor.name} saved`); },
-        onError: (e) => setFailure(errText(e)),
-      });
-    };
-    return (
-      <DocFormShell title={`Edit ${debtor.name}`} backLabel={debtor.name} onBack={() => setForm(null)}>
-        {failure && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{failure}</div>}
-        <DebtorPartyForm key={`edit-${debtor.id}`} mode="edit" initial={debtorPartyFrom(debtor)} saving={update.isPending} onSubmit={save} onCancel={() => setForm(null)} />
-      </DocFormShell>
-    );
+  const form = params.get('form');
+  if (form === 'edit' && canWrite) {
+    return <DebtorFormPage key={`edit-${debtor.id}`} debtor={debtor} backLabel={debtor.name} onClose={() => setForm(null)} />;
+  }
+  if (form === 'bill' && canCreate && debtor.is_active) {
+    return <BillFormPage mode="new" id={null} debtorId={debtor.id} backLabel={debtor.name} onClose={() => setForm(null)} openDoc={(href) => navigate(href)} />;
+  }
+  if (form === 'receipt' && canCreate && debtor.is_active) {
+    return <DebtorReceiptFormPage id={null} debtorId={debtor.id} backLabel={debtor.name} onClose={() => setForm(null)} openDoc={(href) => navigate(href)} />;
   }
 
   const actions: DocAction[] = [];
@@ -151,17 +154,22 @@ export const OtherDebtorDoc = () => {
       party={{ label: 'Bill to', name: debtor.name, lines: [...partyAddressLines(debtor), contact] }}
       amount={{ label: 'Outstanding', value: fmtSen(outstanding), sub: `${openBills} open bill${openBills === 1 ? '' : 's'}` }}
       facts={facts}
-      books={<>Bills and receipts post to the {control ? `${control}${accountName(control) ? ` ${accountName(control)}` : ''}` : 'other debtors'} control</>}
+      books={<>Account code {debtor.code || '—'} · bills and receipts post to the {control ? `${control}${accountName(control) ? ` ${accountName(control)}` : ''}` : 'other debtors'} control</>}
       trail={trail}
     >
       <DocSection title="Bills" buttons={(
-        <Link to={`/scm/ar-invoices?debtor=${encodeURIComponent(debtor.id)}`} className={`${ui.btn} ${ui.btnSmall}`} style={{ textDecoration: 'none' }}>Open bills in AR invoices</Link>
+        <span className={ui.acts} style={{ width: 'auto' }}>
+          {canCreate && debtor.is_active && <button type="button" className={`${ui.btn} ${ui.btnSmall}`} onClick={() => setForm('bill')}><Plus size={13} /> New bill</button>}
+          <Link to={`/scm/ar-invoices?debtor=${encodeURIComponent(debtor.id)}`} className={`${ui.btn} ${ui.btnSmall}`} style={{ textDecoration: 'none' }}>Open bills in Invoices</Link>
+        </span>
       )}>
         {bills.length === 0
           ? <div className={s.empty}>No bills yet.</div>
           : <DataTable<Bill> tableId="mi-debtor-bills" embedded columns={BILL_COLUMNS} rows={bills} getRowKey={(b) => b.id} getRowClassName={(b) => cancelledRowClass(b.status)} />}
       </DocSection>
-      <DocSection title="Receipts">
+      <DocSection title="Receipts" buttons={canCreate && debtor.is_active ? (
+        <button type="button" className={`${ui.btn} ${ui.btnSmall}`} onClick={() => setForm('receipt')}><Plus size={13} /> New receipt</button>
+      ) : undefined}>
         {receipts.length === 0
           ? <div className={s.empty}>No receipts yet.</div>
           : <DataTable<Receipt> tableId="mi-debtor-receipts" embedded columns={receiptColumns} rows={receipts} getRowKey={(r) => r.id} />}

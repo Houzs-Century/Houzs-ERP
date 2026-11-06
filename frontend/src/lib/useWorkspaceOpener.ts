@@ -13,6 +13,7 @@ import {
   activateWorkspaceTab, closeWorkspaceTab, getWorkspaceTabsSnapshot, subscribeWorkspaceTabs, workspaceTabLabel,
   type WorkspaceTabsSnapshot,
 } from "./workspaceTabs";
+import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch } from "../pages/scm-v2/accounting-tabs";
 
 /** Names for the pages an order is opened from whose generic route label reads
     as the bare app section. */
@@ -25,13 +26,34 @@ const OPENER_LABELS: Array<[RegExp, string]> = [
      itself only — a document opened from another document names that one. */
   [/^\/scm\/receipts$/, "Receipts"],
   [/^\/scm\/official-receipts$/, "Official receipts"],
-  [/^\/scm\/ar-invoices$/, "AR invoices"],
+  [/^\/scm\/ar-invoices$/, "Invoices"],
   [/^\/scm\/deposit-invoices$/, "Deposit invoices"],
   [/^\/scm\/other-debtors$/, "Debtor maintenance"],
   [/^\/scm\/credit-notes$/, "Credit / debit notes"],
   [/^\/scm\/outstanding$/, "Outstanding"],
   [/^\/scm\/unbilled-deliveries$/, "Not yet billed"],
+  /* The Finance reports (owner's Claude Design, batch 6 §1.1): an order opened
+     from the Sales report reads "Back to Sales report"; the Accounting page's
+     tabs are named by accountingOpenerLabel. */
+  [/^\/reports\/fair-report$/, "Sales report"],
 ];
+
+/** The Accounting page names the tab a document was opened from — Collection,
+    Corrections, Self-check, any report — not the bare "Accounting". */
+function accountingOpenerLabel(href: string): string | null {
+  const [path, query = ""] = href.split("?");
+  if (path !== "/scm/accounting") return null;
+  const tab = accountingTabFromSearch(new URLSearchParams(query).get("tab"));
+  return tab ? ACCOUNTING_TAB_TITLES[tab] : null;
+}
+
+/** The name the Back button gives the page a document was opened from. */
+export function openerLabel(href: string): string {
+  const path = href.split("?")[0] ?? href;
+  return accountingOpenerLabel(href)
+    ?? OPENER_LABELS.find(([re]) => re.test(path))?.[1]
+    ?? (workspaceTabLabel(path) || "the previous page");
+}
 
 /** The opener of the ACTIVE tab, and whether its tab is still in the strip —
     null unless the active tab was opened as a document from another page. */
@@ -72,7 +94,5 @@ export function useWorkspaceOpener(): { href: string; label: string } | null {
   const snapshot = useSyncExternalStore(subscribeWorkspaceTabs, getWorkspaceTabsSnapshot, getWorkspaceTabsSnapshot);
   const opener = workspaceOpener(snapshot);
   if (!opener) return null;
-  const path = opener.href.split("?")[0] ?? opener.href;
-  const named = OPENER_LABELS.find(([re]) => re.test(path))?.[1];
-  return { href: opener.href, label: named ?? (workspaceTabLabel(path) || "the previous page") };
+  return { href: opener.href, label: openerLabel(opener.href) };
 }

@@ -27,6 +27,7 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 import { readSoRefs } from '../lib/so-ref-lookup';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 
 type Row = Record<string, any>;
 
@@ -51,24 +52,62 @@ const monthWindow = (raw: string | undefined): { from: string; to: string } | nu
 export const listReceiptsHandler = async (c: any): Promise<Response> => {
   const win = monthWindow(c.req.query('month'));
   if (win === 'bad') return c.json({ error: 'bad_month', message: 'month must look like 2026-09, or be left out for every month.' }, 400);
+  /* ?kind= reads one kind alone (Debtor maintenance lists the debtor receipts —
+     the owner's Claude Design, batch 5 §4.3); left out, all three. */
+  const kind = String(c.req.query('kind') ?? '').toUpperCase();
+  if (kind && kind !== 'GENERAL' && kind !== 'DEBTOR' && kind !== 'CUSTOMER') {
+    return c.json({ error: 'bad_kind', message: 'kind must be GENERAL, DEBTOR or CUSTOMER, or be left out for every kind.' }, 400);
+  }
+  const none = Promise.resolve({ data: [] as Row[], error: null });
   const sb = c.get('supabase');
-  /* No month asked for = the three reads are whole. */
+  /* No month asked for = the three reads are whole — paged, so a long history
+     is never cut at the server's 1000-row page. */
   const windowed = (q: any, col: string) => (win ? q.gte(col, win.from).lt(col, win.to) : q);
 
   const [general, debtor, customer] = await Promise.all([
-    scopeToCompany(windowed(sb.from('acc_receipts')
+    kind && kind !== 'GENERAL' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_receipts')
       .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes'), 'receipt_date'), c)
-      .order('receipt_number'),
-    scopeToCompany(windowed(sb.from('acc_debtor_receipts')
-      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, debtor:acc_debtors(name)'), 'receipt_date'), c)
-      .order('receipt_number'),
-    scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
+      .order('receipt_number').range(from, to)),
+    kind && kind !== 'DEBTOR' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_debtor_receipts')
+      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, submitted_at, checked_at, approved_at, debtor:acc_debtors(name, code)'), 'receipt_date'), c)
+      .order('receipt_number').range(from, to)),
+    kind && kind !== 'CUSTOMER' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
       .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit'), 'paid_at'), c)
-      .order('paid_at'),
+      .order('paid_at').range(from, to)),
   ]);
   if (general.error) return c.json({ error: 'load_failed', reason: general.error.message }, 500);
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
   if (customer.error) return c.json({ error: 'load_failed', reason: customer.error.message }, 500);
+
+  /* What each receipt was FOR (the owner's Claude Design, batch 5 §2.3 c1): a
+     sundry receipt's first line, and the bills a debtor receipt knocks off —
+     read by the receipts listed, in this company. Reads only. */
+  const generalRows = (general.data ?? []) as Row[];
+  const debtorRows = (debtor.data ?? []) as Row[];
+  const [firstLines, allocs] = await Promise.all([
+    chunkIn<Row>(generalRows.map((r) => String(r.id)), (batch, from, to) => scopeToCompany(sb.from('acc_receipt_lines')
+      .select('receipt_id, line_no, description').in('receipt_id', batch), c).order('line_no').range(from, to)),
+    chunkIn<Row>(debtorRows.map((r) => String(r.id)), (batch, from, to) => scopeToCompany(sb.from('acc_debtor_receipt_allocations')
+      .select('receipt_id, bill_id, amount_sen').in('receipt_id', batch), c).order('receipt_id').range(from, to)),
+  ]);
+  if (firstLines.error) return c.json({ error: 'load_failed', reason: firstLines.error.message }, 500);
+  if (allocs.error) return c.json({ error: 'load_failed', reason: allocs.error.message }, 500);
+  const billIds = [...new Set(allocs.data.map((a) => String(a.bill_id)))];
+  const billNos = await chunkIn<Row>(billIds, (batch, from, to) => scopeToCompany(sb.from('acc_debtor_bills')
+    .select('id, bill_number').in('id', batch), c).order('id').range(from, to));
+  if (billNos.error) return c.json({ error: 'load_failed', reason: billNos.error.message }, 500);
+  const firstLineOf = new Map<string, { lineNo: number; text: string | null }>();
+  for (const l of firstLines.data) {
+    const k = String(l.receipt_id);
+    const was = firstLineOf.get(k);
+    if (!was || Number(l.line_no) < was.lineNo) firstLineOf.set(k, { lineNo: Number(l.line_no), text: l.description ?? null });
+  }
+  const billNoOf = new Map(billNos.data.map((b) => [String(b.id), String(b.bill_number ?? '')]));
+  const billsOf = new Map<string, Array<{ billId: string; no: string | null; amountSen: number }>>();
+  for (const a of allocs.data) {
+    const k = String(a.receipt_id);
+    billsOf.set(k, [...(billsOf.get(k) ?? []), { billId: String(a.bill_id), no: billNoOf.get(String(a.bill_id)) || null, amountSen: Number(a.amount_sen ?? 0) }]);
+  }
 
   /* A customer receipt's number is its order's; the order's customer reference
      rides along so the page's search finds the payment by it. */
@@ -77,15 +116,19 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
   if (refs.error) console.error('[receipts] SO reference read failed; customer rows carry no SO reference:', refs.error);
 
   const rows = [
-    ...((general.data ?? []) as Row[]).map((r) => ({
+    ...generalRows.map((r) => ({
       kind: 'GENERAL' as const, id: r.id, number: r.receipt_number, date: r.receipt_date,
       payer: r.payer_name, moneyAccount: r.bank_account_code, totalSen: Number(r.total_sen ?? 0),
       status: r.status, notes: r.notes ?? null,
+      firstLine: firstLineOf.get(String(r.id))?.text ?? null,
     })),
-    ...((debtor.data ?? []) as Row[]).map((r) => ({
+    ...debtorRows.map((r) => ({
       kind: 'DEBTOR' as const, id: r.id, number: r.receipt_number, date: r.receipt_date,
-      payer: (r.debtor as Row | null)?.name ?? '(debtor)', moneyAccount: r.bank_account_code,
+      payer: (r.debtor as Row | null)?.name ?? '(debtor)', payerCode: (r.debtor as Row | null)?.code ?? null, moneyAccount: r.bank_account_code,
       totalSen: Number(r.total_sen ?? 0), status: r.status, debtorId: r.debtor_id,
+      /* The four layers' marks — the list's stage (Draft, Prepared, Checked). */
+      submittedAt: r.submitted_at ?? null, checkedAt: r.checked_at ?? null, approvedAt: r.approved_at ?? null,
+      bills: billsOf.get(String(r.id)) ?? [],
     })),
     /* Money that LEFT an order (a mirror row, negative) is no receipt. */
     ...customerRows.map((r) => ({

@@ -71,7 +71,9 @@ import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
 import type { CapabilityKey } from "../auth/capabilities";
-import { makeNavFilter } from "./navFilter";
+import { collapsedEntryIsLit, collapsedEntryTo, makeNavFilter, navToIsActive } from "./navFilter";
+import { REPORT_NAV_MEMBERS } from "../pages/scm-v2/reports-catalog";
+import { readLastReport } from "../pages/scm-v2/reports/lastReport";
 import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
@@ -226,6 +228,19 @@ export interface NavTab {
   /** Stable id used for the per-group expanded/collapsed memory. Only
    *  required when `children` is present. */
   groupId?: string;
+  /** A group shown as ONE entry (Finance › Reports, batch 6 §1.1): its
+   *  `children` are members, each with its own gate, hidden from the rail. The
+   *  entry shows when any member passes the filter, links to the member opened
+   *  last (else the first visible one — collapsedEntryTo) and is lit while any
+   *  member, or `alsoActive`, is the current page. */
+  collapsed?: boolean;
+  /** One more address that lights a collapsed entry (the Books pages opened
+   *  from the report list: `/scm/accounting?in=reports`). */
+  alsoActive?: string;
+  /** A leaf that does NOT light while the address carries this query
+   *  parameter (Books' Journal entries / General ledger / Trial balance opened
+   *  from the report list carry `in`, and the Reports entry lights instead). */
+  notWithParam?: string;
 }
 
 /**
@@ -746,26 +761,28 @@ export const NAV_TABS: NavTab[] = [
         icon: HandCoins,
         groupId: "scm-finance-in",
         children: [
-          { to: "/scm/official-receipts", label: "Official receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
-          // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
-          // customer payment when the company's switch is on; beside the
-          // receipt the same payment is born with.
-          { to: "/scm/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
-          // AR invoices (owner 2026-09-29) — the AP list's twin: sales invoices
-          // mirrored beside the other-debtor bills raised there; the PV key
-          // family, like the AP invoice it mirrors.
-          { to: "/scm/ar-invoices", label: "AR invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          // Receipts (the owner's Claude Design, batch 5 step 4): every ringgit in on
+          // one page — the official receipts folded in as its first kind, so the
+          // gate is the two old entries' together; inside, each kind shows to
+          // whoever saw its old entry. /scm/official-receipts redirects here.
+          { to: "/scm/receipts", label: "Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
+          // Invoices (owner 2026-09-29: AR invoices, the AP list's twin; the
+          // owner's Claude Design, batch 5 step 5): the sales invoices mirrored
+          // beside the other-debtor bills, the deposit invoices (owner
+          // 2026-09-12; docs/bugs/0828) folded in as a kind — so the gate is the
+          // two old rows' together; inside, each kind shows to whoever saw its
+          // old row. /scm/deposit-invoices redirects here; its switch is in Setup.
+          { to: "/scm/ar-invoices", label: "Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/other-debtors", label: "Debtor maintenance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-          { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
           // customer's CN / DN and an other debtor's CN; the supplier's moved to
           // Money out (owner 2026-10-28). The PV key family, like the AP invoice.
-          // The redesign's names (owner's Claude Design, batch 5): Debtor
-          // maintenance, Not yet billed, Credit / debit notes — the same pages
-          // behind the same gates.
+          // The redesign's names and order (owner's Claude Design, batch 5):
+          // Receipts, Invoices, Debtor maintenance, Credit / debit notes,
+          // Outstanding, Not yet billed — the same pages behind the same gates.
           { to: "/scm/credit-notes", label: "Credit / debit notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
         ],
       },
       {
@@ -806,71 +823,48 @@ export const NAV_TABS: NavTab[] = [
         ],
       },
       {
+        // The owner's Claude Design (batch 6 §1.1): the design's order and names.
+        // Opened from the report list (`in=reports`) Journal entries, the General
+        // ledger and the Trial balance light the Reports entry, not these.
         label: "Books",
         icon: BookOpen,
         groupId: "scm-finance-books",
         children: [
-          { to: "/scm/accounting?tab=je", label: "Journal Entries", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
-          { to: "/scm/accounting?tab=gl", label: "General Ledger", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
-          { to: "/scm/accounting?tab=tb", label: "Trial Balance", icon: Receipt, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
-          { to: "/scm/accounting?tab=close", label: "Month-end", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=je", label: "Journal entries", icon: BookOpen, notWithParam: "in", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=gl", label: "General ledger", icon: FileText, notWithParam: "in", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=tb", label: "Trial balance", icon: Receipt, notWithParam: "in", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
           { to: "/scm/accounting?tab=check", label: "Self-check", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=close", label: "Stock close", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
         ],
       },
       {
+        // ONE entry (batch 6 §1.1: Reports keeps its own report list). Its
+        // members are the reports of pages/scm-v2/reports-catalog — the old
+        // Reports and Forecasting groups' entries, each with the gate it had —
+        // hidden here: the entry shows when any member passes, opens the report
+        // opened last (else the first the reader may open), and is lit on any
+        // of them or on a Books page opened from the list.
         label: "Reports",
         icon: BarChart3,
         groupId: "scm-finance-reports",
-        children: [
-          { to: "/scm/accounting?tab=pnl", label: "P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          { to: "/scm/accounting?tab=bs", label: "Balance Sheet", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          { to: "/scm/accounting?tab=rp", label: "Cash Flow", icon: Banknote, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          { to: "/scm/accounting?tab=ar", label: "AR Aging", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          { to: "/scm/accounting?tab=ap", label: "AP Aging", icon: Wallet, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // Finance's corrections to recorded payments (docs/bugs/0785) — a
-          // report, so it lives with the reports (owner: 包括那个 finance 改
-          // sales order 的报告).
-          { to: "/scm/accounting?tab=corrections", label: "Corrections", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825).
-          { to: "/scm/accounting?tab=collection", label: "Collection", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
-          { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
-          { to: "/scm/accounting?tab=performance", label: "Performance P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // Every product the month sold, ranked by gross profit after its share of the gifts (owner 2026-10-05).
-          { to: "/scm/accounting?tab=products", label: "Product Profit", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
-          { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
-          { to: "/scm/accounting?tab=commission", label: "Event Commission", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          // What delivery cost — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL bill lines), setup & dismantle (owner 2026-10-29).
-          { to: "/scm/accounting?tab=logistics", label: "Logistics cost", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
-          { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.reports", "scm.finance.outstanding", "projects.finances"] },
-        ],
-      },
-      {
-        // ── Forecasting (owner 2026-09-21: the Hookka Forecast P&L + Dashboard,
-        //    trading edition — targets per account on the P&L's own tree; the
-        //    Dashboard reads them beside the statements' actuals).
-        label: "Forecasting",
-        icon: BarChart3,
-        groupId: "scm-finance-forecast",
-        children: [
-          { to: "/scm/forecast", label: "Forecast P&L", icon: BarChart3, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.forecast"] },
-          { to: "/scm/finance-dashboard", label: "Dashboard", icon: LayoutDashboard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.forecast"] },
-        ],
+        collapsed: true,
+        alsoActive: "/scm/accounting?in=reports",
+        children: REPORT_NAV_MEMBERS,
       },
       {
         label: "Setup",
         icon: SettingsIcon,
         groupId: "scm-finance-setup",
         children: [
-          { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
+          { to: "/scm/chart-of-accounts", label: "Chart of accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           // The books' opening (owner 2026-10-28: opening balance maintainence 表) — accounts, creditors, other debtors, stock; locked once final.
-          { to: "/scm/opening-balance", label: "Opening Balance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
-          { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.setup"] },
-          { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
+          { to: "/scm/opening-balance", label: "Opening balance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
+          { to: "/scm/accounting?tab=groups", label: "Item groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.setup"] },
+          { to: "/scm/settlement-setup", label: "Recon setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
+          // The deposit invoice switch (owner 2026-09-12; docs/bugs/0828), moved off the old
+          // Deposit invoices page (Claude Design, batch 5 step 5) — gated as that row was.
+          { to: "/scm/finance/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // What fills To do: its built-in rules, the month's routines, Finance's own groups (redesign batch 2).
           { to: "/scm/finance/rules", label: "To do rules", icon: ListChecks, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
         ],
@@ -1184,21 +1178,12 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
   /** True when a tab's `to` matches the current pathname + relevant query
    *  params. NavLink doesn't compare query strings on its own, so for
    *  entries like /projects?view=calendar we have to match manually. */
-  function tabIsActive(to: string, end?: boolean): boolean {
-    const [path, search] = to.split("?");
-    if (end ? location.pathname !== path : !location.pathname.startsWith(path)) {
-      // For non-end matches, allow startsWith for nested routes (e.g.
-      // /projects/123 still highlights /projects).
-      if (location.pathname !== path) return false;
-    }
-    if (!search) return true;
-    const wanted = new URLSearchParams(search);
-    const have = new URLSearchParams(location.search);
-    for (const [k, v] of wanted.entries()) {
-      if (have.get(k) !== v) return false;
-    }
-    return true;
+  function tabIsActive(to: string, end?: boolean, notWithParam?: string): boolean {
+    return navToIsActive(to, location, end, notWithParam);
   }
+  /** A collapsed entry (Finance › Reports) is lit on any of its members, or on
+   *  its `alsoActive` address. */
+  const collapsedLit = (tab: NavTab): boolean => collapsedEntryIsLit(tab, location);
 
   // Filter tabs the current user can't access, plus tabs explicitly
   // suppressed by hidePerm. Recursive — a group with no visible children is
@@ -1215,8 +1200,16 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
   );
 
   // Recursive renderer for tabs — handles plain links and nested groups.
-  function renderTab(tab: NavTab, depth = 0): React.ReactNode {
+  function renderTab(tab: NavTab, depth = 0, lit?: boolean): React.ReactNode {
     const Icon = tab.icon;
+
+    // A collapsed group (Finance › Reports, batch 6 §1.1) is ONE entry: to the
+    // member opened last, else the first the reader may open; its members
+    // never render here.
+    if (tab.collapsed && tab.children && tab.children.length > 0) {
+      const target = collapsedEntryTo(tab.children, readLastReport());
+      return target ? renderTab({ ...tab, children: undefined, to: target }, depth, collapsedLit(tab)) : null;
+    }
 
     // Group header (has children) — expandable section. A group that ALSO
     // carries its own `to` (Supply Chain → /scm Hub) makes its LABEL a link to
@@ -1227,9 +1220,11 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       // Bound once so the hover handlers below close over a narrowed string
       // (TS drops narrowing on `tab.to` inside a callback).
       const headerTo = tab.to;
-      const hasActiveDescendant = (n: NavTab): boolean =>
-        (n.to ? tabIsActive(n.to, n.end) : false) ||
-        (n.children?.some(hasActiveDescendant) ?? false);
+      const hasActiveDescendant = (n: NavTab): boolean => (
+        n.collapsed
+          ? collapsedLit(n)
+          : (n.to ? tabIsActive(n.to, n.end, n.notWithParam) : false) || (n.children?.some(hasActiveDescendant) ?? false)
+      );
       const selfActive = tab.to ? tabIsActive(tab.to, tab.end) : false;
       const headerActive = selfActive || tab.children.some(hasActiveDescendant);
       const open = isGroupOpen(gid, headerActive);
@@ -1326,7 +1321,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
     // Leaf — needs `to`. (filterTab + types ensure it.)
     if (!tab.to) return null;
     const to = tab.to;
-    const active = tabIsActive(to, tab.end);
+    const active = lit ?? tabIsActive(to, tab.end, tab.notWithParam);
     return (
       <NavLink
         key={to}

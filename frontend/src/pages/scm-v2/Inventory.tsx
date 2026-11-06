@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
 import { DemandSoPanel } from './InventoryDemandSoPanel';
-import { BY_WAREHOUSE_COLUMN } from './InventoryWarehouseStock';
+import { LOCATION_COLUMN } from './InventoryLocationColumn';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -213,7 +213,7 @@ export const Inventory = () => {
               <input
                 type="search"
                 className={styles.searchInput}
-                placeholder="Search code / description…"
+                placeholder="Search code / barcode / description…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -592,6 +592,13 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     render: (r) => r.product_name,
   },
   {
+    key: 'barcode',
+    label: 'Barcode',
+    width: '150px',
+    getValue: (r) => r.barcode ?? '',
+    render: (r) => (r.barcode ? <span className={styles.codeChip}>{r.barcode}</span> : <span className={styles.numCellZero}>—</span>),
+  },
+  {
     key: 'category',
     label: 'Category',
     width: '100px',
@@ -629,7 +636,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
-  BY_WAREHOUSE_COLUMN,
   {
     key: 'consignment',
     label: 'Consignment',
@@ -650,6 +656,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
+  LOCATION_COLUMN,
   {
     key: 'incoming',
     label: 'Incoming',

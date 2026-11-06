@@ -69,9 +69,59 @@ export type LogisticsSpreadRow = {
   months: number; isDefault: boolean; perMonthSen: number; inRangeSen: number; lastMonth: string;
 };
 export type LogisticsAreaRate = { key: string; label: string; region: PnlRegion; rateSen: number | null; defaultRateSen: number | null; isDefault: boolean };
+/* ── Month by month (owner 2026-11-05): the P&L, By region & trip, Setup & Dismantle. ── */
+export type RegionMoney = Record<PnlRegion, number>;
+export type LogisticsLorryLine = {
+  plate: string; trips: number; dos: number; sen: RegionMoney;
+  tripList: Array<{ day: string; dos: number; doNumbers: string[]; sen: RegionMoney }>;
+};
+export type LogisticsCarrierLine = {
+  name: string; bills: number; lines: number; dos: number; sen: RegionMoney;
+  billList: Array<{ ref: string; day: string; sen: RegionMoney; noDoSen: number }>;
+};
+export type LogisticsMonthCost = {
+  month: string;
+  dos: Record<PnlRegion, number>;
+  goodsSen: RegionMoney;
+  ownTrips: number;
+  inHouseSen: number;
+  lorries: LogisticsLorryLine[];
+  /** In-house cost of a month with no trip of ours: Total only. */
+  inHouseNoTripSen: number;
+  carriers: LogisticsCarrierLine[];
+  /** What no DO carries yet on the 3PL bills: Total only. */
+  threeplNoDo: { lines: number; sen: number };
+  outsourceSen: number;
+  noDeliverer: Record<PnlRegion, number>;
+};
+export type LogisticsFairBlock = {
+  id: number; code: string | null; name: string; venue: string | null; startDate: string | null; endDate: string | null;
+  region: PnlRegion; salesSen: number; incomeSen: number;
+  chargeTrips: number; chargeSen: number;
+  setupSen: number; dismantleSen: number; transportSen: number;
+  /** Project Overview's Setup + Transport Setup & Dismantle rows. */
+  booksSen: number;
+  who: 'inhouse' | '3pl';
+};
+export type LogisticsMonth = {
+  month: string;
+  rows: LogisticsPnlRow[];
+  dos: Record<PnlRegion, number> & { total: number };
+  cost: LogisticsMonthCost;
+  /** Our lorries + 3PL, as the By region & trip view adds them. */
+  costTotalSen: number;
+  fairs: LogisticsFairBlock[];
+  /** 3PL setup / dismantle lines with no fair picked, by bill month. */
+  noFair: { lines: number; sen: number };
+};
+
 export type LogisticsPnl = {
   from: string; to: string; months: string[];
   doIncomeBp: number;
+  fairIncomeBp: number;
+  perMonth: LogisticsMonth[];
+  /** Set when the fairs' sales or books could not be read — Setup & Dismantle is then not known. */
+  fairsProblem: string | null;
   dos: Record<PnlRegion, number> & { total: number };
   rows: LogisticsPnlRow[];
   income: LogisticsIncomeLine[];
@@ -104,6 +154,8 @@ function usePnlSetting<B>(path: string, failedAs: string) {
   });
 }
 
+/** The share of each fair's sales counted as transport income, in percent. */
+export const useSaveFairIncomeRate = () => usePnlSetting<{ pct: number }>('/acc-events/logistics/fair-income-rate', 'Rate not saved');
 /** The share of the DOs' value counted as transport income, in percent. */
 export const useSaveIncomeRate = () => usePnlSetting<{ pct: number }>('/acc-events/logistics/income-rate', 'Rate not saved');
 /** One area's rate per setup / dismantle trip; rateRm null = no rate; reset = the default again. */

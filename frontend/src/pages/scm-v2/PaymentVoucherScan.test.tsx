@@ -33,6 +33,11 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   useBillMatches: (no: string, date: string) => ({ data: { matches: sameBills[`${no}|${date}`] ?? [] } }),
 }));
 
+/* The page cutter is the server's (pinned in backend lib/pdf-split.test.ts);
+   here it answers with the pages a test says the PDF has. */
+const splitPdfPages = vi.fn(async (_f: File): Promise<File[]> => []);
+vi.mock('../../vendor/scm/lib/pdf-split-request', () => ({ splitPdfPages: (f: File) => splitPdfPages(f) }));
+
 import { MAX_PILE_FILES, PaymentVoucherScan } from './PaymentVoucherScan';
 
 /* The reader, one bill per call: each call's answer is looked up by the bill's
@@ -134,6 +139,52 @@ describe('the pile for AP invoices', () => {
     expect(state.apPrefill.supplierMatch).toMatchObject({ id: 'sup-1' });
     expect(state.apPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
     expect(takePvFiles().map((f) => f.name)).toEqual(['b.pdf']);
+  });
+
+  /* HC-0204 (Siti 2026-11-02): one PDF holding several invoices. Split cuts it
+     into one bill per page, in its place in the pile; each page reads alone and
+     opens as its own AP invoice carrying only its own page. */
+  test('a PDF of several invoices splits into one bill per page', async () => {
+    apLanded = null;
+    splitPdfPages.mockResolvedValueOnce([pdf('stmt p1.pdf'), pdf('stmt p2.pdf'), pdf('stmt p3.pdf')]);
+    answers({
+      'stmt p1.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'stmt p2.pdf': readBill(0, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'stmt p3.pdf': readBill(0, { invoiceNumber: 'INV-3', totalSen: 20000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+    });
+    drawAp();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('stmt.pdf')] } });
+    expect(screen.getByText('Read 1 bill(s)')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Split stmt.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText('Read 3 bill(s)')).toBeTruthy());
+    expect(screen.queryByText('stmt.pdf')).toBeNull();
+    expect(screen.getByText(/stmt\.pdf split into 3 bills/)).toBeTruthy();
+    /* A page is already one page — it offers no split of its own. */
+    expect(screen.queryByLabelText(/Split stmt p1\.pdf/)).toBeNull();
+
+    fireEvent.click(screen.getByText('Read 3 bill(s)'));
+    await readDone(3);
+    expect(extractAsync).toHaveBeenCalledTimes(3);
+    expect(extractAsync.mock.calls.map(([bills]) => bills[0]!.files.map((f) => f.name)).flat().sort())
+      .toEqual(['stmt p1.pdf', 'stmt p2.pdf', 'stmt p3.pdf']);
+    await waitFor(() => expect(screen.getAllByText('Open as AP invoice')).toHaveLength(3));
+
+    fireEvent.click(screen.getAllByText('Open as AP invoice')[1]!);
+    await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
+    expect((apLanded as { apPrefill: { extraction: { invoiceNumber: string } } }).apPrefill.extraction.invoiceNumber).toBe('INV-2');
+    expect(takePvFiles().map((f) => f.name)).toEqual(['stmt p2.pdf']);
+  });
+
+  test('a one-page PDF is left as it is, and a PDF that cannot be cut says so', async () => {
+    splitPdfPages.mockResolvedValueOnce([pdf('one p1.pdf')]);
+    splitPdfPages.mockRejectedValueOnce(new Error('This PDF could not be split — it may be password-protected or damaged.'));
+    drawAp();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('one.pdf'), pdf('locked.pdf')] } });
+    fireEvent.click(screen.getByLabelText('Split one.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText('one.pdf has one page — nothing to split.')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Split locked.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText(/locked\.pdf: This PDF could not be split/)).toBeTruthy());
+    expect(screen.getByText('Read 2 bill(s)')).toBeTruthy();
   });
 });
 
@@ -240,7 +291,7 @@ describe('the bill pile', () => {
     expect(screen.getAllByText('Open as voucher')).toHaveLength(3);
     fireEvent.click(screen.getByLabelText('Tick T0012 for one voucher'));
     fireEvent.click(screen.getByLabelText('Tick W-1 for one voucher'));
-    fireEvent.click(screen.getByText('Open ticked as ONE voucher (2 lines)'));
+    fireEvent.click(screen.getByText('Open ticked as ONE voucher (2 lines, RM 31.10)'));
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
 
     const state = landedState as { billPrefill: { extraction: { vendorName: string | null; invoiceNumber: string | null; totalSen: number | null; documentKind: string }; lines: Array<{ description: string | null; amountSen: number | null }>; memory: unknown } };
@@ -258,6 +309,63 @@ describe('the bill pile', () => {
     ]);
     /* Only the ticked receipts' pages, in bill order — Shell's stays out. */
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'c.pdf']);
+  });
+
+  /* Owner 2026-11-03 (我要claim 3,427.29，但是读出来怪怪的): a staff claim PDF
+     split by page. Its summary page and bank slips are not bills, a receipt
+     on two pages is one receipt, and an order screenshot holds two orders. */
+  test('a staff claim: slips and summary are set aside, a two-page receipt counts once, a page of orders gives a line each', async () => {
+    landedState = null;
+    const kind = (b: ExtractedBill, documentKind: string, severalReceipts = false): ExtractedBill =>
+      (b.ok ? { ...b, extraction: { ...b.extraction, documentKind, severalReceipts } } : b) as ExtractedBill;
+    answers({
+      'summary.pdf': kind(readBill(0, { vendorName: 'CLAIM SUMMARY', totalSen: 342729 }, null), 'summary'),
+      'slip.pdf': kind(readBill(0, { vendorName: 'PUBLIC BANK', invoiceNumber: '662858', totalSen: 93675 }, null), 'payment_proof'),
+      'grab1.pdf': kind(readBill(0, { vendorName: 'GRAB', invoiceNumber: 'A-AX44', totalSen: 3144, lines: [{ description: 'Ride to Penang Sentral', amountSen: 3144 }] }, null), 'receipt'),
+      'grab2.pdf': kind(readBill(0, { vendorName: 'GRAB', invoiceNumber: 'A-AX44', totalSen: 3144 }, null), 'receipt'),
+      'shopee.pdf': kind(readBill(0, { vendorName: 'SHOPEE', totalSen: 5778, lines: [
+        { description: 'TNW D24 RGB LED light', amountSen: 3405 },
+        { description: 'Kopitiam mugs x2', amountSen: 2373 },
+      ] }, null), 'receipt', true),
+    });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: ['summary.pdf', 'slip.pdf', 'grab1.pdf', 'grab2.pdf', 'shopee.pdf'].map(pdf) } });
+    fireEvent.click(screen.getByText('Read 5 bill(s)'));
+    await readDone(5);
+
+    await waitFor(() => expect(screen.getByText('Set aside — not bills')).toBeTruthy());
+    expect(screen.getByText(/summary \/ listing/)).toBeTruthy();
+    expect(screen.getByText(/payment slip/)).toBeTruthy();
+    expect(screen.getByText(/repeats bill 3/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Tick every receipt'));
+    /* Grab once + two Shopee orders = 3 lines, RM 31.44 + 34.05 + 23.73. */
+    fireEvent.click(screen.getByText('Open ticked as ONE voucher (3 lines, RM 89.22)'));
+    await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
+    const state = landedState as { billPrefill: { extraction: { totalSen: number | null }; lines: Array<{ description: string | null; amountSen: number | null }> } };
+    expect(state.billPrefill.extraction.totalSen).toBe(8922);
+    expect(state.billPrefill.lines).toEqual([
+      { description: 'Ride to Penang Sentral', amountSen: 3144 },
+      { description: 'TNW D24 RGB LED light', amountSen: 3405 },
+      { description: 'Kopitiam mugs x2', amountSen: 2373 },
+    ]);
+    /* Every page rides along as evidence — the slip and summary too — in pile order. */
+    expect(takePvFiles().map((f) => f.name)).toEqual(['summary.pdf', 'slip.pdf', 'grab1.pdf', 'grab2.pdf', 'shopee.pdf']);
+  });
+
+  test('"It is a bill" brings a set-aside page back as a receipt', async () => {
+    answers({
+      'slip.pdf': { ...readBill(0, { vendorName: 'TNB', invoiceNumber: 'X1', totalSen: 5000 }, null), extraction: { ...(readBill(0, { vendorName: 'TNB', invoiceNumber: 'X1', totalSen: 5000 }, null) as Extract<ExtractedBill, { ok: true }>).extraction, documentKind: 'payment_proof' } } as ExtractedBill,
+    });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('slip.pdf')] } });
+    fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await readDone(1);
+    await waitFor(() => expect(screen.getByText('Set aside — not bills')).toBeTruthy());
+    expect(screen.queryByText('Open as voucher')).toBeNull();
+    fireEvent.click(screen.getByText('It is a bill'));
+    expect(screen.queryByText('Set aside — not bills')).toBeNull();
+    expect(screen.getByText('Open as voucher')).toBeTruthy();
   });
 
   test('case 3: "pay each bill separately" splits the group; unreadable totals and failures are named', async () => {

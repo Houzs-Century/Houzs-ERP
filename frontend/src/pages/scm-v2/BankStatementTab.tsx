@@ -23,7 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Plus, Undo2, Upload } from 'lucide-react';
 import {
   useBankStatements, useBankStatement,
   useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod, useAutoMatchStatement,
@@ -563,7 +563,11 @@ export const OpenLines = ({ lines }: { lines: BankLine[] }) => {
 export const decisionKey = (l: BankLine): string =>
   `${l.id}|${l.kind}|${l.matched_batch_id ?? ''}|${(l.split ?? []).map((s) => `${s.batchId}:${s.amountSen}`).join('+')}`;
 
-export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; isPicked?: boolean; onPick?: () => void }) => {
+export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
+  line: BankLine; isPicked?: boolean; onPick?: () => void;
+  /** No entry found: record the movement as a manual journal (BankRecordJournal). Offered only where the month allows it. */
+  onRecordJournal?: () => void;
+}) => {
   const book = useBookBankReceipt();
   const match = useMatchBankLine();
   const ignore = useIgnoreBankLine();
@@ -772,6 +776,15 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
           </div>
         )}
 
+        {/* NOTHING IN THE BOOKS FITS (owner 2026-11-03 on d10: 「这样需要」): a bank
+            charge out, interest in — recorded from the line itself as a journal,
+            posted and matched to it in one go. */}
+        {onRecordJournal && !asking && (
+          <button type="button" style={{ ...btn(true), marginTop: 4, marginRight: 6, padding: '2px 8px' }} onClick={onRecordJournal}
+            title="Opens a manual journal on this line's day with the bank's leg filled in; Save & post posts it and matches this line to it">
+            <Plus {...ICON} /> Record journal
+          </button>
+        )}
         {!asking && (
           <button type="button" style={{ ...btn(), marginTop: 4, padding: '2px 8px' }} onClick={() => setAsking(true)}>
             Not ours to reconcile

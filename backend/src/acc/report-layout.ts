@@ -239,15 +239,15 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
         }
         let catSide: Side | undefined;
         let totalLabel: string | undefined;
-        if (cashFlow) {
-          if (depth === 1) {
-            if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
-            catSide = o.flow as Side;
-          }
-          const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
-          if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
-          if (tl) totalLabel = tl;
+        if (cashFlow && depth === 1) {
+          if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
+          catSide = o.flow as Side;
         }
+        /* Any category, in any report and at any depth, may name its Total line (owner
+           2026-11-05: L5 with a subtotal under each); unnamed it prints "Total <name>". */
+        const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
+        if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
+        if (tl) totalLabel = tl;
         const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
         const cat: LayoutCategory = { kind: 'category', id, label, children };
@@ -283,6 +283,9 @@ export type LaidLine = {
   label?: string;
   /** A figure per money column (Receipts & Payments); amountSen is their total. */
   cells?: Record<string, number>;
+  /** Cash Flow: a sub-heading the line prints under where its account sits (lines of one code
+      sharing it print together under it). */
+  group?: { id: string; label: string };
 };
 export type LaidNode = {
   kind: 'category' | 'account' | 'unassigned' | 'subtotal';
@@ -378,6 +381,7 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, baseSen);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
@@ -490,13 +494,25 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     node.flow = flow;
     return node;
   };
+  /* Lines of one code that share a group print under its sub-heading, in their order. */
+  const grouped = (pairs: Array<{ line: LaidLine; node: LaidNode }>, flow: Flow, code: string): LaidNode[] => {
+    const out: Array<LaidNode | { gid: string; label: string; kids: LaidNode[] }> = [];
+    for (const { line, node } of pairs) {
+      if (!line.group) { out.push(node); continue; }
+      const gid = `${flow}:grp:${code}:${line.group.id}`;
+      const at = out.find((o) => 'gid' in o && o.gid === gid) as { kids: LaidNode[] } | undefined;
+      if (at) at.kids.push(node);
+      else out.push({ gid, label: line.group.label, kids: [node] });
+    }
+    return out.map((o) => ('gid' in o ? groupNode('category', o.gid, o.label, o.kids, null) : o));
+  };
   /* The lines an account line takes, oriented to its side. */
   const take = (code: string, flow: Flow, side: Side): LaidNode[] => {
     if (flow === 'in' || flow === 'out') {
       const placed = flow === 'in' ? inPlaced : outPlaced;
       const ls = ((flow === 'in' ? inBy : outBy).get(code) ?? []).filter((l) => !placed.has(keyOf(l)));
       for (const l of ls) placed.add(keyOf(l));
-      return ls.map((l) => leaf(l, flow === side ? 1 : -1, flow));
+      return grouped(ls.map((l) => ({ line: l, node: leaf(l, flow === side ? 1 : -1, flow) })), flow, code);
     }
     /* Net: in − out per row key, oriented to the side. */
     const ins = (inBy.get(code) ?? []).filter((l) => !inPlaced.has(keyOf(l)));
@@ -504,7 +520,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     for (const l of ins) inPlaced.add(keyOf(l));
     for (const l of outs) outPlaced.add(keyOf(l));
     const keys = [...new Set([...ins, ...outs].map(keyOf))];
-    return keys.map((key) => {
+    return grouped(keys.map((key) => {
       const i = ins.find((l) => keyOf(l) === key);
       const o = outs.find((l) => keyOf(l) === key);
       const src = i ?? o!;
@@ -514,8 +530,8 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       const node = laidLineNode({ ...src, amountSen, cells }, null);
       node.id = `net:${node.id}`;
       node.flow = 'net';
-      return node;
-    });
+      return { line: src, node };
+    }), 'net', code);
   };
   const walk = (list: LayoutItem[], side: Side): LaidNode[] => {
     const out: LaidNode[] = [];
@@ -527,6 +543,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, null);
       if (it.code) node.code = it.code;
+      if (it.totalLabel) node.totalLabel = it.totalLabel;
       out.push(node);
     }
     return out;
@@ -540,6 +557,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     const side = it.flow ?? 'in';
     if (it.hiddenFor?.includes(companyId)) continue;
     const kids = walk(it.children, side);
+    if (kids.length === 0) continue; // nothing in it this period (the hidden own-account transfers)
     const node = groupNode('category', it.id, it.label, kids, null);
     node.flow = side;
     node.totalLabel = it.totalLabel ?? `Total ${it.label}`;
@@ -560,7 +578,10 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   }
   const inSen = tops.filter((t) => t.side === 'in').reduce((s, t) => s + t.node.amountSen, 0);
   const outSen = tops.filter((t) => t.side === 'out').reduce((s, t) => s + t.node.amountSen, 0);
-  /* Second pass: % of the side's total, and the running subtotals. */
+  /* Second pass: the %, and the running subtotals. In: % of the first In category,
+     Total Cash In (owner 2026-11-05), so funding or other income never pushes a line
+     past 100%; Out: % of the out side's total. */
+  const inBase = tops.find((t) => t.side === 'in')?.node.amountSen || null;
   const withPct = (n: LaidNode, base: number | null): void => {
     n.pct = pctOf(n.amountSen, base);
     for (const k of n.children) withPct(k, base);
@@ -573,7 +594,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       if (runningCells) t.node.cells = { ...runningCells };
       continue;
     }
-    withPct(t.node, t.side === 'in' ? (inSen || null) : (outSen || null));
+    withPct(t.node, t.side === 'in' ? inBase : (outSen || null));
     const by: 1 | -1 = t.side === 'in' ? 1 : -1;
     running += by * t.node.amountSen;
     runningCells = addCells(runningCells, scaled(t.node.cells, by));

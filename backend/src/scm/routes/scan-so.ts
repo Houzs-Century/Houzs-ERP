@@ -55,6 +55,7 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { depositSenAfterReceiptPass, safeScanDepositSen } from '../lib/scan-header-deposit';
+import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
@@ -3680,6 +3681,7 @@ function buildDraftSoBodyFromSlip(
       ...(Object.keys(variants).length > 0 ? { variants } : {}),
     });
   }
+  applySlipTotalToUnpricedLines(items, parsed.totalRm);
 
   // 'One Shot' -> null (no installment term); 'N months' -> N (the client's
   // planToMonths rule).

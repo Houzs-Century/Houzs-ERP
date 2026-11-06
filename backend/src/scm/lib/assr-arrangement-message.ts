@@ -26,8 +26,8 @@ import { logActivity } from '../../services/assr';
 import { normDate } from '../../services/agents/schedule-reconcile';
 import { fmtDate } from '../shared/format';
 import { normalizePhone } from '../shared/phone';
-import { ASSR_CONFIRMED_COL } from './assr-board-scope';
-import { KIND_AUTOMATION, templateDate } from './delivery-message-kinds';
+import { ASSR_CONFIRMED_COL, ASSR_STATUS_PICK_SOURCE } from './assr-board-scope';
+import { KIND_AFTER_STATUS, KIND_AUTOMATION, kindAttributes, templateDate, type DriverInfoInput } from './delivery-message-kinds';
 import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../../services/connect';
 
 export type AssrLeg = keyof typeof ASSR_CONFIRMED_COL;
@@ -93,13 +93,15 @@ export interface AssrSendResult {
   skipped: Array<{ docNo: string; reason: string }>;
 }
 
-/** Send the Service Arrangement message for each ASSR leg row key. Cases are
- *  read through the caller's granted companies (assrCompanySql) — the same
- *  scope the board showed the row under. One message per leg: the template
- *  names one case and one date. */
+/** Send the Service Arrangement message for each ASSR leg row key — or, with
+ *  `driverInfo`, the Driver Info message (the SO template, button-less: name,
+ *  the leg's date, time window, driver, lorry). Cases are read through the
+ *  caller's granted companies (assrCompanySql) — the same scope the board
+ *  showed the row under. One message per leg: both templates name one date. */
 export async function sendAssrArrangement(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   rowKeys: string[],
+  driverInfo?: DriverInfoInput,
 ): Promise<AssrSendResult> {
   const sent: AssrSendResult['sent'] = [];
   const failed: AssrSendResult['failed'] = [];
@@ -132,6 +134,8 @@ export async function sendAssrArrangement(
     const date = assrLegDate(row, leg);
     if (!date) { skipped.push({ docNo: key, reason: 'no_job_date' }); continue; }
 
+    const extra: Record<string, string> = { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo };
+    if (driverInfo) Object.assign(extra, kindAttributes('driver_info', {}, date, 0, { driverInfo }).attributes);
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),
@@ -143,9 +147,11 @@ export async function sendAssrArrangement(
       null,
       {
         callbackUrl,
-        automation: KIND_AUTOMATION.assr_arrangement,
-        extra: { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo },
-        resetConversation: true,
+        automation: driverInfo ? KIND_AUTOMATION.driver_info : KIND_AUTOMATION.assr_arrangement,
+        extra,
+        // Driver Info opens no Confirm / Amend, so a customer who already
+        // confirmed keeps their Delivery Lock (OPENER_KINDS).
+        resetConversation: !driverInfo,
       },
     );
     const result = await postConnectContact(c.env, contact);
@@ -170,7 +176,9 @@ export async function sendAssrArrangement(
     if (result.ok) {
       try {
         await logActivity(c.env, row.id, 'whatsapp_sent', null, date,
-          `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} on ${dmy(date)}, customer asked to Confirm or Amend the date.`,
+          driverInfo
+            ? `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} driver information for ${dmy(date)} (${driverInfo.deliveryTime}, driver ${driverInfo.driverName}${driverInfo.carPlate ? `, lorry ${driverInfo.carPlate}` : ''}).`
+            : `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} on ${dmy(date)}, customer asked to Confirm or Amend the date.`,
           userId, { category: 'service', source_channel: 'whatsapp' });
       } catch (e) {
         console.warn(`[assr-arrangement] activity insert failed: ${String((e as Error).message).slice(0, 120)}`);
@@ -275,18 +283,29 @@ export interface AssrChatState {
 type LogRow = { doc_no: string; source: string; success: boolean; payload: string | null; created_at: string };
 
 /** Fold the log rows (any order) into each row key's board state. The newest
- *  row wins: a fresh send after an amend clears the old request. */
+ *  row wins: a fresh send after an amend clears the old request, and a staff pick
+ *  replaces the status but leaves the customer's request on the row. */
 export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState> {
   const out = new Map<string, AssrChatState>();
   const sorted = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const r of sorted) {
-    if (r.source === 'delivery-planning') {
-      if (!r.success) continue;
-      out.set(r.doc_no, { delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null });
+    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null; automation?: string; status?: string | null } = {};
+    try { p = JSON.parse(r.payload ?? '{}'); } catch { p = {}; }
+    if (r.source === ASSR_STATUS_PICK_SOURCE) {
+      const prev = out.get(r.doc_no);
+      out.set(r.doc_no, {
+        delivery_message_status: p.status ?? null,
+        amend_date_from_customer: prev?.amend_date_from_customer ?? null,
+        amend_reason_from_customer: prev?.amend_reason_from_customer ?? null,
+      });
       continue;
     }
-    let p: { event?: string; requested_delivery_date?: string | null; reason?: string | null } = {};
-    try { p = JSON.parse(r.payload ?? '{}'); } catch { continue; }
+    if (r.source === 'delivery-planning') {
+      if (!r.success) continue;
+      const status = p.automation === KIND_AUTOMATION.driver_info ? KIND_AFTER_STATUS.driver_info : 'Done Send';
+      out.set(r.doc_no, { delivery_message_status: status, amend_date_from_customer: null, amend_reason_from_customer: null });
+      continue;
+    }
     if (p.event === 'confirm') {
       out.set(r.doc_no, { delivery_message_status: 'Done Scheduling', amend_date_from_customer: null, amend_reason_from_customer: null });
     } else if (p.event === 'amend') {
@@ -307,7 +326,7 @@ export async function loadAssrChatState(sb: AnySchemaClient, rowKeys: string[]):
   const { data, error } = await sb.from('wa_message_log')
     .select('doc_no, source, success, payload, created_at')
     .in('doc_no', rowKeys)
-    .in('source', ['delivery-planning', 'chat-callback'])
+    .in('source', ['delivery-planning', 'chat-callback', ASSR_STATUS_PICK_SOURCE])
     .order('created_at', { ascending: false })
     .limit(2000);
   if (error) throw new Error(error.message);

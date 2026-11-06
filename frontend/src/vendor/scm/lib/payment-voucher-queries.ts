@@ -147,6 +147,19 @@ export const useUpdatePaymentVoucher = () => {
   });
 };
 
+/* A voucher's words alone, until it is approved (owner 2026-11-06: 有时我要改 description). */
+export const useUpdatePvText = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; notes: string; lines: Array<{ id: string; description: string }> }) =>
+      authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}/text`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+    },
+  });
+};
+
 export const usePostPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -234,6 +247,31 @@ export const useCheckPaymentVoucher = approvalMutation('check');
 /* Approve posts the GL in the same request — the response is the post's. */
 export const useApprovePaymentVoucher = approvalMutation('approve');
 
+/* Remind approver (the redesign's e8; owner 2026-11-03: 主要是付款吧) — a note in
+   the approver's bell about checked vouchers. Posts nothing and changes no
+   voucher, so only the trail it writes is refreshed. One voucher from the row,
+   the ticked ones from the batch bar (one note for all of them). Server:
+   backend/src/scm/routes/payment-vouchers-remind.ts. */
+export type PvRemindRefusal = { id: string; pvNumber: string | null; error: string; message: string };
+export type PvRemindResult = {
+  reminded: Array<{ id: string; pvNumber: string }>;
+  refused: PvRemindRefusal[];
+  /** How many people the note reached. */
+  approvers: number;
+  /** When these vouchers may be reminded again (one reminder per voucher an hour). */
+  nextAt: string;
+};
+export const useRemindApprover = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      authedFetch<PvRemindResult>('/payment-vouchers/remind', { method: 'POST', body: JSON.stringify({ ids }) }),
+    onSuccess: (d) => {
+      for (const r of d.reminded) void qc.invalidateQueries({ queryKey: ['scm-entity-audit-log', 'PAYMENT_VOUCHER', r.id] });
+    },
+  });
+};
+
 export const useRejectPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -255,7 +293,10 @@ export const useRejectPaymentVoucher = () => {
 export type BillExtraction = {
   vendorName: string | null; vendorRegNo: string | null;
   /** proforma / quotation: not yet the real invoice — a payment on it owes the official one (item 3). */
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
+  /** payment_proof (a transfer slip) / summary (a claim listing): read, but not a bill — the pile sets them aside. */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'payment_proof' | 'summary' | 'unknown';
+  /** One page of several separate purchases — each line is one purchase. Absent from an older reader. */
+  severalReceipts?: boolean;
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;

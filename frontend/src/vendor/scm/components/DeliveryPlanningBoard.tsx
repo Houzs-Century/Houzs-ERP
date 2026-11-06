@@ -30,6 +30,7 @@ import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
+import { MarkDeliveredCell } from './MarkDeliveredCell';
 import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
 import {
@@ -52,7 +53,7 @@ import {
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
-import { deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
+import { compareByDeliverySlot, deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
 import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
@@ -148,6 +149,8 @@ export const isProject = (o: PlanningOrder): boolean => o.row_type === 'project'
 /* A DP row's so_doc_no is the synthetic key `DP:<id>`; the backend date / fields
    endpoints want the bare dp_order id. Same shape ScheduleDpOrderDrawer uses. */
 export const dpIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^DP:/, '');
+/* A project row's key is `PRJ:<projectId>#SETUP|DISMANTLE`; the write needs the project id. */
+export const projectIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^PRJ:/, '').replace(/#.*$/, '');
 /* A friendly label for a DP job type — resolved from the SHARED canonical map
    (dpJobTypeLabel) so the board's Type chip and the New-DP-Order dropdown always
    read the same wording. Empty job_type falls back to a generic 'DP job'. */
@@ -326,9 +329,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
      scm.dp_orders.delivery_message_status; service-case rows write
      assr_cases.delivery_message_status (owner 2026-10-29 — the non-SO job types
      adjust it too, so the ASSR row is an editable select, not a read-only chip).
-     For a service case the Service-Arrangement WhatsApp reply still overlays its
-     own value when the customer has answered, so a hand-set status shows until
-     then. */
+     A service case's row shows the newest of send / customer tap / this pick. */
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
     : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
     : { type: 'so' as const, id: order.so_doc_no };
@@ -447,13 +448,17 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
    Disposal Request, Remarks). SO rows only, EXCEPT when allowNonSo — the Time Slot
    is editable on DP rows too (owner 2026-10-31, scm.dp_orders.time_range) and on
-   service-case legs (HC-0194). Commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean;
+   service-case legs (HC-0194) — and allowProject (Remarks: the project's board
+   remark). Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false, allowProject = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean; allowProject?: boolean;
 }) {
-  if (isProject(order) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
+  if ((isProject(order) && !allowProject) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
+      // Remount when the saved value changes: an uncontrolled box would keep the
+      // old text, and a blur would save it back over the newer value.
+      key={value ?? ''}
       className={styles.inlineEdit}
       defaultValue={value ?? ''}
       placeholder={placeholder}
@@ -1392,13 +1397,24 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'disposal_request', label: 'Disposal Request', width: 180,
-      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v })} placeholder="Disposal…" />,
+      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, disposalRequest: v }, { onError: fieldNotSaved })} placeholder="Disposal…" />,
       searchValue: (o) => o.disposal_request ?? '',
       exportValue: (o) => o.disposal_request ?? '',
     },
     {
       key: 'dp_remark', label: 'Remarks', width: 200, defaultHidden: true,
-      accessor: (o) => <TextEditCell order={o} value={o.dp_remark} onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, dpRemark: v })} placeholder="Remarks…" />,
+      /* Every row type takes a remark, each on its own record: SO header, DP job,
+         the service-case leg, or the project's board remark. */
+      accessor: (o) => (
+        <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject={!o.remark_locked}
+          onCommit={(v) => updateFieldsMutate(
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), dpRemark: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, dpRemark: v }
+              : isProject(o) ? { type: 'project', id: projectIdOf(o), dpRemark: v }
+              : { type: 'so', id: o.so_doc_no, dpRemark: v },
+            { onError: fieldNotSaved },
+          )} />
+      ),
       searchValue: (o) => o.dp_remark ?? '',
       exportValue: (o) => o.dp_remark ?? '',
     },
@@ -1430,6 +1446,14 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_message_status ?? '',
       sortFn: (a, b) => (a.delivery_message_status ?? '').localeCompare(b.delivery_message_status ?? ''),
     },
+    {
+      // Service-case per-leg "Mark Delivered" (owner 2026-11-06); ASSR legs only.
+      key: 'assr_delivered', label: 'Delivered', width: 130, groupable: true,
+      accessor: (o) => <MarkDeliveredCell order={o} onSchedule={scheduleMutate} />,
+      searchValue: (o) => (isAssr(o) ? (o.delivery_state === 'DELIVERED' ? 'delivered done' : 'pending') : ''),
+      groupValue: (o) => (!isAssr(o) ? '(n/a)' : o.delivery_state === 'DELIVERED' ? 'Delivered' : 'Pending'),
+      exportValue: (o) => (isAssr(o) && o.delivery_state === 'DELIVERED' ? 'Delivered' : ''),
+    },
     /* delivery_state (coarse Pending/Schedule/Overdue/Delivered) and
        arrangement_stage (its Pending-Schedule sub-state) are no longer board
        columns (owner 2026-09-24) — both are still derived server-side and drive
@@ -1459,7 +1483,8 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
+      key: 'time_range', label: 'Time Slot', width: 130, sortable: true, defaultHidden: true,
+      sortFn: compareByDeliverySlot,
       /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
          time_range via useUpdateDeliveryFields (no DO yet → the server saves
          nothing and returns no_do_hint, which we surface); a DP row (owner
@@ -1471,7 +1496,7 @@ export function DeliveryPlanningBoard({
             isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v }
               : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, timeRange: v }
               : { type: 'so', id: o.so_doc_no, timeRange: v },
-            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
+            { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); }, onError: fieldNotSaved },
           )} />
       ),
       searchValue: (o) => o.time_range ?? '',

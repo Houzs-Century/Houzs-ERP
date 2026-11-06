@@ -28,7 +28,7 @@ const PV_ACTIONS: Record<string, string> = {
 const PV_FIELDS: Record<string, string> = {
   status: 'Status', payeeName: 'Payee', creditAccountCode: 'Credit account',
   voucherDate: 'Voucher date', supplierId: 'Supplier', purpose: 'Type',
-  notes: 'Notes', currency: 'Currency', exchangeRate: 'Exchange rate',
+  notes: 'Notes', lineDescription: 'Line description', currency: 'Currency', exchangeRate: 'Exchange rate',
   totalSen: 'Total', allocatedSen: 'Allocated to invoices', bankChargeSen: 'Bank charges',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',

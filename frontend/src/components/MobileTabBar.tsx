@@ -13,7 +13,8 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../hooks/useNotifications";
 import { NAV_TABS, type NavTab } from "./Sidebar";
-import { makeNavFilter } from "./navFilter";
+import { collapsedEntryTo, makeNavFilter } from "./navFilter";
+import { readLastReport } from "../pages/scm-v2/reports/lastReport";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
 
@@ -223,6 +224,13 @@ function MenuModal({ onClose }: { onClose: () => void }) {
     onClose();
   }
 
+  /** A collapsed group (Finance › Reports): one card, to the member opened
+   *  last or the first the reader may open — the desktop rail's rule. */
+  function renderCollapsed(t: NavTab) {
+    const to = collapsedEntryTo(t.children ?? [], readLastReport());
+    return to ? renderCard({ ...t, children: undefined, to }) : null;
+  }
+
   function renderCard(t: NavTab, badge?: number) {
     if (!t.to) return null;
     const Icon = t.icon;
@@ -338,9 +346,12 @@ function MenuModal({ onClose }: { onClose: () => void }) {
                 >
                   {renderGroupHeader(t.label, t.icon)}
                   {t.children.map((k) =>
-                    // Sub-group (e.g. Supply Chain → Procurement): render its
-                    // own section header + leaf cards, one level deeper.
-                    k.children && k.children.length > 0 ? (
+                    // A collapsed group (Finance › Reports) is ONE card, as on
+                    // the desktop rail. A sub-group (e.g. Supply Chain →
+                    // Procurement): its own section header + leaf cards.
+                    k.collapsed ? (
+                      renderCollapsed(k)
+                    ) : k.children && k.children.length > 0 ? (
                       <div
                         key={k.groupId || k.label}
                         className="col-span-2 contents"

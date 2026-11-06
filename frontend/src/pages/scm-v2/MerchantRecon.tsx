@@ -30,8 +30,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
-  useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments, usePayouts,
+  useConfirmSettlementRow, useConfirmSettlementGroup, useConfirmMatched, useIgnoreSettlementRow,
+  useSettlementWatchlist, useUnconfirmSettlementRow, useReleaseSettlementRow, useFindPayments, usePayouts,
   confirmMatchedBatch, useInvalidateAfterPosting,
   type AcquirerSetup, type SettlementRow, type SettlementBatch, type BankAccount, type SettlementCandidate,
   type Watchlist, type Payout,
@@ -313,7 +313,7 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
                   <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
                   <td style={cell}>{b.file_name}</td>
                   <td style={cell}>{b.period_from} → {b.period_to}</td>
-                  <td style={num}>{fmt(b.net_sen)}</td>
+                  <td style={num}>{fmt(payableOf(b))}</td>
                   <td style={{ ...cell, color: good }}>{b.confirmed_count} line(s) done</td>
                   <td style={cell}>
                     <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
@@ -660,7 +660,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       </div>
       {/* The period is on every line below as its own date; only the report's
           TOTAL is worth repeating here, because no single line carries it. */}
-      <div className={grid.sub}>net {fmt(batch.net_sen)}</div>
+      <div className={grid.sub}>net {fmt(payableOf(batch))}</div>
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -787,6 +787,28 @@ const UndoDone = ({ rowId }: { rowId: number }) => {
   );
 };
 
+/** "Not this" on a line the machine matched and nobody confirmed (owner
+    2026-11-03, batch 3 d2): the match is released, the line goes to To choose,
+    and that payment is not offered to it again. Nothing posts. */
+const NotThis = ({ rowId }: { rowId: number }) => {
+  const release = useReleaseSettlementRow();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        style={{ ...btn(false, release.isPending), marginLeft: 8 }}
+        disabled={release.isPending}
+        title="This is not the sale — release the match and choose the right one. Nothing is posted."
+        onClick={() => { setError(null); release.mutate(rowId, { onError: (e) => setError(refusalText(e, 'The match was not released.')) }); }}
+      >
+        Not this
+      </button>
+      {error && <div className={grid.bad} style={{ fontSize: 'var(--fs-12, 12px)' }}>{error}</div>}
+    </>
+  );
+};
+
 const Tally = ({ n, label, note, tone }: {
   n: number; label: string; note: string; tone: 'good' | 'danger' | 'plain';
 }) => (
@@ -865,7 +887,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All reports</button>
         <b>{batch ? `${batch.acquirer_code} · ${batch.file_name}` : 'Loading…'}</b>
-        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</span>}
+        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(payableOf(batch))}</span>}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -960,6 +982,11 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td className={grid.num}>{fmt(r.fee_sen)}</td>
                 <td className={grid.num}>{fmt(r.net_sen)}</td>
                 <td className={grid.seam}>
+                  {r.matched_with && (
+                    <div className={grid.sub}>
+                      with line {r.matched_with.lines.filter((g) => g.rowId !== r.id).map((g) => g.lineNo).join(', ')} · together {fmt(r.matched_with.grossSen)}
+                    </div>
+                  )}
                   {r.linked.map((l) => (
                     <div key={l.payment_id}>
                       {l.doc_no ? <DocLink source={l.payment_source} docNo={l.doc_no} bold /> : <b>{l.payment_id}</b>}
@@ -979,7 +1006,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                     )
                     : r.bucket === 'IGNORED'
                       ? <span style={softText}>set aside</span>
-                      : <span className={grid.good}>matched — the button above books it</span>}
+                      : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                          <span className={grid.good}>matched — the button above books it</span>
+                          {r.linked.length > 0 && <NotThis rowId={r.id} />}
+                        </span>
+                      )}
                 </td>
               </tr>
             ))}
@@ -996,7 +1028,10 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
           deal with another way; you can put it back at any time.
         </div>
       )}
-      {needChoice.map((r) => <SettlementLine key={r.id} row={r} />)}
+      {needChoice.map((r) => (
+        <SettlementLine key={r.id} row={r}
+          others={openRows.filter((o) => o.id !== r.id && o.linked.length === 0)} />
+      ))}
     </section>
   );
 };
@@ -1107,8 +1142,22 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
   );
 };
 
-const SettlementLine = ({ row }: { row: SettlementRow }) => {
+const SettlementLine = ({ row, others = [] }: {
+  row: SettlementRow;
+  /** The report's other open lines with no payment of their own — what this
+      line can be matched TOGETHER with (option B). */
+  others?: SettlementRow[];
+}) => {
   const confirm = useConfirmSettlementRow();
+  const confirmGroup = useConfirmSettlementGroup();
+  /* LINES MATCHED TOGETHER (owner 2026-11-03, option B): the customer swiped
+     twice for two orders — RM 5,000 + RM 2,085 for RM 2,990 + RM 4,095 — so no
+     line equals any payment; only the totals agree. Ticking other lines here
+     makes the target their sum, and the confirm books every line's own fee. */
+  const [joining, setJoining] = useState(false);
+  const [together, setTogether] = useState<Set<number>>(() => new Set());
+  const withLines = others.filter((o) => together.has(o.id));
+  const targetSen = row.gross_sen + withLines.reduce((s, o) => s + o.gross_sen, 0);
   const ignore = useIgnoreSettlementRow();
   /* Start on the system's own answer when it has one — the operator confirms
      instead of repeating the search (owner: 尽量根据日期金额去尝试自动匹配后让我
@@ -1122,7 +1171,9 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
   const offered = [...row.candidates, ...[...extra.values()].filter((p) => !row.candidates.some((c) => key(c) === key(p)))];
   const chosen = offered.filter((p) => picked.has(key(p)));
   const chosenSen = chosen.reduce((s, p) => s + p.amountSen, 0);
-  const balanced = chosen.length > 0 && chosenSen === row.gross_sen;
+  const balanced = chosen.length > 0 && chosenSen === targetSen;
+  const pending = confirm.isPending || confirmGroup.isPending;
+  const failed = confirm.isError ? confirm.error : confirmGroup.isError ? confirmGroup.error : null;
   const hinted = new Set(row.comboHints.flat());
 
   const toggle = (p: { source: string; id: string }) => {
@@ -1146,6 +1197,22 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       {finding ? 'Hide the search' : 'Find the sale'}
     </button>
   );
+  const joinButton = !row.confirmed_at && row.bucket !== 'IGNORED' && row.linked.length === 0 && others.length > 0 && (
+    <button type="button" style={btn()} onClick={() => setJoining((v) => !v)} aria-expanded={joining}>
+      {joining ? 'Match this line alone' : 'Match with other lines'}
+    </button>
+  );
+  const toggleLine = (id: number) => setTogether((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const asGroup = joining && withLines.length > 0;
+  const press = () => {
+    const payments = chosen.map((p) => ({ source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen }));
+    if (asGroup) confirmGroup.mutate({ rowIds: [row.id, ...withLines.map((o) => o.id)], payments });
+    else confirm.mutate({ rowId: row.id, matchReason: 'manual', payments });
+  };
 
   return (
     /* A section, not a div: each line is its own piece of the report, and the
@@ -1181,6 +1248,36 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         <div style={{ fontSize: 'var(--fs-13)' }}>
           Matched to <LinkedDocs links={row.linked} />
           {row.ref ? ' by its reference' : ''} — press <b>Confirm</b> to book its fee.
+        </div>
+      )}
+
+      {!row.confirmed_at && joining && (
+        <div className="space-y-1" data-testid="match-together">
+          <div style={softText}>
+            Tick the other lines of this report the same customer swiped — the payments you pick must add up to all of them together.
+          </div>
+          <table style={table}>
+            <thead>
+              <tr style={headRow}>
+                <th style={cell} />
+                <th style={cell}>Line</th><th style={cell}>Date</th><th style={cell}>Reference</th><th style={num}>Gross</th>
+              </tr>
+            </thead>
+            <tbody>
+              {others.map((o) => (
+                <tr key={o.id}>
+                  <td style={cell}>
+                    <input type="checkbox" checked={together.has(o.id)} onChange={() => toggleLine(o.id)}
+                      aria-label={`Match with line ${o.line_no}`} />
+                  </td>
+                  <td style={cell}>Line {o.line_no}</td>
+                  <td style={cell}>{o.txn_date}</td>
+                  <td style={cell}>{o.ref ?? '—'}</td>
+                  <td style={num}>{fmt(o.gross_sen)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -1232,19 +1329,17 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         <div className="space-y-1">
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 'var(--fs-13)', color: balanced ? good : danger }}>
-              Selected {fmt(chosenSen)} of {fmt(row.gross_sen)}
-              {chosen.length > 0 && !balanced && ` — ${fmt(chosenSen - row.gross_sen)} out`}
+              Selected {fmt(chosenSen)} of {fmt(targetSen)}
+              {asGroup ? ` (${withLines.length + 1} lines together)` : ''}
+              {chosen.length > 0 && !balanced && ` — ${fmt(chosenSen - targetSen)} out`}
             </span>
-            <button type="button" style={btn(true, !balanced || confirm.isPending)}
-              disabled={!balanced || confirm.isPending}
-              onClick={() => confirm.mutate({
-                rowId: row.id,
-                matchReason: 'manual',
-                payments: chosen.map((p) => ({ source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen })),
-              })}>
-              Confirm and post
+            <button type="button" style={btn(true, !balanced || pending)}
+              disabled={!balanced || pending}
+              onClick={press}>
+              {asGroup ? `Confirm the ${withLines.length + 1} lines and post` : 'Confirm and post'}
             </button>
             {findButton}
+            {joinButton}
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
@@ -1260,6 +1355,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
             in-transit without one.
           </span>
           {findButton}
+          {joinButton}
           <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
             {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
           </button>
@@ -1267,9 +1363,9 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       )}
 
 
-      {confirm.isError && (
+      {failed && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-          {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
+          {(failed as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
       )}
     </section>

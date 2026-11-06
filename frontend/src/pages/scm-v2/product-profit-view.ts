@@ -11,6 +11,15 @@
 import type { ProductCategory, ProductProfitData, ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 import { fmtSenPlain } from '../../vendor/shared/format';
+import { monthEnd } from '../../lib/dateRangePresets';
+import { monthsSpanned, periodLabel } from './reports/statementColumns';
+
+/** The months as the subtitle, the sheet and the empty line name them: "October
+    2026", or "September 2026 – October 2026" for several (the redesign's c8). */
+export function profitPeriod(from: string, to: string): string {
+  const month = (iso: string) => periodLabel(`${iso.slice(0, 7)}-01`, monthEnd(`${iso.slice(0, 7)}-01`));
+  return monthsSpanned(from, to) <= 1 ? month(from) : `${month(from)} – ${month(to)}`;
+}
 
 export const CATEGORY_ORDER: readonly ProductCategory[] = ['mattress', 'sofa', 'bedframe', 'other'];
 export const CATEGORY_LABEL: Record<ProductCategory, string> = { mattress: 'Mattress', sofa: 'Sofa', bedframe: 'Bedframe', other: 'Others' };
@@ -124,7 +133,8 @@ export function rankingOf(rows: readonly ProductProfitRow[], v: ProfitView): Ran
 
 /** The foot: what the figures leave out, and what reads high. */
 export function profitNotes(d: ProductProfitData, v: ProfitView, rows: readonly ProductProfitRow[]): string[] {
-  const notes = ['By SO date. Draft and cancelled orders, cancelled lines and service lines (delivery, installation) are left out.'];
+  const months = monthsSpanned(d.from, d.to);
+  const notes = [`${months > 1 ? `${months} months added together, each order in the month of its SO date` : 'By SO date'}. Draft and cancelled orders, cancelled lines and service lines (delivery, installation) are left out.`];
   const giftAll = rows.reduce((a, r) => a + r.giftSen, 0);
   notes.push(v.gifts
     ? 'Gifts (free bedframes, pillows, protectors and the like) are shared among the paid products on the same order, by their sales.'
@@ -155,10 +165,10 @@ export function productProfitSheet(d: ProductProfitData, v: ProfitView, rows: re
   total.push(t.gpSen, t.gpPct, null);
   table.push({ kind: 'total', depth: 0, label: 'Total', cells: total });
   return {
-    title: 'Product Profit',
-    subtitle: `${d.month} · ${viewLabel(v)} · ${giftsLabel(v.gifts)} · RM`,
+    title: 'Product profit',
+    subtitle: `${profitPeriod(d.from, d.to)} · by SO date · ${viewLabel(v)} · ${giftsLabel(v.gifts)} · RM`,
     meta: [
-      { label: 'Month', value: d.month },
+      { label: monthsSpanned(d.from, d.to) > 1 ? 'Months' : 'Month', value: profitPeriod(d.from, d.to) },
       { label: 'Models', value: String(rows.length) },
       { label: 'Orders', value: String(d.orders) },
     ],
@@ -166,7 +176,7 @@ export function productProfitSheet(d: ProductProfitData, v: ProfitView, rows: re
       columns: [
         { label: 'Category', kind: 'text' }, { label: 'Sold', kind: 'text' }, AMOUNT_COLUMN('Avg price'), AMOUNT_COLUMN('Sales'), AMOUNT_COLUMN('Product cost'),
         ...(v.gifts ? [AMOUNT_COLUMN('Gifts')] : []),
-        AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('Margin'), { label: 'Free bedframes', kind: 'text' as const },
+        AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('Margin · % of sales'), { label: 'Free bedframes', kind: 'text' as const },
       ],
       rows: table,
     }],

@@ -102,5 +102,11 @@
       { "category": "MATTRESS", "model": "GENERASI" },
       { "category": "MATTRESS", "model": "SENSATION 2.0" }
     ]
+  },
+  "HC-0208": {
+    "ruling": "Sim 2026-11-03 (HC-0208, '20261103-03 can do merge for this item code IIYASHI'): Product Models KŌRI IYASH and KŌRI IYASHI are one AKEMI mattress; the ticked IYASHI codes are kept, IYASH folds into them.",
+    "groups": [
+      { "category": "MATTRESS", "keep": "KŌRI IYASHI", "drops": ["KŌRI IYASH"] }
+    ]
   }
 }

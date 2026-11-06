@@ -21,8 +21,10 @@ const CO = 1;
 
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
-  constructor(private rows: Row[]) {}
-  select() { return this; }
+  private cols: string[] | null = null;
+  constructor(private rows: Row[], private table = '') {}
+  /* The registry hands back only the columns a read named, so a column left out of a select fails here as it would in prod. */
+  select(cols?: string) { if (cols) this.cols = cols.split(',').map((s) => s.trim()); return this; }
   order() { return this; }
   limit() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
@@ -31,7 +33,11 @@ class FakeQuery {
     this.preds.push((r) => s.has(String(r[col])));
     return this;
   }
-  private run(): Row[] { return this.rows.filter((r) => this.preds.every((p) => p(r))); }
+  private run(): Row[] {
+    const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
+    const cols = this.cols;
+    return this.table === 'acc_debtors' && cols ? hit.map((r) => Object.fromEntries(cols.map((k) => [k, r[k]]))) : hit;
+  }
   maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
   then(res: (v: any) => any, rej?: (e: any) => any) {
     return Promise.resolve({ data: this.run(), error: null }).then(res, rej);
@@ -42,7 +48,7 @@ function harness(tables: Record<string, Row[]>) {
   const app = new Hono();
   app.onError((e, c) => c.json({ error: 'thrown', message: String((e as Error).stack ?? e) }, 500));
   app.use('*', async (c, next) => {
-    c.set('supabase' as never, { from: (t: string) => new FakeQuery(tables[t] ||= []) } as never);
+    c.set('supabase' as never, { from: (t: string) => new FakeQuery(tables[t] ||= [], t) } as never);
     c.set('companyId' as never, CO as never);
     /* The router carries the supabaseAuth bridge (docs/bugs/0648). The pinned
        system-staff id is the bridge's own "already translated" mark, so it steps
@@ -130,6 +136,13 @@ describe('the Finance list — both kinds', () => {
     });
   });
 
+  test("a bill row carries its debtor's account code off the registry, for the list and its filter", async () => {
+    const t = tables();
+    t.acc_debtors[0].code = '305-A001';
+    const b = await (await harness(t).request('/ar-invoices?kind=ODB')).json() as { rows: Row[] };
+    expect(b.rows[0]).toMatchObject({ kind: 'ODB', partyKey: 'D:d1', partyCode: '305-A001', partyName: 'AHMAD BIN ALI' });
+  });
+
   test('an unknown kind is refused by name', async () => {
     const app = harness(tables());
     const res = await app.request('/ar-invoices?kind=PI');
@@ -147,6 +160,13 @@ describe('a bill opens with its lines and its debtor', () => {
     expect(b.bill).toMatchObject({ id: 'b1', bill_number: 'HC-ODB-2609-001', total_sen: 50_000, received_sen: 20_000, status: 'POSTED' });
     expect(b.bill.lines).toEqual([{ id: 'l1', company_id: CO, bill_id: 'b1', line_no: 1, description: '转租', credit_account_code: '700-0000', amount_sen: 50_000 }]);
     expect(b.debtor).toMatchObject({ id: 'd1', name: 'AHMAD BIN ALI', address1: '12 Jalan Satu', city: 'Petaling Jaya' });
+  });
+
+  test("the bill's debtor brings its account code for the page and the print", async () => {
+    const t = tables();
+    t.acc_debtors[0].code = '305-A001';
+    const b = await (await harness(t).request('/ar-invoices/bills/b1')).json() as { debtor: Row };
+    expect(b.debtor.code).toBe('305-A001');
   });
 
   test("another company's bill is not found", async () => {

@@ -11,6 +11,14 @@ import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 import { earliestLorryDate } from "./earliest-lorry-date";
 import { applyProjectFleetDates } from "./project-fleet-dates";
+
+/** LIKE patterns for a word typed as a name's initials: SCCC reads Setia City
+ *  Convention Centre. Letters only, 3 to 6 of them. */
+export function initialsLikes(word: string): string[] {
+  if (!/^[a-z]{3,6}$/i.test(word)) return [];
+  const body = [...word].join("% ");
+  return [`${body}%`, `% ${body}%`];
+}
 export { deriveProjectCode, deriveProjectName };
 // Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
 export { earliestLorryDate };
@@ -1173,6 +1181,7 @@ export interface ListProjectsFilters {
    *  Cancelled events are excluded from both. */
   phase?: "setup" | "dismantle";
   brand?: string;
+  organizer?: string;
   event_type_id?: number;
   search?: string;
   /** Year(s) on start_date. `number` for legacy single-value callers, or a
@@ -1357,20 +1366,17 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     );
     binds.push(todayMyt());
   }
-  // brand / status / year / month accept COMMA-SEPARATED lists since
-  // 2026-08-07 (owner: "add multiple choice for all dropdown also"). A single
-  // value still behaves exactly as before — csvList() yields one element and
-  // the IN (?) collapses to equality.
-  const brandList = csvList(f.brand);
-  if (brandList.length) {
-    where.push(`p.brand IN (${brandList.map(() => "?").join(",")})`);
-    binds.push(...brandList);
-  }
-  const statusList = csvList(f.status);
-  if (statusList.length) {
-    where.push(`p.status IN (${statusList.map(() => "?").join(",")})`);
-    binds.push(...statusList);
-  }
+  // brand / status / organizer / year / month accept COMMA-SEPARATED lists
+  // (owner 2026-08-07; organizer 2026-10-22). A lone value collapses to IN (?).
+  const addInFilter = (col: string, raw: string | undefined) => {
+    const list = csvList(raw);
+    if (!list.length) return;
+    where.push(`${col} IN (${list.map(() => "?").join(",")})`);
+    binds.push(...list);
+  };
+  addInFilter("p.brand", f.brand);
+  addInFilter("p.status", f.status);
+  addInFilter("p.organizer", f.organizer);
   if (f.event_type_id != null) {
     where.push("p.event_type_id = ?");
     binds.push(f.event_type_id);
@@ -1791,11 +1797,16 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // correlated subquery to users (mirroring the `pic.name` display join at
     // the SELECT) so it also works inside the COUNT(*) query, which does NOT
     // join users. Additive — keeps code/name/venue/organizer.
-    where.push(
-      "(p.code LIKE ? OR p.name LIKE ? OR p.venue LIKE ? OR p.organizer LIKE ? OR p.brand LIKE ? OR (SELECT u.name FROM users u WHERE u.id = p.pic_id) LIKE ?)"
-    );
-    const like = `%${f.search}%`;
-    binds.push(like, like, like, like, like, like);
+    // Each word on its own, in any order and any field: "mle dataran" (owner
+    // 2026-11-04). A short word also reads as the venue's initials: "sccc".
+    for (const word of String(f.search).trim().split(/\s+/).filter(Boolean)) {
+      const like = `%${word}%`;
+      const initials = initialsLikes(word);
+      where.push(
+        `(p.code LIKE ? OR p.name LIKE ? OR p.venue LIKE ? OR p.organizer LIKE ? OR p.brand LIKE ? OR (SELECT u.name FROM users u WHERE u.id = p.pic_id) LIKE ?${initials.map(() => " OR p.venue LIKE ?").join("")})`
+      );
+      binds.push(like, like, like, like, like, like, ...initials);
+    }
   }
   // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
   // within a company, any user with the projects permission sees ALL that

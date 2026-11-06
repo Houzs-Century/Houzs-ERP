@@ -175,7 +175,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   not yet approved (`readCheckedVoucherLegs`, owner 2026-10-19 「改成 pv
   checked」; shown as "PV-… (checked)"). A row the books fill replaces its typed
   and auto lines; a rejected voucher drops out and the typed figure returns; AP
-  invoices still count from Post.
+  invoices still count from Post. Exception: Transport Setup & Dismantle = its bills PLUS the in-house setup / dismantle trip charge for trips from 2026-09-01 (`scm/lib/fair-trips.ts`, the Logistics P&L's own trips).
 - The event P&L is TWO P&Ls (owner 2026-10-16; `services/eventPnl.ts`, inputs
   `services/eventPnlInputs.ts`, detail field `finance_pnl`): BY TOTAL SALES (sales
   lines, else the Total Sales box, else the orders' total) and BY SALES ORDERS

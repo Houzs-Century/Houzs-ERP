@@ -34,6 +34,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "scan-so-warm": DAY,
   "push-reminders": DAY,
   "fair-reconcile": DAY,
+  "fair-claim": DAY,
   sla: DAY,
   "do-mirror": DAY,
   "po-docs-pull": DAY,
@@ -48,10 +49,12 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "job-runs-retention": DAY,
   "failed-logins-retention": DAY,
   "stock-close": DAY,
+  "self-check": DAY,
   "supplier-price-apply": DAY,
   "deliver-due": DAY,
   "ai-usage-hub": DAY,
   "scan-so-distill": 7 * DAY,
+  "assr-weekly-status": 7 * DAY,
 };
 
 /** Sub-daily: 2.5 cadences. Daily or longer: the cadence plus 2 hours (26h for

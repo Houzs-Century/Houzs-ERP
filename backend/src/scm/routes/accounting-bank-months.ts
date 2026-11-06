@@ -26,7 +26,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import {
   assembleMonth, monthOf, monthWindow, nextMonth, previousMonth,
-  type MonthStatement, type MonthBalances, type TypedBalance,
+  printedClosingOf, type MonthStatement, type MonthBalances, type TypedBalance,
 } from '../../acc/bank-month';
 import { lockedRefusal, monthAsDate, monthFromDate } from '../../acc/bank-lock';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
@@ -178,13 +178,16 @@ async function loadTypedBalances(
   return { ok: true, byKey };
 }
 
-/** What can speak for a month: its own typed closing, and the previous
-    month's, which is where it opens. */
-const typedFor = (byKey: Map<string, TypedBalance>, accountCode: string, month: string): MonthBalances => {
+/** What can speak for a month beyond its own files: its own typed closing,
+    and the previous month's closing — as that month's files printed it, else
+    as typed — which is where it opens (rule 5, owner 2026-11-03: 「不能9月close
+    了就直接带bank balance过来吗」). `statements` are the account's files. */
+const balancesFor = (byKey: Map<string, TypedBalance>, statements: MonthStatement[], accountCode: string, month: string): MonthBalances => {
   const prev = previousMonth(month);
   return {
     closing: byKey.get(`${accountCode}|${month}`) ?? null,
     previousClosing: prev == null ? null : (byKey.get(`${accountCode}|${prev}`) ?? null),
+    previousPrinted: prev == null ? null : printedClosingOf(statements, prev),
   };
 };
 
@@ -305,6 +308,13 @@ export const bankMonths = bankGuard(async (c) => {
     buckets.set(key, at);
   }
 
+  /* Each account's files, for the month a previous month's printed closing opens (rule 5). */
+  const filesOfAccount = new Map<string, MonthStatement[]>();
+  for (const s of statements) {
+    const code = textOf(s.account_code) ?? '';
+    filesOfAccount.set(code, [...(filesOfAccount.get(code) ?? []), asMonthStatement(s)]);
+  }
+
   /* Newest first — the month he is working is the one he just uploaded into. */
   const months = [...buckets.values()]
     .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
@@ -314,7 +324,7 @@ export const bankMonths = bankGuard(async (c) => {
         const row = byId.get(id);
         if (row) fed.push(asMonthStatement(row));
       }
-      const assembly = assembleMonth(b.month, fed, b.movements, typedFor(typedRes.byKey, b.accountCode, b.month));
+      const assembly = assembleMonth(b.month, fed, b.movements, balancesFor(typedRes.byKey, filesOfAccount.get(b.accountCode) ?? [], b.accountCode, b.month));
       return {
         accountCode: b.accountCode,
         month: b.month,
@@ -392,7 +402,7 @@ export async function loadMonthForLock(
   if (!typedRes.ok) return { ok: false, reason: typedRes.reason };
 
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
-  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, typedFor(typedRes.byKey, accountCode, month));
+  const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month));
   if (!assembly) return { ok: false, reason: `${month} is not a month` };
 
   const ledger = await loadAccountLedger(sb, companyId, accountCode, assembly.periodTo);
@@ -478,7 +488,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
   if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
-  const balances = typedFor(typedRes.byKey, accountCode, month);
+  const balances = balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month);
 
   const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
 

@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
-import { useDeliveryPlanning, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { useDeliveryPlanning, DELIVERY_STATES, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
@@ -22,7 +22,16 @@ import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSectio
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
-import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { Columns, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { deliveryProgressBreakdown, messageStatusBreakdown, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
+
+/* Progress tile tone per state, in DELIVERY_STATES order (pending-delivery,
+   pending-schedule, overdue, delivered) — derived from that one list so the
+   state vocabulary keeps its single home and cannot drift. */
+const PROGRESS_TONES = ["main", "warn", "bad", "good"] as const;
+const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
+  DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]),
+);
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
@@ -181,6 +190,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const followMap = new Map<string, { count: number; sen: number }>();
   for (const o of open) { const k = followUpOf(o.delivery_message_status); const g = followMap.get(k) ?? { count: 0, sen: 0 }; g.count += 1; g.sen += o.local_total_sen; followMap.set(k, g); }
   const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
+  /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
+     by delivery progress and by the customer-message status. */
+  const progress = useMemo(() => deliveryProgressBreakdown(rows), [rows]);
+  const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(rows), 7), [rows]);
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
 
   return (
@@ -237,11 +250,42 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
         </div>
       </Panel>
 
+      <Panel title="Order status breakdown" hint={`${n(rows.length)} sales orders on the board${warehouse ? " · this warehouse" : ""} · delivered shown are those recently closed`}>
+        {rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No orders on the board.</p> : (
+          <div className="space-y-4">
+            {/* Delivery progress — a colour card per state (click opens its orders). */}
+            <div>
+              <div className="mb-2 text-[12px] font-semibold text-ink">By delivery progress</div>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {progress.map((s) => (
+                  <Tile key={s.key} label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}
+                    onClick={() => openSos(`${s.label} · on the board`, rows.filter((o) => o.delivery_state === s.key))}
+                    value={n(s.count)} note={`${s.pct}% · ${fmtSen(s.sen)}`} />
+                ))}
+              </div>
+            </div>
+            {/* Message status — top few, the long tail folded into "Other". */}
+            <div>
+              <div className="mb-1.5 text-[12px] font-semibold text-ink">By message status</div>
+              <table className="w-full border-collapse">
+                <thead><tr><Th left>Message status</Th><Th>Orders</Th><Th>Share</Th><Th>Amount</Th></tr></thead>
+                <tbody>
+                  {msgStatus.map((s) => (
+                    <tr key={s.key}><Td left className={s.key === NO_MESSAGE_STATUS || s.key === "__other__" ? "text-ink-muted" : ""}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-1 text-[11px] text-ink-muted">The customer-message workflow status filled on Delivery Planning; most orders have none set yet.</p>
+            </div>
+          </div>
+        )}
+      </Panel>
+
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
       <Panel title="Weekly logistic report" hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
         right={<Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-          <Columns valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
+          <Columns axes={false} valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
             series={weekBy === "amount" ? [{ name: "DO amount", color: PALETTE[0]! }] : [{ name: "DO issued", color: PALETTE[0]! }, { name: "Marked delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
@@ -262,7 +306,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Monthly delivery volume" hint="delivery orders issued each month"
           right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
-          <Columns valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
+          <Columns axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
             series={[{ name: monthBy === "amount" ? "DO amount" : "DO issued", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
             line={null} />
           <table className="mt-2 w-full border-collapse">

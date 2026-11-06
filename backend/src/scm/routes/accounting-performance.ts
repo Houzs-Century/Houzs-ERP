@@ -149,6 +149,112 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
   return c.json(r.report);
 };
 
+/* ── GET /accounting/reports/performance/months?from=YYYY-MM&to=YYYY-MM ──────
+   The Performance P&L's chart (the owner's Claude Design, batch 6 read c6):
+   per month, the report's own sales, cost of sales, gross profit, other
+   income, expenses (operating expense at the rate + as booked) and net
+   performance — buildPerformance month by month, its inputs read ONCE for
+   the window (twelve calls to the full report would read and rebuild every
+   order twelve times; the ledger's sums are read per month, as the report
+   reads them). Reads only. */
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** The longest window the chart asks for (24 months; the screen asks 12). */
+export const PERFORMANCE_MONTHS_MAX = 24;
+
+export type PerformanceMonth = {
+  month: string; from: string; to: string;
+  salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
+  otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
+};
+
+/** Every month from `from` to `to` (YYYY-MM, inclusive), each as its first and last day. */
+export function monthsBetween(from: string, to: string): Array<{ month: string; from: string; to: string }> {
+  const out: Array<{ month: string; from: string; to: string }> = [];
+  let y = Number(from.slice(0, 4));
+  let m = Number(from.slice(5, 7));
+  const endY = Number(to.slice(0, 4));
+  const endM = Number(to.slice(5, 7));
+  while (y < endY || (y === endY && m <= endM)) {
+    const month = `${y}-${String(m).padStart(2, '0')}`;
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    out.push({ month, from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` });
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+/** The report's sources over a window read once: settings, accounts, layout,
+    the window's orders and their lines and the rate's account answered from
+    memory; the ledger's sums still per period. */
+export async function windowPerfSources(db: PerfSources, from: string, to: string): Promise<{ ok: true; src: PerfSources } | { ok: false; reason: string }> {
+  const [st, accs, laid, sos] = await Promise.all([db.settings(), db.accounts(), db.layout(), db.orders(from, to)]);
+  if (!st.ok) return { ok: false, reason: st.reason };
+  if (!accs.ok) return { ok: false, reason: accs.reason };
+  if (!laid.ok) return { ok: false, reason: laid.reason };
+  if (!sos.ok) return { ok: false, reason: sos.reason };
+  const live = sos.orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no);
+  const [its, acct] = await Promise.all([db.lines(live), db.rateAccount(st.settings.account)]);
+  if (!its.ok) return { ok: false, reason: its.reason };
+  if (!acct.ok) return { ok: false, reason: acct.reason };
+  return {
+    ok: true,
+    src: {
+      sums: db.sums,
+      accounts: () => Promise.resolve(accs),
+      layout: () => Promise.resolve(laid),
+      settings: () => Promise.resolve(st),
+      orders: (f, t) => Promise.resolve({ ok: true, orders: sos.orders.filter((o) => o.so_date >= f && o.so_date <= t) }),
+      lines: (docNos) => {
+        const wanted = new Set(docNos);
+        return Promise.resolve({ ok: true, lines: its.lines.filter((l) => wanted.has(l.doc_no)) });
+      },
+      rateAccount: () => Promise.resolve(acct),
+    },
+  };
+}
+
+/** The months' figures, each from the report's own builder. */
+export async function buildPerformanceMonths(companyId: number, from: string, to: string, db: PerfSources): Promise<{ ok: true; months: PerformanceMonth[] } | { ok: false; reason: string }> {
+  const months = monthsBetween(from, to);
+  const first = months.at(0);
+  const last = months.at(-1);
+  if (!first || !last) return { ok: true, months: [] };
+  const w = await windowPerfSources(db, first.from, last.to);
+  if (!w.ok) return { ok: false, reason: w.reason };
+  const out: PerformanceMonth[] = [];
+  for (const m of months) {
+    const r = await buildPerformance(companyId, m.from, m.to, w.src);
+    if (!r.ok) return { ok: false, reason: `${m.month}: ${r.reason}` };
+    const p = r.report;
+    out.push({
+      month: m.month, from: m.from, to: m.to,
+      salesSen: p.totals.salesSen, cogsSen: p.totals.cogsSen, gpSen: p.totals.gpSen, gpPct: p.totals.gpPct,
+      otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + p.otherExpensesSen,
+      netSen: p.netSen, netPct: p.netPct,
+    });
+  }
+  return { ok: true, months: out };
+}
+
+export const performanceMonthsHandler = async (c: Ctx): Promise<Response> => {
+  if (!requirePerm(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const from = String(c.req.query('from') ?? '').trim();
+  const to = String(c.req.query('to') ?? '').trim();
+  if (!MONTH.test(from) || !MONTH.test(to) || from > to) {
+    return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM, from on or before to.' }, 400);
+  }
+  if (monthsBetween(from, to).length > PERFORMANCE_MONTHS_MAX) {
+    return c.json({ error: 'bad_range', message: `At most ${PERFORMANCE_MONTHS_MAX} months.` }, 400);
+  }
+  const sb = c.get('supabase');
+  const r = await buildPerformanceMonths(co.companyId, from, to, perfDbSources(sb, co.companyId, allowedIds(c)));
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  return c.json({ from, to, months: r.months });
+};
+
 /* ── POST /accounting/reports/performance/settings {rateBp, account} ─────── */
 export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);

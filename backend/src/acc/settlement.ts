@@ -791,6 +791,318 @@ async function moveUntaggedBooking(
   return { ok: true, movedSen, jeNo: posted.jeNo };
 }
 
+type ChosenPayment = { source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number; method: string; provider: string | null; sheet: string | null };
+type SettlementAcquirer = Extract<Awaited<ReturnType<typeof loadAcquirer>>, { ok: true }>['acquirer'];
+
+/** The payments a person picked, read back from the books (see the comment inside). */
+async function readChosenPayments(
+  sb: any, companyId: number, asked: ConfirmInput['payments'],
+): Promise<{ ok: true; chosen: ChosenPayment[] } | { ok: false; status: string; reason: string }> {
+  /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
+     screen believed; the amount that clears in-transit is what the row holds
+     now. A person may pick any card payment of the company (docs/bugs/0792),
+     so this is where a stale list, a payment corrected since, a cash sale, or
+     another company's money is refused — by what the database says, not by
+     what the browser sent. */
+  const chosen: ChosenPayment[] = [];
+  for (const [source, table, docCol] of [['SOPAY', 'mfg_sales_order_payments', 'so_doc_no'], ['SIPAY', 'sales_invoice_payments', 'sales_invoice_id']] as const) {
+    const wanted = asked.filter((p) => p.source === source);
+    if (wanted.length === 0) continue;
+    const { data, error } = await sb.from(table)
+      .select(`id, ${docCol}, amount_sen, method, merchant_provider, account_sheet`)
+      .eq('company_id', companyId)
+      .in('id', wanted.map((p) => p.id));
+    if (error) return { ok: false, status: 'load_failed', reason: `${source} payments: ${error.message}` };
+    const byId = new Map(((data ?? []) as Array<Pick<CardPaymentRow, 'id' | 'so_doc_no' | 'sales_invoice_id' | 'amount_sen' | 'method' | 'merchant_provider'> & { account_sheet?: string | null }>).map((r) => [String(r.id), r]));
+    for (const p of wanted) {
+      const r = byId.get(p.id);
+      if (!r) return { ok: false, status: 'payment_not_found', reason: `Payment ${p.docNo ?? p.id} is not in this company's books. Refresh the list.` };
+      const method = String(r.method ?? '');
+      if (!CARD_METHODS.has(method)) {
+        return { ok: false, status: 'not_card_payment', reason: `${p.docNo ?? p.id} was paid by ${method || 'an unknown method'} — a merchant report cannot be explained by it.` };
+      }
+      chosen.push({
+        source, id: p.id, docNo: p.docNo ?? (r[docCol] == null ? null : String(r[docCol])), amountSen: Number(r.amount_sen ?? 0),
+        method, provider: r.merchant_provider == null ? null : String(r.merchant_provider), sheet: r.account_sheet == null ? null : String(r.account_sheet),
+      });
+    }
+  }
+  return { ok: true, chosen };
+}
+
+/** The merchant's name on each picked payment (see the comment inside). */
+async function stampMerchantTags(
+  sb: any, companyId: number, acquirer: SettlementAcquirer, acquirerCode: string, chosen: ChosenPayment[], userName: string | null,
+): Promise<{ ok: true } | { ok: false; status: string; reason: string }> {
+  /* STAMP THE TAG. The merchant's own statement has just named whose money
+     this is, and the statement outranks the till: a payment recorded without
+     a bank (a migration-era 'imported' row) gets the tag, and — since
+     docs/bugs/0940 (owner 2026-09-15: 要) — a payment keyed under the WRONG
+     bank is corrected to the right one, its account sheet following when it
+     was the bank's own name, with a line in the order's history saying the
+     settlement match corrected it. Until then only NULL was written over, so
+     the Payments card kept saying PBB while the money had left HLB's clearing
+     account. Done BEFORE anything posts, so a failure here stops a clean
+     confirm instead of unwinding one; done twice it writes nothing. */
+  const tag = acquirer.display_name;
+  /* Keyed under one of this merchant's OWN names — its display name, or a name
+     the sales team uses for it (Pinelabs is AEON's terminal, Public is PBB) —
+     is not the wrong bank: the payment keeps what the till typed, and its
+     order's history gets no "corrected" line for a correction nobody needed. */
+  const ownNames = merchantNamesOf(acquirer);
+  for (const p of chosen) {
+    if (keyedAs(p.provider, ownNames)) continue;
+    const table = p.source === 'SOPAY' ? 'mfg_sales_order_payments' : 'sales_invoice_payments';
+    const sheetWasBank = p.sheet == null || p.sheet.trim() === '' || p.sheet === deriveAccountSheet(p.method, p.provider, null);
+    const patch: Record<string, unknown> = { merchant_provider: tag };
+    if (sheetWasBank) patch.account_sheet = deriveAccountSheet(p.method, tag, null);
+    const { error } = await sb.from(table).update(patch).eq('id', p.id).eq('company_id', companyId);
+    if (error) {
+      return { ok: false, status: 'provider_stamp_failed', reason: `Could not mark the payment as ${tag}'s: ${error.message}` };
+    }
+    if (p.provider != null && p.source === 'SOPAY' && p.docNo) {
+      await recordSoAudit(sb, {
+        docNo: p.docNo,
+        action: 'UPDATE_PAYMENT',
+        actorId: null,
+        actorName: userName ?? null,
+        source: 'automation',
+        note: `Bank corrected by the ${acquirerCode} settlement match: ${p.provider} → ${tag}`,
+        paymentId: p.id,
+        fieldChanges: [
+          { field: 'merchantProvider', from: p.provider, to: tag },
+          ...(sheetWasBank ? [{ field: 'accountSheet', from: p.sheet, to: deriveAccountSheet(p.method, tag, null) }] : []),
+        ],
+      });
+    }
+  }
+  return { ok: true };
+}
+
+/** One line's fee entry (see the comment inside). Keyed SETTLE-<row id>, so a second press books once. */
+async function postRowFee(
+  sb: any, companyId: number, acquirer: SettlementAcquirer,
+  row: { id: number; acquirer_code: string; txn_date: string; ref: string | null; fee_sen: number }, chosen: ChosenPayment[],
+) {
+  /* Confirming books the FEE and nothing else, dated by the transaction (§2.5).
+     No bank leg: the money is still with the acquirer on this day, and saying
+     otherwise in the ledger would be a lie the bank statement then contradicts.
+     A fee-free line — some instalment plans, most refunds — books nothing at
+     all, and that is right: nothing has been lost yet, the whole gross is still
+     owed, and the payout entry will clear it. */
+  const feeSen = Number(row.fee_sen);
+  const posted = feeSen === 0
+    ? { ok: true as const, status: 'nothing_to_post', jeNo: null as string | null, jeId: null as string | null }
+    : await postJournal(sb, {
+      companyId,
+      entryDate: isoDay(row.txn_date),
+      sourceType: 'SETTLE',
+      sourceDocNo: `SETTLE-${row.id}`,
+      narration: `${row.acquirer_code} settlement ${isoDay(row.txn_date)}${row.ref ? ` ref ${row.ref}` : ''} — ${chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments'}`,
+      lines: settlementLines(
+        {
+          feeAccountCode: acquirer.fee_account_code,
+          transitAccountCode: acquirer.transit_account_code,
+        },
+        {
+          acquirerCode: row.acquirer_code,
+          txnDate: isoDay(row.txn_date),
+          ref: row.ref,
+          feeSen,
+        },
+      ),
+    });
+  return posted;
+}
+
+/** The card payments' Official Receipts turn formal (see the comment inside). Never fails the confirm. */
+async function formaliseQuietly(sb: any, companyId: number, acquirer: SettlementAcquirer, chosen: ChosenPayment[], userName: string | null): Promise<void> {
+  /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
+     on the acquirer's payout bank (GL redesign item 9 — 卡款 merchant recon
+     确认那笔时自动转正). BEST-EFFORT: the confirm's truth is the fee entry
+     above; a receipt hiccup (or an unconfigured bank letter) leaves the OR
+     in draft for the manual confirm button, never unwinds the settlement. */
+  try {
+    const code = await companyCodeById(sb, companyId);
+    if (code) {
+      await formaliseReceiptsForSettlement(
+        sb, companyId, code,
+        chosen.map((p) => ({ source: p.source, id: p.id })),
+        acquirer.bank_account_code ?? null,
+        userName,
+      );
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] settlement formalise skipped:', e);
+  }
+}
+
+export type ConfirmGroupInput = {
+  companyId: number;
+  rowIds: number[];
+  payments: ConfirmInput['payments'];
+  userName: string | null;
+};
+
+type GroupRow = {
+  id: number; batch_id: number; acquirer_code: string; line_no: number; txn_date: string; ref: string | null;
+  gross_sen: number; fee_sen: number; net_sen: number; bucket: string;
+  confirmed_at: string | null; posted_je_no: string | null; matched_with_row_id: number | null;
+};
+
+/**
+ * Confirm SEVERAL lines of one merchant TOGETHER against several payments
+ * (owner 2026-11-03, option B). The customer swiped twice for two orders —
+ * GHL 29/10 RM 5,000 + RM 2,085 for 2990-SO-2610-055 RM 2,990 + SO-2610-056
+ * RM 4,095 — so no line equals any payment or set of payments; only the
+ * totals agree, to the sen.
+ *
+ * Each line still books ITS OWN fee, dated by its own transaction. The
+ * payments link ONCE (acc_settlement_payment_once still holds) to the group's
+ * first line, the lead; the others point at it (matched_with_row_id). The
+ * clearing move runs once, for the lead. The undo takes the whole group back.
+ *
+ * ONE REPORT. Every line of a group sits on the same statement, so the
+ * statement's payout, its part-payments and the in-transit list keep reading
+ * one statement's lines and links the way they always have.
+ *
+ * A failed press resumes like the one-line confirm: the members are stamped
+ * first and the lead last, so a member already stamped for THIS lead, and the
+ * lead's links when they are exactly this selection, are the same press
+ * finishing — every entry is keyed, and books once.
+ */
+export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput): Promise<ConfirmResult> {
+  const { companyId } = input;
+  const ids = [...new Set(input.rowIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length < 2) return { ok: false, status: 'group_too_small', reason: 'Pick at least two lines to match together — one line is confirmed on its own.' };
+  const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
+    .select('id, batch_id, acquirer_code, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no, matched_with_row_id')
+    .eq('company_id', companyId).in('id', ids);
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  const rows = ((rowsRaw ?? []) as GroupRow[]).map((r) => ({
+    ...r, id: Number(r.id), batch_id: Number(r.batch_id), line_no: Number(r.line_no),
+    matched_with_row_id: r.matched_with_row_id == null ? null : Number(r.matched_with_row_id),
+  }));
+  if (rows.length !== ids.length) return { ok: false, status: 'not_found', reason: 'One of these lines is not in the company you are working in. Refresh the report.' };
+  if (new Set(rows.map((r) => r.batch_id)).size > 1) {
+    return { ok: false, status: 'different_reports', reason: 'Only lines on the same merchant report can be matched together.' };
+  }
+  rows.sort((a, b) => String(a.txn_date).localeCompare(String(b.txn_date)) || a.line_no - b.line_no || a.id - b.id);
+  const lead = rows[0]!;
+  const members = rows.slice(1);
+  if (lead.confirmed_at) {
+    if (members.every((m) => m.confirmed_at && m.matched_with_row_id === lead.id)) {
+      return { ok: true, status: 'already_confirmed', ...(lead.posted_je_no ? { jeNo: lead.posted_je_no } : {}) };
+    }
+    return { ok: false, status: 'already_confirmed', reason: `Line ${lead.line_no} is already confirmed. Take it back first to match it with others.` };
+  }
+  for (const r of rows) {
+    if (r.confirmed_at && r.matched_with_row_id !== lead.id) {
+      return { ok: false, status: 'already_confirmed', reason: `Line ${r.line_no} is already confirmed. Take it back first to match it with others.` };
+    }
+    if (r.bucket === 'IGNORED') return { ok: false, status: 'ignored', reason: `Line ${r.line_no} was set aside. Put it back in the list before confirming it.` };
+  }
+
+  const asked = input.payments ?? [];
+  if (asked.length === 0) {
+    return { ok: false, status: 'no_payments', reason: 'Nothing to confirm: pick the payments these lines cover. Money that arrived without a sale behind it must not be cleared out of the in-transit account.' };
+  }
+  const read = await readChosenPayments(sb, companyId, asked);
+  if (!read.ok) return read;
+  const chosen = read.chosen;
+  const grossTotal = rows.reduce((t, r) => t + Number(r.gross_sen), 0);
+  const chosenTotal = chosen.reduce((t, p) => t + Number(p.amountSen || 0), 0);
+  if (chosenTotal !== grossTotal) {
+    return {
+      ok: false,
+      status: 'amount_mismatch',
+      reason: `The selected payments add up to ${fmtSen(chosenTotal)}, but these ${rows.length} lines come to ${fmtSen(grossTotal)} — a difference of ${fmtSen(chosenTotal - grossTotal)}. Fix the selection, or correct the payment record; do not clear a difference you cannot explain.`,
+    };
+  }
+
+  const acq = await loadAcquirer(sb, companyId, lead.acquirer_code);
+  if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
+  const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, lead.acquirer_code, chosen, input.userName);
+  if (!stamped.ok) return stamped;
+
+  /* The links, once, on the lead. A line already holding a payment was matched
+     on its own (by its reference, at upload) and is not this group's to take;
+     the lead holding exactly this selection is an earlier press of this group,
+     resumed — its own links are not somebody else's settlement. */
+  const { data: existingLinks, error: exErr } = await sb.from('acc_settlement_matches')
+    .select('settlement_row_id, payment_source, payment_id, doc_no').eq('company_id', companyId).in('settlement_row_id', ids);
+  if (exErr) return { ok: false, status: 'link_read_failed', reason: exErr.message };
+  const held = (existingLinks ?? []) as Array<{ settlement_row_id: number; payment_source: string; payment_id: string; doc_no: string | null }>;
+  const chosenKeys = chosen.map((p) => `${p.source}:${p.id}`).sort();
+  const leadKeys = held.filter((l) => Number(l.settlement_row_id) === lead.id).map((l) => `${l.payment_source}:${l.payment_id}`).sort();
+  const resumed = leadKeys.length > 0 && leadKeys.length === chosenKeys.length && leadKeys.every((k, i) => k === chosenKeys[i]);
+  const other = held.find((l) => Number(l.settlement_row_id) !== lead.id || !resumed);
+  if (other) {
+    const line = rows.find((r) => r.id === Number(other.settlement_row_id));
+    return {
+      ok: false, status: 'line_already_matched',
+      reason: `Line ${line?.line_no ?? other.settlement_row_id} is already matched to ${other.doc_no ?? other.payment_id}. Confirm it on its own, or match the other lines without it.`,
+    };
+  }
+  if (!resumed) {
+    const { error: linkErr } = await sb.from('acc_settlement_matches').insert(chosen.map((p) => ({
+      settlement_row_id: lead.id, company_id: companyId, payment_source: p.source, payment_id: p.id,
+      doc_no: p.docNo ?? null, amount_sen: Number(p.amountSen || 0),
+    })));
+    if (linkErr) {
+      const twice = String(linkErr.code ?? '') === '23505' || /duplicate key/i.test(String(linkErr.message ?? ''));
+      return {
+        ok: false,
+        status: twice ? 'payment_already_settled' : 'link_failed',
+        reason: twice
+          ? 'One of these payments has already been cleared by another settlement line. Refresh the list — the same money cannot arrive twice.'
+          : String(linkErr.message),
+      };
+    }
+  }
+
+  /* Each line's own fee, dated by its own transaction. A refusal before any
+     fee posted lets the links go, as the one-line confirm does; after one has
+     posted, the links stay and a second press finishes (each fee books once). */
+  const fees = new Map<number, { jeNo: string | null; jeId: string | null }>();
+  for (const r of rows) {
+    const posted = await postRowFee(sb, companyId, acq.acquirer, r, chosen);
+    if (!posted.ok) {
+      if (fees.size === 0) await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', lead.id);
+      return {
+        ok: false, status: posted.status,
+        reason: `${posted.reason ?? 'the entry was refused by the posting gate'}${fees.size > 0 ? ' (the fees of the lines before it DID post — press confirm again to finish)' : ''}`,
+      };
+    }
+    fees.set(r.id, { jeNo: posted.jeNo ?? null, jeId: posted.jeId ?? null });
+  }
+
+  const moved = await moveUntaggedBooking(sb, companyId, acq.acquirer, lead, chosen);
+  if (!moved.ok) return { ok: false, status: moved.status, reason: `${moved.reason} (the fees DID post — press confirm again to finish)` };
+
+  /* Members first, the lead last: the lead's stamp is what says the group is done. */
+  const now = new Date().toISOString();
+  for (const r of [...members.filter((m) => !m.confirmed_at), lead]) {
+    const fee = fees.get(r.id)!;
+    const { error: upErr } = await sb.from('acc_settlement_rows').update({
+      bucket: 'MATCHED', match_reason: 'manual', confirmed_at: now, confirmed_by: input.userName ?? null,
+      posted_je_no: fee.jeNo, posted_je_id: fee.jeId, updated_at: now,
+      matched_with_row_id: r.id === lead.id ? null : lead.id,
+    }).eq('id', r.id).eq('company_id', companyId);
+    if (upErr) return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entries DID post — press confirm again to finish stamping the lines)` };
+  }
+
+  await formaliseQuietly(sb, companyId, acq.acquirer, chosen, input.userName);
+  const leadFee = fees.get(lead.id)!;
+  return {
+    ok: true,
+    status: 'confirmed',
+    ...(leadFee.jeNo ? { jeNo: leadFee.jeNo } : {}),
+    ...(moved.jeNo ? { moveJeNo: moved.jeNo, movedSen: moved.movedSen } : {}),
+  };
+}
+
 /**
  * Confirm ONE settlement line: link the payments it covers, post the entry,
  * and only then mark the row confirmed.
@@ -833,35 +1145,9 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
       reason: 'Nothing to confirm: this settlement has no matching payment in the ERP. Record the sale first — money that arrived without a sale behind it must not be cleared out of the in-transit account.',
     };
   }
-  /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
-     screen believed; the amount that clears in-transit is what the row holds
-     now. A person may pick any card payment of the company (docs/bugs/0792),
-     so this is where a stale list, a payment corrected since, a cash sale, or
-     another company's money is refused — by what the database says, not by
-     what the browser sent. */
-  const chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number; method: string; provider: string | null; sheet: string | null }> = [];
-  for (const [source, table, docCol] of [['SOPAY', 'mfg_sales_order_payments', 'so_doc_no'], ['SIPAY', 'sales_invoice_payments', 'sales_invoice_id']] as const) {
-    const wanted = asked.filter((p) => p.source === source);
-    if (wanted.length === 0) continue;
-    const { data, error } = await sb.from(table)
-      .select(`id, ${docCol}, amount_sen, method, merchant_provider, account_sheet`)
-      .eq('company_id', companyId)
-      .in('id', wanted.map((p) => p.id));
-    if (error) return { ok: false, status: 'load_failed', reason: `${source} payments: ${error.message}` };
-    const byId = new Map(((data ?? []) as Array<Pick<CardPaymentRow, 'id' | 'so_doc_no' | 'sales_invoice_id' | 'amount_sen' | 'method' | 'merchant_provider'> & { account_sheet?: string | null }>).map((r) => [String(r.id), r]));
-    for (const p of wanted) {
-      const r = byId.get(p.id);
-      if (!r) return { ok: false, status: 'payment_not_found', reason: `Payment ${p.docNo ?? p.id} is not in this company's books. Refresh the list.` };
-      const method = String(r.method ?? '');
-      if (!CARD_METHODS.has(method)) {
-        return { ok: false, status: 'not_card_payment', reason: `${p.docNo ?? p.id} was paid by ${method || 'an unknown method'} — a merchant report cannot be explained by it.` };
-      }
-      chosen.push({
-        source, id: p.id, docNo: p.docNo ?? (r[docCol] == null ? null : String(r[docCol])), amountSen: Number(r.amount_sen ?? 0),
-        method, provider: r.merchant_provider == null ? null : String(r.merchant_provider), sheet: r.account_sheet == null ? null : String(r.account_sheet),
-      });
-    }
-  }
+  const read = await readChosenPayments(sb, companyId, asked);
+  if (!read.ok) return read;
+  const chosen = read.chosen;
   /* The sum must be the gross, to the sen. A difference here IS the thing this
      layer exists to catch, so it is named and refused, never absorbed. */
   const chosenTotal = chosen.reduce((s, p) => s + Number(p.amountSen || 0), 0);
@@ -876,48 +1162,8 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  /* STAMP THE TAG. The merchant's own statement has just named whose money
-     this is, and the statement outranks the till: a payment recorded without
-     a bank (a migration-era 'imported' row) gets the tag, and — since
-     docs/bugs/0940 (owner 2026-09-15: 要) — a payment keyed under the WRONG
-     bank is corrected to the right one, its account sheet following when it
-     was the bank's own name, with a line in the order's history saying the
-     settlement match corrected it. Until then only NULL was written over, so
-     the Payments card kept saying PBB while the money had left HLB's clearing
-     account. Done BEFORE anything posts, so a failure here stops a clean
-     confirm instead of unwinding one; done twice it writes nothing. */
-  const tag = acq.acquirer.display_name;
-  /* Keyed under one of this merchant's OWN names — its display name, or a name
-     the sales team uses for it (Pinelabs is AEON's terminal, Public is PBB) —
-     is not the wrong bank: the payment keeps what the till typed, and its
-     order's history gets no "corrected" line for a correction nobody needed. */
-  const ownNames = merchantNamesOf(acq.acquirer);
-  for (const p of chosen) {
-    if (keyedAs(p.provider, ownNames)) continue;
-    const table = p.source === 'SOPAY' ? 'mfg_sales_order_payments' : 'sales_invoice_payments';
-    const sheetWasBank = p.sheet == null || p.sheet.trim() === '' || p.sheet === deriveAccountSheet(p.method, p.provider, null);
-    const patch: Record<string, unknown> = { merchant_provider: tag };
-    if (sheetWasBank) patch.account_sheet = deriveAccountSheet(p.method, tag, null);
-    const { error } = await sb.from(table).update(patch).eq('id', p.id).eq('company_id', companyId);
-    if (error) {
-      return { ok: false, status: 'provider_stamp_failed', reason: `Could not mark the payment as ${tag}'s: ${error.message}` };
-    }
-    if (p.provider != null && p.source === 'SOPAY' && p.docNo) {
-      await recordSoAudit(sb, {
-        docNo: p.docNo,
-        action: 'UPDATE_PAYMENT',
-        actorId: null,
-        actorName: input.userName ?? null,
-        source: 'automation',
-        note: `Bank corrected by the ${row.acquirer_code} settlement match: ${p.provider} → ${tag}`,
-        paymentId: p.id,
-        fieldChanges: [
-          { field: 'merchantProvider', from: p.provider, to: tag },
-          ...(sheetWasBank ? [{ field: 'accountSheet', from: p.sheet, to: deriveAccountSheet(p.method, tag, null) }] : []),
-        ],
-      });
-    }
-  }
+  const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, row.acquirer_code, chosen, input.userName);
+  if (!stamped.ok) return stamped;
 
   /* A previous attempt may have linked and posted but failed on the final
      stamp. Resuming must not read its own links as "someone else already
@@ -950,34 +1196,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     };
   }
 
-  /* Confirming books the FEE and nothing else, dated by the transaction (§2.5).
-     No bank leg: the money is still with the acquirer on this day, and saying
-     otherwise in the ledger would be a lie the bank statement then contradicts.
-     A fee-free line — some instalment plans, most refunds — books nothing at
-     all, and that is right: nothing has been lost yet, the whole gross is still
-     owed, and the payout entry will clear it. */
-  const feeSen = Number(row.fee_sen);
-  const posted = feeSen === 0
-    ? { ok: true as const, status: 'nothing_to_post', jeNo: null as string | null, jeId: null as string | null }
-    : await postJournal(sb, {
-      companyId,
-      entryDate: isoDay(row.txn_date),
-      sourceType: 'SETTLE',
-      sourceDocNo: `SETTLE-${row.id}`,
-      narration: `${row.acquirer_code} settlement ${isoDay(row.txn_date)}${row.ref ? ` ref ${row.ref}` : ''} — ${chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments'}`,
-      lines: settlementLines(
-        {
-          feeAccountCode: acq.acquirer.fee_account_code,
-          transitAccountCode: acq.acquirer.transit_account_code,
-        },
-        {
-          acquirerCode: row.acquirer_code,
-          txnDate: isoDay(row.txn_date),
-          ref: row.ref,
-          feeSen,
-        },
-      ),
-    });
+  const posted = await postRowFee(sb, companyId, acq.acquirer, row, chosen);
   if (!posted.ok) {
     /* The entry did not post, so the links must not survive — otherwise the
        payments are marked settled with nothing in the ledger behind them. */
@@ -1012,25 +1231,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish stamping the line)` };
   }
 
-  /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
-     on the acquirer's payout bank (GL redesign item 9 — 卡款 merchant recon
-     确认那笔时自动转正). BEST-EFFORT: the confirm's truth is the fee entry
-     above; a receipt hiccup (or an unconfigured bank letter) leaves the OR
-     in draft for the manual confirm button, never unwinds the settlement. */
-  try {
-    const code = await companyCodeById(sb, companyId);
-    if (code) {
-      await formaliseReceiptsForSettlement(
-        sb, companyId, code,
-        chosen.map((p) => ({ source: p.source, id: p.id })),
-        acq.acquirer.bank_account_code ?? null,
-        input.userName,
-      );
-    }
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[receipts] settlement formalise skipped:', e);
-  }
+  await formaliseQuietly(sb, companyId, acq.acquirer, chosen, input.userName);
   return {
     ok: true,
     status: 'confirmed',
@@ -1085,7 +1286,6 @@ export type ReceiptInput = {
   charge?: ReceiptChargeInput | null;
 };
 
-/** Every credit recorded against a batch, oldest first, with what is left. */
 /** Take a confirmed line back out of the ledger — the door the ignore
     refusal has pointed at since layer 3 shipped ("This line is already in the
     ledger. Reverse its journal entry instead.") without any screen being able
@@ -1110,16 +1310,24 @@ export async function unconfirmSettlementRow(
 ): Promise<{ ok: true; status: 'unconfirmed'; jeNo?: string } | { ok: false; status: string; reason: string }> {
   const { data: rowRaw, error } = await sb
     .from('acc_settlement_rows')
-    .select('id, batch_id, acquirer_code, txn_date, ref, bucket, confirmed_at, posted_je_no')
+    .select('id, batch_id, acquirer_code, txn_date, ref, bucket, confirmed_at, posted_je_no, matched_with_row_id')
     .eq('id', rowId).eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
   const row = rowRaw as {
     id: number; batch_id: number; acquirer_code: string; txn_date: string; ref: string | null;
-    bucket: string; confirmed_at: string | null; posted_je_no: string | null;
+    bucket: string; confirmed_at: string | null; posted_je_no: string | null; matched_with_row_id: number | null;
   };
   if (!row.confirmed_at) {
     return { ok: false, status: 'not_confirmed', reason: 'This line is not in the ledger — there is nothing to take back.' };
+  }
+  /* A line matched TOGETHER with others (option B) is taken back with them. */
+  const leadId = row.matched_with_row_id != null ? Number(row.matched_with_row_id) : Number(row.id);
+  const { data: memberRaw, error: memberErr } = await sb.from('acc_settlement_rows')
+    .select('id').eq('company_id', companyId).eq('matched_with_row_id', leadId);
+  if (memberErr) return { ok: false, status: 'load_failed', reason: memberErr.message };
+  if (row.matched_with_row_id != null || ((memberRaw ?? []) as unknown[]).length > 0) {
+    return unconfirmSettlementGroup(sb, companyId, leadId, ((memberRaw ?? []) as Array<{ id: number }>).map((m) => Number(m.id)));
   }
 
   const { data: receiptsRaw, error: rcErr } = await sb
@@ -1174,6 +1382,107 @@ export async function unconfirmSettlementRow(
   return { ok: true, status: 'unconfirmed' };
 }
 
+/** Take back a group matched together (option B): every line's fee, the lead's
+    clearing move, the lead's links, and each line's stamp. Refused while money
+    is recorded received against any of their statements, as one line is. */
+async function unconfirmSettlementGroup(
+  sb: any, companyId: number, leadId: number, memberIds: number[],
+): Promise<{ ok: true; status: 'unconfirmed'; jeNo?: string } | { ok: false; status: string; reason: string }> {
+  const ids = [leadId, ...memberIds.filter((m) => m !== leadId)];
+  const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
+    .select('id, batch_id, txn_date, posted_je_no').eq('company_id', companyId).in('id', ids);
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  const rows = (rowsRaw ?? []) as Array<{ id: number; batch_id: number; txn_date: string; posted_je_no: string | null }>;
+  const lead = rows.find((r) => Number(r.id) === leadId);
+  if (!lead) return { ok: false, status: 'not_found', reason: `settlement line ${leadId} not found` };
+  const batchIds = [...new Set(rows.map((r) => Number(r.batch_id)))];
+  const { data: receiptsRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
+    .select('id').eq('company_id', companyId).in('batch_id', batchIds).limit(1);
+  if (rcErr) return { ok: false, status: 'load_failed', reason: rcErr.message };
+  if (((receiptsRaw ?? []) as unknown[]).length > 0) {
+    return {
+      ok: false, status: 'has_receipts',
+      reason: 'Money is already recorded received against one of these statements. Undo those credits on the bank side first, then take these lines back.',
+    };
+  }
+  /* Every line's fee, stamped or not: a press that stopped before the lead's
+     stamp left the lead's fee posted with nothing on the row to say so. A line
+     that booked no fee reverses nothing. */
+  for (const r of rows) {
+    const reversed = await reverseJournal(sb, {
+      sourceType: 'SETTLE', sourceDocNo: `SETTLE-${r.id}`, companyId, entryDate: isoDay(r.txn_date),
+      narration: (orig: { je_no: string }) => `Reversal of ${orig.je_no} — the confirmation was taken back`,
+    });
+    if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
+  }
+  const movedBack = await reverseJournal(sb, {
+    sourceType: 'SETTLEMOVE', sourceDocNo: `SETTLEMOVE-${lead.id}`, companyId, entryDate: isoDay(lead.txn_date),
+    narration: (orig: { je_no: string }) => `Reversal of ${orig.je_no} — the confirmation was taken back`,
+  });
+  if (!movedBack.ok) return { ok: false, status: movedBack.status, reason: movedBack.reason ?? 'the move reversal was refused' };
+  const { error: delErr } = await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', lead.id);
+  if (delErr) return { ok: false, status: 'unlink_failed', reason: `${delErr.message} (the entries WERE reversed — press undo again to finish releasing the payments)` };
+  const { error: upErr } = await sb.from('acc_settlement_rows')
+    .update({ confirmed_at: null, posted_je_no: null, bucket: 'NEEDS_CONFIRM', match_reason: null, matched_with_row_id: null })
+    .eq('company_id', companyId).in('id', ids);
+  if (upErr) return { ok: false, status: 'update_failed', reason: `${upErr.message} (entries reversed and payments released — press undo again to finish the lines)` };
+  return { ok: true, status: 'unconfirmed' };
+}
+
+/** The payments a person said a line is NOT ("SOPAY:<id>" keys), from its not_this column. */
+export function notThisOf(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(String) : [];
+}
+
+/** "Not this" (owner 2026-11-03, batch 3 d2: 「可以」). The machine matched an
+    UNCONFIRMED line to a payment — by its reference, at upload or on a rematch —
+    and a person says it is not that sale. The line goes back to the deciding
+    pile, its links go, and the payments it held are remembered on the line
+    (not_this) so neither the report's suggestion nor a rematch hands the same
+    payment back to it. Nothing posts: an unconfirmed line has no entry. The
+    memory steers the machine, not the person — picking that payment by hand
+    later still works.
+
+    The line is written before the links go: a press that stops between the two
+    leaves the memory and the bucket right and the links still there, and the
+    next press finishes; the other order would lose the memory. */
+export async function releaseSettlementRow(
+  sb: any, companyId: number, rowId: number,
+): Promise<{ ok: true; released: string[] } | { ok: false; status: string; reason: string }> {
+  const { data: rowRaw, error } = await sb.from('acc_settlement_rows')
+    .select('id, confirmed_at, bucket, not_this').eq('id', rowId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
+  const row = rowRaw as { id: number; confirmed_at: string | null; bucket: string; not_this: unknown };
+  if (row.confirmed_at) {
+    return { ok: false, status: 'already_confirmed', reason: 'This line is already in the ledger. Take it back with Undo first.' };
+  }
+  if (row.bucket === 'IGNORED') {
+    return { ok: false, status: 'ignored', reason: 'This line was set aside. Put it back in the list first.' };
+  }
+  const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
+    .select('payment_source, payment_id').eq('company_id', companyId).eq('settlement_row_id', row.id);
+  if (lErr) return { ok: false, status: 'load_failed', reason: lErr.message };
+  const released = ((linkRaw ?? []) as Array<{ payment_source: string; payment_id: string }>)
+    .map((l) => `${l.payment_source}:${l.payment_id}`);
+  if (released.length === 0) {
+    return { ok: false, status: 'nothing_matched', reason: 'This line holds no payment — there is nothing to release.' };
+  }
+  const { error: upErr } = await sb.from('acc_settlement_rows').update({
+    bucket: 'NEEDS_CONFIRM', match_reason: null,
+    not_this: [...new Set([...notThisOf(row.not_this), ...released])],
+    updated_at: new Date().toISOString(),
+  }).eq('id', row.id).eq('company_id', companyId);
+  if (upErr) return { ok: false, status: 'update_failed', reason: upErr.message };
+  const { error: delErr } = await sb.from('acc_settlement_matches').delete()
+    .eq('company_id', companyId).eq('settlement_row_id', row.id);
+  if (delErr) {
+    return { ok: false, status: 'unlink_failed', reason: `${delErr.message} (the line was marked — press Not this again to release the payment)` };
+  }
+  return { ok: true, released };
+}
+
+/** Every credit recorded against a batch, oldest first, with what is left. */
 export async function loadBatchReceipts(
   sb: any,
   companyId: number,

@@ -20,13 +20,17 @@ import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
-import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
+import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow, isBinding, sameFair } from "./lib/sales-report-bills";
 import { pnlForProjects } from "../services/eventPnlBatch";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { activeCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { financeHiddenForUser } from "../services/pmsAccess";
-import { classifyProjectGaps, type GapProject } from "../scm/lib/project-data-gaps";
+import { classifyProjectGaps, waivedByProject, type GapProject } from "../scm/lib/project-data-gaps";
+
+const GO_LIVE = "2026-09-01";
+/** A giveaway that carries no cost (owner 2026-11-05), so it is no gap in the books. */
+const NO_COST_BY_DESIGN = new Set(["DL-SLEEP WELL PILLOW"]);
 
 export const projectDataGaps = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -39,14 +43,15 @@ projectDataGaps.use("*", async (c, next) => {
 projectDataGaps.use("*", supabaseAuth);
 
 projectDataGaps.get("/", async (c) => {
-  const from = todayMyt(-120);
+  /* The ERP went live on 1 Sep 2026 (owner): rental and chat reports before it are not books to chase. */
+  const from = [todayMyt(-120), GO_LIVE].sort()[1]!;
   const to = todayMyt(-3);
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.start_date, p.end_date,
+    `SELECT p.id, p.code, p.name, p.brand, p.start_date, p.end_date, p.size_sqm,
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
             ${sum("l.kind = 'cost' AND l.category = 'commission'")} AS commission,
@@ -62,8 +67,14 @@ projectDataGaps.get("/", async (c) => {
        FROM projects p
       WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
+  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; size_sqm: number | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;
+  // company-scope: the removed gaps of this company's events (activeCompanySql on p.company_id).
+  const waivedRows = await c.env.DB.prepare(
+    `SELECT a.project_id, a.to_value FROM project_activity a JOIN projects p ON p.id = a.project_id
+      WHERE a.action = 'books_gap_waived' AND a.archived_at IS NULL AND substr(p.end_date, 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+  ).bind(from).all<{ project_id: number; to_value: string | null }>();
+  const waived = waivedByProject(waivedRows.results);
 
   const ids = projects.map((p) => String(p.id));
   const sos = await chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null }>(ids, (b, f, t) =>
@@ -106,9 +117,28 @@ projectDataGaps.get("/", async (c) => {
   ).bind(recent, from, to).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
+  /* Per-event attendee emails — the per-event side of the save gate (owner
+     2026-10-30). Same shape as projectOverview.ts, so an attending rep's chat
+     counts in the data-gap scan too. */
+  const attendeeRows = await c.env.DB.prepare(
+    `SELECT psa.project_id, LOWER(TRIM(u.email)) AS email
+       FROM project_sales_attendees psa
+       JOIN projects p ON p.id = psa.project_id
+       JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+       JOIN users u ON u.id = sr.user_id
+      WHERE u.email IS NOT NULL AND u.email <> ''
+        AND (substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ? OR (substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?))${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent, from, to).all<{ project_id: number; email: string }>();
+  const attendeesOf = new Map<number, Set<string>>();
+  for (const a of attendeeRows.results) {
+    const pid = Number(a.project_id);
+    const bag = attendeesOf.get(pid) ?? new Set<string>();
+    if (a.email) bag.add(a.email);
+    attendeesOf.set(pid, bag);
+  }
   const billsOf = new Map<number, ReturnType<typeof collectReport>["bills"]>();
   for (const p of eventsById.values()) {
-    const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null).bills : [];
+    const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null, attendeesOf.get(p.id) ?? null).bills : [];
     if (bills.length) billsOf.set(p.id, bills);
   }
   type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null };
@@ -118,16 +148,28 @@ projectDataGaps.get("/", async (c) => {
     const since = new Date(Date.parse(`${starts[0] ?? from}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
     const orders = await paginateAll<OrderRow>((f, t) => scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
-      .neq("status", "CANCELLED").gte("so_date", since), c).order("doc_no").range(f, t));
+      .gte("so_date", since), c).order("doc_no").range(f, t));
     if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
-    const index = indexOrdersByToken(orders.data ?? []);
+    /* A refunded bill is opened and cancelled, so its SO is the record (owner
+       2026-11-04): with no live order, a cancelled one settles the bill. */
+    const index = indexOrdersByToken((orders.data ?? []).filter((o) => o.status !== "CANCELLED"));
+    const cancelled = indexOrdersByToken((orders.data ?? []).filter((o) => o.status === "CANCELLED"));
+    const booths = await c.env.DB.prepare(
+      `SELECT p.id, p.venue, p.start_date, p.end_date FROM projects p WHERE substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+    ).bind(since).all<{ id: number; venue: string | null; start_date: string | null; end_date: string | null }>();
+    const boothById = new Map(booths.results.map((p) => [Number(p.id), { venue: p.venue, start: p.start_date, end: p.end_date }]));
+    const boothOf = (id: number | null) => (id == null ? undefined : boothById.get(Number(id)));
     const otherIds = new Set<number>();
     for (const [pid, bills] of billsOf) {
       const list: ProblemBill[] = [];
       for (const b of bills) {
         const m = matchBill(b.ref_token, pid, index);
         if (m.status === "opened" && !m.other_event) continue;
+        /* A binding, or another brand's booth of this fair: either event may hold the sale. */
+        const held = index.get(b.ref_token)?.[0];
+        if (m.other_event && ((held && isBinding(held)) || sameFair(boothOf(m.so_project_id), boothOf(pid)))) continue;
         if (m.other_event && m.so_project_id != null) otherIds.add(m.so_project_id);
+        if (m.status !== "opened" && cancelled.has(b.ref_token)) continue;
         list.push({ ref: b.ref_raw || b.ref_token, amountSen: Number(b.amount_sen), salesperson: b.salesperson_name ?? null,
           problem: m.other_event ? "other_event" : "not_opened", soDocNo: m.so_doc_no, otherEvent: m.so_project_id != null ? String(m.so_project_id) : null });
       }
@@ -151,6 +193,8 @@ projectDataGaps.get("/", async (c) => {
     rental: pnls.get(p.id)?.by_sales.rental ?? Number(p.rental),
     id: p.id, code: p.code, name: p.name, brand: p.brand, endDate: String(p.end_date ?? "").slice(0, 10), soSen: soSen.get(p.id) ?? 0,
     soDocs: soDocs.get(p.id) ?? [],
+    sizeSqm: p.size_sqm == null ? null : Number(p.size_sqm),
+    waived: waived.get(Number(p.id)) ?? [],
     lines: {
       sales: Number(p.income), cogs: Number(p.cogs),
       cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
@@ -179,7 +223,7 @@ projectDataGaps.get("/", async (c) => {
   if (zeroLines.error) return c.json({ error: "load_failed", reason: `order lines with no cost: ${zeroLines.error.message}` }, 500);
   const noCogs = new Map<string, string[]>();
   for (const l of zeroLines.data) {
-    if (!l.item_code || String(l.item_group ?? "").toLowerCase() === "service") continue;
+    if (!l.item_code || String(l.item_group ?? "").toLowerCase() === "service" || NO_COST_BY_DESIGN.has(l.item_code)) continue;
     noCogs.set(String(l.doc_no), [...(noCogs.get(String(l.doc_no)) ?? []), String(l.item_code)]);
   }
   const soNoCogs = [...noCogs.entries()].map(([docNo, items]) => {
@@ -189,5 +233,5 @@ projectDataGaps.get("/", async (c) => {
     return { docNo, projectId: e.id, event: e.name, code: e.code, startDate: String(e.start_date ?? "").slice(0, 10), endDate: String(e.end_date ?? "").slice(0, 10), amountSen, items: [...new Set(items)] };
   }).sort((a, b) => b.endDate.localeCompare(a.endDate) || a.event.localeCompare(b.event) || a.docNo.localeCompare(b.docNo));
 
-  return c.json({ from, to, books, notDaily, soNoCogs, recentFrom: recent, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
+  return c.json({ from, to, books, notDaily, soNoCogs, recentFrom: recent, ...classifyProjectGaps(projects.filter((p) => !waived.get(Number(p.id))?.includes("rental")).map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
 });

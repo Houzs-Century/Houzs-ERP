@@ -101,6 +101,10 @@ export type InventoryBalance = {
 export type InventoryProductTotal = {
   item_code: string;
   product_name: string;
+  /* AutoCount barcode (cash & carry / bedline items carry one; most make-to-order
+     furniture has none and this is null). Exposed on v_inventory_product_totals by
+     mig 20261104T1000; searchable and shown as the Barcode column. */
+  barcode: string | null;
   category: 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
   size_label: string | null;
   base_price_sen: number | null;
@@ -147,8 +151,6 @@ export type InventoryProductTotal = {
      call sites fall back to surplus_qty, i.e. the old behaviour. */
   non_selling_qty?: number;
   sellable_surplus_qty?: number;
-  /* OWNED stock split by warehouse, non-zero only, largest first (HC-0187). */
-  stock_by_warehouse?: InventoryWarehouseStock[];
   /* The MOVEMENT rollup (SUM of IN − OUT) and whether it disagrees with the lot
      ledger the row is built from. Comparison only, never arithmetic: a mismatch
      is a real data fault (docs/inventory-ledger-divergence-coe.md), and the row
@@ -156,12 +158,18 @@ export type InventoryProductTotal = {
   movement_qty?: number;
   ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
+  /* On-hand per warehouse (owned + consignment, held_qty = the consignment
+     part), largest first (HC-0206). Optional for the same cached-payload
+     reason as above. */
+  stock_by_warehouse?: InventoryWarehouseQty[];
 };
 
-export type InventoryWarehouseStock = {
+export type InventoryWarehouseQty = {
   warehouse_id: string;
-  warehouse_code: string | null;
+  code: string;
+  name: string | null;
   qty: number;
+  held_qty: number;
 };
 
 /* One incoming purchase-order line feeding a SKU's Incoming (≤30-day) figure —

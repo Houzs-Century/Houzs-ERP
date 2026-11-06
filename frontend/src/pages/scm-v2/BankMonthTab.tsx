@@ -314,7 +314,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
       <div ref={tabsRef} className={look.section}>
         <LineTabs tab={tab} counts={counts} locked={data.lock != null} onTab={setTab} />
         <LineTabBody tab={tab} lines={byDateThenLine(lines)} entries={entries} locked={data.lock != null} periodTo={a.periodTo}
-          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} />
+          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} accountCode={data.accountCode} />
       </div>
 
       {data.statements.length > 0 && <TheFiles data={data} />}
@@ -433,7 +433,9 @@ const figureSource = (src: BankBalanceSource): string => (src.typed
   ? `the closing balance typed for ${monthLabel(src.typed.month)}${src.typed.by ? ` by ${src.typed.by}` : ''} on ${src.typed.at.slice(0, 10)}`
     + (src.typed.note ? ` (“${src.typed.note}”)` : '')
     + ' — no file prints it'
-  : `per ${src.fileName ?? ''} (${src.on})`);
+  : src.carried
+    ? `where ${monthLabel(src.carried.month)} closed, per ${src.fileName ?? ''} (${src.on})`
+    : `per ${src.fileName ?? ''} (${src.on})`);
 
 const WhereTheFiguresCameFrom = ({ a }: { a: BankMonthAssembly }) => {
   /* A balance with no provenance is a number nobody can check. Both ends are

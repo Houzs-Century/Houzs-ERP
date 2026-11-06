@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { companyHeaderFor } from "../lib/activeCompany";
 import { useUpdateMfgDeliveryOrderStatus } from "../vendor/scm/lib/delivery-order-queries";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { MobileVirtualList } from "./MobileVirtualList";
@@ -33,6 +34,7 @@ import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
 import { useLocalities, postcodeIndex, postcodeLabel } from "../vendor/scm/lib/localities-queries";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
+import { isSetupDismantleJob } from "./setupDismantleJob";
 import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
 
 /* ------------------------------------------------------------------ *
@@ -104,6 +106,12 @@ type BoardRow = {
   // PO No. — purchase orders raised from the SO (SO rows only).
   po_nos?: string[];
   possession_date: string | null;
+  /* The company this stop's documents belong to ('HOUZS' / '2990'), from the
+     cross-company board feed (PlanningOrder.company_code). The run-sheet is a
+     SHARED queue across both companies, so a driver granted both runs a mixed
+     route — and every per-DO action (Start / Arrived / POD) must act in the
+     STOP's own company, not the tab's active one. Null on non-DO / unresolved. */
+  company_code?: string | null;
   region: string | null;
   regions?: string[];
   warehouse_code: string | null;
@@ -287,7 +295,7 @@ export function MobileDeliveryPlanning({
   onBack: () => void;
   onOpen?: (docNo: string) => void;
   /* Open the Proof-of-Delivery screen for a DO NUMBER — see onComplete. */
-  onPod?: (doNumber: string) => void;
+  onPod?: (doNumber: string, companyCode?: string | null) => void;
   /* The DO whose POD was just confirmed (null when the sheet is opened normally).
      The sheet then opens the NEXT open stop of today's run, so a driver goes
      stop 1 -> stop 2 -> ... without returning to the list in between. */
@@ -1292,7 +1300,7 @@ function StopDetail({
   isToday: boolean;
   onBack: () => void;
   onOpen?: (docNo: string) => void;
-  onPod?: (doNumber: string) => void;
+  onPod?: (doNumber: string, companyCode?: string | null) => void;
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
@@ -1352,7 +1360,10 @@ function StopDetail({
   const referral = (order.so_ref && order.so_ref.trim()) || "";
   const disposal =
     (order.replacement_disposal && order.replacement_disposal.trim()) || "";
-  const isSetup = !!disposal; // v2 "job" isn't in the feed; treat disposal as the setup/dismantle signal.
+  // Booth setup/dismantle POD shows only for a real SETUP/DISMANTLE job (project
+  // window or manual DP order), read off the feed's dp_job_type — NOT off disposal.
+  // A customer delivery with "replace furniture" is still a delivery. See setupDismantleJob.ts.
+  const isSetup = isSetupDismantleJob(order);
 
   // Invalidate the board AND every sibling mobile query that renders the same
   // DO/SO state, so a convert / start / complete on this board doesn't leave the
@@ -1451,7 +1462,12 @@ function StopDetail({
         // Server stamps its own time; this route is open to the crew on the job
         // (the general PATCH /:id needs office access and refused drivers).
         `/delivery-orders-mfg/${encodeURIComponent(doId)}/arrival`,
-        { method: "PATCH" },
+        /* Stamp arrival in the STOP's OWN company, not the tab's active one — on a
+           mixed-company run this DO may belong to the other company the driver is
+           granted, and the route is company-scoped (see companyHeaderFor). Without
+           this, marking arrival on a 2990 stop while the tab reads HOUZS 404s with
+           "that record isn't in the company you're working in". */
+        { method: "PATCH", headers: companyHeaderFor(order.company_code) },
       );
     },
     onSuccess: async () => {
@@ -1528,7 +1544,8 @@ function StopDetail({
     if (!canDoSteps) return;
     if (!(await requireDo())) return;
     if (!doId) return; // requireDo guarantees this; narrows the type.
-    start.mutate({ id: doId, status: "IN_TRANSIT" }, {
+    // Start in the STOP's OWN company (mixed-company run); see companyHeaderFor.
+    start.mutate({ id: doId, status: "IN_TRANSIT", companyCode: order.company_code }, {
       onSuccess: async () => { await invalidate(); },
       onError: async (e) => {
         await notify({
@@ -1561,7 +1578,9 @@ function StopDetail({
       });
       return;
     }
-    onPod(String(doNumber));
+    // Carry the stop's company so the POD screen reads + delivers that DO in its
+    // OWN company on a mixed-company run (see companyHeaderFor).
+    onPod(String(doNumber), order.company_code ?? null);
   };
 
   const busy = start.isPending || arrive.isPending;

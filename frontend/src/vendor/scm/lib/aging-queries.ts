@@ -23,9 +23,9 @@ export type AgingRow = {
   code: string | null;
   name: string;
   balanceSen: number;
-  /** The five columns, in sen: 本月 · 1 · 2 · 3 · 4 个月以上, or by days. */
+  /** The five columns, in sen: This month · 1 · 2 · 3 · 4 months + (本月 … 4 个月以上), or by days. */
   cells: number[];
-  /** Money not tied to a bill — negative. */
+  /** Money not tied to a bill (未冲, Unapplied) — negative. */
   unappliedSen: number;
   items: AgingOpenItem[];
   unapplied: AgingUnappliedItem[];
@@ -46,9 +46,11 @@ export type AgingReportData = {
   paidBeforeErp?: { orders: number; sen: number };
 };
 
+/** The five columns' names, in English (the owner's Claude Design, batch 6
+    question g1, default: today's report and its choices, in English). */
 export const AGING_COLUMN_LABELS: Record<AgingBuckets, string[]> = {
-  month: ['本月', '1 个月', '2 个月', '3 个月', '4 个月以上'],
-  day: ['0–30 天', '31–60 天', '61–90 天', '91–120 天', '120 天以上'],
+  month: ['This month', '1 month', '2 months', '3 months', '4 months +'],
+  day: ['0–30', '31–60', '61–90', '91–120', 'Over 120 days'],
 };
 
 export const useAging = (side: AgingSide, p: { asOf: string; basis: AgingBasis; buckets: AgingBuckets; control: AgingControl }) => useQuery({

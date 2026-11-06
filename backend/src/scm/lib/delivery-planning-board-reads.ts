@@ -110,12 +110,13 @@ export function flattenProjectCrew(json: string | null): {
 }
 
 const PROJECT_UNION_SQL =
-  `SELECT p.id AS id, p.code AS code, p.name AS name, p.brand AS brand,
+  `SELECT p.id AS id, p.code AS code, p.name AS name, p.brand AS brand, p.company_id AS company_id,
               p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
               p.setup_start_at     AS setup_start_at,
               p.dismantle_start_at AS dismantle_start_at,
               p.setup_crew     AS setup_crew,
               p.dismantle_crew AS dismantle_crew,
+              p.delivery_remark AS delivery_remark,
               sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
               dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
          FROM projects p
@@ -158,8 +159,10 @@ export function kickOffSubBoardReads(
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
         delivery_by: string | null; pickup_by: string | null; pickup_pic: string | null; actual_pickup_at: string | null;
+        actual_inspection_at: string | null; actual_delivery_at: string | null;
         sched_pickup_date: string | null; sched_inspection_date: string | null; sched_delivery_date: string | null;
         pickup_time_range: string | null; inspection_time_range: string | null; delivery_time_range: string | null;
+        pickup_remark: string | null; inspection_remark: string | null; delivery_remark: string | null;
         closed_at: string | null; archived_at: string | null;
         delivery_message_status: string | null; pickup_message_status: string | null; inspection_message_status: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
@@ -171,7 +174,7 @@ export function kickOffSubBoardReads(
   const dpResP = (async () => {
     try {
       let dpQuery = sb.from('dp_orders')
-        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range')
+        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range, remark')
         .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
         // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
         // finished DP job belongs on the Delivered tab, not hidden).
@@ -185,10 +188,10 @@ export function kickOffSubBoardReads(
   const projRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(PROJECT_UNION_SQL).all<{
-        id: number | null; code: string | null; name: string | null; brand: string | null;
+        id: number | null; code: string | null; name: string | null; brand: string | null; company_id: number | null;
         venue: string | null; venue_address: string | null; state: string | null;
         setup_start_at: string | null; dismantle_start_at: string | null;
-        setup_crew: string | null; dismantle_crew: string | null;
+        setup_crew: string | null; dismantle_crew: string | null; delivery_remark: string | null;
         setup_driver_name: string | null; setup_lorry_plate: string | null;
         dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
       }>() } as const;

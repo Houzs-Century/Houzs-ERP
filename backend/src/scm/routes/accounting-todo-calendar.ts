@@ -22,6 +22,11 @@ import { fmtDate } from '../shared/format';
 
 type Rows = Array<Record<string, any>>;
 
+/* Owner 2026-11-04 (这些supplier bill 可以remove 先吗？): supplier bills crowded
+   every day of the month, so the calendar leaves them out for now — they stay
+   on the AP pages. Flip to bring them back; the read below is kept as is. */
+export const SUPPLIER_BILLS_ON_CALENDAR = false;
+
 async function supplierNames(sb: any, companyId: number, ids: string[]): Promise<Map<string, string>> {
   const r = await chunkIn<Record<string, any>>([...new Set(ids)], (batch, lo, hi) => sb.from('suppliers').select('id, name')
     .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi));
@@ -150,7 +155,7 @@ export async function readCalendarPage(sb: any, companyId: number, today: string
       const all = months.flatMap((m) => taskEvents(r.value.tasks, r.value.occurrences, m, { id: viewerId }));
       return [...new Map(all.map((e) => [e.key, e])).values()];
     }),
-    safe('supplier bills', () => billEvents(sb, co.companyId, lo, hi)),
+    SUPPLIER_BILLS_ON_CALENDAR ? safe('supplier bills', () => billEvents(sb, co.companyId, lo, hi)) : Promise.resolve([] as CalEvent[]),
     safe('payment vouchers', () => voucherEvents(sb, co.companyId, lo, hi)),
     safe('customer invoices', () => invoiceEvents(sb, co.companyId, lo, hi)),
     /* What went late, on the day it did: the To do's upload rules. */

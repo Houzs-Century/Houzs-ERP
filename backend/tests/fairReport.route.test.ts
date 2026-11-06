@@ -33,6 +33,7 @@ class FakeQuery {
   }
   gte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] >= val); return this; }
   lte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] <= val); return this; }
+  lt(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] < val); return this; }
   range(from: number, to: number) { this._range = [from, to]; return this; }
   private apply() {
     let out = this.rows.filter((r) => this.preds.every((p) => p(r)));
@@ -250,6 +251,88 @@ describe('stage=invoice', () => {
     expect(si.goods_si_cost_sen).toBe(54000);
     expect(si.margin_pct).toBeCloseTo(((70000 - 54000) / 70000) * 100);
     expect(body.summary.margin_pct).toBeCloseTo(((70000 - 54000) / 70000) * 100);
+  });
+});
+
+// ── how the dates pick the rows: SO date (default) or each stage's own ───────
+/* Owner 2026-11-03 (「都要」): August, read two ways. SO-1 was taken in July; its
+   second delivery (DO-3, dated 31 July) was delivered on 2 August (Malaysia)
+   and its second invoice is dated 3 August. SO-7 was taken in August; its DO is
+   dated 31 August but was delivered at 01:00 on 1 September, Malaysian time.
+   SO-8 (a draft, never a sale) has an August DO. */
+function augustFixture(): DataSet {
+  const data = fixture();
+  data.mfg_sales_orders.push(
+    { doc_no: 'SO-7', status: 'CONFIRMED', project_id: 1, venue_id: null, customer_state: 'Selangor',
+      salesperson_id: 'sp-1', branding: 'Brand A', so_date: '2026-08-10', ref: 'OF-7', venue: 'Hall 1',
+      local_total_sen: 30000, balance_sen: 0, deposit_sen: 0, paid_sen: 30000,
+      mattress_sofa_sen: 30000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, service_sen: 0,
+      mattress_sofa_cost_sen: 12000, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+      total_cost_sen: 12000 },
+    { doc_no: 'SO-8', status: 'DRAFT', project_id: 1, so_date: '2026-08-12', total_cost_sen: 1 },
+  );
+  data.delivery_orders.push(
+    { id: 'do-3', do_number: 'DO-3', so_doc_no: 'SO-1', do_date: '2026-07-31', delivered_at: '2026-08-02T03:00:00+00:00', status: 'DELIVERED', sales_location: 'KL' },
+    { id: 'do-4', do_number: 'DO-4', so_doc_no: 'SO-7', do_date: '2026-08-31', delivered_at: '2026-08-31T17:00:00+00:00', status: 'DELIVERED', sales_location: 'KL' },
+    { id: 'do-5', do_number: 'DO-5', so_doc_no: 'SO-8', do_date: '2026-08-15', delivered_at: null, status: 'LOADED', sales_location: 'KL' },
+  );
+  data.delivery_order_items.push(
+    { delivery_order_id: 'do-3', qty: 1, unit_cost_sen: 9000, ship_cost_sen: 9000, item_group: 'mattress', item_code: 'M1' },
+    { delivery_order_id: 'do-4', qty: 1, unit_cost_sen: 12000, ship_cost_sen: 12000, item_group: 'mattress', item_code: 'M2' },
+  );
+  data.sales_invoices.push(
+    { id: 'si-2', invoice_number: 'INV-2', so_doc_no: 'SO-1', delivery_order_id: 'do-3', invoice_date: '2026-08-03', total_sen: 9000, status: 'SENT' },
+  );
+  data.sales_invoice_items.push(
+    { sales_invoice_id: 'si-2', qty: 1, unit_cost_sen: 9000, line_cost_sen: 9000, line_total_sen: 9000, item_group: 'mattress', item_code: 'M1' },
+  );
+  return data;
+}
+const AUGUST = 'date_from=2026-08-01&date_to=2026-08-31';
+
+describe('date_basis — SO date (the default) or each stage by its own date', () => {
+  test('Delivery Orders by their own date: the July order delivered in August is in, the delivery that landed on 1 September (Malaysia) is out', async () => {
+    const { app, env } = appWith(augustFixture());
+    const body = (await (await req(app, `/fair-report?stage=do&${AUGUST}&date_basis=stage`, env)).json()) as any;
+    expect(body.rows.map((r: any) => r.do_no)).toEqual(['DO-3']);
+    expect(body.rows[0].so_no).toBe('SO-1');
+    expect(body.summary.deliveries).toBe(1);
+    expect(body.filters.date_basis).toBe('stage');
+  });
+
+  test('by SO date (the default) the same August is the August orders\' deliveries, whatever their own date', async () => {
+    const { app, env } = appWith(augustFixture());
+    const body = (await (await req(app, `/fair-report?stage=do&${AUGUST}`, env)).json()) as any;
+    expect(body.rows.map((r: any) => r.do_no)).toEqual(['DO-4']);
+    expect(body.filters.date_basis).toBe('so');
+    /* An unknown value reads as the default. */
+    const odd = (await (await req(app, `/fair-report?stage=do&${AUGUST}&date_basis=whatever`, env)).json()) as any;
+    expect(odd.rows.map((r: any) => r.do_no)).toEqual(['DO-4']);
+  });
+
+  test('Invoices by invoice date: the July order\'s August invoice is in; by SO date August has none', async () => {
+    const { app, env } = appWith(augustFixture());
+    const own = (await (await req(app, `/fair-report?stage=invoice&${AUGUST}&date_basis=stage`, env)).json()) as any;
+    expect(own.rows.map((r: any) => r.inv_no)).toEqual(['INV-2']);
+    expect(own.summary.invoices).toBe(1);
+    const bySo = (await (await req(app, `/fair-report?stage=invoice&${AUGUST}`, env)).json()) as any;
+    expect(bySo.rows).toHaveLength(0);
+  });
+
+  test('Sales Orders and the P&L are per order: both keep the SO date on either basis', async () => {
+    const { app, env } = appWith(augustFixture());
+    for (const basis of ['so', 'stage']) {
+      const so = (await (await req(app, `/fair-report?stage=so&${AUGUST}&date_basis=${basis}`, env)).json()) as any;
+      expect(so.rows.map((r: any) => r.so_no)).toEqual(['SO-7']);
+      const pnl = (await (await req(app, `/fair-report?stage=pnl&project=1&${AUGUST}&date_basis=${basis}`, env)).json()) as any;
+      expect(pnl.rows.map((r: any) => r.so_no)).toEqual(['SO-7']);
+    }
+  });
+
+  test('each stage by its own date still honours the other filters on the order', async () => {
+    const { app, env } = appWith(augustFixture());
+    const body = (await (await req(app, `/fair-report?stage=do&${AUGUST}&date_basis=stage&state=Johor`, env)).json()) as any;
+    expect(body.rows).toHaveLength(0);   // SO-1 is Selangor
   });
 });
 

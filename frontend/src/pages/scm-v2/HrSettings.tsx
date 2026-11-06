@@ -750,7 +750,7 @@ export const HrSettings = () => {
               >
                 <option value="product">product — one specific product</option>
                 <option value="category">category — every product in a category</option>
-                <option value="fabric">fabric — a fabric series</option>
+                <option value="fabric">fabric — one fabric (pick a series to select all of it)</option>
                 <option value="special">special — a special-order option</option>
               </select>
             </label>
@@ -772,6 +772,26 @@ export const HrSettings = () => {
                   <option key={r.ref} value={r.ref} className="px-1 py-0.5">{r.label}</option>
                 ))}
               </select>
+              {flagType === 'fabric' && (pickers.data?.fabricSeries?.length ?? 0) > 0 && (
+                /* YH 2026-11-06: pick fabrics by the series staff name them by.
+                   Selecting a series highlights its fabrics; Add still makes one
+                   rule per fabric (owner 2026-07-18), so a colour added to the
+                   series later needs its own rule. */
+                <select
+                  className={INPUT_CLASS}
+                  value=""
+                  aria-label="Select every fabric in a series"
+                  onChange={(e) => {
+                    const g = pickers.data?.fabricSeries?.find((x) => x.series === e.target.value);
+                    if (g) setFlagRefs(g.refs.filter((r) => refList.some((x) => x.ref === r)));
+                  }}
+                >
+                  <option value="">Select a whole series…</option>
+                  {pickers.data!.fabricSeries!.map((g) => (
+                    <option key={g.series} value={g.series}>{g.series} ({g.refs.length})</option>
+                  ))}
+                </select>
+              )}
               <span className="text-[11px] text-ink-secondary">
                 {refList.length === 0
                   ? pickers.isLoading

@@ -108,6 +108,7 @@ import { resolveCallerStaffId } from '../lib/salesScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { uplineChainSteps } from '../../services/orgScope';
 import type { Env, Variables } from '../env';
+import { fabricSeriesGroups } from '../lib/fabric-series';
 
 export const hr = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -741,7 +742,7 @@ hr.get('/pickers', async (c) => {
      not a column — same three-state contract as GET /staff/pickable: no
      companies master -> degrade to the full roster; master but no active
      company -> fail closed to []. */
-  const [staffRes, showroomRes, productRes, fabricRes, specialRes] = await Promise.all([
+  const [staffRes, showroomRes, productRes, fabricRes, specialRes, trackingRes] = await Promise.all([
     /* user_id is selected for the SCOPING, not for the response — it is the
        link scopeStaffRowsToActiveCompany derives the company from. Omit it and
        every row reads as UNLINKED, which the rule attributes to the 2990 mirror
@@ -756,8 +757,12 @@ hr.get('/pickers', async (c) => {
       sb.from('fabric_library').select('id, label').eq('company_id', co.companyId).order('label').range(from, to)),
     paginateAll<{ code: string; label: string }>((from, to) =>
       sb.from('special_addons').select('code, label').eq('company_id', co.companyId).order('label').range(from, to)),
+    // The named series (EMBRACE, HOMELY …) each fabric belongs to, so a fabric
+    // rule can be picked by series (YH 2026-11-06). Still one rule per fabric.
+    paginateAll<{ fabric_code: string; series: string | null }>((from, to) =>
+      sb.from('fabric_trackings').select('fabric_code, series').eq('company_id', co.companyId).order('fabric_code').range(from, to)),
   ]);
-  const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error;
+  const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error || trackingRes.error;
   if (firstErr) return c.json({ error: 'fetch_failed', reason: firstErr.message }, 500);
 
   const { scoped: scopedStaff } = await scopeStaffRowsToActiveCompany(
@@ -775,6 +780,7 @@ hr.get('/pickers', async (c) => {
        category rule is matched against exactly that column (kpi-units.ts). */
     categories: MFG_PRODUCT_CATEGORIES.map((code) => ({ ref: code, label: code })),
     fabrics: (fabricRes.data ?? []).map((f) => ({ ref: f.id, label: f.label })),
+    fabricSeries: fabricSeriesGroups(trackingRes.data ?? [], new Set((fabricRes.data ?? []).map((f) => f.id))),
     specials: (specialRes.data ?? []).map((s) => ({ ref: s.code, label: s.label })),
   });
 });

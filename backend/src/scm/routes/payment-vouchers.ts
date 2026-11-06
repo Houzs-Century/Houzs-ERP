@@ -70,12 +70,14 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
-import { extractBillsHandler } from './pv-extract';
+import { extractBillsHandler, splitPdfHandler } from './pv-extract';
 import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { remindApproverHandler } from './payment-vouchers-remind';
+import { updatePaymentVoucherTextHandler } from './payment-vouchers-text';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
-import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
+import { paymentRequestsLinkGuard, linkPaymentRequests } from '../lib/payment-request';
 import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { pvEventAccountRefusal } from '../lib/event-accounts';
@@ -395,6 +397,7 @@ paymentVouchers.get('/', listPaymentVouchersHandler);
 /* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
 paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
+paymentVouchers.post('/remind', remindApproverHandler); // Remind approver: a note in the approver's bell, posts nothing (payment-vouchers-remind.ts)
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
 paymentVouchers.get('/:id/files', listPvFilesHandler);
 paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
@@ -598,8 +601,8 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   }
   const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
   if (eventErr) return eventErr;
-  /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
-  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'PV', body });
+  /* 申请付款: the request(s) this voucher answers, still waiting (lib/payment-request.ts). */
+  const prq = await paymentRequestsLinkGuard(c, body.paymentRequestIds ?? body.paymentRequestId, { kind: 'PV', body });
   if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
@@ -696,7 +699,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
-      ...pvBillFields(body, prq.request), // the bill's own number and date (lib/bill-matches.ts)
+      ...pvBillFields(body, prq.requests.length === 1 ? prq.requests[0] : null), // the bill's own number and date (lib/bill-matches.ts)
       ...officialOwedFields(body, officialActor(c)), // 欠正式单 — paid on a proforma (lib/official-doc.ts)
     }).select(HEADER).single(),
   );
@@ -723,8 +726,8 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
   }
-  if (prq.request) { /* claimed only if still waiting; else this voucher never stood */
-    const linked = await linkPaymentRequest(c, prq.request, { kind: 'PV', id: h.id, number: h.pv_number });
+  if (prq.requests.length > 0) { /* claimed only if still waiting; else this voucher never stood */
+    const linked = await linkPaymentRequests(c, prq.requests, { kind: 'PV', id: h.id, number: h.pv_number });
     if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 
@@ -965,6 +968,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   return c.json({ paymentVoucher: data });
 };
 paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
+
+paymentVouchers.patch('/:id/text', updatePaymentVoucherTextHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    POST /:id/post — write the balanced GL entry, flip DRAFT → POSTED
@@ -1912,8 +1917,9 @@ export const applyAdvanceHandler = async (c: any) => {
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
 /* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
-export { extractBillsHandler };
+export { extractBillsHandler, splitPdfHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
+paymentVouchers.post('/split-pdf', splitPdfHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to

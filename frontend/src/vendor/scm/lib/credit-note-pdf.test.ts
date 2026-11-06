@@ -57,19 +57,48 @@ async function render(over: Partial<CreditNotePdfHeader> = {}, lines: CreditNote
 }
 const has = (draws: TextDraw[], needle: string): boolean => draws.some((d) => d.text.includes(needle));
 
+describe("an other debtor's credit note", () => {
+  test("CUSTOMER carries the debtor's account code, read off the registry (party_code stays blank, owner 2026-11-03)", async () => {
+    const draws = await render({ kind: 'OCN', party_name: 'EASTERN DECORATOR', party_code: null, debtor_code: '305-E003' });
+    expect(has(draws, '305-E003')).toBe(true);
+    const bare = await render({ kind: 'OCN', party_name: 'EASTERN DECORATOR', party_code: null, debtor_code: null });
+    expect(bare.some((d) => d.text === 'Code')).toBe(false);
+  });
+});
+
 describe('the credit note sheet', () => {
+  /* The design's A4 family (batch 5 step 10): CUSTOMER beside NOTE DETAILS, the
+     lines without our accounts, TOTAL CREDIT, the words, Issued by. */
   test('a customer credit note names the customer, the order, the deposit invoice it closes and the final invoice', async () => {
     const draws = await render();
     expect(has(draws, 'CREDIT NOTE')).toBe(true);
     expect(has(draws, 'SUPPLIER CREDIT NOTE')).toBe(false);
     expect(has(draws, '2990-CN-2609-001')).toBe(true);
+    expect(has(draws, 'CUSTOMER')).toBe(true);
+    expect(has(draws, 'NOTE DETAILS')).toBe(true);
     expect(has(draws, 'Larding Chen')).toBe(true);
-    expect(has(draws, 'Sales order: 2990-SO-2609-001')).toBe(true);
-    expect(has(draws, 'Deposit invoice: 2990-DI-2609-001')).toBe(true);
-    expect(has(draws, 'Final invoice: 2990-SI-2609-001')).toBe(true);
-    expect(has(draws, 'TOTAL')).toBe(true);
+    expect(has(draws, ': 2990-SO-2609-001')).toBe(true);
+    expect(has(draws, ': 2990-DI-2609-001')).toBe(true);
+    expect(has(draws, ': 2990-SI-2609-001')).toBe(true);
+    expect(has(draws, ': Posted')).toBe(true);
+    expect(has(draws, 'Deposit invoice 2990-DI-2609-001 applied to 2990-SI-2609-001')).toBe(true);
+    /* Our accounts stay off the customer's paper. */
+    expect(has(draws, '509-0000')).toBe(false);
+    expect(has(draws, 'TOTAL CREDIT')).toBe(true);
+    expect(has(draws, 'RINGGIT (IN WORDS)')).toBe(true);
     expect(has(draws, 'ONE THOUSAND')).toBe(true);
+    expect(has(draws, 'Issued by')).toBe(true);
     expect(has(draws, 'DRAFT')).toBe(false);
+  });
+
+  test('a blank line reads as the name of its account; a debit note totals as TOTAL DEBIT', async () => {
+    const dn = await render({ kind: 'DN', status: 'POSTED', source_doc_no: 'DR-2609-002', sales_invoice_number: null, reason: 'Late delivery fee' },
+      [{ description: null, account_code: '510-0000', amount_sen: 2_050 }]);
+    expect(has(dn, 'DEBIT NOTE')).toBe(true);
+    expect(has(dn, 'RETURN INWARDS')).toBe(true);
+    expect(has(dn, '510-0000')).toBe(false);
+    expect(has(dn, 'TOTAL DEBIT')).toBe(true);
+    expect(has(dn, ': DR-2609-002')).toBe(true);
   });
 
   test('the title is the kind\'s, a free reference prints as a reference, and a draft prints as a draft', async () => {

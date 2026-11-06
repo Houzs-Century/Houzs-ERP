@@ -348,9 +348,10 @@ describe('Finance', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['To do1', 'Turned into vouchers1', 'Sent back2', 'Paid1', 'Official invoice owed0', 'All4']);
     expect(tabNamed(/^To do/).getAttribute('aria-selected')).toBe('true');
     /* The design's columns in its order (the request number first, to open it;
-       the row's buttons last). Event, Pay by and Date wait in the chooser. */
+       the row's buttons last). Event, Pay by and Date wait in the chooser.
+       To do leads with the tick column — several requests, ONE voucher. */
     expect(screen.getAllByRole('columnheader').map((h) => h.textContent))
-      .toEqual(['Request', 'Kind', 'For', 'Why', 'Amount', 'Pay to', 'Requested by', 'Waiting', 'Stage', '']);
+      .toEqual(['', 'Request', 'Kind', 'For', 'Why', 'Amount', 'Pay to', 'Requested by', 'Waiting', 'Stage', '']);
     expect(screen.getByText('Payment')).toBeTruthy();
     expect(screen.getByText('Maybank ···· 8901')).toBeTruthy();
     /* The stage reads English only on Finance's list. */

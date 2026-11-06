@@ -72,7 +72,12 @@ const isCancelled = (status: string | null): boolean => (status ?? "").toUpperCa
 
 /** Proof of Delivery — full-height overlay. `docNo` is a Delivery Order NUMBER;
  *  we resolve it to the DO UUID via the list route, then read the detail. */
-export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: () => void; onDone?: () => void }) {
+/* `companyCode` PINS every DO request here (lookup, detail, deliver) to the
+   stop's OWN company — the run-sheet is a cross-company queue, so a driver
+   granted both companies opens a 2990 DO while the tab reads HOUZS; without it
+   the per-company list/detail/status route 404s the other company's DO. Null
+   (opened from a non-run-sheet surface) keeps the tab's active company. */
+export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo: string; companyCode?: string | null; onBack: () => void; onDone?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
@@ -112,7 +117,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
      a second cache over the same URLs, invisible to invalidateDoShared — so a write
      from the desktop or the planning board left this screen stale, and this screen's
      own writes left theirs stale. One namespace, one logic layer. */
-  const listQ = useMfgDeliveryOrdersPaged({ enabled: !isCrew, page: 0, pageSize: DOC_NO_LOOKUP_ROWS, q: docNo });
+  const listQ = useMfgDeliveryOrdersPaged({ enabled: !isCrew, page: 0, pageSize: DOC_NO_LOOKUP_ROWS, q: docNo, companyCode });
   const doId = useMemo(() => {
     const rows = listQ.data?.deliveryOrders;
     // No rows yet (pending, or the read failed) is NOT "no such DO" — leave it
@@ -122,7 +127,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     return (rows.find((d: DoHeader) => (d.do_number ?? "") === docNo)?.id ?? null) as string | null;
   }, [listQ.data, docNo, isCrew, crewQ.data]);
 
-  const detailQ = useMfgDeliveryOrderDetail(isCrew ? null : doId);
+  const detailQ = useMfgDeliveryOrderDetail(isCrew ? null : doId, companyCode);
   const podData = isCrew ? crewQ.data : detailQ.data;
 
   const h = podData?.deliveryOrder as DoHeader | undefined;
@@ -223,6 +228,8 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
       await updateStatus.mutateAsync({
         id: doId,
         status: "DELIVERED",
+        // Deliver in the stop's OWN company (mixed-company run); see the prop doc.
+        companyCode,
         evidence: {
           signatureData: sig || undefined,
           podKey,

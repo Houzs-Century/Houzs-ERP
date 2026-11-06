@@ -6,6 +6,24 @@ export interface GapProject {
   income: number; cogs: number; commission: number; cost: number; soSen: number;
 }
 
+/** What Books not complete lets a person take off its list: the event truly has
+ *  none, so it is not a gap to chase (owner 2026-11-05). */
+export const BOOKS_GAPS = { rental: "Rental missing or no sales", report: "No chat sales report", size: "No project size" } as const;
+export type BooksGap = keyof typeof BOOKS_GAPS;
+export const isBooksGap = (v: unknown): v is BooksGap => typeof v === "string" && Object.hasOwn(BOOKS_GAPS, v);
+
+/** Each event's removed gaps, from its live books_gap_waived activity rows. */
+export function waivedByProject(rows: ReadonlyArray<{ project_id: number; to_value: string | null }>): Map<number, BooksGap[]> {
+  const out = new Map<number, BooksGap[]>();
+  for (const r of rows) {
+    if (!isBooksGap(r.to_value)) continue;
+    const id = Number(r.project_id);
+    const had = out.get(id) ?? [];
+    if (!had.includes(r.to_value)) out.set(id, [...had, r.to_value]);
+  }
+  return out;
+}
+
 const pick = (p: GapProject) => ({ id: p.id, code: p.code, name: p.name, brand: p.brand, endDate: (p.end_date ?? "").slice(0, 10), income: p.income, cost: p.cost, soSen: p.soSen });
 
 export function classifyProjectGaps(projects: GapProject[]) {

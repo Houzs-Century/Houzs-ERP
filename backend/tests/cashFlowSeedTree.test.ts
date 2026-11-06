@@ -69,8 +69,9 @@ describe('the seeded Cash Flow tree', () => {
     const tops = cf.nodes.map((n) => [n.label, n.amountSen]);
     expect(tops).toEqual([
       ['CASH IN', 7_321_455], ['OPERATIONS OUTFLOWS', 4_500_000], ['Net operation surplus / (deficit)', 2_821_455],
-      ['OTHER INCOME', 0], ['TAXATION', 0], ['FINANCE COST', 0], ['Cash Surplus / (Deficit) after others', 2_821_455],
-      ['FUNDING IN / (OUT)', 3_375_400], ['TRANSFERS BETWEEN OWN ACCOUNTS', 0],
+      /* A top category with nothing in it this period is left off (2026-11-05). */
+      ['Cash Surplus / (Deficit) after others', 2_821_455],
+      ['FUNDING IN / (OUT)', 3_375_400],
     ]);
     const cashIn = cf.nodes[0]!;
     expect(cashIn.children.map((c) => [c.label, c.amountSen])).toEqual([['Deposit received', 7_421_455], ['(-) Refund to customer', -100_000]]);

@@ -1,0 +1,9 @@
+/* Payment corrections in the report shell (the owner's Claude Design, batch 6
+   §5.9): the toolbar's selects and the table's grey sub-lines. Finance tokens
+   from finance/finance-ui.module.css. */
+
+.select {
+  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-input); border-radius: 8px;
+  background: var(--fin-surface); font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+.sub { color: var(--fin-muted); }
