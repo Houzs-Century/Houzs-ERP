@@ -664,9 +664,11 @@ export const HrSettings = () => {
       {/* 3 · Item KPIs */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Item KPIs</SectionHeading>
-        <div className={TABLE_WRAP_CLASS}>
+        {/* YH 2026-11-06: a series adds a dozen rules at once, so the list scrolls
+            inside its box (header pinned) instead of pushing the Add form off screen. */}
+        <div className={`${TABLE_WRAP_CLASS} max-h-[420px] overflow-y-auto`}>
           <table className="w-full text-[12px]">
-            <thead className={THEAD_CLASS}>
+            <thead className={`${THEAD_CLASS} sticky top-0 z-10`}>
               <tr>
                 <th className="px-3 py-2 text-left">Type</th>
                 <th className="px-2 py-2 text-left">Item</th>
