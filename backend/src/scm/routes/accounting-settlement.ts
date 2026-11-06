@@ -1505,13 +1505,19 @@ export const settlementWatchlist = guard(async (c) => {
      salesperson, read off the order and then off the staff table in two plain
      reads; a name that cannot be read is blank, never somebody else's. */
   const salespersonOf = new Map<string, string>();
+  /* The order's Ref No., HC13025, ZNT6656 (owner 2026-11-06: 我要有那个 reference), raw, the
+     way so-ref-lookup sends it: the screen resolves the pair through its one display rule. */
+  const refsOf = new Map<string, { ref: string | null; customer_so_no: string | null }>();
   {
     const docs = [...new Set(recorded.filter((p) => p.source === 'SOPAY').map((p) => p.docNo).filter(Boolean))];
     const staffIdOf = new Map<string, string>();
     for (let i = 0; i < docs.length; i += 200) {
-      const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('company_id', co.companyId).in('doc_no', docs.slice(i, i + 200));
+      const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, salesperson_id, ref, customer_so_no').eq('company_id', co.companyId).in('doc_no', docs.slice(i, i + 200));
       if (error) return c.json({ error: 'load_failed', reason: `salesperson: ${error.message}` }, 500);
-      for (const r of data as Array<{ doc_no: string; salesperson_id: string | null }>) if (r.salesperson_id) staffIdOf.set(r.doc_no, String(r.salesperson_id));
+      for (const r of data as Array<{ doc_no: string; salesperson_id: string | null; ref?: string | null; customer_so_no?: string | null }>) {
+        if (r.salesperson_id) staffIdOf.set(r.doc_no, String(r.salesperson_id));
+        refsOf.set(r.doc_no, { ref: r.ref ?? null, customer_so_no: r.customer_so_no ?? null });
+      }
     }
     const staffIds = [...new Set(staffIdOf.values())];
     const nameOf = new Map<string, string>();
@@ -1527,7 +1533,12 @@ export const settlementWatchlist = guard(async (c) => {
     to,
     recordedNotArrived: recorded
       .sort((a, b) => b.ageDays - a.ageDays)
-      .map((p) => ({ ...p, salespersonName: p.source === 'SOPAY' ? (salespersonOf.get(p.docNo) ?? null) : null })),
+      .map((p) => ({
+        ...p,
+        salespersonName: p.source === 'SOPAY' ? (salespersonOf.get(p.docNo) ?? null) : null,
+        ref: (p.source === 'SOPAY' ? refsOf.get(p.docNo)?.ref : null) ?? null,
+        customer_so_no: (p.source === 'SOPAY' ? refsOf.get(p.docNo)?.customer_so_no : null) ?? null,
+      })),
     arrivedNotRecorded: stranded,
     clean: recorded.length === 0 && stranded.length === 0,
   });
