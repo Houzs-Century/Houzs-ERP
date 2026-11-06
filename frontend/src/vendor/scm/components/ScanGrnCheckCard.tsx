@@ -15,7 +15,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, todayMY } from '../../shared/format';
 import {
-  fetchSupplierSkus, isOddDate, newLineKey, poOptions, shortNote, skuOptions, printedText, skuValue, swappedDate,
+  fetchSupplierSkus, isOddDate, newLineKey, poOptions, receiptItems, shortNote, skuOptions, printedText, skuValue, swappedDate, warehouseTone,
   type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
@@ -40,6 +40,8 @@ export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail
 
 /** The racks of the row's warehouse, as on the GRN page. A rack read off the paper
  *  stays shown until it is changed, even if it is not one of them. */
+const WH_TONES = [styles.wh0, styles.wh1, styles.wh2, styles.wh3, styles.wh4, styles.wh5, styles.wh6, styles.wh7];
+
 function RackCell({ warehouseId, value, onChange, label }: { warehouseId: string | null; value: string | null; onChange: (rack: string | null) => void; label: string }) {
   const { racks } = useGrnRackOptions(warehouseId ?? undefined);
   const options = [...new Set([...(value ? [value] : []), ...racks.map((r) => r.rack)])].map((r) => ({ value: r, label: r }));
@@ -73,7 +75,8 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
   const byId = new Map(poLines.map((l) => [l.poItemId, l]));
   const mine = poLines.filter((l) => l.supplierId === review.supplierId);
   const tied = review.lines.flatMap((l) => (l.poItemId && byId.get(l.poItemId) ? [byId.get(l.poItemId) as CheckPoLine] : []));
-  const warehouses = [...new Set(tied.map((l) => l.warehouse).filter(Boolean))].join(', ');
+  const warehouses = [...new Set(tied.map((l) => l.warehouse))].filter((w): w is string => Boolean(w));
+  const items = receiptItems(review);
   const poList = [...new Set(tied.map((l) => l.poNumber))];
   const pos = poList.join(', ');
   const firstPo = poList[0];
@@ -128,8 +131,11 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           <DateField value={review.deliveryDate ?? ''} onChange={(v) => set({ deliveryDate: v || null })} aria-label="Received date" fullWidth />
         </div>
         <div className={styles.meta}>
-          <div className={styles.metaLine}>{warehouses || '—'}</div>
+          <div className={styles.metaLine}>
+            {warehouses.length === 0 ? '—' : warehouses.map((w) => <span key={w} className={`${styles.wh} ${WH_TONES[warehouseTone(w, WH_TONES.length)]}`}>{w}</span>)}
+          </div>
           <div className={`${styles.metaLine} ${styles.metaPo} ${styles.mono}`} title={pos}>{firstPo || 'No PO line yet'}{morePos > 0 && ` +${morePos}`}</div>
+          <div className={styles.metaPo}>{items} item{items === 1 ? '' : 's'}</div>
         </div>
         <div className={styles.icons}>
           {doc.canGold && (
@@ -170,7 +176,8 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
           {swapped && <button type="button" className={styles.bannerLink} onClick={() => set({ deliveryDate: swapped })}>Change to {fmtDate(swapped)}</button>}
         </div>
       )}
-      {!anyTied && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
+      {!anyTied && repeat === null && !doc.duplicateOf && (shortNote(doc.note) ?? block) && <div className={styles.hint}>{shortNote(doc.note) ?? block}</div>}
+      {!anyTied && doc.duplicateOf && <div className={styles.hint}>This delivery order is on the goods receipt above, so it has no rows to pick here.</div>}
       {anyTied && block && <div className={styles.hint}>{block}</div>}
 
       {open && (

@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { writeFailedAs } from '../lib/mutation-error';
 import {
-  PENDING_KEY, createFromScans, discardScans, fetchPending, fetchPoLines, localBlock, markGold, retryScan, saveReview, uploadScans,
+  PENDING_KEY, createFromScans, discardScans, fetchPending, fetchPoLines, localBlock, markGold, receiptItems, retryScan, saveReview, uploadScans,
   type CheckDoc, type CheckPoLine, type GrnReview, type PendingResp,
 } from '../lib/scan-gr-check';
 import { ScanCheckModal, type CheckResult } from './ScanCheckModal';
@@ -25,7 +25,6 @@ const API = {
   gold: markGold,
 };
 
-const docNumber = (d: CheckDoc) => d.review?.doNo ?? null;
 
 export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   // PO lines of a supplier the operator switched to, which the list did not carry.
@@ -52,7 +51,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
       api={API}
       blockOf={(r, d) => localBlock(r, linesOf(d))}
       withDate={(r, date) => ({ ...r, deliveryDate: date })}
-      docNumber={docNumber}
+      itemsOf={receiptItems}
       onEdit={(r) => {
         const s = r.supplierId;
         if (!s || known.has(s) || asked.has(s)) return;

@@ -29,7 +29,7 @@ import { reapStalePiScanJobs, runPiJobFromRow } from './scan-pi';
 export const scanPiCheck = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanPiCheck.use('*', supabaseAuth);
 
-scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, runLocal: runPiJobFromRow }));
+scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, scannedToday: (review) => review, runLocal: runPiJobFromRow }));
 
 /* GET /scan-pi/check/pending — this user's invoices still being read or waiting
    to be checked, with the suppliers, what is left to bill on every supplier on
