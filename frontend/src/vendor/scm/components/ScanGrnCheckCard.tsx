@@ -40,7 +40,7 @@ export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail
 
 /** The racks of the row's warehouse, as on the GRN page. A rack read off the paper
  *  stays shown until it is changed, even if it is not one of them. */
-const WH_TONES = [styles.wh0, styles.wh1, styles.wh2, styles.wh3, styles.wh4];
+const WH_TONES = [styles.wh0, styles.wh1, styles.wh2, styles.wh3, styles.wh4, styles.wh5, styles.wh6, styles.wh7];
 
 function RackCell({ warehouseId, value, onChange, label }: { warehouseId: string | null; value: string | null; onChange: (rack: string | null) => void; label: string }) {
   const { racks } = useGrnRackOptions(warehouseId ?? undefined);

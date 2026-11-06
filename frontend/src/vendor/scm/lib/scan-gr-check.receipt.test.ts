@@ -12,8 +12,9 @@ describe('what a scanned card receives', () => {
 });
 
 describe('warehouse colours', () => {
-  it('KL and SBH never share one, and a name always keeps its own', () => {
-    expect(warehouseTone('KL WAREHOUSE', 5)).not.toBe(warehouseTone('SBH WAREHOUSE', 5));
-    expect(warehouseTone('MELAKA', 5)).toBe(warehouseTone('melaka', 5));
+  it('the selling warehouses each have their own, and a name always keeps it', () => {
+    const tones = ['KL', 'SBH', 'PG', 'SRW', 'JB'].map((w) => warehouseTone(`${w} WAREHOUSE`, 8));
+    expect(new Set(tones).size).toBe(5);
+    expect(warehouseTone('MELAKA', 8)).toBe(warehouseTone('melaka', 8));
   });
 });

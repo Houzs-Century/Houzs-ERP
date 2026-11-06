@@ -47,11 +47,8 @@ export const receiptItems = (r: { lines: ReadonlyArray<{ poItemId: string | null
 
 /** One tint per warehouse, the same on every card. */
 export function warehouseTone(name: string, tones: number): number {
-  const u = name.toUpperCase();
-  const fixed = ['KL', 'SBH', 'JB', 'PG', 'SRW'].findIndex((w) => u.startsWith(w));
-  if (fixed >= 0) return fixed % tones;
   let h = 0;
-  for (const ch of u) h = (h * 31 + ch.charCodeAt(0)) % 1009;
+  for (const ch of name.toUpperCase()) h = (h * 31 + ch.charCodeAt(0)) % 1009;
   return h % tones;
 }
 
