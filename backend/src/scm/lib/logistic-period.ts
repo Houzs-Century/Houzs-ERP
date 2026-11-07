@@ -124,19 +124,19 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     const ds = lorryDayList.filter((x) => x.lorry === plate);
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
     const jobs = lorryJobs.filter((j) => j.plate === plate);
-    const t = lorryTrips(ds.map((x) => x.date), jobs);
+    const t = lorryTrips(ds, jobs);
     const inUse = new Set([...ds.map((x) => x.date), ...jobs.map((j) => j.date)]);
     const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !inUse.has(d)).length);
     /* Sunday is not a working day, but a Sunday it went out is a day it was available. */
     const available = work - downDays + [...inUse].filter((d) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0).length;
     return {
-      lorry: plate, internal: internal.has(plate), daysOut: t.deliveryDays, fairTrips: t.fairTrips, stockTrips: t.stockTrips,
+      lorry: plate, internal: internal.has(plate), daysOut: t.deliveryTrips, fairTrips: t.fairTrips, stockTrips: t.stockTrips,
       usedDays: t.usedDays, trips: t.trips, otherTrips: t.otherTrips, workingDays: available, downDays,
       /* Over 100% is real: two set-ups in a day are two trips. */
       occupancyPct: available ? Math.round((t.trips / available) * 1000) / 10 : null,
       doOrders: ds.reduce((a, x) => a + x.orders, 0), serviceOrders: t.serviceOrders,
       orders: ds.reduce((a, x) => a + x.orders, 0) + t.serviceOrders, amountSen,
-      perDayOutSen: t.deliveryDays ? Math.round(amountSen / t.deliveryDays) : null,
+      perDayOutSen: t.deliveryTrips ? Math.round(amountSen / t.deliveryTrips) : null,
     };
   }).sort((a, b) => Number(b.internal) - Number(a.internal) || b.amountSen - a.amountSen);
 

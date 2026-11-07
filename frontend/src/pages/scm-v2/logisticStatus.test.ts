@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deliveryProgressBreakdown, messageStatusBreakdown, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
+import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
 import type { PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 
 /** Only the three fields the breakdowns read; the rest is irrelevant here. */
@@ -60,5 +60,18 @@ describe("topWithOther", () => {
     const r = topWithOther(s, 2);
     expect(r).toHaveLength(3);
     expect(r[2]).toMatchObject({ key: "__other__", label: "Other (3)", count: 20, sen: 200, pct: 20 });
+  });
+});
+
+describe("the orders behind a message-status row", () => {
+  const o = (so: string, msg: string | null) => ({ so_doc_no: so, delivery_message_status: msg, delivery_state: "PENDING_DELIVERY", local_total_sen: 100 }) as unknown as PlanningOrder;
+  const rows = [o("A", "Done Scheduling"), o("B", null), o("C", "Rare one"), o("D", "Done Scheduling")];
+  const shown = topWithOther(messageStatusBreakdown(rows), 2);
+  it("a named row lists its own orders, a blank status reads as no status yet", () => {
+    expect(ordersOfSlice(rows, "Done Scheduling", shown).map((x) => x.so_doc_no)).toEqual(["A", "D"]);
+    expect(ordersOfSlice(rows, NO_MESSAGE_STATUS, shown).map((x) => x.so_doc_no)).toEqual(["B"]);
+  });
+  it("Other lists every order whose status has no row of its own", () => {
+    expect(ordersOfSlice(rows, "__other__", shown).map((x) => x.so_doc_no)).toEqual(["C"]);
   });
 });

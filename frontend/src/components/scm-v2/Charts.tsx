@@ -89,14 +89,19 @@ const tickMoney = (v: number): string => {
 /** `axes` (owner 2026-11-05, Project Overview: one chart, but with its scales): the
  *  amount scale on the left, the line's % scale on the right, and a card on hover
  *  with every figure of the column under the pointer. */
+export type ChartLine = { name: string; color: string; values: Array<number | null>; format: Fmt };
+
 export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels, axes }: {
   labels: string[]; series: Series[]; values: number[][]; format: Fmt; stacked: boolean;
-  line: { name: string; color: string; values: Array<number | null>; format: Fmt } | null; highlight: number | null; height: number; valueLabels: boolean;
+  line: ChartLine | readonly ChartLine[] | null; highlight: number | null; height: number; valueLabels: boolean;
   axes: boolean;
 }) {
+  /* Several lines share one scale: they are meant to be the same kind of figure. */
+  const lines: readonly ChartLine[] = line == null ? [] : Array.isArray(line) ? line : [line as ChartLine];
+  const first = lines.at(0) ?? null;
   const [ref, W] = useWidth(420);
   const [hover, setHover] = useState<number | null>(null);
-  const H = height; const padL = axes ? 48 : 8; const padR = axes && line ? 44 : 0; const padB = 22; const padT = 10;
+  const H = height; const padL = axes ? 48 : 8; const padR = axes && first ? 44 : 0; const padB = 22; const padT = 10;
   const n = labels.length;
   const totals = labels.map((_, i) => (stacked ? values.reduce((a, s) => a + Math.max(0, s[i] ?? 0), 0) : Math.max(0, ...values.map((s) => s[i] ?? 0))));
   const max = Math.max(1, ...totals);
@@ -104,7 +109,7 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
   const groupW = slot * 0.68;
   const barW = stacked ? groupW : groupW / Math.max(1, series.length);
   const y = (v: number) => padT + (H - padB - padT) * (1 - v / max);
-  const lineVals = line?.values ?? [];
+  const lineVals = lines.flatMap((l) => l.values);
   const lmax = Math.max(1, ...lineVals.map((v) => v ?? 0));
   const lmin = Math.min(0, ...lineVals.map((v) => v ?? 0));
   const ly = (v: number) => padT + (H - padB - padT) * (1 - (v - lmin) / (lmax - lmin));
@@ -116,9 +121,9 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
         {axes && [0, 0.25, 0.5, 0.75, 1].map((f) => (
           <text key={`l${f}`} x={padL - 6} y={y(max * f) + 3.5} textAnchor="end" className="fill-ink-muted" style={{ fontSize: 10 }}>{tickMoney(max * f)}</text>
         ))}
-        {axes && line && [0, 0.25, 0.5, 0.75, 1].map((f) => {
+        {axes && first && [0, 0.25, 0.5, 0.75, 1].map((f) => {
           const v = lmin + (lmax - lmin) * f;
-          return <text key={`r${f}`} x={W - padR + 6} y={ly(v) + 3.5} textAnchor="start" style={{ fontSize: 10, fill: line.color }}>{`${v.toFixed(0)}%`}</text>;
+          return <text key={`r${f}`} x={W - padR + 6} y={ly(v) + 3.5} textAnchor="start" style={{ fontSize: 10, fill: first.color }}>{`${v.toFixed(0)}%`}</text>;
         })}
         {labels.map((lab, i) => {
           const x0 = padL + i * slot + (slot - groupW) / 2;
@@ -149,17 +154,17 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
             </g>
           );
         })}
-        {line && (
-          <>
-            <polyline fill="none" stroke={line.color} strokeWidth="2" strokeLinejoin="round"
-              points={lineVals.map((v, i) => (v == null ? null : `${padL + i * slot + slot / 2},${ly(v)}`)).filter(Boolean).join(" ")} />
-            {lineVals.map((v, i) => v == null ? null : (
-              <circle key={i} cx={padL + i * slot + slot / 2} cy={ly(v)} r="3" fill="#fff" stroke={line.color} strokeWidth="1.5">
-                <title>{`${labels[i]} · ${line.name}: ${line.format(v)}`}</title>
+        {lines.map((ln) => (
+          <g key={ln.name}>
+            <polyline fill="none" stroke={ln.color} strokeWidth="2" strokeLinejoin="round"
+              points={ln.values.map((v, i) => (v == null ? null : `${padL + i * slot + slot / 2},${ly(v)}`)).filter(Boolean).join(" ")} />
+            {ln.values.map((v, i) => v == null ? null : (
+              <circle key={i} cx={padL + i * slot + slot / 2} cy={ly(v)} r="3" fill="#fff" stroke={ln.color} strokeWidth="1.5">
+                <title>{`${labels[i]} · ${ln.name}: ${ln.format(v)}`}</title>
               </circle>
             ))}
-          </>
-        )}
+          </g>
+        ))}
       </svg>
       {axes && hover !== null && (
         <div className="pointer-events-none absolute top-1 z-10 min-w-[150px] rounded-lg border border-border bg-surface px-3 py-2 text-[11.5px] shadow-md"
@@ -168,10 +173,10 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
           {series.map((sr, si) => (
             <div key={sr.name} className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{sr.name}</span><span>{format(values[si]?.[hover] ?? 0)}</span></div>
           ))}
-          {line && <div className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{line.name}</span><span>{line.values[hover] == null ? "-" : line.format(line.values[hover]!)}</span></div>}
+          {lines.map((ln) => <div key={ln.name} className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{ln.name}</span><span>{ln.values[hover] == null ? "-" : ln.format(ln.values[hover]!)}</span></div>)}
         </div>
       )}
-      <Legend items={[...series.map((s) => ({ label: s.name, color: s.color, dot: false })), ...(line ? [{ label: line.name, color: line.color, dot: true }] : [])]} />
+      <Legend items={[...series.map((s) => ({ label: s.name, color: s.color, dot: false })), ...lines.map((ln) => ({ label: ln.name, color: ln.color, dot: true }))]} />
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
-import { useDeliveryPlanning, DELIVERY_STATES, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { useDeliveryPlanning, DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
@@ -26,7 +26,7 @@ import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDail
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { Columns, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
-import { deliveryProgressBreakdown, messageStatusBreakdown, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
+import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
 
 /* Progress tile tone per state, in DELIVERY_STATES order (pending-delivery,
    pending-schedule, overdue, delivered) — derived from that one list so the
@@ -171,7 +171,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const [soDrill, setSoDrill] = useState<Drill<PlanningOrder> | null>(null);
   const openDos: DoDrill = (title, keep) => setDoDrill({
     title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep).sort((a, b) => b.date.localeCompare(a.date)), rowKey: (d) => d.id,
-    onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`),
+    onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`), groupBy: (d) => d.date,
     columns: [
       col<DoRow>("DO", true, (d) => <span className="text-primary">{d.doNumber ?? "—"}</span>, (d) => d.doNumber ?? "", null, null),
       col<DoRow>("Date", false, (d) => d.date, null, null, null),
@@ -197,10 +197,13 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     }));
     return [...dos, ...others];
   };
-  const openSos = (title: string, xs: PlanningOrder[]) => setSoDrill({
-    title, subtitle: "open sales orders, as of today", rows: xs, rowKey: (o) => o.so_doc_no,
+  const openSos = (title: string, xs: PlanningOrder[], subtitle: string, byDay: boolean) => setSoDrill({
+    title, subtitle, rowKey: (o) => o.so_doc_no,
+    rows: byDay ? [...xs].sort((a, b) => (jobDate(a) ?? "").localeCompare(jobDate(b) ?? "")) : xs,
+    groupBy: byDay ? (o) => jobDate(o) ?? "No date" : null,
     onRow: (o) => navigate(`/scm/sales-orders/${o.so_doc_no}`),
     columns: [
+      col<PlanningOrder>("Status", true, (o) => DELIVERY_STATE_LABEL[o.delivery_state as keyof typeof DELIVERY_STATE_LABEL] , (o) => o.delivery_state, null, null),
       col<PlanningOrder>("Order", true, (o) => <span className="text-primary">{o.so_doc_no}</span>, (o) => o.so_doc_no, null, null),
       col<PlanningOrder>("Customer", true, (o) => o.debtor_name ?? "—", (o) => o.debtor_name ?? "", null, null),
       col<PlanningOrder>("Delivery", false, (o) => o.effective_delivery_date ?? "—", null, null, null),
@@ -215,7 +218,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
      by delivery progress and by the customer-message status. */
   const progress = useMemo(() => deliveryProgressBreakdown(rows), [rows]);
-  const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(rows), 7), [rows]);
+  /* A delivery progress card picks the orders the message table below reads. */
+  const [progressPick, setProgressPick] = useState<string | null>(null);
+  const pickedRows = useMemo(() => (progressPick ? rows.filter((o) => o.delivery_state === progressPick) : rows), [rows, progressPick]);
+  const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(pickedRows), 7), [pickedRows]);
+  const pickedLabel = progress.find((s) => s.key === progressPick)?.label ?? null;
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
 
   return (
@@ -234,7 +241,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={regionRows} period={period} today={today} totals={focus}
-        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
+        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows, "open sales orders, as of today", false)} onDrill={openDos} />
       {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
       {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.lorry.lorryRegionOrders} region={region} day={day} onLorry={setLorryDrill} />}
 
@@ -251,7 +258,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <thead><tr><Th left>Due</Th><Th>Orders</Th><Th>Amount</Th><Th>Not ready (stock)</Th><Th>Date agreed with customer</Th></tr></thead>
             <tbody>
               {buckets.map((b) => (
-                <tr key={b.key} onClick={() => openSos(`Due · ${b.label}`, b.rows)} className="cursor-pointer hover:bg-surface-2/50">
+                <tr key={b.key} onClick={() => openSos(`Due · ${b.label}`, b.rows, "open sales orders, as of today, by day", true)} className="cursor-pointer hover:bg-surface-2/50">
                   <Td left><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: b.color }} />{b.label}</Td>
                   <Td className={b.key === "overdue" && b.count ? "font-semibold text-err" : ""}>{b.count}</Td>
                   <Td>{fmtSen(b.sen)}</Td>
@@ -280,20 +287,29 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
               <div className="mb-2 text-[12px] font-semibold text-ink">By delivery progress</div>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {progress.map((s) => (
-                  <Tile key={s.key} label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}
-                    onClick={() => openSos(`${s.label} · on the board`, rows.filter((o) => o.delivery_state === s.key))}
-                    value={n(s.count)} note={`${s.pct}% · ${fmtSen(s.sen)}`} />
+                  <div key={s.key} className={cn("rounded-xl", progressPick === s.key && "ring-2 ring-primary")}>
+                    <Tile label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}
+                      onClick={() => setProgressPick(progressPick === s.key ? null : s.key)}
+                      value={n(s.count)} note={`${s.pct}% · ${fmtSen(s.sen)}`} />
+                  </div>
                 ))}
               </div>
             </div>
             {/* Message status — top few, the long tail folded into "Other". */}
             <div>
-              <div className="mb-1.5 text-[12px] font-semibold text-ink">By message status</div>
+              <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] font-semibold text-ink">
+                By message status{pickedLabel ? ` · ${pickedLabel}` : " · all orders"}
+                {pickedLabel && <button type="button" className="font-normal text-primary hover:underline" onClick={() => setProgressPick(null)}>All orders</button>}
+                {pickedLabel && <button type="button" className="font-normal text-primary hover:underline" onClick={() => openSos(`${pickedLabel} · on the board`, pickedRows, "sales orders on the board", true)}>See these orders</button>}
+              </div>
               <table className="w-full border-collapse">
                 <thead><tr><Th left>Message status</Th><Th>Orders</Th><Th>Share</Th><Th>Amount</Th></tr></thead>
                 <tbody>
                   {msgStatus.map((s) => (
-                    <tr key={s.key}><Td left className={s.key === NO_MESSAGE_STATUS || s.key === "__other__" ? "text-ink-muted" : ""}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td></tr>
+                    <tr key={s.key} className="cursor-pointer hover:bg-surface-2/50"
+                      onClick={() => openSos([s.label, pickedLabel].filter(Boolean).join(" · "), ordersOfSlice(pickedRows, s.key, msgStatus), "sales orders on the board", true)}>
+                      <Td left className={s.key === NO_MESSAGE_STATUS || s.key === "__other__" ? "text-ink-muted" : "text-primary"}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -318,7 +334,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           <table className="w-full border-collapse self-start">
             <thead><tr><Th left>{{ week: "Week", fortnight: "Fortnight", month: "Month" }[reportSize]}</Th><Th>Orders due</Th><Th>Amount</Th><Th>Average order</Th><Th>Delivered</Th><Th>To deliver</Th></tr></thead>
             <tbody>{weeks.map((w) => (
-              <tr key={w.key} onClick={() => openSos(`Due · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, w.rows)}
+              <tr key={w.key} onClick={() => openSos(`Due · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, w.rows, "every order due, delivered or not, by day", true)}
                 className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>
                 <Td left>{w.label} <span className="text-ink-muted">{dd(w.from)} – {dd(w.to)}</span>{w.current ? " · now" : ""}</Td>
                 <Td>{w.doCount}</Td><Td>{rm(w.doAmountSen)}</Td><Td>{w.doCount ? rm(Math.round(w.doAmountSen / w.doCount)) : "—"}</Td>

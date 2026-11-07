@@ -77,7 +77,7 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
   const [drill, setDrill] = useState<Drill<CaseRow> | null>(null);
   const openCases = (title: string, keep: (c: CaseRow) => boolean) => setDrill({
     title, subtitle: periodLabel, rows: (d?.caseList ?? []).filter(keep).sort((a, b) => b.ageDays - a.ageDays), rowKey: (c) => String(c.id),
-    onRow: (c) => navigate(`/assr/${c.id}`),
+    onRow: (c) => navigate(`/assr/${c.id}`), groupBy: null,
     columns: [
       col<CaseRow>("Case", true, (c) => <span className="text-primary">{c.assrNo ?? `#${c.id}`}</span>, (c) => c.assrNo ?? "", null, null),
       col<CaseRow>("Customer", true, (c) => c.customer ?? "—", (c) => c.customer ?? "", null, null),
