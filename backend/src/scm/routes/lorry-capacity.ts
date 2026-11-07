@@ -142,7 +142,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
   const sb = c.get('supabase');
   const { data: dos, error: doErr } = await paginateAll<Record<string, unknown>>((lo, hi) =>
     scopeToCompany(sb.from('delivery_orders')
-      .select('id, customer_delivery_date')
+      .select('id, customer_delivery_date, local_total_sen')
       .gte('customer_delivery_date', from)
       .lte('customer_delivery_date', to)
       .not('status', 'in', '(DRAFT,CANCELLED)'), c)
@@ -151,6 +151,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
   );
   if (doErr) return { data: [], error: doErr.message };
   const dateByDo = new Map((dos ?? []).map((d) => [dual<string>(d, 'id'), dual<string | null>(d, 'customer_delivery_date')]));
+  const senByDo = new Map((dos ?? []).map((d) => [dual<string>(d, 'id'), Number(dual(d, 'local_total_sen') ?? 0)]));
   const { data: crew, error: crewErr } = await chunkIn([...dateByDo.keys()], (batch, lo, hi) =>
     sb.from('delivery_order_crew')
       .select('do_id, lorry_id, lorry_plate')
@@ -166,6 +167,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
       lorryPlate: dual<string | null>(cr, 'lorry_plate') ?? null,
       date: dateByDo.get(dual<string>(cr, 'do_id')) ?? null,
       kind: 'delivery' as const,
+      revenueSen: senByDo.get(dual<string>(cr, 'do_id')) ?? 0,
     })),
   };
 }
@@ -191,8 +193,8 @@ export async function loadProjectJobs(c: Ctx, from: string, to: string): Promise
       /* The crew the PMS editor stores, one lorry or several, as the board reads it; the
          single lorry column is only the older projects' answer. */
       const { plates } = flattenProjectCrew(dual<string | null>(p, `${k}_crew`) ?? null);
-      for (const plate of plates) data.push({ lorryId: null, lorryPlate: plate, date, kind: 'setupDismantle', stage, code, name });
-      if (plates.length === 0 && lorryId != null) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle', stage, code, name });
+      for (const plate of plates) data.push({ lorryId: null, lorryPlate: plate, date, kind: 'setupDismantle', revenueSen: 0, stage, code, name });
+      if (plates.length === 0 && lorryId != null) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle', revenueSen: 0, stage, code, name });
     }
   }
   return { data, error: null };
@@ -340,13 +342,14 @@ lorryCapacity.get('/', async (c) => {
         trip_id is in our in-range trip set. Paginated, chunked over the trip ids
         (a large fleet-month can exceed a 1000-element IN list). */
   const tripIds = [...tripMeta.keys()];
+  const unpricedDo = new Map<string, string[]>();
   if (tripIds.length > 0) {
     const CHUNK = 200;
     for (let i = 0; i < tripIds.length; i += CHUNK) {
       const batch = tripIds.slice(i, i + CHUNK);
       const { data: stops } = await paginateAll<Record<string, unknown>>((lo, hi) =>
         sb.from('trip_stops')
-          .select('trip_id, stop_type, revenue_sen')
+          .select('trip_id, stop_type, revenue_sen, do_id, assr_case_id')
           .in('trip_id', batch)
           .range(lo, hi),
       );
@@ -357,9 +360,18 @@ lorryCapacity.get('/', async (c) => {
         const acc = byLorry.get(meta.lorryId);
         if (!acc) continue;
         const kind = String(dual<string>(s, 'stop_type') ?? '').toUpperCase();
-        if (kind === 'DELIVERY') {
+        /* A service case's delivery leg rides the run as a service job, the same rule as
+           the Logistic Overview, so it is not a delivery order and earns no DO revenue. */
+        if (kind === 'DELIVERY' && dual(s, 'assr_case_id') != null) {
+          acc.services += 1;
+        } else if (kind === 'DELIVERY') {
           acc.deliveries += 1;
-          acc.deliveryRevenueSen += Number(dual(s, 'revenue_sen') ?? 0);
+          /* revenue_sen is stamped only when the board scheduled the stop; otherwise
+             the stop's delivery order carries the amount (read below). */
+          const stamped = Number(dual(s, 'revenue_sen') ?? 0);
+          const doId = dual<string | null>(s, 'do_id');
+          if (stamped > 0) acc.deliveryRevenueSen += stamped;
+          else if (doId) unpricedDo.set(doId, [...(unpricedDo.get(doId) ?? []), meta.lorryId]);
           if (meta.date) acc.deliveryTripDates.add(meta.date);
         } else if (kind === 'PICKUP') {
           acc.pickups += 1;
@@ -373,6 +385,20 @@ lorryCapacity.get('/', async (c) => {
         } else if (kind === 'SETUP' || kind === 'DISMANTLE') {
           acc.setupDismantle += 1;
         }
+      }
+    }
+  }
+
+  /* 4a. Revenue of the delivery stops that carry no stamped amount, from their DO. */
+  if (unpricedDo.size > 0) {
+    const { data: priced, error: priceErr } = await chunkIn([...unpricedDo.keys()], (batch, lo, hi) =>
+      scopeToCompany(sb.from('delivery_orders').select('id, local_total_sen').in('id', batch), c).order('id').range(lo, hi),
+    );
+    if (priceErr) return c.json({ error: 'load_failed', reason: `delivery order amounts: ${priceErr.message}` }, 500);
+    for (const d of priced) {
+      for (const lid of unpricedDo.get(dual<string>(d, 'id')) ?? []) {
+        const acc = byLorry.get(lid);
+        if (acc) acc.deliveryRevenueSen += Number(dual(d, 'local_total_sen') ?? 0);
       }
     }
   }
@@ -394,6 +420,7 @@ lorryCapacity.get('/', async (c) => {
     acc.totalTrips += t.dates.size;
     acc.deliveries += t.delivery;
     acc.setupDismantle += t.setupDismantle;
+    acc.deliveryRevenueSen += t.revenueSen;
     for (const d of t.dates) acc.tripDates.add(d);
     for (const d of t.deliveryDates) acc.deliveryTripDates.add(d);
   }
