@@ -28,8 +28,10 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     [day.data, lorryId],
   );
   const live = runs.some((t) => String(t.status).toUpperCase() === "IN_PROGRESS");
-  const tracker = (useLorryPositions().data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
-  const track = useLorryTrack(lorryId, date).data;
+  const positions = useLorryPositions();
+  const tracker = (positions.data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
+  const trackQ = useLorryTrack(lorryId, date);
+  const track = trackQ.data;
   const kmCost = (useLorryKmCost().data ?? []).find((k) => k.lorry_id === lorryId) ?? null;
   const phones = useActiveTripLocations(live && !tracker);
   const phoneFix = useMemo(() => {
@@ -52,8 +54,13 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type }));
   const driven = (track?.fixes ?? []).map((f) => ({ lat: f.lat, lng: f.lng }));
 
+  /* A failed read used to look exactly like "no run today / no position yet". */
+  const failed = [day.isError && "today's runs", positions.isError && "the GPS position", trackQ.isError && "today's track"].filter(Boolean);
   return (
     <div className="space-y-3">
+      {failed.length > 0 && (
+        <p role="alert" className="rounded-md border border-err/30 bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">Could not load {failed.join(", ")}. What shows below may be incomplete.</p>
+      )}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <Fact label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
           hint={position

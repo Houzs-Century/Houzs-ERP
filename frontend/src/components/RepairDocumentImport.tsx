@@ -133,6 +133,8 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   const [workshopList, setWorkshopList] = useState<Workshop[]>([]);
   const [creatingWorkshop, setCreatingWorkshop] = useState(false);
   const [newWorkshopName, setNewWorkshopName] = useState("");
+  /* Rename the linked workshop (PATCH /workshops/:id). Its code never changes. */
+  const [renameTo, setRenameTo] = useState<string | null>(null);
 
   const loadWorkshops = async () => {
     try {
@@ -228,6 +230,17 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
       await loadWorkshops();
       setWorkshopId(made.id);
     } catch (e) { setErr(errText(e)); } finally { setCreatingWorkshop(false); }
+  };
+
+  const renameWorkshop = async () => {
+    const name = renameTo?.trim() ?? "";
+    if (!workshopId || !name || creatingWorkshop) return;
+    setCreatingWorkshop(true); setErr(null);
+    try {
+      await api.patch(`/api/fleet-maintenance/workshops/${encodeURIComponent(workshopId)}`, { name });
+      await loadWorkshops();
+      setRenameTo(null);
+    } catch (e) { setErr(`Could not rename the workshop: ${errText(e)}`); } finally { setCreatingWorkshop(false); }
   };
 
   const createNamedWorkshop = async () => {
@@ -374,7 +387,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
           </>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <select className={cn(FIELD, "max-w-[280px]")} value={workshopId} onChange={(e) => setWorkshopId(e.target.value)}>
+          <select className={cn(FIELD, "max-w-[280px]")} value={workshopId} onChange={(e) => { setWorkshopId(e.target.value); setRenameTo(null); }}>
             <option value="">Not linked — keep the name as text</option>
             {workshopList.map((w) => <option key={w.id} value={w.id}>{w.code} · {w.name}</option>)}
           </select>
@@ -383,7 +396,22 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
               {creatingWorkshop ? "Registering…" : "Register this workshop"}
             </Button>
           )}
+          {workshopId && renameTo === null && (
+            <Button variant="secondary" onClick={() => setRenameTo(workshopList.find((w) => w.id === workshopId)?.name ?? "")}>Rename</Button>
+          )}
         </div>
+        {workshopId && renameTo !== null && (
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <div>
+              <label className={LABEL}>New name</label>
+              <input className={cn(FIELD, "min-w-[200px]")} value={renameTo} onChange={(e) => setRenameTo(e.target.value)} placeholder="Workshop name" />
+            </div>
+            <Button variant="primary" onClick={() => void renameWorkshop()} disabled={creatingWorkshop || !renameTo.trim()}>
+              {creatingWorkshop ? "Saving…" : "Save name"}
+            </Button>
+            <Button variant="secondary" onClick={() => setRenameTo(null)} disabled={creatingWorkshop}>Cancel</Button>
+          </div>
+        )}
         {!res && !workshopId && (
           /* With no document there is nothing to read a workshop OUT of, so the
              only way to link one that is not on file yet is to name it here. */
