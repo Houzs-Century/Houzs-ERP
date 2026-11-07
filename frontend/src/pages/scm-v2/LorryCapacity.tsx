@@ -147,12 +147,13 @@ function utilClass(frac: number | null): string {
 export const LorryCapacity = ({ period, overviewLorries }: { period: { from: string; to: string }; overviewLorries: LorryRow[] }) => {
   const [params, setParams] = useSearchParams();
   const notify = useNotify();
-  const fleetParam = (params.get('fleet') as FleetFilter) ?? 'all';
-  const fleet: FleetFilter = FLEET_TABS.some((f) => f.key === fleetParam) ? fleetParam : 'all';
+  /* Own lorries by default (owner 2026-11-08); All and Outsourced stay one click away. */
+  const fleetParam = (params.get('fleet') as FleetFilter) ?? 'internal';
+  const fleet: FleetFilter = FLEET_TABS.some((f) => f.key === fleetParam) ? fleetParam : 'internal';
   const { from, to } = period;
   const setFleet = (f: FleetFilter) => {
     const next = new URLSearchParams(params);
-    if (f === 'all') next.delete('fleet'); else next.set('fleet', f);
+    if (f === 'internal') next.delete('fleet'); else next.set('fleet', f);
     setParams(next, { replace: true });
   };
 
