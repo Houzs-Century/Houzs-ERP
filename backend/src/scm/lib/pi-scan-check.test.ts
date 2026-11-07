@@ -78,6 +78,11 @@ describe('pi scan check', () => {
     const r = { lines: [{ grnItemId: 'g1', read: { itemCode: 'T1' } }, { grnItemId: null, read: { itemCode: 'T2' } }] } as unknown as PiReview;
     expect(billCodesToTeach(r, () => 'SKU-1')).toEqual([{ printedCode: 'T1', itemCode: 'SKU-1' }]);
   });
+  test('a row tied to another size is billed but not taught', () => {
+    const r = { lines: [{ grnItemId: 'g1', read: { itemCode: 'DIVAN-(Q)' } }] } as unknown as PiReview;
+    expect(billCodesToTeach(r, () => 'DIVAN ONLY-(K)')).toEqual([]);
+    expect(billCodesToTeach(r, () => 'DIVAN ONLY-(Q)')).toEqual([{ printedCode: 'DIVAN-(Q)', itemCode: 'DIVAN ONLY-(Q)' }]);
+  });
 });
 
 describe('a set billed on one row', () => {

@@ -123,5 +123,16 @@ export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>
   return { invoiceSen, oursSen };
 }
 
+/** Pieces on the paper and on the GRN lines chosen, for the card's total row. */
+export function piQtyTotals(review: PiReview, lines: ReadonlyMap<string, BillLine>): { qty: number; left: number } {
+  let qty = 0; let left = 0;
+  for (const l of review.lines) {
+    qty += l.qty;
+    const line = l.grnItemId ? lines.get(l.grnItemId) : undefined;
+    if (line) left += line.remaining;
+  }
+  return { qty, left };
+}
+
 let seq = 0;
 export const newPiLineKey = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;

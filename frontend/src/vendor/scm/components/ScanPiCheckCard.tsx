@@ -13,7 +13,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
-import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
+import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
 
@@ -48,6 +48,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
   const swapped = swappedDate(review.invoiceDate, today);
   const anyTied = review.lines.some((l) => l.grnItemId);
   const { invoiceSen, oursSen } = piAmounts(review, byId);
+  const qtyTotals = piQtyTotals(review, byId);
   const amountsDiffer = invoiceSen != null && oursSen != null && invoiceSen !== oursSen;
 
   const set = (patch: Partial<PiReview>) => onChange({ ...review, ...patch });
@@ -139,7 +140,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
       {open && (
         <div className={styles.lines}>
           <div className={`${styles.row} ${styles.rowPi} ${styles.rowHead}`}>
-            <span>#</span><span>GRN</span><span>SKU</span><span>Description</span><span className={styles.right}>Left</span><span className={styles.right}>Qty</span><span className={styles.right}>PO Price</span><span className={styles.right}>PI Price</span><span />
+            <span>#</span><span>GRN</span><span>PO</span><span>SKU</span><span>Description</span><span className={styles.right}>Left</span><span className={styles.right}>Qty</span><span className={styles.right}>PO Price</span><span className={styles.right}>PI Price</span><span />
           </div>
           {review.lines.map((l, i) => {
             const line = l.grnItemId ? byId.get(l.grnItemId) : undefined;
@@ -150,6 +151,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
               <div key={l.key} className={`${styles.row} ${styles.rowPi}`}>
                 <span className={styles.num}>{i + 1}</span>
                 <SearchableSelect value={grn} onChange={(v) => pickGrn(l.key, v)} options={grnOptions(mine)} placeholder="Choose GRN" className={`${styles.cell} ${styles.mono}`} ariaLabel={`GRN for row ${i + 1}`} />
+                <span className={`${styles.mono} ${styles.po}`} title={line?.poNumber ?? undefined}>{line?.poNumber ?? '—'}</span>
                 <SearchableSelect
                   value={l.grnItemId ?? ''}
                   onChange={(v) => setLine(l.key, { grnItemId: v, grnNumber: byId.get(v)?.grnNumber ?? null, suggested: false })}
@@ -171,6 +173,14 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
               </div>
             );
           })}
+          <div className={`${styles.row} ${styles.rowPi} ${styles.rowTotal}`}>
+            <span /><span>Total</span><span /><span /><span>{review.lines.length} {review.lines.length === 1 ? 'line' : 'lines'}</span>
+            <span className={styles.right}>{qtyTotals.left}</span>
+            <span className={styles.right}>{qtyTotals.qty}</span>
+            <span className={`${styles.right} ${amountsDiffer ? styles.priceOff : ''}`}>{oursSen == null ? '—' : fmtSen(oursSen)}</span>
+            <span className={styles.right}>{invoiceSen == null ? '—' : fmtSen(invoiceSen)}</span>
+            <span />
+          </div>
           <button type="button" className={styles.addLine} onClick={() => set({ lines: [...review.lines, { key: newPiLineKey(), grnItemId: null, grnNumber: null, qty: 1, suggested: false, read: null }] })}>+ Add line</button>
           {review.lines.some((l) => !l.grnItemId) && <p className={styles.leftOut}>A row with no SKU chosen is left off the draft.</p>}
         </div>

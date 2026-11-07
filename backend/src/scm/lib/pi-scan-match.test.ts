@@ -92,6 +92,16 @@ describe('matchInvoiceLinesToGrnLines', () => {
     expect(res.matchedLineCount).toBe(1);
   });
 
+  test('a learned code naming another size is not used: a printed queen never bills a king (INV-2610-090)', () => {
+    const res = matchInvoiceLinesToGrnLines(
+      [line({ itemCode: 'DIVAN-(Q)', qty: 1 })],
+      [grn({ grnItemId: 'gk', itemCode: 'DIVAN ONLY-(K)', remaining: 1 })],
+      new Map([['DIVAN-(Q)', 'DIVAN ONLY-(K)']]),
+    );
+    expect(res.picks).toEqual([]);
+    expect(res.unmatched[0]).toMatchObject({ reason: 'no_code_match' });
+  });
+
   test('a code that matches nothing is left unmatched, never guessed onto another line', () => {
     const res = matchInvoiceLinesToGrnLines(
       [line({ itemCode: 'UNKNOWN', qty: 1 })],
