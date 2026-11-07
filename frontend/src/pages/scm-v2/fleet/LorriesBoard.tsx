@@ -64,7 +64,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
       <p className="text-[12px] text-ink-muted">Showing {shown.length} of {all.length}</p>
       {lorries.isError && <p className="text-[13px] text-[#8a2c2c]">Lorries could not be loaded.</p>}
       {lorries.isLoading && <p className="text-[13px] text-ink-muted">Loading lorries…</p>}
-      {!lorries.isLoading && shown.length === 0 && (
+      {!lorries.isLoading && !lorries.isError && shown.length === 0 && (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-ink-muted">
           No lorry matches. <button type="button" className="font-semibold text-primary" onClick={() => { setQ(""); setHome("all"); setOwner("all"); }}>Clear</button>
         </div>

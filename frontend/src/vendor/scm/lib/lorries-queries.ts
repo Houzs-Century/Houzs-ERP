@@ -237,7 +237,7 @@ export function useDeleteLorry() {
   });
 }
 
-export type NewServiceRecord = { serviceDate: string; description: string; workshop: string | null; costSen: number; odometerKm: number | null };
+export type NewServiceRecord = { serviceDate: string; description: string; workshop: string | null; costSen: number; odometerKm: number | null; nextServiceDate: string | null; nextServiceKm: number | null; notes: string | null };
 
 export function useCreateLorryServiceRecord(lorryId: string) {
   const qc = useQueryClient();

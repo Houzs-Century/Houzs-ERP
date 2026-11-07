@@ -14,7 +14,7 @@ import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { expiryStatus, type ComplianceTone } from "../../../vendor/shared/lorry-compliance";
 import {
   CAPACITY_LAYERS, CAPACITY_LAYER_LABEL, LORRY_TYPES, LORRY_TYPE_LABEL,
-  useCreateLorryServiceRecord, useDeleteLorry, useDeleteLorryServiceRecord, useLorryServiceRecords, useUpdateLorry,
+  useDeleteLorry, useUpdateLorry,
   type CapacityLayer, type LorryRow, type LorryType,
 } from "../../../vendor/scm/lib/lorries-queries";
 import type { DriverRow } from "../../../vendor/scm/lib/drivers-queries";
@@ -22,6 +22,7 @@ import type { HelperRow } from "../../../vendor/scm/lib/helpers-queries";
 import type { ThreePLCompanyRow } from "../../../vendor/scm/lib/threepl-companies-queries";
 import { alsoServes, boxOf, groupWarehouses, lorryHome, type WarehouseLite } from "./lorryModel";
 import { Lorry3D } from "./Lorry3D";
+import { ServiceRecords } from "./LorryService";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
   expired: "bg-[#f6dcdc] text-[#8a2c2c]", critical: "bg-[#f6dcdc] text-[#8a2c2c]",
@@ -69,7 +70,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
         <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt ? "GPS live" : "No GPS signal"}</span></span>}
       subtitle={[LORRY_TYPE_LABEL[lorry.type], lorry.model, lorry.active ? null : "Not in use"].filter(Boolean).join(" · ")}
       headerActions={!editing ? <span className="flex gap-2"><button type="button" onClick={() => setEditing(true)} className="rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white">Edit</button>
-        <Link to="/scm/lorry-live-map" className="rounded-md border border-border px-3 py-1.5 text-[12.5px] font-semibold text-ink">See on map</Link></span> : null}>
+        <Link to="/scm/lorry-live-map" className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">See on map</Link></span> : null}>
       {editing
         ? <LorryEdit lorry={lorry} warehouses={warehouses} drivers={drivers} helpers={helpers} carriers={carriers} onDone={() => setEditing(false)} />
         : (
@@ -129,10 +130,15 @@ function Documents({ lorry }: { lorry: LorryRow }) {
     if (!renew || !expiry) return;
     setBusy(true);
     try {
-      await api.post(`/api/fleet-maintenance/vehicles/${lorry.id}/compliance`, { docType: renew, expiryDate: expiry, referenceNo: ref || null });
+      await api.post(`/api/fleet-maintenance/vehicles/${lorry.id}/compliance`, { docType: renew, expiryDate: expiry, documentRef: ref || null });
       await qc.invalidateQueries({ queryKey: ["lorries"] });
       setRenew(null); setExpiry(""); setRef("");
-    } catch (e) { writeFailed(e); } finally { setBusy(false); }
+    } catch (e) {
+      /* The renew writes the Fleet Health vault, which needs fleet.write, not the lorry master's permission. */
+      if ((e as { status?: number } | null)?.status === 403) {
+        writeFailedAs("The document was not renewed")(new Error("You do not have Fleet Health permission (fleet write). Ask an admin to grant it."));
+      } else writeFailed(e);
+    } finally { setBusy(false); }
   };
   return (
     <Card title="Documents" action={<Link to={`/fleet-health/${lorry.id}`} className="text-[12.5px] font-semibold text-primary hover:underline">Full history</Link>}>
@@ -156,47 +162,6 @@ function Documents({ lorry }: { lorry: LorryRow }) {
           </div>
         );
       })}
-    </Card>
-  );
-}
-
-function ServiceRecords({ lorryId }: { lorryId: string }) {
-  const records = useLorryServiceRecords(lorryId);
-  const create = useCreateLorryServiceRecord(lorryId);
-  const del = useDeleteLorryServiceRecord(lorryId);
-  const confirm = useConfirm();
-  const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ date: "", what: "", workshop: "", cost: "", km: "" });
-  const save = () => create.mutate(
-    { serviceDate: f.date, description: f.what.trim(), workshop: f.workshop.trim() || null, costSen: Math.round(Number(f.cost || 0) * 100), odometerKm: f.km ? Math.round(Number(f.km)) : null },
-    { onSuccess: () => { setAdding(false); setF({ date: "", what: "", workshop: "", cost: "", km: "" }); }, onError: writeFailedAs("The service record was not saved") },
-  );
-  const list = records.data ?? [];
-  return (
-    <Card title="Service and workshop" action={<span className="flex gap-3"><LinkBtn onClick={() => setAdding(true)}>Add record</LinkBtn><Link to={`/fleet-health/${lorryId}`} className="text-[12.5px] font-semibold text-primary hover:underline">Repairs</Link></span>}>
-      {adding && (
-        <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg bg-surface-2 p-3">
-          <label className="text-[11px] text-ink-muted">Date<DateField value={f.date} onChange={(v) => setF({ ...f, date: v })} fullWidth aria-label="Service date" /></label>
-          <label className="text-[11px] text-ink-muted">Workshop<input value={f.workshop} onChange={(e) => setF({ ...f, workshop: e.target.value })} className={inputCls} /></label>
-          <label className="col-span-2 text-[11px] text-ink-muted">What was done<input value={f.what} onChange={(e) => setF({ ...f, what: e.target.value })} className={inputCls} /></label>
-          <label className="text-[11px] text-ink-muted">Cost (RM)<input inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} className={inputCls} /></label>
-          <label className="text-[11px] text-ink-muted">Odometer (km)<input inputMode="numeric" value={f.km} onChange={(e) => setF({ ...f, km: e.target.value })} className={inputCls} /></label>
-          <div className="col-span-2 flex gap-2">
-            <button type="button" disabled={!f.date || !f.what.trim() || create.isPending} onClick={save} className="min-h-[40px] rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white disabled:opacity-50">Save</button>
-            <button type="button" onClick={() => setAdding(false)} className="min-h-[40px] px-2 text-[12.5px] text-ink">Cancel</button>
-          </div>
-        </div>
-      )}
-      {records.isError && <p className="text-[12.5px] text-[#8a2c2c]">Service records could not be loaded.</p>}
-      {!records.isLoading && !records.isError && list.length === 0 && <p className="text-[12.5px] text-ink-muted">No service recorded yet.</p>}
-      {list.map((r) => (
-        <div key={r.id} className="flex items-start justify-between gap-2 border-t border-border-subtle py-2 first:border-t-0 text-[12.5px]">
-          <div><div className="font-semibold text-ink">{fmtDate(r.service_date)}</div><div className="text-ink">{r.description}</div>
-            <div className="text-ink-muted">{[r.workshop, r.odometer_km != null ? `${r.odometer_km.toLocaleString()} km` : null].filter(Boolean).join(" · ")}</div></div>
-          <span className="flex items-center gap-3"><b>{fmtSen(r.cost_sen)}</b>
-            <LinkBtn onClick={() => { void confirm({ title: "Delete this service record?", body: `${fmtDate(r.service_date)} · ${r.description}`, confirmLabel: "Delete", danger: true }).then((ok) => { if (ok) del.mutate(r.id, { onError: writeFailedAs("The record was not deleted") }); }); }}>Delete</LinkBtn></span>
-        </div>
-      ))}
     </Card>
   );
 }
