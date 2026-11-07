@@ -350,8 +350,9 @@ export function FleetDay() {
       </div>
 
       {mapOpen && (
+        <div className="mt-4 lg:mt-0 lg:w-[40%] lg:flex-none">
         <DeliveryMapPanel
-          className="mt-4 lg:mt-0 lg:w-[40%] lg:flex-none"
+          className=""
           title="Day map"
           onClose={() => setMapOpen(false)}
           pins={mapPins}
@@ -374,8 +375,9 @@ export function FleetDay() {
           vehicles={vehicles}
           onVehicleClick={(v) => { if (v.lorryId) navigate(`/fleet-health/${v.lorryId}`); }}
         />
+        {roadTotal && <p className="mt-2 text-right text-[12.5px] font-semibold text-ink-secondary">{roadTotal}</p>}
+        </div>
       )}
-      {mapOpen && roadTotal && <p className="mt-2 text-right text-[12.5px] font-semibold text-ink-secondary lg:hidden">{roadTotal}</p>}
     </div>
   );
 
