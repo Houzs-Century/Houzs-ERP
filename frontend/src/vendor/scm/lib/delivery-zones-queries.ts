@@ -6,7 +6,6 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
 
 // ── Zone map ─────────────────────────────────────────────────────────────────
 
@@ -63,7 +62,7 @@ export function useUpdateZoneRule() {
     mutationFn: ({ id, ...body }: ZoneRulePatch) =>
       authedFetch<{ zone: ZoneRuleRow }>(`/delivery-zones/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ZONES_KEY }),
-    onError: writeFailed,
+    // No hook-level onError: every caller passes its own, and both would fire.
   });
 }
 

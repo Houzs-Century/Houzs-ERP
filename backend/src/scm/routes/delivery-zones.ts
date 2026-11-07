@@ -40,6 +40,7 @@ import {
   DEFAULT_ZONE_PREFIX_MAP,
   KLANG_VALLEY_ZONES,
   zoneForAddress,
+  patchedPrefixRange,
   type ZonePrefixRule,
 } from '../lib/zone-classify';
 import { deriveSetCount, type SetLineCategory } from '../lib/set-count';
@@ -200,16 +201,28 @@ deliveryZones.patch('/:id', async (c) => {
   if (p.label !== undefined) updates.label = p.label;
   if (p.isActive !== undefined) updates.is_active = p.isActive;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
-  // A range flip (start > end) trips the table CHECK — guard for a clean 400.
-  const nextStart = updates.prefix_start ?? undefined;
-  const nextEnd = updates.prefix_end ?? undefined;
-  if (nextStart !== undefined && nextEnd !== undefined && Number(nextStart) > Number(nextEnd)) {
-    return c.json({ error: 'invalid_range', reason: 'prefixStart must be <= prefixEnd' }, 400);
-  }
   updates.updated_by = user?.id ?? null;
   updates.updated_at = new Date().toISOString();
 
   const sb = c.get('supabase');
+  // A range flip (start > end) trips the table CHECK, a 500. When the edit sends
+  // only one end, check it against the stored other end for a clean 400.
+  if (p.prefixStart !== undefined || p.prefixEnd !== undefined) {
+    let stored = { prefixStart: p.prefixStart ?? 0, prefixEnd: p.prefixEnd ?? 99 };
+    if (p.prefixStart === undefined || p.prefixEnd === undefined) {
+      const { data: cur, error: curErr } = await scopeToCompanyId(
+        sb.from('delivery_zone_postcodes').select('prefix_start, prefix_end').eq('id', id),
+        co.companyId,
+      ).maybeSingle();
+      if (curErr) return c.json({ error: 'fetch_failed', reason: curErr.message }, 500);
+      if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+      const row = cur as { prefix_start: number; prefix_end: number };
+      stored = { prefixStart: Number(row.prefix_start), prefixEnd: Number(row.prefix_end) };
+    }
+    if (!patchedPrefixRange(stored, p)) {
+      return c.json({ error: 'invalid_range', reason: 'prefixStart must be <= prefixEnd' }, 400);
+    }
+  }
   const { data, error } = await scopeToCompanyId(
     sb.from('delivery_zone_postcodes').update(updates).eq('id', id),
     co.companyId,

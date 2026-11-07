@@ -164,3 +164,15 @@ export function zoneForAddress(
   if (!pc) return { zone: null, method: 'none', postcode: null };
   return { zone: zoneForPostcode(pc, map), method: 'postcode', postcode: pc };
 }
+
+/** The range a rule ends up with after a PATCH that may send only one end; the
+ *  other end comes from the stored row. Null when start would pass end (the
+ *  table CHECK would otherwise turn that into a 500). PURE. */
+export function patchedPrefixRange(
+  stored: { prefixStart: number; prefixEnd: number },
+  patch: { prefixStart?: number; prefixEnd?: number },
+): { prefixStart: number; prefixEnd: number } | null {
+  const prefixStart = patch.prefixStart ?? stored.prefixStart;
+  const prefixEnd = patch.prefixEnd ?? stored.prefixEnd;
+  return prefixStart <= prefixEnd ? { prefixStart, prefixEnd } : null;
+}
