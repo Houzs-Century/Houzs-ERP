@@ -8,7 +8,7 @@ import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { cn } from "../../../lib/utils";
 import { api } from "../../../api/client";
 import { fmtSen } from "../../../vendor/shared/format";
-import { writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
+import { writeFailed, writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { expiryStatus, type ComplianceTone } from "../../../vendor/shared/lorry-compliance";
 import {
@@ -128,7 +128,7 @@ function Documents({ lorry }: { lorry: LorryRow }) {
       await api.post(`/api/fleet-maintenance/vehicles/${lorry.id}/compliance`, { docType: renew, expiryDate: expiry, referenceNo: ref || null });
       await qc.invalidateQueries({ queryKey: ["lorries"] });
       setRenew(null); setExpiry(""); setRef("");
-    } catch (e) { writeFailedAs("The document was not saved")(e); } finally { setBusy(false); }
+    } catch (e) { writeFailed(e); } finally { setBusy(false); }
   };
   return (
     <Card title="Documents" action={<Link to={`/fleet-health/${lorry.id}`} className="text-[12.5px] font-semibold text-primary hover:underline">Full history</Link>}>
