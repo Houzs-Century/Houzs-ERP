@@ -9,6 +9,7 @@
 // '/lorries' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { idOrNull, lorryWarehouseColumns } from '../lib/lorry-warehouses';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -54,6 +55,8 @@ const COLS = [
   'manufacture_date', 'registration_date', 'in_service_date',
   // Own-lorry running cost (km x this); NULL = not set.
   'cost_per_km_sen',
+  // The crew usually on it (mig 20261107T2000).
+  'usual_driver_id', 'usual_helper_id',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
@@ -93,12 +96,18 @@ function toNumericOrNull(v: unknown): number | null {
    not that exact shape is REJECTED rather than coerced: these are compliance
    dates, and a silently-mangled road-tax expiry is worse than a 400. Postgres
    would 22007 on garbage anyway; this turns that 500 into an honest 400. */
-/* A lorry serves one or more warehouses (owner, 2026-10-16). warehouse_ids is
-   the set; warehouse_id stays as its first entry for readers that know one. */
-function warehouseColumns(body: Record<string, unknown>): { warehouse_id: string | null; warehouse_ids: string[] } {
-  const raw = Array.isArray(body.warehouseIds) ? body.warehouseIds : body.warehouseId ? [body.warehouseId] : [];
-  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()))];
-  return { warehouse_id: ids[0] ?? null, warehouse_ids: ids };
+const warehouseColumns = lorryWarehouseColumns;
+
+/* usualDriverId / usualHelperId: undefined = untouched, else a uuid or a clear. */
+function crewColumns(body: Record<string, unknown>): { ok: true; cols: Record<string, string | null> } | { ok: false; field: string } {
+  const cols: Record<string, string | null> = {};
+  for (const [wire, col] of [['usualDriverId', 'usual_driver_id'], ['usualHelperId', 'usual_helper_id']] as const) {
+    if (body[wire] === undefined) continue;
+    const v = idOrNull(body[wire]);
+    if (!v.ok) return { ok: false, field: wire };
+    cols[col] = v.value;
+  }
+  return { ok: true, cols };
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -191,8 +200,12 @@ lorries.post('/', async (c) => {
     ownFlag: body.isInternal === undefined ? undefined : body.isInternal !== false,
   });
 
+  const crew = crewColumns(body);
+  if (!crew.ok) return c.json({ error: 'invalid_id', reason: `${crew.field} must be a driver / helper id or blank` }, 400);
+
   const sb = c.get('supabase');
   const { data, error } = await sb.from('lorries').insert({
+    ...crew.cols,
     company_id: activeCompanyId(c),
     plate,
     type,
@@ -258,7 +271,10 @@ lorries.patch('/:id', async (c) => {
     if (!LORRY_TYPES.has(type)) return c.json({ error: 'invalid_type' }, 400);
     updates.type = type;
   }
-  if (body.warehouseIds !== undefined || body.warehouseId !== undefined) Object.assign(updates, warehouseColumns(body));
+  if (body.warehouseIds !== undefined || body.warehouseId !== undefined || body.homeWarehouseId !== undefined) Object.assign(updates, warehouseColumns(body));
+  const crew = crewColumns(body);
+  if (!crew.ok) return c.json({ error: 'invalid_id', reason: `${crew.field} must be a driver / helper id or blank` }, 400);
+  Object.assign(updates, crew.cols);
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
   // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
@@ -344,6 +360,29 @@ lorries.patch('/:id', async (c) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   return c.json({ lorry: data });
+});
+
+/* Delete a lorry that never worked (owner 2026-11-07). A lorry with runs, positions,
+   documents, repairs or service records keeps its history: it is stopped, not deleted.
+   One shared fleet across companies, as PATCH /:id above. */
+lorries.delete('/:id', async (c) => {
+  // company-scope: UNIFIED FLEET — the lorry master is one roster across companies (see PATCH /:id).
+  const id = c.req.param('id');
+  const sb = c.get('supabase');
+  const { data: row, error: rowErr } = await sb.from('lorries').select('id').eq('id', id).maybeSingle();
+  if (rowErr) return c.json({ error: 'load_failed', reason: rowErr.message }, 500);
+  if (!row) return c.json({ error: 'lorry_not_found' }, 404);
+  for (const table of ['trips', 'lorry_positions', 'lorry_service_records', 'lorry_compliance_documents', 'lorry_work_orders']) {
+    const { count, error } = await sb.from(table).select('lorry_id', { count: 'exact', head: true }).eq('lorry_id', id);
+    if (error) return c.json({ error: 'load_failed', reason: `${table}: ${error.message}` }, 500);
+    if ((count ?? 0) > 0) return c.json({ error: 'lorry_has_history', reason: 'This lorry has runs or records. Stop using it instead, so its history stays.' }, 409);
+  }
+  const { error } = await sb.from('lorries').delete().eq('id', id);
+  if (error) {
+    if (error.code === '23503') return c.json({ error: 'lorry_has_history', reason: 'This lorry is still referenced. Stop using it instead.' }, 409);
+    return c.json({ error: 'delete_failed', reason: error.message }, 500);
+  }
+  return c.json({ ok: true });
 });
 
 // DEV-42: each lorry's latest Velocity fix in the last 24 h (scm/lib/velocity-poll.ts
