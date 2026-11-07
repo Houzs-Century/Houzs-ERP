@@ -15,7 +15,7 @@
    other jobs, so a lorry reads delivery days (revenue) and days in use (occupancy)
    against the days it could work (owner 2026-11-07). */
 
-import { lorryTrips, regionOf, type LorryJob } from '../shared/logistic-region';
+import { countsForLorry, lorryTrips, regionOf, type LorryJob } from '../shared/logistic-region';
 import { PROCUREMENT_CATEGORY_LABEL } from './procurement-overview';
 import { MAIN_CATEGORY_ORDER } from './so-readiness';
 
@@ -54,7 +54,7 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
   for (let d = from; d <= to; d = addDay(d)) {
     const o = out.filter((x) => x.doDate === d);
     const amountSen = o.reduce((a, x) => a + x.amountSen, 0);
-    const withLorry = o.filter((x) => x.lorry);
+    const withLorry = o.filter((x) => x.lorry && countsForLorry(regionOf(x.state)));
     const lorries = new Set(withLorry.map((x) => x.lorry)).size;
     days.push({
       date: d, orders: o.length, amountSen,
@@ -112,13 +112,13 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
   const work = workingDays(from, to < today ? to : today);
   const perDay = new Map<string, { date: string; lorry: string; orders: number; amountSen: number }>();
   for (const d of out) {
-    if (!d.lorry) continue;
+    if (!d.lorry || !countsForLorry(regionOf(d.state))) continue;
     const k = `${d.lorry}|${d.doDate}`;
     const g = perDay.get(k) ?? { date: d.doDate, lorry: d.lorry, orders: 0, amountSen: 0 };
     g.orders += 1; g.amountSen += d.amountSen; perDay.set(k, g);
   }
   const lorryDayList = [...perDay.values()].sort((a, b) => b.date.localeCompare(a.date) || b.amountSen - a.amountSen);
-  const plates = new Set([...fleet.filter((l) => l.internal).map((l) => l.plate), ...lorryDayList.map((x) => x.lorry), ...lorryJobs.map((j) => j.plate).filter((p) => fleet.some((l) => l.plate === p))]);
+  const plates = new Set([...fleet.filter((l) => l.internal).map((l) => l.plate), ...lorryDayList.map((x) => x.lorry), ...lorryJobs.map((j) => j.plate)]);
   const internal = new Set(fleet.filter((l) => l.internal).map((l) => l.plate));
   const byLorry = [...plates].map((plate) => {
     const ds = lorryDayList.filter((x) => x.lorry === plate);
@@ -127,7 +127,8 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     const t = lorryTrips(ds.map((x) => x.date), jobs);
     const inUse = new Set([...ds.map((x) => x.date), ...jobs.map((j) => j.date)]);
     const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !inUse.has(d)).length);
-    const available = work - downDays;
+    /* Sunday is not a working day, but a Sunday it went out is a day it was available. */
+    const available = work - downDays + [...inUse].filter((d) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0).length;
     return {
       lorry: plate, internal: internal.has(plate), daysOut: t.deliveryDays, fairTrips: t.fairTrips, stockTrips: t.stockTrips,
       usedDays: t.usedDays, trips: t.trips, otherTrips: t.otherTrips, workingDays: available, downDays,
@@ -140,11 +141,12 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
   }).sort((a, b) => Number(b.internal) - Number(a.internal) || b.amountSen - a.amountSen);
 
   const lorryDays = days.reduce((a, x) => a + x.lorries, 0);
-  const lorrySen = out.filter((x) => x.lorry).reduce((a, x) => a + x.amountSen, 0);
+  const lorryDos = out.filter((x) => x.lorry && countsForLorry(regionOf(x.state)));
+  const lorrySen = lorryDos.reduce((a, x) => a + x.amountSen, 0);
   return {
     days,
     /* Average a lorry carried per day it went out, over the period. */
-    lorry: { lorryDays, recordedOrders: out.filter((x) => x.lorry).length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null, workingDays: work },
+    lorry: { lorryDays, recordedOrders: lorryDos.length, lorryRegionOrders: out.filter((x) => countsForLorry(regionOf(x.state))).length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null, workingDays: work },
     byLorry,
     lorryDayList: lorryDayList.slice(0, 400),
     byRegion: [...regions.values()].map((g) => ({ ...g, avgOrderSen: g.orders ? Math.round(g.amountSen / g.orders) : null }))

@@ -205,7 +205,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .select('id, lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
   if (used.error) return fail('lorry runs in the period', used.error);
   const usedStops = await chunkIn<Row>((used.data ?? []).map((u) => String(u.id)), (b, f, t) => scopeToCompany(sb.from('trip_stops')
-    .select('trip_id, stop_type').in('trip_id', b), c).order('id').range(f, t));
+    .select('trip_id, stop_type, assr_case_id').in('trip_id', b), c).order('id').range(f, t));
   if (usedStops.error) return fail('lorry run stops in the period', usedStops.error);
   const projectJobs = await loadProjectJobs(c, pFrom, pEnd);
   if (projectJobs.error) return fail('event lorries', { message: projectJobs.error });
@@ -213,15 +213,17 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const lorryJobs: LorryJob[] = [];
   for (const s of usedStops.data) {
     const run = runOf.get(String(s.trip_id));
-    const kind = STOP_KIND[String(s.stop_type)];
+    /* A service case's delivery leg is a DELIVERY stop too; it rides the run as a service job. */
+    const kind = s.assr_case_id != null ? 'service' : STOP_KIND[String(s.stop_type)];
     if (run?.plate && run.date && kind) lorryJobs.push({ plate: run.plate, date: run.date, kind });
   }
-  /* An event's lorry is kept on the project; the same set-up can also sit on a run. */
-  const setupOnRun = new Set(lorryJobs.filter((j) => j.kind === 'setup').map((j) => `${j.plate}|${j.date}`));
+  /* An event's set-up and dismantle live on the project, never on a run, so they add to
+     the run stops rather than repeat them. */
   for (const j of projectJobs.data) {
-    const plate = j.lorryId ? plateOf.get(j.lorryId) : j.lorryPlate;
+    const typed = j.lorryPlate ? (fleetByNorm.get(j.lorryPlate.replace(/\s+/g, '').toUpperCase()) ?? j.lorryPlate) : null;
+    const plate = j.lorryId ? plateOf.get(j.lorryId) : typed;
     const date = String(j.date ?? '').slice(0, 10);
-    if (plate && date && !setupOnRun.has(`${plate}|${date}`)) lorryJobs.push({ plate, date, kind: 'setup' });
+    if (plate && date) lorryJobs.push({ plate, date, kind: 'setup' });
   }
   const period = {
     from: pFrom, to: pTo,

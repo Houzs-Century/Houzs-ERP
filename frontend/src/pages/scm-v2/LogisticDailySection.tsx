@@ -63,7 +63,7 @@ export function LogisticDailySection({ days, regions, region, setRegion, day, se
           </table>
         </div>
         <p className="mt-2 text-[11.5px] text-ink-muted">
-          Average per delivery lorry = the day&apos;s orders whose lorry is known, divided by the lorries that carried a delivery order that day. Other jobs are not counted.
+          Average per delivery lorry = the day&apos;s KL, Southern and Northern orders whose lorry is known, divided by the lorries that carried them. East Malaysia goes out trip by trip and is not counted. Other jobs are not counted.
           {tot.lorryOrders < tot.orders && ` The lorry is recorded on ${tot.lorryOrders} of ${tot.orders} delivery orders; it fills in as the crew and lorry are set on each DO (or the DO is put on a lorry run).`}
         </p>
       </Panel>
@@ -95,7 +95,7 @@ export function LogisticDailySection({ days, regions, region, setRegion, day, se
    show how full it is, both over the days it could work (Sundays and workshop days
    off). Our own lorries carry a fixed crew and instalment, so every working day one
    stays in costs money. */
-export function LorrySection({ lorries, days, recorded, total, region, day, onDrill }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number; region: string | null; day: string | null; onDrill: DoDrill }) {
+export function LorrySection({ lorries, days, recorded, total, region, day, onLorry }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number; region: string | null; day: string | null; onLorry: (plate: string) => void }) {
   const own = lorries.filter((l) => l.internal);
   const ownDays = own.reduce((a, l) => a + l.daysOut, 0);
   const ownTrips = own.reduce((a, l) => a + l.trips, 0);
@@ -104,21 +104,21 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title={`Lorries · revenue and occupancy${scope ? ` · ${scope}` : ""}`} hint="Delivery day = delivery or service run, one trip however many orders · Fair trip = a set-up or dismantle, one trip each · Stock day = a supplier pickup or stock transfer, half a trip each · Occupancy = trips ÷ days it could work (Sundays and workshop days off), and can pass 100% · Per delivery day = revenue ÷ delivery days">
+      <Panel title={`Lorries · revenue and capacity${scope ? ` · ${scope}` : ""}`} hint="KL, Southern and Northern only · Delivery trip = a day's delivery or service run, however many orders · Fair trip = a set-up or dismantle · Stock trip = a supplier pickup or stock transfer, half a trip · Capacity = total trips ÷ days it could work (workshop days off, Sundays only if it went out), and can pass 100% · Per delivery trip = revenue ÷ delivery trips">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
             Our own lorries had <b className="text-ink">{ownPossible}</b> lorry working days: <b className="text-ink">{ownDays}</b> delivery trips and
-            {" "}<b className="text-ink">{ownOther}</b> other trips, <b className="text-ink">{ownPossible ? Math.round((ownTrips / ownPossible) * 100) : 0}%</b> occupied.
+            {" "}<b className="text-ink">{ownOther}</b> other trips, <b className="text-ink">{ownPossible ? Math.round((ownTrips / ownPossible) * 100) : 0}%</b> capacity used.
           </p>
         )}
         <table className="w-full border-collapse">
-          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th>Fair trips</Th><Th>Stock days</Th><Th>Days in use</Th><Th>Trips</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th><Th>Per order</Th></tr></thead>
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery trips</Th><Th>Fair trips</Th><Th>Stock trips</Th><Th>Total trips</Th><Th>Day in use</Th><Th left>Capacity</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery trip</Th><Th>Per order</Th></tr></thead>
           <tbody>{lorries.map((l) => (
-            <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Carried by ${l.lorry}${scope ? ` · ${scope}` : ""}`, (d) => d.lorry === l.lorry && (!region || d.region === region) && (!day || d.date === day))}>
+            <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onLorry(l.lorry)}>
               <Td left className="font-semibold">{l.lorry}</Td>
               <Td left className="text-[11px] text-ink-muted">{l.internal ? "own" : "3PL"}</Td>
-              <Td>{l.daysOut}</Td><Td>{l.fairTrips}</Td><Td>{l.stockTrips}</Td>
-              <Td>{l.usedDays} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td><Td>{l.trips}</Td>
+              <Td>{l.daysOut}</Td><Td>{l.fairTrips}</Td><Td>{l.stockTrips}</Td><Td className="font-semibold">{l.trips}</Td>
+              <Td>{l.usedDays} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td>
               <Td left className="w-[22%]">
                 <div className="flex items-center gap-2">
                   <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: (l.occupancyPct ?? 0) >= 80 ? TONE.good : (l.occupancyPct ?? 0) >= 60 ? TONE.warn : TONE.bad }} /></div>
@@ -138,7 +138,7 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
           <div className="max-h-[420px] overflow-y-auto">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 bg-surface"><tr><Th left>Date</Th><Th left>Lorry</Th><Th>Orders</Th><Th>Revenue</Th></tr></thead>
-              <tbody>{days.map((x) => <tr key={`${x.date}-${x.lorry}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`${x.lorry} on ${x.date}`, (d) => d.lorry === x.lorry && d.date === x.date)}><Td left>{x.date}</Td><Td left>{x.lorry}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td></tr>)}</tbody>
+              <tbody>{days.map((x) => <tr key={`${x.date}-${x.lorry}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onLorry(x.lorry)}><Td left>{x.date}</Td><Td left>{x.lorry}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td></tr>)}</tbody>
             </table>
           </div>
         )}
