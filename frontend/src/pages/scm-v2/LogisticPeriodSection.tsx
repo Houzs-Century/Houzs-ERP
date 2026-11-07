@@ -92,7 +92,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
             </table>
           ) : <p className="text-[12.5px] text-ink-muted">Nothing delivered in this period.</p>}
           <p className="mt-1 text-[11px] text-ink-muted">
-            An order counts in each category it charges for, with only that category&apos;s amount. Free items (bundled bedframes, gift pillows) are left out, and so are fee lines (transport, disposal, storage{totals?.chargesSen ? `: ${fmtSen(totals.chargesSen)} this period` : ""}).
+            Each order counts once, with its whole amount: Sofa or Mattress when it has one, Bedframe only when the order delivers no sofa or mattress. Free items (bundled bedframes, gift pillows) are left out, and so are fee lines (transport, disposal, storage{totals?.chargesSen ? `: ${fmtSen(totals.chargesSen)} this period` : ""}).
           </p>
         </div>
         <div>

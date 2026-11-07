@@ -25,6 +25,9 @@ export interface PeriodDo {
 
 export { regionOf };
 
+/** What an order is, when it carries several: the biggest item decides. */
+const MAIN_CATEGORY = ['Sofa', 'Mattress', 'Bedframe'];
+
 const addDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
 /** One DO line's product category and amount, for the average order per category.
@@ -66,20 +69,29 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     g.orders += 1; g.amountSen += d.amountSen; regions.set(r, g);
   }
 
-  /* Average order per category, from the DO lines: a DO counts in a category
-     when it carries a charged line of it, with only that category's amount, so a mixed
-     DO counts once in each of its categories. Fee lines are not a product. */
+  /* Average order per category, from the DO lines. An order is one category with its
+     whole amount (owner 2026-11-07): sofa and mattress never share one, and a bedframe
+     is the main item only when the order delivers nothing bigger. Fee lines are not a
+     product. */
   const categoriesOf = (list: PeriodDo[]) => {
     const outIds = new Set(list.map((d) => d.id));
-    const cats = new Map<string, Map<string, number>>();
+    const linesOf = new Map<string, Map<string, number>>();
     let chargesSen = 0;
     for (const l of catLines) {
       /* A free line (a bundled bedframe, a gift pillow) is not an order of that category. */
       if (!outIds.has(l.doId) || l.sen <= 0) continue;
       if (l.category === 'Charges') { chargesSen += l.sen; continue; }
-      const m = cats.get(l.category) ?? new Map<string, number>();
-      m.set(l.doId, (m.get(l.doId) ?? 0) + l.sen);
-      cats.set(l.category, m);
+      const m = linesOf.get(l.doId) ?? new Map<string, number>();
+      m.set(l.category, (m.get(l.category) ?? 0) + l.sen);
+      linesOf.set(l.doId, m);
+    }
+    const cats = new Map<string, Map<string, number>>();
+    for (const [doId, m] of linesOf) {
+      const category = MAIN_CATEGORY.find((c) => m.has(c)) ?? [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!category) continue;
+      const orders = cats.get(category) ?? new Map<string, number>();
+      orders.set(doId, [...m.values()].reduce((x, y) => x + y, 0));
+      cats.set(category, orders);
     }
     const byCategory = [...cats.entries()].map(([category, m]) => {
       const sen = [...m.values()].reduce((x, y) => x + y, 0);

@@ -19,6 +19,26 @@ describe('delivery days and days in use', () => {
   });
 });
 
+describe('what category an order is', () => {
+  const run = (lines: Array<{ doId: string; category: string; sen: number }>) =>
+    logisticPeriod([d({ id: 'a' }), d({ id: 'b' })], lines, '2026-10-02', '2026-10-02', [], '2026-10-17', new Map(), new Map()).byCategory;
+
+  test('a mattress with a bedframe is one mattress order, whole amount', () => {
+    expect(run([{ doId: 'a', category: 'Mattress', sen: 300 }, { doId: 'a', category: 'Bedframe', sen: 100 }]))
+      .toEqual([{ category: 'Mattress', orders: 1, amountSen: 400, avgSen: 400 }]);
+  });
+  test('a bedframe counts when the order delivers only that', () => {
+    expect(run([{ doId: 'a', category: 'Bedframe', sen: 100 }, { doId: 'a', category: 'Accessories', sen: 20 }]))
+      .toEqual([{ category: 'Bedframe', orders: 1, amountSen: 120, avgSen: 120 }]);
+  });
+  test('accessories alone stay accessories', () => {
+    expect(run([{ doId: 'b', category: 'Accessories', sen: 20 }])[0]?.category).toBe('Accessories');
+  });
+  test('a free bundled bedframe does not make a bedframe order', () => {
+    expect(run([{ doId: 'a', category: 'Bedframe', sen: 0 }])).toEqual([]);
+  });
+});
+
 describe('the region rule', () => {
   test('the page and the server agree', () => {
     for (const s of ['Kuala Lumpur', 'PULAU PINANG', 'Negeri Sembilan', 'SARAWAK', 'PAHANG', 'Sabah', 'Oversea', null]) expect(frontendRegionOf(s)).toBe(regionOf(s));
@@ -71,8 +91,7 @@ describe('logistic period', () => {
     expect(r.lorryDayList[0]).toEqual({ date: '2026-10-01', lorry: 'L1', orders: 2, amountSen: 4000_00 });
     expect(r.byRegion.map((g) => [g.region, g.orders])).toEqual([['KL / Selangor', 3], ['Northern', 1]]);
     expect(r.byCategory).toEqual([
-      { category: 'Mattress', orders: 2, amountSen: 3000_00, avgSen: 1500_00 },
-      { category: 'Bedframe', orders: 1, amountSen: 1000_00, avgSen: 1000_00 },
+      { category: 'Mattress', orders: 2, amountSen: 4000_00, avgSen: 2000_00 },
     ]);
     expect(r.chargesSen).toBe(150_00);
   });
