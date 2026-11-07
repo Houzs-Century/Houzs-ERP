@@ -104,7 +104,7 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title={`Lorries · revenue and occupancy${scope ? ` · ${scope}` : ""}`} hint="Delivery day = delivery or service run, one trip however many orders · Set-up or dismantle = one trip each · Pickup or transfer = half a trip · Occupancy = trips ÷ days it could work (Sundays and workshop days off), and can pass 100% · Per delivery day = revenue ÷ delivery days">
+      <Panel title={`Lorries · revenue and occupancy${scope ? ` · ${scope}` : ""}`} hint="Delivery day = delivery or service run, one trip however many orders · Fair day = a set-up or dismantle, one trip each · Pickup or transfer = half a trip · Occupancy = trips ÷ days it could work (Sundays and workshop days off), and can pass 100% · Per delivery day = revenue ÷ delivery days">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
             Our own lorries had <b className="text-ink">{ownPossible}</b> lorry working days: <b className="text-ink">{ownDays}</b> delivery trips and
@@ -112,7 +112,7 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
           </p>
         )}
         <table className="w-full border-collapse">
-          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th>Set-up &amp; dismantle days</Th><Th>Pickup &amp; transfer days</Th><Th>Days in use</Th><Th>Trips</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th><Th>Per order</Th></tr></thead>
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th>Fair days</Th><Th>Pickup &amp; transfer days</Th><Th>Days in use</Th><Th>Trips</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th><Th>Per order</Th></tr></thead>
           <tbody>{lorries.map((l) => (
             <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Carried by ${l.lorry}${scope ? ` · ${scope}` : ""}`, (d) => d.lorry === l.lorry && (!region || d.region === region) && (!day || d.date === day))}>
               <Td left className="font-semibold">{l.lorry}</Td>
