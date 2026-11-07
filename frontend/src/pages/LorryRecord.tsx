@@ -20,9 +20,8 @@
 // Route /fleet-health/:lorryId, gated exactly as /fleet-health is (fleet.read).
 // ----------------------------------------------------------------------------
 
-import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
-import { PageHeader } from "../components/Layout";
+import { useParams, useSearchParams, Link } from "react-router-dom";
+import { ChevronLeft } from "lucide-react";
 import { ListSkeleton } from "../components/Skeleton";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
@@ -34,7 +33,10 @@ import { NotifyProvider } from "../vendor/scm/components/NotifyDialog";
 import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend, repairSpendOf } from "./fleet/RepairSpend";
 import { LorryCompliance } from "./fleet/LorryCompliance";
-import { StatCard } from "../components/StatCard";
+import { FleetCard, KpiTile, PlateBadge } from "./fleet/FleetUi";
+import { OffRoadList } from "./fleet/OffRoadList";
+import { lorryBox } from "./fleet/fleetHealthModel";
+import { Lorry3D } from "./scm-v2/fleet/Lorry3D";
 import {
   PlansSection, MileageSection, BreakdownSection, WorkOrdersSection,
   ComponentsSection, MissingComplianceNote, Pill, boxLabel, fmtDays,
@@ -42,11 +44,16 @@ import {
   type VehicleDetailPayload, type DocType, type Tone,
 } from "./FleetHealth";
 
-const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <section className="min-w-0 rounded-lg border border-border bg-surface p-4">
-    <h2 className="mb-3 text-[14px] font-bold text-ink">{title}</h2>
-    {children}
-  </section>
+const Section = FleetCard;
+
+const Breadcrumb = ({ plate }: { plate: string }) => (
+  <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px]">
+    <Link to="/fleet-health" className="inline-flex min-h-9 items-center gap-1 font-semibold text-primary hover:underline">
+      <ChevronLeft size={14} strokeWidth={2.4} /> Fleet Health
+    </Link>
+    <span className="text-ink-muted/70">/</span>
+    <span className="text-ink-muted">{plate}</span>
+  </nav>
 );
 
 const TABS = [
@@ -94,7 +101,6 @@ export function needsAttention(
 
 export function LorryRecord() {
   const { lorryId = "" } = useParams();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab: TabId = TABS.find((t) => t.id === params.get("tab"))?.id ?? "overview";
 
@@ -111,9 +117,11 @@ export function LorryRecord() {
   if (detail.loading && !v) return <div className="space-y-4"><ListSkeleton /></div>;
   if (!v) {
     return (
-      <div className="space-y-4">
-        <PageHeader eyebrow="Operations · Fleet" title="Lorry not found" description="This lorry is not on file, or you cannot see it." />
-        <Link to="/fleet-health" className="text-[12px] text-primary hover:underline">Back to Fleet Health</Link>
+      <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+        <Breadcrumb plate="Not found" />
+        <Section title="Lorry not found">
+          <p className="text-[13px] text-ink-muted">{detail.error ? `Could not load this lorry: ${detail.error}` : "This lorry is not on file, or you cannot see it."}</p>
+        </Section>
       </div>
     );
   }
@@ -125,9 +133,10 @@ export function LorryRecord() {
      is set on Coverage & Fleet. */
   if (v.isInternal === false) {
     return (
-      <div className="space-y-4">
-        <PageHeader eyebrow="Operations · Fleet" title={v.plate} description="Outsourced lorry" />
-        <p className="rounded-md border border-border bg-surface px-4 py-3 text-[12.5px] text-ink-secondary">
+      <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+        <Breadcrumb plate={v.plate} />
+        <div className="flex items-center gap-2.5"><PlateBadge plate={v.plate} size="lg" /><Pill tone="neutral">Outsourced lorry</Pill></div>
+        <p className="rounded-xl border border-border bg-surface px-4 py-3 text-[13px] text-ink-secondary">
           Fleet Health keeps in-house lorries only. An outsourced lorry needs no compliance, vehicle,
           repair or service record here; its delivery capacity is set on{" "}
           <Link to="/scm/fleet" className="text-primary hover:underline">Coverage &amp; Fleet</Link>.
@@ -146,50 +155,47 @@ export function LorryRecord() {
   const attention = needsAttention(v, detail.data?.plans.length ?? 0, openBreakdowns, openWorkOrders, compliance);
   const openTab = (id: TabId) => setParams((p) => { p.set("tab", id); return p; }, { replace: true });
 
+  const oos = v.outOfService;
   return (
-    <div className="space-y-4">
-      <PageHeader
-        eyebrow="Operations · Fleet"
-        title={v.plate}
-        description={["In-house", v.model, box, v.driverName, v.region].filter(Boolean).join(" · ")}
-        actions={
-          <button
-            type="button"
-            onClick={() => navigate("/fleet-health")}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary"
-          >
-            <ArrowLeft size={14} /> Fleet Health
-          </button>
-        }
-      />
+    <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+      <Breadcrumb plate={v.plate} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill>
-        {v.outOfService && v.outOfServiceReason && <span className="text-[12px] text-ink-muted">{v.outOfServiceReason}</span>}
-      </div>
+      <section className="flex flex-wrap items-stretch gap-5 rounded-2xl border border-border bg-surface p-3.5 sm:p-[18px]">
+        <div className="min-w-0 max-w-full flex-[1_1_420px]">
+          {/* Drawn to the lorry's own container size; drag to turn it. */}
+          <Lorry3D box={lorryBox(v)} height={220} />
+        </div>
+        <div className="flex min-w-0 flex-[1_1_340px] flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="sr-only">{v.plate}</h1>
+            <PlateBadge plate={v.plate} size="lg" />
+            <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill>
+          </div>
+          <div className="text-[13.5px] text-ink-secondary">{["In-house", v.model, box, v.driverName, v.region].filter(Boolean).join(" · ")}</div>
+          {oos && (
+            <div className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">
+              Off the road{v.outOfServiceReason ? `: ${v.outOfServiceReason}` : ""}. It cannot be dispatched until the window ends.
+            </div>
+          )}
+          <MissingComplianceNote vehicle={v} compliance={compliance} />
+          <div className="grid grid-cols-2 gap-2.5">
+            <KpiTile compact label="Mileage" value={v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "—"}
+              sub={v.mileageDate ? `Read ${fmtDate(v.mileageDate)}${v.mileageFlagged ? " · flagged" : ""}` : "No reading yet"}
+              tone={v.mileageFlagged ? "warn" : "neutral"} onClick={() => openTab("maintenance")} />
+            <KpiTile compact label="Next document to renew" value={next ? fmtDays(next.days) : "—"}
+              sub={next ? `${DOC_LABEL[next.type]}, ${fmtDate(next.date)}` : "No expiry on file"}
+              tone={next?.tone === "crit" ? "crit" : next?.tone === "warn" ? "warn" : "neutral"} onClick={() => openTab("compliance")} />
+            <KpiTile compact label="Open repairs" value={`${openBreakdowns.length + openWorkOrders.length}`}
+              sub={`${openBreakdowns.length} breakdown${openBreakdowns.length === 1 ? "" : "s"} · ${openWorkOrders.length} work order${openWorkOrders.length === 1 ? "" : "s"}`}
+              tone={openBreakdowns.length ? "warn" : "neutral"} onClick={() => openTab("repairs")} />
+            <KpiTile compact label={`Repair spend ${today.slice(0, 4)}`} value={fmtSen(spend.yearSen)} sub={`${fmtSen(spend.monthSen)} this month`} onClick={() => openTab("repairs")} />
+          </div>
+        </div>
+      </section>
 
-      <MissingComplianceNote vehicle={v} compliance={compliance} />
+      {detail.error && <p role="alert" className="rounded-xl border border-err/30 bg-err-bg px-4 py-2.5 text-[13px] font-semibold text-err">Could not refresh this lorry: {detail.error}</p>}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Mileage" value={v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "—"} subtitle={v.mileageDate ? `Read ${fmtDate(v.mileageDate)}` : "No reading yet"} onClick={() => openTab("maintenance")} />
-        <StatCard
-          label="Next document to renew"
-          value={next ? fmtDays(next.days) : "—"}
-          subtitle={next ? `${DOC_LABEL[next.type]}, ${fmtDate(next.date)}` : "No expiry on file"}
-          tone={next?.tone === "crit" ? "error" : next?.tone === "warn" ? "warning" : "default"}
-          onClick={() => openTab("compliance")}
-        />
-        <StatCard
-          label="Open repairs"
-          value={`${openBreakdowns.length + openWorkOrders.length}`}
-          subtitle={`${openBreakdowns.length} breakdown${openBreakdowns.length === 1 ? "" : "s"} · ${openWorkOrders.length} work order${openWorkOrders.length === 1 ? "" : "s"}`}
-          tone={openBreakdowns.length ? "warning" : "default"}
-          onClick={() => openTab("repairs")}
-        />
-        <StatCard label={`Repair spend ${today.slice(0, 4)}`} value={fmtSen(spend.yearSen)} subtitle={`${fmtSen(spend.monthSen)} this month`} onClick={() => openTab("repairs")} />
-      </div>
-
-      <div role="tablist" aria-label="Lorry record" className="flex gap-1 overflow-x-auto border-b border-border">
+      <div role="tablist" aria-label="Lorry record" className="flex flex-wrap gap-1.5 sm:flex-nowrap sm:gap-0.5 sm:overflow-x-auto sm:border-b sm:border-[#e0dacd]">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -198,8 +204,8 @@ export function LorryRecord() {
             aria-selected={tab === t.id}
             onClick={() => openTab(t.id)}
             className={cn(
-              "-mb-px h-11 shrink-0 border-b-2 px-3.5 text-[13px] transition-colors",
-              tab === t.id ? "border-primary font-bold text-primary" : "border-transparent font-medium text-ink-secondary hover:text-ink",
+              "h-10 shrink-0 rounded-full border px-3.5 text-[14px] transition-colors sm:-mb-px sm:h-11 sm:rounded-none sm:border-0 sm:border-b-2 sm:px-4",
+              tab === t.id ? "border-primary bg-primary-soft font-bold text-primary-ink sm:bg-transparent sm:text-primary" : "border-border font-medium text-ink-secondary hover:text-ink sm:border-transparent",
             )}
           >
             {t.label}
@@ -230,14 +236,17 @@ export function LorryRecord() {
       {tab === "repairs" && (
         <div className="space-y-3">
           <Section title="Repair spend"><RepairSpend workOrders={workOrders} today={today} /></Section>
-          <Section title="Breakdowns"><BreakdownSection vehicleId={v.id} breakdowns={breakdowns} onChanged={refresh} /></Section>
+          <Section title="Breakdowns" sub="A lorry that cannot be driven is off the road until the case is resolved"><BreakdownSection vehicleId={v.id} breakdowns={breakdowns} onChanged={refresh} /></Section>
           <Section title="Work orders"><WorkOrdersSection vehicleId={v.id} plate={v.plate} workOrders={workOrders} breakdowns={breakdowns} onChanged={refresh} /></Section>
         </div>
       )}
 
       {tab === "maintenance" && (
         <div className="space-y-3">
-          <Section title="Mileage"><MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} /></Section>
+          <Section title="Off the road" sub="Days this lorry was or will be out of service. Set from a lorry service job or Repair Days on Lorry Capacity.">
+            <OffRoadList windows={detail.data?.maintenanceWindows ?? []} today={today} />
+          </Section>
+          <Section title="Mileage" sub={v.mileageFlagged ? "The latest reading is an unusually large jump and is flagged for review." : undefined}><MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} /></Section>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             <Section title="Service plans">
               <PlansSection plans={detail.data?.plans ?? []} currentKm={v.mileageKm} vehicleId={v.id} components={detail.data?.planComponents ?? []} onChanged={refresh} />
@@ -258,7 +267,7 @@ export function LorryRecord() {
           <NotifyProvider><PurchaseSection lorry={lorryRow} /></NotifyProvider>
         </div>
       ) : (
-        <Section title="Vehicle and purchase">
+        <Section title="Vehicle & purchase">
           <p className="text-[13px] text-ink-muted">{lorries.isLoading ? "Loading…" : "The lorry master row could not be read."}</p>
         </Section>
       ))}

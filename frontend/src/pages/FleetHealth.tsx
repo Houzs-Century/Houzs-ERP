@@ -1,14 +1,10 @@
 import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
-import { useMemo, useState, useRef, useEffect } from "react";
-import { useSearchParams, Link, useNavigate } from "react-router-dom";
-import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
-import { PageHeader } from "../components/Layout";
-import { DataTable, type Column } from "../components/DataTable";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { X, ChevronRight, FileUp } from "lucide-react";
 import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
-import { StatCard } from "../components/StatCard";
 import { serviceConfirm, serviceNotify } from "../vendor/scm/lib/dialog-service";
-import { FleetHealthCharts } from "./FleetHealthCharts";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
@@ -20,19 +16,16 @@ import { cn } from "../lib/utils";
 import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
-import { NewInHouseLorry } from "./fleet/NewInHouseLorry";
+import { PlateBadge } from "./fleet/FleetUi";
+import { uploadEach } from "./fleet/fleetHealthModel";
 
 // ---------------------------------------------------------------------------
-// Fleet Health — the Phase-1 desktop ops screen for Fleet Maintenance &
-// Compliance. KPI ribbon + a compliance reminders strip + a per-lorry status
-// board, each row opening a detail drawer with the compliance vault (current
-// document + full renewal history per type). All derived state (status,
-// reminder levels, KPIs) is computed by the backend from services/
-// fleet-status.ts, so this page only renders — it never re-derives the rules.
-//
-// Reuses the app's own design system: StatCard (KPI), ResizableDetailDrawer
-// (the shared SCM detail drawer chrome), PageHeader, Button. Status/expiry
-// pills follow the app's tone vocabulary. No dark standalone theme.
+// Fleet Health — the shared types, the quick-look drawer and every section of a
+// lorry's record (plans, mileage, breakdowns, work orders, components, the
+// compliance vault). The dashboard itself is fleet/FleetHealthDashboard.tsx and
+// the record page is LorryRecord.tsx. All derived state (status, reminder
+// levels, KPIs) is computed by the backend from services/fleet-status.ts, so
+// these only render — they never re-derive the rules.
 // ---------------------------------------------------------------------------
 
 /* Owner, 2026-10-15: APAD / cross-border are not needed; the Geran (registration
@@ -147,6 +140,10 @@ export type VehicleRow = {
   openWorkOrders?: number;
   downtimeHours?: number | null;
   openProblem?: string | null;
+  /** The box, drawn as the side view on the board (mig 0209). */
+  lengthFt?: number | null;
+  widthFt?: number | null;
+  heightFt?: number | null;
 };
 
 /* A copy of WORK_ORDER_STATES in services/fleet-status.ts, kept in step by
@@ -260,7 +257,7 @@ export type ComponentView = {
   events: ComponentEventView[];
 };
 
-type VehicleStatus =
+export type VehicleStatus =
   | "AVAILABLE"
   | "SERVICE_DUE"
   | "PLANNED_MAINTENANCE"
@@ -269,7 +266,7 @@ type VehicleStatus =
   | "COMPLIANCE_BLOCKED"
   | "OUT_OF_SERVICE";
 
-type DashboardPayload = {
+export type DashboardPayload = {
   today: string;
   kpis: {
     expiredDocs: number;
@@ -350,7 +347,7 @@ export function money(centi: number | null): string {
 }
 
 /** Downtime hours as a compact "2d 4h" / "6h" string. */
-function fmtDowntime(hours: number | null): string {
+export function fmtDowntime(hours: number | null): string {
   if (hours == null) return "—";
   if (hours < 24) return `${Math.round(hours)}h`;
   const d = Math.floor(hours / 24);
@@ -371,21 +368,6 @@ export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode
   );
 }
 
-/** A compact expiry cell: the date + a days-remaining sub-line in its tone. */
-function ExpiryCell({ doc }: { doc: DocView | undefined }) {
-  if (!doc) return <span className="text-[12px] text-ink-muted">—</span>;
-  const toneText = doc.tone === "crit" ? "text-err" : doc.tone === "warn" ? "text-warning-text" : "text-ink-muted";
-  return (
-    <div className="text-[12px]">
-      <div className="text-ink">{fmtDate(doc.expiryDate)}</div>
-      <div className={cn("text-[10.5px]", toneText)}>
-        {doc.result === "FAIL" ? "FAILED · " : ""}
-        {fmtDays(doc.daysRemaining)}
-      </div>
-    </div>
-  );
-}
-
 /** The days/km remaining for the most-urgent plan, in words. */
 export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining: number | null; overdue: boolean }): string {
   const parts: string[] = [];
@@ -396,7 +378,7 @@ export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining:
 
 /** The board's "Next service" cell: the single most-urgent plan (per-component),
  *  falling back to the legacy next-service target when no plans exist yet. */
-function NextServiceCell({ v }: { v: VehicleRow }) {
+export function NextServiceCell({ v }: { v: VehicleRow }) {
   if (v.nextPlan) {
     const np = v.nextPlan;
     const toneText = np.tone === "crit" ? "text-err" : np.tone === "warn" ? "text-warning-text" : "text-ink-muted";
@@ -435,295 +417,6 @@ export function openProblem(v: VehicleRow): string | null {
   return null;
 }
 
-const REGIONS = ["ALL", "KL", "PG"] as const;
-
-export function FleetHealth() {
-  const [params, setParams] = useSearchParams();
-  const region = params.get("region") ?? "ALL";
-  const statusFilter = params.get("status") ?? "ALL";
-  const [openId, setOpenId] = useState<string | null>(null);
-  const navigate = useNavigate();
-
-  /* Sales Order's interaction, which the owner asked for by name: "单击：弹出一个
-     shortcut，让我简单看一个简介; 双击：点进去看细节".
-
-     A double click fires click, click, dblclick — so opening the drawer on the
-     first click would flash it open and then navigate away underneath it. The
-     peek is held for one double-click interval and cancelled if the second
-     click lands. 250ms is under the platform default (500ms) on purpose: the
-     drawer should not feel laggy, and a slow double click still works because
-     the navigation fires regardless. */
-  const peekTimer = useRef<number | null>(null);
-  const cancelPeek = () => {
-    if (peekTimer.current != null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
-  };
-  // The suite had no unmount for a year and leaked exactly this kind of timer
-  // into a torn-down jsdom (BUG-HISTORY, 2026-08-02).
-  useEffect(() => cancelPeek, []);
-  const peek = (id: string) => {
-    cancelPeek();
-    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setOpenId(id); }, 250);
-  };
-  const openRecord = (id: string) => { cancelPeek(); navigate(`/fleet-health/${id}`); };
-  const expiryValue = (d: VehicleRow["compliance"]["ROAD_TAX"]) => d?.expiryDate ?? null;
-  const boardColumns: Column<VehicleRow>[] = [
-    {
-      key: "lorry", label: "Lorry", getValue: (v) => v.plate,
-      render: (v) => (
-        <>
-          {/* A REAL anchor, so the browser's own affordances work: Cmd/Ctrl-click
-              and middle-click open the record in a new tab (owner 2026-08-03:
-              "我在第二个页面打开进去是不能的吗?"). stopPropagation so the plate
-              does not ALSO fire the row's peek. */}
-          <Link
-            to={`/fleet-health/${v.id}`}
-            onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
-            className="font-semibold text-ink hover:text-primary hover:underline"
-          >
-            {v.plate}
-          </Link>
-          <div className="text-[11px] text-ink-muted">{[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}</div>
-        </>
-      ),
-    },
-    { key: "status", label: "Status", getValue: (v) => v.statusLabel, render: (v) => <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill> },
-    {
-      key: "mileage", label: "Mileage", align: "right", getValue: (v) => v.mileageKm, exportFormat: "number",
-      render: (v) => (
-        <span className="tabular-nums text-ink">
-          {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
-          <span className="ml-1 text-[10.5px] text-ink-muted">km</span>
-          {v.mileageFlagged && <span className="ml-1.5 text-[10px] text-warning-text" title="Abnormal jump — review">flagged</span>}
-        </span>
-      ),
-    },
-    { key: "nextService", label: "Next service", render: (v) => <NextServiceCell v={v} /> },
-    { key: "puspakom", label: "PUSPAKOM", getValue: (v) => expiryValue(v.compliance.PUSPAKOM), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.PUSPAKOM} /> },
-    { key: "insurance", label: "Insurance", getValue: (v) => expiryValue(v.compliance.INSURANCE), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.INSURANCE} /> },
-    { key: "roadTax", label: "Road tax", getValue: (v) => expiryValue(v.compliance.ROAD_TAX), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.ROAD_TAX} /> },
-    {
-      key: "problem", label: "Open problem", getValue: (v) => openProblem(v) ?? "",
-      render: (v) => (
-        <span className="text-[12px] text-ink-secondary">
-          {openProblem(v) ?? <span className="text-ink-muted">—</span>}
-          {(v.openWorkOrders ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-ink-muted">{v.openWorkOrders} WO</span>}
-        </span>
-      ),
-    },
-    {
-      key: "downtime", label: "Downtime", align: "right", getValue: (v) => v.downtimeHours,
-      render: (v) => (v.downtimeHours != null
-        ? <span className="tabular-nums text-err">{fmtDowntime(v.downtimeHours)}</span>
-        : <span className="text-ink-muted">—</span>),
-    },
-  ];
-
-  const [addingLorry, setAddingLorry] = useState(false);
-  const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
-
-  const setParam = (key: string, value: string) => {
-    const next = new URLSearchParams(params);
-    if (value === "ALL" || value === "") next.delete(key);
-    else next.set(key, value);
-    setParams(next, { replace: true });
-  };
-
-  const all = dash.data?.vehicles ?? [];
-  // Lorries that cannot go out (fleet-status canDispatch: only AVAILABLE / SERVICE_DUE can).
-  const grounded = all.filter((v) => v.status !== "AVAILABLE" && v.status !== "SERVICE_DUE");
-  const regionOptions = useMemo(() => {
-    const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
-    return ["ALL", ...present];
-  }, [all]);
-
-  const visible = useMemo(
-    () =>
-      all.filter(
-        (v) => (region === "ALL" || v.region === region) && (statusFilter === "ALL" || v.status === statusFilter),
-      ),
-    [all, region, statusFilter],
-  );
-
-  // The reminders strip: every actionable current document, most-urgent first.
-  // Derived from the same payload the KPIs use, so it can never disagree with
-  // the board. (The /api/fleet-maintenance/reminders endpoint serves the same
-  // computation to a future scheduled-notification job.)
-  const reminders = useMemo(() => {
-    const scope = region === "ALL" ? all : all.filter((v) => v.region === region);
-    const items: Array<{ v: VehicleRow; doc: DocView }> = [];
-    for (const v of scope) {
-      for (const t of DOC_TYPES) {
-        const doc = v.compliance[t];
-        if (doc && doc.reminderLevel !== "OK") items.push({ v, doc });
-      }
-    }
-    return items.sort((a, b) => (a.doc.daysRemaining ?? 1e9) - (b.doc.daysRemaining ?? 1e9));
-  }, [all, region]);
-
-  const kpis = dash.data?.kpis;
-  const statusCounts = dash.data?.statusCounts ?? {};
-
-  return (
-    <div className="space-y-5">
-      <PageHeader
-        eyebrow="Operations · Fleet"
-        title="Fleet Health"
-        description="Which lorries can go out today, and what needs renewing or repairing."
-        actions={
-          <div className="flex gap-2">
-            <Button variant="secondary" icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />} onClick={() => dash.reload()}>Refresh</Button>
-            <Button variant="primary" onClick={() => setAddingLorry(true)}>New lorry</Button>
-          </div>
-        }
-      />
-      {addingLorry && <NewInHouseLorry onClose={() => setAddingLorry(false)} onCreated={() => dash.reload()} />}
-
-      {/* Region toggle */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-brand text-ink-muted">Warehouse</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-border">
-          {regionOptions.map((r) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={region === r}
-              onClick={() => setParam("region", r)}
-              className={cn(
-                "px-3.5 py-1.5 text-[12px] font-semibold transition-colors",
-                region === r ? "bg-primary-soft text-primary" : "text-ink-secondary hover:bg-surface-2",
-              )}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-        <span className="ml-auto text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
-          {visible.length} {visible.length === 1 ? "lorry" : "lorries"}
-        </span>
-      </div>
-
-      {/* KPI ribbon — four cards (owner, 2026-10-16: the eight small tiles read as
-          clutter). The first names which lorry cannot go out and why. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard
-          label="Cannot dispatch"
-          value={`${kpis?.cantDispatch ?? 0} of ${kpis?.fleetSize ?? 0}`}
-          subtitle={grounded.length ? grounded.slice(0, 3).map((v) => `${v.plate} · ${v.statusLabel}`).join(", ") + (grounded.length > 3 ? ` +${grounded.length - 3}` : "") : "Every lorry can go out"}
-          tone={kpis?.cantDispatch ? "error" : "default"} rail={kpis?.cantDispatch ? "bg-err" : undefined} pending={dash.loading}
-          onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"}
-        />
-        <StatCard
-          label="Documents"
-          value={kpis?.expiredDocs ? `${kpis.expiredDocs} expired` : "None expired"}
-          subtitle={`Due in 30 days ${kpis?.expiring30 ?? 0} · 60 days ${kpis?.expiring60 ?? 0} · 90 days ${kpis?.expiring90 ?? 0}`}
-          tone={kpis?.expiredDocs ? "error" : kpis?.expiring30 ? "warning" : "default"} pending={dash.loading}
-        />
-        <StatCard
-          label="Breakdowns & service"
-          value={`${kpis?.activeBreakdowns ?? 0} breakdown${kpis?.activeBreakdowns === 1 ? "" : "s"}`}
-          subtitle={`${kpis?.openWorkOrders ?? 0} open work order${kpis?.openWorkOrders === 1 ? "" : "s"} · service due ${kpis?.serviceDue ?? 0}${kpis?.serviceOverdue ? ` (${kpis.serviceOverdue} overdue)` : ""}`}
-          tone={kpis?.activeBreakdowns ? "error" : kpis?.serviceOverdue ? "warning" : "default"} pending={dash.loading}
-          onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"}
-        />
-        <StatCard
-          label="Repairs this month"
-          value={kpis?.repairSpendThisMonthSen != null ? money(kpis.repairSpendThisMonthSen) : "—"}
-          subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleSen ?? 0)}` : "No repairs logged"}
-          pending={dash.loading}
-        />
-      </div>
-
-      <FleetHealthCharts vehicles={all} kpis={kpis ?? null} />
-
-      {/* Reminders strip */}
-      {reminders.length > 0 && (
-        <section className="rounded-lg border border-border bg-surface p-4 shadow-stone">
-          <div className="mb-3 flex items-center gap-2">
-            <AlertTriangle size={15} className="text-warning-text" />
-            <h2 className="font-display text-[14px] font-bold text-ink">Compliance reminders</h2>
-            <span className="text-[11.5px] text-ink-muted">An expired document grounds the lorry</span>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            {reminders.slice(0, 12).map(({ v, doc }) => (
-              <button
-                key={`${v.id}-${doc.docType}`}
-                type="button"
-                onClick={() => setOpenId(v.id)}
-                className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <span className="flex items-center gap-2.5 text-[12.5px]">
-                  <span className="font-semibold text-ink">{v.plate}</span>
-                  <span className="text-ink-muted">{DOC_LABEL[doc.docType]}</span>
-                  {v.region && <span className="text-[10.5px] text-ink-muted">{v.region}</span>}
-                </span>
-                <span className="flex items-center gap-3">
-                  <span className="text-[11.5px] text-ink-secondary">{doc.expiryDate ? fmtDate(doc.expiryDate) : "—"}</span>
-                  <Pill tone={doc.tone}>{doc.result === "FAIL" ? "FAILED" : fmtDays(doc.daysRemaining)}</Pill>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Status filter chips */}
-      <div className="flex flex-wrap gap-2">
-        <FilterChip label={`All ${all.length}`} active={statusFilter === "ALL"} onClick={() => setParam("status", "ALL")} />
-        {Object.entries(statusCounts)
-          .sort()
-          .map(([status, count]) => (
-            <FilterChip
-              key={status}
-              label={`${statusLabel(status)} ${count}`}
-              tone={STATUS_TONE[status as VehicleStatus]}
-              active={statusFilter === status}
-              onClick={() => setParam("status", status)}
-            />
-          ))}
-      </div>
-
-      {/* Fleet board */}
-      <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <DataTable<VehicleRow>
-          tableId="fleet-health-board"
-          exportName="fleet-health"
-          exportXlsx
-          columns={boardColumns}
-          rows={dash.loading ? null : visible}
-          loading={dash.loading}
-          emptyLabel="No lorries in this view. Add a vehicle or run the seed script to load the fleet."
-          getRowKey={(v) => v.id}
-          onRowClick={(v) => peek(v.id)}
-          onRowDoubleClick={(v) => openRecord(v.id)}
-        />
-      </div>
-
-      {dash.error && (
-        <p className="text-[12px] text-err">Could not load the fleet: {dash.error}</p>
-      )}
-
-      <VehicleDrawer id={openId} onClose={() => setOpenId(null)} onChanged={() => dash.reload()} />
-    </div>
-  );
-}
-
-function FilterChip({ label, tone, active, onClick }: { label: string; tone?: Tone; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors",
-        active ? "border-primary bg-primary-soft text-primary" : "border-border text-ink-secondary hover:bg-surface-2",
-      )}
-    >
-      {tone && <span className={cn("h-1.5 w-1.5 rotate-45", tone === "crit" ? "bg-err" : tone === "warn" ? "bg-warning-text" : tone === "ok" ? "bg-synced" : tone === "info" ? "bg-primary" : "bg-ink-muted")} />}
-      {label}
-    </button>
-  );
-}
-
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {
     AVAILABLE: "Available",
@@ -738,7 +431,7 @@ export function statusLabel(status: string): string {
 }
 
 // ── Detail drawer — vehicle header + compliance vault with renewal history ──
-function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged?: () => void }) {
+export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged?: () => void }) {
   const detail = useQuery<VehicleDetailPayload>(
     `/api/fleet-maintenance/vehicles/${id}`,
     () => api.get(`/api/fleet-maintenance/vehicles/${id}`),
@@ -757,8 +450,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
       <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <Truck size={18} className="text-primary" />
-            <span className="font-display text-[18px] font-bold text-ink">{v?.plate ?? "…"}</span>
+            {v ? <PlateBadge plate={v.plate} size="md" /> : <span className="text-[18px] font-bold text-ink">…</span>}
           </div>
           <div className="mt-1 text-[12px] text-ink-muted">
             {v ? [
@@ -884,9 +576,8 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
         <PlanForm
           vehicleId={vehicleId}
           components={components ?? []}
-          /* Editing an existing plan re-POSTs it: the route UPSERTs on
-             (lorry, component), so the component is the identity and PATCH by
-             id would be a second way to write the same row. */
+          /* A new plan POSTs (the route UPSERTs on lorry + component); an
+             existing one PATCHes by id, which can also retire it. */
           plan={editing}
           taken={new Set(plans.map((p) => p.component))}
           onCancel={() => { setAdding(false); setEditing(null); }}
@@ -933,12 +624,20 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
     if (busy || !ok) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
-        component,
-        intervalKm: num(intervalKm),
-        intervalMonths: num(intervalMonths),
-        active,
-      });
+      if (plan) {
+        await api.patch(`/api/fleet-maintenance/plans/${encodeURIComponent(plan.id)}`, {
+          intervalKm: num(intervalKm),
+          intervalMonths: num(intervalMonths),
+          active,
+        });
+      } else {
+        await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
+          component,
+          intervalKm: num(intervalKm),
+          intervalMonths: num(intervalMonths),
+          active,
+        });
+      }
       onSaved();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
@@ -1004,12 +703,22 @@ function planProgress(p: PlanView, currentKm: number | null): number {
 
 function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm: number | null; onEdit?: () => void; onServiced?: () => void }) {
   const [servicing, setServicing] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [toggleErr, setToggleErr] = useState<string | null>(null);
+  /* Retire = active off: the plan stays on file but stops falling due. */
+  const setActive = async (active: boolean) => {
+    if (!onServiced) return;
+    if (!active && !(await serviceConfirm({ title: `Retire the ${p.componentLabel} plan?`, body: "It stays on file but stops falling due. You can reactivate it later.", confirmLabel: "Retire" }))) return;
+    setToggling(true); setToggleErr(null);
+    try { await api.patch(`/api/fleet-maintenance/plans/${encodeURIComponent(p.id)}`, { active }); onServiced(); }
+    catch (e) { setToggleErr(apiErrText(e)); } finally { setToggling(false); }
+  };
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
   const due = [
     p.nextDueKm != null ? `${p.nextDueKm.toLocaleString()} km` : null,
-    p.nextDueDate ?? null,
+    p.nextDueDate ? fmtDate(p.nextDueDate) : null,
   ].filter(Boolean).join(" · ");
   return (
     <div className={cn("rounded-lg border p-3", p.active ? "border-border bg-surface-2/40" : "border-transparent bg-transparent opacity-60")}>
@@ -1024,6 +733,11 @@ function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm:
           )}
           {onEdit && (
             <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit rule</button>
+          )}
+          {onServiced && (
+            <button type="button" disabled={toggling} onClick={() => void setActive(!p.active)} className="text-[10.5px] text-primary hover:underline disabled:opacity-50">
+              {p.active ? "Retire" : "Reactivate"}
+            </button>
           )}
           <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
         </span>
@@ -1041,7 +755,8 @@ function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm:
           {fmtPlanRemaining(p)}
         </span>
       </div>
-      {p.lastDoneDate && <div className="mt-1 text-[10.5px] text-ink-muted">Last serviced {p.lastDoneDate}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
+      {toggleErr && <div className="mt-1 text-[11px] text-err">{toggleErr}</div>}
+      {p.lastDoneDate && <div className="mt-1 text-[10.5px] text-ink-muted">Last serviced {fmtDate(p.lastDoneDate)}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
       {servicing && onServiced && (
         <PlanServiceForm planId={p.id} componentLabel={p.componentLabel} currentKm={currentKm}
           onCancel={() => setServicing(false)} onSaved={() => { setServicing(false); onServiced(); }} />
@@ -1268,14 +983,16 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
-  /* No render on a refusal, so this CONTROLLED select keeps the picked option:
-     the row reads "Resolved" while the lorry is still grounded. */
+  /* No render on a refusal would leave this CONTROLLED select on the picked
+     option: the row reads "Resolved" while the lorry is still grounded. A
+     refusal remounts it (new key) so it falls back to the saved status. */
+  const [statusReset, setStatusReset] = useState(0);
   const setStatus = async (id: string, status: BreakdownView["status"]) => {
     setErr(null);
     const patch: Record<string, unknown> = { status };
     if (status === "RESOLVED") patch.recoveryTime = new Date().toISOString();
     try { await api.patch(`/api/fleet-maintenance/breakdowns/${id}`, patch); onChanged(); }
-    catch (e) { setErr(apiErrText(e)); }
+    catch (e) { setStatusReset((n) => n + 1); setErr(`Status not changed: ${apiErrText(e)}`); }
   };
 
   return (
@@ -1322,6 +1039,8 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
               <span className="text-[11px] text-ink">Resolved</span>
             ) : (
               <select
+                key={`${b.id}-${statusReset}`}
+                aria-label="Breakdown status"
                 className="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-ink"
                 value={b.status}
                 onChange={(e) => setStatus(b.id, e.target.value as BreakdownView["status"])}
@@ -1896,7 +1615,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
         c.costPerKmSen != null ? `${money(c.costPerKmSen)}/km` : null,
         c.status === "ACTIVE" ? null : "removed",
       ].filter(Boolean).join(" · ")}
-      when={c.fittedDate}
+      when={c.fittedDate ? fmtDate(c.fittedDate) : null}
       /* A fitted component is the live one; a removed one is history. */
       defaultOpen={c.status === "ACTIVE"}
     >
@@ -1916,7 +1635,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
             {c.events.slice(0, 5).map((e) => (
               <div key={e.id} className="flex items-center gap-2 text-[10.5px] text-ink-muted">
                 <span className="uppercase tracking-brand">{e.eventType}</span>
-                <span>{e.eventDate}</span>
+                <span>{e.eventDate ? fmtDate(e.eventDate) : "—"}</span>
                 {e.odometerKm != null && <span className="tabular-nums">{e.odometerKm.toLocaleString()} km</span>}
                 {e.toPosition && <span>&rarr; {e.toPosition}</span>}
                 {e.note && <span className="text-ink-secondary">{e.note}</span>}
@@ -1968,7 +1687,9 @@ export function AttachmentStrip({ docId, files, onChanged }: {
     try {
       const url = await api.fetchBlobUrl(`/api/fleet-maintenance/compliance-attachments/${f.r2Key}`);
       window.open(url, "_blank", "noopener");
-    } catch { /* the drawer stays usable; the file simply does not open */ }
+    } catch (e) {
+      void serviceNotify({ title: "Could not open the document", body: apiErrText(e), tone: "error" });
+    }
   };
 
   const remove = async (f: ComplianceFile) => {
@@ -2022,41 +1743,54 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     setOwner(""); setResult(""); setReinspect(""); setFiles([]); setErr(null);
   };
 
+  /* The renewal row is created ONCE. If a scan then fails to upload, the row is
+     kept, the vault is refreshed, and Save only retries the scans still to go;
+     it used to post the renewal again and leave a duplicate. */
+  const [savedId, setSavedId] = useState<string | null>(null);
   const save = async () => {
-    if (!expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    if (!savedId && !expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
     setBusy(true);
     setErr(null);
+    let id = savedId;
     try {
-      /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
-      const created = await api.post<{ id: string }>(
-        `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
-        {
-          docType,
-          issueDate: issueDate || null,
-          expiryDate: expiryDate || null,
-          documentRef: documentRef || null,
-          costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
-          owner: owner || null,
-          ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
-        },
-      );
-      /* Files go up one at a time against the row that now exists. A failed
-         upload leaves the renewal itself recorded - losing the dates because a
-         scan failed would be the worse outcome. */
-      for (const f of files) {
-        const ext = (f.name.split(".").pop() || "").toLowerCase();
-        const qs = `?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`;
-        await api.putBinary(
-          `/api/fleet-maintenance/vehicles/${lorryId}/compliance/${created.id}/attachments${qs}`,
-          f, f.type || "application/octet-stream",
+      if (!id) {
+        /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
+        const created = await api.post<{ id: string }>(
+          `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
+          {
+            docType,
+            issueDate: issueDate || null,
+            expiryDate: expiryDate || null,
+            documentRef: documentRef || null,
+            costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+            owner: owner || null,
+            ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
+          },
         );
+        id = created.id;
+        setSavedId(id);
       }
-      reset();
-      setOpen(false);
-      onSaved();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save the renewal.");
-    } finally { setBusy(false); }
+      setBusy(false);
+      return;
+    }
+    const docId = id;
+    const { left, error } = await uploadEach(files, (f) => {
+      const ext = (f.name.split(".").pop() || "").toLowerCase();
+      const qs = `?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`;
+      return api.putBinary(`/api/fleet-maintenance/vehicles/${lorryId}/compliance/${docId}/attachments${qs}`, f, f.type || "application/octet-stream");
+    });
+    setBusy(false);
+    onSaved();
+    if (left.length > 0) {
+      setFiles(left);
+      setErr(`The renewal is saved, but ${left.length} scan${left.length === 1 ? "" : "s"} did not upload (${error instanceof Error ? error.message : "upload failed"}). Retry uploads, or Close to keep the renewal without them.`);
+      return;
+    }
+    reset();
+    setSavedId(null);
+    setOpen(false);
   };
 
   if (!open) {
@@ -2102,8 +1836,8 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
       {err && <div className="text-[11px] text-err">{err}</div>}
 
       <div className="flex gap-2">
-        <Button variant="primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save renewal"}</Button>
-        <Button variant="secondary" onClick={() => { reset(); setOpen(false); }} disabled={busy}>Cancel</Button>
+        <Button variant="primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : savedId ? "Retry uploads" : "Save renewal"}</Button>
+        <Button variant="secondary" onClick={() => { reset(); setSavedId(null); setOpen(false); }} disabled={busy}>{savedId ? "Close" : "Cancel"}</Button>
       </div>
     </div>
   );

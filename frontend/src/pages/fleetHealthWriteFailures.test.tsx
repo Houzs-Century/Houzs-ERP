@@ -147,6 +147,8 @@ describe("a refused Fleet Health write is said out loud", () => {
     expect(onChanged).not.toHaveBeenCalled();
     // … and the operator must be told, rather than left reading "Resolved".
     expect(await screen.findByText(/not allowed from the current state/i)).toBeTruthy();
+    // … and the dropdown is back on the status the server still holds.
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("OPEN");
   });
 
   it("work-order step: a refused transition says so instead of doing nothing", async () => {
