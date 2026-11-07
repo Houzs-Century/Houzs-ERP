@@ -600,12 +600,14 @@ lorryCapacity.put('/lorries/:id/repair-days', async (c) => {
         window is an availability fact about a SHARED vehicle. A lorry that is in
         the workshop is in the workshop for both companies, so both must see (and
         be able to correct) the same window. */
-  await sb.from('lorry_maintenance')
+  /* A failed delete must stop the insert, or the lorry ends up with two windows. */
+  const { error: clearErr } = await sb.from('lorry_maintenance')
     .delete()
     .eq('lorry_id', id)
     .eq('reason', DASHBOARD_REASON)
     .lte('unavailable_from', to)
     .gte('unavailable_to', from);
+  if (clearErr) return c.json({ error: 'update_failed', reason: `Could not clear the earlier repair days: ${clearErr.message}` }, 500);
 
   /* 2. Insert one window holding exactly `days` Mon–Sat days, starting at `from`,
         clamped to `to`. Walk day-by-day from `from`, counting working days; the
