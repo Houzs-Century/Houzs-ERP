@@ -26,8 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { type ReactElement } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/Layout';
 import { cn } from '../../lib/utils';
 import { DeliveryPlanningRegions } from './DeliveryPlanningRegions';
@@ -62,12 +61,6 @@ export const DeliveryMaintenance = () => {
         eyebrow="Reference data"
         title="Coverage & Fleet"
         description="Lorries, crews, building rules, regions and places."
-        actions={
-          <Link to="/scm/delivery-planning"
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary hover:border-primary/40 hover:text-primary">
-            <ArrowLeft size={14} /> Delivery Planning
-          </Link>
-        }
       />
       <div role="tablist" aria-label="Coverage and fleet" className="flex gap-1 overflow-x-auto border-b border-border">
         {TABS.map((t) => (
