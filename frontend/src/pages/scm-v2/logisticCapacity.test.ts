@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capacityFromOverview, capacityTotals } from "./logisticCapacity";
+import { capacityFromOverview, capacityTotals, tripsText } from "./logisticCapacity";
 import type { LorryCapacityRow } from "../../vendor/scm/lib/lorry-capacity-queries";
 import type { LorryRow } from "./LogisticDailySection";
 
@@ -24,5 +24,13 @@ describe("Lorry Capacity on the overview's figures", () => {
   it("the tiles add up the rows shown", () => {
     const rows = capacityFromOverview([cap("VQE9058"), cap("PDR7734")], [ov]);
     expect(capacityTotals(rows)).toMatchObject({ lorries: 2, total_trips: 7, delivery_revenue_sen: 110_000_00, available_days: 31 });
+  });
+});
+
+describe("a trip count on screen", () => {
+  it("keeps the half trip instead of rounding it (VNB9058 3.5, not 4)", () => {
+    expect(tripsText(3.5)).toBe("3.5");
+    expect(tripsText(7)).toBe("7");
+    expect(tripsText(null)).toBe("—");
   });
 });
