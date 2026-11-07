@@ -108,6 +108,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { normalizePlate } from '../lib/plate-normalize';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
@@ -1635,7 +1636,7 @@ deliveryPlanning.get('/geo', async (c) => {
   const scopedRows = dayRows.filter((r) => docNoSet.has(String(r.docNo ?? r.doc_no ?? '')));
 
   if (scopedRows.length === 0) {
-    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', ungeocoded: [] });
+    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', lorryDepots: {}, ungeocoded: [] });
   }
 
   /* 2. Zone map — the SAME company map + in-code default the delivery-zones
@@ -1732,6 +1733,39 @@ deliveryPlanning.get('/geo', async (c) => {
     }
   }
 
+  /* 4b. Each lorry's home: the warehouse it starts and ends the day at (the lorry's
+        home warehouse, else the first it serves), so a Penang lorry's route leaves
+        Penang (owner 2026-11-07). A lorry with none falls back to the day's depot.
+        company-scope: the lorry fleet is one shared master across companies, read
+        whole like GET /trips/day's masters. */
+  const lorryDepots: Record<string, { warehouseId: string; name: string; lat: number; lng: number }> = {};
+  {
+    const { data: lorryRows } = await sb.from('lorries').select('plate, warehouse_id, warehouse_ids');
+    const homeOf = new Map<string, string>();
+    for (const l of (lorryRows ?? []) as Array<Record<string, unknown>>) {
+      const ids = Array.isArray(l.warehouse_ids) ? (l.warehouse_ids as unknown[]).map(String) : [];
+      const home = (l.warehouse_id as string | null) ?? ids[0] ?? null;
+      if (home && l.plate) homeOf.set(normalizePlate(String(l.plate)), home);
+    }
+    const whIds = [...new Set(homeOf.values())];
+    const { data: whRows } = whIds.length
+      ? await sb.from('warehouses').select('id, name, location, city, state, postcode').in('id', whIds)
+      : { data: [] as Array<Record<string, unknown>> };
+    const whPoint = new Map<string, { name: string; lat: number; lng: number }>();
+    for (const w of (whRows ?? []) as Array<Record<string, unknown>>) {
+      const addr = composeAddress({
+        address1: (w.location ?? null) as string | null, address2: (w.city ?? null) as string | null,
+        postcode: (w.postcode ?? null) as string | null, state: (w.state ?? null) as string | null,
+      });
+      const hit = addr ? await geocodeAddressCached(sb, c.env, addr) : null;
+      if (hit) whPoint.set(String(w.id), { name: String(w.name ?? ''), lat: hit.lat, lng: hit.lng });
+    }
+    for (const [plate, wh] of homeOf) {
+      const p = whPoint.get(wh);
+      if (p) lorryDepots[plate] = { warehouseId: wh, ...p };
+    }
+  }
+
   /* 5. Point geocodes — ONE batched cache read over the day's normalized
         addresses, then geocodeAddressCached ONLY for the misses (each miss is
         one Google call, once ever; with no key, misses stay ungeocoded). */
@@ -1817,7 +1851,7 @@ deliveryPlanning.get('/geo', async (c) => {
     });
   }
 
-  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ungeocoded });
+  return c.json({ date, region: regionParam, configured, points, depot, depotReason, lorryDepots, ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────

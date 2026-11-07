@@ -352,6 +352,7 @@ export function buildLorryRoutes(
   runs: readonly LorryRunVM[],
   pointByRef: ReadonlyMap<string, MapLatLng>,
   depot: MapLatLng | null,
+  homeOf: (plateKey: string) => MapLatLng | null,
   colorForPlate: (plateKey: string) => string,
 ): { routes: MapRoute[]; unlocated: UnlocatedStop[] } {
   const routes: MapRoute[] = [];
@@ -387,7 +388,8 @@ export function buildLorryRoutes(
       color: colorForPlate(key),
       title: run.plate,
       crewLabel: run.driverName,
-      depot,
+      /* The lorry leaves from and comes back to its own home warehouse when it has one. */
+      depot: homeOf(key) ?? depot,
       stops,
       allRefs: run.docs.map((d) => d.soDocNo),
       delivered: run.rollup.delivered,
