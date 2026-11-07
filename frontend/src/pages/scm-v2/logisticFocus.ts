@@ -73,6 +73,22 @@ export function reportWindows(months: readonly string[], size: "week" | "fortnig
   });
 }
 
+/** The report windows of a date range: the months it touches, cut to the range, so a
+ *  picked range never shows a day outside it. */
+export function windowsInRange(from: string, to: string, size: "week" | "fortnight" | "month"): ReturnType<typeof reportWindows> {
+  const months: string[] = [];
+  for (let m = from.slice(0, 7); m <= to.slice(0, 7);) {
+    months.push(m);
+    const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
+    m = mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, "0")}`;
+  }
+  return reportWindows(months, size).flatMap((w) => {
+    const a = w.from < from ? from : w.from;
+    const b = w.to > to ? to : w.to;
+    return a <= b ? [{ ...w, from: a, to: b }] : [];
+  });
+}
+
 /** The date a job falls on: its delivery date on Delivery Planning, the latest one set,
  *  else the sales exemption date until a more exact date is given (owner 2026-11-07). */
 export const jobDate = (o: { effective_delivery_date: string | null; sales_exemption_expiry?: string | null; ac_sales_exemption_expiry?: string | null }): string | null =>

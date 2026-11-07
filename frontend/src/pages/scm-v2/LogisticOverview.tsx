@@ -17,9 +17,9 @@ import { useDeliveryPlanning, DELIVERY_STATES, type PlanningOrder } from "../../
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
-import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
-import { focusPeriod, jobDate, reportWindows } from "./logisticFocus";
+import { focusPeriod, jobDate, windowsInRange } from "./logisticFocus";
 import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
@@ -151,22 +151,15 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
      not, so a week ahead is a forecast and moves as dates move on the board. */
   const [reportSize, setReportSize] = useState<"week" | "fortnight" | "month">("week");
   const weeks = useMemo(() => {
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const months: string[] = [];
-    for (let m = period.from.slice(0, 7); m <= period.to.slice(0, 7);) {
-      months.push(m);
-      const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
-      m = mm === 12 ? `${y + 1}-01` : `${y}-${pad(mm + 1)}`;
-    }
     const orders = regionRows.filter((o) => o.row_type === "so");
-    return reportWindows(months, reportSize).map((w) => {
+    return windowsInRange(period.from, periodEnd(period), reportSize).map((w) => {
       const xs = orders.filter((o) => { const d = jobDate(o); return !!d && d >= w.from && d <= w.to; });
       return {
         ...w, rows: xs, doCount: xs.length, doAmountSen: xs.reduce((x, o) => x + o.local_total_sen, 0),
         delivered: xs.filter((o) => o.delivery_state === "DELIVERED").length, current: today >= w.from && today <= w.to,
       };
     });
-  }, [regionRows, reportSize, period.from, period.to, today]);
+  }, [regionRows, reportSize, period, today]);
   const months = h?.deliveredMonths ?? [];
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });

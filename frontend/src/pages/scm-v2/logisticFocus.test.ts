@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PeriodTotals } from "./LogisticPeriodSection";
-import { focusPeriod, jobDate, reportWindows } from "./logisticFocus";
+import { focusPeriod, jobDate, reportWindows, windowsInRange } from "./logisticFocus";
 
 const period = {
   from: "2026-11-01", to: "2026-11-02", doCount: 3, doAmountSen: 600, podClosed: 1,
@@ -66,6 +66,18 @@ describe("the date a job falls on", () => {
   });
   it("has no date when neither is set", () => {
     expect(jobDate({ effective_delivery_date: null })).toBeNull();
+  });
+});
+
+describe("reports follow the picked dates", () => {
+  it("cuts the weeks to the range", () => {
+    expect(windowsInRange("2026-11-05", "2026-11-10", "week").map((w) => [w.label, w.from, w.to])).toEqual([["W1", "2026-11-05", "2026-11-07"], ["W2", "2026-11-08", "2026-11-10"]]);
+  });
+  it("a month view of a part month stops at the range", () => {
+    expect(windowsInRange("2026-11-05", "2026-11-10", "month")).toEqual([{ key: "2026-11-01", label: "2026-11", from: "2026-11-05", to: "2026-11-10" }]);
+  });
+  it("runs across a year end", () => {
+    expect(windowsInRange("2026-12-20", "2027-01-05", "month").map((w) => w.label)).toEqual(["2026-12", "2027-01"]);
   });
 });
 

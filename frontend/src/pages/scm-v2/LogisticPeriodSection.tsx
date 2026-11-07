@@ -9,7 +9,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { ASSR_JOB_KIND_LABEL, type AssrJobKind, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Tile } from "../../components/scm-v2/Charts";
-import type { Period } from "../../components/scm-v2/DashboardPeriod";
+import { periodEnd, type Period } from "../../components/scm-v2/DashboardPeriod";
 
 import type { DayRow, RegionRow, LorryRow, LorryDay, DoDrill } from "./LogisticDailySection";
 
@@ -52,7 +52,9 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
   const date = (o: PlanningOrder) => jobDate(o);
-  const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= period.to);
+  /* Jobs look ahead: "this month" means the whole month, not up to today. */
+  const end = periodEnd(period);
+  const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= end);
   const byType = new Map<string, { type: string; jobs: number; done: number }>();
   for (const o of jobs) {
     const t = jobTypeOf(o);
@@ -64,7 +66,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
   /* Where the rest of the open deliveries sit: the job table is only this period. */
   const openSo = rows.filter((o) => o.row_type === "so" && o.delivery_state !== "DELIVERED");
   const dated = (test: (d: string) => boolean) => openSo.filter((o) => { const d = date(o); return !!d && test(d); }).length;
-  const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= period.to), after: dated((d) => d > period.to), none: openSo.filter((o) => !date(o)).length };
+  const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= end), after: dated((d) => d > end), none: openSo.filter((o) => !date(o)).length };
   const avgOrder = totals && totals.doCount ? totals.doAmountSen / totals.doCount : null;
 
   return (
