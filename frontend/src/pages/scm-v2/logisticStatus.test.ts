@@ -17,7 +17,7 @@ describe("deliveryProgressBreakdown", () => {
       o("OVERDUE", null, 50),
       o("DELIVERED", null, 250),
     ];
-    const r = deliveryProgressBreakdown(rows);
+    const r = deliveryProgressBreakdown(rows, () => true);
     // Pending Schedule has no rows, so it is dropped; order follows DELIVERY_STATES.
     expect(r.map((s) => s.key)).toEqual(["PENDING_DELIVERY", "OVERDUE", "DELIVERED"]);
     expect(r[0]).toMatchObject({ count: 2, sen: 200, pct: 50 });
@@ -26,7 +26,7 @@ describe("deliveryProgressBreakdown", () => {
   });
 
   it("is empty for no rows and never divides by zero", () => {
-    expect(deliveryProgressBreakdown([])).toEqual([]);
+    expect(deliveryProgressBreakdown([], () => true)).toEqual([]);
   });
 });
 
@@ -73,5 +73,13 @@ describe("the orders behind a message-status row", () => {
   });
   it("Other lists every order whose status has no row of its own", () => {
     expect(ordersOfSlice(rows, "__other__", shown).map((x) => x.so_doc_no)).toEqual(["C"]);
+  });
+});
+
+describe("delivered split into closed and only out", () => {
+  it("an order on the board as Delivered but not finished reads Out, not closed", () => {
+    const rows = [o("DELIVERED", null, 100), o("DELIVERED", null, 50), o("PENDING_DELIVERY", null, 10)];
+    const finished = new Set([rows[0]]);
+    expect(deliveryProgressBreakdown(rows, (x) => finished.has(x)).map((s) => [s.key, s.count])).toEqual([["PENDING_DELIVERY", 1], ["OUT_NOT_CLOSED", 1], ["DELIVERED", 1]]);
   });
 });

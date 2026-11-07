@@ -94,7 +94,9 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     // Monthly volume is what was confirmed delivered, in the month it was delivered.
     const dm = d.status === 'DELIVERED' ? String(d.delivered_at ?? d.do_date ?? '').slice(0, 7) : '';
     if (dm) { const row = deliveredMonths.get(dm) ?? { month: dm, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); deliveredMonths.set(dm, row); }
-    const m = date.slice(0, 7);
+    /* A DO dated ahead of today has not gone out: the month counts what left up to today,
+       the same window as the period figures above it, so the two tally. */
+    const m = date <= today ? date.slice(0, 7) : '';
     if (m) { const row = months.get(m) ?? { month: m, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); months.set(m, row); }
   }
 

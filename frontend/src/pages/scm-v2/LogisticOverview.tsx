@@ -7,6 +7,8 @@
 //   3. reports — weekly and monthly volume, and the process gaps.
 // Data: the Delivery Planning board (open orders) and
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
+import { jobDone } from "./logisticDone";
+import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -26,14 +28,14 @@ import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDail
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { Columns, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
-import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
+import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, progressKeyOf, topWithOther, NO_MESSAGE_STATUS, OUT_NOT_CLOSED } from "./logisticStatus";
 
 /* Progress tile tone per state, in DELIVERY_STATES order (pending-delivery,
    pending-schedule, overdue, delivered) — derived from that one list so the
    state vocabulary keeps its single home and cannot drift. */
 const PROGRESS_TONES = ["main", "warn", "bad", "good"] as const;
 const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
-  DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]),
+  [...DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]), [OUT_NOT_CLOSED, "warn"]],
 );
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
@@ -117,7 +119,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   /* Every open sales order, as of today, by when it is due (owner 2026-10-17:
      3 days, a week, two weeks, a month, later), with how many are short of
      stock and how many have a date agreed with the customer. */
-  const open = useMemo(() => rows.filter((o) => o.delivery_state !== "DELIVERED"), [rows]);
+  const progressMap = useJobProgressMap(true);
+  const open = useMemo(() => rows.filter((o) => !jobDone(o, progressMap)), [rows, progressMap]);
   const buckets = useMemo(() => {
     const defs: Array<{ key: string; label: string; color: string; test: (e: string | null) => boolean }> = [
       { key: "overdue", label: "Past delivery date", color: TONE.bad, test: (e) => !!e && e < today },
@@ -157,7 +160,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       const xs = orders.filter((o) => { const d = jobDate(o); return !!d && d >= w.from && d <= w.to; });
       return {
         ...w, rows: xs, doCount: xs.length, doAmountSen: xs.reduce((x, o) => x + o.local_total_sen, 0),
-        delivered: xs.filter((o) => o.delivery_state === "DELIVERED").length, current: today >= w.from && today <= w.to,
+        delivered: xs.filter((o) => jobDone(o, progressMap)).length, current: today >= w.from && today <= w.to,
       };
     });
   }, [regionRows, reportSize, period, today]);
@@ -217,10 +220,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
   /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
      by delivery progress and by the customer-message status. */
-  const progress = useMemo(() => deliveryProgressBreakdown(rows), [rows]);
+  const progress = useMemo(() => deliveryProgressBreakdown(rows, (o) => jobDone(o, progressMap)), [rows, progressMap]);
   /* A delivery progress card picks the orders the message table below reads. */
   const [progressPick, setProgressPick] = useState<string | null>(null);
-  const pickedRows = useMemo(() => (progressPick ? rows.filter((o) => o.delivery_state === progressPick) : rows), [rows, progressPick]);
+  const pickedRows = useMemo(() => (progressPick ? rows.filter((o) => progressKeyOf(o, (x) => jobDone(x, progressMap)) === progressPick) : rows), [rows, progressPick, progressMap]);
   const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(pickedRows), 7), [pickedRows]);
   const pickedLabel = progress.find((s) => s.key === progressPick)?.label ?? null;
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
@@ -240,7 +243,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
-      <LogisticPeriodSection rows={regionRows} period={period} today={today} totals={focus}
+      <LogisticPeriodSection rows={regionRows} period={period} progress={progressMap} totals={focus}
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows, "open sales orders, as of today", false)} onDrill={openDos} />
       {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
       {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.lorry.lorryRegionOrders} region={region} day={day} onLorry={setLorryDrill} />}
@@ -285,7 +288,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             {/* Delivery progress — a colour card per state (click opens its orders). */}
             <div>
               <div className="mb-2 text-[12px] font-semibold text-ink">By delivery progress</div>
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                 {progress.map((s) => (
                   <div key={s.key} className={cn("rounded-xl", progressPick === s.key && "ring-2 ring-primary")}>
                     <Tile label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}

@@ -51,6 +51,8 @@ export type DeliveryGeoResponse = {
   configured: boolean;
   points: DeliveryGeoPoint[];
   depot: DeliveryGeoDepot | null;
+  /** Each lorry's home warehouse point, by normalized plate; a lorry absent here uses `depot`. */
+  lorryDepots?: Record<string, { warehouseId: string; name: string; lat: number; lng: number }>;
   /** Why `depot` is null, when it is (no warehouse / ungeocodable address). */
   depotReason?: string | null;
   ungeocoded: Array<{ ref: string; reason: string }>;

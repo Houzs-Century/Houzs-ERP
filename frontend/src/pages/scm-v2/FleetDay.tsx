@@ -128,8 +128,8 @@ export function FleetDay() {
     date, new Date(),
   ), [lorryRows, progressMap, date]);
   const dayDocs = useMemo(
-    () => lorryRows.map((o) => docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock)),
-    [lorryRows, statusByRef, clock],
+    () => lorryRows.map((o) => { const j = jobRefOf(o); return docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock, j ? progressMap.get(jobKey(j)) ?? null : null); }),
+    [lorryRows, statusByRef, clock, progressMap],
   );
   const driversById = useMemo(() => new Map(drivers.map((d) => [d.id, d])), [drivers]);
   const colors = useMemo(() => assignRouteColors(trips.map((t) => t.id)), [trips]);
@@ -232,8 +232,8 @@ export function FleetDay() {
   // lorry's run as its own numbered, coloured route — not the per-trip dots — and
   // surfaces every drop it could not locate instead of silently dropping it.
   const lorryRoutes = useMemo(
-    () => buildLorryRoutes(runs, pointByRef, depotLL, colorForPlate),
-    [runs, pointByRef, depotLL, colorForPlate],
+    () => buildLorryRoutes(runs, pointByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
+    [runs, pointByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
   );
   const panelRoutes = lorryRoutes.routes;
   // The board's own drops that could not be placed (surfaced, never dropped),
