@@ -574,7 +574,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
 
   const nowIso = new Date().toISOString();
   const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR] = await Promise.all([
-    inHouseLorries(sb, "id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").order("plate"),
+    inHouseLorries(sb, "id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, length_ft, width_ft, height_ft").order("plate"),
     sb.from("warehouses").select("id, code, name"),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*"),
@@ -725,7 +725,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       driverName: driverByPlate.get(normPlate(l.plate)) ?? null,
       vehicleType: l.type,
       model: l.model,
-      mileageKm: currentMileageKm,
+      mileageKm: currentMileageKm, lengthFt: l.length_ft ?? null, widthFt: l.width_ft ?? null, heightFt: l.height_ft ?? null,
       mileageDate: mileage?.reading_date ?? null,
       mileageSource: mileage ? "reading" : svc?.odometer_km != null ? "service" : null,
       mileageFlagged: mileage?.flagged ?? false,
