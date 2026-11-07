@@ -129,7 +129,7 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !inUse.has(d)).length);
     const available = work - downDays;
     return {
-      lorry: plate, internal: internal.has(plate), daysOut: t.deliveryDays, setupDays: t.setupDays, transportDays: t.transportDays,
+      lorry: plate, internal: internal.has(plate), daysOut: t.deliveryDays, fairTrips: t.fairTrips, transportDays: t.transportDays,
       usedDays: t.usedDays, trips: t.trips, otherTrips: t.otherTrips, workingDays: available, downDays,
       /* Over 100% is real: two set-ups in a day are two trips. */
       occupancyPct: available ? Math.round((t.trips / available) * 1000) / 10 : null,
