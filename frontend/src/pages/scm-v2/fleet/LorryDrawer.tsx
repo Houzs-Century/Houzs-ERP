@@ -1,6 +1,7 @@
 // One lorry (owner 2026-11-07, the Coverage & Fleet design): where it starts the day,
 // where else it picks up, who usually drives it, what it carries, its documents and its
 // workshop visits. Read first, Edit to change; every field writes the lorry master.
+import { fmtDrive, fmtKm, useRoadFigures } from "../../../vendor/scm/lib/lorry-routes-queries";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -94,6 +95,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
               <CrewLine role="Driver" person={drivers.find((d) => d.id === lorry.usual_driver_id) ?? null} />
               <CrewLine role="Helper" person={helpers.find((h) => h.id === lorry.usual_helper_id) ?? null} />
             </Card>
+            <RoadThisMonth lorryId={lorry.id} />
             <Card title="How much it can carry">
               <Lorry3D box={box} height={230} />
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -108,6 +110,25 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
           </div>
         )}
     </ResizableDrawer>
+  );
+}
+
+/** Kilometres and driving time by road this month, home and back, from Last Mile. */
+function RoadThisMonth({ lorryId }: { lorryId: string }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const road = useRoadFigures(`${today.slice(0, 7)}-01`, today, lorryId);
+  const rows = road.data ?? [];
+  const m = rows.reduce((a, r) => a + r.distanceM, 0), s = rows.reduce((a, r) => a + r.durationS, 0);
+  return (
+    <Card title="On the road this month">
+      {road.isError ? <p className="text-[12.5px] text-[#8a2c2c]">Road figures could not be loaded.</p>
+        : rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No run worked out yet this month.</p>
+        : <div className="grid grid-cols-3 gap-2 text-[12.5px]">
+            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">By road</div><div className="text-[16px] font-semibold">{fmtKm(m)}</div></div>
+            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Driving time</div><div className="text-[16px] font-semibold">{fmtDrive(s)}</div></div>
+            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Days out</div><div className="text-[16px] font-semibold">{rows.length}</div></div>
+          </div>}
+    </Card>
   );
 }
 
