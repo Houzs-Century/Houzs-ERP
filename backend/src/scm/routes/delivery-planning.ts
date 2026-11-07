@@ -63,6 +63,7 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
@@ -1222,8 +1223,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const date = (d.requested_date as string | null) ?? null;
       const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
         .filter(Boolean).join(', ') || null;
-      const scheduled = String(d.status ?? '') === 'SCHEDULED';
-      const dpDelivered = String(d.status ?? '') === 'DELIVERED';
+      const boardState = dpBoardState((d.status as string | null) ?? null);
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
@@ -1239,7 +1239,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         phone: (d.contact_phone as string | null) ?? null, agent: null, salesperson_id: null, venue: null,
         branding: null,
         status: String(d.status ?? ''),
-        delivery_state: dpDelivered ? 'DELIVERED' : (scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE'),
+        delivery_state: boardState,
         delivery_state_override: null,
         balance_sen: 0,
         balance_sen_live: null,
@@ -1309,7 +1309,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         trip_stop_no: null,
         trip_eta_offset_s: null,
         arrangement_stage: deriveArrangementStage({
-          deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          deliveryState: boardState,
           dateConfirmed: date != null,
           onActiveTrip: false, // an unscheduled DP job is never on a trip yet
         }),
