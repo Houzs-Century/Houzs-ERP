@@ -8,9 +8,9 @@ import { useState } from "react";
 import { Button } from "../../components/Button";
 import { api } from "../../api/client";
 import { DateField } from "../../vendor/scm/components/DateField";
+import { LABEL } from "./FleetUi";
 
-const CLS = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
-const LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
+const CLS = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none";
 
 export function PlanServiceForm({ planId, componentLabel, currentKm, onCancel, onSaved }: {
   planId: string;
@@ -50,9 +50,9 @@ export function PlanServiceForm({ planId, componentLabel, currentKm, onCancel, o
   };
 
   return (
-    <div className="mt-2 rounded-lg border border-primary/30 bg-surface p-3">
-      <div className="mb-2 text-[12px] font-semibold text-ink">Record a {componentLabel} service</div>
-      <div className="grid grid-cols-2 gap-3">
+    <div className="rounded-[14px] border border-primary/30 bg-surface p-4">
+      <div className="mb-3 text-[14px] font-semibold text-ink">Record a {componentLabel} service</div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className={LABEL}>Service date *</label>
           <DateField fullWidth className={CLS} value={doneDate} onChange={(iso) => setDoneDate(iso)} />
@@ -69,12 +69,12 @@ export function PlanServiceForm({ planId, componentLabel, currentKm, onCancel, o
           <label className={LABEL}>Workshop</label>
           <input className={CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
         </div>
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <label className={LABEL}>Notes</label>
           <input className={CLS} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
         </div>
       </div>
-      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-3 flex gap-2">
         <Button variant="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save service"}</Button>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
