@@ -43,6 +43,12 @@ const LinkBtn = ({ onClick, children }: { onClick: () => void; children: ReactNo
   <button type="button" onClick={onClick} className="text-[12.5px] font-semibold text-primary hover:underline">{children}</button>
 );
 const inputCls = "min-h-[40px] w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink";
+/** When a trip on this lorry counts as full, in words. */
+const fullWhen = (l: LorryRow): string => {
+  const sets = `${l.max_sets ?? 10} sets`, value = fmtSen(l.max_revenue_sen ?? 3_000_000);
+  const layer = (l.capacity_layer ?? "SETS") as CapacityLayer;
+  return layer === "REVENUE" ? `A trip is full at ${value} of orders.` : layer === "BOTH" ? `A trip is full at ${sets} or ${value}, whichever comes first.` : `A trip is full at ${sets}.`;
+};
 const docPhrase = (days: number | null, date: string | null) =>
   date == null ? "Not recorded" : days != null && days < 0 ? `Expired ${fmtDate(date)}` : days != null && days <= 45 ? `Expires in ${days} days` : `Valid to ${fmtDate(date)}`;
 
@@ -93,7 +99,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
                 <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Max sets per trip</div><div className="text-[16px] font-semibold">{lorry.max_sets ?? 10}</div>{lorry.max_sets == null && <div className="text-[11px] text-ink-muted">Usual is 10</div>}</div>
                 <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Max order value per trip</div><div className="text-[16px] font-semibold">{fmtSen(lorry.max_revenue_sen ?? 3_000_000)}</div>{lorry.max_revenue_sen == null && <div className="text-[11px] text-ink-muted">Usual is RM 30,000</div>}</div>
               </div>
-              <p className="mt-2 text-[12px] text-ink-secondary">A trip is full when it reaches {CAPACITY_LAYER_LABEL[(lorry.capacity_layer ?? "SETS") as CapacityLayer].toLowerCase()}.</p>
+              <p className="mt-2 text-[12px] text-ink-secondary">{fullWhen(lorry)}</p>
             </Card>
             <Documents lorry={lorry} />
             <ServiceRecords lorryId={lorry.id} />
