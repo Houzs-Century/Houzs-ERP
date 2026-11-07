@@ -25,6 +25,7 @@
 // sibling SCM surface still carries the same shape; do not "restore" the claim.
 // ----------------------------------------------------------------------------
 
+import { LorriesBoard } from "./fleet/LorriesBoard";
 import { useCallback, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -559,158 +560,11 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LorriesSection = () => {
-  const [includeInactive, setIncludeInactive] = useState(false);
-  const [fleet, setFleet] = useState<FleetFilter>('all');
   const [creating, setCreating] = useState(false);
-  /* The open lorry is held by ID, not by the row object: the row object is a
-     snapshot from the list query, so holding it would leave the detail showing
-     stale compliance dates after a save until the drawer was reopened. */
-  const [openId, setOpenId] = useState<string | null>(null);
-  const lorries = useLorries({ includeInactive, fleet });
-  const warehouses = useWarehouses();
-  const update = useUpdateLorry();
-  const updateMutate = update.mutate;
-
-  /* Map warehouse id → code/name for the column display. */
-  const whName = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const w of warehouses.data ?? []) m.set(w.id, warehouseLabel(w) ?? "");
-    return m;
-  }, [warehouses.data]);
-
-  /* Re-resolved from the live list each render, so an edit in the detail is
-     reflected as soon as the lorries query is invalidated. Undefined once the
-     row leaves the filtered set (e.g. toggled inactive while open) — the drawer
-     then unmounts rather than showing a row that is no longer in the list. */
-  const openLorry = useMemo(
-    () => (openId ? (lorries.data ?? []).find((l) => l.id === openId) : undefined),
-    [openId, lorries.data],
-  );
-
-  const columns = useMemo<GridColumn<LorryRow>[]>(() => [
-    {
-      key: 'plate',
-      label: 'Plate',
-      width: 130,
-      accessor: (l) => <span className={styles.codeChip}>{l.plate}</span>,
-      searchValue: (l) => l.plate,
-      filterValue: (l) => l.plate,
-      sortFn: (a, b) => (a.plate ?? '').localeCompare(b.plate ?? ''),
-    },
-    {
-      key: 'type',
-      label: 'Type',
-      width: 140,
-      accessor: (l) => LORRY_TYPE_LABEL[l.type] ?? l.type,
-      searchValue: (l) => LORRY_TYPE_LABEL[l.type] ?? l.type,
-      filterValue: (l) => LORRY_TYPE_LABEL[l.type] ?? l.type,
-      sortFn: (a, b) => (LORRY_TYPE_LABEL[a.type] ?? a.type).localeCompare(LORRY_TYPE_LABEL[b.type] ?? b.type),
-    },
-    {
-      key: 'fleet',
-      label: 'Fleet',
-      width: 130,
-      accessor: (l) => {
-        const internal = isInternalOf(l);
-        return (
-          <span style={{ fontSize: 'var(--fs-12)', color: internal ? 'var(--c-secondary-a)' : 'var(--fg-muted)' }}>
-            {internal ? 'In-house' : 'Outsource'}
-          </span>
-        );
-      },
-      searchValue: (l) => (isInternalOf(l) ? 'In-house' : 'Outsource'),
-      filterValue: (l) => (isInternalOf(l) ? 'In-house' : 'Outsource'),
-      sortFn: (a, b) => Number(isInternalOf(a)) - Number(isInternalOf(b)),
-    },
-    {
-      key: 'warehouse',
-      label: 'Warehouses',
-      width: 180,
-      accessor: (l) => {
-        const ids = lorryWarehouseIds(l);
-        return ids.length ? ids.map((id) => whName.get(id) ?? '—').join(', ') : 'Any';
-      },
-    },
-    {
-      key: 'capM3',
-      label: 'Cap. m³',
-      width: 110,
-      accessor: (l) => fmtNum(capM3Of(l)),
-      defaultHidden: true,
-    },
-    {
-      key: 'capKg',
-      label: 'Cap. kg',
-      width: 110,
-      accessor: (l) => fmtNum(capKgOf(l)),
-      defaultHidden: true,
-    },
-    {
-      key: 'active',
-      label: 'Active',
-      width: 130,
-      accessor: (l) => (
-        <label
-          onClick={(e) => e.stopPropagation()}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-        >
-          <input type="checkbox" checked={l.active}
-            onChange={(e) => updateMutate({ id: l.id, active: e.target.checked })} />
-          <span style={{ fontSize: 'var(--fs-12)', color: l.active ? 'var(--c-secondary-a)' : 'var(--fg-muted)' }}>
-            {l.active ? 'Active' : 'Inactive'}
-          </span>
-        </label>
-      ),
-      searchValue: (l) => (l.active ? 'Active' : 'Inactive'),
-      filterValue: (l) => (l.active ? 'Active' : 'Inactive'),
-      sortFn: (a, b) => Number(a.active) - Number(b.active),
-    },
-  ], [updateMutate, whName]);
-
   return (
     <section className={styles.section}>
-      <div className={styles.headerRow}>
-        <h2 className={styles.title}>Lorries</h2>
-        <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-          <Plus {...ICON} />
-          <span>New Lorry</span>
-        </Button>
-      </div>
-
-      <div className={styles.headerRow}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-            <input type="checkbox" checked={includeInactive} onChange={(e) => setIncludeInactive(e.target.checked)} />
-            <span>Show inactive</span>
-          </label>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-            <span>Fleet</span>
-            <select className={styles.fieldInput} style={{ width: 'auto' }}
-              value={fleet} onChange={(e) => setFleet(e.target.value as FleetFilter)}>
-              <option value="all">All</option>
-              <option value="internal">In-house</option>
-              <option value="outsourced">Outsourced</option>
-            </select>
-          </label>
-        </div>
-        <p className={styles.eyebrow}>{lorries.data?.length ?? 0} lorries</p>
-      </div>
-
-      <DataGridCompat
-        rows={lorries.data ?? []}
-        columns={columns}
-        storageKey="dg-lorries"
-        exportName="Lorries"
-        rowKey={(l) => l.id}
-        searchPlaceholder="Search plate, type, fleet…"
-        groupBanner={false}
-        isLoading={lorries.isLoading}
-        emptyMessage="No lorries yet."
-        onRowClick={(l) => setOpenId(l.id)}
-      />
-
+      <LorriesBoard onNew={() => setCreating(true)} />
       {creating && <CreateLorryDrawer onClose={() => setCreating(false)} />}
-      {openLorry && <LorryDetail lorry={openLorry} onClose={() => setOpenId(null)} />}
     </section>
   );
 };
