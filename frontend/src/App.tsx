@@ -74,7 +74,7 @@ const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ de
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
-const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
+const FleetHealth = lazy(() => import("./pages/fleet/FleetHealthDashboard").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
 const Assistant = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
@@ -190,7 +190,6 @@ const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies
 const ScmSavedLocationsV2 = lazy(() => import("./pages/scm-v2/SavedLocations").then((m) => ({ default: m.SavedLocations })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmDeliveryMaintenanceV2 = lazy(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
-const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
 const ScmLorryLiveMap = lazy(() => import("./pages/scm-v2/LorryLiveMap").then((m) => ({ default: m.LorryLiveMap })));
 // Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
 const ScmFleetDayV2 = lazy(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
@@ -946,7 +945,7 @@ export default function App() {
         <Route path="/scm/saved-locations"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmSavedLocationsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-maintenance"      element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/lorry-capacity"            element={<Navigate to="/scm/logistic-overview?view=capacity" replace />} />
         <Route path="/scm/lorry-live-map"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryLiveMap /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-run-sheet"           element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetRunSheetV2 /></Scm2990Shell></ScmGuard>} />
