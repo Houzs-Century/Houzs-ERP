@@ -16,6 +16,8 @@
    against the days it could work (owner 2026-11-07). */
 
 import { regionOf } from '../shared/logistic-region';
+import { PROCUREMENT_CATEGORY_LABEL } from './procurement-overview';
+import { MAIN_CATEGORY_ORDER } from './so-readiness';
 
 export interface PeriodDo {
   id: string; doDate: string; status: string; amountSen: number; state: string | null;
@@ -25,8 +27,9 @@ export interface PeriodDo {
 
 export { regionOf };
 
-/** What an order is, when it carries several: the biggest item decides. */
-const MAIN_CATEGORY = ['Sofa', 'Mattress', 'Bedframe'];
+/** What an order is, when it carries several. Bedframe comes last: it names an order only
+ *  when nothing bigger is on it. */
+const MAIN_CATEGORY: string[] = [...MAIN_CATEGORY_ORDER].reverse().map((c) => PROCUREMENT_CATEGORY_LABEL[c as keyof typeof PROCUREMENT_CATEGORY_LABEL]);
 
 const addDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
