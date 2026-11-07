@@ -18,6 +18,8 @@ export const countsForLorry = (region: string): boolean => LORRY_REGIONS.include
 /** A job a lorry did, by how it counts (owner 2026-11-07). */
 export type LorryJobKind = 'delivery' | 'service' | 'setup' | 'transport';
 export interface LorryJob { plate: string; date: string; kind: LorryJobKind }
+/** The same job as a line in the lorry's list: every counted job is one of these. */
+export interface LorryJobDetail extends LorryJob { type: string; ref: string | null; customer: string | null; assrId: string | null; doId: string | null }
 
 /** A delivery run goes out once however many orders it carries, and service jobs ride
  *  on it. A set-up or a dismantle is a trip each. A supplier pickup or a stock transfer

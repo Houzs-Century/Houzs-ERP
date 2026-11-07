@@ -2,7 +2,18 @@
 // delivery orders of that region, so everything below a click follows it.
 import type { DayRow, LorryDay, LorryRow } from "./LogisticDailySection";
 import type { PeriodTotals } from "./LogisticPeriodSection";
-import { countsForLorry, lorryTrips } from "../../vendor/shared/logistic-region";
+import { countsForLorry, lorryTrips, type LorryJob, type LorryJobDetail } from "../../vendor/shared/logistic-region";
+
+/* A region narrows what a lorry delivered, and a service job rides on a delivery run.
+   A job with no region of its own (an event, a stock move) stays the lorry's. */
+const jobsInRegion = <J extends LorryJob>(jobs: readonly J[], region: string | null): J[] =>
+  region == null ? [...jobs] : jobs.filter((j) => j.kind !== "delivery" && j.kind !== "service");
+
+/** The jobs behind a lorry's row that its delivery orders do not already list, so the
+ *  lines under a lorry add up to the row's own figures. */
+export function lorryOtherJobs(jobs: readonly LorryJobDetail[], plate: string, from: string, to: string, region: string | null, listedDoIds: ReadonlySet<string>): LorryJobDetail[] {
+  return jobsInRegion(jobs.filter((j) => j.plate === plate && j.date >= from && j.date <= to), region).filter((j) => !(j.doId != null && listedDoIds.has(j.doId) && j.kind === "delivery"));
+}
 
 export function focusPeriod(p: PeriodTotals, region: string | null, day: string | null): PeriodTotals {
   if (region == null && day == null) return p;
@@ -32,7 +43,7 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
     const ds = lorryDayList.filter((x) => x.lorry === l.lorry);
     const jobs = p.lorryJobs.filter((j) => j.plate === l.lorry && (day == null || j.date === day));
     if (ds.length === 0 && (region != null || jobs.length === 0)) return [];
-    const t = lorryTrips(ds.map((x) => x.date), region == null ? jobs : jobs.filter((j) => j.kind !== "delivery" && j.kind !== "service"));
+    const t = lorryTrips(ds.map((x) => x.date), jobsInRegion(jobs, region));
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
     const doOrders = ds.reduce((a, x) => a + x.orders, 0);
     const workingDays = day == null ? l.workingDays : 1;

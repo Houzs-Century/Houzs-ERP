@@ -8,7 +8,7 @@
    owe money (the sheet's "Overdue balance > 30 days"), and DOs never closed
    or carrying no cost.
    Company scope: every read is scoped to the active company. */
-import type { LorryJob, LorryJobKind } from '../shared/logistic-region';
+import type { LorryJobDetail, LorryJobKind } from '../shared/logistic-region';
 import { loadProjectJobs } from './lorry-capacity';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -36,6 +36,11 @@ const DAY = 86400000;
 const STOP_KIND: Readonly<Record<string, LorryJobKind | null>> = {
   DELIVERY: 'delivery', SERVICE: 'service', INSPECTION: 'service', PICKUP: 'service',
   SETUP: 'setup', DISMANTLE: 'setup', SUPPLIER_PICKUP: 'transport', TRANSFER: 'transport', LORRY_SERVICE: null,
+};
+/** What a run's stop reads as in the lorry's list, in the board's job type words. */
+const STOP_TYPE: Readonly<Record<string, string>> = {
+  DELIVERY: 'Delivery', SERVICE: 'Service case', INSPECTION: 'Service case · Inspection', PICKUP: 'Service case · Pickup',
+  SETUP: 'Setup', DISMANTLE: 'Dismantle', SUPPLIER_PICKUP: 'Supplier Pickup', TRANSFER: 'Transfer',
 };
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -205,17 +210,20 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .select('id, lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
   if (used.error) return fail('lorry runs in the period', used.error);
   const usedStops = await chunkIn<Row>((used.data ?? []).map((u) => String(u.id)), (b, f, t) => scopeToCompany(sb.from('trip_stops')
-    .select('trip_id, stop_type, assr_case_id').in('trip_id', b), c).order('id').range(f, t));
+    .select('trip_id, stop_type, assr_case_id, do_id, dp_no, customer_name').in('trip_id', b), c).order('id').range(f, t));
   if (usedStops.error) return fail('lorry run stops in the period', usedStops.error);
   const projectJobs = await loadProjectJobs(c, pFrom, pEnd);
   if (projectJobs.error) return fail('event lorries', { message: projectJobs.error });
   const runOf = new Map((used.data ?? []).map((u) => [String(u.id), { plate: plateOf.get(String(u.lorry_id)), date: String(u.trip_date ?? '').slice(0, 10) }]));
-  const lorryJobs: LorryJob[] = [];
+  const lorryJobs: LorryJobDetail[] = [];
   for (const s of usedStops.data) {
     const run = runOf.get(String(s.trip_id));
     /* A service case's delivery leg is a DELIVERY stop too; it rides the run as a service job. */
     const kind = s.assr_case_id != null ? 'service' : STOP_KIND[String(s.stop_type)];
-    if (run?.plate && run.date && kind) lorryJobs.push({ plate: run.plate, date: run.date, kind });
+    if (run?.plate && run.date && kind) {
+      const type = s.assr_case_id != null && String(s.stop_type) === 'DELIVERY' ? 'Service case' : STOP_TYPE[String(s.stop_type)] ?? String(s.stop_type);
+      lorryJobs.push({ plate: run.plate, date: run.date, kind, type, ref: str(s.dp_no), customer: str(s.customer_name), assrId: s.assr_case_id != null ? String(s.assr_case_id) : null, doId: str(s.do_id) });
+    }
   }
   /* An event's set-up and dismantle live on the project, never on a run, so they add to
      the run stops rather than repeat them. */
@@ -223,7 +231,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     const typed = j.lorryPlate ? (fleetByNorm.get(j.lorryPlate.replace(/\s+/g, '').toUpperCase()) ?? j.lorryPlate) : null;
     const plate = j.lorryId ? plateOf.get(j.lorryId) : typed;
     const date = String(j.date ?? '').slice(0, 10);
-    if (plate && date) lorryJobs.push({ plate, date, kind: 'setup' });
+    if (plate && date) lorryJobs.push({ plate, date, kind: 'setup', type: j.stage, ref: j.code, customer: j.name, assrId: null, doId: null });
   }
   const period = {
     from: pFrom, to: pTo,
@@ -231,6 +239,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
     ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate, lorryJobs),
+    lorryJobs,
     /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),

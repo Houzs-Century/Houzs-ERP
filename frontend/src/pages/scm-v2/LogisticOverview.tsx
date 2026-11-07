@@ -18,9 +18,9 @@ import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
-import { LogisticPeriodSection, jobTypeOf, type PeriodTotals } from "./LogisticPeriodSection";
+import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
 import { LogisticLorryDrawer, type LorryWorkRow } from "./LogisticLorryDrawer";
-import { focusPeriod, jobDate, windowsInRange } from "./logisticFocus";
+import { focusPeriod, jobDate, lorryOtherJobs, windowsInRange } from "./logisticFocus";
 import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
@@ -191,12 +191,9 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       key: d.id, date: d.date, type: "Delivery", ref: d.doNumber ?? "—", customer: d.customer ?? "—", region: d.region, amountSen: d.amountSen,
       onOpen: () => navigate(`/scm/delivery-orders/${d.id}`),
     }));
-    const others = regionRows.filter((o) => {
-      const d = jobDate(o);
-      return o.row_type !== "so" && !!d && d >= from && d <= to && String(o.crew?.lorry ?? "").split(" / ").includes(plate);
-    }).map((o): LorryWorkRow => ({
-      key: o.so_doc_no, date: jobDate(o) ?? "", type: jobTypeOf(o), ref: o.ref ?? o.dp_no ?? "—", customer: o.debtor_name ?? "—", region: regionOf(o.customer_state), amountSen: 0,
-      onOpen: o.row_type === "assr" && o.assr_id ? () => navigate(`/assr/${o.assr_id}`) : null,
+    const others = lorryOtherJobs(h?.period.lorryJobs ?? [], plate, from, to, region, new Set(dos.map((d) => d.key))).map((j, i): LorryWorkRow => ({
+      key: `job-${i}`, date: j.date, type: j.type, ref: j.ref ?? "—", customer: j.customer ?? "—", region: "—", amountSen: 0,
+      onOpen: j.assrId ? () => navigate(`/assr/${j.assrId}`) : null,
     }));
     return [...dos, ...others];
   };
