@@ -186,7 +186,7 @@ export function useUpdateLorry() {
       authedFetch<{ lorry: LorryRow }>(`/lorries/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorries'] }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['lorries'] }), qc.invalidateQueries({ queryKey: ['lorry-capacity'] })]),
   });
 }
 
