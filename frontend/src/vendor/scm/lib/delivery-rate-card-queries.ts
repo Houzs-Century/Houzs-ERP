@@ -17,7 +17,7 @@ export type RateAggregation = 'UNIT' | 'DROP' | 'CUSTOMER' | 'TRIP';
 export type RateRounding = 'NONE' | 'NEAREST_10C' | 'NEAREST_RM';
 export type RateRuleType =
   | 'POSITIONAL_TIER' | 'OVERAGE' | 'SOFA_BRACKET' | 'OUTSTATION' | 'OUTSTATION_TRIP'
-  | 'DISPOSE' | 'SETUP' | 'DISMANTLE' | 'SERVICE' | 'PICKUP' | 'INSPECTION' | 'TRANSFER';
+  | 'DISPOSE' | 'SETUP' | 'DISMANTLE' | 'SERVICE' | 'PICKUP' | 'INSPECTION' | 'SUPPLIER_PICKUP' | 'TRANSFER';
 
 export type RateCard = {
   id: string;
@@ -77,6 +77,7 @@ export type DeliveryFacts = {
   serviceCount?: number | null;
   pickupCount?: number | null;
   inspectionCount?: number | null;
+  supplierPickupCount?: number | null;
   transferCount?: number | null;
 };
 
@@ -190,7 +191,11 @@ export function useCreateRateRule(cardId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: NewRateRule) => authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+    /* The carrier list shows each card's rule count, so it refreshes too. */
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+      qc.invalidateQueries({ queryKey: CARDS_KEY }),
+    ]),
   });
 }
 
@@ -199,7 +204,11 @@ export function useUpdateRateRule(cardId: string) {
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<NewRateRule> & { id: string }) =>
       authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+    /* The carrier list shows each card's rule count, so it refreshes too. */
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+      qc.invalidateQueries({ queryKey: CARDS_KEY }),
+    ]),
     onError: writeFailed,
   });
 }
@@ -208,7 +217,11 @@ export function useDeleteRateRule(cardId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+    /* The carrier list shows each card's rule count, so it refreshes too. */
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+      qc.invalidateQueries({ queryKey: CARDS_KEY }),
+    ]),
   });
 }
 

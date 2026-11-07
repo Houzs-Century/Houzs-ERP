@@ -5,7 +5,8 @@
 //   GET  /?from=&to=     rows (one per DO + carrier) with billed, system amount
 //                        and variance, plus totals per (carrier, invoice no)
 //   PUT  /               { doNumber, threeplCompanyId, invoiceNo, invoiceDate,
-//                          billedSen, note } - upsert on (company, DO, carrier)
+//                          billedSen, note, replace? } - upsert on (company, DO,
+//                          carrier); 409 already_keyed unless replace is true
 //   DELETE /:id
 //   /from-ap/*           fill the rows from an AP invoice's attached bill
 //                        (threepl-from-ap.ts, owner 2026-10-23)
@@ -148,6 +149,23 @@ threeplDoCharges.put('/', async (c) => {
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
   const live = ((dos ?? []) as Row[]).filter((d) => d.status !== 'CANCELLED');
   if (live.length !== 1) return c.json({ error: live.length ? 'do_ambiguous' : 'do_not_found' }, 404);
+
+  /* A second key-in for the same DO and 3PL used to overwrite the first in
+     silence. Say what is already there; replace only when the person says so. */
+  if (body.replace !== true) {
+    const { data: prior, error: pErr } = await scopeToCompanyId(db(sb).from('threepl_do_charges')
+      .select('id, billed_sen, invoice_no'), co.companyId)
+      .eq('do_id', String(live[0]!.id)).eq('threepl_company_id', carrierId).maybeSingle();
+    if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+    if (prior) {
+      const was = prior as Row;
+      return c.json({
+        error: 'already_keyed',
+        message: `${doNumber} is already keyed in for this 3PL${was.invoice_no ? ` on invoice ${String(was.invoice_no)}` : ''}.`,
+        existing: { billedSen: Number(was.billed_sen ?? 0), invoiceNo: str(was.invoice_no) },
+      }, 409);
+    }
+  }
 
   const { data, error } = await db(sb).from('threepl_do_charges').upsert({
     company_id: co.companyId,
