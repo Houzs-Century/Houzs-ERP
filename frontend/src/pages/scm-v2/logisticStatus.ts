@@ -36,10 +36,20 @@ export function deliveryProgressBreakdown(rows: PlanningOrder[]): StatusSlice[] 
 
 /** Orders by their customer-message workflow status (the raw value, blank →
  *  "No status yet"), biggest first. */
+export const messageStatusOf = (o: PlanningOrder): string => o.delivery_message_status?.trim() || NO_MESSAGE_STATUS;
+
+/** The orders behind one row of the message-status table; "__other__" is every status
+ *  not shown on its own row. */
+export function ordersOfSlice(rows: PlanningOrder[], key: string, shown: readonly StatusSlice[]): PlanningOrder[] {
+  if (key !== "__other__") return rows.filter((o) => messageStatusOf(o) === key);
+  const own = new Set(shown.map((s) => s.key));
+  return rows.filter((o) => !own.has(messageStatusOf(o)));
+}
+
 export function messageStatusBreakdown(rows: PlanningOrder[]): StatusSlice[] {
   const by = new Map<string, { count: number; sen: number }>();
   for (const o of rows) {
-    const k = o.delivery_message_status?.trim() || NO_MESSAGE_STATUS;
+    const k = messageStatusOf(o);
     const g = by.get(k) ?? { count: 0, sen: 0 };
     g.count += 1;
     g.sen += o.local_total_sen;

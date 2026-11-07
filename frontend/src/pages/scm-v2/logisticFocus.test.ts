@@ -56,13 +56,13 @@ describe("one region of the logistic overview", () => {
     expect(f.chargesSen).toBe(5);
   });
 
-  it("lists only the lorries that carried there, per delivery day from that region", () => {
+  it("lists only the lorries that carried there; a one-order run is half a trip", () => {
     const f = focusPeriod(period, "Northern", null);
-    expect(f.byLorry.map((l) => [l.lorry, l.daysOut, l.perDayOutSen])).toEqual([["A", 2, 200]]);
+    expect(f.byLorry.map((l) => [l.lorry, l.daysOut, l.perDayOutSen])).toEqual([["A", 1, 400]]);
   });
 
   it("keeps a lorry's set-ups, whichever region it delivered to", () => {
-    expect(focusPeriod(period, "Southern", null).byLorry[0]).toMatchObject({ lorry: "B", fairTrips: 1, trips: 2, workingDays: 2 });
+    expect(focusPeriod(period, "Southern", null).byLorry[0]).toMatchObject({ lorry: "B", fairTrips: 1, trips: 1.5, workingDays: 2 });
   });
 
   it("a picked day shows that day's lorries, and their orders add up to the day", () => {

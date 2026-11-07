@@ -16,9 +16,11 @@ export type DoDrill = (title: string, keep: (d: { date: string; region: string; 
 
 const dd = (d: string) => d.slice(5).replace("-", "/");
 const money = (x: number | null) => (x == null ? "—" : fmtSen(x));
+/** Capacity: 100% and over is a lorry earning its day, under is not (owner 2026-11-07). */
+export const capacityTone = (pct: number | null) => ((pct ?? 0) >= 100 ? TONE.good : TONE.bad);
 
 export function LogisticDailySection({ days, regions, region, setRegion, day, setDay, onDrill }: { days: DayRow[]; regions: RegionRow[]; region: string | null; setRegion: (r: string | null) => void; day: string | null; setDay: (d: string | null) => void; onDrill: DoDrill }) {
-  const [by, setBy] = useState<"amount" | "orders" | "lorry">("amount");
+  const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
   const shown = days.filter((x) => x.orders);
   const tot = days.reduce((a, x) => ({ orders: a.orders + x.orders, amountSen: a.amountSen + x.amountSen, lorries: a.lorries + x.lorries, lorryOrders: a.lorryOrders + x.lorryOrders }), { orders: 0, amountSen: 0, lorries: 0, lorryOrders: 0 });
@@ -32,13 +34,16 @@ export function LogisticDailySection({ days, regions, region, setRegion, day, se
           {region && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setRegion(null)}>All regions</button>}
           {day && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => onDrill(`Delivered on ${day}${region ? ` · ${region}` : ""}`, (d) => d.date === day && (!region || d.region === region))}>See orders</button>}
           {day && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setDay(null)}>All days</button>}
-          <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"], ["lorry", "Per delivery lorry"]]} onChange={setBy} />
+          <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />
         </span>}>
         <Columns axes={false} valueLabels={by === "orders"} height={190} stacked={false} format={by === "orders" ? (x) => `${x} orders` : fmtSen} highlight={null}
           labels={days.map((x) => dd(x.date))}
-          series={[{ name: { amount: "Delivered amount", orders: "Orders delivered", lorry: "Average per delivery lorry" }[by], color: TONE.good }]}
-          values={[days.map((x) => ({ amount: x.amountSen, orders: x.orders, lorry: x.perLorrySen ?? 0 }[by]))]}
-          line={amt ? { name: "Average order", color: PALETTE[1]!, values: days.map((x) => x.avgOrderSen), format: fmtSen } : null} />
+          series={[{ name: amt ? "Delivered amount" : "Orders delivered", color: TONE.good }]}
+          values={[days.map((x) => (amt ? x.amountSen : x.orders))]}
+          line={amt ? [
+            { name: "Average order", color: PALETTE[1]!, values: days.map((x) => x.avgOrderSen), format: fmtSen },
+            { name: "Average per delivery lorry", color: PALETTE[2]!, values: days.map((x) => x.perLorrySen), format: fmtSen },
+          ] : null} />
         <div className="mt-3 max-h-[340px] overflow-y-auto">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr>
@@ -104,7 +109,7 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onLo
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title={`Lorries · revenue and capacity${scope ? ` · ${scope}` : ""}`} hint="KL, Southern and Northern only · Delivery trip = a day's delivery or service run, however many orders · Fair trip = a set-up or dismantle · Stock trip = a supplier pickup or stock transfer, half a trip · Capacity = total trips ÷ days it could work (workshop days off, Sundays only if it went out), and can pass 100% · Per delivery trip = revenue ÷ delivery trips">
+      <Panel title={`Lorries · revenue and capacity${scope ? ` · ${scope}` : ""}`} hint="KL, Southern and Northern only · Delivery trip = a day's delivery or service run; under 3 orders (delivery orders and service jobs) it is half a trip · Fair trip = a set-up or dismantle · Stock trip = a supplier pickup or stock transfer, half a trip · Capacity = total trips ÷ days it could work (workshop days off, Sundays only if it went out), and can pass 100% · Per delivery trip = revenue ÷ delivery trips">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
             Our own lorries had <b className="text-ink">{ownPossible}</b> lorry working days: <b className="text-ink">{ownDays}</b> delivery trips and
@@ -121,8 +126,8 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onLo
               <Td>{l.usedDays} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td>
               <Td left className="w-[22%]">
                 <div className="flex items-center gap-2">
-                  <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: (l.occupancyPct ?? 0) >= 80 ? TONE.good : (l.occupancyPct ?? 0) >= 60 ? TONE.warn : TONE.bad }} /></div>
-                  <span className="w-12 text-right tabular-nums text-[12px]">{l.occupancyPct == null ? "—" : `${l.occupancyPct}%`}</span>
+                  <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: capacityTone(l.occupancyPct) }} /></div>
+                  <span className="w-12 text-right tabular-nums text-[12px] font-semibold" style={{ color: capacityTone(l.occupancyPct) }}>{l.occupancyPct == null ? "—" : `${l.occupancyPct}%`}</span>
                 </div>
               </Td>
               <Td><span title={`${l.doOrders} delivery orders + ${l.serviceOrders} service jobs`}>{l.orders}</span></Td><Td>{fmtSen(l.amountSen)}</Td><Td>{money(l.perDayOutSen)}</Td><Td>{l.orders ? fmtSen(Math.round(l.amountSen / l.orders)) : "—"}</Td>

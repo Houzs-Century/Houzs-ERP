@@ -43,14 +43,14 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
     const ds = lorryDayList.filter((x) => x.lorry === l.lorry);
     const jobs = p.lorryJobs.filter((j) => j.plate === l.lorry && (day == null || j.date === day));
     if (ds.length === 0 && (region != null || jobs.length === 0)) return [];
-    const t = lorryTrips(ds.map((x) => x.date), jobsInRegion(jobs, region));
+    const t = lorryTrips(ds, jobsInRegion(jobs, region));
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
     const doOrders = ds.reduce((a, x) => a + x.orders, 0);
     const workingDays = day == null ? l.workingDays : 1;
     return [{
-      ...l, ...t, daysOut: t.deliveryDays, workingDays, downDays: day == null ? l.downDays : 0,
+      ...l, ...t, daysOut: t.deliveryTrips, workingDays, downDays: day == null ? l.downDays : 0,
       occupancyPct: workingDays ? Math.round((t.trips / workingDays) * 1000) / 10 : null,
-      doOrders, orders: doOrders + t.serviceOrders, amountSen, perDayOutSen: t.deliveryDays ? Math.round(amountSen / t.deliveryDays) : null,
+      doOrders, orders: doOrders + t.serviceOrders, amountSen, perDayOutSen: t.deliveryTrips ? Math.round(amountSen / t.deliveryTrips) : null,
     }];
   });
   const lorryList = list.filter((d) => countsForLorry(d.region));
