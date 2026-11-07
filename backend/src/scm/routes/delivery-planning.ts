@@ -108,6 +108,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
@@ -116,7 +117,6 @@ import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock 
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
-
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
@@ -1635,7 +1635,7 @@ deliveryPlanning.get('/geo', async (c) => {
   const scopedRows = dayRows.filter((r) => docNoSet.has(String(r.docNo ?? r.doc_no ?? '')));
 
   if (scopedRows.length === 0) {
-    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', ungeocoded: [] });
+    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', lorryDepots: {}, ungeocoded: [] });
   }
 
   /* 2. Zone map — the SAME company map + in-code default the delivery-zones
@@ -1817,7 +1817,7 @@ deliveryPlanning.get('/geo', async (c) => {
     });
   }
 
-  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ungeocoded });
+  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ...(await loadLorryDepots(sb, c.env)), ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────
