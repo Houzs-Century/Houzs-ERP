@@ -21,7 +21,7 @@ import type { DriverRow } from "../../../vendor/scm/lib/drivers-queries";
 import type { HelperRow } from "../../../vendor/scm/lib/helpers-queries";
 import type { ThreePLCompanyRow } from "../../../vendor/scm/lib/threepl-companies-queries";
 import { alsoServes, boxOf, groupWarehouses, lorryHome, type WarehouseLite } from "./lorryModel";
-import { LorrySilhouette } from "./LorrySilhouette";
+import { Lorry3D } from "./Lorry3D";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
   expired: "bg-[#f6dcdc] text-[#8a2c2c]", critical: "bg-[#f6dcdc] text-[#8a2c2c]",
@@ -88,10 +88,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
               <CrewLine role="Helper" person={helpers.find((h) => h.id === lorry.usual_helper_id) ?? null} />
             </Card>
             <Card title="How much it can carry">
-              <LorrySilhouette box={box} labels />
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-ink">
-                {box ? <><span>Length {box.length} ft</span><span>Width {box.width} ft</span><span>Height {box.height} ft</span><b>{box.m3} m³</b></> : <span className="text-ink-muted">Box size not entered</span>}
-              </div>
+              <Lorry3D box={box} height={230} />
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Max sets per trip</div><div className="text-[16px] font-semibold">{lorry.max_sets ?? 10}</div>{lorry.max_sets == null && <div className="text-[11px] text-ink-muted">Usual is 10</div>}</div>
                 <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Max order value per trip</div><div className="text-[16px] font-semibold">{fmtSen(lorry.max_revenue_sen ?? 3_000_000)}</div>{lorry.max_revenue_sen == null && <div className="text-[11px] text-ink-muted">Usual is RM 30,000</div>}</div>
@@ -274,7 +271,7 @@ function LorryEdit({ lorry, warehouses, drivers, helpers, carriers, onDone }: {
       </div>
       <div>
         <div className={label}>Box size (feet)</div>
-        <LorrySilhouette box={box} labels className="my-2" />
+        <div className="my-2"><Lorry3D box={box} height={200} /></div>
         <div className="grid grid-cols-3 gap-2">
           <label className="text-[11px] text-ink-muted">Length<input inputMode="decimal" value={f.length} onChange={(e) => setF({ ...f, length: e.target.value })} className={inputCls} /></label>
           <label className="text-[11px] text-ink-muted">Width<input inputMode="decimal" value={f.width} onChange={(e) => setF({ ...f, width: e.target.value })} className={inputCls} /></label>
