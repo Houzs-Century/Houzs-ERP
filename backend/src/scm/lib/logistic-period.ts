@@ -15,7 +15,7 @@
    other jobs, so a lorry reads delivery days (revenue) and days in use (occupancy)
    against the days it could work (owner 2026-11-07). */
 
-import { regionOf } from '../shared/logistic-region';
+import { lorryTrips, regionOf, type LorryJob } from '../shared/logistic-region';
 import { PROCUREMENT_CATEGORY_LABEL } from './procurement-overview';
 import { MAIN_CATEGORY_ORDER } from './so-readiness';
 
@@ -47,7 +47,7 @@ export function workingDays(from: string, to: string): number {
   return n;
 }
 
-export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string, downDatesOf: ReadonlyMap<string, ReadonlySet<string>>, usedDatesOf: ReadonlyMap<string, ReadonlySet<string>>) {
+export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string, fleet: FleetLorry[], today: string, downDatesOf: ReadonlyMap<string, ReadonlySet<string>>, lorryJobs: readonly LorryJob[]) {
   const out = dos.filter((d) => d.doDate >= from && d.doDate <= to);
 
   const days: Array<{ date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null }> = [];
@@ -118,19 +118,24 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     g.orders += 1; g.amountSen += d.amountSen; perDay.set(k, g);
   }
   const lorryDayList = [...perDay.values()].sort((a, b) => b.date.localeCompare(a.date) || b.amountSen - a.amountSen);
-  const plates = new Set([...fleet.filter((l) => l.internal).map((l) => l.plate), ...lorryDayList.map((x) => x.lorry), ...[...usedDatesOf.keys()].filter((p) => fleet.some((l) => l.plate === p))]);
+  const plates = new Set([...fleet.filter((l) => l.internal).map((l) => l.plate), ...lorryDayList.map((x) => x.lorry), ...lorryJobs.map((j) => j.plate).filter((p) => fleet.some((l) => l.plate === p))]);
   const internal = new Set(fleet.filter((l) => l.internal).map((l) => l.plate));
   const byLorry = [...plates].map((plate) => {
     const ds = lorryDayList.filter((x) => x.lorry === plate);
     const amountSen = ds.reduce((a, x) => a + x.amountSen, 0);
-    const used = new Set([...ds.map((x) => x.date), ...(usedDatesOf.get(plate) ?? [])]);
-    const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !used.has(d)).length);
+    const jobs = lorryJobs.filter((j) => j.plate === plate);
+    const t = lorryTrips(ds.map((x) => x.date), jobs);
+    const inUse = new Set([...ds.map((x) => x.date), ...jobs.map((j) => j.date)]);
+    const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !inUse.has(d)).length);
     const available = work - downDays;
     return {
-      lorry: plate, internal: internal.has(plate), daysOut: ds.length, usedDays: used.size, workingDays: available, downDays,
-      occupancyPct: available ? Math.round((used.size / available) * 1000) / 10 : null,
-      orders: ds.reduce((a, x) => a + x.orders, 0), amountSen,
-      perDayOutSen: ds.length ? Math.round(amountSen / ds.length) : null,
+      lorry: plate, internal: internal.has(plate), daysOut: t.deliveryDays, setupDays: t.setupDays, transportDays: t.transportDays,
+      usedDays: t.usedDays, trips: t.trips, otherTrips: t.otherTrips, workingDays: available, downDays,
+      /* Over 100% is real: two set-ups in a day are two trips. */
+      occupancyPct: available ? Math.round((t.trips / available) * 1000) / 10 : null,
+      doOrders: ds.reduce((a, x) => a + x.orders, 0), serviceOrders: t.serviceOrders,
+      orders: ds.reduce((a, x) => a + x.orders, 0) + t.serviceOrders, amountSen,
+      perDayOutSen: t.deliveryDays ? Math.round(amountSen / t.deliveryDays) : null,
     };
   }).sort((a, b) => Number(b.internal) - Number(a.internal) || b.amountSen - a.amountSen);
 
@@ -146,5 +151,6 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
       .sort((a, b) => b.amountSen - a.amountSen),
     ...categoriesOf(out),
     categoryByRegion,
+    lorryJobs: [...lorryJobs],
   };
 }

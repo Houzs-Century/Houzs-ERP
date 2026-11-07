@@ -2,12 +2,14 @@
 // delivered (DO amount and orders), the average order (delivery orders only),
 // the average a lorry carried, what is overdue today, the average order per
 // product category, and the jobs of the period by type.
+import { jobDate } from "./logisticFocus";
+import type { LorryJob } from "../../vendor/shared/logistic-region";
 import { useState } from "react";
 import { fmtSen } from "../../vendor/shared/format";
 import { ASSR_JOB_KIND_LABEL, type AssrJobKind, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Tile } from "../../components/scm-v2/Charts";
-import type { Period } from "../../components/scm-v2/DashboardPeriod";
+import { periodEnd, type Period } from "../../components/scm-v2/DashboardPeriod";
 
 import type { DayRow, RegionRow, LorryRow, LorryDay, DoDrill } from "./LogisticDailySection";
 
@@ -22,6 +24,7 @@ export type PeriodTotals = {
   byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
   byCategory: CategoryRow[];
   chargesSen: number;
+  lorryJobs: LorryJob[];
   categoryByRegion: Partial<Record<string, { byCategory: CategoryRow[]; chargesSen: number }>>;
 };
 
@@ -48,8 +51,10 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
 }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
-  const date = (o: PlanningOrder) => o.effective_delivery_date;
-  const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= period.to);
+  const date = (o: PlanningOrder) => jobDate(o);
+  /* Jobs look ahead: "this month" means the whole month, not up to today. */
+  const end = periodEnd(period);
+  const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= end);
   const byType = new Map<string, { type: string; jobs: number; done: number }>();
   for (const o of jobs) {
     const t = jobTypeOf(o);
@@ -61,7 +66,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
   /* Where the rest of the open deliveries sit: the job table is only this period. */
   const openSo = rows.filter((o) => o.row_type === "so" && o.delivery_state !== "DELIVERED");
   const dated = (test: (d: string) => boolean) => openSo.filter((o) => { const d = date(o); return !!d && test(d); }).length;
-  const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= period.to), after: dated((d) => d > period.to), none: openSo.filter((o) => !date(o)).length };
+  const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= end), after: dated((d) => d > end), none: openSo.filter((o) => !date(o)).length };
   const avgOrder = totals && totals.doCount ? totals.doAmountSen / totals.doCount : null;
 
   return (
@@ -105,7 +110,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
               {types.length === 0 && <tr><Td left className="text-ink-muted">No jobs dated in this period.</Td></tr>}
             </tbody>
           </table>
-            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, by each job&apos;s delivery date; Done = marked delivered there. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
+            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, every job done or not, by its delivery date, else its sales exemption date; Done = marked delivered there. Closed service legs stay on the board 30 days, so an older period reads them low. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
         </div>
       </div>
     </Panel>
