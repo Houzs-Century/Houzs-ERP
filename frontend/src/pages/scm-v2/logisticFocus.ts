@@ -2,7 +2,7 @@
 // delivery orders of that region, so everything below a click follows it.
 import type { DayRow, LorryDay, LorryRow } from "./LogisticDailySection";
 import type { PeriodTotals } from "./LogisticPeriodSection";
-import { lorryTrips } from "../../vendor/shared/logistic-region";
+import { countsForLorry, lorryTrips } from "../../vendor/shared/logistic-region";
 
 export function focusPeriod(p: PeriodTotals, region: string | null, day: string | null): PeriodTotals {
   if (region == null && day == null) return p;
@@ -10,7 +10,7 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
   const list = day == null ? inRegion : inRegion.filter((d) => d.date === day);
   const days: DayRow[] = p.days.map((x) => {
     const ds = inRegion.filter((d) => d.date === x.date);
-    const withLorry = ds.filter((d) => d.lorry);
+    const withLorry = ds.filter((d) => d.lorry && countsForLorry(d.region));
     const lorries = new Set(withLorry.map((d) => d.lorry)).size;
     const amountSen = ds.reduce((a, d) => a + d.amountSen, 0);
     return {
@@ -20,7 +20,7 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
   });
   const perDay = new Map<string, LorryDay>();
   for (const d of list) {
-    if (!d.lorry) continue;
+    if (!d.lorry || !countsForLorry(d.region)) continue;
     const k = `${d.lorry}|${d.date}`;
     const g = perDay.get(k) ?? { date: d.date, lorry: d.lorry, orders: 0, amountSen: 0 };
     g.orders += 1; g.amountSen += d.amountSen; perDay.set(k, g);
@@ -42,7 +42,8 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
       doOrders, orders: doOrders + t.serviceOrders, amountSen, perDayOutSen: t.deliveryDays ? Math.round(amountSen / t.deliveryDays) : null,
     }];
   });
-  const recorded = list.filter((d) => d.lorry);
+  const lorryList = list.filter((d) => countsForLorry(d.region));
+  const recorded = lorryList.filter((d) => d.lorry);
   const lorryDays = day == null ? days.reduce((a, x) => a + x.lorries, 0) : new Set(recorded.map((d) => d.lorry)).size;
   const lorrySen = recorded.reduce((a, d) => a + d.amountSen, 0);
   const cat = region == null ? { byCategory: p.byCategory, chargesSen: p.chargesSen } : p.categoryByRegion[region];
@@ -52,7 +53,7 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
     doAmountSen: list.reduce((a, d) => a + d.amountSen, 0),
     podClosed: list.filter((d) => d.status === "DELIVERED").length,
     days, byLorry, lorryDayList, doList: inRegion,
-    lorry: { ...p.lorry, lorryDays, recordedOrders: recorded.length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null },
+    lorry: { ...p.lorry, lorryDays, recordedOrders: recorded.length, lorryRegionOrders: lorryList.length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null },
     byCategory: cat?.byCategory ?? [],
     chargesSen: cat?.chargesSen ?? 0,
   };

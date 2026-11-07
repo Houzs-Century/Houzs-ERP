@@ -20,7 +20,7 @@ type CategoryRow = { category: string; orders: number; amountSen: number; avgSen
 export type PeriodTotals = {
   from: string; to: string; doCount: number; doAmountSen: number; podClosed: number;
   days: DayRow[]; byRegion: RegionRow[];
-  lorry: { lorryDays: number; recordedOrders: number; perLorrySen: number | null; workingDays: number };
+  lorry: { lorryDays: number; recordedOrders: number; lorryRegionOrders: number; perLorrySen: number | null; workingDays: number };
   byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
   byCategory: CategoryRow[];
   chargesSen: number;
@@ -80,7 +80,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
           value={avgOrder != null ? fmtSen(avgOrder) : "—"} note="delivery orders only · service cases not counted" />
         <Tile label="Average per lorry, per day" tone="brass" trend={null} onClick={() => onDrill("Delivery orders with a lorry recorded", (d) => !!d.lorry)}
           value={totals?.lorry.perLorrySen != null ? fmtSen(totals.lorry.perLorrySen) : "—"}
-          note={totals ? (totals.lorry.recordedOrders ? `${totals.lorry.lorryDays} lorry-days · lorry recorded on ${totals.lorry.recordedOrders} of ${totals.doCount} DO` : `lorry not recorded on the DOs yet (0 of ${totals.doCount})`) : ""} />
+          note={totals ? (totals.lorry.recordedOrders ? `${totals.lorry.lorryDays} lorry-days · KL, Southern and Northern · lorry recorded on ${totals.lorry.recordedOrders} of ${totals.lorry.lorryRegionOrders} DO` : `lorry not recorded on the DOs yet (0 of ${totals.lorry.lorryRegionOrders})`) : ""} />
         <Tile label="Overdue · ready, date not confirmed" tone={overdue.count ? "bad" : "good"} trend={null} onClick={overdue.count ? onOverdue : null}
           value={amt ? fmtSen(overdue.sen) : `${overdue.count} orders`} note={overdue.count ? `${amt ? `${overdue.count} orders` : fmtSen(overdue.sen)} · stock ready, no delivery date agreed · see the list` : "every ready order has a date"} />
       </div>

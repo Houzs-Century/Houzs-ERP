@@ -18,7 +18,8 @@ import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
-import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
+import { LogisticPeriodSection, jobTypeOf, type PeriodTotals } from "./LogisticPeriodSection";
+import { LogisticLorryDrawer, type LorryWorkRow } from "./LogisticLorryDrawer";
 import { focusPeriod, jobDate, windowsInRange } from "./logisticFocus";
 import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
@@ -160,7 +161,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       };
     });
   }, [regionRows, reportSize, period, today]);
-  const months = h?.deliveredMonths ?? [];
+  const months = (h?.months ?? []).map((m) => ({ ...m, confirmed: h?.deliveredMonths.find((x) => x.month === m.month)?.doCount ?? 0 }));
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
@@ -169,7 +170,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const [doDrill, setDoDrill] = useState<Drill<DoRow> | null>(null);
   const [soDrill, setSoDrill] = useState<Drill<PlanningOrder> | null>(null);
   const openDos: DoDrill = (title, keep) => setDoDrill({
-    title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep), rowKey: (d) => d.id,
+    title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep).sort((a, b) => b.date.localeCompare(a.date)), rowKey: (d) => d.id,
     onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`),
     columns: [
       col<DoRow>("DO", true, (d) => <span className="text-primary">{d.doNumber ?? "—"}</span>, (d) => d.doNumber ?? "", null, null),
@@ -180,6 +181,25 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       col<DoRow>("Amount", false, (d) => fmtSen(d.amountSen), null, (d) => d.amountSen, fmtSen),
     ],
   });
+  const [lorryDrill, setLorryDrill] = useState<string | null>(null);
+  /* Everything on the lorry: its delivery orders, and every other board job whose crew
+     names it, on the job's date. */
+  const lorryWork = (plate: string): LorryWorkRow[] => {
+    const from = day ?? period.from;
+    const to = day ?? period.to;
+    const dos = (h?.period.doList ?? []).filter((d) => d.lorry === plate && d.date >= from && d.date <= to && (!region || d.region === region)).map((d): LorryWorkRow => ({
+      key: d.id, date: d.date, type: "Delivery", ref: d.doNumber ?? "—", customer: d.customer ?? "—", region: d.region, amountSen: d.amountSen,
+      onOpen: () => navigate(`/scm/delivery-orders/${d.id}`),
+    }));
+    const others = regionRows.filter((o) => {
+      const d = jobDate(o);
+      return o.row_type !== "so" && !!d && d >= from && d <= to && String(o.crew?.lorry ?? "").split(" / ").includes(plate);
+    }).map((o): LorryWorkRow => ({
+      key: o.so_doc_no, date: jobDate(o) ?? "", type: jobTypeOf(o), ref: o.ref ?? o.dp_no ?? "—", customer: o.debtor_name ?? "—", region: regionOf(o.customer_state), amountSen: 0,
+      onOpen: o.row_type === "assr" && o.assr_id ? () => navigate(`/assr/${o.assr_id}`) : null,
+    }));
+    return [...dos, ...others];
+  };
   const openSos = (title: string, xs: PlanningOrder[]) => setSoDrill({
     title, subtitle: "open sales orders, as of today", rows: xs, rowKey: (o) => o.so_doc_no,
     onRow: (o) => navigate(`/scm/sales-orders/${o.so_doc_no}`),
@@ -219,7 +239,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <LogisticPeriodSection rows={regionRows} period={period} today={today} totals={focus}
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
       {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
-      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.doCount} region={region} day={day} onDrill={openDos} />}
+      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.lorry.lorryRegionOrders} region={region} day={day} onLorry={setLorryDrill} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
@@ -313,16 +333,16 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Monthly delivery volume" hint="delivery orders confirmed delivered, in the month they were delivered"
+        <Panel title="Monthly delivery volume" hint="delivery orders out each month · Confirmed = closed as delivered, in the month it was delivered"
           right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
           <Columns axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
-            series={[{ name: monthBy === "amount" ? "Delivered amount" : "Delivered", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
+            series={[{ name: monthBy === "amount" ? "DO amount" : "DO out", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
             line={null} />
           <table className="mt-2 w-full border-collapse">
-            <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th></tr></thead>
-            <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td></tr>)}</tbody>
+            <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Confirmed</Th></tr></thead>
+            <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td><Td>{x.confirmed}</Td></tr>)}</tbody>
           </table>
-          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders confirmed delivered in the ERP; months before the ERP took over delivery orders read low.</p>
+          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders raised in the ERP; months before the ERP took over read low. Confirmed stays low until the crew closes each DO.</p>
         </Panel>
         <section id="gaps">
           <Panel title="Process gaps" hint="why some figures above read low">
@@ -397,6 +417,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <DrillDrawer drill={doDrill} onClose={() => setDoDrill(null)} />
+      {lorryDrill && <LogisticLorryDrawer plate={lorryDrill} subtitle={[day ?? `${period.from} – ${period.to}`, region].filter(Boolean).join(" · ")} rows={lorryWork(lorryDrill)} onClose={() => setLorryDrill(null)} />}
       <DrillDrawer drill={soDrill} onClose={() => setSoDrill(null)} />
     </div>
   );

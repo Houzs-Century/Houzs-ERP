@@ -10,6 +10,11 @@ export function regionOf(state: string | null): string {
   return 'Other';
 }
 
+/** Our lorries run these regions. East Malaysia and the rest go out trip by trip on
+ *  their own, so they stay out of the lorry figures (owner 2026-11-07). */
+export const LORRY_REGIONS: readonly string[] = ['KL / Selangor', 'Southern', 'Northern'];
+export const countsForLorry = (region: string): boolean => LORRY_REGIONS.includes(region);
+
 /** A job a lorry did, by how it counts (owner 2026-11-07). */
 export type LorryJobKind = 'delivery' | 'service' | 'setup' | 'transport';
 export interface LorryJob { plate: string; date: string; kind: LorryJobKind }

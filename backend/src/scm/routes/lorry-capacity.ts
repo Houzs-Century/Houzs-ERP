@@ -59,6 +59,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jobs';
+import { flattenProjectCrew } from '../lib/delivery-planning-board-reads';
 import { downDays, loadDownWindows } from '../lib/lorry-down-days';
 import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
 
@@ -174,16 +175,21 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
    scoped to the active company. */
 export async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
   const proj = await c.env.DB.prepare(
-    `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
+    `SELECT setup_lorry_id, setup_start_at, setup_crew, dismantle_lorry_id, dismantle_start_at, dismantle_crew
        FROM projects WHERE archived_at IS NULL
-        AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)${activeCompanySql(c)}`,
+        AND (setup_start_at IS NOT NULL OR dismantle_start_at IS NOT NULL)${activeCompanySql(c)}`,
   ).all<Record<string, unknown>>();
   const data: LorryJob[] = [];
   for (const p of proj.results) {
     for (const k of ['setup', 'dismantle'] as const) {
       const lorryId = dual<string | number | null>(p, `${k}_lorry_id`);
       const date = String(dual<string | null>(p, `${k}_start_at`) ?? '').slice(0, 10);
-      if (lorryId != null && date >= from && date <= to) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle' });
+      if (date < from || date > to) continue;
+      /* The crew the PMS editor stores, one lorry or several, as the board reads it; the
+         single lorry column is only the older projects' answer. */
+      const { plates } = flattenProjectCrew(dual<string | null>(p, `${k}_crew`) ?? null);
+      for (const plate of plates) data.push({ lorryId: null, lorryPlate: plate, date, kind: 'setupDismantle' });
+      if (plates.length === 0 && lorryId != null) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle' });
     }
   }
   return { data, error: null };
