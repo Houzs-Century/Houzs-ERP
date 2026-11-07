@@ -12,7 +12,7 @@
 // Houzs bills back. Since 2026-10-24 such a bill is read by itself every half
 // hour; what is not on a DO waits under To check (ThreePLBillLines.tsx).
 // ----------------------------------------------------------------------------
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
 import { fmtDate, fmtSen } from '@2990s/shared';
@@ -24,6 +24,8 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { ThreePLFromAp, toSen } from './ThreePLFromAp';
 import { BillsFromAp, type BillSummary } from './ThreePLBillLines';
+import { BTN_PRI, BTN_QUIET, CARD, DiffPill, FilterBar, INPUT, Kpi, KpiStrip, LABEL, TableCard, diffTone } from './carriers/ui';
+import { chargeTotals } from './carriers/reconcile';
 
 export { toSen };
 
@@ -50,24 +52,16 @@ const alreadyKeyed = (e: unknown): { billedSen: number; invoiceNo: string | null
   } catch { return null; }
 };
 const errText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong.');
-export const variance = (v: number | null) => (v == null
-  ? <span className="text-ink-muted">no rate card</span>
-  : <span className={v === 0 ? 'text-[#1f5c43]' : 'font-bold text-[#8a2c2c]'}>
-      {v === 0 ? 'matches' : `${v > 0 ? '+' : '−'}${fmtSen(Math.abs(v))}`}
-    </span>);
-const LABEL = 'text-[12.5px] font-semibold text-ink-secondary';
-const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[14px] text-ink';
-const CARD = 'rounded-2xl border border-border bg-surface';
-const BTN_PRI = 'inline-flex min-h-[40px] items-center rounded-lg bg-primary px-4 text-[13.5px] font-semibold text-white disabled:opacity-60';
-const BTN_QUIET = 'inline-flex min-h-[40px] items-center rounded-lg bg-surface-2 px-4 text-[13.5px] font-semibold text-ink disabled:opacity-60';
+/** Billed less the rate card, as a coloured pill (carriers/ui.tsx DiffPill). */
+export const variance = (v: number | null) => <DiffPill v={v} />;
 const money = { align: 'right' as const, exportFormat: 'money' as const };
 
 const TOTAL_COLUMNS: Column<InvoiceTotal>[] = [
   { key: 'carrier', label: '3PL', render: (r) => r.carrierName ?? '—', getValue: (r) => r.carrierName ?? '' },
   { key: 'inv', label: 'Invoice no', render: (r) => r.invoiceNo ?? '—', getValue: (r) => r.invoiceNo ?? '' },
   { key: 'dos', label: 'DOs', align: 'right', render: (r) => r.dos, getValue: (r) => r.dos },
-  { key: 'billed', label: 'Billed', ...money, render: (r) => fmtSen(r.billedSen), getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100 },
-  { key: 'expected', label: 'Rate card', ...money, render: (r) => (r.expectedSen == null ? '—' : fmtSen(r.expectedSen)), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100) },
+  { key: 'billed', label: 'Billed', ...money, render: (r) => <span className="tabular-nums">{fmtSen(r.billedSen)}</span>, getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100 },
+  { key: 'expected', label: 'Rate card', ...money, render: (r) => (r.expectedSen == null ? '—' : <span className="tabular-nums">{fmtSen(r.expectedSen)}</span>), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100) },
   { key: 'var', label: 'Difference', ...money, render: (r) => variance(r.varianceSen), getValue: (r) => r.varianceSen, exportValue: (r) => (r.varianceSen == null ? null : r.varianceSen / 100) },
 ];
 
@@ -158,8 +152,8 @@ export const ThreePLInvoices = () => {
     { key: 'cust', label: 'Customer', render: (r) => r.customer ?? '—', getValue: (r) => r.customer ?? '' },
     { key: 'carrier', label: '3PL', render: (r) => r.carrierName ?? '—', getValue: (r) => r.carrierName ?? '' },
     { key: 'inv', label: 'Invoice', render: (r) => [r.invoiceNo, r.invoiceDate && fmtDate(r.invoiceDate)].filter(Boolean).join(' · ') || '—', getValue: (r) => r.invoiceNo ?? '' },
-    { key: 'billed', label: 'Billed', ...money, render: (r) => fmtSen(r.billedSen), getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100 },
-    { key: 'expected', label: 'Rate card', ...money, render: (r) => (r.expectedSen == null ? '—' : fmtSen(r.expectedSen)), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100) },
+    { key: 'billed', label: 'Billed', ...money, render: (r) => <span className="tabular-nums">{fmtSen(r.billedSen)}</span>, getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100 },
+    { key: 'expected', label: 'Rate card', ...money, render: (r) => (r.expectedSen == null ? '—' : <span className="tabular-nums">{fmtSen(r.expectedSen)}</span>), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100) },
     { key: 'var', label: 'Difference', ...money, render: (r) => variance(r.varianceSen), getValue: (r) => r.varianceSen, exportValue: (r) => (r.varianceSen == null ? null : r.varianceSen / 100) },
     { key: 'note', label: 'Note', render: (r) => r.note ?? '', getValue: (r) => r.note ?? '' },
     {
@@ -179,17 +173,43 @@ export const ThreePLInvoices = () => {
     </label>
   );
 
+  const t = useMemo(() => chargeTotals(list.data?.rows ?? []), [list.data?.rows]);
+  const invoiceCount = list.data?.invoices.length ?? 0;
+  const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmtSen(Math.abs(v))}`;
+
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <p className="max-w-[900px] text-[13px] text-ink-muted">
         When a transporter's bill is attached to its AP invoice, it is read by itself within half an hour: the lines naming a DO are kept on that DO, and the rest wait under To check for you to say where they go. You can also read a bill yourself (From AP invoice) or key in what was billed for each delivery order. The rate card amount is worked out from the DO's sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
       </p>
-      {mayBringIn && (
-        <div className="flex flex-wrap items-center justify-end gap-2.5">
-          {said && <span role="status" className="text-[13px] text-ink">{said}</span>}
-          <button type="button" className={BTN_QUIET} onClick={() => { setFromAp(true); setSaid(null); }} disabled={fromAp}>From AP invoice</button>
-        </div>
+
+      <FilterBar>
+        {(['from', 'to'] as const).map((k) => (
+          <label key={k} className="flex min-w-[140px] flex-1 flex-col gap-1.5 sm:w-[170px] sm:flex-none">
+            <span className={LABEL}>{k === 'from' ? 'Invoice date from' : 'To'}</span>
+            <DateField className={INPUT} value={range[k]} onChange={(v) => setRange((s) => ({ ...s, [k]: v }))} fullWidth />
+          </label>
+        ))}
+        {(range.from || range.to) && (
+          <button type="button" className="min-h-[40px] text-[13px] font-semibold text-primary" onClick={() => setRange({ from: '', to: '' })}>Clear dates</button>
+        )}
+        {mayBringIn && (
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2.5">
+            {said && <span role="status" className="text-[13px] text-ink">{said}</span>}
+            <button type="button" className={BTN_QUIET} onClick={() => { setFromAp(true); setSaid(null); }} disabled={fromAp}>From AP invoice</button>
+          </div>
+        )}
+      </FilterBar>
+
+      {list.data && (
+        <KpiStrip>
+          <Kpi label="Billed" value={fmtSen(t.billedSen)} sub={`${t.dos} ${t.dos === 1 ? 'DO' : 'DOs'} on ${invoiceCount} ${invoiceCount === 1 ? 'invoice' : 'invoices'}`} tone={null} />
+          <Kpi label="Rate card" value={t.priced ? fmtSen(t.expectedSen) : '—'} sub={`${t.priced} of ${t.dos} DOs priced`} tone={null} />
+          <Kpi label="Difference" value={t.diffSen == null ? '—' : signed(t.diffSen)} sub="Billed less rate card, priced DOs" tone={t.diffSen == null ? null : diffTone(t.diffSen)} />
+          <Kpi label="Off the card" value={t.over + t.under} sub={`${t.over} over · ${t.under} under · ${t.noCard} no card`} tone={t.over + t.under ? 'red' : 'green'} />
+        </KpiStrip>
       )}
+
       {fromAp && (
         <ThreePLFromAp
           onClose={() => setFromAp(false)}
@@ -202,8 +222,11 @@ export const ThreePLInvoices = () => {
       )}
       {mayBringIn && (list.data?.bills?.length ?? 0) > 0 && <BillsFromAp bills={list.data?.bills ?? []} />}
 
-      <section className={`${CARD} flex flex-col gap-3.5 px-6 py-[22px]`}>
-        <h3 className="text-[16px] font-bold text-ink">Key in a 3PL bill</h3>
+      <section aria-label="Key in a 3PL bill" className={`${CARD} flex flex-col gap-3.5 px-5 py-[18px]`}>
+        <div className="flex flex-col gap-0.5">
+          <h3 className="text-[16px] font-bold text-ink">Key in a 3PL bill</h3>
+          <p className="text-[12px] text-ink-muted">One DO at a time. The 3PL, invoice no and date stay filled for the next DO on the same invoice.</p>
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           {field('DO number', 'doNumber')}
           <label className="flex min-w-0 flex-[1_1_200px] flex-col gap-1.5">
@@ -220,54 +243,33 @@ export const ThreePLInvoices = () => {
           </label>
           {field('Billed (RM)', 'billed', 120)}
           {field('Note', 'note', 220)}
-        </div>
-        <div className="flex flex-wrap items-center gap-3.5">
           <button type="button" className={BTN_PRI} onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          {err && <p role="alert" className="text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
         </div>
+        {err && <p role="alert" className="text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h3 className="text-[16px] font-bold text-ink">Per invoice</h3>
-        <div className={`${CARD} overflow-hidden`}>
-          <DataTable<InvoiceTotal>
-            tableId="threepl-invoice-totals" exportName="3pl-invoice-totals" exportXlsx
-            columns={TOTAL_COLUMNS} rows={list.data?.invoices ?? null} loading={list.isLoading}
-            error={list.isError ? errText(list.error) : null} emptyLabel="No 3PL invoices keyed in yet."
-            getRowKey={(r) => `${r.carrierId}|${r.invoiceNo ?? ''}`}
-          />
-        </div>
-      </section>
+      <TableCard title="Per invoice" count={list.data ? `(${invoiceCount})` : null} label={null} actions={null}
+        hint="Each 3PL invoice: how many DOs it bills, and what their rate cards add up to.">
+        <DataTable<InvoiceTotal>
+          tableId="threepl-invoice-totals" exportName="3pl-invoice-totals" exportXlsx
+          columns={TOTAL_COLUMNS} rows={list.data?.invoices ?? null} loading={list.isLoading}
+          error={list.isError ? errText(list.error) : null} emptyLabel="No 3PL invoices keyed in yet."
+          getRowKey={(r) => `${r.carrierId}|${r.invoiceNo ?? ''}`}
+        />
+      </TableCard>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-col gap-1">
-            <h3 className="text-[16px] font-bold text-ink">Per delivery order</h3>
-            {byCompany.length > 1 && (
-              <span className="text-[13px] text-ink-muted">
-                By company: {byCompany.map(([code, t]) => `${code} ${t.dos} DO${t.dos === 1 ? '' : 's'} · ${fmtSen(t.sen)}`).join('  ·  ')}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-end gap-2.5">
-            {(['from', 'to'] as const).map((k) => (
-              <label key={k} className="flex w-[170px] flex-col gap-1.5">
-                <span className={LABEL}>{k === 'from' ? 'Invoice date from' : 'To'}</span>
-                <DateField className={INPUT} value={range[k]} onChange={(v) => setRange((s) => ({ ...s, [k]: v }))} fullWidth />
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className={`${CARD} overflow-hidden`}>
-          <DataTable<ChargeRow>
-            tableId="threepl-do-charges" exportName="3pl-do-charges" exportXlsx
-            columns={columns} rows={list.data?.rows ?? null} loading={list.isLoading}
-            error={list.isError ? errText(list.error) : null} emptyLabel="No DOs keyed in for this range."
-            getRowKey={(r) => r.id}
-            getRowStyle={(r) => (r.varianceSen ? { background: 'rgba(163,38,27,0.05)' } : undefined)}
-          />
-        </div>
-      </section>
+      <TableCard title="Per delivery order" count={list.data ? `(${t.dos})` : null} label={null} actions={null}
+        hint={byCompany.length > 1
+          ? <span>By company: {byCompany.map(([code, c]) => `${code} ${c.dos} DO${c.dos === 1 ? '' : 's'} · ${fmtSen(c.sen)}`).join('  ·  ')}</span>
+          : 'Red rows are billed off the card. Remove a row that was keyed in by mistake.'}>
+        <DataTable<ChargeRow>
+          tableId="threepl-do-charges" exportName="3pl-do-charges" exportXlsx
+          columns={columns} rows={list.data?.rows ?? null} loading={list.isLoading}
+          error={list.isError ? errText(list.error) : null} emptyLabel="No DOs keyed in for this range."
+          getRowKey={(r) => r.id}
+          getRowStyle={(r) => (r.varianceSen ? { background: 'rgba(163,38,27,0.05)' } : undefined)}
+        />
+      </TableCard>
     </div>
   );
 };

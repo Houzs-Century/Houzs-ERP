@@ -23,6 +23,7 @@ import { allBoothChoices } from '../../vendor/scm/lib/fair-booth-choices';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Suppliers.module.css';
+import { Pill, TableCard } from './carriers/ui';
 
 export type LineAssign = 'do' | 'service' | 'event' | 'none';
 export interface BillLine {
@@ -203,40 +204,39 @@ export function BillsFromAp({ bills }: { bills: BillSummary[] }) {
   ];
 
   return (
-    <section aria-label="Bills from AP invoices" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <h3 style={{ margin: '8px 0 0', fontSize: 'var(--fs-13)' }}>
-        To check {waiting.length ? `(${waiting.length} line${waiting.length === 1 ? '' : 's'} · ${fmtSen(waitingSen)})` : ''}
-      </h3>
-      <p style={{ margin: 0, fontSize: 'var(--fs-12)', ...muted }}>
-        Lines read off a bill that are not on a DO yet. Say where each goes: a DO (its number), Service (an ASSR number if there is one), Setup / Dismantle (the fair) or Not counted (storage, handling, dispose).
-      </p>
-      {said && <p role="status" style={{ margin: 0, fontSize: 'var(--fs-12)' }}>{said}</p>}
-      <DataTable<BillLine>
-        tableId="threepl-bill-lines-open" columns={lineColumns(fairList, onSaved, true)} rows={open.data ?? null} loading={open.isLoading}
-        error={open.isError ? errText(open.error) : null} emptyLabel="Nothing to check — every line read off a bill has a place."
-        getRowKey={(r) => r.id}
-      />
+    <section aria-label="Bills from AP invoices" className="flex flex-col gap-4">
+      <TableCard label={null} title={`To check ${waiting.length ? `(${waiting.length} line${waiting.length === 1 ? '' : 's'} · ${fmtSen(waitingSen)})` : ''}`.trim()}
+        count={null} actions={waiting.length ? <Pill tone="amber">Needs you</Pill> : <Pill tone="green">All placed</Pill>}
+        hint="Lines read off a bill that are not on a DO yet. Say where each goes: a DO (its number), Service (an ASSR number if there is one), Setup / Dismantle (the fair) or Not counted (storage, handling, dispose).">
+        {said && <p role="status" className="border-b border-border bg-[#e7eef6] px-5 py-2 text-[12.5px] text-[#1f4f75]">{said}</p>}
+        <DataTable<BillLine>
+          tableId="threepl-bill-lines-open" columns={lineColumns(fairList, onSaved, true)} rows={open.data ?? null} loading={open.isLoading}
+          error={open.isError ? errText(open.error) : null} emptyLabel="Nothing to check — every line read off a bill has a place."
+          getRowKey={(r) => r.id}
+        />
+      </TableCard>
 
-      <h3 style={{ margin: '8px 0 0', fontSize: 'var(--fs-13)' }}>Per bill</h3>
-      <p style={{ margin: 0, fontSize: 'var(--fs-12)', ...muted }}>
-        Each bill read off its AP invoice, split by where its lines went. The parts add up to the AP invoice; “Not on the reading” is what no line accounts for.
-      </p>
-      <DataTable<BillSummary>
-        tableId="threepl-bills" exportName="3pl-bills" exportXlsx columns={billColumns} rows={bills}
-        emptyLabel="No bill read yet." getRowKey={(r) => r.apInvoiceId}
-      />
-      {openedBill && (
-        <>
-          <h4 style={{ margin: '4px 0 0', fontSize: 'var(--fs-13)' }}>
-            Lines of {openedBill.invoiceNumber} · {openedBill.supplierName}{openedBill.supplierRef ? ` · bill ${openedBill.supplierRef}` : ''}
-          </h4>
-          <DataTable<BillLine>
-            tableId="threepl-bill-lines-one" columns={lineColumns(fairList, onSaved, false)} rows={one.data ?? null} loading={one.isLoading}
-            error={one.isError ? errText(one.error) : null} emptyLabel="No line was read off this bill."
-            getRowKey={(r) => r.id}
-          />
-        </>
-      )}
+      <TableCard label={null} title="Per bill" count={`(${bills.length})`} actions={null}
+        hint="Each bill read off its AP invoice, split by where its lines went. The parts add up to the AP invoice; “Not on the reading” is what no line accounts for.">
+        <DataTable<BillSummary>
+          tableId="threepl-bills" exportName="3pl-bills" exportXlsx columns={billColumns} rows={bills}
+          emptyLabel="No bill read yet." getRowKey={(r) => r.apInvoiceId}
+        />
+        {openedBill && (
+          <div className="border-t border-border bg-surface-2/40 px-4 pb-4 pt-3">
+            <h4 className="mb-2 text-[14px] font-bold text-ink">
+              Lines of {openedBill.invoiceNumber} · {openedBill.supplierName}{openedBill.supplierRef ? ` · bill ${openedBill.supplierRef}` : ''}
+            </h4>
+            <div className="overflow-hidden rounded-xl border border-border bg-surface">
+              <DataTable<BillLine>
+                tableId="threepl-bill-lines-one" columns={lineColumns(fairList, onSaved, false)} rows={one.data ?? null} loading={one.isLoading}
+                error={one.isError ? errText(one.error) : null} emptyLabel="No line was read off this bill."
+                getRowKey={(r) => r.id}
+              />
+            </div>
+          </div>
+        )}
+      </TableCard>
     </section>
   );
 }

@@ -57,7 +57,7 @@ describe('Carriers & Rates', () => {
     mount();
     expect(screen.getByRole('heading', { name: 'Carriers & Rates' })).toBeTruthy();
     expect(await screen.findByText('SET · per unit · 1 rule')).toBeTruthy();
-    expect(screen.getByText('No rate card yet. Click to add')).toBeTruthy();
+    expect(screen.getByText('No rate card yet')).toBeTruthy();
     expect(screen.getByText('Needs a carrier')).toBeTruthy();
     expect(screen.getByText(/Carrier removed · SET/)).toBeTruthy();
     expect(screen.getByText('Own fleet cost')).toBeTruthy();
@@ -70,8 +70,8 @@ describe('Carriers & Rates', () => {
     expect(await screen.findByRole('heading', { name: 'MSJ TRANSPORT' })).toBeTruthy();
     expect((screen.getByLabelText(/Minimum charge \(RM\)/) as HTMLInputElement).value).toBe('50.00');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit amount for Positional tier' }));
-    const amount = screen.getByLabelText('Amount for Positional tier');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit amount for Positional tier Each set' }));
+    const amount = screen.getByLabelText('Amount for Positional tier Each set');
     fireEvent.change(amount, { target: { value: '95' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save amount' }));
     await waitFor(() => {
@@ -86,6 +86,48 @@ describe('Carriers & Rates', () => {
       const run = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/compute'));
       expect(JSON.parse(String(run?.[1].body)).supplierPickupCount).toBe(2);
     });
+  });
+
+  it('a carrier with no card asks to create one, and opens the new card for it', async () => {
+    fetchMock.mockImplementation(api);
+    mount();
+    fireEvent.click(await screen.findByText('EU LOGISTICS'));
+    const prompt = await screen.findByRole('region', { name: 'No rate card yet' });
+    fireEvent.click(within(prompt).getByRole('button', { name: 'Create rate card' }));
+    const group = await screen.findByRole('group', { name: '3PL company' });
+    expect(within(group).getByRole('button', { name: 'EU LOGISTICS' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('lays the rules out per category, with outstation as a zone table whose empty cell adds a price', async () => {
+    const rules = [
+      RULE,
+      { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
+      { ...RULE, id: 'r3', ruleType: 'OUTSTATION', tierPosition: null, zone: 'KUCHING', amountSen: 30000 },
+    ];
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
+      ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
+    mount();
+    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    const delivery = await screen.findByRole('region', { name: 'Delivery' });
+    expect(within(delivery).getByText('1st')).toBeTruthy();
+    expect(within(delivery).getByText('3rd+')).toBeTruthy();
+    const out = screen.getByRole('region', { name: 'Outstation' });
+    expect(within(out).getByRole('rowheader', { name: 'KUCHING' })).toBeTruthy();
+    expect(within(out).getByText('300.00')).toBeTruthy();
+
+    fireEvent.click(within(out).getByRole('button', { name: 'Add KUCHING per trip' }));
+    fireEvent.change(within(out).getByLabelText('Amount for KUCHING per trip'), { target: { value: '120' } });
+    fireEvent.click(within(out).getByRole('button', { name: 'Save KUCHING per trip' }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST');
+      expect(post?.[0]).toBe('/delivery-rate-cards/card-msj/rules');
+      expect(JSON.parse(String(post?.[1].body))).toMatchObject({ ruleType: 'OUTSTATION_TRIP', zone: 'KUCHING', amountSen: 12000 });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a Service calls rule' }));
+    const svc = screen.getByRole('region', { name: 'Service calls' });
+    const types = within(within(svc).getByLabelText('Rule type')).getAllByRole('option').map((o) => o.textContent);
+    expect(types).toEqual(['Service', 'Pickup', 'Inspection', 'Supplier pickup', 'Transfer']);
   });
 
   it('a card whose carrier was deleted can be moved to a carrier without a card', async () => {

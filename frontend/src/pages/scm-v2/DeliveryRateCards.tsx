@@ -14,14 +14,14 @@
 // Styled after the Coverage & Fleet screens (owner design 2026-11-07).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
-  useCreateRateRule, useUpdateRateRule, useDeleteRateRule, useComputeCost, useReconcile, type ReconcileRow,
-  type RateCard, type RateRule, type RateRuleType, type DeliveryFacts, type RateAggregation,
+  useComputeCost, useReconcile, type ReconcileRow,
+  type RateCard, type RateRule, type DeliveryFacts, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
@@ -30,12 +30,16 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
 import { fmtDate, fmtSen } from '@2990s/shared';
 import {
-  RULE_LABEL, RULE_CATEGORY, CATEGORY_LABEL, CATEGORY_HINT,
-  RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
+  RULE_LABEL, CATEGORY_LABEL, type RateRuleCategory, type RateRuleTypeT,
 } from '../../vendor/scm/lib/rate-rule-taxonomy';
 import { ThreePLCompanies } from './ThreePLCompanies';
-import { ThreePLInvoices, useThreePLDoCharges, variance, type ChargeRow } from './ThreePLInvoices';
+import { useThreePLDoCharges, ThreePLInvoices, type ChargeRow } from './ThreePLInvoices';
+import { carrierRecon, chargeTotals, type CarrierRecon } from './carriers/reconcile';
 import { DateField } from '../../vendor/scm/components/DateField';
+import { RateCardRules, categoryTotals, rmToSen, sectionAnchor } from './carriers/RateCardRules';
+import {
+  BTN_PRI, BTN_QUIET, CARD, DiffPill, EYEBROW, FilterBar, HINT, ICON_BTN, INPUT, Kpi, KpiStrip, LABEL, Pill, TableCard, diffTone,
+} from './carriers/ui';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -51,24 +55,8 @@ const AGGREGATION_HINT: Record<RateAggregation, string> = {
 
 /* Server values can outrun this build's lists, so lookups fall back rather than render blank. */
 const aggHint = (a: string): string => (AGGREGATION_HINT as Partial<Record<string, string>>)[a] ?? AGGREGATION_HINT.UNIT;
-const ruleLabel = (t: string): string => (RULE_LABEL as Partial<Record<string, string>>)[t] ?? t;
-const ruleCategory = (t: string): RateRuleCategory => (RULE_CATEGORY as Partial<Record<string, RateRuleCategory>>)[t] ?? 'DELIVERY';
 
 const centiToRM = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
-const rmToSen = (v: string): number | null => {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-};
-
-/* Shared classes — the Coverage & Fleet tokens. */
-const CARD = 'rounded-2xl border border-border bg-surface';
-const LABEL = 'text-[12.5px] font-semibold text-ink-secondary';
-const HINT = 'text-[12px] leading-snug text-ink-muted';
-const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[14px] text-ink';
-const EYEBROW = 'text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted';
-const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13.5px] font-semibold text-white disabled:opacity-60';
-const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13.5px] font-semibold text-ink disabled:opacity-60';
-const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[#8a2c2c] disabled:opacity-50';
 
 /* The carrier list on this page comes from /delivery-rate-cards/meta, a DIFFERENT
    query from the one useCreateThreePLCompany invalidates — and it holds for five
@@ -78,11 +66,14 @@ const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
 type Tab = 'cards' | 'invoices' | 'reconcile';
 const TAB_LABEL: Record<Tab, string> = { cards: 'Rate Cards', invoices: '3PL invoices', reconcile: 'Reconciliation' };
 
+/* What the right-hand side shows: a card, or a carrier that has none yet. */
+type Selection = { kind: 'card'; id: string } | { kind: 'company'; id: string } | null;
+
 export const DeliveryRateCards = ({ embedded = false }: {
   embedded?: boolean;
 } = {}) => {
   const [tab, setTab] = useState<Tab>('cards');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sel, setSel] = useState<Selection>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
   const [companiesOpen, setCompaniesOpen] = useState(false);
   const cards = useRateCards();
@@ -97,6 +88,13 @@ export const DeliveryRateCards = ({ embedded = false }: {
     setCompaniesOpen(false);
     void qc.invalidateQueries({ queryKey: COMPANY_LIST_KEY });
   };
+  const companies = meta.data?.companies ?? [];
+  const emptyCompany = sel?.kind === 'company' ? companies.find((co) => co.id === sel.id) ?? null : null;
+  /* On a phone the list sits above the card: bring the picked card into view. */
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (sel && window.innerWidth < 768) editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [sel]);
 
   const actions = tab === 'cards' ? (
     <div className="flex flex-wrap gap-2.5">
@@ -136,18 +134,24 @@ export const DeliveryRateCards = ({ embedded = false }: {
         <div className="flex flex-wrap items-start gap-5">
           <CardList
             cards={cards.data ?? []}
-            companies={meta.data?.companies ?? []}
+            companies={companies}
             isLoading={cards.isLoading || meta.isLoading}
             loadFailed={cards.isError || meta.isError}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onCreateFor={(carrierCompanyId) => setCreating({ carrierCompanyId })}
+            sel={sel}
+            onSelect={setSel}
             onCreateCompany={onCreateCompany}
           />
-          <div className="flex min-w-0 flex-[1_1_560px] flex-col gap-5">
-            {selectedId
-              ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
-              : <div className={cn(CARD, 'p-10 text-center text-[14px] text-ink-muted')}>Select a card to edit its rules, or create one.</div>}
+          <div ref={editorRef} className="flex min-w-0 flex-[1_1_560px] scroll-mt-4 flex-col gap-4">
+            {sel?.kind === 'card'
+              ? <CardEditor key={sel.id} cardId={sel.id} onDeleted={() => setSel(null)} />
+              : emptyCompany
+                ? <NoCardYet name={emptyCompany.name} onCreate={() => setCreating({ carrierCompanyId: emptyCompany.id })} />
+                : (
+                  <div className={cn(CARD, 'flex flex-col items-center gap-2 px-6 py-12 text-center')}>
+                    <p className="text-[15px] font-semibold text-ink">Pick a carrier on the left</p>
+                    <p className={cn(HINT, 'max-w-[420px]')}>Its rate card opens here, laid out per category so the whole card can be checked at once. A carrier without a card can get one in a click.</p>
+                  </div>
+                )}
           </div>
         </div>
       ) : tab === 'invoices' ? <ThreePLInvoices /> : (
@@ -158,7 +162,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
         <CreateCardDrawer
           initialCarrierCompanyId={creating.carrierCompanyId}
           onClose={() => setCreating(null)}
-          onCreated={(id) => { setCreating(null); setSelectedId(id); }}
+          onCreated={(id) => { setCreating(null); setSel({ kind: 'card', id }); }}
         />
       )}
 
@@ -175,21 +179,34 @@ export const DeliveryRateCards = ({ embedded = false }: {
   );
 };
 
+/* A carrier with no card: say so plainly, and offer the one thing to do. */
+const NoCardYet = ({ name, onCreate }: { name: string; onCreate: () => void }) => (
+  <section aria-label="No rate card yet" className={cn(CARD, 'flex flex-col items-center gap-3 px-6 py-12 text-center')}>
+    <Pill tone="amber">No rate card yet</Pill>
+    <h2 className="text-[20px] font-bold text-ink">{name}</h2>
+    <p className={cn(HINT, 'max-w-[460px] text-[13px]')}>
+      Nothing says what this carrier should charge, so its bills on the 3PL invoices tab cannot be checked. Create its card, then add its prices per category.
+    </p>
+    <button type="button" className={BTN_PRI} onClick={onCreate}><Plus {...ICON} />Create rate card</button>
+  </section>
+);
+
 // ── Carrier list ────────────────────────────────────────────────
 // Owner's flow (2026-08-01): register the 3PL companies first, then come here to
 // see what each one charges. So the list IS the carrier list — every registered
-// 3PL appears, whether or not it has a card yet, and a carrier with no card is a
-// one-click create. Own-fleet cost structures keep their own group below.
-const CardList = ({ cards, companies, isLoading, loadFailed, selectedId, onSelect, onCreateFor, onCreateCompany }: {
+// 3PL appears, whether or not it has a card yet, and a carrier with no card opens
+// a clear create prompt. Own-fleet cost structures keep their own group below.
+const SEARCH_FROM = 8;
+const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCreateCompany }: {
   cards: RateCard[];
   companies: Array<{ id: string; name: string }>;
   isLoading: boolean;
   loadFailed: boolean;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onCreateFor: (carrierCompanyId: string | null) => void;
+  sel: Selection;
+  onSelect: (s: Selection) => void;
   onCreateCompany: () => void;
 }) => {
+  const [q, setQ] = useState('');
   const byCompany = new Map<string, RateCard>();
   for (const c of cards) if (c.carrierCompanyId) byCompany.set(c.carrierCompanyId, c);
   const listed = new Set(companies.map((co) => co.id));
@@ -198,51 +215,78 @@ const CardList = ({ cards, companies, isLoading, loadFailed, selectedId, onSelec
      refused) has no carrier but was never own fleet; a card whose company is
      inactive is not in the carrier list. Neither may hide or vanish. */
   const others = cards.filter((c) => cardKind(c, listed) === 'removed' || cardKind(c, listed) === 'inactive');
+  const priced = companies.filter((co) => byCompany.has(co.id)).length;
+  const match = (name: string) => !q.trim() || name.toLowerCase().includes(q.trim().toLowerCase());
 
   const summary = (c: RateCard) => {
     const n = c.ruleCount ?? 0;
     return `${c.basis} · per ${c.aggregation.toLowerCase()} · ${n} ${n === 1 ? 'rule' : 'rules'}${c.isActive ? '' : ' · inactive'}`;
   };
-  const row = (key: string, on: boolean, name: string, sub: string, subTone: string, onClick: () => void) => (
-    <button key={key} type="button" onClick={onClick}
-      className={cn('flex w-full flex-col items-start gap-0.5 px-[18px] py-[11px] text-left', on ? 'bg-[#eef6f3]' : 'hover:bg-surface-2')}>
-      <span className="text-[14px] font-bold text-ink">{name}</span>
-      <span className={cn('text-[12.5px]', subTone)}>{sub}</span>
+  const status = (c: RateCard | null) => (c == null
+    ? <Pill tone="amber">No card</Pill>
+    : c.isActive ? <Pill tone="green">Active</Pill> : <Pill tone="grey">Inactive</Pill>);
+  const row = (key: string, on: boolean, name: string, sub: string, subTone: string, badge: ReactNode, onClick: () => void) => (
+    <button key={key} type="button" onClick={onClick} aria-current={on ? 'true' : undefined}
+      className={cn('flex w-full items-center gap-3 border-l-[3px] px-[15px] py-[10px] text-left',
+        on ? 'border-primary bg-[#eef6f3]' : 'border-transparent hover:bg-surface-2')}>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-[14px] font-bold text-ink">{name}</span>
+        <span className={cn('text-[12.5px]', subTone)}>{sub}</span>
+      </span>
+      {badge}
     </button>
   );
+  const group = (label: string) => <div className={cn(EYEBROW, 'px-[18px] pb-1.5 pt-3.5')}>{label}</div>;
+  const shownCompanies = companies.filter((co) => match(co.name));
 
   return (
-    <aside className={cn(CARD, 'w-full py-2 md:w-auto md:min-w-[240px] md:flex-[0_1_300px]')}>
-      <div className={cn(EYEBROW, 'px-[18px] pb-2 pt-3')}>{companies.length} {companies.length === 1 ? 'carrier' : 'carriers'}</div>
-      {isLoading && <p className="px-[18px] py-3 text-[13px] text-ink-muted">Loading…</p>}
-      {loadFailed && <p className="px-[18px] py-3 text-[13px] text-[#8a2c2c]">The carriers did not load.</p>}
-      {!isLoading && !loadFailed && companies.length === 0 && (
-        <p className="px-[18px] py-3 text-[13px] leading-normal text-ink-secondary">
-          No 3PL companies registered yet. A rate card is priced per carrier, so there is nothing to price until one exists.{' '}
-          <button type="button" onClick={onCreateCompany} className="font-semibold text-primary hover:underline">Register one now</button>
-        </p>
-      )}
-      {companies.map((co) => {
-        const card = byCompany.get(co.id);
-        return row(co.id, !!card && selectedId === card.id, co.name,
-          card ? summary(card) : 'No rate card yet. Click to add',
-          card ? 'text-ink-muted' : 'font-semibold text-primary',
-          () => (card ? onSelect(card.id) : onCreateFor(co.id)));
-      })}
-      {ownFleet.length > 0 && (
-        <>
-          <div className={cn(EYEBROW, 'px-[18px] pb-1.5 pt-3.5')}>Own fleet</div>
-          {ownFleet.map((c) => row(c.id, selectedId === c.id, c.name, summary(c), 'text-ink-muted', () => onSelect(c.id)))}
-        </>
-      )}
-      {others.length > 0 && (
-        <>
-          <div className={cn(EYEBROW, 'px-[18px] pb-1.5 pt-3.5')}>Needs a carrier</div>
-          {others.map((c) => row(c.id, selectedId === c.id, c.name,
-            `${cardKind(c, listed) === 'removed' ? 'Carrier removed' : 'Carrier inactive'} · ${summary(c)}`,
-            'font-semibold text-[#80501c]', () => onSelect(c.id)))}
-        </>
-      )}
+    <aside aria-label="Carriers" className={cn(CARD, 'w-full overflow-hidden md:w-auto md:min-w-[260px] md:flex-[0_1_320px] lg:sticky lg:top-4')}>
+      <div className="border-b border-border px-[18px] pb-3 pt-4">
+        <div className="text-[15px] font-bold text-ink">Carriers</div>
+        <div className={cn(HINT, 'mt-0.5')}>
+          {companies.length} {companies.length === 1 ? 'carrier' : 'carriers'} · {priced} with a card
+          {companies.length > priced ? ` · ${companies.length - priced} without` : ''}
+        </div>
+        {companies.length >= SEARCH_FROM && (
+          <input className={cn(INPUT, 'mt-2.5 min-h-[36px] text-[13px]')} placeholder="Find a carrier" aria-label="Find a carrier"
+            value={q} onChange={(e) => setQ(e.target.value)} />
+        )}
+      </div>
+      <div className="py-1.5 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
+        {isLoading && <p className="px-[18px] py-3 text-[13px] text-ink-muted">Loading…</p>}
+        {loadFailed && <p className="px-[18px] py-3 text-[13px] text-[#8a2c2c]">The carriers did not load.</p>}
+        {!isLoading && !loadFailed && companies.length === 0 && (
+          <p className="px-[18px] py-3 text-[13px] leading-normal text-ink-secondary">
+            No 3PL companies registered yet. A rate card is priced per carrier, so there is nothing to price until one exists.{' '}
+            <button type="button" onClick={onCreateCompany} className="font-semibold text-primary hover:underline">Register one now</button>
+          </p>
+        )}
+        {companies.length > 0 && group('3PL')}
+        {shownCompanies.map((co) => {
+          const card = byCompany.get(co.id) ?? null;
+          const on = card ? sel?.kind === 'card' && sel.id === card.id : sel?.kind === 'company' && sel.id === co.id;
+          return row(co.id, on, co.name,
+            card ? summary(card) : 'No rate card yet',
+            card ? 'text-ink-muted' : 'font-semibold text-primary',
+            status(card),
+            () => onSelect(card ? { kind: 'card', id: card.id } : { kind: 'company', id: co.id }));
+        })}
+        {companies.length > 0 && shownCompanies.length === 0 && <p className="px-[18px] py-3 text-[13px] text-ink-muted">No carrier matches &ldquo;{q.trim()}&rdquo;.</p>}
+        {ownFleet.length > 0 && (
+          <>
+            {group('Own fleet')}
+            {ownFleet.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name, summary(c), 'text-ink-muted', status(c), () => onSelect({ kind: 'card', id: c.id })))}
+          </>
+        )}
+        {others.length > 0 && (
+          <>
+            {group('Needs a carrier')}
+            {others.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name,
+              `${cardKind(c, listed) === 'removed' ? 'Carrier removed' : 'Carrier inactive'} · ${summary(c)}`,
+              'font-semibold text-[#80501c]', <Pill tone="amber">Fix</Pill>, () => onSelect({ kind: 'card', id: c.id })))}
+          </>
+        )}
+      </div>
     </aside>
   );
 };
@@ -254,7 +298,9 @@ type CardKind = 'own' | 'carrier' | 'removed' | 'inactive';
 const cardKind = (c: RateCard, listed: ReadonlySet<string>): CardKind =>
   c.carrierCompanyId ? (listed.has(c.carrierCompanyId) ? 'carrier' : 'inactive') : c.isOwnFleet ? 'own' : 'removed';
 
-// ── Card editor (fields + rules + calculator) ────────────────────────────────
+// ── Card editor (header + rules + calculator) ────────────────────────────────
+const AGG_SHORT: Partial<Record<string, string>> = { UNIT: 'unit', DROP: 'drop point', CUSTOMER: 'customer', TRIP: 'trip' };
+const NO_RULES: RateRule[] = [];
 const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => void }) => {
   const detail = useRateCard(cardId);
   const meta = useRateCardMeta();
@@ -264,8 +310,10 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
 
   const allCards = useRateCards();
   const card = detail.data?.card;
-  const rules = detail.data?.rules ?? [];
+  const rules = detail.data?.rules ?? NO_RULES;
   const companies = meta.data?.companies ?? [];
+  const unit = card?.basis === 'ITEM' ? 'item' : 'set';
+  const totals = useMemo(() => categoryTotals(rules, unit), [rules, unit]);
 
   if (detail.isError) return <div className={cn(CARD, 'p-6 text-[13px] text-[#8a2c2c]')}>This card did not load.</div>;
   if (detail.isLoading || !card) return <div className={cn(CARD, 'p-6 text-[13px] text-ink-muted')}>Loading card…</div>;
@@ -281,17 +329,45 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
     update.mutate({ id: cardId, ...body }, { onError: writeFailedAs('The card was not updated') });
 
   const removeCard = async () => {
-    if (!(await askConfirm({ title: `Delete card "${card.name}"?`, body: 'Its rules are removed too. This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
+    if (!(await askConfirm({ title: `Delete card "${card.name}"?`, body: `Its ${rules.length} ${rules.length === 1 ? 'rule is' : 'rules are'} removed too. This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return;
     del.mutate(cardId, { onSuccess: onDeleted, onError: writeFailedAs('The card was not deleted') });
   };
+  const jump = (cat: RateRuleCategory) => document.getElementById(sectionAnchor(cat))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
     <>
-      <section className={cn(CARD, 'flex flex-col gap-[18px] px-6 py-[22px]')}>
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-[20px] font-bold text-ink">{title}</h2>
+      {/* The card's header, sticky: which card this is and what it carries
+          stay in view while its prices scroll past. */}
+      <div className={cn(CARD, 'z-10 flex flex-col gap-2.5 px-5 py-3.5 shadow-sm md:sticky md:top-0')}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={EYEBROW}>{kind === 'own' ? 'Own fleet rate card' : 'Rate card'}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 break-words text-[19px] font-bold leading-tight text-ink">{title}</h2>
+              {card.isActive ? <Pill tone="green">Active</Pill> : <Pill tone="grey">Inactive</Pill>}
+            </div>
+          </div>
           <button type="button" className={ICON_BTN} onClick={() => void removeCard()} disabled={del.isPending} aria-label="Delete card"><Trash2 {...ICON} /></button>
         </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="text-[12.5px] text-ink-muted">
+            {card.basis} · per {AGG_SHORT[card.aggregation] ?? card.aggregation.toLowerCase()} · {rules.length} {rules.length === 1 ? 'rule' : 'rules'}
+            {' · '}Min {card.minChargeSen == null ? 'none' : fmtSen(card.minChargeSen)} · Cap {card.capSen == null ? 'none' : fmtSen(card.capSen)}
+          </span>
+          <nav aria-label="Jump to a category" className="flex flex-wrap gap-1.5 md:ml-auto">
+            {totals.map((t) => (
+              <button key={t.category} type="button" onClick={() => jump(t.category)}
+                className={cn('min-h-[32px] rounded-full border px-2.5 text-[12px] font-semibold',
+                  t.count ? 'border-border bg-surface text-ink hover:border-primary hover:text-primary' : 'border-dashed border-border text-ink-muted')}>
+                {CATEGORY_LABEL[t.category]} <span className="tabular-nums text-ink-muted">{t.count}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      <section aria-label="Card settings" className={cn(CARD, 'flex flex-col gap-3.5 px-5 py-[18px]')}>
+        <h3 className="text-[16px] font-bold text-ink">Card settings</h3>
         {(kind === 'removed' || kind === 'inactive') && (
           <div className="flex flex-wrap items-end gap-3 rounded-xl bg-[#f6ecd4] px-4 py-3 text-[13px] text-[#5a3a14]">
             <p className="min-w-[220px] flex-[1_1_260px]">
@@ -311,7 +387,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
             )}
           </div>
         )}
-        <div className="grid gap-x-5 gap-y-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
+        <div className="grid gap-x-3 gap-y-3.5 [grid-template-columns:repeat(auto-fit,minmax(140px,1fr))] sm:[grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
           <Field label="Charging basis">
             <select className={INPUT} value={card.basis} onChange={(e) => patch({ basis: e.target.value })}>
               <option value="SET">By set (frame+mattress)</option>
@@ -333,8 +409,8 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
               heading. Own fleet IS "no carrier", derived server-side (mig 0246). */}
           <div className="flex flex-col gap-1.5">
             <span className={LABEL}>Carrier</span>
-            <span className="py-2.5 text-[14px] font-semibold text-ink">
-              {kind === 'own' ? 'Own fleet' : kind === 'removed' ? 'Carrier removed' : title}
+            <span className="flex min-h-[40px] items-center text-[14px] font-semibold text-ink">
+              {kind === 'own' ? 'Own fleet' : kind === 'removed' ? 'Carrier removed' : 'This 3PL company'}
             </span>
             <span className={HINT}>
               {kind === 'own'
@@ -354,7 +430,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
               <option value="NEAREST_RM">Nearest RM</option>
             </select>
           </Field>
-          <label className="flex cursor-pointer items-center gap-2.5 pt-[22px] text-[14px] font-semibold text-ink">
+          <label className="flex cursor-pointer items-center gap-2.5 self-start pt-[26px] text-[14px] font-semibold text-ink">
             <input type="checkbox" className="h-[18px] w-[18px] accent-[#16695f]" checked={card.isActive} disabled={update.isPending}
               onChange={(e) => patch({ isActive: e.target.checked })} />
             Active
@@ -362,192 +438,9 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
         </div>
       </section>
 
-      <RulesEditor cardId={cardId} rules={rules} zones={meta.data?.zones ?? []} />
+      <RateCardRules cardId={cardId} rules={rules} zones={meta.data?.zones ?? []} unit={unit} />
       <CalculatorPanel cardId={cardId} basis={card.basis} zones={meta.data?.zones ?? []} rules={rules} />
     </>
-  );
-};
-
-// ── Rules editor ──────────────────────────────────────────────────────────────
-const ordinal = (n: number | null) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd+' : `${n}th`);
-const describeRule = (r: RateRule): string => {
-  if (r.ruleType === 'POSITIONAL_TIER') return `${ordinal(r.tierPosition)} unit`;
-  if (r.ruleType === 'OVERAGE') return `beyond cap ${r.tierPosition}, each`;
-  if (r.ruleType === 'SOFA_BRACKET') return `${r.bracketMin}${r.bracketMax == null ? '+' : `-${r.bracketMax}`} compartments`;
-  if (r.ruleType === 'OUTSTATION') return `${r.zone ?? ''} · per order`;
-  if (r.ruleType === 'OUTSTATION_TRIP') return `${r.zone ?? ''} · fixed per trip`;
-  return 'each occurrence';
-};
-const RULE_GRID = 'grid grid-cols-[1.3fr_1.3fr_.9fr_76px] items-center gap-3 px-6';
-
-/* One rule. Its amount is edited in place (PATCH): a carrier raising one price
-   used to mean deleting the rule and adding it again. */
-const RuleRow = ({ cardId, rule }: { cardId: string; rule: RateRule }) => {
-  const update = useUpdateRateRule(cardId);
-  const del = useDeleteRateRule(cardId);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const save = () => {
-    if (draft === null) return;
-    const amountSen = rmToSen(draft);
-    if (draft.trim() === '' || amountSen == null) { setErr('Enter a non-negative RM amount.'); return; }
-    if (amountSen === rule.amountSen) { setDraft(null); return; }
-    update.mutate({ id: rule.id, amountSen }, {
-      onSuccess: () => { setDraft(null); setErr(null); },
-    }); // the hook's own onError (writeFailed) shows a refusal
-  };
-  return (
-    <div className={cn(RULE_GRID, 'py-[7px] text-[13.5px]')}>
-      <span className="font-semibold text-ink">{ruleLabel(rule.ruleType)}</span>
-      <span className="text-ink-secondary">{describeRule(rule)}</span>
-      {draft === null ? (
-        <span className="text-right font-semibold tabular-nums text-ink">{centiToRM(rule.amountSen)}</span>
-      ) : (
-        <span className="flex flex-col items-end gap-0.5">
-          <input autoFocus className={cn(INPUT, 'min-h-[34px] text-right')} inputMode="decimal" aria-label={`Amount for ${ruleLabel(rule.ruleType)}`}
-            value={draft} onChange={(e) => { setErr(null); setDraft(e.target.value); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setDraft(null); setErr(null); } }} />
-          {err && <span role="alert" className="text-[11.5px] font-semibold text-[#8a2c2c]">{err}</span>}
-        </span>
-      )}
-      <span className="flex justify-end gap-1">
-        {draft === null ? (
-          <button type="button" className={cn(ICON_BTN, 'h-8 w-8 hover:text-primary')} onClick={() => setDraft(centiToRM(rule.amountSen))}
-            aria-label={`Edit amount for ${ruleLabel(rule.ruleType)}`}><Pencil size={14} strokeWidth={1.75} /></button>
-        ) : (
-          <>
-            <button type="button" className={cn(ICON_BTN, 'h-8 w-8 hover:text-primary')} onClick={save} disabled={update.isPending} aria-label="Save amount"><Check size={14} strokeWidth={1.75} /></button>
-            <button type="button" className={cn(ICON_BTN, 'h-8 w-8')} onClick={() => { setDraft(null); setErr(null); }} aria-label="Cancel"><X size={14} strokeWidth={1.75} /></button>
-          </>
-        )}
-        {draft === null && (
-          <button type="button" className={cn(ICON_BTN, 'h-8 w-8')} disabled={del.isPending}
-            onClick={() => del.mutate(rule.id, { onError: writeFailedAs('The rule was not deleted') })}
-            aria-label={`Delete ${ruleLabel(rule.ruleType)} rule`}><Trash2 size={14} strokeWidth={1.75} /></button>
-        )}
-      </span>
-    </div>
-  );
-};
-
-const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule[]; zones: string[] }) => {
-  const create = useCreateRateRule(cardId);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [form, setForm] = useState<{ ruleType: RateRuleType; tierPosition: string; bracketMin: string; bracketMax: string; zone: string; amountRM: string }>({
-    ruleType: 'POSITIONAL_TIER', tierPosition: '1', bracketMin: '', bracketMax: '', zone: zones[0] ?? 'MELAKA', amountRM: '',
-  });
-  const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => { setErr(null); setForm((s) => ({ ...s, [k]: v })); };
-
-  const addRule = () => {
-    const amountSen = rmToSen(form.amountRM);
-    if (amountSen == null || form.amountRM.trim() === '') { setErr('Enter a non-negative RM amount.'); return; }
-    const body: Parameters<typeof create.mutate>[0] = { ruleType: form.ruleType, amountSen };
-    if (form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE') {
-      const n = Number(form.tierPosition);
-      if (!Number.isInteger(n) || n < 1) { setErr(form.ruleType === 'OVERAGE' ? 'Cap N must be 1 or more.' : 'Tier position must be 1 or more.'); return; }
-      body.tierPosition = n;
-    }
-    if (form.ruleType === 'SOFA_BRACKET') {
-      const lo = Number(form.bracketMin);
-      if (form.bracketMin.trim() === '' || !Number.isInteger(lo) || lo < 0) { setErr('Compartment min must be 0 or more.'); return; }
-      const hi = form.bracketMax.trim() === '' ? null : Number(form.bracketMax);
-      if (hi != null && (!Number.isInteger(hi) || hi < lo)) { setErr('Compartment max must be blank or at least the min.'); return; }
-      body.bracketMin = lo;
-      body.bracketMax = hi;
-    }
-    if (form.ruleType === 'OUTSTATION' || form.ruleType === 'OUTSTATION_TRIP') {
-      if (!form.zone.trim()) { setErr('Enter the zone or town.'); return; }
-      body.zone = form.zone.trim();
-    }
-    create.mutate(body, { onSuccess: () => set('amountRM', ''), onError: writeFailedAs('The rule was not added') });
-  };
-
-  /* Grouped by CATEGORY, not sorted alphabetically, so the rules that price a
-     delivery sit together. An unknown rule type falls into Delivery rather than
-     vanishing — a rule the operator can see and delete beats one that hides. */
-  const grouped = useMemo(() => {
-    const order = new Map<RateRuleCategory, number>(RATE_RULE_CATEGORIES.map((cat, i) => [cat, i]));
-    const byCat = new Map<RateRuleCategory, RateRule[]>();
-    for (const r of rules) {
-      const cat = ruleCategory(r.ruleType);
-      (byCat.get(cat) ?? byCat.set(cat, []).get(cat)!).push(r);
-    }
-    return [...byCat.entries()]
-      .sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99))
-      .map(([category, list]) => ({
-        category,
-        rules: list.sort((a, b) =>
-          (a.tierPosition ?? 0) - (b.tierPosition ?? 0)
-          || (a.bracketMin ?? 0) - (b.bracketMin ?? 0)
-          || a.ruleType.localeCompare(b.ruleType)),
-      }));
-  }, [rules]);
-
-  const needsPosition = form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE';
-  const needsBracket = form.ruleType === 'SOFA_BRACKET';
-  const needsZone = form.ruleType === 'OUTSTATION' || form.ruleType === 'OUTSTATION_TRIP';
-
-  return (
-    <section className={cn(CARD, 'overflow-hidden')}>
-      <h3 className="px-6 pb-2 pt-[18px] text-[16px] font-bold text-ink">Rules ({rules.length})</h3>
-      <div className="overflow-x-auto">
-        <div className="min-w-[520px]">
-          <div className={cn(RULE_GRID, 'border-b border-border py-2.5 text-[11.5px] font-bold uppercase tracking-[0.05em] text-ink-muted')}>
-            <span>Type</span><span>Applies to</span><span className="text-right">Amount (RM)</span><span />
-          </div>
-          {grouped.map(({ category, rules: list }) => (
-            <div key={category}>
-              <div className="flex flex-col gap-0.5 px-6 pb-1.5 pt-3.5">
-                <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-primary">{CATEGORY_LABEL[category]}</span>
-                <span className="text-[12.5px] text-ink-muted">{CATEGORY_HINT[category]}</span>
-              </div>
-              {list.map((r) => <RuleRow key={r.id} cardId={cardId} rule={r} />)}
-            </div>
-          ))}
-          {rules.length === 0 && <p className="px-6 py-[18px] text-[13.5px] text-ink-muted">No rules yet. Add one below.</p>}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-end gap-3 border-t border-border bg-surface-2/60 px-6 py-[18px]">
-        <Field label="Rule type" className="flex-[1_1_220px]">
-          {/* optgroup, so the operator finds the rule for the job by its group. */}
-          <select className={INPUT} value={form.ruleType} onChange={(e) => set('ruleType', e.target.value as RateRuleType)}>
-            {rulesByCategory().map(({ category, types }) => (
-              <optgroup key={category} label={CATEGORY_LABEL[category]}>
-                {types.map((t) => <option key={t} value={t}>{RULE_LABEL[t]}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </Field>
-        {needsPosition && (
-          <Field label={form.ruleType === 'OVERAGE' ? 'Cap N' : 'Position (3=3rd+)'} className="flex-[0_1_140px]">
-            <input className={INPUT} inputMode="numeric" value={form.tierPosition} onChange={(e) => set('tierPosition', e.target.value)} />
-          </Field>
-        )}
-        {needsBracket && (
-          <>
-            <Field label="Comp min" className="flex-[0_1_120px]">
-              <input className={INPUT} inputMode="numeric" value={form.bracketMin} onChange={(e) => set('bracketMin', e.target.value)} />
-            </Field>
-            <Field label="Comp max (blank=+)" className="flex-[0_1_150px]">
-              <input className={INPUT} inputMode="numeric" value={form.bracketMax} onChange={(e) => set('bracketMax', e.target.value)} />
-            </Field>
-          </>
-        )}
-        {needsZone && (
-          <Field label="Zone or town" className="flex-[1_1_200px]">
-            <input className={INPUT} list="rate-zone-list" value={form.zone} onChange={(e) => set('zone', e.target.value)} placeholder="KL, JOHOR, or a town e.g. RAWANG" />
-            <datalist id="rate-zone-list">{zones.map((z) => <option key={z} value={z} />)}</datalist>
-          </Field>
-        )}
-        <Field label="Amount (RM)" className="flex-[0_1_140px]">
-          <input className={INPUT} inputMode="decimal" value={form.amountRM} onChange={(e) => set('amountRM', e.target.value)} />
-        </Field>
-        <button type="button" className={BTN_PRI} onClick={addRule} disabled={create.isPending}><Plus {...ICON} />{create.isPending ? 'Adding…' : 'Add rule'}</button>
-        {err && <p role="alert" className="basis-full text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
-      </div>
-    </section>
   );
 };
 
@@ -671,6 +564,7 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
 
 // ── Reconciliation view ────────────────────────────────────────────────────────
 const reconStatus = (r: ReconcileRow): string => (!r.matched ? 'unmatched' : r.flagged ? 'mismatch' : 'match');
+const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmtSen(Math.abs(v))}`;
 const RECON_COLUMNS: Column<ReconcileRow>[] = [
   { key: 'trip', label: 'Trip', render: (r) => <span className="font-semibold">{r.tripNo ?? r.tripId.slice(0, 8)}</span>, getValue: (r) => r.tripNo ?? r.tripId },
   { key: 'date', label: 'Date', render: (r) => (r.tripDate ? fmtDate(r.tripDate) : '—'), getValue: (r) => r.tripDate, exportFormat: 'date' },
@@ -678,74 +572,53 @@ const RECON_COLUMNS: Column<ReconcileRow>[] = [
   { key: 'drops', label: 'Drops', align: 'right', render: (r) => r.dropCount, getValue: (r) => r.dropCount },
   { key: 'zone', label: 'Zone', render: (r) => r.derivedZone ?? '—', getValue: (r) => r.derivedZone ?? '' },
   {
-    key: 'expected', label: 'Expected', align: 'right', render: (r) => fmtSen(r.expectedSen),
+    key: 'expected', label: 'Expected', align: 'right', render: (r) => <span className="tabular-nums">{fmtSen(r.expectedSen)}</span>,
     getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money',
   },
   {
-    key: 'billed', label: 'Billed', align: 'right', render: (r) => fmtSen(r.billedSen),
+    key: 'billed', label: 'Billed', align: 'right', render: (r) => <span className="tabular-nums">{fmtSen(r.billedSen)}</span>,
     getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money',
   },
   {
     key: 'delta', label: 'Delta', align: 'right',
-    render: (r) => (
-      <span className={r.flagged ? 'font-bold text-[#8a2c2c]' : 'text-ink-muted'}>
-        {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}${fmtSen(Math.abs(r.deltaSen))}`}
-      </span>
-    ),
+    render: (r) => (r.deltaSen == null ? <span className="text-ink-muted">—</span>
+      : r.flagged ? <Pill tone={diffTone(r.deltaSen)} className="tabular-nums">{signed(r.deltaSen)}</Pill>
+      : <span className="tabular-nums text-ink-muted">{signed(r.deltaSen)}</span>),
     getValue: (r) => r.deltaSen, exportValue: (r) => (r.deltaSen == null ? null : r.deltaSen / 100), exportFormat: 'money',
   },
   {
     key: 'status', label: 'Status',
     render: (r) => (
-      <>
-        {!r.matched ? <span className="text-ink-muted">unmatched</span>
-          : r.flagged ? <span className="rounded-full bg-[#f6dcdc] px-2 py-0.5 text-[11.5px] font-semibold text-[#8a2c2c]">mismatch</span>
-          : <span className="rounded-full bg-[#dcebe3] px-2 py-0.5 text-[11.5px] font-semibold text-[#1f5c43]">match</span>}
-        {r.matched && !r.factsComplete && <span className="text-[11px] text-ink-muted"> · facts partial</span>}
-      </>
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        {!r.matched ? <Pill tone="grey">unmatched</Pill> : r.flagged ? <Pill tone="red">mismatch</Pill> : <Pill tone="green">match</Pill>}
+        {r.matched && !r.factsComplete && <span className="text-[11px] text-ink-muted">facts partial</span>}
+      </span>
     ),
     getValue: reconStatus,
   },
 ];
-/* Per 3PL, from what its bills say (the 3PL invoices tab), against the rate card.
-   The trip table below reads trips.three_pl_cost_sen, which nothing on screen
-   writes and which 3PL work rarely has (it is not planned as trips), so on its
-   own this tab was always empty. The billed cost that IS recorded is per DO. */
-type CarrierRecon = { carrierId: string; carrierName: string; dos: number; billedSen: number; billedPricedSen: number; expectedSen: number; priced: number; off: number; noCard: number };
-const carrierRecon = (rows: readonly ChargeRow[]): CarrierRecon[] => {
-  const by = new Map<string, CarrierRecon>();
-  for (const r of rows) {
-    const t = by.get(r.carrierId) ?? { carrierId: r.carrierId, carrierName: r.carrierName ?? '—', dos: 0, billedSen: 0, billedPricedSen: 0, expectedSen: 0, priced: 0, off: 0, noCard: 0 };
-    t.dos += 1;
-    t.billedSen += r.billedSen;
-    if (r.expectedSen == null) t.noCard += 1;
-    else { t.expectedSen += r.expectedSen; t.billedPricedSen += r.billedSen; t.priced += 1; if (r.varianceSen) t.off += 1; }
-    by.set(r.carrierId, t);
-  }
-  return [...by.values()].sort((a, b) => a.carrierName.localeCompare(b.carrierName));
-};
 const CARRIER_COLUMNS: Column<CarrierRecon>[] = [
   { key: 'carrier', label: '3PL', render: (r) => <span className="font-semibold">{r.carrierName}</span>, getValue: (r) => r.carrierName },
   { key: 'dos', label: 'DOs', align: 'right', render: (r) => r.dos, getValue: (r) => r.dos },
-  { key: 'billed', label: 'Billed', align: 'right', render: (r) => fmtSen(r.billedSen), getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money' },
-  { key: 'expected', label: 'Rate card', align: 'right', render: (r) => (r.priced ? fmtSen(r.expectedSen) : '—'), getValue: (r) => r.expectedSen, exportValue: (r) => r.expectedSen / 100, exportFormat: 'money' },
+  { key: 'billed', label: 'Billed', align: 'right', render: (r) => <span className="tabular-nums">{fmtSen(r.billedSen)}</span>, getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money' },
+  { key: 'expected', label: 'Rate card', align: 'right', render: (r) => (r.priced ? <span className="tabular-nums">{fmtSen(r.expectedSen)}</span> : '—'), getValue: (r) => r.expectedSen, exportValue: (r) => r.expectedSen / 100, exportFormat: 'money' },
   {
     key: 'diff', label: 'Difference', align: 'right',
     /* Over the DOs the card prices only: a DO with no card has no expected cost to differ from. */
-    render: (r) => (r.priced ? variance(r.billedPricedSen - r.expectedSen) : <span className="text-ink-muted">no rate card</span>),
+    render: (r) => <DiffPill v={r.priced ? r.billedPricedSen - r.expectedSen : null} />,
     getValue: (r) => (r.priced ? r.billedPricedSen - r.expectedSen : null),
     exportValue: (r) => (r.priced ? (r.billedPricedSen - r.expectedSen) / 100 : null), exportFormat: 'money',
   },
-  { key: 'off', label: 'DOs off the card', align: 'right', render: (r) => (r.off ? <span className="font-bold text-[#8a2c2c]">{r.off}</span> : 0), getValue: (r) => r.off },
-  { key: 'nocard', label: 'No rate card', align: 'right', render: (r) => (r.noCard ? <span className="font-semibold text-[#80501c]">{r.noCard}</span> : 0), getValue: (r) => r.noCard },
+  { key: 'off', label: 'DOs off the card', align: 'right', render: (r) => (r.off ? <Pill tone="red">{r.off}</Pill> : <span className="text-ink-muted">0</span>), getValue: (r) => r.off },
+  { key: 'nocard', label: 'No rate card', align: 'right', render: (r) => (r.noCard ? <Pill tone="amber">{r.noCard}</Pill> : <span className="text-ink-muted">0</span>), getValue: (r) => r.noCard },
 ];
 const DO_COLUMNS: Column<ChargeRow>[] = [
   { key: 'do', label: 'DO', render: (r) => <span className="font-semibold">{r.doNumber ?? '—'}</span>, getValue: (r) => r.doNumber ?? '' },
   { key: 'carrier', label: '3PL', render: (r) => r.carrierName ?? '—', getValue: (r) => r.carrierName ?? '' },
   { key: 'inv', label: 'Invoice', render: (r) => [r.invoiceNo, r.invoiceDate && fmtDate(r.invoiceDate)].filter(Boolean).join(' · ') || '—', getValue: (r) => r.invoiceNo ?? '' },
-  { key: 'billed', label: 'Billed', align: 'right', render: (r) => fmtSen(r.billedSen), getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money' },
-  { key: 'expected', label: 'Rate card', align: 'right', render: (r) => (r.expectedSen == null ? '—' : fmtSen(r.expectedSen)), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money' },
-  { key: 'diff', label: 'Difference', align: 'right', render: (r) => variance(r.varianceSen), getValue: (r) => r.varianceSen, exportValue: (r) => (r.varianceSen == null ? null : r.varianceSen / 100), exportFormat: 'money' },
+  { key: 'billed', label: 'Billed', align: 'right', render: (r) => <span className="tabular-nums">{fmtSen(r.billedSen)}</span>, getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money' },
+  { key: 'expected', label: 'Rate card', align: 'right', render: (r) => (r.expectedSen == null ? '—' : <span className="tabular-nums">{fmtSen(r.expectedSen)}</span>), getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money' },
+  { key: 'diff', label: 'Difference', align: 'right', render: (r) => <DiffPill v={r.varianceSen} />, getValue: (r) => r.varianceSen, exportValue: (r) => (r.varianceSen == null ? null : r.varianceSen / 100), exportFormat: 'money' },
 ];
 
 const ReconcileView = () => {
@@ -753,68 +626,76 @@ const ReconcileView = () => {
   const recon = useReconcile(range);
   const charges = useThreePLDoCharges(range);
   const rows = recon.data ?? [];
-  const chargeRows = charges.data?.rows ?? [];
+  const chargeRows = useMemo(() => charges.data?.rows ?? [], [charges.data?.rows]);
   const perCarrier = useMemo(() => carrierRecon(chargeRows), [chargeRows]);
   const offCard = useMemo(() => chargeRows.filter((r) => r.varianceSen == null || r.varianceSen !== 0), [chargeRows]);
+  const t = useMemo(() => chargeTotals(chargeRows), [chargeRows]);
+  const flaggedTrips = rows.filter((r) => r.flagged).length;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <p className="max-w-[900px] text-[13px] text-ink-muted">
         What each 3PL billed, from its bills on the 3PL invoices tab, against what its rate card says. The rate card amount is worked out from each DO&rsquo;s sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
       </p>
-      <div className="flex flex-wrap items-end gap-2.5">
+      <FilterBar>
         {(['from', 'to'] as const).map((k) => (
-          <Field key={k} label={k === 'from' ? 'From' : 'To'} className="w-[170px]">
+          <Field key={k} label={k === 'from' ? 'From' : 'To'} className="min-w-[140px] flex-1 sm:w-[170px] sm:flex-none">
             <DateField className={INPUT} value={range[k]} onChange={(v) => setRange((s) => ({ ...s, [k]: v }))} fullWidth />
           </Field>
         ))}
         <span className={cn(HINT, 'pb-2.5')}>Invoice date for bills, trip date for trips.</span>
-      </div>
+        {(range.from || range.to) && (
+          <button type="button" className="min-h-[40px] text-[13px] font-semibold text-primary" onClick={() => setRange({ from: '', to: '' })}>Clear dates</button>
+        )}
+      </FilterBar>
 
-      <section className="flex flex-col gap-3">
-        <h3 className="text-[16px] font-bold text-ink">Per 3PL</h3>
-        <div className={cn(CARD, 'overflow-hidden')}>
-          <DataTable<CarrierRecon>
-            tableId="rate-card-reconcile-carriers" exportName="3pl-reconciliation" exportXlsx
-            columns={CARRIER_COLUMNS} rows={charges.data ? perCarrier : null} loading={charges.isLoading}
-            error={charges.isError ? 'The 3PL bills did not load.' : null}
-            emptyLabel="No 3PL bills in range. Key one in, or bring one in from an AP invoice, on the 3PL invoices tab."
-            getRowKey={(r) => r.carrierId}
-          />
-        </div>
-      </section>
+      {charges.data && (
+        <KpiStrip>
+          <Kpi label="Billed" value={fmtSen(t.billedSen)} sub={`${t.dos} ${t.dos === 1 ? 'DO' : 'DOs'} · ${perCarrier.length} ${perCarrier.length === 1 ? '3PL' : '3PLs'}`} tone={null} />
+          <Kpi label="Rate card" value={t.priced ? fmtSen(t.expectedSen) : '—'} sub={`${t.priced} of ${t.dos} DOs priced`} tone={null} />
+          <Kpi label="Difference" value={t.diffSen == null ? '—' : signed(t.diffSen)} sub="Billed less rate card, priced DOs" tone={t.diffSen == null ? null : diffTone(t.diffSen)} />
+          <Kpi label="Off the card" value={offCard.length} sub={`${t.over} over · ${t.under} under · ${t.noCard} no card`} tone={offCard.length ? 'red' : 'green'} />
+        </KpiStrip>
+      )}
 
-      <section className="flex flex-col gap-3">
-        <h3 className="text-[16px] font-bold text-ink">DOs that differ from the rate card <span className="font-medium text-ink-muted">({offCard.length})</span></h3>
-        <div className={cn(CARD, 'overflow-hidden')}>
-          <DataTable<ChargeRow>
-            tableId="rate-card-reconcile-dos" exportName="3pl-dos-off-card" exportXlsx
-            columns={DO_COLUMNS} rows={charges.data ? offCard : null} loading={charges.isLoading}
-            error={charges.isError ? 'The 3PL bills did not load.' : null}
-            emptyLabel="Every billed DO in range matches its rate card."
-            getRowKey={(r) => r.id}
-          />
-        </div>
-      </section>
+      <TableCard title="Per 3PL" count={null} label={null} actions={null}
+        hint="Each 3PL's bills in range beside its rate card. The difference counts only the DOs its card prices.">
+        <DataTable<CarrierRecon>
+          tableId="rate-card-reconcile-carriers" exportName="3pl-reconciliation" exportXlsx
+          columns={CARRIER_COLUMNS} rows={charges.data ? perCarrier : null} loading={charges.isLoading}
+          error={charges.isError ? 'The 3PL bills did not load.' : null}
+          emptyLabel="No 3PL bills in range. Key one in, or bring one in from an AP invoice, on the 3PL invoices tab."
+          getRowKey={(r) => r.carrierId}
+        />
+      </TableCard>
 
-      <section className="flex flex-col gap-3">
-        <h3 className="text-[16px] font-bold text-ink">Trips with a 3PL cost</h3>
-        <p className={HINT}>Outsourced trips planned in Delivery Planning that carry the 3PL&rsquo;s cost, priced from the trip&rsquo;s set count and zone (occurrence charges and sofa compartments are not on the trip: facts partial).</p>
-        <div className={cn(CARD, 'overflow-hidden')}>
-          <DataTable<ReconcileRow>
-            tableId="rate-card-reconcile"
-            exportName="rate-card-reconcile"
-            exportXlsx
-            columns={RECON_COLUMNS}
-            rows={recon.data ? rows : null}
-            loading={recon.isLoading}
-            error={recon.isError ? 'The reconciliation did not load.' : null}
-            emptyLabel="No 3PL trips with a captured billed cost in range."
-            getRowKey={(r) => r.tripId}
-            getRowStyle={(r) => (r.flagged ? { background: 'rgba(163,38,27,0.05)' } : undefined)}
-          />
-        </div>
-      </section>
+      <TableCard title="DOs that differ from the rate card" count={`(${offCard.length})`} label={null} actions={null}
+        hint="Red: billed over the card. Amber: billed under it. Grey: the 3PL has no card to check against.">
+        <DataTable<ChargeRow>
+          tableId="rate-card-reconcile-dos" exportName="3pl-dos-off-card" exportXlsx
+          columns={DO_COLUMNS} rows={charges.data ? offCard : null} loading={charges.isLoading}
+          error={charges.isError ? 'The 3PL bills did not load.' : null}
+          emptyLabel="Every billed DO in range matches its rate card."
+          getRowKey={(r) => r.id}
+          getRowStyle={(r) => ((r.varianceSen ?? 0) > 0 ? { background: 'rgba(163,38,27,0.05)' } : undefined)}
+        />
+      </TableCard>
+
+      <TableCard title="Trips with a 3PL cost" count={recon.data ? `(${rows.length}${flaggedTrips ? `, ${flaggedTrips} mismatch` : ''})` : null} label={null} actions={null}
+        hint={<>Outsourced trips planned in Delivery Planning that carry the 3PL&rsquo;s cost, priced from the trip&rsquo;s set count and zone (occurrence charges and sofa compartments are not on the trip: facts partial).</>}>
+        <DataTable<ReconcileRow>
+          tableId="rate-card-reconcile"
+          exportName="rate-card-reconcile"
+          exportXlsx
+          columns={RECON_COLUMNS}
+          rows={recon.data ? rows : null}
+          loading={recon.isLoading}
+          error={recon.isError ? 'The reconciliation did not load.' : null}
+          emptyLabel="No 3PL trips with a captured billed cost in range."
+          getRowKey={(r) => r.tripId}
+          getRowStyle={(r) => (r.flagged ? { background: 'rgba(163,38,27,0.05)' } : undefined)}
+        />
+      </TableCard>
     </div>
   );
 };
