@@ -11,7 +11,7 @@ import { useHelpers } from "../../../vendor/scm/lib/helpers-queries";
 import { useThreePLCompanies } from "../../../vendor/scm/lib/threepl-companies-queries";
 import { useWarehouses } from "../../../vendor/scm/lib/inventory-queries";
 import { boxOf, byHome, lorryHome, lorryMatches } from "./lorryModel";
-import { LorrySilhouette } from "./LorrySilhouette";
+import { LorrySide } from "./Lorry3D";
 import { LorryDrawer } from "./LorryDrawer";
 
 const RANK: Record<ComplianceTone, number> = { expired: 4, critical: 3, warning: 2, none: 1, ok: 0 };
@@ -86,7 +86,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
                     <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt.has(l.id) ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt.has(l.id) ? "GPS live" : "No GPS"}</span>
                   </div>
                   <div className="mt-1 text-[12px] text-ink-muted">{own ? "Own fleet" : carrier ?? "3PL"} · {LORRY_TYPE_LABEL[l.type]}{l.model ? ` · ${l.model}` : ""}{l.active ? "" : " · Not in use"}</div>
-                  <LorrySilhouette box={box} labels={false} className="my-1 h-16" />
+                  <div className="my-1.5"><LorrySide box={box} /></div>
                   <div className="flex flex-wrap gap-x-3 text-[12px] text-ink">
                     {box ? <span>{box.length} × {box.width} × {box.height} ft · {box.m3} m³</span> : <span className="text-[#80501c]">Box size not entered</span>}
                   </div>
