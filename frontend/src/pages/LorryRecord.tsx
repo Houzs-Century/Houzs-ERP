@@ -28,12 +28,11 @@ import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { useLorries } from "../vendor/scm/lib/lorries-queries";
 import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
-import { PurchaseSection, CapacitySection } from "./scm-v2/LorryDetail";
-import { NotifyProvider } from "../vendor/scm/components/NotifyDialog";
+import { CapacityCard, PurchaseCard } from "./fleet/LorryVehicle";
 import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend, repairSpendOf } from "./fleet/RepairSpend";
 import { LorryCompliance } from "./fleet/LorryCompliance";
-import { FleetCard, KpiTile, PlateBadge } from "./fleet/FleetUi";
+import { EMPTY, FleetCard, KpiTile, PlateBadge, TONE_DOT } from "./fleet/FleetUi";
 import { OffRoadList } from "./fleet/OffRoadList";
 import { lorryBox } from "./fleet/fleetHealthModel";
 import { Lorry3D } from "./scm-v2/fleet/Lorry3D";
@@ -117,7 +116,7 @@ export function LorryRecord() {
   if (detail.loading && !v) return <div className="space-y-4"><ListSkeleton /></div>;
   if (!v) {
     return (
-      <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+      <div className="flex flex-col gap-4">
         <Breadcrumb plate="Not found" />
         <Section title="Lorry not found">
           <p className="text-[13px] text-ink-muted">{detail.error ? `Could not load this lorry: ${detail.error}` : "This lorry is not on file, or you cannot see it."}</p>
@@ -133,7 +132,7 @@ export function LorryRecord() {
      is set on Coverage & Fleet. */
   if (v.isInternal === false) {
     return (
-      <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+      <div className="flex flex-col gap-4">
         <Breadcrumb plate={v.plate} />
         <div className="flex items-center gap-2.5"><PlateBadge plate={v.plate} size="lg" /><Pill tone="neutral">Outsourced lorry</Pill></div>
         <p className="rounded-xl border border-border bg-surface px-4 py-3 text-[13px] text-ink-secondary">
@@ -157,7 +156,7 @@ export function LorryRecord() {
 
   const oos = v.outOfService;
   return (
-    <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <Breadcrumb plate={v.plate} />
 
       <section className="flex flex-wrap items-stretch gap-5 rounded-2xl border border-border bg-surface p-3.5 sm:p-[18px]">
@@ -179,10 +178,10 @@ export function LorryRecord() {
           )}
           <MissingComplianceNote vehicle={v} compliance={compliance} />
           <div className="grid grid-cols-2 gap-2.5">
-            <KpiTile compact label="Mileage" value={v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "—"}
+            <KpiTile compact label="Mileage" value={v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "Not set"}
               sub={v.mileageDate ? `Read ${fmtDate(v.mileageDate)}${v.mileageFlagged ? " · flagged" : ""}` : "No reading yet"}
               tone={v.mileageFlagged ? "warn" : "neutral"} onClick={() => openTab("maintenance")} />
-            <KpiTile compact label="Next document to renew" value={next ? fmtDays(next.days) : "—"}
+            <KpiTile compact label="Next document to renew" value={next ? fmtDays(next.days) : "Not set"}
               sub={next ? `${DOC_LABEL[next.type]}, ${fmtDate(next.date)}` : "No expiry on file"}
               tone={next?.tone === "crit" ? "crit" : next?.tone === "warn" ? "warn" : "neutral"} onClick={() => openTab("compliance")} />
             <KpiTile compact label="Open repairs" value={`${openBreakdowns.length + openWorkOrders.length}`}
@@ -217,13 +216,15 @@ export function LorryRecord() {
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.5fr_1fr]">
           <Section title="Where it is today"><LorryTodayRoute lorryId={v.id} /></Section>
           <Section title="Needs attention">
-            {attention.length === 0 ? <p className="text-[13px] text-ink-muted">Nothing needs attention.</p> : (
-              <ul className="divide-y divide-border">
+            {attention.length === 0 ? <p className={EMPTY}>Nothing needs attention.</p> : (
+              <ul className="-mx-1 flex flex-col">
                 {attention.map((a) => (
-                  <li key={a.text}>
-                    <button type="button" onClick={() => openTab(a.tab)} className="flex min-h-11 w-full items-center justify-between gap-3 py-2 text-left text-[13px] text-ink hover:text-primary">
-                      <span>{a.text}</span>
+                  <li key={a.text} className="border-b border-[#efebe2] last:border-b-0">
+                    <button type="button" onClick={() => openTab(a.tab)} className="flex min-h-12 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-1 py-2.5 text-left hover:bg-[#faf9f6]">
+                      <span className={cn("h-2.5 w-2.5 flex-none rounded-full", TONE_DOT[a.tone])} />
+                      <span className="min-w-0 flex-1 text-[14px] font-semibold text-ink">{a.text}</span>
                       <Pill tone={a.tone}>{a.tag}</Pill>
+                      <span className="text-[13px] font-semibold text-primary">Open</span>
                     </button>
                   </li>
                 ))}
@@ -243,10 +244,12 @@ export function LorryRecord() {
 
       {tab === "maintenance" && (
         <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           <Section title="Off the road" sub="Days this lorry was or will be out of service. Set from a lorry service job or Repair Days on Lorry Capacity.">
             <OffRoadList windows={detail.data?.maintenanceWindows ?? []} today={today} />
           </Section>
           <Section title="Mileage" sub={v.mileageFlagged ? "The latest reading is an unusually large jump and is flagged for review." : undefined}><MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} /></Section>
+          </div>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             <Section title="Service plans">
               <PlansSection plans={detail.data?.plans ?? []} currentKm={v.mileageKm} vehicleId={v.id} components={detail.data?.planComponents ?? []} onChanged={refresh} />
@@ -260,15 +263,16 @@ export function LorryRecord() {
 
       {tab === "compliance" && <LorryCompliance compliance={compliance} lorryId={v.id} onChanged={refresh} />}
 
-      {/* The scm editors report through the scm dialog, so each carries its provider here. */}
       {tab === "vehicle" && (lorryRow ? (
-        <div className="space-y-3">
-          <NotifyProvider><CapacitySection lorry={lorryRow} ownFleet /></NotifyProvider>
-          <NotifyProvider><PurchaseSection lorry={lorryRow} /></NotifyProvider>
+        <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+          <CapacityCard key={`cap-${lorryRow.id}`} lorry={lorryRow} />
+          <PurchaseCard key={`buy-${lorryRow.id}`} lorry={lorryRow} />
         </div>
       ) : (
         <Section title="Vehicle & purchase">
-          <p className="text-[13px] text-ink-muted">{lorries.isLoading ? "Loading…" : "The lorry master row could not be read."}</p>
+          {lorries.isLoading
+            ? <p className={EMPTY}>Loading…</p>
+            : <p role="alert" className="text-[13.5px] font-semibold text-err">Could not read this lorry's vehicle details{lorries.error ? `: ${(lorries.error as Error).message}` : "."}</p>}
         </Section>
       ))}
     </div>
