@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import {
+  stopTimes, fmtMinutes,
   docRowVM, buildRuns, buildLorryCards, buildLorryRoutes, applyFilters, searchMatch, latestLiveDoId,
   EMPTY_FILTERS, filtersActive, isoToMytTime, mytTimeToIso, type DocRowVM, type DayClock,
 } from './vm';
@@ -48,7 +49,7 @@ describe('latestLiveDoId', () => {
 
 describe('docRowVM — field mapping + late', () => {
   test('maps the row, derives units/slot/DO, and marks overdue as late', () => {
-    const d = docRowVM(order(), 'overdue', CLOCK);
+    const d = docRowVM(order(), 'overdue', CLOCK, null);
     expect(d.key).toBe('so:HC-SO-000123');
     expect(d.customer).toBe('Ada Wong');
     expect(d.doNumber).toBe('HC-DO-9');
@@ -62,12 +63,12 @@ describe('docRowVM — field mapping + late', () => {
     expect(d.latestLiveDoId).toBe('do-1');
   });
   test('a delivered row is not late and carries its delivered time', () => {
-    const d = docRowVM(order({ delivered_at: '2026-11-01T03:20:00Z' }), 'done', CLOCK);
+    const d = docRowVM(order({ delivered_at: '2026-11-01T03:20:00Z' }), 'done', CLOCK, null);
     expect(d.late).toBe(false);
     expect(d.deliveredAt).toBe('2026-11-01T03:20:00Z');
   });
   test('an SO delivery carries no job tag; its code line is SO · DO · Ref', () => {
-    const d = docRowVM(order(), 'scheduled', CLOCK);
+    const d = docRowVM(order(), 'scheduled', CLOCK, null);
     expect(d.rowType).toBe('so');
     expect(d.jobLabel).toBeNull();
     expect(d.codeLine).toBe('HC-SO-000123 · HC-DO-9 · pg0791');
@@ -77,7 +78,7 @@ describe('docRowVM — field mapping + late', () => {
       row_type: 'dp', so_doc_no: 'DP:42', dp_job_type: 'TRANSFER', dp_no: 'DP-261102-VRH02',
       debtor_name: 'KL → Penang', local_total_sen: 0, delivered_qty: 0, remaining_qty: 0,
       delivery_orders: [], so_ref: null,
-    }), 'scheduled', CLOCK);
+    }), 'scheduled', CLOCK, null);
     expect(d.rowType).toBe('dp');
     expect(d.jobLabel).toBe('Transfer item');
     expect(d.codeLine).toBe('DP-261102-VRH02');
@@ -86,13 +87,13 @@ describe('docRowVM — field mapping + late', () => {
     const assr = docRowVM(order({
       row_type: 'assr', so_doc_no: 'ASSR/2610-031#delivery', assr_id: 1594, job_kind: 'delivery',
       ref: 'ASSR/2610-031', delivery_orders: [], so_ref: null,
-    }), 'scheduled', CLOCK);
+    }), 'scheduled', CLOCK, null);
     expect(assr.jobLabel).toBe('Service / delivery back');
     expect(assr.codeLine).toBe('ASSR/2610-031');
     const prj = docRowVM(order({
       row_type: 'project', so_doc_no: 'PRJ:7#DISMANTLE', dp_job_type: 'DISMANTLE',
       ref: '2026-10-HOMEDEC-AKEMI', delivery_orders: [], so_ref: null,
-    }), 'scheduled', CLOCK);
+    }), 'scheduled', CLOCK, null);
     expect(prj.jobLabel).toBe('Dismantle');
     expect(prj.codeLine).toBe('2026-10-HOMEDEC-AKEMI');
   });
@@ -100,12 +101,12 @@ describe('docRowVM — field mapping + late', () => {
     const d = docRowVM(order({
       row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
       ref: 'ASSR/1', delivery_state: 'DELIVERED', delivery_orders: [], so_ref: null,
-    }), 'scheduled', CLOCK);
+    }), 'scheduled', CLOCK, null);
     expect(d.status).toBe('done');
     expect(d.late).toBe(false);
   });
   test('a DELIVERED SO row keeps its computed stop status (the done-fold is non-SO only)', () => {
-    const d = docRowVM(order({ delivery_state: 'DELIVERED' }), 'scheduled', CLOCK);
+    const d = docRowVM(order({ delivery_state: 'DELIVERED' }), 'scheduled', CLOCK, null);
     expect(d.status).toBe('scheduled');
   });
 });
@@ -116,9 +117,9 @@ describe('buildRuns — grouping + driver join + sort', () => {
   ]);
   test('a run carries its drops sorted by stop, with crew joined', () => {
     const docs: DocRowVM[] = [
-      docRowVM(order({ so_doc_no: 'S2', trip_stop_no: 3 }), 'done', CLOCK),
-      docRowVM(order({ so_doc_no: 'S1', trip_stop_no: 1, has_pod: true, crew: { driver_2_name: 'Zaki' } as PlanningOrder['crew'] }), 'done', CLOCK),
-      docRowVM(order({ so_doc_no: 'OFF', trip_id: 'other', trip_stop_no: 1 }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'S2', trip_stop_no: 3 }), 'done', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'S1', trip_stop_no: 1, has_pod: true, crew: { driver_2_name: 'Zaki' } as PlanningOrder['crew'] }), 'done', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'OFF', trip_id: 'other', trip_stop_no: 1 }), 'scheduled', CLOCK, null),
     ];
     const runs = buildRuns([trip()], docs, drivers, () => '#2563eb');
     expect(runs).toHaveLength(1);
@@ -139,11 +140,11 @@ describe('makeRunVM sort — drops ordered by delivery time (owner 2026-11-02)',
   const drivers = new Map<string, DriverRow>();
   test('earliest delivery window first; AM before PM; untimed last; time beats stop no.', () => {
     const docs: DocRowVM[] = [
-      docRowVM(order({ so_doc_no: 'D-2PM', trip_id: 't1', trip_stop_no: 1, time_range: '2pm-4pm' }), 'scheduled', CLOCK),
-      docRowVM(order({ so_doc_no: 'D-NONE', trip_id: 't1', trip_stop_no: 2, time_range: null }), 'scheduled', CLOCK),
-      docRowVM(order({ so_doc_no: 'D-AM', trip_id: 't1', trip_stop_no: 9, time_range: 'AM' }), 'scheduled', CLOCK),
-      docRowVM(order({ so_doc_no: 'D-930', trip_id: 't1', trip_stop_no: 8, time_range: '9:30am to 11am' }), 'scheduled', CLOCK),
-      docRowVM(order({ so_doc_no: 'D-1230', trip_id: 't1', trip_stop_no: 7, time_range: '12:30pm to 2:30pm' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-2PM', trip_id: 't1', trip_stop_no: 1, time_range: '2pm-4pm' }), 'scheduled', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'D-NONE', trip_id: 't1', trip_stop_no: 2, time_range: null }), 'scheduled', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'D-AM', trip_id: 't1', trip_stop_no: 9, time_range: 'AM' }), 'scheduled', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'D-930', trip_id: 't1', trip_stop_no: 8, time_range: '9:30am to 11am' }), 'scheduled', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'D-1230', trip_id: 't1', trip_stop_no: 7, time_range: '12:30pm to 2:30pm' }), 'scheduled', CLOCK, null),
     ];
     const runs = buildRuns([trip()], docs, drivers, () => '#000');
     expect(runs[0]!.docs.map((d) => d.soDocNo)).toEqual(['D-AM', 'D-930', 'D-1230', 'D-2PM', 'D-NONE']);
@@ -159,8 +160,8 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
   ];
   test('every in-house lorry shows (even empty); an outsourced lorry shows only with drops', () => {
     const docs: DocRowVM[] = [
-      docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1 }), 'scheduled', CLOCK),
-      docRowVM(order({ so_doc_no: 'B', trip_id: null, trip_stop_no: null, crew: { lorry_plate: 'MCF 3084' } as PlanningOrder['crew'] }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1 }), 'scheduled', CLOCK, null),
+      docRowVM(order({ so_doc_no: 'B', trip_id: null, trip_stop_no: null, crew: { lorry_plate: 'MCF 3084' } as PlanningOrder['crew'] }), 'scheduled', CLOCK, null),
     ];
     const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
     // In-house A->Z (VQE, VRH) then outsourced (MCF). The crew plate "MCF 3084"
@@ -183,13 +184,13 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
       docRowVM(order({
         row_type: 'dp', so_doc_no: 'DP:42', dp_job_type: 'TRANSFER', dp_no: 'DP-261102-VQE01',
         trip_id: 't1', trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
-      }), 'scheduled', CLOCK),
+      }), 'scheduled', CLOCK, null),
       // an ASSR service leg on VRH by its echoed crew plate, no trip of its own
       docRowVM(order({
         row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
         ref: 'ASSR/1', trip_id: null, trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
         crew: { lorry_plate: 'VRH 9058' } as PlanningOrder['crew'],
-      }), 'scheduled', CLOCK),
+      }), 'scheduled', CLOCK, null),
     ];
     const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
     const byPlate = Object.fromEntries(cards.map((c) => [c.plate, c] as const));
@@ -208,9 +209,9 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
   ];
   // VQE runs three drops in delivery-time order; two geocode, one does not.
   const docs: DocRowVM[] = [
-    docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1, time_range: 'AM', debtor_name: 'Ada' }), 'done', CLOCK),
-    docRowVM(order({ so_doc_no: 'B', trip_id: 't1', trip_stop_no: 2, time_range: '2pm-4pm', debtor_name: 'Ben' }), 'scheduled', CLOCK),
-    docRowVM(order({ so_doc_no: 'C', trip_id: 't1', trip_stop_no: 3, time_range: '2pm-4pm', debtor_name: 'Cho' }), 'scheduled', CLOCK),
+    docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1, time_range: 'AM', debtor_name: 'Ada' }), 'done', CLOCK, null),
+    docRowVM(order({ so_doc_no: 'B', trip_id: 't1', trip_stop_no: 2, time_range: '2pm-4pm', debtor_name: 'Ben' }), 'scheduled', CLOCK, null),
+    docRowVM(order({ so_doc_no: 'C', trip_id: 't1', trip_stop_no: 3, time_range: '2pm-4pm', debtor_name: 'Cho' }), 'scheduled', CLOCK, null),
   ];
   const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
   const depot: MapLatLng = { lat: 3.1, lng: 101.6 };
@@ -254,7 +255,7 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
       docRowVM(order({
         row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
         ref: 'ASSR/1', trip_id: 't1', trip_stop_no: 1, delivery_orders: [], local_total_sen: 0,
-      }), 'scheduled', CLOCK),
+      }), 'scheduled', CLOCK, null),
     ];
     const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
     const out = buildLorryRoutes(jobCards, new Map(), null, () => null, (k) => k);
@@ -265,8 +266,8 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
 
 describe('applyFilters + searchMatch', () => {
   const docs = [
-    docRowVM(order({ so_doc_no: 'A', region: 'KL/SEL', regions: ['KL/SEL'], salesperson_id: 's1', time_range: '9-12' }), 'overdue', CLOCK),
-    docRowVM(order({ so_doc_no: 'B', region: 'NTH', regions: ['NTH'], salesperson_id: 's2', time_range: '2pm-6pm' }), 'done', CLOCK),
+    docRowVM(order({ so_doc_no: 'A', region: 'KL/SEL', regions: ['KL/SEL'], salesperson_id: 's1', time_range: '9-12' }), 'overdue', CLOCK, null),
+    docRowVM(order({ so_doc_no: 'B', region: 'NTH', regions: ['NTH'], salesperson_id: 's2', time_range: '2pm-6pm' }), 'done', CLOCK, null),
   ];
   test('region, status, slot, salesperson, lateOnly each narrow', () => {
     expect(applyFilters(docs, { ...EMPTY_FILTERS, region: 'NTH' }).map((d) => d.soDocNo)).toEqual(['B']);
@@ -300,5 +301,25 @@ describe('isoToMytTime / mytTimeToIso', () => {
     expect(mytTimeToIso('2026-11-01', '')).toBeNull();
     expect(isoToMytTime(null)).toBe('');
     expect(isoToMytTime('nope')).toBe('');
+  });
+});
+
+describe('time on the road and on site', () => {
+  const doc = (key: string, departedAt: string | null, arrivedAt: string | null, deliveredAt: string | null) =>
+    ({ key, departedAt, arrivedAt, deliveredAt }) as unknown as DocRowVM;
+  it('first stop runs from setting off; each later stop from the one before it was completed', () => {
+    const t = stopTimes([
+      doc('b', '2026-11-07T02:00:00Z', '2026-11-07T04:00:00Z', '2026-11-07T04:45:00Z'),
+      doc('a', '2026-11-07T02:00:00Z', '2026-11-07T02:30:00Z', '2026-11-07T03:10:00Z'),
+    ]);
+    expect(t.get('a')).toEqual({ roadMin: 30, siteMin: 40 });
+    expect(t.get('b')).toEqual({ roadMin: 50, siteMin: 45 });
+  });
+  it('a stop never marked arrived shows neither figure', () => {
+    expect(stopTimes([doc('a', '2026-11-07T02:00:00Z', null, '2026-11-07T03:10:00Z')]).get('a')).toEqual({ roadMin: null, siteMin: null });
+  });
+  it('reads minutes past an hour plainly', () => {
+    expect(fmtMinutes(65)).toBe('1 h 05 min');
+    expect(fmtMinutes(25)).toBe('25 min');
   });
 });
