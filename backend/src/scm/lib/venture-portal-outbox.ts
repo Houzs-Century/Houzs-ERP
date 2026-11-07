@@ -21,8 +21,11 @@
 //      (venture-portal-feed-flag.ts). This carries the COMPANY SCOPE too.
 //   2. scm.sync_config 'vp.url'    — no receiver, nothing is sent.
 //   3. scm.sync_config 'vp.secret' — the portal answers 503 without it anyway.
-// `vp.since` is a date floor: orders dated before it are never sent, so
+// `vp.since` is a date floor: orders dated before it are not sent, so
 // enabling the feed cannot leak years of history into somebody's commission.
+// One exception (migration 20261107T1212): an old order whose salesperson has
+// left and which took a payment dated on or after the floor, because the
+// portal pays the colleague who collected it (scm.vp_old_orders_wanted).
 //
 // The company scope lives ONLY in the app_config flag. The contract put it in a
 // second place (a vp.companies config row) and this deliberately does not: two
@@ -277,10 +280,11 @@ export async function drainVenturePortalOutbox(
   if (!rows.length) return { ...zero };
 
   /* SCOPE FIRST, and from the order itself. A document whose company is not
-     enabled, or which predates vp.since, is marked skipped WITHOUT a request,
-     so the queue never fills with orders the portal does not want. A row whose
-     order no longer exists is NOT out of scope — it is a deletion, and the
-     portal needs it to stop paying commission on a cancelled sale. */
+     enabled, or which predates vp.since (one exception, below), is marked
+     skipped WITHOUT a request, so the queue never fills with orders the portal
+     does not want. A row whose order no longer exists is NOT out of scope — it
+     is a deletion, and the portal needs it to stop paying commission on a
+     cancelled sale. */
   const docNos = rows.map((r) => r.doc_no);
   const { data: soData, error: soErr } = await sb
     .from('mfg_sales_orders')
@@ -300,12 +304,37 @@ export async function drainVenturePortalOutbox(
       .map((s) => [s.doc_no, { company_id: s.company_id, so_date: s.so_date }]),
   );
 
+  /* A DEPARTED SALESPERSON'S OLD ORDER GOES ONCE MONEY REACHES IT AGAIN. The
+     portal pays whoever collected the top-up of an order that was under its
+     deposit when the portal started paying (owner 2026-11-07), so an order
+     dated before vp.since whose salesperson has left and which took a payment
+     dated on or after vp.since is delivered after all. scm.vp_old_orders_wanted
+     says which, in one round trip, asked only about in-scope rows that are too
+     old. Its error aborts the sweep like the scope read: answering "none" would
+     mark the very rows it exists to send as skipped, and nothing re-queues a
+     skipped row until the order is saved again or the reconcile finds it. */
+  const isTooOld = (so: { so_date: string | null }) =>
+    cfg.since != null && so.so_date != null && so.so_date < cfg.since;
+  const oldInScope = [...new Set(rows.flatMap((r) => {
+    const so = soByDoc.get(r.doc_no);
+    return so && inScope(scope, so.company_id) && isTooOld(so) ? [r.doc_no] : [];
+  }))];
+  let wantedOld = new Set<string>();
+  if (oldInScope.length) {
+    const { data: wantedData, error: wantedErr } = await sb.rpc('vp_old_orders_wanted', {
+      p_doc_nos: oldInScope,
+      p_since: cfg.since,
+    });
+    if (wantedErr) return { skipped: 'scope_read_failed', ...zero };
+    wantedOld = new Set((wantedData as string[] | null) ?? []);
+  }
+
   const summary = { ...zero };
   const deliverable: VpOutboxRow[] = [];
   for (const row of rows) {
     const so = soByDoc.get(row.doc_no);
     if (so) {
-      const tooOld = cfg.since != null && so.so_date != null && so.so_date < cfg.since;
+      const tooOld = isTooOld(so) && !wantedOld.has(row.doc_no);
       if (!inScope(scope, so.company_id) || tooOld) {
         await sb
           .from('venture_portal_outbox')
@@ -513,8 +542,10 @@ export async function probeVenturePortal(
  * The capture trigger swallows its own errors on purpose — it must never roll
  * back a salesperson's Save — so a row CAN be missed, and this is what finds
  * it. Also picks up an order parked as `failed` once a person has cleared the
- * cause, and an order that fell in scope later because somebody moved
- * vp.since back.
+ * cause, an order that fell in scope later because somebody moved
+ * vp.since back, and an old order the drain now sends
+ * (scm.vp_old_orders_wanted) whose newest change or newest payment never
+ * reached the portal — its rows from before 20261107T1212 say skipped.
  *
  * Returns the number of rows re-queued. Steady state is 0.
  */
