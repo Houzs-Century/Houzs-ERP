@@ -37,6 +37,8 @@ import {
   type FleetFilter,
   type LorryCapacityRow,
 } from '../../vendor/scm/lib/lorry-capacity-queries';
+import { capacityFromOverview, capacityTotals } from './logisticCapacity';
+import type { LorryRow } from './LogisticDailySection';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './LorryCapacity.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -139,38 +141,18 @@ function utilClass(frac: number | null): string {
   return styles.utilHigh!;
 }
 
-export const LorryCapacity = () => {
+/** Lorry Capacity as the Logistic Overview's second view (owner 2026-11-07): the period
+ *  is the overview's, and the figures come from the overview's lorry rows so the two
+ *  pages agree; this read adds the lorry list, in-house flag, GPS km and running cost. */
+export const LorryCapacity = ({ period, overviewLorries }: { period: { from: string; to: string }; overviewLorries: LorryRow[] }) => {
   const [params, setParams] = useSearchParams();
   const notify = useNotify();
-
-  const preset = (params.get('range') as RangePreset) ?? 'this';
-  const activePreset: RangePreset = RANGE_TABS.some((r) => r.key === preset) ? preset : 'this';
   const fleetParam = (params.get('fleet') as FleetFilter) ?? 'all';
   const fleet: FleetFilter = FLEET_TABS.some((f) => f.key === fleetParam) ? fleetParam : 'all';
-
-  /* Custom range from the URL, defaulting to this-month when first switching. */
-  const thisMonth = monthRange(0);
-  const customFrom = params.get('from') || thisMonth.from;
-  const customTo = params.get('to') || thisMonth.to;
-  const { from, to } = rangeForPreset(activePreset, { from: customFrom, to: customTo });
-
-  const setPreset = (p: RangePreset) => {
-    const next = new URLSearchParams(params);
-    next.set('range', p);
-    if (p === 'custom') { next.set('from', customFrom); next.set('to', customTo); }
-    else { next.delete('from'); next.delete('to'); }
-    setParams(next, { replace: true });
-  };
+  const { from, to } = period;
   const setFleet = (f: FleetFilter) => {
     const next = new URLSearchParams(params);
     if (f === 'all') next.delete('fleet'); else next.set('fleet', f);
-    setParams(next, { replace: true });
-  };
-  const setCustom = (key: 'from' | 'to', val: string) => {
-    const next = new URLSearchParams(params);
-    next.set('range', 'custom');
-    next.set(key, val);
-    next.set(key === 'from' ? 'to' : 'from', key === 'from' ? customTo : customFrom);
     setParams(next, { replace: true });
   };
 
@@ -178,9 +160,8 @@ export const LorryCapacity = () => {
   const toggleInHouse = useToggleLorryInHouse();
   const setRepair = useSetRepairDays();
 
-  const rows = useMemo<LorryCapacityRow[]>(() => data?.lorries ?? [], [data]);
-  const totals = data?.totals;
-  const workingDays = data?.workingDays ?? 0;
+  const rows = useMemo<LorryCapacityRow[]>(() => capacityFromOverview(data?.lorries ?? [], overviewLorries), [data, overviewLorries]);
+  const totals = useMemo(() => capacityTotals(rows), [rows]);
 
   /* Sample-parity search (owner 2026-07-25: every table = the SO table):
      client-side over the loaded fleet — plate or type. */
@@ -253,11 +234,11 @@ export const LorryCapacity = () => {
       ),
     },
     { key: 'total_trips', label: 'Total Trips', align: 'right', getValue: (l) => l.total_trips, render: (l) => numOrDash(l.total_trips) },
-    { key: 'delivery_days', label: 'Delivery Days', align: 'right', getValue: (l) => l.delivery_days, render: (l) => numOrDash(l.delivery_days) },
+    { key: 'delivery_days', label: 'Delivery Trips', align: 'right', getValue: (l) => l.delivery_days, render: (l) => numOrDash(l.delivery_days) },
     { key: 'deliveries', label: 'Deliveries', align: 'right', getValue: (l) => l.deliveries, render: (l) => numOrDash(l.deliveries) },
     { key: 'orders_per_trip', label: 'Orders/Trip', align: 'right', getValue: (l) => l.orders_per_trip ?? null, render: (l) => numOrDash(l.orders_per_trip, 2) },
     { key: 'setup_dismantle', label: 'Setup/Dismantle', align: 'right', getValue: (l) => l.setup_dismantle, render: (l) => numOrDash(l.setup_dismantle) },
-    { key: 'pickups', label: 'Pickups', align: 'right', getValue: (l) => l.pickups, render: (l) => numOrDash(l.pickups) },
+    { key: 'pickups', label: 'Pickups & Transfers', align: 'right', getValue: (l) => l.pickups, render: (l) => numOrDash(l.pickups) },
     { key: 'services', label: 'Services', align: 'right', getValue: (l) => l.services, render: (l) => numOrDash(l.services) },
     { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
     { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
@@ -269,56 +250,24 @@ export const LorryCapacity = () => {
 
   return (
     <div>
-      {/* ── Header — shared PageHeader (full-bleed, design-system) ─── */}
-      <PageHeader
-        dense
-        eyebrow="Delivery · TMS"
-        title="Lorry Capacity"
-        description={`Working days Mon–Sat · ${workingDays} in range · ${fmtDate(from)} – ${fmtDate(to)}`}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Date-range segment */}
-            <SegmentedControl
-              label="Date range"
-              options={RANGE_TABS}
-              value={activePreset}
-              onChange={setPreset}
-            />
-            {activePreset === 'custom' && (
-              <div className="inline-flex items-center gap-1.5">
-                <DateField fullWidth className={DATE_INPUT} value={customFrom} max={customTo} onChange={(iso) => setCustom('from', iso)}/>
-                <span className="text-[12px] text-ink-muted">–</span>
-                <DateField fullWidth className={DATE_INPUT} value={customTo} min={customFrom} onChange={(iso) => setCustom('to', iso)}/>
-              </div>
-            )}
-            {/* Fleet segment */}
-            <SegmentedControl
-              label="Fleet"
-              options={FLEET_TABS}
-              value={fleet}
-              onChange={setFleet}
-            />
-          </div>
-        }
-      />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12.5px] text-ink-secondary">
+          {fmtDate(from)} – {fmtDate(to)} · KL, Southern and Northern · a run of under 3 orders is half a trip, as on Deliveries
+        </p>
+        <SegmentedControl label="Fleet" options={FLEET_TABS} value={fleet} onChange={setFleet} />
+      </div>
 
-      {error && !isLoading && (
-        <div className="mb-4 rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[12.5px] text-err">
-          <strong className="font-semibold">Failed to load lorry capacity.</strong>{' '}
-          {error instanceof Error ? error.message : 'Something went wrong.'}
-        </div>
-      )}
 
       {/* Summary metric tiles */}
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Lorries" value={numOrDash(totals?.lorries)} />
-        <StatCard label="Total Trips" value={numOrDash(totals?.total_trips)} />
-        <StatCard label="Available Days" value={numOrDash(totals?.available_days)} />
-        <StatCard label="Utilisation" value={pctOrDash(totals?.utilisation)} />
-        <StatCard label="Orders/Delivery Trip" value={numOrDash(totals?.orders_per_delivery_trip, 2)} />
-        <StatCard label="Delivery Revenue" value={centiOrDash(totals?.delivery_revenue_sen)} />
-        <StatCard label="Revenue/Order" value={centiOrDash(totals?.revenue_per_order_sen)} />
-        <StatCard label="Revenue/Trip" value={centiOrDash(totals?.revenue_per_trip_sen)} />
+        <StatCard label="Lorries" value={numOrDash(totals.lorries)} />
+        <StatCard label="Total Trips" value={numOrDash(totals.total_trips)} />
+        <StatCard label="Available Days" value={numOrDash(totals.available_days)} />
+        <StatCard label="Utilisation" value={pctOrDash(totals.utilisation)} />
+        <StatCard label="Orders/Delivery Trip" value={numOrDash(totals.orders_per_delivery_trip, 2)} />
+        <StatCard label="Delivery Revenue" value={centiOrDash(totals.delivery_revenue_sen)} />
+        <StatCard label="Revenue/Order" value={centiOrDash(totals.revenue_per_order_sen)} />
+        <StatCard label="Revenue/Trip" value={centiOrDash(totals.revenue_per_trip_sen)} />
       </div>
 
       {/* Per-lorry metric table — the shared DataTable (owner 2026-07-25:

@@ -84,7 +84,8 @@ export function useToggleLorryInHouse() {
         `/lorry-capacity/lorries/${id}/in-house`,
         { method: 'PATCH', body: JSON.stringify({ isInternal }) },
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-capacity'] }),
+    /* The flag is the lorry master's: the lorry lists and the overview read it too. */
+    onSuccess: () => Promise.all([['lorry-capacity'], ['lorries'], ['logistic-overview']].map((queryKey) => qc.invalidateQueries({ queryKey }))),
     onError: writeFailed,
   });
 }
@@ -98,6 +99,7 @@ export function useSetRepairDays() {
         `/lorry-capacity/lorries/${id}/repair-days`,
         { method: 'PUT', body: JSON.stringify({ from, to, days }) },
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-capacity'] }),
+    /* Repair days are workshop windows the overview's available days read as well. */
+    onSuccess: () => Promise.all([['lorry-capacity'], ['logistic-overview']].map((queryKey) => qc.invalidateQueries({ queryKey }))),
   });
 }
