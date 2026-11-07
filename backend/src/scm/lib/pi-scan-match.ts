@@ -56,6 +56,20 @@ export function normalizeCode(s: string | null | undefined): string {
   return (s ?? '').toUpperCase().trim().replace(/\s+/g, ' ');
 }
 
+/** The size a code ends with, "(Q)" in "DIVAN-(Q)"; null when it names none. */
+export function sizeTag(code: string | null | undefined): string | null {
+  const m = /\(([^()]+)\)\s*$/.exec(normalizeCode(code));
+  return m ? m[1]! : null;
+}
+
+/** A learned or bound code may stand in for the printed one only when it does not name
+ *  another size: a printed queen is never billed against a king. */
+export function sameSize(printed: string | null | undefined, ours: string | null | undefined): boolean {
+  const a = sizeTag(printed);
+  const b = sizeTag(ours);
+  return a == null || b == null || a === b;
+}
+
 /** A candidate outstanding GRN line the matcher can bill. */
 export type PiMatchGrnLine = {
   grnItemId: string;
@@ -154,7 +168,7 @@ export function matchInvoiceLinesToGrnLines(
     }
     const skuCode = normalizeCode(line.articleNo) || normalizeCode(line.itemCode);
     const mapped = skuCode ? bindingBySku.get(skuCode) : undefined;
-    if (mapped) candidateCodes.add(normalizeCode(mapped));
+    if (mapped && sameSize(skuCode, mapped)) candidateCodes.add(normalizeCode(mapped));
 
     const matches = [...candidateCodes].flatMap((c) => byCode.get(c) ?? []);
     if (matches.length === 0) {
