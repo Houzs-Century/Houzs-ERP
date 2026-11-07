@@ -16,6 +16,7 @@ import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/s
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
 import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
+import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
 
 const MAPS_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "";
 
@@ -34,6 +35,10 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const trackQ = useLorryTrack(lorryId, date);
   const track = trackQ.data;
   const kmCost = (useLorryKmCost().data ?? []).find((k) => k.lorry_id === lorryId) ?? null;
+  /* The run by road, home and back, as Last Mile worked it out (owner 2026-11-08). */
+  const road = useRoadFigures(`${date.slice(0, 7)}-01`, date, lorryId);
+  const roadToday = (road.data ?? []).find((r) => r.date === date) ?? null;
+  const roadMonth = (road.data ?? []).reduce((a, r) => ({ m: a.m + r.distanceM, s: a.s + r.durationS, d: a.d + 1 }), { m: 0, s: 0, d: 0 });
   const phones = useActiveTripLocations(live && !tracker);
   const phoneFix = useMemo(() => {
     const ids = new Set(runs.map((t) => t.id));
@@ -62,7 +67,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
       {failed.length > 0 && (
         <p role="alert" className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">Could not load {failed.join(", ")}. What shows below may be incomplete.</p>
       )}
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
           hint={position
             ? `${fmtTime(position.at)} · ${position.source}${position.speed != null ? ` · ${Math.round(position.speed)} km/h` : ""}`
@@ -71,6 +76,8 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           hint={kmCost?.cost_sen != null ? `running cost ${fmtSen(kmCost.cost_sen)}` : "set RM/km in Vehicle details to see the cost"} />
         <Tile label="Today's run" value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : "No run today"}
           hint={runs.length ? `${runs[0]?.driver?.name ?? "no driver"} · ${stops.length} stop${stops.length === 1 ? "" : "s"}` : "Runs are planned in Delivery Time Arrangement"} />
+        <Tile label="By road today" value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
+          hint={roadMonth.d ? `this month ${fmtKm(roadMonth.m)} · ${fmtDrive(roadMonth.s)} over ${roadMonth.d} day${roadMonth.d === 1 ? "" : "s"}` : "from its warehouse and back, worked out on Last Mile"} />
       </div>
 
       {MAPS_KEY ? (
