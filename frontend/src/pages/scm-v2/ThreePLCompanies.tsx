@@ -35,6 +35,9 @@ import { useCreateHelper } from '../../vendor/scm/lib/helpers-queries';
 import { useCreateLorry, LORRY_TYPES, LORRY_TYPE_LABEL, type LorryType } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
+import { cn } from '../../lib/utils';
+import { LorrySide } from './fleet/Lorry3D';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -54,7 +57,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   const submit = () => {
-    if (!form.name.trim()) { notify({ title: 'Name required', body: 'Give the 3PL company a name.', tone: 'error' }); return; }
+    if (!form.name.trim()) { void notify({ title: 'Name required', body: 'Give the 3PL company a name.', tone: 'error' }); return; }
     const trimmed = (v: string) => v.trim() || null;
     createCo.mutate(
       {
@@ -69,9 +72,9 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
       {
         onSuccess: () => {
           setForm(BLANK);
-          notify({ title: 'Company added', body: 'Open it to register its lorries, drivers and helpers.', tone: 'info' });
+          void notify({ title: 'Company added', body: 'Open it to register its lorries, drivers and helpers.', tone: 'info' });
         },
-        onError: (err) => notify({ title: 'Could not add', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+        onError: writeFailedAs('The company was not added'),
       },
     );
   };
@@ -142,11 +145,13 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         </FormGrid>
       </FormCard>
 
-      <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
+      <div className="space-y-3">
         {companies.isLoading ? (
-          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Loading…</p>
+          <p className="text-[13px] text-ink-muted">Loading…</p>
+        ) : companies.isError ? (
+          <p className="text-[13px] text-[#8a2c2c]">The 3PL companies did not load.</p>
         ) : rows.length === 0 ? (
-          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
+          <p className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-ink-muted">
             No 3PL companies yet. Register one above, then open it to add its lorries and crew.
           </p>
         ) : (
@@ -166,7 +171,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+      <div className="flex items-start gap-2 text-[12px] text-ink-muted">
         <Building2 {...ICON} />
         <span>
           A carrier&rsquo;s lorries, drivers and helpers are stored in the shared Fleet masters and flagged Outsource — you cannot mark them in-house while they belong to a 3PL.
@@ -196,7 +201,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   const save = () => {
-    if (!form.name.trim()) { notify({ title: 'Name required', tone: 'error' }); return; }
+    if (!form.name.trim()) { void notify({ title: 'Name required', tone: 'error' }); return; }
     const trimmed = (v: string) => v.trim() || null;
     update.mutate(
       {
@@ -205,7 +210,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         contactPhone: trimmed(form.contactPhone), officePhone: trimmed(form.officePhone),
         email: trimmed(form.email), address: trimmed(form.address),
       },
-      { onSuccess: () => setEditing(false), onError: (err) => notify({ title: 'Could not save', body: err instanceof Error ? err.message : '', tone: 'error' }) },
+      { onSuccess: () => setEditing(false), onError: writeFailedAs('The company was not saved') },
     );
   };
 
@@ -215,8 +220,9 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
       title: 'Delete this 3PL company?',
       body: `${row.name} — its ${total} fleet record(s) are detached, not deleted.`,
       confirmLabel: 'Delete',
+      danger: true,
     }))) return;
-    del.mutate(row.id, { onError: (err) => notify({ title: 'Could not delete', body: err instanceof Error ? err.message : '', tone: 'error' }) });
+    del.mutate(row.id, { onError: writeFailedAs('The company was not deleted') });
   };
 
   /* Editing reuses the SAME grid the register form above uses. The old inline
@@ -225,8 +231,8 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
      under "Fleet", and the address input under "Active". */
   if (editing) {
     return (
-      <div style={ROW_SHELL}>
-        <div style={{ padding: '12px' }}>
+      <div className={SHELL}>
+        <div className="p-4">
           <FormGrid>
             <FormField label="Company name" required span={2}>
               <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} />
@@ -269,22 +275,22 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
   ].join(' · ');
 
   return (
-    <div style={ROW_SHELL}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '10px 12px' }}>
-        <button onClick={onToggleOpen} title={open ? 'Collapse' : 'Open fleet'}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2, flex: '0 0 auto' }}>
+    <div className={cn(SHELL, !row.isActive && 'opacity-70')}>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <button type="button" onClick={onToggleOpen} aria-expanded={open} aria-label={open ? 'Close fleet' : 'Open fleet'}
+          className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary">
           {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
         </button>
 
         {/* The minted code (mig 0242). It was stored and returned but nowhere
             on screen, which makes an auto-allocated identifier useless — you
             cannot quote a code you cannot see. */}
-        <div style={{ flex: '1 1 190px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className={styles.codeChip}>{row.code ?? '—'}</span>
-            <strong style={{ fontSize: 'var(--fs-13)' }}>{row.name}</strong>
+        <div className="min-w-0 flex-[1_1_190px]">
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-ink-secondary">{row.code ?? '—'}</span>
+            <strong className="text-[14px] text-ink">{row.name}</strong>
           </div>
-          <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+          <div className="mt-0.5 text-[12px] text-ink-muted">
             {row.registrationNo ? `SSM ${row.registrationNo}` : 'No SSM on file'} · {fleet}
           </div>
         </div>
@@ -292,22 +298,22 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         <Fact label="Contact" value={row.contactName} sub={row.contactPhone ? formatPhone(row.contactPhone) : null} />
         <Fact label="Office" value={row.officePhone ? formatPhone(row.officePhone) : null} sub={row.email} />
 
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: '0 0 auto' }}>
-          <input type="checkbox" checked={row.isActive} disabled={update.isPending}
+        <label className="inline-flex flex-none cursor-pointer items-center gap-1.5">
+          <input type="checkbox" className="h-4 w-4 accent-[#16695f]" checked={row.isActive} disabled={update.isPending}
             onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
-              onError: (err) => notify({ title: 'Could not update', body: err instanceof Error ? err.message : '', tone: 'error' }),
+              onError: writeFailedAs('The company was not updated'),
             })} />
-          <span style={{ fontSize: 'var(--fs-12)', color: row.isActive ? 'var(--c-secondary-a, inherit)' : 'var(--fg-muted)' }}>{row.isActive ? 'Active' : 'Inactive'}</span>
+          <span className={cn('rounded-full px-2 py-0.5 text-[11.5px] font-semibold', row.isActive ? 'bg-[#dcebe3] text-[#1f5c43]' : 'bg-surface-2 text-ink-muted')}>{row.isActive ? 'Active' : 'Inactive'}</span>
         </label>
 
-        <div style={{ display: 'inline-flex', gap: 4, flex: '0 0 auto' }}>
+        <div className="inline-flex flex-none gap-1">
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil {...ICON} /><span>Edit</span></Button>
-          <Button variant="ghost" size="sm" onClick={remove} disabled={del.isPending}><Trash2 {...ICON} /></Button>
+          <Button variant="ghost" size="sm" onClick={() => void remove()} disabled={del.isPending} aria-label={`Delete ${row.name}`}><Trash2 {...ICON} /></Button>
         </div>
       </div>
 
       {open && (
-        <div style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+        <div className="border-t border-border bg-surface-2/50 px-4 pb-4">
           <CarrierFleet companyId={row.id} companyName={row.name} />
         </div>
       )}
@@ -315,14 +321,14 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
   );
 };
 
-const ROW_SHELL: CSSProperties = { borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' };
+const SHELL = 'overflow-hidden rounded-xl border border-border bg-surface';
 
 /* One labelled value that shrinks instead of wrapping to six lines. */
 const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub?: string | null }) => (
-  <div style={{ flex: '1 1 150px', minWidth: 0 }}>
-    <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</div>
-    <div style={{ fontSize: 'var(--fs-12)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</div>
-    {sub && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+  <div className="min-w-0 flex-[1_1_150px]">
+    <div className="text-[11.5px] font-semibold text-ink-muted">{label}</div>
+    <div className="truncate text-[13px] text-ink">{value || '—'}</div>
+    {sub && <div className="truncate text-[12px] text-ink-muted">{sub}</div>}
   </div>
 );
 
@@ -345,11 +351,11 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   const [drv, setDrv] = useState({ name: '', phone: '', ic: '' });
   const [hlp, setHlp] = useState({ name: '', contact: '', ic: '' });
 
-  const fail = (err: unknown) => notify({ title: 'Could not add', body: err instanceof Error ? err.message : '', tone: 'error' });
+  const fail = writeFailedAs('That was not added');
   const num = (v: string) => (v.trim() === '' ? null : Number(v));
 
   const addLorry = () => {
-    if (!plate.trim()) { notify({ title: 'Plate required', tone: 'error' }); return; }
+    if (!plate.trim()) { void notify({ title: 'Plate required', tone: 'error' }); return; }
     createLorry.mutate(
       {
         plate: plate.trim(), type: lorryType, threeplCompanyId: companyId,
@@ -361,7 +367,7 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
 
   const addDriver = () => {
     if (!drv.name.trim() || !drv.phone.trim()) {
-      notify({ title: 'Name and phone are required', tone: 'error' }); return;
+      void notify({ title: 'Name and phone are required', tone: 'error' }); return;
     }
     createDriver.mutate(
       { name: drv.name.trim(), phone: drv.phone.trim(), icNumber: drv.ic.trim() || undefined, threeplCompanyId: companyId },
@@ -370,7 +376,7 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   };
 
   const addHelper = () => {
-    if (!hlp.name.trim()) { notify({ title: 'Name is required', tone: 'error' }); return; }
+    if (!hlp.name.trim()) { void notify({ title: 'Name is required', tone: 'error' }); return; }
     createHelper.mutate(
       { name: hlp.name.trim(), contact: hlp.contact.trim() || undefined, icNumber: hlp.ic.trim() || undefined, threeplCompanyId: companyId },
       { onSuccess: () => { setHlp({ name: '', contact: '', ic: '' }); void fleet.refetch(); }, onError: fail },
@@ -380,18 +386,21 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   const d = fleet.data;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 12 }}>
-      <span style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>
+    <div className="flex flex-col gap-3.5 pt-3">
+      <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted">
         {companyName} — fleet
       </span>
+      {fleet.isError && <p className="text-[13px] text-[#8a2c2c]">This carrier&rsquo;s fleet did not load.</p>}
 
       <FleetBlock title="Lorries" empty="No lorries registered for this carrier."
         rows={(d?.lorries ?? []).map((l) => ({
           id: l.id,
           main: l.plate,
-          sub: [l.type, l.capacity_m3 != null ? `${l.capacity_m3} m3` : null,
+          sub: [l.type ? (LORRY_TYPE_LABEL as Partial<Record<string, string>>)[l.type] ?? l.type : null, l.capacity_m3 != null ? `${l.capacity_m3} m3` : null,
             l.length_ft && l.width_ft && l.height_ft ? `${l.length_ft} x ${l.width_ft} x ${l.height_ft} ft` : null]
             .filter(Boolean).join(' · '),
+          /* Drawn on the same per-foot scale as the Fleet cards. */
+          visual: <LorrySide box={l.length_ft && l.width_ft && l.height_ft ? { length: Number(l.length_ft), width: Number(l.width_ft), height: Number(l.height_ft) } : null} />,
         }))}
         loading={fleet.isLoading}
         form={
@@ -457,38 +466,48 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
 
 const FleetBlock = ({ title, rows, empty, loading, form }: {
   title: string;
-  rows: Array<{ id: string; main: string; sub: string }>;
+  rows: Array<{ id: string; main: string; sub: string; visual?: ReactNode }>;
   empty: string;
   loading: boolean;
   form: ReactNode;
 }) => (
-  <div style={{ borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.1))', background: 'var(--bg, #fff)', overflow: 'hidden' }}>
-    <div style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', fontWeight: 600, borderBottom: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-      {title} <span style={{ fontWeight: 400, color: 'var(--fg-muted)' }}>({rows.length})</span>
+  <div className="overflow-hidden rounded-xl border border-border bg-surface">
+    <div className="border-b border-border px-3.5 py-2.5 text-[13px] font-semibold text-ink">
+      {title} <span className="font-normal text-ink-muted">({rows.length})</span>
     </div>
     {loading ? (
-      <p style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Loading…</p>
+      <p className="px-3.5 py-2.5 text-[12.5px] text-ink-muted">Loading…</p>
     ) : rows.length === 0 ? (
-      <p style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{empty}</p>
-    ) : (
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+      <p className="px-3.5 py-2.5 text-[12.5px] text-ink-muted">{empty}</p>
+    ) : rows.some((r) => r.visual) ? (
+      <ul className="grid gap-2.5 p-3 sm:grid-cols-2">
         {rows.map((r) => (
-          <li key={r.id} style={{ padding: '6px 12px', borderBottom: '1px solid var(--border, rgba(0,0,0,0.04))', fontSize: 'var(--fs-12)' }}>
-            <strong>{r.main}</strong>
-            {r.sub && <span style={{ color: 'var(--fg-muted)' }}> — {r.sub}</span>}
+          <li key={r.id} className="rounded-lg border border-border p-2.5">
+            <span className="rounded-md bg-[#1d2420] px-2 py-0.5 font-mono text-[12.5px] tracking-wider text-white">{r.main}</span>
+            <div className="my-1.5">{r.visual}</div>
+            {r.sub && <div className="text-[12px] text-ink-muted">{r.sub}</div>}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <ul>
+        {rows.map((r) => (
+          <li key={r.id} className="border-b border-border-subtle px-3.5 py-2 text-[13px] last:border-b-0">
+            <strong className="text-ink">{r.main}</strong>
+            {r.sub && <span className="text-ink-muted"> — {r.sub}</span>}
           </li>
         ))}
       </ul>
     )}
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', padding: '10px 12px', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+    <div className="flex flex-wrap items-end gap-2.5 border-t border-border bg-surface-2/60 px-3.5 py-3">
       {form}
     </div>
   </div>
 );
 
 const Ctl = ({ label, children }: { label: string; children: ReactNode }) => (
-  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
+  <label className="flex flex-col gap-1">
+    <span className="text-[12px] font-semibold text-ink-secondary">{label}</span>
     {children}
   </label>
 );
@@ -499,8 +518,8 @@ const Inp = ({ value, onChange, placeholder, width }: {
     style={{ ...selStyle, width: width ?? 150 }} />
 );
 const selStyle: CSSProperties = {
-  padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.2))',
-  background: 'var(--bg, #fff)', color: 'var(--fg, inherit)', fontSize: 'var(--fs-13)',
+  minHeight: 38, padding: '0 10px', borderRadius: 8, border: '1px solid #d6d9d2',
+  background: '#fff', color: '#11140f', fontSize: 13,
 };
 
 export default ThreePLCompanies;

@@ -304,6 +304,16 @@ threeplCompanies.delete('/:id', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
+  /* A company with a rate card is not deleted: the FK would null the card's
+     carrier and leave a price list that belongs to nobody, shown as own fleet. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: cards, error: cardErr } = await scopeToCompanyId((sb as any).from('delivery_rate_cards').select('id'), co.companyId)
+    .eq('carrier_company_id', id).limit(1);
+  if (cardErr) return c.json({ error: 'load_failed', reason: cardErr.message }, 500);
+  if ((cards ?? []).length > 0) {
+    return c.json({ error: 'has_rate_card', message: 'This 3PL company has a rate card. Delete its rate card on Carriers & Rates first, or set the company inactive.' }, 409);
+  }
+
   const { data: deleted, error } = await scopeToCompanyId(
     sb.from('threepl_companies').delete().eq('id', id),
     co.companyId,
