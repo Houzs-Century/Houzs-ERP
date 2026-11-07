@@ -45,7 +45,7 @@ describe("one region of the logistic overview", () => {
   });
 
   it("keeps a lorry's set-ups, whichever region it delivered to", () => {
-    expect(focusPeriod(period, "Southern", null).byLorry[0]).toMatchObject({ lorry: "B", setupDays: 1, trips: 2, workingDays: 2 });
+    expect(focusPeriod(period, "Southern", null).byLorry[0]).toMatchObject({ lorry: "B", fairTrips: 1, trips: 2, workingDays: 2 });
   });
 
   it("a picked day shows that day's lorries, and their orders add up to the day", () => {
