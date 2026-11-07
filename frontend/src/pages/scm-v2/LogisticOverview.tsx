@@ -7,6 +7,7 @@
 //   3. reports — weekly and monthly volume, and the process gaps.
 // Data: the Delivery Planning board (open orders) and
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
+import { LorryCapacity } from "./LorryCapacity";
 import { jobDone } from "./logisticDone";
 import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
@@ -228,11 +229,45 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const pickedLabel = progress.find((s) => s.key === progressPick)?.label ?? null;
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
 
+  /* Owner 2026-11-07: Lorry Capacity is this page's second view, on the same period and
+     the same lorry figures. ?view=capacity holds it. */
+  const view = params.get("view") === "capacity" ? "capacity" : "deliveries";
+  const setView = (v: "deliveries" | "capacity") => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (v === "capacity") next.set("view", "capacity"); else next.delete("view");
+    return next;
+  }, { replace: true });
+  const viewSwitch = (
+    <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="tablist" aria-label="Logistic view">
+      {([["deliveries", "Deliveries"], ["capacity", "Lorry capacity"]] as const).map(([k, label]) => (
+        <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k)}
+          className={view === k ? "rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white" : "rounded-md px-3 py-1.5 text-[12.5px] font-semibold text-ink-secondary hover:text-ink"}>{label}</button>
+      ))}
+    </div>
+  );
+  const header = !embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
+    description="What was delivered in the period, what is still to deliver and when, what is overdue, and the weekly report — straight from the orders and delivery orders." />;
+
+  if (view === "capacity") {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="flex flex-wrap items-center gap-2">
+          {viewSwitch}
+          <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
+          {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+        </div>
+        {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
+        <LorryCapacity period={{ from: period.from, to: period.to }} overviewLorries={h?.period.byLorry ?? []} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {!embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
-        description="What was delivered in the period, what is still to deliver and when, what is overdue, and the weekly report — straight from the orders and delivery orders." />}
+      {header}
       <div className="flex flex-wrap items-center gap-2">
+        {viewSwitch}
         <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
         <select className={SELECT_CLS} value={warehouse} onChange={(e) => setWarehouse(e.target.value)} aria-label="Warehouse">
           <option value="">All warehouses</option>
