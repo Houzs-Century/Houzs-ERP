@@ -20,6 +20,8 @@ export type HelperRow = {
   inHouse?: boolean;
   active: boolean;
   created_at: string;
+  /** The 3PL company this person is registered under, or null. */
+  threepl_company_id?: string | null;
   /** Mig 20261107T2000: the warehouse this helper works from. */
   warehouse_id?: string | null;
 };

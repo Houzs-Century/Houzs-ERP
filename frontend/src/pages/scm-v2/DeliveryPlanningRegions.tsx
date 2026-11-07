@@ -1,25 +1,24 @@
 // ----------------------------------------------------------------------------
 // Delivery Planning Regions — the owner-maintained MASTER for the Delivery
 // Planning board's region tabs (migration 0053 / route
-// delivery-planning-regions.ts). One simple master editor: list the region
-// buckets (Code · Name · Sort · Active) with create / edit-in-place / delete.
+// delivery-planning-regions.ts): the region buckets (Code · Name · Sort · Active)
+// with create / edit / delete.
 //
 // The live buckets are the owner-maintained geographic regions (KL/SEL /
 // Northern / Southern / East Coast / East Malaysia); the owner adds more here and
 // they show up automatically as tabs on Delivery Planning (the board reads this
-// master).
-// Per-state → region(s) assignment lives in SO Maintenance (the multi-select),
-// not here — this page only owns the bucket list itself.
+// master). Per-state → region(s) assignment lives in SO Maintenance (the
+// multi-select), not here; the Areas line is read LIVE from that mapping so it
+// can never drift from the actual routing.
 //
-// Mirrors the Fleet master pattern: a header (title + count + "New Region"),
-// the master's DataGrid, and a create drawer. Delete guards the 409
-// region_in_use (a state still maps to it) via the in-app NotifyDialog.
-// Dual-read camelCase throughout (the pg driver camelCases result cols).
+// Layout (owner 2026-11-07, the Coverage & Fleet design): one card per region
+// in sort order, with its areas, an Active switch and Edit; a drawer reads,
+// edits, creates and deletes. Delete surfaces the route's 409 region_in_use
+// (a state still maps to it). The toolbar sits in the body so New Region is
+// there when the page is embedded in Coverage & Fleet too.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Plus, X, Trash2, Save } from 'lucide-react';
-import { Button } from '@2990s/design-system';
 import {
   useDeliveryPlanningRegions,
   useCreateDeliveryPlanningRegion,
@@ -29,219 +28,38 @@ import {
   sortOrderOf,
   type RegionMasterRow,
 } from '../../vendor/scm/lib/delivery-planning-regions-queries';
-import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import styles from './Suppliers.module.css';
+import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { PageHeader } from '../../components/Layout';
-import { NumberInput } from '../../vendor/scm/components/NumberInput';
+import { ResizableDrawer } from '../../components/ResizableDrawer';
+import { cn } from '../../lib/utils';
+import { areasByRegionCode, hit } from './fleet/coverageModel';
+import {
+  Card, Field, IconBtn, ListToolbar, NoMatch, PencilIcon, ReadRows, Switch,
+  dangerBtn, exportCsv, inputCls, primaryBtn, secondaryBtn,
+} from './fleet/ui';
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
+type Open = { mode: 'read' | 'edit'; id: string } | { mode: 'new' } | null;
 
 export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boolean } = {}) => {
-  const [creating, setCreating] = useState(false);
   const regions = useDeliveryPlanningRegions();
   const update = useUpdateDeliveryPlanningRegion();
-  const del = useDeleteDeliveryPlanningRegion();
-  const notify = useNotify();
-  const askConfirm = useConfirm();
-  const updateMutate = update.mutate;
-
-  /* Read-only "Areas" column: which states fall under each region, derived LIVE
-     from the state→region mapping (state_delivery_regions) — so it can never
-     drift from the actual routing. Spelling variants (WP KL, Melaka/Malacca,
-     Penang/Pulau Pinang, WP Labuan) collapse to one human label so the cell reads
-     cleanly. The mapping itself is edited in SO Maintenance, not here. */
   const stateRegions = useStateDeliveryRegions();
-  const areasByCode = useMemo<Record<string, string[]>>(() => {
-    const AREA_LABEL: Record<string, string> = {
-      'kuala lumpur': 'Kuala Lumpur', 'wp kuala lumpur': 'Kuala Lumpur', 'w p kuala lumpur': 'Kuala Lumpur',
-      'pulau pinang': 'Penang', 'penang': 'Penang',
-      'melaka': 'Melaka', 'malacca': 'Melaka',
-      'labuan': 'Labuan', 'wp labuan': 'Labuan', 'w p labuan': 'Labuan',
-    };
-    const pretty = (s: string) => {
-      const k = s.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
-      return AREA_LABEL[k] ?? s;
-    };
-    const byCode: Record<string, Set<string>> = {};
-    for (const s of stateRegions.data ?? []) {
-      for (const code of s.regionCodes) {
-        (byCode[code] ??= new Set<string>()).add(pretty(s.stateKey));
-      }
-    }
-    const out: Record<string, string[]> = {};
-    for (const [code, set] of Object.entries(byCode)) out[code] = [...set].sort();
-    return out;
-  }, [stateRegions.data]);
+  const areas = useMemo(() => areasByRegionCode(stateRegions.data ?? []), [stateRegions.data]);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState<Open>(null);
+  const all = useMemo(() => [...(regions.data ?? [])].sort((a, b) => sortOrderOf(a) - sortOrderOf(b)), [regions.data]);
+  const shown = all.filter((r) => hit(q, r.code, r.name, ...(areas[r.code] ?? [])));
+  const current = open && open.mode !== 'new' ? all.find((r) => r.id === open.id) ?? null : null;
+  const nextSort = all.reduce((m, r) => Math.max(m, sortOrderOf(r)), 0) + 1;
 
-  /* Per-row uncommitted edits (name / sort_order), keyed by id — committed on
-     blur / Enter / the Save affordance (matches the SO Maintenance dropdown
-     edit-buffer pattern). Code is the unique key + drives the SG dashed style on
-     the board, so it's edited inline too. */
-  const [edits, setEdits] = useState<Record<string, Partial<{ code: string; name: string; sortOrder: number }>>>({});
-
-  const commitRow = (row: RegionMasterRow) => {
-    const buf = edits[row.id];
-    if (!buf) return;
-    const patch: Parameters<typeof updateMutate>[0] = { id: row.id };
-    const curSort = sortOrderOf(row);
-    if (buf.code !== undefined && buf.code.trim() && buf.code.trim() !== row.code) patch.code = buf.code.trim();
-    if (buf.name !== undefined && buf.name.trim() && buf.name.trim() !== row.name) patch.name = buf.name.trim();
-    if (buf.sortOrder !== undefined && buf.sortOrder !== curSort) patch.sortOrder = buf.sortOrder;
-    const clearBuf = () => setEdits((e) => { const next = { ...e }; delete next[row.id]; return next; });
-    if (Object.keys(patch).length === 1) { clearBuf(); return; }
-    updateMutate(patch, {
-      onSuccess: clearBuf,
-      onError: (err) => notify({ title: 'Update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-    });
-  };
-
-  const removeRow = async (row: RegionMasterRow) => {
-    if (!(await askConfirm({
-      title: `Delete region "${row.name}" (${row.code})?`,
-      body: 'The region disappears from the Delivery Planning tabs. Blocked if any state still maps to it.',
-      confirmLabel: 'Delete',
-      danger: true,
-    }))) return;
-    del.mutate(row.id, {
-      // The route returns 409 region_in_use with a plain-language reason — surface it.
-      onError: (err) => notify({ title: 'Cannot delete region', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-    });
-  };
-
-  const columns = useMemo<GridColumn<RegionMasterRow>[]>(() => [
-    {
-      key: 'code',
-      label: 'Code',
-      width: 140,
-      accessor: (r) => {
-        const buf = edits[r.id] ?? {};
-        return (
-          <input
-            className={styles.fieldInput}
-            value={buf.code ?? r.code}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setEdits((s) => ({ ...s, [r.id]: { ...s[r.id], code: e.target.value } }))}
-            onBlur={() => commitRow(r)}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRow(r); }}
-          />
-        );
-      },
-      searchValue: (r) => r.code,
-      filterValue: (r) => r.code,
-      sortFn: (a, b) => a.code.localeCompare(b.code),
-    },
-    {
-      key: 'name',
-      label: 'Name',
-      width: 220,
-      accessor: (r) => {
-        const buf = edits[r.id] ?? {};
-        return (
-          <input
-            className={styles.fieldInput}
-            value={buf.name ?? r.name}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setEdits((s) => ({ ...s, [r.id]: { ...s[r.id], name: e.target.value } }))}
-            onBlur={() => commitRow(r)}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRow(r); }}
-          />
-        );
-      },
-      searchValue: (r) => r.name,
-      sortFn: (a, b) => a.name.localeCompare(b.name),
-    },
-    {
-      key: 'areas',
-      label: 'Areas',
-      width: 300,
-      accessor: (r) => {
-        const areas = areasByCode[r.code] ?? [];
-        if (areas.length === 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
-        const text = areas.join(', ');
-        return <span title={text} style={{ fontSize: 'var(--fs-12)' }}>{text}</span>;
-      },
-      searchValue: (r) => (areasByCode[r.code] ?? []).join(', '),
-      filterValue: (r) => (areasByCode[r.code] ?? []).join(', '),
-    },
-    {
-      key: 'sortOrder',
-      label: 'Sort',
-      width: 100,
-      align: 'right',
-      accessor: (r) => {
-        const buf = edits[r.id] ?? {};
-        return (
-          <NumberInput
-            sign="unsigned"
-            decimal={false}
-            className={styles.fieldInput}
-            style={{ textAlign: 'right' }}
-            value={buf.sortOrder ?? sortOrderOf(r)}
-            onClick={(e) => e.stopPropagation()}
-            onValueChange={(n) => setEdits((s) => ({ ...s, [r.id]: { ...s[r.id], sortOrder: n ?? 0 } }))}
-            onBlur={() => commitRow(r)}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRow(r); }}
-          />
-        );
-      },
-      searchValue: (r) => String(sortOrderOf(r)),
-      sortFn: (a, b) => sortOrderOf(a) - sortOrderOf(b),
-      numberValue: (r) => sortOrderOf(r),
-    },
-    {
-      key: 'active',
-      label: 'Active',
-      width: 130,
-      accessor: (r) => (
-        <label
-          onClick={(e) => e.stopPropagation()}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-        >
-          <input type="checkbox" checked={r.active}
-            onChange={(e) => updateMutate(
-              { id: r.id, active: e.target.checked },
-              { onError: (err) => notify({ title: 'Update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }) },
-            )} />
-          <span style={{ fontSize: 'var(--fs-12)', color: r.active ? 'var(--c-secondary-a)' : 'var(--fg-muted)' }}>
-            {r.active ? 'Active' : 'Inactive'}
-          </span>
-        </label>
-      ),
-      searchValue: (r) => (r.active ? 'Active' : 'Inactive'),
-      filterValue: (r) => (r.active ? 'Active' : 'Inactive'),
-      sortFn: (a, b) => Number(a.active) - Number(b.active),
-    },
-    {
-      key: 'actions',
-      label: '',
-      width: 120,
-      accessor: (r) => {
-        const buf = edits[r.id];
-        const dirty = !!buf && (
-          (buf.code !== undefined && buf.code !== r.code) ||
-          (buf.name !== undefined && buf.name !== r.name) ||
-          (buf.sortOrder !== undefined && buf.sortOrder !== sortOrderOf(r))
-        );
-        return (
-          <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', gap: 4 }}>
-            {dirty && (
-              <button type="button" className={styles.iconBtn} disabled={update.isPending}
-                onClick={() => commitRow(r)} aria-label="Save region">
-                <Save {...ICON} />
-              </button>
-            )}
-            <button type="button" className={styles.iconBtn} disabled={del.isPending}
-              onClick={() => removeRow(r)} aria-label="Delete region">
-              <Trash2 {...ICON} />
-            </button>
-          </span>
-        );
-      },
-    },
-  // edits drives the inline buffers; updateMutate/del.isPending the controls.
-  ], [edits, areasByCode, updateMutate, update.isPending, del.isPending]); // eslint-disable-line react-hooks/exhaustive-deps
+  const doExport = () => exportCsv('regions.csv', shown, [
+    { key: 'code', label: 'Code', getValue: (r) => r.code },
+    { key: 'name', label: 'Name', getValue: (r) => r.name },
+    { key: 'areas', label: 'Areas', getValue: (r) => (areas[r.code] ?? []).join(', ') },
+    { key: 'sort', label: 'Sort', getValue: (r) => sortOrderOf(r) },
+    { key: 'active', label: 'Active', getValue: (r) => (r.active ? 'Active' : 'Inactive') },
+  ]);
 
   return (
     <div className="space-y-4">
@@ -250,96 +68,102 @@ export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boole
           eyebrow="Delivery"
           title="Delivery Regions"
           description="The region buckets (tabs) on Delivery Planning, with the areas each one covers. Assign which states fall under each region in SO Maintenance."
-          actions={
-            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-              <Plus {...ICON} />
-              <span>New Region</span>
-            </Button>
-          }
         />
       )}
-
-      <div className={styles.headerRow}>
-        <p className={styles.eyebrow}>{regions.data?.length ?? 0} regions</p>
+      <ListToolbar search={q} onSearch={setQ} placeholder="Search regions or areas" shown={shown.length} total={all.length}
+        onExport={doExport} newLabel="New Region" onNew={() => setOpen({ mode: 'new' })} />
+      {regions.isError && <p className="text-[13px] text-[#8a2c2c]">The regions could not be loaded.</p>}
+      {regions.isLoading && <p className="text-[13px] text-ink-muted">Loading regions…</p>}
+      {!regions.isLoading && !regions.isError && shown.length === 0 && (
+        <NoMatch text={all.length === 0 ? 'No regions came back. Add your delivery buckets (e.g. KL/SEL, Northern, Southern) to get started.' : 'No region matches this search.'}
+          onClear={all.length === 0 ? null : () => setQ('')} />
+      )}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {shown.map((r) => (
+          <div key={r.id} className={cn('flex flex-col gap-3 rounded-xl border border-border bg-surface p-4', !r.active && 'opacity-60')}>
+            <div className="flex items-center gap-2.5">
+              <span className={cn('rounded-md px-2 py-1 font-mono text-[12.5px] font-bold tracking-wide',
+                r.code === 'SG' ? 'border border-dashed border-primary text-primary' : 'bg-primary text-white')}>{r.code}</span>
+              <h2 className="min-w-0 flex-1 truncate text-[16px] font-bold text-ink">{r.name}</h2>
+              <Switch on={r.active} label={`${r.name} active`} disabled={update.isPending}
+                onClick={() => update.mutate({ id: r.id, active: !r.active }, { onError: writeFailedAs('The region was not changed') })} />
+              <IconBtn label={`Edit ${r.name}`} onClick={() => setOpen({ mode: 'edit', id: r.id })}><PencilIcon /></IconBtn>
+            </div>
+            <div><span className="block text-[12px] text-ink-muted">Areas</span>
+              <span className="text-[13.5px] text-ink">{(areas[r.code] ?? []).join(', ') || 'No state is mapped to it yet'}</span></div>
+            <div className="mt-auto flex items-center justify-between text-[12.5px] text-ink-muted">
+              <span>Sort {sortOrderOf(r)}</span>
+              <button type="button" onClick={() => setOpen({ mode: 'read', id: r.id })} className="text-[13px] font-semibold text-primary hover:underline">See details</button>
+            </div>
+          </div>
+        ))}
       </div>
-
-      <DataGridCompat
-        rows={regions.data ?? []}
-        columns={columns}
-        storageKey="dg-delivery-planning-regions"
-        exportName="DeliveryRegions"
-        rowKey={(r) => r.id}
-        searchPlaceholder="Search regions…"
-        groupBanner={false}
-        isLoading={regions.isLoading}
-        emptyMessage="No regions yet — add your delivery buckets (e.g. KL/SEL / Northern / Southern) to get started."
-      />
-
-      {creating && <CreateRegionDrawer onClose={() => setCreating(false)} nextSort={(regions.data?.reduce((m, r) => Math.max(m, sortOrderOf(r)), 0) ?? 0) + 1} />}
+      {open && (open.mode === 'new' || current) && (
+        <RegionDrawer key={open.mode === 'new' ? 'new' : current!.id} region={current} areas={current ? areas[current.code] ?? [] : []}
+          editing={open.mode !== 'read'} nextSort={nextSort}
+          onEdit={() => current && setOpen({ mode: 'edit', id: current.id })} onClose={() => setOpen(null)} />
+      )}
     </div>
   );
 };
 
-const CreateRegionDrawer = ({ onClose, nextSort }: { onClose: () => void; nextSort: number }) => {
-  const create = useCreateDeliveryPlanningRegion();
-  const notify = useNotify();
-  const [form, setForm] = useState({ code: '', name: '', sortOrder: String(nextSort) });
-  const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
-
-  const submit = () => {
-    if (!form.code.trim()) { notify({ title: 'Code required.', tone: 'error' }); return; }
-    if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
-    const sort = Number(form.sortOrder);
-    create.mutate({
-      code: form.code.trim(),
-      name: form.name.trim(),
-      sortOrder: Number.isFinite(sort) ? sort : nextSort,
-      active: true,
-    }, {
-      onSuccess: onClose,
-      onError: (err) => notify({ title: 'Create failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-    });
+function RegionDrawer({ region, areas, editing, nextSort, onEdit, onClose }: {
+  region: RegionMasterRow | null; areas: string[]; editing: boolean; nextSort: number; onEdit: () => void; onClose: () => void;
+}) {
+  const del = useDeleteDeliveryPlanningRegion();
+  const confirm = useConfirm();
+  const remove = (r: RegionMasterRow) => {
+    void confirm({
+      title: `Delete region "${r.name}" (${r.code})?`,
+      body: 'The region disappears from the Delivery Planning tabs. Blocked if any state still maps to it.',
+      confirmLabel: 'Delete', danger: true,
+    }).then((ok) => { if (ok) del.mutate(r.id, { onSuccess: onClose, onError: writeFailedAs('The region was not deleted') }); });
   };
-
   return (
-    <>
-      <div className={styles.backdrop} onClick={onClose} />
-      <aside className={styles.drawer}>
-        <header className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>New Region</h2>
-          <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON} /></button>
-        </header>
-        <div className={styles.drawerBody}>
-          <div className={styles.formGrid}>
-            <Field label="Code *" value={form.code} onChange={(v) => set('code', v)} placeholder="e.g. JB" />
-            <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} placeholder="e.g. Johor Bahru" />
-            <Field label="Sort order" value={form.sortOrder} onChange={(v) => set('sortOrder', v)} type="number" />
-          </div>
-          <p style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', margin: 0 }}>
-            Code is normalised to upper-case and must be unique. A region with code <strong>SG</strong> gets the
-            distinct dashed styling on the board.
-          </p>
+    <ResizableDrawer onClose={onClose} storageKey="fleet-region-drawer" defaultWidth={460} ariaLabel={region ? `Region ${region.name}` : 'New region'}
+      title={region ? `${editing ? 'Edit ' : ''}${region.name} (${region.code})` : 'New Region'} subtitle="Region"
+      headerActions={region && !editing ? <button type="button" onClick={onEdit} className="rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white">Edit</button> : null}>
+      {editing ? <RegionForm region={region} nextSort={nextSort} onDone={onClose} /> : region && (
+        <div className="space-y-3 p-4">
+          <Card>
+            <ReadRows rows={[
+              ['Code', region.code], ['Name', region.name], ['Areas', areas.join(', ') || '—'],
+              ['Sort', String(sortOrderOf(region))], ['Active', region.active ? 'Yes' : 'No'],
+            ]} />
+          </Card>
+          <p className="text-[12px] text-ink-muted">Which states fall under a region is set in SO Maintenance.</p>
+          <button type="button" onClick={() => remove(region)} disabled={del.isPending} className={dangerBtn}>Delete region</button>
         </div>
-        <footer className={styles.drawerFooter}>
-          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? 'Creating…' : 'Create Region'}
-          </Button>
-        </footer>
-      </aside>
-    </>
+      )}
+    </ResizableDrawer>
   );
-};
+}
 
-const Field = ({
-  label, value, onChange, placeholder, type,
-}: {
-  label: string; value: string;
-  onChange: (v: string) => void; placeholder?: string; type?: string;
-}) => (
-  <label className={styles.field}>
-    <span className={styles.fieldLabel}>{label}</span>
-    <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type}
-      onChange={(e) => onChange(e.target.value)} />
-  </label>
-);
+function RegionForm({ region, nextSort, onDone }: { region: RegionMasterRow | null; nextSort: number; onDone: () => void }) {
+  const create = useCreateDeliveryPlanningRegion();
+  const update = useUpdateDeliveryPlanningRegion();
+  const [f, setF] = useState({ code: region?.code ?? '', name: region?.name ?? '', sort: String(region ? sortOrderOf(region) : nextSort) });
+  const sort = Number(f.sort);
+  const problem = !f.code.trim() ? 'Enter the code.' : !f.name.trim() ? 'Enter the name.' : !(Number.isInteger(sort) && sort >= 0) ? 'Sort must be a whole number of 0 or more.' : null;
+  const pending = create.isPending || update.isPending;
+  const save = () => {
+    const body = { code: f.code.trim(), name: f.name.trim(), sortOrder: sort };
+    if (region) update.mutate({ id: region.id, ...body }, { onSuccess: onDone, onError: writeFailedAs('The region was not saved') });
+    else create.mutate({ ...body, active: true }, { onSuccess: onDone, onError: writeFailedAs('The region was not added') });
+  };
+  return (
+    <div className="space-y-4 p-4">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Code"><input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="e.g. JB" className={inputCls} /></Field>
+        <Field label="Sort order"><input inputMode="numeric" value={f.sort} onChange={(e) => setF({ ...f, sort: e.target.value })} className={inputCls} /></Field>
+        <Field label="Name" wide><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Johor Bahru" className={inputCls} /></Field>
+      </div>
+      <p className="text-[12px] text-ink-muted">Code is changed to upper case and must be unique. A region with code SG gets the dashed style on the board.</p>
+      {problem && (f.code !== '' || f.name !== '') && <p className="text-[12.5px] text-[#8a2c2c]">{problem}</p>}
+      <div className="flex gap-2">
+        <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? 'Saving…' : region ? 'Save changes' : 'Create Region'}</button>
+        <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>
+      </div>
+    </div>
+  );
+}

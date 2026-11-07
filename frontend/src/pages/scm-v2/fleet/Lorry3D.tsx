@@ -460,9 +460,13 @@ export function LorrySide({ box }: { box: LorryBox | null }) {
   }
   const r = WHEEL_R * s, wy = gy - r, xf = cabLeft + cabL * 0.45, xr = boxL + Math.max(r + 2, L * s * 0.3);
   const label = b ? `Lorry with container ${fmt(b.length)} by ${fmt(b.height)} ft` : 'Lorry, container size not entered';
+  /* Every lorry keeps the one scale (s); only its position moves, so a short lorry sits in
+     the middle of its box instead of against the right edge. */
+  const dx = (260 - (cabR - (boxL - 1))) / 2 - (boxL - 1);
   return (
     <svg viewBox="0 0 260 64" width="100%" role="img" aria-label={label} style={{ display: 'block', background: '#f6f8f7', borderRadius: 8 }}>
       <path d="M4 60.5 H256" style={{ fill: 'none', stroke: '#dfe5e2', strokeWidth: 1 }} />
+      <g transform={`translate(${dx} 0)`}>
       <rect x={boxL - 1} y={bot} width={cabR - 2 - (boxL - 1)} height={2.5} style={{ fill: '#2f3433' }} />
       <rect
         x={boxL} y={top} width={boxR - boxL} height={bot - top}
@@ -482,6 +486,7 @@ export function LorrySide({ box }: { box: LorryBox | null }) {
           <circle cx={cx} cy={wy} r={r * 0.45} style={{ fill: '#aeb5b2' }} />
         </g>
       ))}
+      </g>
     </svg>
   );
 }

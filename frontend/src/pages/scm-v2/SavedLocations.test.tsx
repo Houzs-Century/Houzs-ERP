@@ -53,7 +53,8 @@ describe('SavedLocations', () => {
         ? Promise.resolve({ locations: [] })
         : Promise.resolve({ location: { ...SEEDED, id: 'l2', name: 'New Point' } }));
     wrap(<SavedLocations />);
-    await screen.findByText('Add a saved location');
+    fireEvent.click(await screen.findByText('New location'));
+    await screen.findByPlaceholderText('e.g. Sunway Pyramid loading bay');
 
     // No name: the client refuses before any POST.
     fireEvent.click(screen.getByText('Add location'));
