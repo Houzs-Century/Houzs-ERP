@@ -128,8 +128,8 @@ export function FleetDay() {
     date, new Date(),
   ), [lorryRows, progressMap, date]);
   const dayDocs = useMemo(
-    () => lorryRows.map((o) => docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock)),
-    [lorryRows, statusByRef, clock],
+    () => lorryRows.map((o) => { const j = jobRefOf(o); return docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock, j ? progressMap.get(jobKey(j)) ?? null : null); }),
+    [lorryRows, statusByRef, clock, progressMap],
   );
   const driversById = useMemo(() => new Map(drivers.map((d) => [d.id, d])), [drivers]);
   const colors = useMemo(() => assignRouteColors(trips.map((t) => t.id)), [trips]);
