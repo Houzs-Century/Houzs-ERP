@@ -11,6 +11,7 @@
 // here is a labelled placeholder). The page keeps the scm.transportation.last_mile
 // gate (applied on the route) and the real Google-Maps panel.
 // ----------------------------------------------------------------------------
+import { fmtDrive, fmtKm, useRoadRuns } from '../../vendor/scm/lib/lorry-routes-queries';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Map as MapIcon, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -235,7 +236,19 @@ export function FleetDay() {
     () => buildLorryRoutes(runs, pointByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
     [runs, pointByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
   );
-  const panelRoutes = lorryRoutes.routes;
+  /* Each lorry's run by road, from its home and back (owner 2026-11-08). */
+  const roadInputs = useMemo(() => lorryRoutes.routes.filter((r) => r.depot && r.stops.length > 0)
+    .map((r) => ({ plate: r.title, home: { lat: r.depot!.lat, lng: r.depot!.lng }, stops: r.stops.map((s) => ({ lat: s.lat, lng: s.lng })) })), [lorryRoutes.routes]);
+  const roadRuns = useRoadRuns(date, roadInputs);
+  const roadLabelOf = (plate: string): string | null => {
+    const f = roadRuns.get(plate)?.figure;
+    return f ? `${fmtKm(f.distanceM)} · ${fmtDrive(f.durationS)}` : null;
+  };
+  const roadTotal = (() => {
+    const figs = [...roadRuns.values()].map((x) => x.figure).filter((f): f is NonNullable<typeof f> => f != null);
+    return figs.length ? `All lorries by road: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
+  })();
+  const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
   // The board's own drops that could not be placed (surfaced, never dropped),
   // then any server-ungeocoded order not already named.
   const mapUnlocated = useMemo(() => {
@@ -293,6 +306,7 @@ export function FleetDay() {
       focused={focusedPlate === platekey(r.plate)}
       selectedKey={selected?.key ?? null}
       remarkKeys={remarkKeys}
+      road={roadLabelOf(r.plate)}
       onFocus={() => toggleFocus(platekey(r.plate))}
       onOpenDoc={(d) => setSelected(d)}
       onCrew={() => setCrewRun(r)}
@@ -361,6 +375,7 @@ export function FleetDay() {
           onVehicleClick={(v) => { if (v.lorryId) navigate(`/fleet-health/${v.lorryId}`); }}
         />
       )}
+      {mapOpen && roadTotal && <p className="mt-2 text-right text-[12.5px] font-semibold text-ink-secondary lg:hidden">{roadTotal}</p>}
     </div>
   );
 

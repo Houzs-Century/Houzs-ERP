@@ -45,6 +45,7 @@ describe('LorryCard', () => {
         focused={false}
         selectedKey={null}
         remarkKeys={new Set()}
+        road={null}
         onFocus={() => {}}
         onOpenDoc={() => {}}
         onCrew={() => {}}
@@ -74,7 +75,7 @@ describe('LorryCard', () => {
     render(
       <LorryCard
         run={jobRun} visibleDocs={jobRun.docs} filtersActive={false} searchActive={false}
-        actionable focused={false} selectedKey={null} remarkKeys={new Set()}
+        actionable focused={false} selectedKey={null} remarkKeys={new Set()} road={null}
         onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}}
       />,
     );
@@ -89,8 +90,18 @@ describe('a finished stop shows its road and site time', () => {
     const timed = { ...run, docs: [doc({ soDocNo: 'B', status: 'done', departedAt: '2026-11-01T02:00:00Z', arrivedAt: '2026-11-01T02:30:00Z', deliveredAt: '2026-11-01T03:10:00Z' })] };
     render(
       <LorryCard run={timed} visibleDocs={timed.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
-        remarkKeys={new Set()} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
+        remarkKeys={new Set()} road={null} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
     expect(screen.getByText('On the road 30 min · On site 40 min')).toBeTruthy();
+  });
+});
+
+describe('the run by road', () => {
+  test('shows the road distance and driving time on the card', () => {
+    render(
+      <LorryCard run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
+        remarkKeys={new Set()} road="86.4 km · 3 h 10 min" onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
+    );
+    expect(screen.getByText('86.4 km · 3 h 10 min')).toBeTruthy();
   });
 });
