@@ -1710,7 +1710,7 @@ deliveryPlanning.get('/geo', async (c) => {
     if (!best) depotReason = "the day's orders carry no warehouse";
     else {
       const { data: whRow } = await sb.from('warehouses')
-        .select('id, name, code, location, city, state, postcode')
+        .select('id, name, code, location, city, state, postcode, latitude, longitude')
         .eq('id', best.id)
         .maybeSingle();
       const w = (whRow ?? {}) as Record<string, unknown>;
@@ -1721,7 +1721,7 @@ deliveryPlanning.get('/geo', async (c) => {
         postcode: (w.postcode ?? null) as string | null,
         state: (w.state ?? null) as string | null,
       });
-      const hit = whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null;
+      const hit = w.latitude != null && w.longitude != null ? { lat: Number(w.latitude), lng: Number(w.longitude) } : whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null; // a set map position wins
       if (hit) {
         depot = { warehouseId: best.id, name: whName, code: (w.code ?? null) as string | null, lat: hit.lat, lng: hit.lng };
       } else {

@@ -117,10 +117,12 @@ function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { ro
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys,
+  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
+  /** The run by road from the lorry's home and back (Google); null when not worked out. */
+  road: string | null;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
@@ -217,6 +219,7 @@ export function LorryCard({
           </span>
         )}
         {!plannedAt && !actualAt && <span className="text-ink-muted">Not departed yet</span>}
+        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">By road</span> <span className="font-semibold text-ink">{road}</span></span>}
       </div>
 
       {/* progress */}

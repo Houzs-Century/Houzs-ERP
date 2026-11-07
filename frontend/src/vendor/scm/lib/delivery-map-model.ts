@@ -65,6 +65,8 @@ export type MapRoute = {
    *  in the legend as "VQE9058 5/8". Absent on the Date/Time proposal routes. */
   delivered?: number | null;
   total?: number | null;
+  /** Last Mile: the run by road, home and back ("86.4 km · 3 h 10 min"); absent elsewhere. */
+  roadLabel?: string | null;
 };
 
 /** Trip focus (owner rule: click a trip card / polyline → dim the others, zoom
@@ -430,6 +432,7 @@ export type MapLegendRow = {
    *  route does not carry them (Date/Time proposal routes). */
   delivered: number | null;
   total: number | null;
+  roadLabel: string | null;
   /** First window's start → last window's end ("09:40 → 12:55"; ETA offsets
    *  read "+30m → +2h 5m"). Null when no stop carries a window — never a
    *  fabricated clock. */
@@ -461,6 +464,7 @@ export function legendFromRoutes(routes: readonly MapRoute[]): MapLegendRow[] {
       stopCount: r.allRefs.length,
       delivered: r.delivered ?? null,
       total: r.total ?? null,
+      roadLabel: r.roadLabel ?? null,
       timeRange,
       stops: r.stops.map((s) => ({ ref: s.ref, order: s.order, windowLabel: s.windowLabel })),
     };

@@ -30,7 +30,7 @@ export async function loadLorryDepots(sb: SupabaseClient, env: { GOOGLE_MAPS_API
   const homeOf = lorryHomes(lorryRows ?? []);
   const whIds = [...new Set(homeOf.values())];
   if (whIds.length === 0) return { lorryDepots: {}, lorryDepotsReason: null };
-  const { data: whRows, error: wErr } = await sb.from('warehouses').select('id, name, location, city, state, postcode').in('id', whIds);
+  const { data: whRows, error: wErr } = await sb.from('warehouses').select('id, name, location, city, state, postcode, latitude, longitude').in('id', whIds);
   if (wErr) return { lorryDepots: {}, lorryDepotsReason: `warehouses could not be read: ${wErr.message}` };
   const point = new Map<string, { name: string; lat: number; lng: number }>();
   for (const w of (whRows ?? []) as Array<Record<string, unknown>>) {
@@ -38,7 +38,9 @@ export async function loadLorryDepots(sb: SupabaseClient, env: { GOOGLE_MAPS_API
       address1: (w.location ?? null) as string | null, address2: (w.city ?? null) as string | null,
       postcode: (w.postcode ?? null) as string | null, state: (w.state ?? null) as string | null,
     });
-    const hit = addr ? await geocodeAddressCached(sb, env, addr) : null;
+    /* The map position the owner set wins; an address is only a fallback. */
+    const pinned = w.latitude != null && w.longitude != null ? { lat: Number(w.latitude), lng: Number(w.longitude) } : null;
+    const hit = pinned ?? (addr ? await geocodeAddressCached(sb, env, addr) : null);
     if (hit) point.set(String(w.id), { name: String(w.name ?? ''), lat: hit.lat, lng: hit.lng });
   }
   const depots: Record<string, LorryDepot> = {};
