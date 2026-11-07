@@ -9,7 +9,7 @@ import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
 
 export type DayRow = { date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null };
 export type RegionRow = { region: string; orders: number; amountSen: number; avgOrderSen: number | null };
-export type LorryRow = { lorry: string; internal: boolean; daysOut: number; fairTrips: number; transportDays: number; usedDays: number; trips: number; otherTrips: number; doOrders: number; serviceOrders: number; workingDays: number; downDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
+export type LorryRow = { lorry: string; internal: boolean; daysOut: number; fairTrips: number; stockTrips: number; usedDays: number; trips: number; otherTrips: number; doOrders: number; serviceOrders: number; workingDays: number; downDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
 export type LorryDay = { date: string; lorry: string; orders: number; amountSen: number };
 /** Open the delivery orders behind a figure (title, which DOs). */
 export type DoDrill = (title: string, keep: (d: { date: string; region: string; lorry: string | null }) => boolean) => void;
@@ -104,7 +104,7 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title={`Lorries · revenue and occupancy${scope ? ` · ${scope}` : ""}`} hint="Delivery day = delivery or service run, one trip however many orders · Fair trip = a set-up or dismantle, one trip each · Pickup or transfer = half a trip · Occupancy = trips ÷ days it could work (Sundays and workshop days off), and can pass 100% · Per delivery day = revenue ÷ delivery days">
+      <Panel title={`Lorries · revenue and occupancy${scope ? ` · ${scope}` : ""}`} hint="Delivery day = delivery or service run, one trip however many orders · Fair trip = a set-up or dismantle, one trip each · Stock day = a supplier pickup or stock transfer, half a trip each · Occupancy = trips ÷ days it could work (Sundays and workshop days off), and can pass 100% · Per delivery day = revenue ÷ delivery days">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
             Our own lorries had <b className="text-ink">{ownPossible}</b> lorry working days: <b className="text-ink">{ownDays}</b> delivery trips and
@@ -112,12 +112,12 @@ export function LorrySection({ lorries, days, recorded, total, region, day, onDr
           </p>
         )}
         <table className="w-full border-collapse">
-          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th>Fair trips</Th><Th>Pickup &amp; transfer days</Th><Th>Days in use</Th><Th>Trips</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th><Th>Per order</Th></tr></thead>
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th>Fair trips</Th><Th>Stock days</Th><Th>Days in use</Th><Th>Trips</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th><Th>Per order</Th></tr></thead>
           <tbody>{lorries.map((l) => (
             <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Carried by ${l.lorry}${scope ? ` · ${scope}` : ""}`, (d) => d.lorry === l.lorry && (!region || d.region === region) && (!day || d.date === day))}>
               <Td left className="font-semibold">{l.lorry}</Td>
               <Td left className="text-[11px] text-ink-muted">{l.internal ? "own" : "3PL"}</Td>
-              <Td>{l.daysOut}</Td><Td>{l.fairTrips}</Td><Td>{l.transportDays}</Td>
+              <Td>{l.daysOut}</Td><Td>{l.fairTrips}</Td><Td>{l.stockTrips}</Td>
               <Td>{l.usedDays} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td><Td>{l.trips}</Td>
               <Td left className="w-[22%]">
                 <div className="flex items-center gap-2">

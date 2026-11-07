@@ -25,7 +25,7 @@ export function lorryTrips(doDates: Iterable<string>, jobs: readonly LorryJob[])
   return {
     deliveryDays: deliveryDates.size,
     fairTrips: setups.length,
-    transportDays: new Set(moves.map((j) => j.date)).size,
+    stockTrips: moves.length * 0.5,
     usedDays: new Set([...deliveryDates, ...jobs.map((j) => j.date)]).size,
     serviceOrders: jobs.filter((j) => j.kind === 'service').length,
     otherTrips: setups.length + moves.length * 0.5,

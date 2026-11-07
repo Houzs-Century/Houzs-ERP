@@ -22,7 +22,7 @@ describe('trips and occupancy', () => {
     expect(run([job('2026-10-02', 'setup'), job('2026-10-02', 'setup')])).toMatchObject({ daysOut: 1, fairTrips: 2, trips: 3, occupancyPct: 100 });
   });
   test('a supplier pickup or stock transfer is half a trip', () => {
-    expect(run([job('2026-10-02', 'transport')])).toMatchObject({ transportDays: 1, trips: 1.5, occupancyPct: 50 });
+    expect(run([job('2026-10-02', 'transport')])).toMatchObject({ stockTrips: 0.5, trips: 1.5, occupancyPct: 50 });
   });
   test('occupancy can pass 100%', () => {
     expect(run([job('2026-10-01', 'setup'), job('2026-10-02', 'setup'), job('2026-10-02', 'setup'), job('2026-10-03', 'setup')]))
