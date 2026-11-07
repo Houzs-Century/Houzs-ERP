@@ -1722,7 +1722,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/routes/lib/hr-trip-store.ts backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts backend/src/scm/routes/logistic-overview.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/routes/lib/hr-trip-store.ts backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
       "why": "logistic-overview.ts STOP_KIND answers another question over the same stop types: how a stop counts towards a lorry's trips (delivery, service, set-up, half-trip transport, or nothing for its own upkeep). THE scm.trip_stop_type ENUM, read four ways for four jobs: dp-orders.ts and delivery-planning-queries.ts list the job types a planner may raise, rate-rule-taxonomy.ts the ones a 3PL rate card prices, and hr-trip-store.ts STOP_KIND maps each stop onto the trip-pay kind HR pays the crew for (HC-0125 phase 5; HR can still change a row's kind). The database enum is the one vocabulary; a new stop type must be added to STOP_KIND deliberately or it pays nothing (NONE)."
     },
     {

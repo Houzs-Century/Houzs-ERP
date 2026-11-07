@@ -32,15 +32,13 @@ logisticOverview.use('*', supabaseAuth);
 
 type Row = Record<string, unknown>;
 const DAY = 86400000;
-/** How a run's stop counts for the lorry. A lorry service is the lorry's own upkeep. */
-const STOP_KIND: Readonly<Record<string, LorryJobKind | null>> = {
-  DELIVERY: 'delivery', SERVICE: 'service', INSPECTION: 'service', PICKUP: 'service',
-  SETUP: 'setup', DISMANTLE: 'setup', SUPPLIER_PICKUP: 'transport', TRANSFER: 'transport', LORRY_SERVICE: null,
-};
-/** What a run's stop reads as in the lorry's list, in the board's job type words. */
-const STOP_TYPE: Readonly<Record<string, string>> = {
-  DELIVERY: 'Delivery', SERVICE: 'Service case', INSPECTION: 'Service case · Inspection', PICKUP: 'Service case · Pickup',
-  SETUP: 'Setup', DISMANTLE: 'Dismantle', SUPPLIER_PICKUP: 'Supplier Pickup', TRANSFER: 'Transfer',
+/** How a run's stop counts for the lorry and reads in its list, in the board's job type
+ *  words. A lorry service is the lorry's own upkeep, not a job. */
+const STOP_JOB: Readonly<Record<string, { kind: LorryJobKind; type: string } | null>> = {
+  DELIVERY: { kind: 'delivery', type: 'Delivery' }, SERVICE: { kind: 'service', type: 'Service case' },
+  INSPECTION: { kind: 'service', type: 'Service case · Inspection' }, PICKUP: { kind: 'service', type: 'Service case · Pickup' },
+  SETUP: { kind: 'setup', type: 'Setup' }, DISMANTLE: { kind: 'setup', type: 'Dismantle' },
+  SUPPLIER_PICKUP: { kind: 'transport', type: 'Supplier Pickup' }, TRANSFER: { kind: 'transport', type: 'Transfer' }, LORRY_SERVICE: null,
 };
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -219,11 +217,8 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   for (const s of usedStops.data) {
     const run = runOf.get(String(s.trip_id));
     /* A service case's delivery leg is a DELIVERY stop too; it rides the run as a service job. */
-    const kind = s.assr_case_id != null ? 'service' : STOP_KIND[String(s.stop_type)];
-    if (run?.plate && run.date && kind) {
-      const type = s.assr_case_id != null && String(s.stop_type) === 'DELIVERY' ? 'Service case' : STOP_TYPE[String(s.stop_type)] ?? String(s.stop_type);
-      lorryJobs.push({ plate: run.plate, date: run.date, kind, type, ref: str(s.dp_no), customer: str(s.customer_name), assrId: s.assr_case_id != null ? String(s.assr_case_id) : null, doId: str(s.do_id) });
-    }
+    const leg = s.assr_case_id != null && String(s.stop_type) === 'DELIVERY' ? STOP_JOB.SERVICE : STOP_JOB[String(s.stop_type)];
+    if (run?.plate && run.date && leg) lorryJobs.push({ plate: run.plate, date: run.date, kind: s.assr_case_id != null ? 'service' : leg.kind, type: leg.type, ref: str(s.dp_no), customer: str(s.customer_name), assrId: s.assr_case_id != null ? String(s.assr_case_id) : null, doId: str(s.do_id) });
   }
   /* An event's set-up and dismantle live on the project, never on a run, so they add to
      the run stops rather than repeat them. */
