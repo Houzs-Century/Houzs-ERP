@@ -5,6 +5,7 @@
 // + search. Kept out of the components so the grouping, filtering and search
 // rules are testable without a browser (vm.test.ts).
 // ----------------------------------------------------------------------------
+import type { JobProgress } from '../../../vendor/scm/lib/delivery-job';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
 import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
@@ -99,6 +100,9 @@ export type DocRowVM = {
   lateReason: string | null;
   hasPod: boolean;
   deliveredAt: string | null;
+  /** The crew set off for it (Start / on the way), and reached it (Arrived). */
+  departedAt: string | null;
+  arrivedAt: string | null;
   /** The latest non-draft/cancelled DO's id — the POD + crew target; null when none. */
   latestLiveDoId: string | null;
 };
@@ -146,7 +150,7 @@ export function latestLiveDoId(o: Pick<PlanningOrder, 'delivery_orders'>): strin
 }
 
 /** One board row -> a doc row, given its already-computed stop status + the clock. */
-export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock): DocRowVM {
+export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, progress: JobProgress | null): DocRowVM {
   const slotEnd = windowEndMinutes(o.time_range);
   const live = o.delivery_orders.filter((d) => {
     const s = d.status.toUpperCase();
@@ -193,10 +197,39 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
     late: isLate(effStatus),
     lateReason: lateReason(effStatus, { day: clock.day, today: clock.today, slotEnd }),
     hasPod: !!o.has_pod,
-    deliveredAt: o.delivered_at ?? o.customer_delivered_date ?? null,
+    /* A delivery order carries its own stamps; a set-up, pickup or service job keeps them
+       on the crew's job progress. */
+    deliveredAt: o.delivered_at ?? progress?.completed_at ?? o.customer_delivered_date ?? null,
+    departedAt: o.departure_at ?? progress?.departed_at ?? null,
+    arrivedAt: o.arrival_at ?? progress?.arrived_at ?? null,
     latestLiveDoId: live.length > 0 ? live[live.length - 1]!.id : null,
   };
 }
+
+/** Minutes between two stamps; null when either is missing or they run backwards. */
+const minutesBetween = (from: string | null, to: string | null): number | null => {
+  if (!from || !to) return null;
+  const m = Math.round((Date.parse(to) - Date.parse(from)) / 60_000);
+  return Number.isFinite(m) && m >= 0 ? m : null;
+};
+
+/** Each finished stop on one run: time on the road to it (from the stop before it was
+ *  completed, or from setting off for the first) and time on site (arrived to completed).
+ *  Owner 2026-11-07: "on the way to arrived, and arrived to complete". */
+export function stopTimes(docs: readonly DocRowVM[]): Map<string, { roadMin: number | null; siteMin: number | null }> {
+  const done = docs.filter((d) => d.deliveredAt).sort((a, b) => (a.arrivedAt ?? a.deliveredAt ?? '').localeCompare(b.arrivedAt ?? b.deliveredAt ?? ''));
+  const out = new Map<string, { roadMin: number | null; siteMin: number | null }>();
+  let prevDone: string | null = null;
+  for (const d of done) {
+    const start = prevDone && (!d.departedAt || prevDone > d.departedAt) ? prevDone : d.departedAt;
+    out.set(d.key, { roadMin: minutesBetween(start, d.arrivedAt), siteMin: minutesBetween(d.arrivedAt, d.deliveredAt) });
+    prevDone = d.deliveredAt;
+  }
+  return out;
+}
+
+/** "1 h 05 min" / "25 min". */
+export const fmtMinutes = (m: number): string => (m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`);
 
 /** Neutral plate/stop colour for a card with no trip (no map route to tint). */
 const NO_TRIP_COLOR = '#b4b9ad';
