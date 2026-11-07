@@ -220,7 +220,7 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     ['C', { lat: 3.3, lng: 101.8 }],
     // 'B' deliberately missing — it must surface, not vanish.
   ]);
-  const { routes, unlocated } = buildLorryRoutes(cards, pointByRef, depot, (k) => `col:${k}`);
+  const { routes, unlocated } = buildLorryRoutes(cards, pointByRef, depot, () => null, (k) => `col:${k}`);
 
   test('one route per working lorry; an empty pinned lorry has none', () => {
     expect(routes.map((r) => r.id)).toEqual(['VQE9058']); // VRH is empty -> no route
@@ -242,6 +242,11 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     expect(vqe.total).toBe(3);       // all three drops counted, located or not
     expect(vqe.allRefs).toEqual(['A', 'B', 'C']); // focus still finds the ungeocoded B
   });
+  test('a lorry with a home warehouse starts and ends its route there, not at the day depot', () => {
+    const penang: MapLatLng = { lat: 5.4, lng: 100.3 };
+    const out = buildLorryRoutes(cards, pointByRef, depot, (k) => (k === 'VQE9058' ? penang : null), (k) => k);
+    expect(out.routes[0]!.depot).toEqual(penang);
+  });
   test('the ungeocoded drop is surfaced with a reason, never dropped', () => {
     expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: 'Address could not be located' }]);
   });
@@ -253,7 +258,7 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
       }), 'scheduled', CLOCK, null),
     ];
     const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
-    const out = buildLorryRoutes(jobCards, new Map(), null, (k) => k);
+    const out = buildLorryRoutes(jobCards, new Map(), null, () => null, (k) => k);
     expect(out.routes.find((r) => r.id === 'VQE9058')!.stops).toEqual([]);
     expect(out.unlocated).toEqual([{ ref: 'ASSR/1#delivery', label: 'ASSR/1', reason: 'Non-delivery job — no location' }]);
   });
