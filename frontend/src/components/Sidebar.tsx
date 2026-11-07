@@ -631,7 +631,6 @@ export const NAV_TABS: NavTab[] = [
           // lorries, not a daily dispatch view. The lorry/driver REGISTRY
           // (/scm/fleet) is in Maintenance too.
           { to: "/scm/lorry-live-map", label: "Lorry Live Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.lorry_map"], hideForSalesRep: true },
-          { to: "/scm/logistic-overview?view=capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.lorry_capacity"], hideForSalesRep: true },
           { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.crew_leave"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
              section of Fleet above, and sat here with the SAME Truck icon and the
@@ -666,7 +665,7 @@ export const NAV_TABS: NavTab[] = [
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers", "scm.transportation.coverage"], hideForSalesRep: true,
             children: [
               { to: "/scm/delivery-maintenance", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
-              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
+              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
               { to: "/scm/delivery-rate-cards", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
               /* Fleet Health joined Maintenance 2026-08-02 (owner: "你把 Fleet
                  Health 加进去 Maintenance 的地方"). It keeps its OWN gate —

@@ -308,7 +308,8 @@ async function loadAndPack(
 
   // 1. Company zone map (falls back to the in-code default when unset).
   const { data: mapRows } = await paginateAll<MapRow>((from, to) =>
-    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).range(from, to),
+    /* A fixed order: when two rules of the same width overlap, the same one wins on every read. */
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap, usingDefault } = toPrefixMap(mapRows ?? []);
 
@@ -773,13 +774,20 @@ deliveryZones.post('/locks', async (c) => {
   const user = c.get('user') as { id?: string } | null;
 
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('delivery_day_locks').upsert({
-    company_id: co.companyId,
-    warehouse_id: p.warehouseId ?? null,
-    delivery_date: p.deliveryDate,
-    notes: p.notes ?? null,
-    locked_by: user?.id ?? null,
-  }, { onConflict: 'company_id,warehouse_id,delivery_date' }).select(LOCK_COLS).single();
+  const row = { company_id: co.companyId, warehouse_id: p.warehouseId ?? null, delivery_date: p.deliveryDate, notes: p.notes ?? null, locked_by: user?.id ?? null };
+  /* An all-warehouse lock has a NULL warehouse, which the (company, warehouse, date)
+     unique key never matches, so upsert added a second one each time. Update the
+     existing all-warehouse lock of that day instead. */
+  let existingId: string | null = null;
+  if (row.warehouse_id == null) {
+    const { data: found, error: findErr } = await scopeToCompany(sb.from('delivery_day_locks').select('id'), c)
+      .is('warehouse_id', null).eq('delivery_date', p.deliveryDate).maybeSingle();
+    if (findErr) return c.json({ error: 'lock_failed', reason: findErr.message }, 500);
+    existingId = (found?.id as string | undefined) ?? null;
+  }
+  const { data, error } = existingId
+    ? await scopeToCompany(sb.from('delivery_day_locks').update({ notes: row.notes, locked_by: row.locked_by }), c).eq('id', existingId).select(LOCK_COLS).single()
+    : await sb.from('delivery_day_locks').upsert(row, { onConflict: 'company_id,warehouse_id,delivery_date' }).select(LOCK_COLS).single();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'lock_failed', reason: error.message }, 500);
