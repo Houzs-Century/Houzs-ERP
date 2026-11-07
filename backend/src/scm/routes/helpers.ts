@@ -9,6 +9,7 @@
 // '/helpers' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { idOrNull } from '../lib/lorry-warehouses';
 import { Hono } from 'hono';
 import { normalizePhone } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
@@ -28,7 +29,7 @@ async function mintHelperCode(sb: { from: (t: string) => any }): Promise<string>
 export const helpers = new Hono<{ Bindings: Env; Variables: Variables }>();
 helpers.use('*', supabaseAuth);
 
-const COLS = 'id, helper_code, name, contact, ic_number, in_house, threepl_company_id, active, created_at';
+const COLS = 'id, helper_code, name, contact, ic_number, in_house, threepl_company_id, active, created_at, warehouse_id';
 
 /* The caller's in_house as a tri-state: absent stays absent (see threepl-link). */
 const ownFlagOf = (body: Record<string, unknown>): boolean | undefined =>
@@ -69,6 +70,8 @@ helpers.post('/', async (c) => {
   if (icNumber === INVALID_IC) return c.json({ error: 'invalid_ic', reason: 'An IC / passport number is at most 20 characters.' }, 400);
 
   /* A helper registered under a 3PL carrier is outsource, whatever was ticked. */
+  const home = idOrNull(body.warehouseId ?? null);
+  if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
   const link = carrierLinkForInsert({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
 
   const sb = c.get('supabase');
@@ -80,6 +83,7 @@ helpers.post('/', async (c) => {
     in_house: link.ownFlag,
     threepl_company_id: link.carrierId,
     active: body.active === false ? false : true,
+    warehouse_id: home.value,
   };
 
   /* Codes are minted (owner 2026-08-02); an explicit one is still honoured so
@@ -120,6 +124,11 @@ helpers.patch('/:id', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const updates: Record<string, unknown> = {};
+  if (body.warehouseId !== undefined) {
+    const home = idOrNull(body.warehouseId);
+    if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
+    updates.warehouse_id = home.value;
+  }
   /* The SAME rules the create path applies — a field validated on create and
      not on edit is validated nowhere. */
   const map: Array<[string, string]> = [
