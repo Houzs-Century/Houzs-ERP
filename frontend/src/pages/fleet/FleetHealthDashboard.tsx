@@ -166,7 +166,7 @@ export function FleetHealth() {
   const pending = dash.loading && !dash.data;
 
   return (
-    <div className="mx-auto flex max-w-[1320px] flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1.5">
           <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-primary">Operations · Fleet</div>
@@ -235,13 +235,13 @@ export function FleetHealth() {
               key={`${v.id}-${doc.docType}`}
               type="button"
               onClick={() => setOpenId(v.id)}
-              className="flex w-full flex-wrap items-center gap-x-3.5 gap-y-2 border-t border-border/60 px-5 py-[11px] text-left text-[13.5px] text-ink hover:bg-surface-2"
+              className="flex w-full flex-wrap items-center gap-x-3.5 gap-y-2 border-t border-border/60 px-5 py-[11px] text-left text-[13.5px] text-ink hover:bg-surface-2 md:grid md:grid-cols-[104px_minmax(0,1fr)_minmax(90px,180px)_120px_150px]"
             >
-              <PlateBadge plate={v.plate} />
-              <span className="min-w-[160px] flex-1 font-semibold">{DOC_LABEL[doc.docType]}</span>
-              <span className="w-[110px] text-ink-muted">{v.region ?? "—"}</span>
-              <span className="w-[110px] text-ink-muted">{doc.expiryDate ? fmtDate(doc.expiryDate) : "—"}</span>
-              <Pill tone={doc.tone}>{doc.result === "FAIL" ? "FAILED" : fmtDays(doc.daysRemaining)}</Pill>
+              <span className="flex"><PlateBadge plate={v.plate} /></span>
+              <span className="min-w-[160px] flex-1 font-semibold md:min-w-0">{DOC_LABEL[doc.docType]}</span>
+              <span className="w-[110px] text-ink-muted md:w-auto">{v.region ?? "No warehouse"}</span>
+              <span className="w-[110px] tabular-nums text-ink-muted md:w-auto">{doc.expiryDate ? fmtDate(doc.expiryDate) : "No expiry"}</span>
+              <span className="md:justify-self-end"><Pill tone={doc.tone}>{doc.result === "FAIL" ? "FAILED" : fmtDays(doc.daysRemaining)}</Pill></span>
             </button>
           ))}
           {reminders.length > REMINDERS_SHOWN && (

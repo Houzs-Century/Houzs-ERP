@@ -50,27 +50,27 @@ export function BreakdownFiles({ caseId, refs, onChanged }: { caseId: string; re
   };
 
   return (
-    <div className="mt-2 rounded-md border border-border/70 bg-surface-2/30 p-2">
-      <div className="text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Photos &amp; videos</div>
+    <div className="mt-3 rounded-xl bg-surface p-3">
+      <div className="text-[12.5px] font-semibold text-ink-secondary">Photos &amp; videos</div>
       {refs.length > 0 && (
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px]">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px]">
           {refs.map((k) => (
-            <span key={k} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5">
-              <button type="button" onClick={() => void open(k)} className="text-primary hover:underline">{mediaLabel(k)}</button>
-              <button type="button" disabled={busy} onClick={() => void remove(k)} className="text-ink-muted hover:text-err" aria-label={`Remove ${mediaLabel(k)}`}>
-                <X size={11} />
+            <span key={k} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ece8df] pl-2.5 pr-1">
+              <button type="button" onClick={() => void open(k)} className="font-medium text-primary-ink underline">{mediaLabel(k)}</button>
+              <button type="button" disabled={busy} onClick={() => void remove(k)} className="rounded p-1 text-ink-muted hover:text-err" aria-label={`Remove ${mediaLabel(k)}`}>
+                <X size={13} />
               </button>
             </span>
           ))}
         </div>
       )}
-      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <input type="file" multiple accept={BREAKDOWN_MEDIA_ACCEPT} disabled={busy} aria-label="Attach photos or videos"
           onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ""; void upload(fs); }}
-          className="text-[11px] text-ink-secondary file:mr-2 file:rounded file:border file:border-border file:bg-surface-2 file:px-2 file:py-0.5 file:text-[11px]" />
-        <span className="text-[10.5px] text-ink-muted">{busy ? "Saving..." : "Photo 15 MB, video (MP4/MOV) 50 MB"}</span>
+          className="max-w-full text-[13px] text-ink-secondary file:mr-2 file:h-9 file:rounded-lg file:border file:border-[#d9d3c6] file:bg-surface file:px-3 file:text-[13px] file:font-semibold" />
+        <span className="text-[12px] text-ink-muted">{busy ? "Saving..." : "Photo 15 MB, video (MP4/MOV) 50 MB"}</span>
       </div>
-      {err && <div className="mt-1 text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="mt-1.5 text-[12.5px] font-semibold text-err">{err}</div>}
     </div>
   );
 }
