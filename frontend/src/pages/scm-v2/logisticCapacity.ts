@@ -53,3 +53,6 @@ export function capacityTotals(rows: readonly LorryCapacityRow[]): LorryCapacity
     revenue_per_trip_sen: div(revenue, deliveryTrips),
   };
 }
+
+/** A trip count as read: a half trip shows as .5, never rounded to a whole. */
+export const tripsText = (n: number | null | undefined): string => (n == null || !Number.isFinite(n) ? "—" : n % 1 === 0 ? String(n) : n.toFixed(1));

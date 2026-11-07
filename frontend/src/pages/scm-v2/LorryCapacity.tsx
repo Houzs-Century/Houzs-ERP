@@ -37,7 +37,7 @@ import {
   type FleetFilter,
   type LorryCapacityRow,
 } from '../../vendor/scm/lib/lorry-capacity-queries';
-import { capacityFromOverview, capacityTotals } from './logisticCapacity';
+import { capacityFromOverview, capacityTotals, tripsText } from './logisticCapacity';
 import type { LorryRow } from './LogisticDailySection';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './LorryCapacity.module.css';
@@ -233,8 +233,8 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
         </span>
       ),
     },
-    { key: 'total_trips', label: 'Total Trips', align: 'right', getValue: (l) => l.total_trips, render: (l) => numOrDash(l.total_trips) },
-    { key: 'delivery_days', label: 'Delivery Trips', align: 'right', getValue: (l) => l.delivery_days, render: (l) => numOrDash(l.delivery_days) },
+    { key: 'total_trips', label: 'Total Trips', align: 'right', getValue: (l) => l.total_trips, render: (l) => tripsText(l.total_trips) },
+    { key: 'delivery_days', label: 'Delivery Trips', align: 'right', getValue: (l) => l.delivery_days, render: (l) => tripsText(l.delivery_days) },
     { key: 'deliveries', label: 'Deliveries', align: 'right', getValue: (l) => l.deliveries, render: (l) => numOrDash(l.deliveries) },
     { key: 'orders_per_trip', label: 'Orders/Trip', align: 'right', getValue: (l) => l.orders_per_trip ?? null, render: (l) => numOrDash(l.orders_per_trip, 2) },
     { key: 'setup_dismantle', label: 'Setup/Dismantle', align: 'right', getValue: (l) => l.setup_dismantle, render: (l) => numOrDash(l.setup_dismantle) },
@@ -261,7 +261,7 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
       {/* Summary metric tiles */}
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Lorries" value={numOrDash(totals.lorries)} />
-        <StatCard label="Total Trips" value={numOrDash(totals.total_trips)} />
+        <StatCard label="Total Trips" value={tripsText(totals.total_trips)} />
         <StatCard label="Available Days" value={numOrDash(totals.available_days)} />
         <StatCard label="Utilisation" value={pctOrDash(totals.utilisation)} />
         <StatCard label="Orders/Delivery Trip" value={numOrDash(totals.orders_per_delivery_trip, 2)} />
