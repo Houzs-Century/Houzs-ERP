@@ -13,13 +13,16 @@ import type { DayRow, RegionRow, LorryRow, LorryDay, DoDrill } from "./LogisticD
 
 export type DoRow = { id: string; doNumber: string | null; soDocNo: string | null; customer: string | null; date: string; region: string; state: string | null; amountSen: number; lorry: string | null; status: string };
 
+type CategoryRow = { category: string; orders: number; amountSen: number; avgSen: number | null };
+
 export type PeriodTotals = {
   from: string; to: string; doCount: number; doAmountSen: number; podClosed: number;
   days: DayRow[]; byRegion: RegionRow[];
   lorry: { lorryDays: number; recordedOrders: number; perLorrySen: number | null; workingDays: number };
   byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
-  byCategory: Array<{ category: string; orders: number; amountSen: number; avgSen: number | null }>;
+  byCategory: CategoryRow[];
   chargesSen: number;
+  categoryByRegion: Partial<Record<string, { byCategory: CategoryRow[]; chargesSen: number }>>;
 };
 
 const titleCase = (s: string) => s.toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -55,6 +58,10 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
     byType.set(t, g);
   }
   const types = [...byType.values()].sort((a, b) => b.jobs - a.jobs);
+  /* Where the rest of the open deliveries sit: the job table is only this period. */
+  const openSo = rows.filter((o) => o.row_type === "so" && o.delivery_state !== "DELIVERED");
+  const dated = (test: (d: string) => boolean) => openSo.filter((o) => { const d = date(o); return !!d && test(d); }).length;
+  const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= period.to), after: dated((d) => d > period.to), none: openSo.filter((o) => !date(o)).length };
   const avgOrder = totals && totals.doCount ? totals.doAmountSen / totals.doCount : null;
 
   return (
@@ -85,7 +92,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
             </table>
           ) : <p className="text-[12.5px] text-ink-muted">Nothing delivered in this period.</p>}
           <p className="mt-1 text-[11px] text-ink-muted">
-            An order counts in each category it charges for, with only that category&apos;s amount. Free items (bundled bedframes, gift pillows) are left out, and so are fee lines (transport, disposal, storage{totals?.chargesSen ? `: ${fmtSen(totals.chargesSen)} this period` : ""}).
+            Each order counts once, with its whole amount: Sofa or Mattress when it has one, Bedframe only when the order delivers no sofa or mattress. Free items (bundled bedframes, gift pillows) are left out, and so are fee lines (transport, disposal, storage{totals?.chargesSen ? `: ${fmtSen(totals.chargesSen)} this period` : ""}).
           </p>
         </div>
         <div>
@@ -98,6 +105,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
               {types.length === 0 && <tr><Td left className="text-ink-muted">No jobs dated in this period.</Td></tr>}
             </tbody>
           </table>
+            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, by each job&apos;s delivery date; Done = marked delivered there. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
         </div>
       </div>
     </Panel>

@@ -1,6 +1,7 @@
 /* Logistic Overview, day by day (owner, 2026-10-17): delivered per day with the
    average order and the average per lorry, by region, the average order per
    category with fee lines left out. */
+import { regionOf as frontendRegionOf } from '../../frontend/src/vendor/shared/logistic-region';
 import { describe, expect, test } from 'vitest';
 import { logisticPeriod, regionOf, workingDays, type PeriodDo } from '../src/scm/lib/logistic-period';
 
@@ -8,14 +9,50 @@ const d = (o: Partial<PeriodDo>): PeriodDo => ({
   id: 'd1', doDate: '2026-10-02', status: 'LOADED', amountSen: 1000_00, state: 'SELANGOR', lorry: null, ...o,
 });
 
+describe('delivery days and days in use', () => {
+  const run = () => logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-03', [{ plate: 'L1', internal: true }], '2026-10-03', new Map(), new Map([['L1', new Set(['2026-10-02'])]]));
+  test('a day on another job is in use but is not a delivery day', () => {
+    expect(run().byLorry[0]).toMatchObject({ daysOut: 1, usedDays: 2, workingDays: 3, occupancyPct: 66.7 });
+  });
+  test('revenue per day is over delivery days only', () => {
+    expect(run().byLorry[0]).toMatchObject({ perDayOutSen: 3000_00 });
+  });
+});
+
+describe('what category an order is', () => {
+  const run = (lines: Array<{ doId: string; category: string; sen: number }>) =>
+    logisticPeriod([d({ id: 'a' }), d({ id: 'b' })], lines, '2026-10-02', '2026-10-02', [], '2026-10-17', new Map(), new Map()).byCategory;
+
+  test('a mattress with a bedframe is one mattress order, whole amount', () => {
+    expect(run([{ doId: 'a', category: 'Mattress', sen: 300 }, { doId: 'a', category: 'Bedframe', sen: 100 }]))
+      .toEqual([{ category: 'Mattress', orders: 1, amountSen: 400, avgSen: 400 }]);
+  });
+  test('a bedframe counts when the order delivers only that', () => {
+    expect(run([{ doId: 'a', category: 'Bedframe', sen: 100 }, { doId: 'a', category: 'Accessories', sen: 20 }]))
+      .toEqual([{ category: 'Bedframe', orders: 1, amountSen: 120, avgSen: 120 }]);
+  });
+  test('accessories alone stay accessories', () => {
+    expect(run([{ doId: 'b', category: 'Accessories', sen: 20 }])[0]?.category).toBe('Accessories');
+  });
+  test('a free bundled bedframe does not make a bedframe order', () => {
+    expect(run([{ doId: 'a', category: 'Bedframe', sen: 0 }])).toEqual([]);
+  });
+});
+
+describe('the region rule', () => {
+  test('the page and the server agree', () => {
+    for (const s of ['Kuala Lumpur', 'PULAU PINANG', 'Negeri Sembilan', 'SARAWAK', 'PAHANG', 'Sabah', 'Oversea', null]) expect(frontendRegionOf(s)).toBe(regionOf(s));
+  });
+});
+
 describe('a lorry in the workshop', () => {
   test('its down days come off the days it could work, so occupancy reads what it could do', () => {
-    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-02'])]]));
+    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-02'])]]), new Map());
     expect(r.byLorry[0]).toMatchObject({ daysOut: 1, workingDays: 1, downDays: 1, occupancyPct: 100, perDayOutSen: 3000_00 });
   });
 
   test('the day it delivered and then broke down stays a day it worked; only the next is off', () => {
-    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-03', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-01', '2026-10-02'])]]));
+    const r = logisticPeriod([d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' })], [], '2026-10-01', '2026-10-03', [{ plate: 'L1', internal: true }], '2026-10-17', new Map([['L1', new Set(['2026-10-01', '2026-10-02'])]]), new Map());
     expect(r.byLorry[0]).toMatchObject({ daysOut: 1, workingDays: 2, downDays: 1, occupancyPct: 50 });
   });
 });
@@ -46,7 +83,7 @@ describe('logistic period', () => {
       { doId: 'a', category: 'Mattress', sen: 2000_00 }, { doId: 'a', category: 'Bedframe', sen: 1000_00 },
       { doId: 'b', category: 'Mattress', sen: 1000_00 }, { doId: 'b', category: 'Accessories', sen: 0 },
       { doId: 'b', category: 'Charges', sen: 150_00 }, { doId: 'c', category: 'Sofa', sen: 1000_00 },
-    ], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }, { plate: 'L9', internal: true }], '2026-10-17', new Map());
+    ], '2026-10-01', '2026-10-02', [{ plate: 'L1', internal: true }, { plate: 'L9', internal: true }], '2026-10-17', new Map(), new Map());
     expect(r.days[0]).toMatchObject({ date: '2026-10-01', orders: 4, amountSen: 12000_00, avgOrderSen: 3000_00, lorries: 2, lorryOrders: 3, perLorrySen: 3000_00 });
     expect(r.days[1]).toMatchObject({ date: '2026-10-02', orders: 0, perLorrySen: null });
     expect(r.lorry).toEqual({ lorryDays: 2, recordedOrders: 3, perLorrySen: 3000_00, workingDays: 2 });
@@ -54,8 +91,7 @@ describe('logistic period', () => {
     expect(r.lorryDayList[0]).toEqual({ date: '2026-10-01', lorry: 'L1', orders: 2, amountSen: 4000_00 });
     expect(r.byRegion.map((g) => [g.region, g.orders])).toEqual([['KL / Selangor', 3], ['Northern', 1]]);
     expect(r.byCategory).toEqual([
-      { category: 'Mattress', orders: 2, amountSen: 3000_00, avgSen: 1500_00 },
-      { category: 'Bedframe', orders: 1, amountSen: 1000_00, avgSen: 1000_00 },
+      { category: 'Mattress', orders: 2, amountSen: 4000_00, avgSen: 2000_00 },
     ]);
     expect(r.chargesSen).toBe(150_00);
   });

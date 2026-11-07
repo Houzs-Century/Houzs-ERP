@@ -8,6 +8,7 @@
    owe money (the sheet's "Overdue balance > 30 days"), and DOs never closed
    or carrying no cost.
    Company scope: every read is scoped to the active company. */
+import { loadProjectJobs } from './lorry-capacity';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -73,6 +74,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   });
   const weekOf = (d: string | null) => (d ? weeks.find((w) => d.slice(0, 10) >= w.from && d.slice(0, 10) <= w.to) : undefined);
   const months = new Map<string, { month: string; doCount: number; doAmountSen: number }>();
+  const deliveredMonths = new Map<string, { month: string; doCount: number; doAmountSen: number }>();
   for (const d of dos.data ?? []) {
     const date = String(d.do_date ?? '').slice(0, 10);
     const w = weekOf(date);
@@ -80,6 +82,9 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     // A DELIVERED order without a delivered_at stamp (older imports) counts on its DO date.
     const dw = d.status === 'DELIVERED' ? weekOf(String(d.delivered_at ?? d.do_date ?? '')) : undefined;
     if (dw) dw.delivered += 1;
+    // Monthly volume is what was confirmed delivered, in the month it was delivered.
+    const dm = d.status === 'DELIVERED' ? String(d.delivered_at ?? d.do_date ?? '').slice(0, 7) : '';
+    if (dm) { const row = deliveredMonths.get(dm) ?? { month: dm, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); deliveredMonths.set(dm, row); }
     const m = date.slice(0, 7);
     if (m) { const row = months.get(m) ?? { month: m, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); months.set(m, row); }
   }
@@ -189,12 +194,27 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const down = await loadDownWindows(sb, pFrom, pEnd, today);
   if (down.error) return fail('lorry down days', { message: down.error });
   const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
+  /* The days each lorry was in use: its runs, and event set-ups and dismantles. A day
+     with only those is not a delivery day, but the lorry was not free either. */
+  const used = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
+    .select('lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
+  if (used.error) return fail('lorry runs in the period', used.error);
+  const projectJobs = await loadProjectJobs(c, pFrom, pEnd);
+  if (projectJobs.error) return fail('event lorries', { message: projectJobs.error });
+  const usedByPlate = new Map<string, Set<string>>();
+  const markUsed = (plate: string | null | undefined, date: unknown) => {
+    const day = String(date ?? '').slice(0, 10);
+    if (!plate || !day) return;
+    usedByPlate.set(plate, (usedByPlate.get(plate) ?? new Set<string>()).add(day));
+  };
+  for (const u of used.data ?? []) markUsed(plateOf.get(String(u.lorry_id)), u.trip_date);
+  for (const j of projectJobs.data) markUsed(j.lorryId ? plateOf.get(j.lorryId) : j.lorryPlate, j.date);
   const period = {
     from: pFrom, to: pTo,
     doCount: pDos.length,
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
-    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate),
+    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate, usedByPlate),
     /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),
@@ -208,6 +228,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     doNotClosed, doNoCost, soNoProcessing,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
+    deliveredMonths: [...deliveredMonths.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,
     deliveredOwingOver30: overdue30,
   } };

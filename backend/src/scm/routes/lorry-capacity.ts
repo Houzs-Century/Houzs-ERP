@@ -172,7 +172,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
 /* PMS project setup / dismantle windows with a lorry (420 of the 421 lorry rows
    on the board, 15 Oct 2026). Same raw-SQL read as the board's project rows,
    scoped to the active company. */
-async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
+export async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
   const proj = await c.env.DB.prepare(
     `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
        FROM projects WHERE archived_at IS NULL
