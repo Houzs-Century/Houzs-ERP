@@ -562,8 +562,13 @@
     },
     {
       "check": "D1",
-      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
-      "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
+      "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it on the map; the Delivery Zones page names and colours it (zoneModel.ts, pinned to zone-classify.ts by backend/tests/zoneModelPin.test.ts). Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+    },
+    {
+      "check": "D1",
+      "key": "KAJANG,KL,KLANG,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts",
+      "why": "THE KLANG VALLEY ZONES. zone-classify.ts decides they share trips; the Delivery Zones page groups them on its map. Pinned equal by backend/tests/zoneModelPin.test.ts."
     },
     {
       "check": "D1",
