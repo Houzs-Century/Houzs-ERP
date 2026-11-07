@@ -31,6 +31,8 @@ export type DriverRow = {
   inHouse?: boolean;
   active: boolean;
   created_at: string;
+  /** Mig 20261107T2000: the warehouse this driver works from. */
+  warehouse_id?: string | null;
 };
 
 export type NewDriver = {
@@ -47,6 +49,7 @@ export type NewDriver = {
   vehicle?: string;
   inHouse?: boolean;
   active?: boolean;
+  warehouseId?: string | null;
 };
 
 export function useDrivers(opts?: { includeInactive?: boolean }) {

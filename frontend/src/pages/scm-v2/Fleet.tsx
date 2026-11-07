@@ -25,6 +25,7 @@
 // sibling SCM surface still carries the same shape; do not "restore" the claim.
 // ----------------------------------------------------------------------------
 
+import { CrewWarehouseCell } from './fleet/CrewWarehouseCell';
 import { LorriesBoard } from "./fleet/LorriesBoard";
 import { useCallback, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
@@ -78,6 +79,24 @@ const fmtNum = (v: number | string | null): string => {
   return Number.isFinite(n) ? String(n) : '—';
 };
 
+/** The warehouses and the lorries each driver / helper usually crews, for the rows. */
+const useCrewLookups = () => {
+  const warehouses = useWarehouses();
+  const lorries = useLorries();
+  return useMemo(() => {
+    const ws = (warehouses.data ?? []).map((w) => ({ id: w.id, code: w.code, name: w.name }));
+    const names = new Map(ws.map((w) => [w.id, w.name]));
+    const plates = (pick: (l: LorryRow) => string | null | undefined) => (id: string) =>
+      (lorries.data ?? []).filter((l) => pick(l) === id).map((l) => l.plate).join(', ');
+    return {
+      warehouses: ws,
+      whName: (id: string | null) => (id ? names.get(id) ?? '' : ''),
+      lorriesOfDriver: plates((l) => l.usual_driver_id),
+      lorriesOfHelper: plates((l) => l.usual_helper_id),
+    };
+  }, [warehouses.data, lorries.data]);
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Page — three stacked sections.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +123,7 @@ export const Fleet = ({ embedded = false }: { embedded?: boolean } = {}) => {
 // Drivers section (logic from the former Drivers.tsx).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DriversSection = () => {
+export const DriversSection = () => {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
   // Row-click opens the detail drawer to edit name / phone / IC / vehicle — the
@@ -113,6 +132,7 @@ const DriversSection = () => {
   const [editId, setEditId] = useState<string | null>(null);
   const drivers = useDrivers({ includeInactive });
   const update = useUpdateDriver();
+  const crew = useCrewLookups();
   const notify = useNotify();
 
   const editDriver = useMemo(
@@ -181,6 +201,24 @@ const DriversSection = () => {
       label: 'Vehicle',
       width: 170,
       accessor: (d) => d.vehicle ?? '—',
+    },
+    {
+      key: 'usualLorry',
+      label: 'Usual lorry',
+      width: 140,
+      accessor: (d) => crew.lorriesOfDriver(d.id) || '—',
+      searchValue: (d) => crew.lorriesOfDriver(d.id),
+    },
+    {
+      key: 'warehouse',
+      label: 'Works from',
+      width: 200,
+      accessor: (d) => (
+        <CrewWarehouseCell value={d.warehouse_id ?? null} warehouses={crew.warehouses} label={`Warehouse of ${d.name}`}
+          onChange={(id) => updateMutate({ id: d.id, warehouseId: id })} />
+      ),
+      searchValue: (d) => crew.whName(d.warehouse_id ?? null),
+      filterValue: (d) => crew.whName(d.warehouse_id ?? null),
     },
     {
       // EDITABLE, not a label. The retired /scm/drivers page (Drivers.tsx) grew
@@ -395,10 +433,11 @@ const EditDriverDrawer = ({ driver, onClose }: { driver: DriverRow; onClose: () 
 // Helpers section (logic from the former Helpers.tsx).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HelpersSection = () => {
+export const HelpersSection = () => {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
   const helpers = useHelpers({ includeInactive });
+  const crew = useCrewLookups();
   const update = useUpdateHelper();
   const updateMutate = update.mutate;
 
@@ -447,6 +486,24 @@ const HelpersSection = () => {
       searchValue: (h) => ((h.inHouse ?? h.in_house) !== false ? 'In-house' : 'Outsource'),
       filterValue: (h) => ((h.inHouse ?? h.in_house) !== false ? 'In-house' : 'Outsource'),
       sortFn: (a, b) => Number((a.inHouse ?? a.in_house) !== false) - Number((b.inHouse ?? b.in_house) !== false),
+    },
+    {
+      key: 'usualLorry',
+      label: 'Usual lorry',
+      width: 140,
+      accessor: (h) => crew.lorriesOfHelper(h.id) || '—',
+      searchValue: (h) => crew.lorriesOfHelper(h.id),
+    },
+    {
+      key: 'warehouse',
+      label: 'Works from',
+      width: 200,
+      accessor: (h) => (
+        <CrewWarehouseCell value={h.warehouse_id ?? null} warehouses={crew.warehouses} label={`Warehouse of ${h.name}`}
+          onChange={(id) => updateMutate({ id: h.id, warehouseId: id })} />
+      ),
+      searchValue: (h) => crew.whName(h.warehouse_id ?? null),
+      filterValue: (h) => crew.whName(h.warehouse_id ?? null),
     },
     {
       key: 'active',
@@ -559,7 +616,7 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
 // Lorries section (logic from the former Lorries.tsx — incl. the Fleet filter).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LorriesSection = () => {
+export const LorriesSection = () => {
   const [creating, setCreating] = useState(false);
   return (
     <section className={styles.section}>
