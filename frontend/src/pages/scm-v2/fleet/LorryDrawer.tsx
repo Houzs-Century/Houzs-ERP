@@ -7,7 +7,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { cn } from "../../../lib/utils";
 import { api } from "../../../api/client";
-import { fmtSen } from "../../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../vendor/shared/format";
+import { DateField } from "../../../vendor/scm/components/DateField";
 import { writeFailed, writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { expiryStatus, type ComplianceTone } from "../../../vendor/shared/lorry-compliance";
@@ -43,7 +44,7 @@ const LinkBtn = ({ onClick, children }: { onClick: () => void; children: ReactNo
 );
 const inputCls = "min-h-[40px] w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink";
 const docPhrase = (days: number | null, date: string | null) =>
-  date == null ? "Not recorded" : days != null && days < 0 ? `Expired ${date}` : days != null && days <= 45 ? `Expires in ${days} days` : `Valid to ${date}`;
+  date == null ? "Not recorded" : days != null && days < 0 ? `Expired ${fmtDate(date)}` : days != null && days <= 45 ? `Expires in ${days} days` : `Valid to ${fmtDate(date)}`;
 
 export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gpsAt, onClose }: {
   lorry: LorryRow; warehouses: WarehouseLite[]; drivers: DriverRow[]; helpers: HelperRow[]; carriers: ThreePLCompanyRow[];
@@ -143,7 +144,7 @@ function Documents({ lorry }: { lorry: LorryRow }) {
             </div>
             {renew === d.type && (
               <div className="mt-2 grid grid-cols-[1fr_1fr_auto_auto] items-end gap-2">
-                <label className="text-[11px] text-ink-muted">New expiry date<input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} /></label>
+                <label className="text-[11px] text-ink-muted">New expiry date<DateField value={expiry} onChange={setExpiry} fullWidth aria-label="New expiry date" /></label>
                 <label className="text-[11px] text-ink-muted">Reference no.<input value={ref} onChange={(e) => setRef(e.target.value)} className={inputCls} /></label>
                 <button type="button" disabled={!expiry || busy} onClick={() => void save()} className="min-h-[40px] rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white disabled:opacity-50">Save</button>
                 <button type="button" onClick={() => setRenew(null)} className="min-h-[40px] px-2 text-[12.5px] text-ink">Cancel</button>
@@ -172,7 +173,7 @@ function ServiceRecords({ lorryId }: { lorryId: string }) {
     <Card title="Service and workshop" action={<span className="flex gap-3"><LinkBtn onClick={() => setAdding(true)}>Add record</LinkBtn><Link to={`/fleet-health/${lorryId}`} className="text-[12.5px] font-semibold text-primary hover:underline">Repairs</Link></span>}>
       {adding && (
         <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg bg-surface-2 p-3">
-          <label className="text-[11px] text-ink-muted">Date<input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} className={inputCls} /></label>
+          <label className="text-[11px] text-ink-muted">Date<DateField value={f.date} onChange={(v) => setF({ ...f, date: v })} fullWidth aria-label="Service date" /></label>
           <label className="text-[11px] text-ink-muted">Workshop<input value={f.workshop} onChange={(e) => setF({ ...f, workshop: e.target.value })} className={inputCls} /></label>
           <label className="col-span-2 text-[11px] text-ink-muted">What was done<input value={f.what} onChange={(e) => setF({ ...f, what: e.target.value })} className={inputCls} /></label>
           <label className="text-[11px] text-ink-muted">Cost (RM)<input inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} className={inputCls} /></label>
@@ -187,10 +188,10 @@ function ServiceRecords({ lorryId }: { lorryId: string }) {
       {!records.isLoading && !records.isError && list.length === 0 && <p className="text-[12.5px] text-ink-muted">No service recorded yet.</p>}
       {list.map((r) => (
         <div key={r.id} className="flex items-start justify-between gap-2 border-t border-border-subtle py-2 first:border-t-0 text-[12.5px]">
-          <div><div className="font-semibold text-ink">{r.service_date}</div><div className="text-ink">{r.description}</div>
+          <div><div className="font-semibold text-ink">{fmtDate(r.service_date)}</div><div className="text-ink">{r.description}</div>
             <div className="text-ink-muted">{[r.workshop, r.odometer_km != null ? `${r.odometer_km.toLocaleString()} km` : null].filter(Boolean).join(" · ")}</div></div>
           <span className="flex items-center gap-3"><b>{fmtSen(r.cost_sen)}</b>
-            <LinkBtn onClick={() => { void confirm({ title: "Delete this service record?", body: `${r.service_date} · ${r.description}`, confirmLabel: "Delete", danger: true }).then((ok) => { if (ok) del.mutate(r.id, { onError: writeFailedAs("The record was not deleted") }); }); }}>Delete</LinkBtn></span>
+            <LinkBtn onClick={() => { void confirm({ title: "Delete this service record?", body: `${fmtDate(r.service_date)} · ${r.description}`, confirmLabel: "Delete", danger: true }).then((ok) => { if (ok) del.mutate(r.id, { onError: writeFailedAs("The record was not deleted") }); }); }}>Delete</LinkBtn></span>
         </div>
       ))}
     </Card>
