@@ -2,6 +2,8 @@
 // delivered (DO amount and orders), the average order (delivery orders only),
 // the average a lorry carried, what is overdue today, the average order per
 // product category, and the jobs of the period by type.
+import { jobDate } from "./logisticFocus";
+import type { LorryJob } from "../../vendor/shared/logistic-region";
 import { useState } from "react";
 import { fmtSen } from "../../vendor/shared/format";
 import { ASSR_JOB_KIND_LABEL, type AssrJobKind, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
@@ -22,6 +24,7 @@ export type PeriodTotals = {
   byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
   byCategory: CategoryRow[];
   chargesSen: number;
+  lorryJobs: LorryJob[];
   categoryByRegion: Partial<Record<string, { byCategory: CategoryRow[]; chargesSen: number }>>;
 };
 
@@ -48,7 +51,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
 }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
-  const date = (o: PlanningOrder) => o.effective_delivery_date;
+  const date = (o: PlanningOrder) => jobDate(o);
   const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= period.to);
   const byType = new Map<string, { type: string; jobs: number; done: number }>();
   for (const o of jobs) {
@@ -105,7 +108,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
               {types.length === 0 && <tr><Td left className="text-ink-muted">No jobs dated in this period.</Td></tr>}
             </tbody>
           </table>
-            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, by each job&apos;s delivery date; Done = marked delivered there. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
+            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, every job done or not, by its delivery date, else its sales exemption date; Done = marked delivered there. Closed service legs stay on the board 30 days, so an older period reads them low. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
         </div>
       </div>
     </Panel>

@@ -8,6 +8,7 @@
    owe money (the sheet's "Overdue balance > 30 days"), and DOs never closed
    or carrying no cost.
    Company scope: every read is scoped to the active company. */
+import type { LorryJob, LorryJobKind } from '../shared/logistic-region';
 import { loadProjectJobs } from './lorry-capacity';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -31,6 +32,11 @@ logisticOverview.use('*', supabaseAuth);
 
 type Row = Record<string, unknown>;
 const DAY = 86400000;
+/** How a run's stop counts for the lorry. A lorry service is the lorry's own upkeep. */
+const STOP_KIND: Readonly<Record<string, LorryJobKind | null>> = {
+  DELIVERY: 'delivery', SERVICE: 'service', INSPECTION: 'service', PICKUP: 'service',
+  SETUP: 'setup', DISMANTLE: 'setup', SUPPLIER_PICKUP: 'transport', TRANSFER: 'transport', LORRY_SERVICE: null,
+};
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
@@ -194,27 +200,35 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const down = await loadDownWindows(sb, pFrom, pEnd, today);
   if (down.error) return fail('lorry down days', { message: down.error });
   const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
-  /* The days each lorry was in use: its runs, and event set-ups and dismantles. A day
-     with only those is not a delivery day, but the lorry was not free either. */
+  /* What each lorry did, from its runs' stops and event set-ups and dismantles. */
   const used = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
-    .select('lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
+    .select('id, lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
   if (used.error) return fail('lorry runs in the period', used.error);
+  const usedStops = await chunkIn<Row>((used.data ?? []).map((u) => String(u.id)), (b, f, t) => scopeToCompany(sb.from('trip_stops')
+    .select('trip_id, stop_type').in('trip_id', b), c).order('id').range(f, t));
+  if (usedStops.error) return fail('lorry run stops in the period', usedStops.error);
   const projectJobs = await loadProjectJobs(c, pFrom, pEnd);
   if (projectJobs.error) return fail('event lorries', { message: projectJobs.error });
-  const usedByPlate = new Map<string, Set<string>>();
-  const markUsed = (plate: string | null | undefined, date: unknown) => {
-    const day = String(date ?? '').slice(0, 10);
-    if (!plate || !day) return;
-    usedByPlate.set(plate, (usedByPlate.get(plate) ?? new Set<string>()).add(day));
-  };
-  for (const u of used.data ?? []) markUsed(plateOf.get(String(u.lorry_id)), u.trip_date);
-  for (const j of projectJobs.data) markUsed(j.lorryId ? plateOf.get(j.lorryId) : j.lorryPlate, j.date);
+  const runOf = new Map((used.data ?? []).map((u) => [String(u.id), { plate: plateOf.get(String(u.lorry_id)), date: String(u.trip_date ?? '').slice(0, 10) }]));
+  const lorryJobs: LorryJob[] = [];
+  for (const s of usedStops.data) {
+    const run = runOf.get(String(s.trip_id));
+    const kind = STOP_KIND[String(s.stop_type)];
+    if (run?.plate && run.date && kind) lorryJobs.push({ plate: run.plate, date: run.date, kind });
+  }
+  /* An event's lorry is kept on the project; the same set-up can also sit on a run. */
+  const setupOnRun = new Set(lorryJobs.filter((j) => j.kind === 'setup').map((j) => `${j.plate}|${j.date}`));
+  for (const j of projectJobs.data) {
+    const plate = j.lorryId ? plateOf.get(j.lorryId) : j.lorryPlate;
+    const date = String(j.date ?? '').slice(0, 10);
+    if (plate && date && !setupOnRun.has(`${plate}|${date}`)) lorryJobs.push({ plate, date, kind: 'setup' });
+  }
   const period = {
     from: pFrom, to: pTo,
     doCount: pDos.length,
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
-    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate, usedByPlate),
+    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate, lorryJobs),
     /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),

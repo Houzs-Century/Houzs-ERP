@@ -19,7 +19,7 @@ import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
-import { focusPeriod, reportWindows } from "./logisticFocus";
+import { focusPeriod, jobDate, reportWindows } from "./logisticFocus";
 import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
@@ -105,6 +105,12 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     if (r) next.set("region", r); else next.delete("region");
     return next;
   }, { replace: true });
+  const day = params.get("day");
+  const setDay = (d: string | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (d) next.set("day", d); else next.delete("day");
+    return next;
+  }, { replace: true });
   const regionRows: PlanningOrder[] = useMemo(() => (region ? allRows.filter((o) => regionOf(o.customer_state) === region) : allRows), [allRows, region]);
   const rows: PlanningOrder[] = useMemo(() => allRows.filter((o) => o.row_type === "so"), [allRows]);
   /* Every open sales order, as of today, by when it is due (owner 2026-10-17:
@@ -139,11 +145,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const ready = open.filter((o) => o.is_ship_ready);
 
   const h = hist.data;
-  const focus = useMemo(() => (h?.period ? focusPeriod(h.period, region) : null), [h, region]);
+  const focus = useMemo(() => (h?.period ? focusPeriod(h.period, region, day) : null), [h, region, day]);
   /* The weekly and bi-weekly reports read Delivery Planning, not issued DOs (owner
      2026-11-07): every order by its delivery date, confirmed with the customer or
      not, so a week ahead is a forecast and moves as dates move on the board. */
-  const [reportSize, setReportSize] = useState<"week" | "fortnight">("week");
+  const [reportSize, setReportSize] = useState<"week" | "fortnight" | "month">("week");
   const weeks = useMemo(() => {
     const pad = (n: number) => String(n).padStart(2, "0");
     const months: string[] = [];
@@ -154,7 +160,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     }
     const orders = regionRows.filter((o) => o.row_type === "so");
     return reportWindows(months, reportSize).map((w) => {
-      const xs = orders.filter((o) => { const d = o.effective_delivery_date; return !!d && d >= w.from && d <= w.to; });
+      const xs = orders.filter((o) => { const d = jobDate(o); return !!d && d >= w.from && d <= w.to; });
       return {
         ...w, rows: xs, doCount: xs.length, doAmountSen: xs.reduce((x, o) => x + o.local_total_sen, 0),
         delivered: xs.filter((o) => o.delivery_state === "DELIVERED").length, current: today >= w.from && today <= w.to,
@@ -219,8 +225,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={regionRows} period={period} today={today} totals={focus}
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
-      {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} onDrill={openDos} />}
-      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.doCount} region={region} onDrill={openDos} />}
+      {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
+      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.doCount} region={region} day={day} onDrill={openDos} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
@@ -288,9 +294,9 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
-      <Panel title={`${reportSize === "week" ? "Weekly" : "Bi-weekly"} logistic report${region ? ` · ${region}` : ""}`} hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
+      <Panel title={`${{ week: "Weekly", fortnight: "Bi-weekly", month: "Monthly" }[reportSize]} logistic report${region ? ` · ${region}` : ""}`} hint={`${period.label} every order by its delivery date, else its sales exemption date, on Delivery Planning, confirmed or not · how much is due and how much is left · click a row for its orders`}
         right={<span className="flex items-center gap-2">
-          <Toggle value={reportSize} options={[["week", "Weekly"], ["fortnight", "Bi-weekly"]]} onChange={setReportSize} />
+          <Toggle value={reportSize} options={[["week", "Weekly"], ["fortnight", "Bi-weekly"], ["month", "Monthly"]]} onChange={setReportSize} />
           <Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />
         </span>}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
@@ -300,7 +306,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
             line={weekBy === "amount" ? { name: "Average order", color: PALETTE[1]!, values: weeks.map((w) => (w.doCount ? Math.round(w.doAmountSen / w.doCount) : null)), format: rm } : null} />
           <table className="w-full border-collapse self-start">
-            <thead><tr><Th left>{reportSize === "week" ? "Week" : "Fortnight"}</Th><Th>Orders due</Th><Th>Amount</Th><Th>Average order</Th><Th>Delivered</Th><Th>To deliver</Th></tr></thead>
+            <thead><tr><Th left>{{ week: "Week", fortnight: "Fortnight", month: "Month" }[reportSize]}</Th><Th>Orders due</Th><Th>Amount</Th><Th>Average order</Th><Th>Delivered</Th><Th>To deliver</Th></tr></thead>
             <tbody>{weeks.map((w) => (
               <tr key={w.key} onClick={() => openSos(`Due · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, w.rows)}
                 className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>

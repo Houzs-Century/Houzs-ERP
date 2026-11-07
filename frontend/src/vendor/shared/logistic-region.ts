@@ -9,3 +9,26 @@ export function regionOf(state: string | null): string {
   if (/(SABAH|SARAWAK|LABUAN)/.test(s)) return 'East Malaysia';
   return 'Other';
 }
+
+/** A job a lorry did, by how it counts (owner 2026-11-07). */
+export type LorryJobKind = 'delivery' | 'service' | 'setup' | 'transport';
+export interface LorryJob { plate: string; date: string; kind: LorryJobKind }
+
+/** A delivery run goes out once however many orders it carries, and service jobs ride
+ *  on it. A set-up or a dismantle is a trip each. A supplier pickup or a stock transfer
+ *  is half a trip. */
+export function lorryTrips(doDates: Iterable<string>, jobs: readonly LorryJob[]) {
+  const deliveryDates = new Set(doDates);
+  for (const j of jobs) if (j.kind === 'delivery' || j.kind === 'service') deliveryDates.add(j.date);
+  const setups = jobs.filter((j) => j.kind === 'setup');
+  const moves = jobs.filter((j) => j.kind === 'transport');
+  return {
+    deliveryDays: deliveryDates.size,
+    setupDays: new Set(setups.map((j) => j.date)).size,
+    transportDays: new Set(moves.map((j) => j.date)).size,
+    usedDays: new Set([...deliveryDates, ...jobs.map((j) => j.date)]).size,
+    serviceOrders: jobs.filter((j) => j.kind === 'service').length,
+    otherTrips: setups.length + moves.length * 0.5,
+    trips: deliveryDates.size + setups.length + moves.length * 0.5,
+  };
+}
