@@ -20,6 +20,8 @@ export type HelperRow = {
   inHouse?: boolean;
   active: boolean;
   created_at: string;
+  /** Mig 20261107T2000: the warehouse this helper works from. */
+  warehouse_id?: string | null;
 };
 
 export type NewHelper = {
@@ -32,6 +34,7 @@ export type NewHelper = {
   icNumber?: string;
   inHouse?: boolean;
   active?: boolean;
+  warehouseId?: string | null;
 };
 
 export function useHelpers(opts?: { includeInactive?: boolean }) {
