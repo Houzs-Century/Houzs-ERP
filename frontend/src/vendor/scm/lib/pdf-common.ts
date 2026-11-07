@@ -155,7 +155,12 @@ const WINANSI_ABOVE_LATIN1 = new Set([
    would refuse to print over its own punctuation. Folded to ASCII for paper;
    the screen keeps the symbols. Applied to a whole cell, a customer's own
    arrow folds the same way, which is a faithful print, not a corruption. */
-const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [[/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~']];
+/* Spaces and marks pasted from Word or a website (HC-PO-2611-134 held a U+2006): they
+   look like nothing, so nobody can find them to remove, and neither font carries them. */
+const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [
+  [/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~'],
+  [/[ -   　]/g, ' '], [/[​-‏⁠﻿]/g, ''],
+];
 export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
 /** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
@@ -191,8 +196,8 @@ const CJK_FETCH_FAILED =
 /* Not worded as "Chinese": the same guard catches anything helvetica can't
    paint that the subset doesn't carry either — a traditional 陳, a rare given
    name, an emoji someone pasted into a remark. */
-const CJK_GLYPH_MISSING =
-  'This document has a character we cannot print yet, so the PDF was not created.';
+const glyphMissing = (cps: readonly number[]): string =>
+  `This document has a character we cannot print yet (${cps.slice(0, 5).map((cp) => `"${String.fromCodePoint(cp)}" U+${cp.toString(16).toUpperCase()}`).join(', ')}), so the PDF was not created. Remove it from the document and try again.`;
 
 /* Scans the text as it will be PAINTED: the fold shim below turns these
    symbols into ASCII at draw time, so an "→" in a line remark (BUG-28,
@@ -338,7 +343,7 @@ export async function ensurePdfCjkFont(
     | Record<number, number>
     | undefined;
   const missing = [...needed].filter((cp) => codeMap?.[cp] === undefined);
-  if (missing.length > 0) throw new Error(CJK_GLYPH_MISSING);
+  if (missing.length > 0) throw new Error(glyphMissing(missing));
 
   if (!docShimmed.has(doc)) {
     /* The generators ask for 'helvetica' by name in ~50 places, and
