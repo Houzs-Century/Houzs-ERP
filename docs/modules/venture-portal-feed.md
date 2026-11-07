@@ -20,7 +20,11 @@ Ships **off** behind three gates, all of which must be set from the
 | shared secret | `scm.sync_config` key `vp.secret` | absent |
 | brands the portal pays on | `scm.sync_config` key `vp.brands` | `AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI` (seeded) |
 
-`vp.since` is a fourth, optional date floor. **Capture is unconditional** —
+`vp.since` is a fourth, optional date floor: an order dated before it is
+skipped without a request, except one whose salesperson's `scm.staff` row is
+not active and which took a payment dated on or after it
+(`scm.vp_old_orders_wanted`) — the portal pays the colleague who collected the
+top-up of a departed salesperson's order. **Capture is unconditional** —
 a same-transaction `AFTER` trigger on `mfg_sales_orders` / `_items` /
 `_payments` queues an outbox row regardless of the switch; the switch and
 config gate only the **drain**, so turning the feed off leaves the queue
@@ -38,7 +42,10 @@ batch left the queue, or after the same wait when an order was saved again
 while in flight); (2) the unchanged `*/5` cron
 (`drainVenturePortalOutbox`) — the zero-loss guarantee; (3) the `*/30` cron
 (`reconcileVenturePortalOutbox`) requeues any in-scope order with no
-delivered row. **Trigger-written rows drain before backfill/RECONCILE rows**
+delivered row, and any such old order whose newest change, or newest payment
+dated on or after `vp.since`, never reached the portal (a sent row alone is
+not enough: the first backfill sent them before the portal had a date floor).
+**Trigger-written rows drain before backfill/RECONCILE rows**
 within a sweep — a live save must never queue behind a backlog.
 
 Response taxonomy (deliberately NOT the portal contract's "retry forever on
@@ -114,7 +121,9 @@ non-2xx"):
   `vpBrand` for a bill whose `branding` names no brand.
 - `vp_build_payloads` takes an array and answers the whole batch in **one**
   round trip — never recompose per-document in a Worker loop (subrequest
-  budget).
+  budget). The salesperson carries `active` and each payment row
+  `collected_by_name` (null when nobody is recorded): the portal decides a
+  departed salesperson's old order from them, so keep both.
 - `PUT /connection` is **https-only** — the body carries a customer name and
   every line's cost.
 - The API secret is **write-only** and shown exactly once at generation (48
@@ -262,6 +271,10 @@ is `vp.url` with its trailing `/sales-orders` replaced by `/sales-attending`
   `routes/mfg-so-vp-brand.ts` (the answer), and on the client
   `frontend/src/vendor/scm/lib/vp-brand-prompt.ts` with
   `components/VpBrandPromptBridge.tsx` mounted in both shells.
+- `backend/src/db/migrations-pg/*_scm_vp_old_bills.sql` —
+  `vp_old_orders_wanted`, the `active` / `collected_by_name` keys and the
+  reconcile's old-order statement; executed by
+  `backend/tests-pg/vpOldBills.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
