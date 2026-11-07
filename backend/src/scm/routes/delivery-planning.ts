@@ -1641,7 +1641,7 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 2. Zone map — the SAME company map + in-code default the delivery-zones
         router owns (exported helpers, one rule, two readers). */
   const { data: zoneRows } = await paginateAll<ZoneMapRow>((from, to) =>
-    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).range(from, to),
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap } = toPrefixMap(zoneRows ?? []);
 
