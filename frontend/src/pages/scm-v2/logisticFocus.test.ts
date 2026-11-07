@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PeriodTotals } from "./LogisticPeriodSection";
-import { focusPeriod, jobDate, reportWindows, windowsInRange } from "./logisticFocus";
+import { focusPeriod, jobDate, lorryOtherJobs, reportWindows, windowsInRange } from "./logisticFocus";
+import type { LorryJobDetail, LorryJobKind } from "../../vendor/shared/logistic-region";
 
 const period = {
   from: "2026-11-01", to: "2026-11-02", doCount: 3, doAmountSen: 600, podClosed: 1,
@@ -25,6 +26,22 @@ const period = {
   lorryJobs: [{ plate: "B", date: "2026-11-02", kind: "setup" }],
   categoryByRegion: { Northern: { byCategory: [{ category: "Sofa", orders: 2, amountSen: 400, avgSen: 200 }], chargesSen: 5 } },
 } as unknown as PeriodTotals;
+
+describe("the jobs under a lorry", () => {
+  const job = (kind: LorryJobKind, date: string, doId: string | null): LorryJobDetail => ({ plate: "A", date, kind, type: kind, ref: null, customer: null, assrId: null, doId });
+  const jobs = [job("transport", "2026-11-05", null), job("service", "2026-11-05", null), job("setup", "2026-11-06", null), job("delivery", "2026-11-05", "do1"), job("delivery", "2026-11-05", "do2")];
+  it("lists every counted job, a run's stock move and service case included", () => {
+    expect(lorryOtherJobs(jobs, "A", "2026-11-01", "2026-11-07", null, new Set(["do1", "do2"])).map((j) => j.kind)).toEqual(["transport", "service", "setup"]);
+  });
+  it("keeps a delivery stop whose order is not on the list, so a counted day is never blank", () => {
+    expect(lorryOtherJobs(jobs, "A", "2026-11-01", "2026-11-07", null, new Set(["do1"])).map((j) => j.doId)).toContain("do2");
+  });
+  it("follows the same region and date rule as the row's figures", () => {
+    expect(lorryOtherJobs(jobs, "A", "2026-11-06", "2026-11-06", "Northern", new Set()).map((j) => j.kind)).toEqual(["setup"]);
+    expect(lorryOtherJobs(jobs, "A", "2026-11-05", "2026-11-05", "Northern", new Set()).map((j) => j.kind)).toEqual(["transport"]);
+    expect(lorryOtherJobs(jobs, "B", "2026-11-01", "2026-11-07", null, new Set())).toEqual([]);
+  });
+});
 
 describe("one region of the logistic overview", () => {
   it("leaves the page alone when no region is picked", () => {

@@ -3,7 +3,7 @@
 // the average a lorry carried, what is overdue today, the average order per
 // product category, and the jobs of the period by type.
 import { jobDate } from "./logisticFocus";
-import type { LorryJob } from "../../vendor/shared/logistic-region";
+import type { LorryJobDetail } from "../../vendor/shared/logistic-region";
 import { useState } from "react";
 import { fmtSen } from "../../vendor/shared/format";
 import { ASSR_JOB_KIND_LABEL, type AssrJobKind, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
@@ -24,7 +24,7 @@ export type PeriodTotals = {
   byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
   byCategory: CategoryRow[];
   chargesSen: number;
-  lorryJobs: LorryJob[];
+  lorryJobs: LorryJobDetail[];
   categoryByRegion: Partial<Record<string, { byCategory: CategoryRow[]; chargesSen: number }>>;
 };
 
