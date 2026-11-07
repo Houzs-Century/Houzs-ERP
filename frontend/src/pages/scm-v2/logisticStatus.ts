@@ -20,16 +20,24 @@ function withPct(
 /** Orders by their derived delivery progress, in the board's tab order
  *  (Pending Delivery · Pending Schedule · Overdue · Delivered). Zero-count
  *  states are dropped; the share denominator is every row passed in. */
-export function deliveryProgressBreakdown(rows: PlanningOrder[]): StatusSlice[] {
+/** The board's Delivered split in two: the delivery orders closed as delivered, and those
+ *  only out on the lorry (owner 2026-11-07). */
+export const OUT_NOT_CLOSED = "OUT_NOT_CLOSED";
+
+export const progressKeyOf = (o: PlanningOrder, done: (o: PlanningOrder) => boolean): string =>
+  o.delivery_state === "DELIVERED" && !done(o) ? OUT_NOT_CLOSED : o.delivery_state;
+
+export function deliveryProgressBreakdown(rows: PlanningOrder[], done: (o: PlanningOrder) => boolean): StatusSlice[] {
   const by = new Map<string, { count: number; sen: number }>();
   for (const o of rows) {
-    const g = by.get(o.delivery_state) ?? { count: 0, sen: 0 };
+    const k = progressKeyOf(o, done);
+    const g = by.get(k) ?? { count: 0, sen: 0 };
     g.count += 1;
     g.sen += o.local_total_sen;
-    by.set(o.delivery_state, g);
+    by.set(k, g);
   }
-  const out = DELIVERY_STATES
-    .map((s) => ({ key: s, label: DELIVERY_STATE_LABEL[s], count: by.get(s)?.count ?? 0, sen: by.get(s)?.sen ?? 0 }))
+  const out = [...DELIVERY_STATES.slice(0, -1), OUT_NOT_CLOSED, ...DELIVERY_STATES.slice(-1)]
+    .map((s) => ({ key: s, label: s === OUT_NOT_CLOSED ? "Out, not closed" : DELIVERY_STATE_LABEL[s as keyof typeof DELIVERY_STATE_LABEL], count: by.get(s)?.count ?? 0, sen: by.get(s)?.sen ?? 0 }))
     .filter((r) => r.count > 0);
   return withPct(out, rows.length);
 }

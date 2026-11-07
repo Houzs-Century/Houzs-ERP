@@ -2,6 +2,7 @@
 // delivered (DO amount and orders), the average order (delivery orders only),
 // the average a lorry carried, what is overdue today, the average order per
 // product category, and the jobs of the period by type.
+import { jobDone, type Progress } from "./logisticDone";
 import { jobDate } from "./logisticFocus";
 import type { LorryJobDetail } from "../../vendor/shared/logistic-region";
 import { useState } from "react";
@@ -39,14 +40,9 @@ export function jobTypeOf(o: PlanningOrder): string {
   if (o.row_type === "dp" || o.row_type === "project") return titleCase(o.dp_job_type ?? "Other");
   return "Delivery";
 }
-/** Done: delivered on the board; an event set-up / dismantle has no delivered state, so it is done once its day has passed. */
-export function jobDone(o: PlanningOrder, today: string): boolean {
-  if (o.row_type === "project") return !!o.effective_delivery_date && o.effective_delivery_date < today;
-  return o.delivery_state === "DELIVERED";
-}
 
-export function LogisticPeriodSection({ rows, period, today, totals, overdue, onOverdue, onDrill }: {
-  rows: PlanningOrder[]; period: Period; today: string; totals: PeriodTotals | null;
+export function LogisticPeriodSection({ rows, period, progress, totals, overdue, onOverdue, onDrill }: {
+  rows: PlanningOrder[]; period: Period; progress: Progress; totals: PeriodTotals | null;
   overdue: { count: number; sen: number }; onOverdue: () => void; onDrill: DoDrill;
 }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
@@ -59,12 +55,12 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
   for (const o of jobs) {
     const t = jobTypeOf(o);
     const g = byType.get(t) ?? { type: t, jobs: 0, done: 0 };
-    g.jobs += 1; if (jobDone(o, today)) g.done += 1;
+    g.jobs += 1; if (jobDone(o, progress)) g.done += 1;
     byType.set(t, g);
   }
   const types = [...byType.values()].sort((a, b) => b.jobs - a.jobs);
   /* Where the rest of the open deliveries sit: the job table is only this period. */
-  const openSo = rows.filter((o) => o.row_type === "so" && o.delivery_state !== "DELIVERED");
+  const openSo = rows.filter((o) => o.row_type === "so" && !jobDone(o, progress));
   const dated = (test: (d: string) => boolean) => openSo.filter((o) => { const d = date(o); return !!d && test(d); }).length;
   const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= end), after: dated((d) => d > end), none: openSo.filter((o) => !date(o)).length };
   const avgOrder = totals && totals.doCount ? totals.doAmountSen / totals.doCount : null;
@@ -110,7 +106,7 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
               {types.length === 0 && <tr><Td left className="text-ink-muted">No jobs dated in this period.</Td></tr>}
             </tbody>
           </table>
-            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, every job done or not, by its delivery date, else its sales exemption date; Done = marked delivered there. Closed service legs stay on the board 30 days, so an older period reads them low. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
+            <p className="mt-1 text-[11px] text-ink-muted">From Delivery Planning, every job done or not, by its delivery date, else its sales exemption date; Done = really finished: every delivery order of the order closed as delivered, or the crew pressed Complete on the job (a DO only loaded on the lorry is not done). Closed service legs stay on the board 30 days, so an older period reads them low. Open deliveries on the board: {openSo.length} · {reconcile.before} dated before this period · {reconcile.inside} in it · {reconcile.after} after it · {reconcile.none} with no date.</p>
         </div>
       </div>
     </Panel>
