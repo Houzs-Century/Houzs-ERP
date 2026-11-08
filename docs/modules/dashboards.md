@@ -113,6 +113,7 @@
 - Each lorry, each day：每辆车每天送了几张单、多少钱。
 - By region：按客户所在的州，归到 Delivery Planning 的区域（KL / Selangor、Northern、Southern、East Coast、East Malaysia）。
 - Jobs dated in the period, by type：Delivery Planning 上日期落在期间内的工作（送货、安装、拆展、售后上门等），以及其中已完成的数量。
+- On-time delivery：按约定日期（有改期用改期日，否则客户日期）对比签收那天的马来西亚日期；准时 = 当天，提早 = 之前，迟 = 之后。准时率 = (准时 + 提早) ÷ 期间内已送。过了约定日期还没送的另列，不算进准时率。按车、司机、区域分，点数字看单。东马和新加坡不算（跟 Last Mile 一样）。服务器算好，规则见 `delivery-tms.md`。Lorry capacity 的 On-time rate 栏是同一个数。
 
 ### 2.2 还要送（快照，今天）
 
