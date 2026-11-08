@@ -42,6 +42,7 @@ import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
 import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
+import { saleAmountRm, validateSaleAmount } from "./saleAmount";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 import type { EventPnl } from "../pages/projects/types";
 
@@ -1842,7 +1843,7 @@ function SalesPanel({
     const amtStr = await prompt({
       title: "Sale amount (RM)",
       placeholder: "0.00",
-      validate: (v) => { const n = parseFloat(v); return Number.isFinite(n) && n > 0 ? null : "Enter a positive number."; },
+      validate: validateSaleAmount,
     });
     if (amtStr == null) return;
     const ref = await prompt({ title: "Reference no. (optional)", placeholder: "e.g. INV-123" });
@@ -1853,7 +1854,7 @@ function SalesPanel({
       await api.post(`/api/sales/entries`, {
         project_id: projectId,
         quick_log: true,
-        amount: parseFloat(amtStr),
+        amount: saleAmountRm(amtStr),
         ref_no: ref.trim() || null,
         occurred_at: today,
       });
