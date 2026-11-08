@@ -11,7 +11,7 @@
 // here is a labelled placeholder). The page keeps the scm.transportation.last_mile
 // gate (applied on the route) and the real Google-Maps panel.
 // ----------------------------------------------------------------------------
-import { fmtDrive, fmtKm, useRoadDay } from '../../vendor/scm/lib/lorry-routes-queries';
+import { fmtDrive, fmtKm, legLabelsByRef, useRoadDay } from '../../vendor/scm/lib/lorry-routes-queries';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Map as MapIcon, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -246,8 +246,10 @@ export function FleetDay() {
   };
   const roadTotal = (() => {
     const figs = [...(roadDay.data?.values() ?? [])];
-    return figs.length ? `All lorries by road: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
+    return figs.length ? `All lorries, Google: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
   })();
+  const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
+  const mapNoByRef = useMemo(() => new Map(lorryRoutes.routes.flatMap((r) => r.stops.map((st) => [st.ref, st.order] as const))), [lorryRoutes.routes]);
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
   // The board's own drops that could not be placed (surfaced, never dropped),
   // then any server-ungeocoded order not already named.
@@ -307,6 +309,8 @@ export function FleetDay() {
       selectedKey={selected?.key ?? null}
       remarkKeys={remarkKeys}
       road={roadLabelOf(r.plate)}
+      legByRef={legByRef}
+      mapNoByRef={mapNoByRef}
       onFocus={() => toggleFocus(platekey(r.plate))}
       onOpenDoc={(d) => setSelected(d)}
       onCrew={() => setCrewRun(r)}

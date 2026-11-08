@@ -113,6 +113,7 @@ export type SupplierMaintenanceBody = {
 const refreshSuppliers = (qc: ReturnType<typeof useQueryClient>, id?: string) => {
   void qc.invalidateQueries({ queryKey: ['supplier-maintenance'] });
   void qc.invalidateQueries({ queryKey: ['suppliers'] });
+  void qc.invalidateQueries({ queryKey: ['suppliers-paged'] });
   if (id) void qc.invalidateQueries({ queryKey: ['supplier-detail', id] });
 };
 

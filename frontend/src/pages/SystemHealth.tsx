@@ -30,6 +30,7 @@ import { QueuesPanel } from "./systemHealth/QueuesPanel";
 import { ServicesPanel } from "./systemHealth/ServicesPanel";
 import { DatabasePanel } from "./systemHealth/DatabasePanel";
 import { LoginsPanel } from "./systemHealth/LoginsPanel";
+import { HubReportLine } from "./systemHealth/HubReportLine";
 
 // ---------------------------------------------------------------------------
 // System Health — owner-only ("*"). "Real data" phase 1, ported from Hookka's
@@ -519,6 +520,7 @@ export function SystemHealth() {
               </p>
             </div>
 
+            <HubReportLine />
             <JobsPanel />
             <QueuesPanel />
             <ServicesPanel />

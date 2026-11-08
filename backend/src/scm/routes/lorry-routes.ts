@@ -1,10 +1,12 @@
 /* /api/scm/lorry-routes: each lorry's day by road (owner 2026-11-08), worked out ONCE on
    the server (scm/lib/lorry-day-runs.ts) and read by every page.
    POST /day   works out the day's runs now and returns them (Last Mile opens a day with it;
-               the nightly cron does the same for the days just gone). Google is asked
+               the nightly cron does the same for the days just gone, today and tomorrow). Google is asked
                only for a run that changed.
    GET  /      the kept figures for a date range, for Lorry Capacity, Fleet Health and the
                lorry record.
+   GET  /daily each lorry-day, Google against GPS and the crew's taps, and On-site time
+               per building type (scm/lib/lorry-day-stats.ts), for Lorry Capacity.
    company-scope: the lorry fleet is one shared master across companies and a lorry's day
    is one physical run (see lorry-day-runs.ts), so the figures are the fleet's, read whole
    like GET /lorries. */
@@ -13,6 +15,7 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { computeDayRoutes } from '../lib/lorry-day-runs';
+import { loadDayStats } from '../lib/lorry-day-stats';
 
 export const lorryRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorryRoutes.use('*', supabaseAuth);
@@ -22,8 +25,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const out = (r: Record<string, unknown>) => ({
   lorryId: String(r.lorry_id), date: String(r.route_date).slice(0, 10), distanceM: Number(r.distance_m), durationS: Number(r.duration_s),
   stopCount: Number(r.stop_count), polyline: (r.polyline as string | null) ?? null, computedAt: String(r.computed_at),
+  legs: Array.isArray(r.legs) ? (r.legs as Array<{ ref: string | null; distanceM: number; durationS: number }>) : null,
 });
-const COLS = 'lorry_id, route_date, distance_m, duration_s, stop_count, polyline, computed_at';
+const COLS = 'lorry_id, route_date, distance_m, duration_s, stop_count, polyline, legs, computed_at';
 
 lorryRoutes.post('/day', async (c) => { // company-scope: the shared fleet's runs, see the header
   let body: unknown;
@@ -52,4 +56,16 @@ lorryRoutes.get('/', async (c) => { // company-scope: the shared fleet's runs, s
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ routes: (data as Array<Record<string, unknown>>).map(out) });
+});
+
+lorryRoutes.get('/daily', async (c) => { // company-scope: the shared fleet's runs, see the header
+  const from = c.req.query('from') ?? '';
+  const to = c.req.query('to') ?? '';
+  if (!ISO.test(from) || !ISO.test(to)) return c.json({ error: 'invalid_range', reason: 'from and to must be YYYY-MM-DD' }, 400);
+  if (Date.parse(to) - Date.parse(from) > 92 * 86_400_000) return c.json({ error: 'invalid_range', reason: 'at most 92 days at a time' }, 400);
+  try {
+    return c.json(await loadDayStats(c.get('supabase'), from, to));
+  } catch (e) {
+    return c.json({ error: 'load_failed', reason: String((e as Error).message) }, 500);
+  }
 });

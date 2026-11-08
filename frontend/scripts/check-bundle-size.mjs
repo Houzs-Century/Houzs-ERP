@@ -282,11 +282,10 @@ const CEILINGS = {
   // entry: initial-app 89.05 -> 89.88 KB gzip (main 176.5 -> 177.3). The
   // list's icons and one-line descriptions stayed lazy (reports/
   // reportListLook.ts) — moving them too measured +1.9 KB.
-  // 178 -> 179 on 2026-11-08: main sat AT 178.0 and the Payment listing (PR
-  // #5393, the owner's daily list of vouchers to pay) added NO eager module —
-  // one lazy() route in App.tsx, one Sidebar entry under Money out, its route
-  // label and route-manifest line: +0.1 KB gzip on the entry, the "~+0.1 KB on
-  // initial" a new lazy route page costs (see the allowance notes below).
+  // 178 -> 179 on 2026-11-08: main sat AT 178.0 again; the Last Mile pin-number
+  // change (PR #5395) adds no eager module (LorryCard / FleetDay are lazy) and
+  // crossed it by bytes, the renamed lazy-chunk hashes in the entry's map. Same
+  // mechanism as the 176 -> 177 bump: one more KB of headroom.
   INITIAL_JS_GZIP: 179 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left

@@ -76,7 +76,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           hint={kmCost?.cost_sen != null ? `running cost ${fmtSen(kmCost.cost_sen)}` : "set RM/km in Vehicle details to see the cost"} />
         <Tile label="Today's run" value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : "No run today"}
           hint={runs.length ? `${runs[0]?.driver?.name ?? "no driver"} · ${stops.length} stop${stops.length === 1 ? "" : "s"}` : "Runs are planned in Delivery Time Arrangement"} />
-        <Tile label="By road today" value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
+        <Tile label="Google km · Google time today" value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
           hint={roadMonth.d ? `this month ${fmtKm(roadMonth.m)} · ${fmtDrive(roadMonth.s)} over ${roadMonth.d} day${roadMonth.d === 1 ? "" : "s"}` : "from its warehouse and back, worked out on Last Mile"} />
       </div>
 

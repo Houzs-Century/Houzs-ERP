@@ -4,6 +4,7 @@ import type { Env } from "../types";
 import { getDb, type DB } from "../db/client";
 import { todayMyt } from "../scm/lib/my-time";
 import { scrubError, serviceVerdict } from "../services/serviceHealth";
+import { aiServiceQuery } from "../services/healthMeasures";
 
 // ---------------------------------------------------------------------------
 // GET /api/admin/health/services (DEV-35): one row per outside service, built
@@ -191,16 +192,8 @@ app.get("/services", async (c) => {
           FROM scm.venture_portal_outbox`),
 
     // The table arrives with the AI usage work; until then this row says so.
-    measure(db, "ai", "AI (Anthropic)",
-      // company-scope: system-wide IT health aggregates plus one scrubbed error string
-      sql`SELECT
-            max(created_at) FILTER (WHERE ok) AS last_success_at,
-            max(created_at) FILTER (WHERE NOT ok) AS last_failure_at,
-            (SELECT error FROM public.ai_usage_events WHERE NOT ok
-              ORDER BY created_at DESC LIMIT 1) AS last_error,
-            count(*) FILTER (WHERE created_at >= ${cutoff})::int AS attempts_24h,
-            count(*) FILTER (WHERE NOT ok AND created_at >= ${cutoff})::int AS failures_24h
-          FROM public.ai_usage_events`,
+    // Shared with the IT Hub health report (services/healthHub.ts).
+    measure(db, "ai", "AI (Anthropic)", aiServiceQuery(cutoff),
       { missingTable: "AI calls are not recorded yet." }),
   ]);
 

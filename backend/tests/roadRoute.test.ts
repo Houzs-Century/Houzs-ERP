@@ -19,7 +19,9 @@ describe('a lorry day by road', () => {
       { distance: { value: 8000 }, duration: { value: 900 } },
       { distance: { value: 15000 }, duration: { value: 1500 } },
     ], overview_polyline: { points: 'abc' } }] });
-    expect(r).toEqual({ ok: true, distanceM: 35000, durationS: 3600, polyline: 'abc' });
+    expect(r).toEqual({ ok: true, distanceM: 35000, durationS: 3600, polyline: 'abc', legs: [
+      { distanceM: 12000, durationS: 1200 }, { distanceM: 8000, durationS: 900 }, { distanceM: 15000, durationS: 1500 },
+    ] });
   });
   it('a refused request is not a zero-km route', () => {
     expect(parseRoadRoute({ status: 'ZERO_RESULTS', routes: [] })).toEqual({ ok: false, reason: 'Directions status ZERO_RESULTS' });

@@ -2,7 +2,7 @@
    match the Last Mile card order (frontend slotSortKey + stop number + SO number), and
    the lorry starts from its own warehouse before any fallback. */
 import { describe, expect, it } from 'vitest';
-import { buildDayRuns, offPeninsula, windowStartMinutes, type RunStopIn } from '../src/scm/lib/lorry-day-runs';
+import { buildDayRuns, offPeninsula, stopLegs, windowStartMinutes, type RunStopIn } from '../src/scm/lib/lorry-day-runs';
 
 const row = (over: Partial<RunStopIn>): RunStopIn => ({
   ref: 'HC-SO-1', plate: 'VNB 9058', lorryId: 'l1', companyId: 1, timeRange: null, stopNo: null,
@@ -62,5 +62,19 @@ describe('a lorry day', () => {
     expect(offPeninsula('Sabah', 'Malaysia')).toBe(true);
     expect(offPeninsula(null, 'Singapore')).toBe(true);
     expect(offPeninsula('Selangor', 'Malaysia')).toBe(false);
+  });
+});
+
+describe('each stop by road from the one before', () => {
+  const stops = [{ ref: 'SO-1' }, { ref: 'SO-2' }];
+  it('pins leg i on stop i and keeps the drive home last', () => {
+    expect(stopLegs(stops, [{ distanceM: 12000, durationS: 1200 }, { distanceM: 8000, durationS: 900 }, { distanceM: 15000, durationS: 1500 }])).toEqual([
+      { ref: 'SO-1', distanceM: 12000, durationS: 1200 },
+      { ref: 'SO-2', distanceM: 8000, durationS: 900 },
+      { ref: null, distanceM: 15000, durationS: 1500 },
+    ]);
+  });
+  it('legs that do not line up with the stops are not guessed onto orders', () => {
+    expect(stopLegs(stops, [{ distanceM: 12000, durationS: 1200 }, { distanceM: 8000, durationS: 900 }])).toBeNull();
   });
 });

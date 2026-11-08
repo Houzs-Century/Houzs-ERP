@@ -23,7 +23,9 @@
 // Every number is rounded.
 // ----------------------------------------------------------------------------
 
-import { fmtDrive, fmtKm, roadTotalsByLorry, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
+import { dailyTotalsByLorry, diffPct, fmtDrive, fmtKm, roadTotalsByLorry, useRoadDaily, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
+import { LorryRoadDaily } from './LorryRoadDaily';
+import { ratePctText, useOnTime } from '../../vendor/scm/lib/on-time-queries';
 import { useMemo, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { fmtSen, fmtDate } from '@2990s/shared';
@@ -144,7 +146,8 @@ function utilClass(frac: number | null): string {
 
 /** Lorry Capacity as the Logistic Overview's second view (owner 2026-11-07): the period
  *  is the overview's, and the figures come from the overview's lorry rows so the two
- *  pages agree; this read adds the lorry list, in-house flag, GPS km and running cost. */
+ *  pages agree; this read adds the lorry list, in-house flag and running cost; Google km / GPS km /
+ *  Google time / Drive time come from the lorry-day figures (lorry-routes). */
 export const LorryCapacity = ({ period, overviewLorries }: { period: { from: string; to: string }; overviewLorries: LorryRow[] }) => {
   const [params, setParams] = useSearchParams();
   const notify = useNotify();
@@ -166,6 +169,13 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
   /* Road distance and driving time, home and back, from the Last Mile runs (owner 2026-11-08). */
   const road = useRoadFigures(from, to, null);
   const roadBy = useMemo(() => roadTotalsByLorry(road.data ?? []), [road.data]);
+  /* GPS km, Drive time and On-site time per lorry-day, worked out on the server. */
+  const daily = useRoadDaily(from, to);
+  const dailyBy = useMemo(() => dailyTotalsByLorry(daily.data?.days ?? []), [daily.data]);
+  /* On-time rate per lorry, worked out on the server (the Deliveries view's on-time KPI). */
+  const onTime = useOnTime(from, to, null);
+  const onTimeBy = useMemo(() => new Map((onTime.data?.byLorry ?? []).filter((g) => g.lorryId).map((g) => [g.lorryId as string, g])), [onTime.data]);
+  const plateById = useMemo(() => new Map((data?.lorries ?? []).map((l) => [l.lorry_id, l.plate])), [data]);
   const totals = useMemo(() => capacityTotals(rows), [rows]);
 
   /* Sample-parity search (owner 2026-07-25: every table = the SO table):
@@ -248,12 +258,24 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
     { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
     { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
     { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_sen)}</span> },
-    { key: 'road_km', label: 'Road km', align: 'right', getValue: (l) => (roadBy.get(l.lorry_id)?.distanceM ?? 0) / 1000, render: (l) => { const r = roadBy.get(l.lorry_id); return r ? fmtKm(r.distanceM) : dash; } },
-    { key: 'road_time', label: 'Drive Time', align: 'right', getValue: (l) => roadBy.get(l.lorry_id)?.durationS ?? 0, render: (l) => { const r = roadBy.get(l.lorry_id); return r ? fmtDrive(r.durationS) : dash; } },
-    { key: 'km', label: 'GPS km', align: 'right', getValue: (l) => l.km, render: (l) => numOrDash(l.km, 1) },
+    { key: 'road_km', label: 'Google km', align: 'right', getValue: (l) => (roadBy.get(l.lorry_id)?.distanceM ?? 0) / 1000, render: (l) => { const r = roadBy.get(l.lorry_id); return r ? fmtKm(r.distanceM) : dash; } },
+    { key: 'km', label: 'GPS km', align: 'right', getValue: (l) => dailyBy.get(l.lorry_id)?.gpsKm ?? null, render: (l) => { const g = dailyBy.get(l.lorry_id)?.gpsKm; return g == null ? dash : fmtKm(g * 1000); } },
+    { key: 'road_time', label: 'Google time', align: 'right', getValue: (l) => roadBy.get(l.lorry_id)?.durationS ?? 0, render: (l) => { const r = roadBy.get(l.lorry_id); return r ? fmtDrive(r.durationS) : dash; } },
+    {
+      key: 'drive_time', label: 'Drive time', align: 'right', getValue: (l) => dailyBy.get(l.lorry_id)?.driveS ?? null,
+      render: (l) => { const t = dailyBy.get(l.lorry_id); return t?.timedStops ? fmtDrive(t.driveS) : dash; },
+    },
+    {
+      key: 'time_diff', label: 'Time diff', align: 'right', getValue: (l) => dailyBy.get(l.lorry_id)?.driveS ?? null,
+      render: (l) => { const t = dailyBy.get(l.lorry_id); return (t?.timedStops ? diffPct(t.driveS, t.googleTimedS) : null) ?? dash; },
+    },
+    {
+      key: 'on_time_rate', label: 'On-time rate', align: 'right', getValue: (l) => onTimeBy.get(l.lorry_id)?.ratePct ?? null,
+      render: (l) => { const g = onTimeBy.get(l.lorry_id); return g?.delivered ? <span title={`${g.onTime + g.early} of ${g.delivered} delivered on or before the promised date`}>{ratePctText(g.ratePct)}</span> : dash; },
+    },
     { key: 'running_cost', label: 'Running Cost', align: 'right', getValue: (l) => l.running_cost_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.running_cost_sen)}</span> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [toggleInHouse, setRepair, from, to, notify, roadBy]);
+  ], [toggleInHouse, setRepair, from, to, notify, roadBy, dailyBy, onTimeBy]);
 
   return (
     <div>
@@ -295,6 +317,14 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
           placeholder: 'Search plate or type…',
           totalRecords: filteredRows.length,
         }}
+      />
+
+      <LorryRoadDaily
+        days={daily.data?.days ?? []}
+        onSite={daily.data?.onSite ?? []}
+        plateOf={(id) => plateById.get(id) ?? null}
+        loading={daily.isLoading}
+        error={daily.error instanceof Error ? daily.error.message : daily.error ? String(daily.error) : null}
       />
     </div>
   );

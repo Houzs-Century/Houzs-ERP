@@ -105,3 +105,21 @@ describe('DiscountInput — one field, no mode to pick', () => {
     expect(box.value).toBe('250.00');
   });
 });
+
+/* Regression: same default as MoneyInput. Clicking a discount showing 0.00 must
+   select it, so typing 50 replaces the 0 instead of reading 500 or 0.0050. */
+describe('DiscountInput focus', () => {
+  test('selects the whole value on focus by default', () => {
+    vi.useFakeTimers();
+    try {
+      render(<DiscountInput bare valueSen={0} baseSen={BASE} onCommit={vi.fn()} />);
+      const box = screen.getByRole('textbox') as HTMLInputElement;
+      fireEvent.focus(box);
+      vi.runAllTimers();
+      expect(box.selectionStart).toBe(0);
+      expect(box.selectionEnd).toBe(box.value.length);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

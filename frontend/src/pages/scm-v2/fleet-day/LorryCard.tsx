@@ -47,7 +47,16 @@ function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: strin
   );
 }
 
-function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM; color: string; selected: boolean; hasRemark: boolean; onOpen: () => void }) {
+/** The stop's number, the same one its pin carries on the map. */
+function StopNo({ no, color }: { no: number | null; color: string }) {
+  return (
+    <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 text-[10px] font-bold text-ink-secondary" style={{ borderColor: color }}>
+      {no ?? '•'}
+    </span>
+  );
+}
+
+function UndeliveredRow({ d, no, color, selected, hasRemark, leg, onOpen }: { d: DocRowVM; no: number | null; color: string; selected: boolean; hasRemark: boolean; leg: string | null; onOpen: () => void }) {
   const meta = STATUS_META[d.status];
   return (
     <button
@@ -59,9 +68,7 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
         d.late && !selected && 'bg-err-bg/40',
       )}
     >
-      <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 text-[10px] font-bold text-ink-secondary" style={{ borderColor: color }}>
-        {d.stopNo ?? '•'}
-      </span>
+      <StopNo no={no ?? d.stopNo} color={color} />
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <JobTag label={d.jobLabel} />
@@ -71,6 +78,7 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
         </span>
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {d.address && <span className="block truncate text-[12px] text-ink-secondary">{d.address}</span>}
+        {leg && <span className="block text-[11px] text-ink-muted">Google <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex flex-col items-end gap-1">
         {d.rowType === 'so' && <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">{fmtSen(d.amountSen)}</span>}
@@ -86,13 +94,14 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
   );
 }
 
-function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { roadMin: number | null; siteMin: number | null } | null; selected: boolean; onOpen: () => void }) {
+function DeliveredRow({ d, no, color, times, selected, leg, onOpen }: { d: DocRowVM; no: number | null; color: string; times: { roadMin: number | null; siteMin: number | null } | null; selected: boolean; leg: string | null; onOpen: () => void }) {
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={cn('grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-border-subtle px-4 py-2 text-left hover:bg-surface-2', selected && 'bg-primary-soft')}
+      className={cn('grid w-full grid-cols-[24px_1fr_auto] items-center gap-3 border-t border-border-subtle px-4 py-2 text-left hover:bg-surface-2', selected && 'bg-primary-soft')}
     >
+      <StopNo no={no} color={color} />
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <JobTag label={d.jobLabel} />
@@ -101,9 +110,10 @@ function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { ro
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {times && (times.roadMin != null || times.siteMin != null) && (
           <span className="block text-[11px] text-ink-secondary">
-            {[times.roadMin != null ? `On the road ${fmtMinutes(times.roadMin)}` : null, times.siteMin != null ? `On site ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
+            {[times.roadMin != null ? `Drive time ${fmtMinutes(times.roadMin)}` : null, d.arrivedAt ? `Arrived ${clockMY(d.arrivedAt)}` : null, times.siteMin != null ? `On-site time ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
           </span>
         )}
+        {leg && <span className="block text-[11px] text-ink-muted">Google <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex items-center gap-2">
         {d.rowType === 'so' && <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>}
@@ -117,12 +127,16 @@ function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { ro
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road,
+  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road, legByRef, mapNoByRef,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
   /** The run by road from the lorry's home and back (Google); null when not worked out. */
   road: string | null;
+  /** Each order's drive from the stop before, by sales order number (server-worked). */
+  legByRef: ReadonlyMap<string, string>;
+  /** Each order's pin number on the day map, by sales order number. */
+  mapNoByRef: ReadonlyMap<string, number>;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
@@ -219,7 +233,7 @@ export function LorryCard({
           </span>
         )}
         {!plannedAt && !actualAt && <span className="text-ink-muted">Not departed yet</span>}
-        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">By road</span> <span className="font-semibold text-ink">{road}</span></span>}
+        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Google</span> <span className="font-semibold text-ink">{road}</span></span>}
       </div>
 
       {/* progress */}
@@ -244,7 +258,7 @@ export function LorryCard({
       ) : (
         <>
           {undelivered.map((d) => (
-            <UndeliveredRow key={d.key} d={d} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} onOpen={() => onOpenDoc(d)} />
+            <UndeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
           ))}
           {delivered.length > 0 && (
             <>
@@ -257,7 +271,7 @@ export function LorryCard({
                 {delivered.length} delivered
               </button>
               {showDone && delivered.map((d) => (
-                <DeliveredRow key={d.key} d={d} times={times.get(d.key) ?? null} selected={selectedKey === d.key} onOpen={() => onOpenDoc(d)} />
+                <DeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={run.color} times={times.get(d.key) ?? null} selected={selectedKey === d.key} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
               ))}
             </>
           )}
