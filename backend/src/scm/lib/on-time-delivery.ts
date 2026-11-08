@@ -114,7 +114,8 @@ export function onTimeSummary(orders: readonly OnTimeOrderIn[], from: string, to
       .sort((a, b) => Number(a.key === NONE) - Number(b.key === NONE) || b.delivered - a.delivered || a.key.localeCompare(b.key));
   };
   const all = group(() => 'all', () => null)[0] as OnTimeGroup | undefined;
-  const order: Record<OnTimeOrderRow['result'], number> = { LATE_OPEN: 0, LATE: 1, EARLY: 2, ON_TIME: 3 };
+  /* Late-open first, then late, early, on time: open orders, then by days late. */
+  const rank = (r: OnTimeOrderRow) => (r.delivered === null ? 0 : r.daysLate > 0 ? 1 : r.daysLate < 0 ? 2 : 3);
   return {
     from, to,
     delivered: all?.delivered ?? 0, onTime: all?.onTime ?? 0, early: all?.early ?? 0, late: all?.late ?? 0, lateOpen: all?.lateOpen ?? 0,
@@ -124,7 +125,7 @@ export function onTimeSummary(orders: readonly OnTimeOrderIn[], from: string, to
     byRegion: group((r) => r.region, () => null),
     /* Left out, counted so the reader sees them. */
     excluded: { offPeninsula, noPromise, noDeliveryTime },
-    orders: rows.sort((a, b) => order[a.result] - order[b.result] || b.daysLate - a.daysLate || a.soDocNo.localeCompare(b.soDocNo)),
+    orders: rows.sort((a, b) => rank(a) - rank(b) || b.daysLate - a.daysLate || a.soDocNo.localeCompare(b.soDocNo)),
   };
 }
 

@@ -9,6 +9,7 @@ import { todayMyt } from './my-time';
 import { normalizePlate } from './plate-normalize';
 import { offPeninsula } from './lorry-day-runs';
 import { regionOf } from '../shared/logistic-region';
+import { SO_DELIVERED_OR_BEYOND } from '../shared/so-deliverable-states';
 import type { SwrBuild } from './kv-swr';
 import { latestLiveDo, onTimeSummary, promisedDateOf, type OnTimeOrderIn } from './on-time-delivery';
 
@@ -17,8 +18,6 @@ const DAY = 86400000;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
-/* An SO in one of these is done with, whatever its DOs say. */
-const SO_CLOSED = new Set(['DELIVERED', 'INVOICED', 'CLOSED']);
 
 export async function buildOnTime(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SwrBuild> {
   const sb = c.get('supabase');
@@ -105,7 +104,7 @@ export async function buildOnTime(c: Context<{ Bindings: Env; Variables: Variabl
       soDocNo: dn, customer: str(so.debtor_name),
       promised: promisedDateOf({ amended_delivery_date: str(so.amended_delivery_date), customer_delivery_date: str(so.customer_delivery_date) }),
       deliveredAt: isDelivered ? str(d!.delivered_at) : null,
-      closedWithoutTime: !isDelivered && (SO_CLOSED.has(String(so.status ?? '').toUpperCase()) || String(d?.status ?? '').toUpperCase() === 'DELIVERED'),
+      closedWithoutTime: !isDelivered && (SO_DELIVERED_OR_BEYOND.has(String(so.status ?? '').toUpperCase()) || String(d?.status ?? '').toUpperCase() === 'DELIVERED'),
       region: regionOf(str(so.customer_state)), offPeninsula: offPeninsula(str(so.customer_state), str(so.customer_country)),
       lorryId, lorry: (lorryId ? plateOf.get(lorryId) || null : null) ?? typedPlate,
       driver: str(cr?.driver_1_name) ?? str(d?.driver_name),
