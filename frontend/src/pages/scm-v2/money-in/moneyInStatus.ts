@@ -104,7 +104,8 @@ export function debtorBillTag(b: { status: string; total_sen: number; received_s
 
 /** A sales invoice, by its money: paid; past its due date with money
  *  outstanding (`Overdue <n>d`); part paid; unpaid. `paidSen` counts the
- *  order's deposit applied, as the outstanding figure does. */
+ *  order's deposit applied and the credit notes knocked off it, as the
+ *  outstanding figure does. */
 export function salesInvoiceTag(si: { outstandingSen: number; paidSen: number; dueDate: string | null; status?: string | null }, today: string): Tag {
   /* Finance lists the live invoices only; a page opened on a cancelled or a
      draft one says so first (statusLabel's own word). */

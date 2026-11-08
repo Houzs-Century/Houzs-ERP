@@ -44,6 +44,7 @@ async function stampSiHeaders(sb: unknown, rows: Array<Record<string, unknown>>,
     await stampSourcePos(sb, batch);
     await stampOrderDeposit(sb, batch, companyId);
     if (companyId !== null && batch.some((r) => r.so_deposit_applied_sen === null)) return 'order deposits: the deposit read failed';
+    if (companyId !== null && batch.some((r) => r.credit_notes_sen === null)) return 'credit notes: the knock-off read failed';
   }
   return null;
 }

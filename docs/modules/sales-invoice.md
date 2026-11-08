@@ -93,6 +93,12 @@ accounting staff. Money is integer sen.
 - A failed deposit-stamp read must render as `null`, read by every
   consumer as "no deposit" (the larger, safer figure) — never as zero
   deposit collected, which would be the smaller, wrong direction.
+- Customer credit notes knocked off an invoice (`credit_notes_sen`,
+  `lib/si-credit-notes.ts`) are stamped and subtracted beside the deposit on
+  every surface that shows its outstanding, never folded into `paid_sen`
+  (the overpayment rule reads it); a failed read stamps `null` (the larger
+  figure) and Mark paid refuses (`credit_unknown`). A cancelled invoice
+  gives its knock-offs back to the notes.
 - The printed invoice lists every sum received under "Payments received"
   (owner 2026-10-06: it called all of the order's money "Deposit", even a
   full payment): `GET /sales-invoices/:id` stamps `receipts` (the order's

@@ -9,6 +9,10 @@
 // under ⋯ (or a right-click); ticks gather a batch — Post to ledger, Print.
 // A row opens the note's page (NotePage) or the debit note's bill page.
 //
+// A posted customer credit note knocks off the customer's sales invoices on
+// its own form (`?form=knock`, NoteKnockOffPage — owner 2026-11-03: 「要」);
+// it posts nothing. A note answering a deposit invoice has no Knock off.
+//
 // The form opens in place of the list (`?form=new|copy|edit`): the note form
 // Money out and the note page use (CreditNotes.tsx NoteForm, `inline`), the
 // kind picked by the page's switch — Credit note / Debit note, Customer /
@@ -23,12 +27,12 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Printer } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useArInvoices } from '../../../vendor/scm/lib/ar-invoice-queries';
 import {
-  useCancelCreditNote, useCreditNoteDetail, useCreditNotes, type CreditNote, type CreditNoteLine, type NoteKind,
+  useCancelCreditNote, useCreditNoteDetail, useCreditNotes, type CreditNoteDetail, type NoteKind,
 } from '../../../vendor/scm/lib/credit-note-queries';
 import { useCancelDebtorBill } from '../../../vendor/scm/lib/accounting-queries';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
@@ -45,6 +49,7 @@ import { NoteForm, emptyForm, noteEditValues } from '../CreditNotes';
 import { AskBanner, type Ask } from './AskBanner';
 import { batchTitle, useMoneyInPrint } from './moneyInPrint';
 import { BillFormPage } from './BillFormPage';
+import { NoteKnockOffPage } from './NoteKnockOffPage';
 import { DocFormShell } from './MoneyInDocPage';
 import { BatchBar, Chips, SearchBox, Segments, StatusTag, tidyMenu, useRowMenu, type MenuItem } from './MoneyInParts';
 import {
@@ -71,6 +76,7 @@ const kindOf = (type: NoteType, party: NoteParty): NoteKind => (type === 'debit'
 
 export function MoneyInNotes() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const openInTab = useOpenDocInTab();
   const qc = useQueryClient();
   const toast = useToastOptional();
@@ -148,11 +154,11 @@ export function MoneyInNotes() {
       const bills = rows.flatMap((x) => (x.bill ? [x.bill] : []));
       const nameOf = await accountNamer();
       if (notes.length > 0) {
-        const [{ generateCreditNotesPdf }, details] = await Promise.all([
+        const [{ generateCreditNotesPdf, knockedOffOf }, details] = await Promise.all([
           import('../../../vendor/scm/lib/credit-note-pdf'),
-          Promise.all(notes.map((x) => authedFetch<{ note: CreditNote; lines: CreditNoteLine[] }>(`/credit-notes/${encodeURIComponent(x.id)}`))),
+          Promise.all(notes.map((x) => authedFetch<CreditNoteDetail>(`/credit-notes/${encodeURIComponent(x.id)}`))),
         ]);
-        await generateCreditNotesPdf(details.map((d) => ({ header: d.note, lines: d.lines })), nameOf, { action });
+        await generateCreditNotesPdf(details.map((d) => ({ header: d.note, lines: d.lines, knockedOff: knockedOffOf(d) })), nameOf, { action });
       }
       if (bills.length > 0) {
         const [{ arInvoicesPdfBlob }, { deliverPdfBlob }] = await Promise.all([
@@ -197,7 +203,7 @@ export function MoneyInNotes() {
   } : {
     title: `Cancel ${asking.no}?`,
     body: asking.status === 'posted'
-      ? `Its journal is reversed by a contra dated today. The note stays on file as cancelled.${asking.knocks && asking.knocks.appliedSen > 0 ? ' Its knock-off against the bills is undone.' : ''}`
+      ? `Its journal is reversed by a contra dated today. The note stays on file as cancelled.${asking.knocks && asking.knocks.appliedSen > 0 ? ` Its knock-off against the ${asking.otherDebtor ? 'bills' : 'invoices'} is undone.` : ''}`
       : 'The draft stays on file as cancelled.',
     tone: 'undo', goLabel: 'Cancel note',
     onGo: () => {
@@ -212,9 +218,9 @@ export function MoneyInNotes() {
   };
 
   const openRow = (x: NoteItem) => openInTab(noteHref(x));
-  const openForm = (mode: 'new' | 'copy' | 'edit', x?: NoteItem) =>
+  const openForm = (mode: 'new' | 'copy' | 'edit' | 'knock', x?: NoteItem) =>
     setUrl({ form: mode, id: x?.id ?? null, src: x?.source === 'bill' ? 'bill' : null, type: null, party: null }, true);
-  const closeForm = () => setUrl({ form: null, id: null, src: null, type: null, party: null }, true);
+  const closeForm = () => setUrl({ form: null, id: null, src: null, type: null, party: null, back: null }, true);
 
   const menuOf = (x: NoteItem): MenuItem[] => {
     const open: MenuItem = { label: 'Open', onClick: () => openRow(x) };
@@ -235,8 +241,10 @@ export function MoneyInNotes() {
       open,
       ...(x.status === 'draft' && canWrite ? [{ label: 'Edit', onClick: () => openForm('edit', x) }] : []),
       ...(x.status === 'draft' && canPost ? [{ label: 'Post to ledger', onClick: () => { void postNotes([x]); } }] : []),
-      /* An other debtor's credit comes off their bills on the note's page (its knock-off). */
+      /* An other debtor's credit comes off their bills on the note's page (its knock-off); a
+         customer's off their sales invoices on its Knock off form — never a deposit invoice's note. */
       ...(x.status === 'posted' && kind === 'OCN' ? [{ label: 'Knock off', onClick: () => openRow(x) }] : []),
+      ...(x.status === 'posted' && kind === 'CN' && !x.note?.depositPaper && canPost ? [{ label: 'Knock off', onClick: () => openForm('knock', x) }] : []),
       ...(canCreate ? [{ label: 'Copy as new', onClick: () => openForm('copy', x) }] : []),
       DIVIDER, printIt, DIVIDER,
       /* An opening paper is changed on Opening Balance — the server refuses a cancel here. */
@@ -274,7 +282,8 @@ export function MoneyInNotes() {
       /* What an other debtor's posted credit came off; a customer's note knocks
          off nothing yet (the sales-invoice knock-off waits for the owner, f2). */
       key: 'knock_off_amount', label: 'Knocks off',
-      render: (x) => (!x.knocks ? <span className={ui.muted}>—</span>
+      render: (x) => (x.closesInvoice ? <span className={ui.muted} title="Closes a deposit invoice at the final invoice">{x.closesInvoice}</span>
+        : !x.knocks ? <span className={ui.muted}>—</span>
         : x.knocks.appliedSen > 0
           ? <span>{fmtSen(x.knocks.appliedSen)}{x.knocks.leftSen > 0 && <span className={ui.under}>{fmtSen(x.knocks.leftSen)} not knocked off</span>}</span>
           : <span className={ui.muted}>Not applied</span>),
@@ -285,6 +294,13 @@ export function MoneyInNotes() {
     { key: 'actions', label: '', align: 'right', width: '150px', disableSort: true, disableFilter: true, render: actionsOf },
   ];
 
+  /* A posted customer note's knock-off (the design's Knock off <no>). From the note's page, back to it. */
+  if (form === 'knock' && params.get('id')) {
+    const id = params.get('id') ?? '';
+    const fromNote = params.get('back') === 'note';
+    const back = fromNote ? () => navigate(`/scm/credit-notes/${encodeURIComponent(id)}`) : closeForm;
+    return <NoteKnockOffPage id={id} backLabel={fromNote ? 'the note' : BACK} onClose={back} onSaved={refreshAll} />;
+  }
   if (form === 'new' || form === 'copy' || form === 'edit') {
     const id = params.get('id');
     /* An other debtor's debit note is a bill: Invoices' bill form, its debit-note kind. */

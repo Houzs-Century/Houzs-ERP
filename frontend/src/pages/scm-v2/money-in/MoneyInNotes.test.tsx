@@ -75,6 +75,8 @@ vi.mock('../../../vendor/scm/lib/credit-note-queries', async (importOriginal) =>
   usePostCreditNote: () => ({ mutateAsync: postAsync, mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null }),
   useCancelCreditNote: () => ({ mutate: cancelMutate, isPending: false, isError: false, error: null }),
   useUploadCreditNoteFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  /* The customer's open invoices (the knock-off table; noteKnockOff.test.tsx covers it). */
+  usePartyKnockOff: () => ({ data: { rows: [] }, isLoading: false, isError: false, error: null }),
 }));
 vi.mock('../../../vendor/scm/lib/ar-invoice-queries', () => ({
   useArInvoices: () => ODN,
@@ -227,6 +229,7 @@ describe('the note form, in place of the list', () => {
     expect(createAsync.mock.calls[0]![0]).toEqual({
       kind: 'CN', noteDate: TODAY, reason: 'Scratched leg', sourceDocNo: null, soDocNo: 'HC-SO-2611-004',
       lines: [{ description: 'Goodwill', accountCode: null, amountSen: 15_000 }],
+      allocations: [],
     });
     expect(await screen.findByText('HC-CN-2611-003 saved and posted')).toBeTruthy();
     expect(where()).toBe('/scm/credit-notes/n9');

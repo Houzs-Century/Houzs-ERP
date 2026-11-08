@@ -34,7 +34,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { siSettledSen, siOutstandingSen } from "../../vendor/scm/lib/si-outstanding";
+import { siCreditNotesSen, siSettledSen, siOutstandingSen } from "../../vendor/scm/lib/si-outstanding";
 import {
   ArrowLeft,
   History,
@@ -161,6 +161,7 @@ type SiHeader = {
   local_total_sen: number;
   total_sen: number;
   paid_sen: number;
+  credit_notes_sen?: number | null; // credit notes knocked off it (si-credit-notes); null = unread
   line_count: number;
   currency: string;
   // Finance-gated cost / margin fields (served on the detail payload; shown only
@@ -269,11 +270,12 @@ type OrderDeposit = {
    in one place instead of once per formula. */
 const paidOf = (h: SiHeader): number => h.paid_sen ?? 0;
 
+/* The credit notes knocked off it ride the header (credit_notes_sen) — the same three kinds of money the list nets. */
 const settledOf = (h: SiHeader, depositSen: number): number =>
-  siSettledSen(paidOf(h), depositSen);
+  siSettledSen(paidOf(h), depositSen, siCreditNotesSen(h));
 
 const outstandingOf = (h: SiHeader, items: SiItem[], depositSen: number): number =>
-  siOutstandingSen(totalOf(h, items), paidOf(h), depositSen);
+  siOutstandingSen(totalOf(h, items), paidOf(h), depositSen, siCreditNotesSen(h));
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
@@ -522,6 +524,9 @@ function OutstandingHeroCard({
             v={fmtMoney(depositSen, header.currency)}
             tone="success"
           />
+        )}
+        {siCreditNotesSen(header) > 0 && (
+          <HeroLine k="Credit notes" v={fmtMoney(siCreditNotesSen(header), header.currency)} tone="success" />
         )}
         <HeroLine
           k="Outstanding"
@@ -968,6 +973,7 @@ export function SalesInvoiceDetailV2() {
       status: salesInvoice.status,
       outstandingSen: outstanding,
       depositUnavailable: orderDepositUnavailable,
+      creditNotesUnavailable: salesInvoice.credit_notes_sen === null,
     });
     if (!plan.ok) {
       // Fire-and-forget: the dialog's own OK button closes it (NotifyDialog).
@@ -1162,6 +1168,7 @@ export function SalesInvoiceDetailV2() {
     status: salesInvoice.status,
     outstandingSen: outstanding,
     depositUnavailable: orderDepositUnavailable,
+    creditNotesUnavailable: salesInvoice.credit_notes_sen === null,
   });
 
   return (

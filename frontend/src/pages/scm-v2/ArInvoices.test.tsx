@@ -20,7 +20,7 @@ const TODAY = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 /* ── What the server answers (ONE stable object per read, as react-query hands back) ── */
 const AR_ROWS = [
   { kind: 'ODB', docKind: 'INV', id: 'b1', invoiceNumber: 'HC-ODB-2609-001', partyKey: 'D:d1', partyCode: null, partyName: 'AHMAD BIN ALI', debtorId: 'd1', ref: null, description: '转租九月', invoiceDate: '2026-09-05', dueDate: null, currency: 'MYR', totalSen: 50_000, paidSen: 20_000, depositAppliedSen: 0, outstandingSen: 30_000, status: 'POSTED' },
-  { kind: 'SI', docKind: 'INV', id: 'si-1', invoiceNumber: 'HC-SI-2609-001', partyKey: 'C:300-C001', partyCode: '300-C001', partyName: 'TAN AH KOW', debtorId: null, ref: 'HC-SO-2609-004', description: 'Bedroom set', invoiceDate: '2026-09-03', dueDate: '2026-09-30', currency: 'MYR', totalSen: 440_000, paidSen: 60_000, depositAppliedSen: 20_000, outstandingSen: 380_000, status: 'SENT' },
+  { kind: 'SI', docKind: 'INV', id: 'si-1', invoiceNumber: 'HC-SI-2609-001', partyKey: 'C:300-C001', partyCode: '300-C001', partyName: 'TAN AH KOW', debtorId: null, ref: 'HC-SO-2609-004', description: 'Bedroom set', invoiceDate: '2026-09-03', dueDate: '2026-09-30', currency: 'MYR', totalSen: 440_000, paidSen: 60_000, depositAppliedSen: 20_000, creditNotesSen: 30_000, outstandingSen: 350_000, status: 'SENT' },
   { kind: 'ODB', docKind: 'DN', id: 'b3', invoiceNumber: 'HC-ODN-2610-001', partyKey: 'D:d2', partyCode: null, partyName: 'OLD DEBTOR', debtorId: 'd2', ref: null, description: 'Damaged booth', invoiceDate: '2026-10-02', dueDate: null, currency: 'MYR', totalSen: 10_000, paidSen: 10_000, depositAppliedSen: 0, outstandingSen: 0, status: 'POSTED' },
 ];
 const DI_ROWS = [
@@ -153,6 +153,9 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     expect(si.textContent).toMatch(/Overdue \d+d/);
     expect(within(si).getByText('HC-SO-2609-004').getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-004');
     expect(si.textContent).toContain('deposit applied');
+    /* What a customer's credit notes knocked off it (owner 2026-11-03), apart from what was paid. */
+    expect(within(si).getByText('RM 300.00')).toBeTruthy();
+    expect(within(si).getByText('RM 3,500.00')).toBeTruthy();
     expect(si.getAttribute('style') ?? '').toContain('252, 247, 236');
     /* A bill part paid; a debit note paid, its own tag. */
     expect(row('HC-ODB-2609-001').textContent).toContain('Partly paid');

@@ -37,8 +37,10 @@ export type NoteItem = {
   cancelled: boolean;
   tag: Tag;
   journal: string | null;
-  /** What it knocks off: an OCN's knocked-off total and what is left; '—' when it knocks off nothing. */
+  /** What it knocks off: a posted credit note's knocked-off total and what is left; '—' when it knocks off nothing. */
   knocks: { appliedSen: number; leftSen: number } | null;
+  /** A close-out's final invoice — what the deposit note was knocked off against (it is no knock-off of its own). */
+  closesInvoice: string | null;
   note?: CreditNote;
   bill?: ArListRow;
 };
@@ -51,9 +53,12 @@ export function noteItem(n: CreditNote): NoteItem {
     otherDebtor: n.kind === 'OCN', date: String(n.note_date).slice(0, 10), party: n.party_name ?? n.party_code ?? '—',
     reference: [n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—',
     totalSen: Number(n.total_sen), status, cancelled: status === 'cancelled', tag: noteTag(n.status), journal: n.je_no,
-    /* An other debtor's credit knocks off their bills (the knock-off the list
-       carries); a customer's waits for its own knock-off (f2). */
-    knocks: n.kind === 'OCN' && status === 'posted' ? { appliedSen: Number(n.appliedSen ?? 0), leftSen: Number(n.unusedSen ?? 0) } : null,
+    /* An other debtor's credit knocks off their bills, a customer's their sales
+       invoices (owner 2026-11-03); a note answering a deposit invoice knocks
+       off nothing — a close-out names the final invoice it closed against. */
+    knocks: (n.kind === 'OCN' || (n.kind === 'CN' && !n.depositPaper)) && status === 'posted'
+      ? { appliedSen: Number(n.appliedSen ?? 0), leftSen: Number(n.unusedSen ?? 0) } : null,
+    closesInvoice: n.depositPaper === 'closes' && status !== 'cancelled' ? (n.sales_invoice_number ?? null) : null,
     note: n,
   };
 }
@@ -65,7 +70,7 @@ export function debitBillItem(b: ArListRow): NoteItem {
     key: `bill:${b.id}`, source: 'bill', id: b.id, no: b.invoiceNumber, kindWord: 'DN', side: 'debit', otherDebtor: true,
     date: String(b.invoiceDate ?? '').slice(0, 10), party: b.partyName ?? '—', reference: b.description ?? '—',
     totalSen: b.totalSen, status: cancelled ? 'cancelled' : 'posted', cancelled,
-    tag: noteTag(cancelled ? 'CANCELLED' : 'POSTED'), journal: null, knocks: null, bill: b,
+    tag: noteTag(cancelled ? 'CANCELLED' : 'POSTED'), journal: null, knocks: null, closesInvoice: null, bill: b,
   };
 }
 

@@ -57,7 +57,7 @@ export function arItem(r: ArListRow, today: string): InvoiceItem {
       key: `si:${r.id}`, kind: 'si', id: r.id, no: r.invoiceNumber, date: String(r.invoiceDate ?? '').slice(0, 10),
       billTo: r.partyName ?? '—', partyKey: r.partyKey, forText: r.ref ?? '—', forHref: r.ref ? soHref(r.ref) : null,
       totalSen: r.totalSen, outstandingSen: r.outstandingSen, status: open ? 'open' : 'settled', cancelled: false,
-      tag: salesInvoiceTag({ outstandingSen: r.outstandingSen, paidSen: r.paidSen, dueDate: r.dueDate, status: r.status }, today),
+      tag: salesInvoiceTag({ outstandingSen: r.outstandingSen, paidSen: r.paidSen + (r.creditNotesSen ?? 0), dueDate: r.dueDate, status: r.status }, today),
       debitNote: false, journal: null, closedBy: null, ar: r,
     };
   }

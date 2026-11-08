@@ -13,7 +13,10 @@ type Store = {
   orders: Array<Record<string, unknown>>;
   payments: Array<Record<string, unknown>>;
   invoices: Array<Record<string, unknown>>;
-  fail: 'orders' | 'payments' | 'invoices' | null;
+  /* The customers' credit notes knocked off the invoices (si-credit-notes.ts). */
+  allocations?: Array<Record<string, unknown>>;
+  notes?: Array<Record<string, unknown>>;
+  fail: 'orders' | 'payments' | 'invoices' | 'credits' | null;
   reads: string[];
 };
 
@@ -28,6 +31,7 @@ function fakeSb(store: Store) {
     eq(col: string, val: unknown) { this.filters[col] = val; return this; }
     in(col: string, vals: unknown[]) { this.ins[col] = vals; return this; }
     order() { return this; }
+    range() { return this; }
     private rows(src: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
       return src.filter((r) => {
         for (const [c, v] of Object.entries(this.filters)) if (r[c] !== v) return false;
@@ -46,6 +50,10 @@ function fakeSb(store: Store) {
       if (this.table === 'sales_invoices') {
         return store.fail === 'invoices' ? { data: null, error: { message: 'invoices blip' } } : { data: this.rows(store.invoices), error: null };
       }
+      if (this.table === 'acc_credit_note_allocations') {
+        return store.fail === 'credits' ? { data: null, error: { message: 'credits blip' } } : { data: this.rows(store.allocations ?? []), error: null };
+      }
+      if (this.table === 'acc_credit_notes') return { data: this.rows(store.notes ?? []), error: null };
       return { data: [], error: null };
     }
     then<T>(onF: (v: { data: unknown; error: unknown }) => T, onR?: (e: unknown) => T) {
@@ -107,13 +115,51 @@ describe('stampOrderDeposit', () => {
     expect(rows[0]!.so_deposit_applied_sen).toBe(0);
   });
 
-  /* Three reads for the page, not three per row — the whole reason the stamp is
-     batched. Twenty rows on one order must not become sixty round trips. */
-  test('it costs THREE reads for the whole page', async () => {
+  /* Four reads for the page, not four per row — the whole reason the stamp is
+     batched: the order, its payments, its invoices, and the credit notes knocked
+     off them. Twenty rows on one order must not become eighty round trips. */
+  test('it costs FOUR reads for the whole page', async () => {
     const store = twoInvoiceOrder();
     const rows = Array.from({ length: 20 }, (_, i) => ({ id: `si-${i}`, so_doc_no: 'HC-SO-2608-006' }));
     await stampOrderDeposit(fakeSb(store), rows as Array<Record<string, unknown>>, 1);
-    expect(store.reads).toHaveLength(3);
+    expect(store.reads).toHaveLength(4);
+  });
+
+  /* A customer's credit note knocked off the first invoice (owner 2026-11-03:
+     「要」): the row carries it, and the order's money spills past it. */
+  test('a credit note knocked off the first invoice is stamped on it, and the deposit spills to the second', async () => {
+    const store = twoInvoiceOrder();
+    store.payments = [{ so_doc_no: 'HC-SO-2608-006', amount_sen: 390_000, is_deposit: false }];
+    store.allocations = [{ id: 'al-1', note_id: 'cn-1', sales_invoice_id: 'si-1', applied_sen: 50_000, company_id: 1 }];
+    store.notes = [{ id: 'cn-1', status: 'POSTED', company_id: 1 }];
+    const rows = [
+      { id: 'si-1', so_doc_no: 'HC-SO-2608-006', status: 'SENT' },
+      { id: 'si-2', so_doc_no: 'HC-SO-2608-006', status: 'SENT' },
+    ] as Array<Record<string, unknown>>;
+    await stampOrderDeposit(fakeSb(store), rows, 1);
+    expect(rows.map((r) => [r.id, r.so_deposit_applied_sen, r.credit_notes_sen])).toEqual([['si-1', 250_000, 50_000], ['si-2', 140_000, 0]]);
+  });
+
+  test('only a POSTED note\'s knock-off counts, and an invoice with no order is stamped too', async () => {
+    const store = twoInvoiceOrder();
+    store.allocations = [
+      { id: 'al-1', note_id: 'cn-draft', sales_invoice_id: 'si-1', applied_sen: 0, company_id: 1 },
+      { id: 'al-2', note_id: 'cn-gone', sales_invoice_id: 'si-1', applied_sen: 30_000, company_id: 1 },
+      { id: 'al-3', note_id: 'cn-1', sales_invoice_id: 'manual', applied_sen: 20_000, company_id: 1 },
+    ];
+    store.notes = [{ id: 'cn-gone', status: 'CANCELLED', company_id: 1 }, { id: 'cn-1', status: 'POSTED', company_id: 1 }];
+    const rows = [{ id: 'si-1', so_doc_no: 'HC-SO-2608-006' }, { id: 'manual', so_doc_no: null }] as Array<Record<string, unknown>>;
+    await stampOrderDeposit(fakeSb(store), rows, 1);
+    expect(rows.map((r) => [r.id, r.credit_notes_sen])).toEqual([['si-1', 0], ['manual', 20_000]]);
+  });
+
+  test('a failed credit-note read leaves credit_notes_sen NULL and the deposit split as if none were knocked off', async () => {
+    const store = twoInvoiceOrder();
+    store.fail = 'credits';
+    const rows = [{ id: 'si-1', so_doc_no: 'HC-SO-2608-006' }] as Array<Record<string, unknown>>;
+    await stampOrderDeposit(fakeSb(store), rows, 1);
+    expect(rows[0]!.credit_notes_sen).toBeNull();
+    expect(rows[0]!.so_deposit_applied_sen).toBe(200_000);
   });
 
   for (const which of ['orders', 'payments', 'invoices'] as const) {

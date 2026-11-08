@@ -18,6 +18,9 @@
 //   GET /ar-invoices/bills/:billId    → { bill, debtor, receipts, creditNotes }
 //                                       a debtor bill with its lines, its debtor,
 //                                       the receipts and credit notes on it — its page
+//   GET /ar-invoices/sales/:siId/credit-notes → { creditNotes }
+//                                       the credit notes knocked off a sales
+//                                       invoice, and those closing its deposits
 //
 // This router only READS. A debtor bill is raised, edited and cancelled through
 // routes/other-debtors.ts (POST /other-debtors/:id/bills, PATCH
@@ -33,6 +36,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-order-deposit';
+import { creditNotesOf } from '../lib/si-credit-notes';
 import { DEBTOR_PARTY_COLS } from './other-debtors';
 
 type Row = Record<string, any>;
@@ -73,6 +77,9 @@ export type ArListRow = {
   paidSen: number;
   /** The slice of the order's deposit applied to a sales invoice (0 on a bill) — the "dep" marker the SI list draws. */
   depositAppliedSen: number;
+  /** What customers' credit notes knocked off a sales invoice (0 on a bill, whose
+      other-debtor credit notes already sit in its received) — si-credit-notes.ts. */
+  creditNotesSen: number;
   outstandingSen: number;
   status: string;
 };
@@ -84,6 +91,8 @@ function shapeSi(r: Row): ArListRow {
      outstanding — the one direction this may be wrong in (si-order-deposit.ts). */
   const depositRaw = Number(r.so_deposit_applied_sen ?? 0);
   const deposit = Number.isFinite(depositRaw) && depositRaw > 0 ? depositRaw : 0;
+  /* Kept apart from paid (the overpayment rule reads paid_sen alone); unread, 0 — the larger outstanding. */
+  const credit = creditNotesOf(r);
   const code = r.debtor_code ? String(r.debtor_code) : null;
   const name = r.debtor_name ? String(r.debtor_name) : null;
   return {
@@ -103,7 +112,8 @@ function shapeSi(r: Row): ArListRow {
     totalSen: total,
     paidSen: own + deposit,
     depositAppliedSen: deposit,
-    outstandingSen: Math.max(0, total - own - deposit),
+    creditNotesSen: credit,
+    outstandingSen: Math.max(0, total - own - deposit - credit),
     status: String(r.status ?? ''),
   };
 }
@@ -129,6 +139,7 @@ function shapeBill(r: Row, debtorName: string | null, debtorCode: string | null)
     totalSen: total,
     paidSen: received,
     depositAppliedSen: 0,
+    creditNotesSen: 0,
     outstandingSen: Math.max(0, total - received),
     status: String(r.status ?? ''),
   };
@@ -238,6 +249,52 @@ export const arBillDetailHandler = async (c: any): Promise<Response> => {
   });
 };
 
+/* ── GET /sales/:siId/credit-notes — the credit notes on a sales invoice ─────
+   Its page's Credit notes (batch 5 §8): the customers' credit notes knocked off
+   it (owner 2026-11-03: 「要」; si-credit-notes.ts), and the notes that closed
+   its order's deposit invoices at this final invoice — not knock-offs (the
+   order's deposit already lowers the invoice; they are not counted twice), so
+   each says which deposit invoice it closed. Posted notes only. */
+export const arSalesInvoiceCreditNotesHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const siId = c.req.param('siId');
+  const { data: si, error } = await scopeToCompany(sb.from('sales_invoices').select('id').eq('id', siId), c).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!si) return c.json({ error: 'not_found', message: 'That sales invoice is not in the company you are working in.' }, 404);
+  const [allocs, named] = await Promise.all([
+    scopeToCompany(sb.from('acc_credit_note_allocations').select('note_id, applied_sen').eq('sales_invoice_id', siId), c),
+    scopeToCompany(sb.from('acc_credit_notes').select('id').eq('kind', 'CN').eq('sales_invoice_id', siId).eq('status', 'POSTED'), c),
+  ]);
+  if (allocs.error) return c.json({ error: 'load_failed', reason: allocs.error.message }, 500);
+  if (named.error) return c.json({ error: 'load_failed', reason: named.error.message }, 500);
+  const taken = ((allocs.data ?? []) as Row[]).filter((a) => Number(a.applied_sen ?? 0) > 0);
+  const namedIds = ((named.data ?? []) as Row[]).map((n) => String(n.id));
+  /* A note that names this invoice is its close-out only when a deposit invoice says so. */
+  const closes = new Map<string, string>();
+  if (namedIds.length > 0) {
+    const { data: dis, error: diErr } = await scopeToCompany(sb.from('acc_deposit_invoices').select('di_number, credit_note_id').in('credit_note_id', namedIds), c);
+    if (diErr) return c.json({ error: 'load_failed', reason: diErr.message }, 500);
+    for (const d of (dis ?? []) as Row[]) closes.set(String(d.credit_note_id), String(d.di_number));
+  }
+  const ids = [...new Set([...taken.map((a) => String(a.note_id)), ...closes.keys()])];
+  if (ids.length === 0) return c.json({ creditNotes: [] });
+  const { data: notes, error: nErr } = await scopeToCompany(
+    sb.from('acc_credit_notes').select('id, note_number, note_date, status, reason, total_sen').in('id', ids).eq('status', 'POSTED'), c,
+  );
+  if (nErr) return c.json({ error: 'load_failed', reason: nErr.message }, 500);
+  const byId = new Map(((notes ?? []) as Row[]).map((n) => [String(n.id), n]));
+  const row = (n: Row, what: string, amountSen: number, closesDeposit: boolean) => ({
+    id: String(n.id), number: String(n.note_number ?? ''), date: n.note_date ?? null, what, amountSen, closesDeposit,
+  });
+  const creditNotes = [
+    ...[...closes].flatMap(([id, di]) => { const n = byId.get(id); return n ? [row(n, `Closes deposit invoice ${di}`, Number(n.total_sen ?? 0), true)] : []; }),
+    ...taken.flatMap((a) => { const n = byId.get(String(a.note_id)); return n ? [row(n, n.reason ? String(n.reason) : '—', Number(a.applied_sen), false)] : []; }),
+  ].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')) || a.number.localeCompare(b.number));
+  return c.json({ creditNotes });
+};
+
 /* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const arInvoices = new Hono();
@@ -247,3 +304,4 @@ export const arInvoices = new Hono();
 arInvoices.use('*', supabaseAuth);
 arInvoices.get('/', listArInvoicesHandler);
 arInvoices.get('/bills/:billId', arBillDetailHandler);
+arInvoices.get('/sales/:siId/credit-notes', arSalesInvoiceCreditNotesHandler);

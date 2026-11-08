@@ -4,7 +4,6 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Waiting on owner
 - Logistics cost, September: 332 DOs have no lorry picked (Penang 77, KL 255), so the month's own-lorry cost cannot be shared per lorry; pick the lorries in Delivery Planning, or decide to leave September as it is — owner said "later" — 2026-11-05
-- Project Overview: 7 August events still in draft / setup with no data at all (#149, #153, #157, #164, #360, #399, #400), probably never held; cancel them or keep — owner — 2026-11-05
 - DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; Team, Mailboxes lists the addresses still waiting (P3) — 2026-10-09
 - HC-0125 Employees & Attendance: after phase 1 deploys, grant `hr.employees.manage` (or `hr.employees.read`) to Nico's role in Team > Roles & Permissions; until then only Owner / IT Admin (`*`) see HR > Employees & Attendance — 2026-10-21
 - HC-0125 payroll: grant `hr.payroll.approve` (approve / reopen / mark paid a payroll month, approve penalties) to whoever signs payroll off - not the person who keys the hours - 2026-10-22

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
+import { siCreditNotesSen, siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { offersRecordPayment, piPaymentHint } from "./doc-payment";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices, canPostGoodsReceipts } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -413,11 +413,13 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     stats: (h) => {
       const depositSen = siDepositAppliedSen(h); // own stat, never folded into Paid
-      const bal = siOutstandingSen(Number(h.total_sen ?? h.local_total_sen ?? 0), Number(h.paid_sen ?? 0), depositSen);
+      const creditSen = siCreditNotesSen(h); // credit notes knocked off it — their own stat too
+      const bal = siOutstandingSen(Number(h.total_sen ?? h.local_total_sen ?? 0), Number(h.paid_sen ?? 0), depositSen, creditSen);
       return [
         ["Total", money(h.total_sen ?? h.local_total_sen), "var(--ink)"],
         ["Paid", money(h.paid_sen), "#2f8a5b"],
         ...(depositSen > 0 ? [["SO deposit", money(depositSen), "#2f8a5b"] as [string, string, string]] : []),
+        ...(creditSen > 0 ? [["Credit notes", money(creditSen), "#2f8a5b"] as [string, string, string]] : []),
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -1150,7 +1152,7 @@ function PaymentSheet({ id, header, onClose, onDone }: {
   const notify = useNotify();
   const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
   const paid = Number(header?.paid_sen ?? 0);
-  const balance = siOutstandingSen(total, paid, siDepositAppliedSen(header));
+  const balance = siOutstandingSen(total, paid, siDepositAppliedSen(header), siCreditNotesSen(header));
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
   const [method, setMethod] = useState("cash");

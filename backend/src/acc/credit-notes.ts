@@ -220,8 +220,9 @@ export async function cancelCreditNote(
   if (note.status === 'CANCELLED') return { ok: true, status: 'already_cancelled', contraJeNo: null };
   /* A supplier note's credit comes back off the invoices it was applied to
      first (2026-10-01, Supplier CN part 2) — they owe it again; an other
-     debtor's comes back off the bills it was knocked off. */
-  if (note.kind === 'SCN' || note.kind === 'OCN') {
+     debtor's comes back off the bills it was knocked off, a customer's off the
+     sales invoices (2026-11-03) — each owes it again. */
+  if (note.kind === 'SCN' || note.kind === 'OCN' || note.kind === 'CN') {
     const back = await removeAllAllocations(sb, { companyId: p.companyId, note });
     if (!back.ok) return { ok: false, status: back.refusal.error, reason: back.refusal.message };
   }

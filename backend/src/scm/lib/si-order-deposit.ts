@@ -28,8 +28,16 @@
 // the second still owes its full 1,400. The property that makes it checkable is
 // that the slices sum to the order's own collected total (or to what the
 // invoices could absorb, whichever is smaller) — never more than either side.
+//
+// A CUSTOMER'S CREDIT NOTE knocked off an invoice (owner 2026-11-03: 「要」;
+// si-credit-notes.ts) lowers what that invoice still owes, so it absorbs that
+// much less of the order's money and the rest spills to the next invoice — a
+// partly delivered order whose first invoice took a credit note, then paid in
+// full, owes nothing on either invoice. The knock-off is Finance's own act; the
+// spill is worked out again every time it is read.
 // ----------------------------------------------------------------------------
 import { soPaidInputsOf, soPaidSen } from '../shared/so-outstanding';
+import { creditNotesBySi } from './si-credit-notes';
 
 /** One invoice competing for the order's money. All sen. */
 export interface AllocatableInvoice {
@@ -43,6 +51,9 @@ export interface AllocatableInvoice {
   totalSen: number;
   /** `sales_invoices.paid_sen` — receipts taken on THIS invoice, not the order. */
   ownPaidSen: number;
+  /** What customers' credit notes knocked off it (si-credit-notes.ts) — it owes
+      that much less, so it absorbs that much less of the order's money. */
+  creditedSen: number;
 }
 
 /* An invoice that cannot take money must not absorb any of the order's.
@@ -90,9 +101,9 @@ export function sortForAllocation(rows: AllocatableInvoice[]): AllocatableInvoic
  * Split `orderCollectedSen` across the order's invoices, earliest first.
  *
  * Each eligible invoice absorbs `min(what is left, what it still owes)`, where
- * "what it still owes" is its own total less its own receipts. Money already
- * taken ON the invoice is therefore never displaced by the order's — the two
- * add up rather than competing.
+ * "what it still owes" is its own total less its own receipts and less what
+ * credit notes knocked off it. Money already taken ON the invoice is therefore
+ * never displaced by the order's — the two add up rather than competing.
  *
  * Guarantees, pinned by `si-order-deposit.test.ts`:
  *   · every slice is >= 0, and <= that invoice's own outstanding;
@@ -111,7 +122,8 @@ export function allocateOrderDeposit(
   let remaining = Math.max(0, Math.trunc(Number.isFinite(orderCollectedSen) ? orderCollectedSen : 0));
   for (const inv of sortForAllocation(invoices)) {
     if (!absorbsOrderDeposit(inv.status)) { out.set(inv.id, 0); continue; }
-    const outstanding = Math.max(0, Math.trunc(inv.totalSen) - Math.trunc(inv.ownPaidSen));
+    const credited = Math.max(0, Math.trunc(Number.isFinite(inv.creditedSen) ? inv.creditedSen : 0));
+    const outstanding = Math.max(0, Math.trunc(inv.totalSen) - Math.trunc(inv.ownPaidSen) - credited);
     const take = Math.min(remaining, outstanding);
     out.set(inv.id, take);
     remaining -= take;
@@ -157,13 +169,16 @@ const SIBLING_COLS = 'id, invoice_number, invoice_date, status, total_sen, paid_
  * Fails LOUD, never silently: any read error comes back `ok: false` so the
  * caller decides. Folding a failed read into "the order collected nothing"
  * would tell the office to chase money that is already in the drawer, which is
- * the exact bug this module exists to end.
+ * the exact bug this module exists to end. The one exception is the invoices'
+ * credit notes: unread, they come back `credits: null` and the split runs as if
+ * none were knocked off — the earlier invoices then absorb more and the later
+ * ones show MORE outstanding, the direction this may be wrong in.
  */
 export async function readOrderDeposit(
   sb: any,
   soDocNo: string,
   companyId: number | null,
-): Promise<{ ok: true; slices: Map<string, number>; collectedSen: number; transactions: OrderDepositTransaction[] } | { ok: false; reason: string }> {
+): Promise<{ ok: true; slices: Map<string, number>; collectedSen: number; transactions: OrderDepositTransaction[]; credits: Map<string, number> | null } | { ok: false; reason: string }> {
   if (companyId == null) return { ok: false, reason: 'no active company' };
 
   const { data: soRow, error: soErr } = await sb
@@ -173,7 +188,7 @@ export async function readOrderDeposit(
     .eq('company_id', companyId)
     .maybeSingle();
   if (soErr) return { ok: false, reason: `order header: ${soErr.message}` };
-  if (!soRow) return { ok: true, slices: new Map(), collectedSen: 0, transactions: [] };
+  if (!soRow) return { ok: true, slices: new Map(), collectedSen: 0, transactions: [], credits: new Map() };
 
   const [pays, sibs] = await Promise.all([
     sb.from('mfg_sales_order_payments')
@@ -201,13 +216,21 @@ export async function readOrderDeposit(
     soPaidInputsOf(soRow as Record<string, unknown>, ledgerPaidSen, depositInLedger),
   );
 
-  const invoices: AllocatableInvoice[] = ((sibs.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+  const sibRows = (sibs.data ?? []) as Array<Record<string, unknown>>;
+  const credited = await creditNotesBySi(sb, companyId, sibRows.map((r) => String(r.id)));
+  if (!credited.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[si-order-deposit] credit-note read failed — the split runs as if none were knocked off:', soDocNo, credited.reason);
+  }
+  const credits = credited.ok ? credited.bySi : null;
+  const invoices: AllocatableInvoice[] = sibRows.map((r) => ({
     id: String(r.id),
     invoiceNumber: String(r.invoice_number ?? ''),
     invoiceDate: (r.invoice_date as string | null) ?? null,
     status: String(r.status ?? ''),
     totalSen: Number(r.total_sen ?? 0),
     ownPaidSen: Number(r.paid_sen ?? 0),
+    creditedSen: credits?.get(String(r.id)) ?? 0,
   }));
 
   return {
@@ -215,6 +238,7 @@ export async function readOrderDeposit(
     slices: allocateOrderDeposit(collectedSen, invoices),
     collectedSen,
     transactions: payRows.map(({ is_deposit: _d, ...t }) => t),
+    credits,
   };
 }
 
@@ -309,19 +333,32 @@ export async function recomputeSiPaid(sb: any, salesInvoiceId: string): Promise<
      exactly as it was for the next successful roll to fix. */
   let deposit = 0;
   let depositUnknown = false;
+  /* What customers' credit notes knocked off it settles it too (si-credit-notes.ts)
+     — never folded into paid_sen. Unread, the status waits like the deposit's. */
+  let credited: number | null = null;
   if (c0.so_doc_no) {
     const d = await readOrderDeposit(sb, c0.so_doc_no, c0.company_id ?? null);
-    if (d.ok) deposit = d.slices.get(salesInvoiceId) ?? 0;
-    else {
+    if (d.ok) {
+      deposit = d.slices.get(salesInvoiceId) ?? 0;
+      credited = d.credits ? (d.credits.get(salesInvoiceId) ?? 0) : null;
+    } else {
       depositUnknown = true;
       /* eslint-disable-next-line no-console */
       console.error('[si-recompute-paid] order deposit read failed — status left unchanged:', salesInvoiceId, d.reason);
     }
+  } else {
+    /* No company stamped (pre-0083 rows) means no allocation could name it. */
+    const read = c0.company_id == null ? null : await creditNotesBySi(sb, c0.company_id, [salesInvoiceId]);
+    credited = read === null ? 0 : read.ok ? (read.bySi.get(salesInvoiceId) ?? 0) : null;
+  }
+  if (credited === null && !depositUnknown) {
+    /* eslint-disable-next-line no-console */
+    console.error('[si-recompute-paid] credit-note read failed — status left unchanged:', salesInvoiceId);
   }
 
   const updates: Record<string, unknown> = { paid_sen: paid, updated_at: new Date().toISOString() };
-  if (!depositUnknown) {
-    const next = siStatusFor(c0.status, Number(c0.total_sen ?? 0), paid + deposit);
+  if (!depositUnknown && credited !== null) {
+    const next = siStatusFor(c0.status, Number(c0.total_sen ?? 0), paid + deposit + credited);
     if (next) {
       updates.status = next;
       if (next === 'PAID') updates.paid_at = new Date().toISOString();
@@ -385,6 +422,11 @@ export async function recomputeSiPaidForOrder(sb: any, soDocNo: string, companyI
  * the UN-adjusted, LARGER outstanding — today's behaviour, and the direction
  * that can only over-state what is owed. It is logged rather than swallowed,
  * which is more than the two stamps beside it do.
+ *
+ * It also stamps `credit_notes_sen` — what customers' credit notes knocked off
+ * each row (si-credit-notes.ts), read once for the page and the siblings the
+ * split runs over. Every reader subtracts it beside the deposit; `null` is the
+ * same "could not read", rendering the larger outstanding.
  */
 export async function stampOrderDeposit(
   sb: any,
@@ -393,18 +435,13 @@ export async function stampOrderDeposit(
 ): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
-  for (const r of list) r.so_deposit_applied_sen = null;
+  for (const r of list) { r.so_deposit_applied_sen = null; r.credit_notes_sen = null; }
   if (companyId == null) return;
 
   const soDocNos = [...new Set(
     list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d),
   )];
-  if (soDocNos.length === 0) {
-    for (const r of list) r.so_deposit_applied_sen = 0;
-    return;
-  }
-
-  const [sos, pays, sibs] = await Promise.all([
+  const reads = soDocNos.length === 0 ? null : await Promise.all([
     sb.from('mfg_sales_orders')
       .select('doc_no, total_revenue_sen, deposit_sen')
       .in('doc_no', soDocNos).eq('company_id', companyId),
@@ -414,12 +451,30 @@ export async function stampOrderDeposit(
       .select(`so_doc_no, ${SIBLING_COLS}`)
       .in('so_doc_no', soDocNos).eq('company_id', companyId),
   ]);
-  if (sos.error || pays.error || sibs.error) {
+  const failed = reads ? (reads[0].error ?? reads[1].error ?? reads[2].error ?? null) : null;
+  if (failed) {
     /* eslint-disable-next-line no-console */
-    console.error('[si-order-deposit] list stamp failed — rows keep the un-adjusted outstanding:',
-      sos.error?.message ?? pays.error?.message ?? sibs.error?.message);
+    console.error('[si-order-deposit] list stamp failed — rows keep the un-adjusted outstanding:', failed.message);
+  }
+  const sibRows = reads && !failed ? (reads[2].data ?? []) as Array<Record<string, unknown>> : [];
+
+  /* The credit notes knocked off the page's invoices and every sibling the split runs over. */
+  const credited = await creditNotesBySi(sb, companyId, [...list, ...sibRows].map((r) => String(r.id ?? '')));
+  if (!credited.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[si-order-deposit] credit-note stamp failed — rows keep the un-adjusted outstanding:', credited.reason);
+  } else {
+    /* A draft or cancelled invoice is owed nothing, so nothing is knocked off it. */
+    for (const r of list) r.credit_notes_sen = absorbsOrderDeposit(r.status as string | null) ? (credited.bySi.get(String(r.id)) ?? 0) : 0;
+  }
+  const creditOf = (id: string): number => (credited.ok ? (credited.bySi.get(id) ?? 0) : 0);
+
+  if (failed) return;
+  if (!reads) {
+    for (const r of list) r.so_deposit_applied_sen = 0;
     return;
   }
+  const [sos, pays] = reads;
 
   const ledgerByDoc = new Map<string, { sum: number; hasDeposit: boolean }>();
   for (const p of (pays.data ?? []) as Array<{ so_doc_no: string; amount_sen: number; is_deposit?: boolean | null }>) {
@@ -430,7 +485,7 @@ export async function stampOrderDeposit(
   }
 
   const invoicesByDoc = new Map<string, AllocatableInvoice[]>();
-  for (const r of (sibs.data ?? []) as Array<Record<string, unknown>>) {
+  for (const r of sibRows) {
     const doc = (r.so_doc_no as string | null) ?? '';
     if (!doc) continue;
     const bucket = invoicesByDoc.get(doc) ?? [];
@@ -441,6 +496,7 @@ export async function stampOrderDeposit(
       status: String(r.status ?? ''),
       totalSen: Number(r.total_sen ?? 0),
       ownPaidSen: Number(r.paid_sen ?? 0),
+      creditedSen: creditOf(String(r.id)),
     });
     invoicesByDoc.set(doc, bucket);
   }

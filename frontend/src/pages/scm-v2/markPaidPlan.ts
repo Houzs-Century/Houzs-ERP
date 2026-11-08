@@ -30,7 +30,8 @@
 export type MarkPaidRefusal =
   | 'not_payable'
   | 'nothing_outstanding'
-  | 'deposit_unknown';
+  | 'deposit_unknown'
+  | 'credit_unknown';
 
 export type MarkPaidPlan =
   | { ok: true; amountSen: number }
@@ -59,6 +60,12 @@ export interface MarkPaidInput {
    * deposit a second time.
    */
   depositUnavailable: boolean;
+  /**
+   * The header's `credit_notes_sen` came back null — the credit notes knocked
+   * off it could not be read, so the outstanding on screen may be too high by
+   * what they took. REQUIRED for the same reason as the deposit.
+   */
+  creditNotesUnavailable: boolean;
 }
 
 /* The statuses the payment endpoints themselves refuse with `not_payable`
@@ -78,6 +85,9 @@ export function planMarkPaid(input: MarkPaidInput): MarkPaidPlan {
      copies order payments into `sales_invoice_payments`, because both ledgers
      post Dr cash / Cr AR). Refuse and let the operator refresh. */
   if (input.depositUnavailable) return { ok: false, reason: 'deposit_unknown' };
+  /* The same for the credit notes knocked off it (owner 2026-11-03): an
+     unread credit is not "no credit", and booking it as cash counts it twice. */
+  if (input.creditNotesUnavailable) return { ok: false, reason: 'credit_unknown' };
 
   const outstanding = Math.trunc(Number(input.outstandingSen));
   /* NaN falls through here too: `NaN > 0` is false, so an unreadable figure
@@ -104,4 +114,6 @@ export const MARK_PAID_REFUSAL_MESSAGE: Record<MarkPaidRefusal, string> = {
     'The outstanding balance on this invoice reads zero, so there is no amount to record.',
   deposit_unknown:
     'We could not read what the source order already collected, so the outstanding amount shown may be too high. Refresh and try again rather than recording a payment that would count the deposit twice.',
+  credit_unknown:
+    'We could not read the credit notes knocked off this invoice, so the outstanding amount shown may be too high. Refresh and try again rather than recording a payment for what a credit note settles.',
 };
