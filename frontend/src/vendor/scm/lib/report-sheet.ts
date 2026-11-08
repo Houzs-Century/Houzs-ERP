@@ -14,7 +14,7 @@
 import { fmtSenPlain } from '../../shared/format';
 import { flattenLaid, fmtPct, linesVisible, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
-import { balanceParts, type RpReport } from './rp-report-queries';
+import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpReport } from './rp-report-queries';
 import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
 
 export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
@@ -111,8 +111,16 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
   for (const n of r.layout.tree) {
     if (n.kind === 'subtotal') { rows.push({ kind: 'net', depth: 0, label: n.label, cells: cellsOf(n.cells, n.amountSen, null) }); continue; }
     rows.push({ kind: 'block', depth: 0, label: n.label, cells: [] });
-    const lines = flattenLaid(n.children).map(({ node, depth }) => ({ id: node.id, depth, node }));
-    for (const { node, depth } of linesVisible(lines, level, open)) {
+    /* The AutoCount line (owner 2026-11-08) where the screen prints it; the block's end is its fallback place. */
+    type Placed = { id: string; depth: number; node: LaidNode | null };
+    const end: Placed = { id: `tot:${n.id}`, depth: 0, node: null };
+    const lines = withAutoCountLine(r, [...flattenLaid(n.children).map(({ node, depth }): Placed => ({ id: node.id, depth, node })), end],
+      (depth): Placed => ({ id: AUTOCOUNT_LINE_ID, depth, node: null })).filter((l) => l !== end);
+    for (const { id, node, depth } of linesVisible(lines, level, open)) {
+      if (!node) {
+        if (id === AUTOCOUNT_LINE_ID) rows.push({ kind: 'memo', depth, label: AUTOCOUNT_LINE_LABEL, cells: cellsOf(undefined, r.autoCount?.sen ?? 0, null) });
+        continue;
+      }
       rows.push({ kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category', depth, label: node.label, ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}), cells: cellsOf(node.cells, node.amountSen, node.pct) });
     }
     rows.push({ kind: 'total', depth: 0, label: n.totalLabel ?? `Total ${n.label}`, cells: cellsOf(n.cells, n.amountSen, n.pct) });

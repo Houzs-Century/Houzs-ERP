@@ -57,6 +57,7 @@ import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-l
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
+import { loadAutoCountReceipts, type AutoCountReceipt } from '../../acc/autocount-receipts';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -95,7 +96,12 @@ export type RpReport = {
   entries: RpEntry[];
   /** The card money the bank has not received (owner 2026-09-28). */
   card: RpCard;
+  /** Customers' money AutoCount recorded after the books started, which no journal carries
+      (owner 2026-11-08): named under the customer receipts, in no total. */
+  autoCount: RpAutoCount;
 };
+export type RpAutoCount = { sen: number; count: number; entries: RpEntry[] };
+const NO_AUTOCOUNT: RpAutoCount = { sen: 0, count: 0, entries: [] };
 /** A swipe books Dr card-machine clearing / Cr the customer; the acquirer's payout
     Dr bank / Cr clearing. Since 2026-11-05 the swipes are Cash In in the Card column;
     these two figures stay for the API's readers: what was swiped in the period — every
@@ -238,6 +244,8 @@ export type RpSources = {
   roles: () => Promise<RoleCodes>;
   /** What each named supplier-payment voucher settled (rule A), keyed by pv_number. */
   splits: (pvNumbers: string[], controlCodes: Set<string>) => Promise<{ ok: true; byPv: Map<string, RpSplit[]> } | Fail>;
+  /** Customers' money AutoCount recorded in the period after the books started; a source without it names none. */
+  autoCountReceipts?: (from: string, to: string) => Promise<{ ok: true; payments: AutoCountReceipt[] } | Fail>;
 };
 /** The database, as the route reads it. */
 export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpSources => ({
@@ -255,6 +263,7 @@ export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpS
   },
   roles: () => resolveRoles(sb, companyId),
   splits: (pvNumbers, controlCodes) => supplierPurposeSplits(sb, companyId, pvNumbers, controlCodes),
+  autoCountReceipts: (from, to) => loadAutoCountReceipts(sb, companyId, from, to),
 });
 
 /** What each supplier-payment voucher settled, read through the documents it
@@ -375,7 +384,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   if (!acquirers.ok) return { ok: false, reason: acquirers.reason };
   const clearingCodes = [...new Set([String(roles.TRANSIT_EDC).trim(), ...acquirers.codes].filter(Boolean))].sort();
   const clearingSet = new Set(clearingCodes);
-  if (bankColumns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] } } };
+  if (bankColumns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] }, autoCount: NO_AUTOCOUNT } };
   const loaded = await src.lines(bankColumns.map((a) => a.code), clearingCodes, from, to);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
   /* The Card column shows once a clearing account has ever moved. */
@@ -605,7 +614,17 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const ownTransfer = (r: RpRow) => r.key.startsWith('XFER:') && r.code !== null && colSet.has(r.code);
   const cf = layOutCashFlow(tree, cashFlowLines(receiptRows.filter((r) => !ownTransfer(r))), cashFlowLines(paymentRows.filter((r) => !ownTransfer(r))), companyId);
   const layout = { stored: laid.stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen };
-  return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries, card } };
+  const ac = src.autoCountReceipts ? await src.autoCountReceipts(from, to) : { ok: true as const, payments: [] };
+  if (!ac.ok) return { ok: false, reason: ac.reason };
+  const autoCount: RpAutoCount = ac.payments.length === 0 ? NO_AUTOCOUNT : {
+    sen: ac.payments.reduce((s, p) => s + p.amountSen, 0),
+    count: ac.payments.length,
+    entries: ac.payments.map((p) => ({
+      jeNo: '', entryDate: p.paidOn, sourceType: 'AUTOCOUNT', sourceDocNo: p.docNo, narration: p.note,
+      party: p.party, side: 'R' as const, rowKey: 'AUTOCOUNT', column: 'AUTOCOUNT', sen: p.amountSen,
+    })),
+  };
+  return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries, card, autoCount } };
 }
 
 /* ── GET /accounting/reports/receipts-payments?from&to&accounts=a,b&party=1 ── */
