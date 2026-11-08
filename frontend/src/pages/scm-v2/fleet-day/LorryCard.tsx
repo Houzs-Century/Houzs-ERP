@@ -78,7 +78,7 @@ function UndeliveredRow({ d, no, color, selected, hasRemark, leg, onOpen }: { d:
         </span>
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {d.address && <span className="block truncate text-[12px] text-ink-secondary">{d.address}</span>}
-        {leg && <span className="block text-[11px] text-ink-muted">From the stop before: <span className="font-semibold text-ink-secondary">{leg}</span></span>}
+        {leg && <span className="block text-[11px] text-ink-muted">Google <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex flex-col items-end gap-1">
         {d.rowType === 'so' && <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">{fmtSen(d.amountSen)}</span>}
@@ -110,10 +110,10 @@ function DeliveredRow({ d, no, color, times, selected, leg, onOpen }: { d: DocRo
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {times && (times.roadMin != null || times.siteMin != null) && (
           <span className="block text-[11px] text-ink-secondary">
-            {[times.roadMin != null ? `On the road ${fmtMinutes(times.roadMin)}` : null, d.arrivedAt ? `Arrived ${clockMY(d.arrivedAt)}` : null, times.siteMin != null ? `On site ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
+            {[times.roadMin != null ? `Drive time ${fmtMinutes(times.roadMin)}` : null, d.arrivedAt ? `Arrived ${clockMY(d.arrivedAt)}` : null, times.siteMin != null ? `On-site time ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
           </span>
         )}
-        {leg && <span className="block text-[11px] text-ink-muted">From the stop before: <span className="font-semibold text-ink-secondary">{leg}</span></span>}
+        {leg && <span className="block text-[11px] text-ink-muted">Google <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex items-center gap-2">
         {d.rowType === 'so' && <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>}
@@ -233,7 +233,7 @@ export function LorryCard({
           </span>
         )}
         {!plannedAt && !actualAt && <span className="text-ink-muted">Not departed yet</span>}
-        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">By road</span> <span className="font-semibold text-ink">{road}</span></span>}
+        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Google</span> <span className="font-semibold text-ink">{road}</span></span>}
       </div>
 
       {/* progress */}

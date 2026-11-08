@@ -94,7 +94,7 @@ describe('a finished stop shows its road and site time', () => {
       <LorryCard run={timed} visibleDocs={timed.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
         remarkKeys={new Set()} road={null} legByRef={new Map()} mapNoByRef={new Map()} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
-    expect(screen.getByText(/^On the road 30 min · Arrived .+ · On site 40 min$/)).toBeTruthy();
+    expect(screen.getByText(/^Drive time 30 min · Arrived .+ · On-site time 40 min$/)).toBeTruthy();
   });
 });
 

@@ -50,3 +50,40 @@ export function legLabelsByRef(figs: Iterable<RoadFigure>): Map<string, string> 
   for (const f of figs) for (const l of f.legs ?? []) if (l.ref) out.set(l.ref, `${fmtKm(l.distanceM)} · ${fmtDrive(l.durationS)}`);
   return out;
 }
+
+/** One lorry-day, Google against what really happened (server: scm/lib/lorry-day-stats.ts).
+ *  `driveS` and `googleTimedS` cover the same timed stops, so they compare like for like. */
+export type RoadDayStat = {
+  date: string; lorryId: string;
+  googleM: number; googleS: number; gpsKm: number | null;
+  stops: number; timedStops: number; driveS: number; googleTimedS: number;
+  onSiteS: number; onSiteStops: number;
+};
+export type OnSiteRow = { buildingType: string; lorryId: string; stops: number; onSiteS: number };
+
+export function useRoadDaily(from: string, to: string) {
+  return useQuery({
+    queryKey: ['lorry-route', 'daily', from, to],
+    queryFn: () => authedFetch<{ days: RoadDayStat[]; onSite: OnSiteRow[] }>(`/lorry-routes/daily?from=${from}&to=${to}`),
+    staleTime: 60_000,
+  });
+}
+
+/** "+12%" / "-8%" against the Google figure; null when there is nothing to compare. PURE. */
+export function diffPct(actual: number | null, google: number): string | null {
+  if (actual == null || google <= 0) return null;
+  const p = Math.round(((actual - google) / google) * 100);
+  return `${p > 0 ? '+' : ''}${p}%`;
+}
+
+/** Per-lorry totals of the daily figures. GPS km stays null for a lorry with no GPS day. PURE. */
+export function dailyTotalsByLorry(days: readonly RoadDayStat[]): Map<string, { gpsKm: number | null; driveS: number; googleTimedS: number; timedStops: number }> {
+  const out = new Map<string, { gpsKm: number | null; driveS: number; googleTimedS: number; timedStops: number }>();
+  for (const d of days) {
+    const t = out.get(d.lorryId) ?? { gpsKm: null, driveS: 0, googleTimedS: 0, timedStops: 0 };
+    if (d.gpsKm != null) t.gpsKm = (t.gpsKm ?? 0) + d.gpsKm;
+    t.driveS += d.driveS; t.googleTimedS += d.googleTimedS; t.timedStops += d.timedStops;
+    out.set(d.lorryId, t);
+  }
+  return out;
+}
