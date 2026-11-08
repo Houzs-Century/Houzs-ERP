@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { fmtDate } from '../../shared/format';
 import { triggerDownload } from './fabric-csv';
+import { guardFormula } from '../../../lib/csv';
 
 export type LedgerJournal = 'SALES' | 'PURCHASE' | 'BANK' | 'CASH' | 'GENERAL';
 
@@ -104,7 +105,10 @@ export const journalLabel = (j: LedgerJournal): string =>
 /** The ledger's columns, the owner's order — ONE home for the screen, the CSV and the PDF. */
 export const LEDGER_COLUMNS = ['Date', 'Entry', 'Journal', 'Other side', 'Ref. 1', 'Ref. 2', 'Description', 'Debit', 'Credit', 'Balance'] as const;
 
-const csvCell = (s: string): string => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+const csvCell = (raw: string): string => {
+  const s = guardFormula(raw);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
 /** The ledger as a CSV — exactly the rows the screen shows: a heading row per
     account, its balance b/f, its lines, its totals, then the grand totals. */
