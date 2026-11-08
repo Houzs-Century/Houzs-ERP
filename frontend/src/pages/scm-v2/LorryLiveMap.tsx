@@ -39,7 +39,8 @@ function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
   );
 }
 
-export function LorryLiveMap() {
+/** `embedded`: shown inside Coverage & Fleet or Fleet Health (owner 2026-11-08), which carry their own header. */
+export function LorryLiveMap({ embedded }: { embedded: boolean }) {
   const q = useLorryPositions();
   const positions = q.data ?? [];
   const kmCost = new Map((useLorryKmCost().data ?? []).map((k) => [k.lorry_id, k]));
@@ -61,13 +62,17 @@ export function LorryLiveMap() {
 
   return (
     <div>
-      <PageHeader
-        dense
-        eyebrow="Delivery · TMS"
-        title="Lorry Live Map"
-        description="Velocity trackers, updated every 5 min. Lorries with no tracker, or no position in 24 h, are not shown."
-      />
-      <div className="space-y-4 p-4">
+      {embedded ? (
+        <p className="text-[13px] text-ink-muted">Velocity trackers, updated every 5 min. Lorries with no tracker, or no position in 24 h, are not shown.</p>
+      ) : (
+        <PageHeader
+          dense
+          eyebrow="Delivery · TMS"
+          title="Lorry Live Map"
+          description="Velocity trackers, updated every 5 min. Lorries with no tracker, or no position in 24 h, are not shown."
+        />
+      )}
+      <div className={embedded ? 'space-y-4 pt-3' : 'space-y-4 p-4'}>
         {q.isLoading ? (
           <p className="text-[13px] text-ink-muted">Loading positions…</p>
         ) : q.isError ? (

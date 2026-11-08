@@ -32,6 +32,7 @@ import { cn } from '../../lib/utils';
 import { DeliveryPlanningRegions } from './DeliveryPlanningRegions';
 import { DeliveryResidenceRules } from './DeliveryResidenceRules';
 import { DriversSection, HelpersSection, LorriesSection } from './Fleet';
+import { LorryLiveMap } from './LorryLiveMap';
 import { SavedLocations } from './SavedLocations';
 
 type Tab = { key: string; title: string; path: string; render: () => ReactElement };
@@ -42,6 +43,8 @@ const TABS: Tab[] = [
   { key: 'lorries', title: 'Lorries', path: '/scm/fleet', render: () => <LorriesSection /> },
   { key: 'drivers', title: 'Drivers', path: '/scm/fleet', render: () => <DriversSection /> },
   { key: 'helpers', title: 'Helpers', path: '/scm/fleet', render: () => <HelpersSection /> },
+  /* Owner 2026-11-08: the Lorry Live Map left the sidebar for a tab here and in Fleet Health. */
+  { key: 'live-map', title: 'Live map', path: '/scm/lorry-live-map', render: () => <LorryLiveMap embedded /> },
   { key: 'residence-rules', title: 'Residence rules', path: '/scm/delivery-residence-rules', render: () => <DeliveryResidenceRules embedded /> },
   { key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions', render: () => <DeliveryPlanningRegions embedded /> },
   { key: 'saved-locations', title: 'Places', path: '/scm/saved-locations', render: () => <SavedLocations embedded /> },
@@ -60,7 +63,7 @@ export const DeliveryMaintenance = () => {
       <PageHeader
         eyebrow="Reference data"
         title="Coverage & Fleet"
-        description="Lorries, crews, building rules, regions and places."
+        description="Lorries, crews, where each lorry is now, building rules, regions and places."
       />
       <div role="tablist" aria-label="Coverage and fleet" className="flex gap-1 overflow-x-auto border-b border-border">
         {TABS.map((t) => (
