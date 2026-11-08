@@ -1059,6 +1059,7 @@ POST,/api/scm/localities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + require
 DELETE,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
 PATCH,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
 GET,/api/scm/logistic-overview,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/logistic-overview.ts
+GET,/api/scm/logistic-overview/on-time,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/logistic-overview.ts
 GET,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 POST,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 DELETE,/api/scm/lorries/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
