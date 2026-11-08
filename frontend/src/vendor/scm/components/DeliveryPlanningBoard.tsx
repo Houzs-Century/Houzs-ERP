@@ -30,6 +30,7 @@ import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
+import { MarkDeliveredCell } from './MarkDeliveredCell';
 import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
 import {
@@ -1444,6 +1445,14 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => o.delivery_message_status ?? '(none)',
       exportValue: (o) => o.delivery_message_status ?? '',
       sortFn: (a, b) => (a.delivery_message_status ?? '').localeCompare(b.delivery_message_status ?? ''),
+    },
+    {
+      // Service-case per-leg "Mark Delivered" (owner 2026-11-06); ASSR legs only.
+      key: 'assr_delivered', label: 'Delivered', width: 130, groupable: true,
+      accessor: (o) => <MarkDeliveredCell order={o} onSchedule={scheduleMutate} />,
+      searchValue: (o) => (isAssr(o) ? (o.delivery_state === 'DELIVERED' ? 'delivered done' : 'pending') : ''),
+      groupValue: (o) => (!isAssr(o) ? '(n/a)' : o.delivery_state === 'DELIVERED' ? 'Delivered' : 'Pending'),
+      exportValue: (o) => (isAssr(o) && o.delivery_state === 'DELIVERED' ? 'Delivered' : ''),
     },
     /* delivery_state (coarse Pending/Schedule/Overdue/Delivered) and
        arrangement_stage (its Pending-Schedule sub-state) are no longer board

@@ -1,14 +1,10 @@
 import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
-import { useMemo, useState, useRef, useEffect } from "react";
-import { useSearchParams, Link, useNavigate } from "react-router-dom";
-import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
-import { PageHeader } from "../components/Layout";
-import { DataTable, type Column } from "../components/DataTable";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { X, ChevronRight, FileUp } from "lucide-react";
 import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
-import { StatCard } from "../components/StatCard";
 import { serviceConfirm, serviceNotify } from "../vendor/scm/lib/dialog-service";
-import { FleetHealthCharts } from "./FleetHealthCharts";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
@@ -20,19 +16,16 @@ import { cn } from "../lib/utils";
 import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
-import { NewInHouseLorry } from "./fleet/NewInHouseLorry";
+import { BTN_GHOST, BTN_PRI, BTN_SEC, EMPTY, LABEL, PlateBadge, orNotSet } from "./fleet/FleetUi";
+import { uploadEach } from "./fleet/fleetHealthModel";
 
 // ---------------------------------------------------------------------------
-// Fleet Health — the Phase-1 desktop ops screen for Fleet Maintenance &
-// Compliance. KPI ribbon + a compliance reminders strip + a per-lorry status
-// board, each row opening a detail drawer with the compliance vault (current
-// document + full renewal history per type). All derived state (status,
-// reminder levels, KPIs) is computed by the backend from services/
-// fleet-status.ts, so this page only renders — it never re-derives the rules.
-//
-// Reuses the app's own design system: StatCard (KPI), ResizableDetailDrawer
-// (the shared SCM detail drawer chrome), PageHeader, Button. Status/expiry
-// pills follow the app's tone vocabulary. No dark standalone theme.
+// Fleet Health — the shared types, the quick-look drawer and every section of a
+// lorry's record (plans, mileage, breakdowns, work orders, components, the
+// compliance vault). The dashboard itself is fleet/FleetHealthDashboard.tsx and
+// the record page is LorryRecord.tsx. All derived state (status, reminder
+// levels, KPIs) is computed by the backend from services/fleet-status.ts, so
+// these only render — they never re-derive the rules.
 // ---------------------------------------------------------------------------
 
 /* Owner, 2026-10-15: APAD / cross-border are not needed; the Geran (registration
@@ -147,6 +140,10 @@ export type VehicleRow = {
   openWorkOrders?: number;
   downtimeHours?: number | null;
   openProblem?: string | null;
+  /** The box, drawn as the side view on the board (mig 0209). */
+  lengthFt?: number | null;
+  widthFt?: number | null;
+  heightFt?: number | null;
 };
 
 /* A copy of WORK_ORDER_STATES in services/fleet-status.ts, kept in step by
@@ -260,7 +257,7 @@ export type ComponentView = {
   events: ComponentEventView[];
 };
 
-type VehicleStatus =
+export type VehicleStatus =
   | "AVAILABLE"
   | "SERVICE_DUE"
   | "PLANNED_MAINTENANCE"
@@ -269,7 +266,7 @@ type VehicleStatus =
   | "COMPLIANCE_BLOCKED"
   | "OUT_OF_SERVICE";
 
-type DashboardPayload = {
+export type DashboardPayload = {
   today: string;
   kpis: {
     expiredDocs: number;
@@ -350,7 +347,7 @@ export function money(centi: number | null): string {
 }
 
 /** Downtime hours as a compact "2d 4h" / "6h" string. */
-function fmtDowntime(hours: number | null): string {
+export function fmtDowntime(hours: number | null): string {
   if (hours == null) return "—";
   if (hours < 24) return `${Math.round(hours)}h`;
   const d = Math.floor(hours / 24);
@@ -371,21 +368,6 @@ export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode
   );
 }
 
-/** A compact expiry cell: the date + a days-remaining sub-line in its tone. */
-function ExpiryCell({ doc }: { doc: DocView | undefined }) {
-  if (!doc) return <span className="text-[12px] text-ink-muted">—</span>;
-  const toneText = doc.tone === "crit" ? "text-err" : doc.tone === "warn" ? "text-warning-text" : "text-ink-muted";
-  return (
-    <div className="text-[12px]">
-      <div className="text-ink">{fmtDate(doc.expiryDate)}</div>
-      <div className={cn("text-[10.5px]", toneText)}>
-        {doc.result === "FAIL" ? "FAILED · " : ""}
-        {fmtDays(doc.daysRemaining)}
-      </div>
-    </div>
-  );
-}
-
 /** The days/km remaining for the most-urgent plan, in words. */
 export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining: number | null; overdue: boolean }): string {
   const parts: string[] = [];
@@ -396,7 +378,7 @@ export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining:
 
 /** The board's "Next service" cell: the single most-urgent plan (per-component),
  *  falling back to the legacy next-service target when no plans exist yet. */
-function NextServiceCell({ v }: { v: VehicleRow }) {
+export function NextServiceCell({ v }: { v: VehicleRow }) {
   if (v.nextPlan) {
     const np = v.nextPlan;
     const toneText = np.tone === "crit" ? "text-err" : np.tone === "warn" ? "text-warning-text" : "text-ink-muted";
@@ -435,295 +417,6 @@ export function openProblem(v: VehicleRow): string | null {
   return null;
 }
 
-const REGIONS = ["ALL", "KL", "PG"] as const;
-
-export function FleetHealth() {
-  const [params, setParams] = useSearchParams();
-  const region = params.get("region") ?? "ALL";
-  const statusFilter = params.get("status") ?? "ALL";
-  const [openId, setOpenId] = useState<string | null>(null);
-  const navigate = useNavigate();
-
-  /* Sales Order's interaction, which the owner asked for by name: "单击：弹出一个
-     shortcut，让我简单看一个简介; 双击：点进去看细节".
-
-     A double click fires click, click, dblclick — so opening the drawer on the
-     first click would flash it open and then navigate away underneath it. The
-     peek is held for one double-click interval and cancelled if the second
-     click lands. 250ms is under the platform default (500ms) on purpose: the
-     drawer should not feel laggy, and a slow double click still works because
-     the navigation fires regardless. */
-  const peekTimer = useRef<number | null>(null);
-  const cancelPeek = () => {
-    if (peekTimer.current != null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
-  };
-  // The suite had no unmount for a year and leaked exactly this kind of timer
-  // into a torn-down jsdom (BUG-HISTORY, 2026-08-02).
-  useEffect(() => cancelPeek, []);
-  const peek = (id: string) => {
-    cancelPeek();
-    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setOpenId(id); }, 250);
-  };
-  const openRecord = (id: string) => { cancelPeek(); navigate(`/fleet-health/${id}`); };
-  const expiryValue = (d: VehicleRow["compliance"]["ROAD_TAX"]) => d?.expiryDate ?? null;
-  const boardColumns: Column<VehicleRow>[] = [
-    {
-      key: "lorry", label: "Lorry", getValue: (v) => v.plate,
-      render: (v) => (
-        <>
-          {/* A REAL anchor, so the browser's own affordances work: Cmd/Ctrl-click
-              and middle-click open the record in a new tab (owner 2026-08-03:
-              "我在第二个页面打开进去是不能的吗?"). stopPropagation so the plate
-              does not ALSO fire the row's peek. */}
-          <Link
-            to={`/fleet-health/${v.id}`}
-            onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
-            className="font-semibold text-ink hover:text-primary hover:underline"
-          >
-            {v.plate}
-          </Link>
-          <div className="text-[11px] text-ink-muted">{[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}</div>
-        </>
-      ),
-    },
-    { key: "status", label: "Status", getValue: (v) => v.statusLabel, render: (v) => <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill> },
-    {
-      key: "mileage", label: "Mileage", align: "right", getValue: (v) => v.mileageKm, exportFormat: "number",
-      render: (v) => (
-        <span className="tabular-nums text-ink">
-          {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
-          <span className="ml-1 text-[10.5px] text-ink-muted">km</span>
-          {v.mileageFlagged && <span className="ml-1.5 text-[10px] text-warning-text" title="Abnormal jump — review">flagged</span>}
-        </span>
-      ),
-    },
-    { key: "nextService", label: "Next service", render: (v) => <NextServiceCell v={v} /> },
-    { key: "puspakom", label: "PUSPAKOM", getValue: (v) => expiryValue(v.compliance.PUSPAKOM), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.PUSPAKOM} /> },
-    { key: "insurance", label: "Insurance", getValue: (v) => expiryValue(v.compliance.INSURANCE), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.INSURANCE} /> },
-    { key: "roadTax", label: "Road tax", getValue: (v) => expiryValue(v.compliance.ROAD_TAX), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.ROAD_TAX} /> },
-    {
-      key: "problem", label: "Open problem", getValue: (v) => openProblem(v) ?? "",
-      render: (v) => (
-        <span className="text-[12px] text-ink-secondary">
-          {openProblem(v) ?? <span className="text-ink-muted">—</span>}
-          {(v.openWorkOrders ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-ink-muted">{v.openWorkOrders} WO</span>}
-        </span>
-      ),
-    },
-    {
-      key: "downtime", label: "Downtime", align: "right", getValue: (v) => v.downtimeHours,
-      render: (v) => (v.downtimeHours != null
-        ? <span className="tabular-nums text-err">{fmtDowntime(v.downtimeHours)}</span>
-        : <span className="text-ink-muted">—</span>),
-    },
-  ];
-
-  const [addingLorry, setAddingLorry] = useState(false);
-  const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
-
-  const setParam = (key: string, value: string) => {
-    const next = new URLSearchParams(params);
-    if (value === "ALL" || value === "") next.delete(key);
-    else next.set(key, value);
-    setParams(next, { replace: true });
-  };
-
-  const all = dash.data?.vehicles ?? [];
-  // Lorries that cannot go out (fleet-status canDispatch: only AVAILABLE / SERVICE_DUE can).
-  const grounded = all.filter((v) => v.status !== "AVAILABLE" && v.status !== "SERVICE_DUE");
-  const regionOptions = useMemo(() => {
-    const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
-    return ["ALL", ...present];
-  }, [all]);
-
-  const visible = useMemo(
-    () =>
-      all.filter(
-        (v) => (region === "ALL" || v.region === region) && (statusFilter === "ALL" || v.status === statusFilter),
-      ),
-    [all, region, statusFilter],
-  );
-
-  // The reminders strip: every actionable current document, most-urgent first.
-  // Derived from the same payload the KPIs use, so it can never disagree with
-  // the board. (The /api/fleet-maintenance/reminders endpoint serves the same
-  // computation to a future scheduled-notification job.)
-  const reminders = useMemo(() => {
-    const scope = region === "ALL" ? all : all.filter((v) => v.region === region);
-    const items: Array<{ v: VehicleRow; doc: DocView }> = [];
-    for (const v of scope) {
-      for (const t of DOC_TYPES) {
-        const doc = v.compliance[t];
-        if (doc && doc.reminderLevel !== "OK") items.push({ v, doc });
-      }
-    }
-    return items.sort((a, b) => (a.doc.daysRemaining ?? 1e9) - (b.doc.daysRemaining ?? 1e9));
-  }, [all, region]);
-
-  const kpis = dash.data?.kpis;
-  const statusCounts = dash.data?.statusCounts ?? {};
-
-  return (
-    <div className="space-y-5">
-      <PageHeader
-        eyebrow="Operations · Fleet"
-        title="Fleet Health"
-        description="Which lorries can go out today, and what needs renewing or repairing."
-        actions={
-          <div className="flex gap-2">
-            <Button variant="secondary" icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />} onClick={() => dash.reload()}>Refresh</Button>
-            <Button variant="primary" onClick={() => setAddingLorry(true)}>New lorry</Button>
-          </div>
-        }
-      />
-      {addingLorry && <NewInHouseLorry onClose={() => setAddingLorry(false)} onCreated={() => dash.reload()} />}
-
-      {/* Region toggle */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-brand text-ink-muted">Warehouse</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-border">
-          {regionOptions.map((r) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={region === r}
-              onClick={() => setParam("region", r)}
-              className={cn(
-                "px-3.5 py-1.5 text-[12px] font-semibold transition-colors",
-                region === r ? "bg-primary-soft text-primary" : "text-ink-secondary hover:bg-surface-2",
-              )}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-        <span className="ml-auto text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
-          {visible.length} {visible.length === 1 ? "lorry" : "lorries"}
-        </span>
-      </div>
-
-      {/* KPI ribbon — four cards (owner, 2026-10-16: the eight small tiles read as
-          clutter). The first names which lorry cannot go out and why. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard
-          label="Cannot dispatch"
-          value={`${kpis?.cantDispatch ?? 0} of ${kpis?.fleetSize ?? 0}`}
-          subtitle={grounded.length ? grounded.slice(0, 3).map((v) => `${v.plate} · ${v.statusLabel}`).join(", ") + (grounded.length > 3 ? ` +${grounded.length - 3}` : "") : "Every lorry can go out"}
-          tone={kpis?.cantDispatch ? "error" : "default"} rail={kpis?.cantDispatch ? "bg-err" : undefined} pending={dash.loading}
-          onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"}
-        />
-        <StatCard
-          label="Documents"
-          value={kpis?.expiredDocs ? `${kpis.expiredDocs} expired` : "None expired"}
-          subtitle={`Due in 30 days ${kpis?.expiring30 ?? 0} · 60 days ${kpis?.expiring60 ?? 0} · 90 days ${kpis?.expiring90 ?? 0}`}
-          tone={kpis?.expiredDocs ? "error" : kpis?.expiring30 ? "warning" : "default"} pending={dash.loading}
-        />
-        <StatCard
-          label="Breakdowns & service"
-          value={`${kpis?.activeBreakdowns ?? 0} breakdown${kpis?.activeBreakdowns === 1 ? "" : "s"}`}
-          subtitle={`${kpis?.openWorkOrders ?? 0} open work order${kpis?.openWorkOrders === 1 ? "" : "s"} · service due ${kpis?.serviceDue ?? 0}${kpis?.serviceOverdue ? ` (${kpis.serviceOverdue} overdue)` : ""}`}
-          tone={kpis?.activeBreakdowns ? "error" : kpis?.serviceOverdue ? "warning" : "default"} pending={dash.loading}
-          onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"}
-        />
-        <StatCard
-          label="Repairs this month"
-          value={kpis?.repairSpendThisMonthSen != null ? money(kpis.repairSpendThisMonthSen) : "—"}
-          subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleSen ?? 0)}` : "No repairs logged"}
-          pending={dash.loading}
-        />
-      </div>
-
-      <FleetHealthCharts vehicles={all} kpis={kpis ?? null} />
-
-      {/* Reminders strip */}
-      {reminders.length > 0 && (
-        <section className="rounded-lg border border-border bg-surface p-4 shadow-stone">
-          <div className="mb-3 flex items-center gap-2">
-            <AlertTriangle size={15} className="text-warning-text" />
-            <h2 className="font-display text-[14px] font-bold text-ink">Compliance reminders</h2>
-            <span className="text-[11.5px] text-ink-muted">An expired document grounds the lorry</span>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            {reminders.slice(0, 12).map(({ v, doc }) => (
-              <button
-                key={`${v.id}-${doc.docType}`}
-                type="button"
-                onClick={() => setOpenId(v.id)}
-                className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <span className="flex items-center gap-2.5 text-[12.5px]">
-                  <span className="font-semibold text-ink">{v.plate}</span>
-                  <span className="text-ink-muted">{DOC_LABEL[doc.docType]}</span>
-                  {v.region && <span className="text-[10.5px] text-ink-muted">{v.region}</span>}
-                </span>
-                <span className="flex items-center gap-3">
-                  <span className="text-[11.5px] text-ink-secondary">{doc.expiryDate ? fmtDate(doc.expiryDate) : "—"}</span>
-                  <Pill tone={doc.tone}>{doc.result === "FAIL" ? "FAILED" : fmtDays(doc.daysRemaining)}</Pill>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Status filter chips */}
-      <div className="flex flex-wrap gap-2">
-        <FilterChip label={`All ${all.length}`} active={statusFilter === "ALL"} onClick={() => setParam("status", "ALL")} />
-        {Object.entries(statusCounts)
-          .sort()
-          .map(([status, count]) => (
-            <FilterChip
-              key={status}
-              label={`${statusLabel(status)} ${count}`}
-              tone={STATUS_TONE[status as VehicleStatus]}
-              active={statusFilter === status}
-              onClick={() => setParam("status", status)}
-            />
-          ))}
-      </div>
-
-      {/* Fleet board */}
-      <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <DataTable<VehicleRow>
-          tableId="fleet-health-board"
-          exportName="fleet-health"
-          exportXlsx
-          columns={boardColumns}
-          rows={dash.loading ? null : visible}
-          loading={dash.loading}
-          emptyLabel="No lorries in this view. Add a vehicle or run the seed script to load the fleet."
-          getRowKey={(v) => v.id}
-          onRowClick={(v) => peek(v.id)}
-          onRowDoubleClick={(v) => openRecord(v.id)}
-        />
-      </div>
-
-      {dash.error && (
-        <p className="text-[12px] text-err">Could not load the fleet: {dash.error}</p>
-      )}
-
-      <VehicleDrawer id={openId} onClose={() => setOpenId(null)} onChanged={() => dash.reload()} />
-    </div>
-  );
-}
-
-function FilterChip({ label, tone, active, onClick }: { label: string; tone?: Tone; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors",
-        active ? "border-primary bg-primary-soft text-primary" : "border-border text-ink-secondary hover:bg-surface-2",
-      )}
-    >
-      {tone && <span className={cn("h-1.5 w-1.5 rotate-45", tone === "crit" ? "bg-err" : tone === "warn" ? "bg-warning-text" : tone === "ok" ? "bg-synced" : tone === "info" ? "bg-primary" : "bg-ink-muted")} />}
-      {label}
-    </button>
-  );
-}
-
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {
     AVAILABLE: "Available",
@@ -738,7 +431,7 @@ export function statusLabel(status: string): string {
 }
 
 // ── Detail drawer — vehicle header + compliance vault with renewal history ──
-function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged?: () => void }) {
+export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged?: () => void }) {
   const detail = useQuery<VehicleDetailPayload>(
     `/api/fleet-maintenance/vehicles/${id}`,
     () => api.get(`/api/fleet-maintenance/vehicles/${id}`),
@@ -757,8 +450,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
       <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <Truck size={18} className="text-primary" />
-            <span className="font-display text-[18px] font-bold text-ink">{v?.plate ?? "…"}</span>
+            {v ? <PlateBadge plate={v.plate} size="md" /> : <span className="text-[18px] font-bold text-ink">…</span>}
           </div>
           <div className="mt-1 text-[12px] text-ink-muted">
             {v ? [
@@ -866,7 +558,7 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
   return (
     <div className="space-y-2">
       {plans.length === 0 && !adding && (
-        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+        <p className={EMPTY}>
           {/* This used to read "Seed the default set (backend/scripts/
               seed-fleet-plans.mjs) or add plans via the API" — an empty state
               that told the owner to run a Node script. The write routes existed
@@ -884,9 +576,8 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
         <PlanForm
           vehicleId={vehicleId}
           components={components ?? []}
-          /* Editing an existing plan re-POSTs it: the route UPSERTs on
-             (lorry, component), so the component is the identity and PATCH by
-             id would be a second way to write the same row. */
+          /* A new plan POSTs (the route UPSERTs on lorry + component); an
+             existing one PATCHes by id, which can also retire it. */
           plan={editing}
           taken={new Set(plans.map((p) => p.component))}
           onCancel={() => { setAdding(false); setEditing(null); }}
@@ -933,18 +624,26 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
     if (busy || !ok) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
-        component,
-        intervalKm: num(intervalKm),
-        intervalMonths: num(intervalMonths),
-        active,
-      });
+      if (plan) {
+        await api.patch(`/api/fleet-maintenance/plans/${encodeURIComponent(plan.id)}`, {
+          intervalKm: num(intervalKm),
+          intervalMonths: num(intervalMonths),
+          active,
+        });
+      } else {
+        await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
+          component,
+          intervalKm: num(intervalKm),
+          intervalMonths: num(intervalMonths),
+          active,
+        });
+      }
       onSaved();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-3">
+    <div className={FORM_SHELL}>
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className={FIELD_LABEL}>Component</label>
@@ -954,7 +653,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
             ))}
           </select>
           {!plan && free.length === 0 && (
-            <p className="mt-1 text-[10.5px] text-ink-muted">Every component already has a plan on this lorry. Edit one instead.</p>
+            <p className="mt-1 text-[12px] text-ink-muted">Every component already has a plan on this lorry. Edit one instead.</p>
           )}
         </div>
         <div>
@@ -967,7 +666,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
         </div>
       </div>
 
-      <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+      <p className="mt-2 text-[12px] leading-snug text-ink-muted">
         The rule only: give at least one interval; with both, it falls due on whichever comes first.
         When the service is done, use &ldquo;Record service&rdquo; on the plan.
       </p>
@@ -976,7 +675,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active
       </label>
 
-      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-3 flex gap-2">
         <Button variant="primary" onClick={save} disabled={busy || !ok}>{busy ? "Saving…" : plan ? "Save plan" : "Add plan"}</Button>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -1004,44 +703,60 @@ function planProgress(p: PlanView, currentKm: number | null): number {
 
 function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm: number | null; onEdit?: () => void; onServiced?: () => void }) {
   const [servicing, setServicing] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [toggleErr, setToggleErr] = useState<string | null>(null);
+  /* Retire = active off: the plan stays on file but stops falling due. */
+  const setActive = async (active: boolean) => {
+    if (!onServiced) return;
+    if (!active && !(await serviceConfirm({ title: `Retire the ${p.componentLabel} plan?`, body: "It stays on file but stops falling due. You can reactivate it later.", confirmLabel: "Retire" }))) return;
+    setToggling(true); setToggleErr(null);
+    try { await api.patch(`/api/fleet-maintenance/plans/${encodeURIComponent(p.id)}`, { active }); onServiced(); }
+    catch (e) { setToggleErr(apiErrText(e)); } finally { setToggling(false); }
+  };
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
   const due = [
     p.nextDueKm != null ? `${p.nextDueKm.toLocaleString()} km` : null,
-    p.nextDueDate ?? null,
+    p.nextDueDate ? fmtDate(p.nextDueDate) : null,
   ].filter(Boolean).join(" · ");
   return (
-    <div className={cn("rounded-lg border p-3", p.active ? "border-border bg-surface-2/40" : "border-transparent bg-transparent opacity-60")}>
-      <div className="mb-1.5 flex items-center justify-between gap-3">
-        <span className="text-[12.5px] font-semibold text-ink">
-          {p.componentLabel}
-          {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
-        </span>
-        <span className="flex items-center gap-2">
-          {onServiced && !servicing && (
-            <button type="button" onClick={() => setServicing(true)} className="text-[10.5px] font-semibold text-primary hover:underline">Record service</button>
-          )}
-          {onEdit && (
-            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit rule</button>
-          )}
+    <div className={cn("flex flex-col gap-2 rounded-[14px] p-4", p.active ? "bg-[#faf9f6]" : "bg-[#faf9f6]/60 opacity-70")}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="text-[14px] font-semibold text-ink">{p.componentLabel}</span>
+          {!p.active && <span className="text-[12px] text-ink-muted">Retired</span>}
           <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
         </span>
+        <span className="flex flex-wrap items-center gap-2">
+          {onServiced && !servicing && (
+            <button type="button" onClick={() => setServicing(true)} className={BTN_SEC}>Record service</button>
+          )}
+          {onEdit && (
+            <button type="button" onClick={onEdit} className={BTN_SEC}>Edit rule</button>
+          )}
+          {onServiced && (
+            <button type="button" disabled={toggling} onClick={() => void setActive(!p.active)} className={BTN_GHOST}>
+              {p.active ? "Retire" : "Reactivate"}
+            </button>
+          )}
+        </span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/60">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#ece8df]">
         <div className={cn("h-full rounded-full", barColor)} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10.5px] text-ink-muted">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[12.5px] text-ink-muted">
         <span>
-          {interval ? `every ${interval}` : "no interval"}
+          {interval ? `Every ${interval}` : "No interval"}
           {due ? ` · next ${due}` : (p.lastDoneKm == null && p.lastDoneDate == null ? " · never done" : "")}
         </span>
-        <span className={cn(p.tone === "crit" ? "text-err" : p.tone === "warn" ? "text-warning-text" : "text-ink-muted")}>
-          {p.overdue ? "OVERDUE · " : ""}
+        <span className={cn("font-semibold", p.tone === "crit" ? "text-err" : p.tone === "warn" ? "text-warning-text" : "text-ink-secondary")}>
+          {p.overdue ? "Overdue · " : ""}
           {fmtPlanRemaining(p)}
         </span>
       </div>
-      {p.lastDoneDate && <div className="mt-1 text-[10.5px] text-ink-muted">Last serviced {p.lastDoneDate}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
+      {toggleErr && <div role="alert" className="text-[12.5px] font-semibold text-err">{toggleErr}</div>}
+      {p.lastDoneDate && <div className="text-[12.5px] text-ink-muted">Last serviced {fmtDate(p.lastDoneDate)}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
       {servicing && onServiced && (
         <PlanServiceForm planId={p.id} componentLabel={p.componentLabel} currentKm={currentKm}
           onCancel={() => setServicing(false)} onSaved={() => { setServicing(false); onServiced(); }} />
@@ -1113,13 +828,13 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[13px]">
             <thead>
-              <tr className="border-b border-border text-left text-[11.5px] text-ink-muted">
+              <tr className="border-b border-[#ece8df] text-left text-[12px] text-ink-muted">
                 <th className="py-2 pr-4 font-medium">Reading</th><th className="py-2 pr-4 font-medium">Date</th><th className="py-2 pr-4 font-medium">From</th><th className="py-2 font-medium" />
               </tr>
             </thead>
             <tbody>
               {readings.slice(0, 8).map((r) => (
-                <tr key={r.id} className="border-b border-border/60 last:border-b-0">
+                <tr key={r.id} className="border-b border-[#f0ece4] last:border-b-0">
                   <td className="py-2 pr-4 font-semibold tabular-nums text-ink">{r.odometerKm != null ? `${r.odometerKm.toLocaleString()} km` : "—"}</td>
                   <td className="py-2 pr-4 tabular-nums text-ink-secondary">{r.readingDate ? fmtDate(r.readingDate) : "—"}</td>
                   <td className="py-2 pr-4 text-ink-secondary">{r.source === "MANUAL" ? "Manual" : r.source === "DRIVER" ? "Driver" : r.source ?? "—"}</td>
@@ -1137,12 +852,13 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
   );
 }
 
-const MILEAGE_FIELD = "h-10 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none";
+const MILEAGE_FIELD = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none";
 
 // ── Phase 3 drawer sections ──────────────────────────────────────────────────
 
-export const FIELD_CLS = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
-export const FIELD_LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
+export const FIELD_CLS = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none disabled:bg-surface-2";
+const FORM_SHELL = "rounded-[14px] border border-[#e6e1d6] bg-surface p-4";
+export const FIELD_LABEL = LABEL;
 
 /* HC-0160: the route's code lives in HttpError.rawBody; e.message has already
    been rewritten into a sentence by humanHttpMessage, so matching codes against
@@ -1195,27 +911,27 @@ export function RecordCard({ code, badge, title, when, subtitle, tone, defaultOp
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={cn("rounded-lg border", tone === "crit" ? "border-err/30 bg-err/5" : "border-border bg-surface-2/40")}>
+    <div className={cn("rounded-[14px]", tone === "crit" ? "bg-err-bg/60 ring-1 ring-err/25" : "bg-[#faf9f6]")}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+        className="flex min-h-12 w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 px-4 py-3 text-left"
       >
-        <ChevronRight size={14} className={cn("shrink-0 text-ink-muted transition-transform", open && "rotate-90")} />
+        <ChevronRight size={16} className={cn("shrink-0 text-ink-muted transition-transform", open && "rotate-90")} />
         {code && (
-          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tracking-wide text-ink-secondary">
+          <span className="shrink-0 rounded-md bg-[#ece8df] px-2 py-0.5 font-mono text-[12px] font-semibold tracking-wide text-ink">
             {code}
           </span>
         )}
         {badge}
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12.5px] font-semibold text-ink">{title}</span>
-          {subtitle && <span className="block truncate text-[10.5px] text-ink-muted">{subtitle}</span>}
+        <span className="min-w-[min(100%,220px)] flex-1">
+          <span className="block truncate text-[14px] font-semibold text-ink">{title}</span>
+          {subtitle && <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-muted sm:truncate">{subtitle}</span>}
         </span>
-        {when && <span className="shrink-0 text-[10.5px] text-ink-muted">{when}</span>}
+        {when && <span className="shrink-0 text-[12.5px] text-ink-muted">{when}</span>}
       </button>
-      {open && <div className="border-t border-border/60 px-3 pb-3 pt-2.5">{children}</div>}
+      {open && <div className="border-t border-[#ece8df] px-4 pb-4 pt-3 text-[13px]">{children}</div>}
     </div>
   );
 }
@@ -1236,8 +952,8 @@ export function EditField({ label, span, children }: { label: string; span?: boo
 export function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{label}</dt>
-      <dd className="truncate text-ink">{value}</dd>
+      <dt className="text-[12px] text-ink-muted">{label}</dt>
+      <dd className={cn("break-words text-[13.5px] font-medium", orNotSet(value) === value ? "text-ink" : "text-ink-muted")}>{orNotSet(value)}</dd>
     </div>
   );
 }
@@ -1268,28 +984,30 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
-  /* No render on a refusal, so this CONTROLLED select keeps the picked option:
-     the row reads "Resolved" while the lorry is still grounded. */
+  /* No render on a refusal would leave this CONTROLLED select on the picked
+     option: the row reads "Resolved" while the lorry is still grounded. A
+     refusal remounts it (new key) so it falls back to the saved status. */
+  const [statusReset, setStatusReset] = useState(0);
   const setStatus = async (id: string, status: BreakdownView["status"]) => {
     setErr(null);
     const patch: Record<string, unknown> = { status };
     if (status === "RESOLVED") patch.recoveryTime = new Date().toISOString();
     try { await api.patch(`/api/fleet-maintenance/breakdowns/${id}`, patch); onChanged(); }
-    catch (e) { setErr(apiErrText(e)); }
+    catch (e) { setStatusReset((n) => n + 1); setErr(`Status not changed: ${apiErrText(e)}`); }
   };
 
   return (
     <div className="space-y-2">
       {/* Section-level: a refused STATUS change has no form to sit under. */}
-      {err && !adding && <div className="rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[11px] text-err">{err}</div>}
+      {err && !adding && <div className="rounded-[10px] bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">{err}</div>}
       {impact && (
-        <div className="rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[11.5px] text-err">
+        <div className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">
           Lorry grounded. {impact.trips} trip(s) affected. Dispatch notified.
           {impact.suggestions.length > 0 && <> Suggested replacements: {impact.suggestions.map((s) => s.plate).join(", ")}.</>}
         </div>
       )}
       {breakdowns.length === 0 && !adding && (
-        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No breakdown cases on file.</p>
+        <p className={EMPTY}>No breakdown cases on file.</p>
       )}
       {breakdowns.map((b) => (
         <RecordCard
@@ -1304,7 +1022,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
           /* An unresolved case is the one you opened the page for. */
           defaultOpen={b.status !== "RESOLVED"}
         >
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+          <dl className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-6 gap-y-3">
             <Detail label="Occurred" value={fmtDateTime(b.occurredAt)} />
             <Detail label="Recovered" value={b.recoveryTime ? fmtDateTime(b.recoveryTime) : "still down"} />
             <Detail label="Downtime" value={b.downtimeHours != null ? fmtDowntime(b.downtimeHours) : "—"} />
@@ -1313,16 +1031,18 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
             <Detail label="GPS" value={b.gpsLat != null && b.gpsLng != null ? `${b.gpsLat.toFixed(4)}, ${b.gpsLng.toFixed(4)}` : "—"} />
           </dl>
           {b.driverDescription && (
-            <p className="mt-2 rounded-md bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary">{b.driverDescription}</p>
+            <p className="mt-3 rounded-lg bg-surface px-3 py-2 text-[13px] text-ink-secondary">{b.driverDescription}</p>
           )}
           <BreakdownFiles caseId={b.id} refs={b.mediaRefs} onChanged={onChanged} />
-          <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            <span className="text-[10.5px] uppercase tracking-brand text-ink-muted">Status</span>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#ece8df] pt-3">
+            <span className="text-[12.5px] font-semibold text-ink-secondary">Status</span>
             {b.status === "RESOLVED" ? (
-              <span className="text-[11px] text-ink">Resolved</span>
+              <span className="text-[13px] font-semibold text-ink">Resolved</span>
             ) : (
               <select
-                className="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-ink"
+                key={`${b.id}-${statusReset}`}
+                aria-label="Breakdown status"
+                className="h-[34px] rounded-lg border border-[#d9d3c6] bg-surface px-2.5 text-[13px] text-ink"
                 value={b.status}
                 onChange={(e) => setStatus(b.id, e.target.value as BreakdownView["status"])}
               >
@@ -1341,7 +1061,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
       ))}
 
       {adding ? (
-        <div className="rounded-lg border border-border bg-surface p-3">
+        <div className={FORM_SHELL}>
           <div className="grid grid-cols-2 gap-2.5">
             <div className="col-span-2">
               <label className={FIELD_LABEL}>Fault</label>
@@ -1356,7 +1076,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
               </select>
             </div>
             <div className="flex items-end pb-1.5">
-              <label className="flex items-center gap-2 text-[11.5px] text-ink-secondary">
+              <label className="flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary">
                 <input type="checkbox" checked={stillDrivable} onChange={(e) => setStillDrivable(e.target.checked)} />
                 Still drivable
               </label>
@@ -1366,7 +1086,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
               <input className={FIELD_CLS} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What happened" />
             </div>
           </div>
-          {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+          {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={submit} disabled={busy}>{busy ? "Saving…" : "Report breakdown"}</Button>
             <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
@@ -1415,7 +1135,7 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
   return (
     <div className="space-y-2">
       {workOrders.length === 0 && !adding && (
-        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No work orders on this lorry.</p>
+        <p className={EMPTY}>No work orders on this lorry.</p>
       )}
       {workOrders.map((wo) => (
         <WorkOrderCard key={wo.id} wo={wo} cause={breakdowns.find((b) => b.id === wo.breakdownCaseId)} onChanged={onChanged} />
@@ -1429,14 +1149,14 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
         />
       )}
       {adding ? (
-        <div className="rounded-lg border border-border bg-surface p-3">
+        <div className={FORM_SHELL}>
           <label className={FIELD_LABEL}>Problem</label>
           <input className={FIELD_CLS} value={problem} onChange={(e) => setProblem(e.target.value)} placeholder="What needs fixing" />
           <label className={cn(FIELD_LABEL, "mt-2")}>Workshop</label>
           <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
           <label className={cn(FIELD_LABEL, "mt-2")}>Caused by</label>
           {openCases.length === 0 ? (
-            <p className="text-[11px] text-ink-muted">No open breakdown case on this lorry — this is scheduled or ad-hoc work.</p>
+            <p className="text-[13px] text-ink-muted">No open breakdown case on this lorry — this is scheduled or ad-hoc work.</p>
           ) : (
             <>
               <select className={FIELD_CLS} value={caseId} onChange={(e) => setCaseId(e.target.value)}>
@@ -1447,10 +1167,10 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-[10.5px] text-ink-muted">Link the repair to the case that caused it, so the downtime and the spend belong to the same incident.</p>
+              <p className="mt-1 text-[12px] text-ink-muted">Link the repair to the case that caused it, so the downtime and the spend belong to the same incident.</p>
             </>
           )}
-          {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+          {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={create} disabled={busy || !problem.trim()}>{busy ? "Saving…" : "Open work order"}</Button>
             <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
@@ -1504,10 +1224,10 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
   };
 
   if (!open) {
-    return <button type="button" onClick={() => setOpen(true)} className="text-[10.5px] font-semibold text-primary hover:underline">Edit</button>;
+    return <button type="button" onClick={() => setOpen(true)} className={BTN_SEC}>Edit</button>;
   }
   return (
-    <div className="mt-2 w-full rounded-lg border border-border bg-surface p-3">
+    <div className={cn(FORM_SHELL, "mt-2 w-full")}>
       <div className="grid grid-cols-2 gap-3">
         <EditField label="Fault" span>
           <input className={FIELD_CLS} value={faultType} onChange={(e) => setFaultType(e.target.value)} placeholder="e.g. Tyre burst, engine overheat" />
@@ -1520,7 +1240,7 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
           </select>
         </EditField>
         <div className="flex items-end pb-1.5">
-          <label className="flex items-center gap-2 text-[11.5px] text-ink-secondary">
+          <label className="flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary">
             <input type="checkbox" checked={stillDrivable} onChange={(e) => setStillDrivable(e.target.checked)} />
             Still drivable
           </label>
@@ -1540,10 +1260,10 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
       </div>
       {/* Severity is not cosmetic: CRITICAL + unresolved is what grounds the
           lorry, so changing it here can put a lorry back on the road. */}
-      <p className="mt-2 text-[10.5px] text-ink-muted">
+      <p className="mt-2 text-[12px] text-ink-muted">
         Not drivable, or Critical, takes the lorry off the road until the case is resolved.
       </p>
-      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-3 flex gap-2">
         <Button variant="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
         <Button variant="secondary" onClick={() => { setOpen(false); setErr(null); }}>Cancel</Button>
@@ -1599,7 +1319,7 @@ function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: 
   };
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-surface p-3">
+    <div className={cn(FORM_SHELL, "mt-2")}>
       <div className="grid grid-cols-2 gap-3">
         <EditField label="What was done" span>
           <input className={FIELD_CLS} value={problem} onChange={(e) => setProblem(e.target.value)} />
@@ -1632,11 +1352,11 @@ function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: 
           <input className={FIELD_CLS} inputMode="decimal" value={tax} onChange={(e) => setTax(e.target.value)} />
         </EditField>
       </div>
-      <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+      <p className="mt-2 text-[12px] leading-snug text-ink-muted">
         These four amounts are added ON TOP of the lines above. If the workshop&rsquo;s labour is already a line, leave
         Labour at zero — the route refuses the double count rather than silently inflating the total.
       </p>
-      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-3 flex gap-2">
         <Button variant="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -1697,7 +1417,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       when={wo.reportedAt ? fmtDateTime(wo.reportedAt) : null}
       defaultOpen={wo.open}
     >
-      {err && <div className="mt-2 rounded-md border border-err/25 bg-err/10 px-2.5 py-1.5 text-[11px] text-err">{err}</div>}
+      {err && <div className="mt-2 rounded-[10px] bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-1"><ViewOriginalScan kind="workshop" documentId={wo.id} /></div>
       {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
@@ -1706,7 +1426,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
           const reached = i <= idx;
           return (
             <span key={s} className="flex items-center gap-1">
-              <span className={cn("rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-brand", reached ? "bg-primary-soft text-primary" : "bg-surface-2 text-ink-muted")}>
+              <span className={cn("rounded-md px-2 py-1 text-[12px] font-semibold", reached ? "bg-primary-soft text-primary" : "bg-surface-2 text-ink-muted")}>
                 {WORK_ORDER_STATE_LABEL[s]}
               </span>
               {i < WORK_ORDER_STATES.length - 1 && <span className="text-ink-muted">›</span>}
@@ -1717,17 +1437,17 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       {wo.nextStates.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {wo.nextStates.map((s) => (
-            <button key={s} type="button" disabled={busy} onClick={() => transition(s)} className="rounded-md border border-primary/40 bg-primary-soft px-2 py-1 text-[10.5px] font-semibold text-primary hover:bg-primary-soft/70 disabled:opacity-50">
+            <button key={s} type="button" disabled={busy} onClick={() => transition(s)} className={BTN_PRI}>
               → {WORK_ORDER_STATE_LABEL[s]}
             </button>
           ))}
         </div>
       )}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-ink-muted">
         {wo.workshop && <span>{wo.workshop}</span>}
         <span>Reported {fmtDateTime(wo.reportedAt)}</span>
         {wo.actualComplete && <span>Done {fmtDateTime(wo.actualComplete)}</span>}
-        {wo.warrantyUntil && <span>Warranty to {wo.warrantyUntil}</span>}
+        {wo.warrantyUntil && <span>Warranty to {fmtDate(wo.warrantyUntil)}</span>}
       </div>
       {/* Parts table */}
       {(wo.photoRefs?.length ?? 0) > 0 && (
@@ -1736,28 +1456,28 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         </div>
       )}
       {wo.parts.length > 0 && (
-        <table className="mt-2 w-full border-collapse text-[11px]">
+        <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[420px] border-collapse text-[13px]">
           <thead>
-            <tr className="text-left text-[9.5px] uppercase tracking-brand text-ink-muted">
-              <th className="py-1 pr-2 font-semibold">Part</th>
-              <th className="py-1 pr-2 font-semibold">Qty</th>
-              <th className="py-1 pr-2 text-right font-semibold">Unit</th>
-              <th className="py-1 pr-2 text-right font-semibold">Line</th>
+            <tr className="text-left text-[12px] text-ink-muted">
+              <th className="py-1.5 pr-3 font-semibold">Part</th>
+              <th className="py-1.5 pr-3 font-semibold">Qty</th>
+              <th className="py-1.5 pr-3 text-right font-semibold">Unit</th>
+              <th className="py-1.5 pr-3 text-right font-semibold">Line</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {wo.parts.map((p) => (
               <tr key={p.id} className="border-t border-border/60">
-                <td className="py-1 pr-2 text-ink">{p.name}{p.partNo ? <span className="text-ink-muted"> · {p.partNo}</span> : ""}{p.serial ? <span className="text-ink-muted"> · SN {p.serial}</span> : ""}</td>
-                <td className="py-1 pr-2 tabular-nums">{p.qty}</td>
-                <td className="py-1 pr-2 text-right tabular-nums">{money(p.unitPriceSen)}</td>
-                <td className="py-1 pr-2 text-right tabular-nums">{money(p.lineSen)}</td>
-                <td className="py-1 text-right"><button type="button" onClick={() => removePart(p.id)} className="text-ink-muted hover:text-err" aria-label="Remove part"><X size={12} /></button></td>
+                <td className="py-2 pr-3 text-ink">{p.name}{p.partNo ? <span className="text-ink-muted"> · {p.partNo}</span> : ""}{p.serial ? <span className="text-ink-muted"> · SN {p.serial}</span> : ""}</td>
+                <td className="py-2 pr-3 tabular-nums">{p.qty}</td>
+                <td className="py-2 pr-3 text-right tabular-nums">{money(p.unitPriceSen)}</td>
+                <td className="py-2 pr-3 text-right tabular-nums">{money(p.lineSen)}</td>
+                <td className="py-2 text-right"><button type="button" onClick={() => removePart(p.id)} className="text-ink-muted hover:text-err" aria-label="Remove part"><X size={15} /></button></td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       {addingPart ? (
         <div className="mt-2 flex flex-wrap items-end gap-2">
@@ -1768,17 +1488,17 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
           <Button variant="secondary" onClick={() => setAddingPart(false)}>Cancel</Button>
         </div>
       ) : (
-        <div className="mt-2 flex items-center justify-between">
-          <span className="flex items-center gap-3">
-            <button type="button" onClick={() => setAddingPart(true)} className="text-[10.5px] font-semibold text-primary hover:underline">+ Add part</button>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setAddingPart(true)} className={BTN_SEC}>Add part</button>
             {/* PATCH /work-orders/:id has always accepted the whole header —
                 problem, diagnosis, workshop, their document numbers, advisor,
                 and the four money legs. Nothing on screen sent any of it. */}
-            <button type="button" onClick={() => setEditing((v) => !v)} className="text-[10.5px] font-semibold text-primary hover:underline">
+            <button type="button" onClick={() => setEditing((v) => !v)} className={BTN_SEC}>
               {editing ? "Close" : "Edit details"}
             </button>
           </span>
-          <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalSen)}</span>
+          <span className="text-[14px] font-bold tabular-nums text-ink">Total {money(wo.totalSen)}</span>
         </div>
       )}
       <WorkOrderFiles wo={wo} onChanged={onChanged} />
@@ -1820,14 +1540,14 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
   return (
     <div className="space-y-2">
       {components.length === 0 && !adding && (
-        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No components tracked. Fit a tyre, battery or part to start its lifecycle.</p>
+        <p className={EMPTY}>No components tracked. Fit a tyre, battery or part to start its lifecycle.</p>
       )}
       {active.map((c) => <ComponentCard key={c.id} c={c} currentKm={currentKm} onChanged={onChanged} />)}
-      {removed.length > 0 && <div className="pt-1 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Removed</div>}
+      {removed.length > 0 && <h3 className="pt-2 text-[13px] font-bold text-ink-secondary">Removed</h3>}
       {removed.map((c) => <ComponentCard key={c.id} c={c} currentKm={currentKm} onChanged={onChanged} />)}
 
       {adding ? (
-        <div className="rounded-lg border border-border bg-surface p-3">
+        <div className={FORM_SHELL}>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className={FIELD_LABEL}>Type</label>
@@ -1847,7 +1567,7 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
             <div><label className={FIELD_LABEL}>Price RM</label><input className={FIELD_CLS} value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" /></div>
             <div className="col-span-2"><label className={FIELD_LABEL}>Warranty until</label><DateField fullWidth className={FIELD_CLS} value={warranty} onChange={(iso) => setWarranty(iso)} /></div>
           </div>
-          {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+          {err && <div role="alert" className="mt-2 text-[12.5px] font-semibold text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={fit} disabled={busy}>{busy ? "Saving…" : "Fit component"}</Button>
             <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
@@ -1896,11 +1616,11 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
         c.costPerKmSen != null ? `${money(c.costPerKmSen)}/km` : null,
         c.status === "ACTIVE" ? null : "removed",
       ].filter(Boolean).join(" · ")}
-      when={c.fittedDate}
+      when={c.fittedDate ? fmtDate(c.fittedDate) : null}
       /* A fitted component is the live one; a removed one is history. */
       defaultOpen={c.status === "ACTIVE"}
     >
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+      <dl className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-6 gap-y-3">
         <Detail label="Fitted" value={c.fittedDate ? `${fmtDate(c.fittedDate)}${c.fittedKm != null ? ` @ ${c.fittedKm.toLocaleString()} km` : ""}` : "—"} />
         <Detail label="Removed" value={c.removedDate ? `${fmtDate(c.removedDate)}${c.removedKm != null ? ` @ ${c.removedKm.toLocaleString()} km` : ""}` : "still fitted"} />
         <Detail label="Km used" value={c.kmUsed != null ? c.kmUsed.toLocaleString() : "—"} />
@@ -1908,15 +1628,15 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
         <Detail label="Tread" value={c.treadDepth != null ? `${c.treadDepth} mm` : "—"} />
         <Detail label="Serial" value={c.serial ?? "—"} />
       </dl>
-      {err && <div className="mt-2 rounded-md border border-err/25 bg-err/10 px-2.5 py-1.5 text-[11px] text-err">{err}</div>}
+      {err && <div className="mt-2 rounded-[10px] bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">{err}</div>}
       {c.events.length > 0 && (
         <div className="mt-2.5">
-          <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">History</div>
+          <h4 className="mb-1 text-[12.5px] font-semibold text-ink-secondary">History</h4>
           <div className="space-y-0.5">
             {c.events.slice(0, 5).map((e) => (
-              <div key={e.id} className="flex items-center gap-2 text-[10.5px] text-ink-muted">
-                <span className="uppercase tracking-brand">{e.eventType}</span>
-                <span>{e.eventDate}</span>
+              <div key={e.id} className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 border-t border-[#ece8df] py-1.5 text-[12.5px] text-ink-muted first:border-t-0">
+                <span className="font-semibold text-ink">{e.eventType.charAt(0) + e.eventType.slice(1).toLowerCase()}</span>
+                <span>{e.eventDate ? fmtDate(e.eventDate) : "—"}</span>
                 {e.odometerKm != null && <span className="tabular-nums">{e.odometerKm.toLocaleString()} km</span>}
                 {e.toPosition && <span>&rarr; {e.toPosition}</span>}
                 {e.note && <span className="text-ink-secondary">{e.note}</span>}
@@ -1938,9 +1658,9 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
             <Button variant="secondary" onClick={() => setLogging(false)}>Cancel</Button>
           </div>
         ) : (
-          <div className="mt-2 flex gap-3">
-            <button type="button" onClick={() => setLogging(true)} className="text-[10.5px] font-semibold text-primary hover:underline">+ Log event</button>
-            <button type="button" onClick={remove} disabled={busy} className="text-[10.5px] font-semibold text-ink-muted hover:text-err disabled:opacity-50">Remove</button>
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-[#ece8df] pt-3">
+            <button type="button" onClick={() => setLogging(true)} className={BTN_SEC}>Log event</button>
+            <button type="button" onClick={remove} disabled={busy} className={cn(BTN_GHOST, "text-ink-secondary hover:text-err")}>Remove</button>
           </div>
         )
       )}
@@ -1968,7 +1688,9 @@ export function AttachmentStrip({ docId, files, onChanged }: {
     try {
       const url = await api.fetchBlobUrl(`/api/fleet-maintenance/compliance-attachments/${f.r2Key}`);
       window.open(url, "_blank", "noopener");
-    } catch { /* the drawer stays usable; the file simply does not open */ }
+    } catch (e) {
+      void serviceNotify({ title: "Could not open the document", body: apiErrText(e), tone: "error" });
+    }
   };
 
   const remove = async (f: ComplianceFile) => {
@@ -1984,15 +1706,15 @@ export function AttachmentStrip({ docId, files, onChanged }: {
 
   if (files.length === 0) return null;
   return (
-    <div className="mt-1 flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1.5">
       {files.map((f) => (
-        <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10.5px]">
-          <button type="button" onClick={() => void open(f)} className="text-primary hover:underline">
+        <span key={f.id} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ece8df] pl-2.5 pr-1 text-[12.5px]">
+          <button type="button" onClick={() => void open(f)} className="font-medium text-primary-ink underline">
             {f.fileName || "document"}
           </button>
           <button type="button" disabled={busy} onClick={() => void remove(f)}
-            className="text-ink-muted hover:text-err" aria-label="Remove attachment">
-            <X size={11} />
+            className="rounded p-1 text-ink-muted hover:text-err" aria-label="Remove attachment">
+            <X size={13} />
           </button>
         </span>
       ))}
@@ -2022,55 +1744,68 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     setOwner(""); setResult(""); setReinspect(""); setFiles([]); setErr(null);
   };
 
+  /* The renewal row is created ONCE. If a scan then fails to upload, the row is
+     kept, the vault is refreshed, and Save only retries the scans still to go;
+     it used to post the renewal again and leave a duplicate. */
+  const [savedId, setSavedId] = useState<string | null>(null);
   const save = async () => {
-    if (!expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    if (!savedId && !expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
     setBusy(true);
     setErr(null);
+    let id = savedId;
     try {
-      /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
-      const created = await api.post<{ id: string }>(
-        `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
-        {
-          docType,
-          issueDate: issueDate || null,
-          expiryDate: expiryDate || null,
-          documentRef: documentRef || null,
-          costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
-          owner: owner || null,
-          ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
-        },
-      );
-      /* Files go up one at a time against the row that now exists. A failed
-         upload leaves the renewal itself recorded - losing the dates because a
-         scan failed would be the worse outcome. */
-      for (const f of files) {
-        const ext = (f.name.split(".").pop() || "").toLowerCase();
-        const qs = `?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`;
-        await api.putBinary(
-          `/api/fleet-maintenance/vehicles/${lorryId}/compliance/${created.id}/attachments${qs}`,
-          f, f.type || "application/octet-stream",
+      if (!id) {
+        /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
+        const created = await api.post<{ id: string }>(
+          `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
+          {
+            docType,
+            issueDate: issueDate || null,
+            expiryDate: expiryDate || null,
+            documentRef: documentRef || null,
+            costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+            owner: owner || null,
+            ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
+          },
         );
+        id = created.id;
+        setSavedId(id);
       }
-      reset();
-      setOpen(false);
-      onSaved();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save the renewal.");
-    } finally { setBusy(false); }
+      setBusy(false);
+      return;
+    }
+    const docId = id;
+    const { left, error } = await uploadEach(files, (f) => {
+      const ext = (f.name.split(".").pop() || "").toLowerCase();
+      const qs = `?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`;
+      return api.putBinary(`/api/fleet-maintenance/vehicles/${lorryId}/compliance/${docId}/attachments${qs}`, f, f.type || "application/octet-stream");
+    });
+    setBusy(false);
+    onSaved();
+    if (left.length > 0) {
+      setFiles(left);
+      setErr(`The renewal is saved, but ${left.length} scan${left.length === 1 ? "" : "s"} did not upload (${error instanceof Error ? error.message : "upload failed"}). Retry uploads, or Close to keep the renewal without them.`);
+      return;
+    }
+    reset();
+    setSavedId(null);
+    setOpen(false);
   };
 
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)}
-        className="mt-2 rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary">
+        className={BTN_PRI}>
         Add renewal
       </button>
     );
   }
 
   return (
-    <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-2.5">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className={cn(FORM_SHELL, "space-y-3")}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <RenewalField label="Issue date"><DateField fullWidth value={issueDate} onChange={(iso) => setIssueDate(iso)} className={RENEWAL_FIELD_CLS}/></RenewalField>
         {!NO_EXPIRY.has(docType) && <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>}
         <RenewalField label="Document no"><input type="text" value={documentRef} onChange={(e) => setDocumentRef(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
@@ -2093,28 +1828,28 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
       <RenewalField label="Scans (PDF or image, max 15MB each)">
         <input type="file" multiple accept={ATTACH_ACCEPT}
           onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-          className="block w-full text-[11.5px] text-ink-secondary file:mr-2 file:rounded file:border file:border-border file:bg-surface-2 file:px-2 file:py-1 file:text-[11px]" />
+          className="block w-full text-[13px] text-ink-secondary file:mr-2 file:h-9 file:rounded-lg file:border file:border-[#d9d3c6] file:bg-surface file:px-3 file:text-[13px] file:font-semibold" />
       </RenewalField>
       {files.length > 0 && (
-        <div className="text-[10.5px] text-ink-muted">{files.length} file(s) will be attached to this renewal.</div>
+        <div className="text-[12.5px] text-ink-muted">{files.length} file(s) will be attached to this renewal.</div>
       )}
 
-      {err && <div className="text-[11px] text-err">{err}</div>}
+      {err && <div role="alert" className="text-[12.5px] font-semibold text-err">{err}</div>}
 
       <div className="flex gap-2">
-        <Button variant="primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save renewal"}</Button>
-        <Button variant="secondary" onClick={() => { reset(); setOpen(false); }} disabled={busy}>Cancel</Button>
+        <Button variant="primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : savedId ? "Retry uploads" : "Save renewal"}</Button>
+        <Button variant="secondary" onClick={() => { reset(); setSavedId(null); setOpen(false); }} disabled={busy}>{savedId ? "Close" : "Cancel"}</Button>
       </div>
     </div>
   );
 }
 
-const RENEWAL_FIELD_CLS = "h-8 w-full rounded border border-border bg-surface px-2 text-[12px] text-ink focus:border-primary focus:outline-none";
+const RENEWAL_FIELD_CLS = FIELD_CLS;
 
 function RenewalField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-0.5 block text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted">{label}</span>
+      <span className={LABEL}>{label}</span>
       {children}
     </label>
   );
@@ -2147,7 +1882,7 @@ export function MissingComplianceNote({ vehicle, compliance }: {
   });
   if (missing.length === 0) return null;
   return (
-    <div className="mt-2 rounded-md border border-warning-text/30 bg-warning-text/10 px-2.5 py-1.5 text-[11.5px] text-warning-text">
+    <div className="rounded-[10px] bg-warning-bg px-3 py-2.5 text-[13px] text-warning-text">
       In-house lorry with nothing on file for {missing.map((t) => DOC_LABEL[t]).join(", ")}. Add a renewal below.
     </div>
   );

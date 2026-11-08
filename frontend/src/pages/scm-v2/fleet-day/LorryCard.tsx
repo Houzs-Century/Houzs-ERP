@@ -4,7 +4,7 @@ import { cn } from '../../../lib/utils';
 import { fmtSen } from '../../../vendor/shared/format';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { RUN_STATUS_LABEL, progressPct, departureDeltaMin, isDepartLate } from '../../../vendor/scm/lib/fleet-day-cards';
-import { clockMY, actualDepartOf, type LorryRunVM, type DocRowVM } from './vm';
+import { clockMY, actualDepartOf, fmtMinutes, stopTimes, type LorryRunVM, type DocRowVM } from './vm';
 
 const STATUS_META: Record<StopStatus, { label: string; dot: string; text: string }> = {
   done: { label: 'Delivered', dot: 'bg-synced', text: 'text-synced' },
@@ -86,7 +86,7 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
   );
 }
 
-function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean; onOpen: () => void }) {
+function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { roadMin: number | null; siteMin: number | null } | null; selected: boolean; onOpen: () => void }) {
   return (
     <button
       type="button"
@@ -99,6 +99,11 @@ function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean;
           <span className="truncate text-[12.5px] font-semibold text-ink">{d.customer || '—'}</span>
         </span>
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
+        {times && (times.roadMin != null || times.siteMin != null) && (
+          <span className="block text-[11px] text-ink-secondary">
+            {[times.roadMin != null ? `On the road ${fmtMinutes(times.roadMin)}` : null, times.siteMin != null ? `On site ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
+          </span>
+        )}
       </span>
       <span className="flex items-center gap-2">
         {d.rowType === 'so' && <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>}
@@ -112,10 +117,12 @@ function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean;
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys,
+  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
+  /** The run by road from the lorry's home and back (Google); null when not worked out. */
+  road: string | null;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
@@ -136,6 +143,7 @@ export function LorryCard({
   const [doneOpen, setDoneOpen] = useState(false);
   const undelivered = visibleDocs.filter((d) => d.status !== 'done');
   const delivered = visibleDocs.filter((d) => d.status === 'done');
+  const times = stopTimes(run.docs);
   const showDone = doneOpen || searchActive;
   const plannedAt = run.trip?.planned_depart_at ?? null;
   const actualAt = run.trip?.clock_in_at ?? actualDepartOf(run.docs);
@@ -211,6 +219,7 @@ export function LorryCard({
           </span>
         )}
         {!plannedAt && !actualAt && <span className="text-ink-muted">Not departed yet</span>}
+        {road && <span className="ml-auto text-ink-secondary"><span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">By road</span> <span className="font-semibold text-ink">{road}</span></span>}
       </div>
 
       {/* progress */}
@@ -248,7 +257,7 @@ export function LorryCard({
                 {delivered.length} delivered
               </button>
               {showDone && delivered.map((d) => (
-                <DeliveredRow key={d.key} d={d} selected={selectedKey === d.key} onOpen={() => onOpenDoc(d)} />
+                <DeliveredRow key={d.key} d={d} times={times.get(d.key) ?? null} selected={selectedKey === d.key} onOpen={() => onOpenDoc(d)} />
               ))}
             </>
           )}

@@ -16,7 +16,7 @@ const doc = (over: Partial<DocRowVM>): DocRowVM => ({
   customer: 'Ada Wong', phone: '012', address: '12 Jalan Besar', region: 'KL/SEL',
   salespersonId: null, agent: null, branding: null, amountSen: 25000, units: 2,
   slotKind: 'AM', slotLabel: 'AM', stopNo: 1, status: 'scheduled', late: false,
-  lateReason: null, hasPod: false, deliveredAt: null, latestLiveDoId: 'do-1',
+  lateReason: null, hasPod: false, deliveredAt: null, departedAt: null, arrivedAt: null, latestLiveDoId: 'do-1',
   ...over,
 });
 
@@ -45,6 +45,7 @@ describe('LorryCard', () => {
         focused={false}
         selectedKey={null}
         remarkKeys={new Set()}
+        road={null}
         onFocus={() => {}}
         onOpenDoc={() => {}}
         onCrew={() => {}}
@@ -74,12 +75,33 @@ describe('LorryCard', () => {
     render(
       <LorryCard
         run={jobRun} visibleDocs={jobRun.docs} filtersActive={false} searchActive={false}
-        actionable focused={false} selectedKey={null} remarkKeys={new Set()}
+        actionable focused={false} selectedKey={null} remarkKeys={new Set()} road={null}
         onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}}
       />,
     );
     expect(screen.getByText('Transfer item')).toBeTruthy();
     expect(screen.getByText('DP-261102-VRH02')).toBeTruthy();
     expect(screen.getByText('KL → Penang')).toBeTruthy();
+  });
+});
+
+describe('a finished stop shows its road and site time', () => {
+  test('on the road from setting off to arrived, on site from arrived to completed', () => {
+    const timed = { ...run, docs: [doc({ soDocNo: 'B', status: 'done', departedAt: '2026-11-01T02:00:00Z', arrivedAt: '2026-11-01T02:30:00Z', deliveredAt: '2026-11-01T03:10:00Z' })] };
+    render(
+      <LorryCard run={timed} visibleDocs={timed.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
+        remarkKeys={new Set()} road={null} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
+    );
+    expect(screen.getByText('On the road 30 min · On site 40 min')).toBeTruthy();
+  });
+});
+
+describe('the run by road', () => {
+  test('shows the road distance and driving time on the card', () => {
+    render(
+      <LorryCard run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
+        remarkKeys={new Set()} road="86.4 km · 3 h 10 min" onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
+    );
+    expect(screen.getByText('86.4 km · 3 h 10 min')).toBeTruthy();
   });
 });

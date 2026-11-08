@@ -402,7 +402,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/sofa-compartment-photos.ts": {
-      "reads": 1,
+      "reads": 0,
       "catches": 3
     },
     "backend/src/scm/routes/stock-takes.ts": {
@@ -544,10 +544,6 @@
     "frontend/src/vendor/scm/components/ScanOrderModal.tsx": {
       "reads": 0,
       "catches": 2
-    },
-    "frontend/src/vendor/scm/components/SofaComboTab.tsx": {
-      "reads": 0,
-      "catches": 1
     },
     "frontend/src/vendor/scm/lib/native-location.ts": {
       "reads": 0,

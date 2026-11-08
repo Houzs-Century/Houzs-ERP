@@ -155,7 +155,12 @@ const WINANSI_ABOVE_LATIN1 = new Set([
    would refuse to print over its own punctuation. Folded to ASCII for paper;
    the screen keeps the symbols. Applied to a whole cell, a customer's own
    arrow folds the same way, which is a faithful print, not a corruption. */
-const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [[/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~']];
+/* Spaces and marks pasted from Word or a website (HC-PO-2611-134 held a U+2006): they
+   look like nothing, so nobody can find them to remove, and neither font carries them. */
+const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [
+  [/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~'],
+  [/[ -   　]/g, ' '], [/[​-‏⁠﻿]/g, ''],
+];
 export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
 /** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
@@ -191,8 +196,8 @@ const CJK_FETCH_FAILED =
 /* Not worded as "Chinese": the same guard catches anything helvetica can't
    paint that the subset doesn't carry either — a traditional 陳, a rare given
    name, an emoji someone pasted into a remark. */
-const CJK_GLYPH_MISSING =
-  'This document has a character we cannot print yet, so the PDF was not created.';
+const glyphMissing = (cps: readonly number[]): string =>
+  `This document has a character we cannot print yet (${cps.slice(0, 5).map((cp) => `"${String.fromCodePoint(cp)}" U+${cp.toString(16).toUpperCase()}`).join(', ')}), so the PDF was not created. Remove it from the document and try again.`;
 
 /* Scans the text as it will be PAINTED: the fold shim below turns these
    symbols into ASCII at draw time, so an "→" in a line remark (BUG-28,
@@ -338,7 +343,7 @@ export async function ensurePdfCjkFont(
     | Record<number, number>
     | undefined;
   const missing = [...needed].filter((cp) => codeMap?.[cp] === undefined);
-  if (missing.length > 0) throw new Error(CJK_GLYPH_MISSING);
+  if (missing.length > 0) throw new Error(glyphMissing(missing));
 
   if (!docShimmed.has(doc)) {
     /* The generators ask for 'helvetica' by name in ~50 places, and
@@ -815,7 +820,6 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   bar.appendChild(name);
 
   const iframe = document.createElement('iframe');
-  iframe.src = blobUrl;
   iframe.title = title;
   iframe.style.cssText = 'flex:1;width:100%;border:0;display:block;background:#525659';
 
@@ -862,9 +866,19 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   });
   document.addEventListener('keydown', onKey, true);
 
-  if (opts.print) {
-    iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); });
-  }
+  /* The browser's own Save takes its name from the address: a blob saves as a
+     GUID (owner 2026-11-06), the worker's path saves as the document. An iframe
+     with no src fires load too, so print listens only once the real one is set. */
+  void (async () => {
+    let path: string | null = null;
+    try {
+      path = await putPrintPreview(blob, filename);
+    } catch {
+      // Any storage/worker failure just means the blob, as in the preview tab.
+    }
+    if (opts.print) iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); }, { once: true });
+    iframe.src = path ?? blobUrl;
+  })();
 
   panel.appendChild(bar);
   panel.appendChild(iframe);

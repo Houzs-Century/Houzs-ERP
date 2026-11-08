@@ -34,6 +34,7 @@ import { todayMyt } from '../lib/my-time';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
 import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo } from '../lib/derive-combo-cost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { clearHeights, hasAnyPrice, mergeComboPrices, newestComboRow, type HeightPrices } from '../lib/sofa-combo-apply';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -79,6 +80,7 @@ type Row = {
   created_at: string;
   updated_at: string;
   created_by: string | null;
+  created_by_name: string | null;
 };
 
 function rowToWire(r: Row) {
@@ -100,6 +102,7 @@ function rowToWire(r: Row) {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     createdBy: r.created_by,
+    createdByName: r.created_by_name,
   };
 }
 
@@ -187,7 +190,7 @@ sofaCombos.get('/', async (c) => {
       .from('sofa_combo_pricing')
       .select(
         'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
-        'effective_from, deleted_at, notes, created_at, updated_at, created_by',
+        'effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name',
       ),
     c,
   )
@@ -359,7 +362,7 @@ sofaCombos.get('/history', async (c) => {
       .from('sofa_combo_pricing')
       .select(
         'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
-        'effective_from, deleted_at, notes, created_at, updated_at, created_by',
+        'effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name',
       )
       .eq('base_model', baseModel),
     c,
@@ -585,10 +588,11 @@ sofaCombos.post('/', async (c) => {
       effective_from: effectiveFrom,
       notes: body.notes ?? null,
       created_by: user.id,
+      created_by_name: user.user_metadata?.name ?? null,
     })
     .select(
       'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
-      'effective_from, deleted_at, notes, created_at, updated_at, created_by',
+      'effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name',
     )
     .single();
 
@@ -725,10 +729,11 @@ export const sofaComboPutHandler = async (c: any) => {
       effective_from: effectiveFrom,
       notes: body.notes ?? null,
       created_by: user.id,
+      created_by_name: user.user_metadata?.name ?? null,
     })
     .select(
       'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
-      'effective_from, deleted_at, notes, created_at, updated_at, created_by',
+      'effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name',
     )
     .single();
 
@@ -772,6 +777,398 @@ sofaCombos.delete('/:id', async (c) => {
     return c.json({ error: 'delete_failed', reason: error.message }, 500);
   }
   return c.body(null, 204);
+});
+
+// ── Batch writes ───────────────────────────────────────────────────────
+// A combo on the screen is one model + module set across Price 1 to 4 and every
+// supplier; the rows below it are that combo's tuples. These three routes write
+// at that level, so one save or one Excel file is one atomic insert.
+
+const COMBO_COLUMNS =
+  'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
+  'effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name';
+const MAX_BATCH_ITEMS = 200;
+const ID_CHUNK = 200;
+
+type LiveRows = { rows: Row[] } | { error: string };
+
+async function loadLiveComboRows(c: AppContext, baseModels: readonly string[]): Promise<LiveRows> {
+  const supabase = c.get('supabase');
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await scopeToCompany(supabase.from('sofa_combo_pricing').select(COMBO_COLUMNS), c)
+      .in('base_model', [...baseModels])
+      .is('deleted_at', null)
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (error) return { error: error.message };
+    const page = (data ?? []) as unknown as Row[];
+    rows.push(...page);
+    if (page.length < 1000) return { rows };
+  }
+}
+
+const unknownSuppliers = async (c: AppContext, ids: readonly string[]): Promise<string[] | { error: string }> => {
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(c.get('supabase').from('suppliers').select('id'), c).in('id', [...ids]);
+  if (error) return { error: error.message };
+  const known = new Set(((data ?? []) as Array<{ id: string }>).map((r) => r.id));
+  return ids.filter((id) => !known.has(id));
+};
+
+async function softDeleteRows(c: AppContext, ids: readonly string[]): Promise<string | null> {
+  const stamp = new Date().toISOString();
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { error } = await scopeToCompany(
+      c.get('supabase').from('sofa_combo_pricing').update({ deleted_at: stamp }).in('id', ids.slice(i, i + ID_CHUNK)),
+      c,
+    );
+    if (error) return error.message;
+  }
+  return null;
+}
+
+const rederiveMasters = async (c: AppContext, rows: readonly Row[]): Promise<void> => {
+  const companyId = activeCompanyId(c);
+  if (rows.length === 0 || !(await autoDeriveEnabled(c.get('supabase'), companyId))) return;
+  const done = new Set<string>();
+  for (const r of rows) {
+    const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
+    if (done.has(key)) continue;
+    done.add(key);
+    await recomputeMasterComboCostFromSuppliers(c.get('supabase'), r, companyId, c.get('user').id);
+  }
+};
+
+type ApplyItem = {
+  baseModel: string;
+  modules: ComboSlots;
+  tier: Exclude<Tier, null>;
+  supplierId: string | null;
+  prices: HeightPrices;
+  label: string | null | undefined;
+  effectiveFrom: string;
+  notes: string | null;
+};
+
+function parseApplyItem(raw: unknown): ApplyItem | string {
+  if (!raw || typeof raw !== 'object') return 'item_invalid';
+  const r = raw as Record<string, unknown>;
+  const baseModel = typeof r.baseModel === 'string' ? r.baseModel.trim() : '';
+  if (!baseModel) return 'base_model_required';
+  const modules = validateComboModules(r.modules);
+  if (!modules) return 'modules_required';
+  if (typeof r.tier !== 'string' || !TIERS.has(r.tier)) return 'tier_invalid';
+  const prices = validatePricesByHeight(r.prices);
+  if (!prices) return 'prices_invalid';
+  const effectiveFrom = typeof r.effectiveFrom === 'string' ? r.effectiveFrom.trim() : '';
+  if (!ISO_DATE.test(effectiveFrom)) return 'effective_from_required';
+  return {
+    baseModel,
+    modules,
+    tier: r.tier as Exclude<Tier, null>,
+    supplierId: typeof r.supplierId === 'string' && r.supplierId ? r.supplierId : null,
+    prices,
+    label: typeof r.label === 'string' ? r.label.trim() || null : undefined,
+    effectiveFrom,
+    notes: typeof r.notes === 'string' ? r.notes.trim() || null : null,
+  };
+}
+
+// POST /apply — body { items: [{ baseModel, modules, tier, supplierId, prices,
+// effectiveFrom, label?, notes? }] }. `prices` names only the cells to change;
+// null takes a price away. {} on a combo that does not exist yet opens it with no
+// price, which every pricing path skips (pickComboMatch needs a number), and is a
+// no-op on one that does, so assigning twice adds nothing.
+export const sofaComboApplyHandler = async (c: AppContext) => {
+  const gate = await requireWriteRole(c);
+  if (!gate.ok) return gate.res;
+
+  let body: { items?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'invalid_json' }, 400);
+  }
+  if (!Array.isArray(body.items) || body.items.length === 0) return c.json({ error: 'items_required' }, 400);
+  if (body.items.length > MAX_BATCH_ITEMS) return c.json({ error: 'too_many_items', max: MAX_BATCH_ITEMS }, 400);
+
+  const items: ApplyItem[] = [];
+  for (const [index, raw] of body.items.entries()) {
+    const parsed = parseApplyItem(raw);
+    if (typeof parsed === 'string') return c.json({ error: parsed, index }, 400);
+    items.push(parsed);
+  }
+
+  const bad = await unknownSuppliers(c, [...new Set(items.flatMap((i) => (i.supplierId ? [i.supplierId] : [])))]);
+  if (!Array.isArray(bad)) return c.json({ error: 'load_failed', reason: bad.error }, 500);
+  if (bad.length > 0) return c.json({ error: 'supplier_not_found', supplierIds: bad }, 404);
+
+  const live = await loadLiveComboRows(c, [...new Set(items.map((i) => i.baseModel))]);
+  if ('error' in live) return c.json({ error: 'load_failed', reason: live.error }, 500);
+
+  const tupleKey = (baseModel: string, modules: ComboSlots, tier: Tier, supplierId: string | null) =>
+    JSON.stringify([baseModel, comboSlotsKey(modules), tier, supplierId]);
+  const rowsByTuple = new Map<string, Row[]>();
+  for (const r of live.rows) {
+    if (r.customer_id !== null) continue;
+    const key = tupleKey(r.base_model, r.modules ?? [], r.tier, r.supplier_id);
+    const list = rowsByTuple.get(key) ?? [];
+    list.push(r);
+    rowsByTuple.set(key, list);
+  }
+
+  const today = todayIso();
+  const companyId = activeCompanyId(c);
+  const userId = c.get('user').id;
+  const userName = c.get('user').user_metadata?.name ?? null;
+  type Pending = Record<string, unknown> & { prices_by_height: HeightPrices; selling_prices_by_height: HeightPrices; effective_from: string };
+  const pending = new Map<string, Pending>();
+  const retire: string[] = [];
+
+  for (const item of items) {
+    const key = tupleKey(item.baseModel, item.modules, item.tier, item.supplierId);
+    const tuple = rowsByTuple.get(key) ?? [];
+    const prior = newestComboRow(tuple);
+    const queued = pending.get(key);
+    const merged = mergeComboPrices(queued?.prices_by_height ?? prior?.prices_by_height ?? null, item.prices);
+    const labelChanged = item.label !== undefined && item.label !== (prior?.label ?? null);
+    if (prior && !queued && !merged.changed && !labelChanged) continue;
+
+    // The engine reads every row of a tuple, so a height emptied on a new row would
+    // fall through to the older row's price. Taking a price away has to retire them.
+    const removing = merged.removed.length > 0;
+    if (removing) retire.push(...tuple.map((r) => r.id));
+    pending.set(key, {
+      company_id: companyId,
+      base_model: item.baseModel,
+      modules: item.modules,
+      tier: item.tier,
+      customer_id: null,
+      supplier_id: item.supplierId,
+      prices_by_height: merged.prices,
+      selling_prices_by_height: clearHeights(queued?.selling_prices_by_height ?? prior?.selling_prices_by_height ?? {}, merged.removed),
+      pwp_prices_by_height: prior?.pwp_prices_by_height ?? {},
+      default_free_gifts: prior?.default_free_gifts ?? [],
+      label: item.label === undefined ? (prior?.label ?? null) : item.label,
+      effective_from: removing || queued?.effective_from === today ? today : item.effectiveFrom,
+      notes: item.notes,
+      created_by: userId,
+      created_by_name: userName,
+    });
+  }
+
+  if (pending.size === 0) return c.json({ applied: 0, skipped: items.length });
+
+  const supabase = c.get('supabase');
+  const { data, error } = await supabase.from('sofa_combo_pricing').insert([...pending.values()]).select(COMBO_COLUMNS);
+  if (error) {
+    if (error.code === '42501' || /permission denied/i.test(error.message)) {
+      return c.json({ error: 'forbidden', reason: error.message }, 403);
+    }
+    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  const retireFailed = await softDeleteRows(c, [...new Set(retire)]);
+  if (retireFailed) return c.json({ error: 'delete_failed', reason: retireFailed }, 500);
+
+  const saved = (data ?? []) as unknown as Row[];
+  await rederiveMasters(c, saved.filter((r) => r.supplier_id !== null && hasAnyPrice(r.prices_by_height)));
+  return c.json({ applied: saved.length, skipped: items.length - saved.length });
+};
+sofaCombos.post('/apply', sofaComboApplyHandler);
+
+// POST /retire — body { items: [{ baseModel, modules }], supplierId }. Takes the whole
+// combo away, every Price and every old row (retiring only the newest row would bring
+// the older one back). Without a supplier it is the master combo, and every supplier's
+// copy goes with it: a supplier combo has nothing to connect to once the combo is gone.
+export const sofaComboRetireHandler = async (c: AppContext) => {
+  const gate = await requireWriteRole(c);
+  if (!gate.ok) return gate.res;
+
+  let body: { items?: unknown; supplierId?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'invalid_json' }, 400);
+  }
+  if (!Array.isArray(body.items) || body.items.length === 0) return c.json({ error: 'items_required' }, 400);
+  if (body.items.length > MAX_BATCH_ITEMS) return c.json({ error: 'too_many_items', max: MAX_BATCH_ITEMS }, 400);
+  const supplierId = typeof body.supplierId === 'string' && body.supplierId ? body.supplierId : null;
+
+  const wanted = new Set<string>();
+  const models = new Set<string>();
+  for (const [index, raw] of body.items.entries()) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const baseModel = typeof r.baseModel === 'string' ? r.baseModel.trim() : '';
+    const modules = validateComboModules(r.modules);
+    if (!baseModel || !modules) return c.json({ error: 'item_invalid', index }, 400);
+    models.add(baseModel);
+    wanted.add(JSON.stringify([baseModel, comboSlotsKey(modules)]));
+  }
+
+  const live = await loadLiveComboRows(c, [...models]);
+  if ('error' in live) return c.json({ error: 'load_failed', reason: live.error }, 500);
+  const hit = live.rows.filter((r) =>
+    wanted.has(JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? [])]))
+    && (supplierId === null || r.supplier_id === supplierId));
+
+  const failed = await softDeleteRows(c, hit.map((r) => r.id));
+  if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);
+  if (supplierId !== null) await rederiveMasters(c, hit);
+  return c.json({ retired: hit.length });
+};
+sofaCombos.post('/retire', sofaComboRetireHandler);
+
+// POST /recompose — body { baseModel, from, to, supplierId, label? }. Changing the
+// modules makes a different tuple, so each Price's current row moves to the new one
+// with its prices, from today, and the old tuple is retired. Without a supplier every
+// supplier follows the master, or their combos would stop matching it.
+export const sofaComboRecomposeHandler = async (c: AppContext) => {
+  const gate = await requireWriteRole(c);
+  if (!gate.ok) return gate.res;
+
+  let body: { baseModel?: unknown; from?: unknown; to?: unknown; supplierId?: unknown; label?: unknown; notes?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'invalid_json' }, 400);
+  }
+  const baseModel = typeof body.baseModel === 'string' ? body.baseModel.trim() : '';
+  if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
+  const from = validateComboModules(body.from);
+  const to = validateComboModules(body.to);
+  if (!from || !to) return c.json({ error: 'modules_required' }, 400);
+  const supplierId = typeof body.supplierId === 'string' && body.supplierId ? body.supplierId : null;
+
+  const live = await loadLiveComboRows(c, [baseModel]);
+  if ('error' in live) return c.json({ error: 'load_failed', reason: live.error }, 500);
+  const fromKey = comboSlotsKey(from);
+  const toKey = comboSlotsKey(to);
+  const inScope = (r: Row) => supplierId === null || r.supplier_id === supplierId;
+  const old = live.rows.filter((r) => comboSlotsKey(r.modules ?? []) === fromKey && inScope(r));
+  if (old.length === 0) return c.json({ error: 'not_found' }, 404);
+
+  const label = typeof body.label === 'string' ? body.label.trim() || null : undefined;
+  const notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
+  const companyId = activeCompanyId(c);
+  const userId = c.get('user').id;
+  const userName = c.get('user').user_metadata?.name ?? null;
+
+  const tuples = new Map<string, Row[]>();
+  for (const r of old) {
+    const key = JSON.stringify([r.tier, r.customer_id, r.supplier_id]);
+    tuples.set(key, [...(tuples.get(key) ?? []), r]);
+  }
+  // A marker row on the tuple's own date, so a price dated ahead stays ahead.
+  const marker = (r: Row, modules: ComboSlots, note: string | null) => ({
+    company_id: companyId,
+    base_model: baseModel,
+    modules,
+    tier: r.tier,
+    customer_id: r.customer_id,
+    supplier_id: r.supplier_id,
+    prices_by_height: r.prices_by_height,
+    selling_prices_by_height: r.selling_prices_by_height ?? {},
+    pwp_prices_by_height: r.pwp_prices_by_height ?? {},
+    default_free_gifts: r.default_free_gifts ?? [],
+    label: label === undefined ? r.label : label,
+    effective_from: r.effective_from,
+    notes: note,
+    created_by: userId,
+    created_by_name: userName,
+  });
+  const newest = [...tuples.values()].flatMap((tuple) => {
+    const r = newestComboRow(tuple);
+    return r ? [r] : [];
+  });
+
+  const supabase = c.get('supabase');
+  if (fromKey === toKey) {
+    const rows = newest.filter((r) => (label !== undefined && label !== r.label) || notes).map((r) => marker(r, from, notes));
+    if (rows.length === 0) return c.json({ moved: 0 });
+    const { error } = await supabase.from('sofa_combo_pricing').insert(rows);
+    if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+    return c.json({ moved: rows.length });
+  }
+
+  if (live.rows.some((r) => comboSlotsKey(r.modules ?? []) === toKey && inScope(r))) {
+    return c.json({ error: 'combo_exists', message: 'This model already has a combo with these modules.' }, 409);
+  }
+
+  // Every row moves, not only the newest: history reads by module set, so anything
+  // left behind would vanish from it, and a price dated ahead keeps its date.
+  const moved = [...old]
+    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+    .map((r) => ({
+      company_id: companyId,
+      base_model: baseModel,
+      modules: to,
+      tier: r.tier,
+      customer_id: r.customer_id,
+      supplier_id: r.supplier_id,
+      prices_by_height: r.prices_by_height,
+      selling_prices_by_height: r.selling_prices_by_height ?? {},
+      pwp_prices_by_height: r.pwp_prices_by_height ?? {},
+      default_free_gifts: r.default_free_gifts ?? [],
+      label: r.label,
+      effective_from: r.effective_from,
+      notes: r.notes,
+      created_by: r.created_by,
+      created_by_name: r.created_by_name,
+      created_at: r.created_at,
+    }));
+  const was = from.map((slot) => slot.join(' or ')).join(' + ');
+  const inserts = [...moved, ...newest.map((r) => marker(r, to, notes ?? `Modules were ${was}`))];
+  for (let i = 0; i < inserts.length; i += ID_CHUNK) {
+    const { error } = await supabase.from('sofa_combo_pricing').insert(inserts.slice(i, i + ID_CHUNK));
+    if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  const failed = await softDeleteRows(c, old.map((r) => r.id));
+  if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);
+  return c.json({ moved: newest.length });
+};
+sofaCombos.post('/recompose', sofaComboRecomposeHandler);
+
+// GET /assign-targets?baseModel= — who a model's combos can go to: which suppliers
+// carry the model, and the combos each already holds (comboSlotsKey values).
+sofaCombos.get('/assign-targets', async (c) => {
+  const baseModel = (c.req.query('baseModel') ?? '').trim();
+  if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
+  const supabase = c.get('supabase');
+
+  const { data: suppliers, error: supErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c)
+    .eq('status', 'ACTIVE')
+    .order('name', { ascending: true });
+  if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+
+  const { data: products, error: prodErr } = await scopeToCompany(supabase.from('mfg_products').select('code'), c)
+    .eq('base_model', baseModel);
+  if (prodErr) return c.json({ error: 'load_failed', reason: prodErr.message }, 500);
+  const codes = ((products ?? []) as Array<{ code: string }>).map((p) => p.code);
+
+  const linked = new Set<string>();
+  for (let i = 0; i < codes.length; i += ID_CHUNK) {
+    const { data, error } = await scopeToCompany(supabase.from('supplier_material_bindings').select('supplier_id'), c)
+      .in('item_code', codes.slice(i, i + ID_CHUNK));
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    for (const b of (data ?? []) as Array<{ supplier_id: string }>) linked.add(b.supplier_id);
+  }
+
+  const live = await loadLiveComboRows(c, [baseModel]);
+  if ('error' in live) return c.json({ error: 'load_failed', reason: live.error }, 500);
+  const held = new Map<string, Set<string>>();
+  for (const r of live.rows) {
+    if (!r.supplier_id) continue;
+    const set = held.get(r.supplier_id) ?? new Set<string>();
+    set.add(comboSlotsKey(r.modules ?? []));
+    held.set(r.supplier_id, set);
+  }
+
+  return c.json({
+    suppliers: ((suppliers ?? []) as Array<{ id: string; name: string | null }>).map((s) => ({
+      id: s.id, name: s.name ?? '', linked: linked.has(s.id), held: [...(held.get(s.id) ?? [])],
+    })),
+  });
 });
 
 // ── Copy-to-customer endpoint removed 2026-05-28 ───────────────────────

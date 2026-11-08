@@ -26,7 +26,7 @@ import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { activeCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { financeHiddenForUser } from "../services/pmsAccess";
-import { classifyProjectGaps, type GapProject } from "../scm/lib/project-data-gaps";
+import { classifyProjectGaps, waivedByProject, type GapProject } from "../scm/lib/project-data-gaps";
 
 const GO_LIVE = "2026-09-01";
 /** A giveaway that carries no cost (owner 2026-11-05), so it is no gap in the books. */
@@ -69,6 +69,12 @@ projectDataGaps.get("/", async (c) => {
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
   ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; size_sqm: number | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;
+  // company-scope: the removed gaps of this company's events (activeCompanySql on p.company_id).
+  const waivedRows = await c.env.DB.prepare(
+    `SELECT a.project_id, a.to_value FROM project_activity a JOIN projects p ON p.id = a.project_id
+      WHERE a.action = 'books_gap_waived' AND a.archived_at IS NULL AND substr(p.end_date, 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+  ).bind(from).all<{ project_id: number; to_value: string | null }>();
+  const waived = waivedByProject(waivedRows.results);
 
   const ids = projects.map((p) => String(p.id));
   const sos = await chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null }>(ids, (b, f, t) =>
@@ -188,6 +194,7 @@ projectDataGaps.get("/", async (c) => {
     id: p.id, code: p.code, name: p.name, brand: p.brand, endDate: String(p.end_date ?? "").slice(0, 10), soSen: soSen.get(p.id) ?? 0,
     soDocs: soDocs.get(p.id) ?? [],
     sizeSqm: p.size_sqm == null ? null : Number(p.size_sqm),
+    waived: waived.get(Number(p.id)) ?? [],
     lines: {
       sales: Number(p.income), cogs: Number(p.cogs),
       cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
@@ -226,5 +233,5 @@ projectDataGaps.get("/", async (c) => {
     return { docNo, projectId: e.id, event: e.name, code: e.code, startDate: String(e.start_date ?? "").slice(0, 10), endDate: String(e.end_date ?? "").slice(0, 10), amountSen, items: [...new Set(items)] };
   }).sort((a, b) => b.endDate.localeCompare(a.endDate) || a.event.localeCompare(b.event) || a.docNo.localeCompare(b.docNo));
 
-  return c.json({ from, to, books, notDaily, soNoCogs, recentFrom: recent, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
+  return c.json({ from, to, books, notDaily, soNoCogs, recentFrom: recent, ...classifyProjectGaps(projects.filter((p) => !waived.get(Number(p.id))?.includes("rental")).map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
 });

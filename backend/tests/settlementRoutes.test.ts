@@ -1067,6 +1067,30 @@ describe('the batch detail and the watchlists', () => {
     expect(body.clean).toBe(false);
   });
 
+  /* Owner 2026-11-06: 我要有那个 reference HC, ZNT 等等. The order's own pair, raw, the way
+     so-ref-lookup sends it: the screen resolves it through its one display rule. */
+  test("a row on watchlist 1 carries its order's Ref No., as the order holds it", async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [
+        soPayment({ id: 'r1', so_doc_no: 'SO-R1', paid_at: '2026-07-15T09:00:00', approval_code: 'B1' }),
+        soPayment({ id: 'r2', so_doc_no: 'SO-R2', paid_at: '2026-07-16T09:00:00', approval_code: 'B2' }),
+        soPayment({ id: 'r3', so_doc_no: 'SO-R3', paid_at: '2026-07-17T09:00:00', approval_code: 'B3' }),
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-R1', company_id: CO, debtor_name: 'A', status: 'CONFIRMED', ref: 'HC13025', customer_so_no: 'HC13025' },
+        { doc_no: 'SO-R2', company_id: CO, debtor_name: 'B', status: 'CONFIRMED', ref: null, customer_so_no: 'ZNT6656' },
+        { doc_no: 'SO-R3', company_id: CO, debtor_name: 'C', status: 'CONFIRMED' },
+      ],
+    });
+    const body = await (await app.request('/settlement/watchlist?from=2026-07-01&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; ref: string | null; customer_so_no: string | null }>;
+    };
+    const of = (id: string) => body.recordedNotArrived.find((p) => p.id === id);
+    expect(of('r1')).toMatchObject({ ref: 'HC13025', customer_so_no: 'HC13025' });
+    expect(of('r2')).toMatchObject({ ref: null, customer_so_no: 'ZNT6656' });
+    expect(of('r3')).toMatchObject({ ref: null, customer_so_no: null });
+  });
+
   /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
      same instalment under GHL, HLB, MBB and PBB, and the header counting it
      four times. An untagged payment is every acquirer's CANDIDATE (that is how

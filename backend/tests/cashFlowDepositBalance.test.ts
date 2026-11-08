@@ -4,9 +4,9 @@
        Balance; every payment before it is a Deposit; an order not yet fully paid
        has only Deposits;
      • all of an order's payments count, whatever their month;
-     • under CASH IN: Deposit (Transfer / cash, Card - in the bank, Card - not yet
-       in the bank), the same three under Balance, then (-) Refund, then Other
-       receipts that are not order payments. */
+     • under CASH IN: Deposit (Transfer / cash, Card - in the bank, Card - merchant
+       matched, Card - not matched yet), the same four under Balance, then (-) Refund,
+       then Other receipts that are not order payments. */
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -136,14 +136,14 @@ describe('Cash Flow: Deposit and Balance under CASH IN', () => {
   test('September: only Deposits (SO-1 is not paid in full yet), by how the money came in', async () => {
     const r = await get('from=2026-09-01&to=2026-09-30');
     expect(debtorPlace(r).children.map(shape)).toEqual([
-      ['Deposit', 50000, [['Transfer / cash', 30000], ['Card - not yet in the bank', 20000]]],
+      ['Deposit', 50000, [['Transfer / cash', 30000], ['Card - not matched yet', 20000]]],
     ]);
   });
 
   test('October: SO-1\'s last payment and SO-2\'s only one are Balance; then (-) Refund and Other receipts, in that order', async () => {
     const r = await get('from=2026-10-01&to=2026-10-31');
     expect(debtorPlace(r).children.map(shape)).toEqual([
-      ['Balance', 90000, [['Transfer / cash', 50000], ['Card - not yet in the bank', 40000]]],
+      ['Balance', 90000, [['Transfer / cash', 50000], ['Card - not matched yet', 40000]]],
       ['(-) Refund', -9000],
       ['Other receipts (not order payments)', 7000],
     ]);
@@ -156,8 +156,8 @@ describe('Cash Flow: Deposit and Balance under CASH IN', () => {
   test('September and October together: September\'s payments stay Deposits (the rule reads the whole order, not the period)', async () => {
     const r = await get('from=2026-09-01&to=2026-10-31');
     const [dep, bal] = debtorPlace(r).children;
-    expect(shape(dep!)).toEqual(['Deposit', 50000, [['Transfer / cash', 30000], ['Card - not yet in the bank', 20000]]]);
-    expect(shape(bal!)).toEqual(['Balance', 90000, [['Transfer / cash', 50000], ['Card - not yet in the bank', 40000]]]);
+    expect(shape(dep!)).toEqual(['Deposit', 50000, [['Transfer / cash', 30000], ['Card - not matched yet', 20000]]]);
+    expect(shape(bal!)).toEqual(['Balance', 90000, [['Transfer / cash', 50000], ['Card - not matched yet', 40000]]]);
   });
 
   test('by debtor, the rows keep the party and are not split', async () => {

@@ -25,7 +25,13 @@ export function funnelValues(colFilters: ColFilters, key: string): string[] | un
   return v && v.length > 0 ? v : undefined;
 }
 
-export function useServerColumnFunnels<F extends Record<string, string[] | undefined>>(
+/** A column's ticked values, without the date or number condition the server asks for another way. */
+export function funnelTicked(colFilters: ColFilters, key: string): string[] | undefined {
+  const v = (colFilters[key] ?? []).filter((x) => !x.startsWith('\u0001'));
+  return v.length > 0 ? v : undefined;
+}
+
+export function useServerColumnFunnels<F extends Record<string, string[] | string | undefined>>(
   map: (colFilters: ColFilters) => F,
   onChange: () => void,
 ): { serverFunnels: F; onColFiltersChange: (colFilters: ColFilters) => void } {

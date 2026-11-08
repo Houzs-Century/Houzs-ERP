@@ -14,7 +14,8 @@
 //   Prepared  (submitted_at)   -> STILL editable (owner: prepare 还可以改),
 //                                 checkable, withdrawable; not approvable
 //   Checked   (checked_at)     -> LOCKED (owner: checked 的人就不可以改了),
-//                                 approvable / rejectable only
+//                                 approvable / rejectable only; its words alone
+//                                 may still change (owner 2026-11-06)
 //   Approved  (approved_at)    -> the approve route posts the GL itself;
 //                                 a voucher seen in this state without a JE
 //                                 is a post that failed halfway — approve
@@ -64,6 +65,19 @@ export function pvCanEdit(pv: PvApprovalShape): Verdict {
       ok: false, error: 'already_checked',
       message: 'This voucher has been checked — it is locked. Reject it back to draft to change it.',
     };
+  }
+  return { ok: true };
+}
+
+/** May its words change — the notes and the lines' descriptions, nothing else
+    (owner 2026-11-06: 有时我要改 description)? They move no money, so the first
+    yes does not lock them. Approving writes the journal, which carries the lines'
+    words, so the second yes does. */
+export function pvCanEditText(pv: PvApprovalShape): Verdict {
+  const dead = notDraft(pv);
+  if (dead) return dead;
+  if (pv.approved_at) {
+    return { ok: false, error: 'already_approved', message: 'This voucher is approved — its journal carries these words, so they stay as they are.' };
   }
   return { ok: true };
 }

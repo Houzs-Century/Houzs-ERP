@@ -29,7 +29,7 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
-  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
+  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch, useReadSettlementBatches,
   useConfirmSettlementRow, useConfirmSettlementGroup, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, useUnconfirmSettlementRow, useReleaseSettlementRow, useFindPayments, usePayouts,
   confirmMatchedBatch, useInvalidateAfterPosting,
@@ -37,6 +37,11 @@ import {
   type Watchlist, type Payout,
 } from './settlement-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { HeaderExportMenu } from '../../components/DataTableExportItems';
+import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
+import { customerRefOf } from '../../lib/customer-ref';
+import { todayMY } from '../../vendor/shared/format';
+import { LINE_STATUS_WORDS, isOpenLine, lineStatus, openReportsOf, ordersOf, reportLinesMatrix } from './merchantReconExport';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   BUCKET_LABEL, refusalText, payableOf,
@@ -212,6 +217,8 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
   /* Back from an order lands where the list was scrolled. */
   useReturnScroll(batchId == null && batches.data != null);
   const [showDone, setShowDone] = useState(false);
+  const readBatches = useReadSettlementBatches();
+  const [exportNote, setExportNote] = useState<ExportNote | null>(null);
 
   /* ONE THING AT A TIME. Working a statement replaces everything else. */
   if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
@@ -244,6 +251,29 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
      (docs/bugs/0688 — it used to sit under every merchant), and the confirm
      that stamps its bank is what moves it onto that merchant's list. */
   const untagged = waiting.filter((p) => p.acquirerCode == null).length;
+
+  /* Owner 2026-11-06: 我要能 export, right click, 支持 pdf. A file takes a moment to make, and one
+     that cannot be made says why, beside the list it was asked of. */
+  const runExport = (list: ExportNote['list'], what: string, work: () => Promise<void>) => {
+    setExportNote({ list, text: `Making the ${what}…`, failed: false });
+    work().then(
+      () => setExportNote(null),
+      (e: unknown) => setExportNote({ list, failed: true, text: e instanceof Error && e.message ? e.message : `The ${what} could not be made.` }),
+    );
+  };
+  const exportReports = (how: 'excel' | 'pdf') => runExport('reports', how === 'pdf' ? 'PDF' : 'Excel', async () => {
+    const reports = openReportsOf(open, await readBatches(open.map((b) => b.id)));
+    if (how === 'excel') {
+      await writeLineExportFile(reportLinesMatrix(reports), 'To reconcile', `merchant-reports-to-reconcile-${todayMY()}.xlsx`);
+      return;
+    }
+    const { generateReportLinesPdf } = await import('../../vendor/scm/lib/merchant-recon-pdf');
+    await generateReportLinesPdf(reports, { merchant: acq });
+  });
+  const exportCardsPdf = (view: TablePdfView<WaitingCard>) => runExport('cards', 'PDF', async () => {
+    const { generateWaitingCardsPdf } = await import('../../vendor/scm/lib/merchant-recon-pdf');
+    await generateWaitingCardsPdf(view, { merchant: acq });
+  });
 
   return (
     <div className="space-y-4">
@@ -293,7 +323,8 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
             columns as the upload summary, for the same reason: a file name is
             not a transaction (owner: 显示 transaction detail 和 sales order
             detail, 而不是 document 罢了). */}
-        {open.length > 0 && <LinesTable batches={open} openOnly onOpen={setBatchId} />}
+        {exportNote?.list === 'reports' && <ExportStatus note={exportNote} />}
+        {open.length > 0 && <LinesTable batches={open} openOnly onOpen={setBatchId} onExport={exportReports} />}
         {/* Done, and therefore not on this screen's list — but say so, and say
             where they went, so "it disappeared" never has to be a question. */}
         {cleared.length > 0 && (
@@ -313,7 +344,7 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
                   <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
                   <td style={cell}>{b.file_name}</td>
                   <td style={cell}>{b.period_from} → {b.period_to}</td>
-                  <td style={num}>{fmt(b.net_sen)}</td>
+                  <td style={num}>{fmt(payableOf(b))}</td>
                   <td style={{ ...cell, color: good }}>{b.confirmed_count} line(s) done</td>
                   <td style={cell}>
                     <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
@@ -333,10 +364,12 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
           Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
           {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
+        {exportNote?.list === 'cards' && <ExportStatus note={exportNote} />}
         <DataTable<WaitingCard>
           tableId="merchant-recon-waiting"
           exportName="card-payments-not-reported"
           exportXlsx
+          onExportPdf={exportCardsPdf}
           columns={WAITING_COLUMNS}
           rows={watchlist.data ? waiting : null}
           loading={watchlist.isLoading}
@@ -349,10 +382,19 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
   );
 };
 
+type ExportNote = { list: 'reports' | 'cards'; text: string; failed: boolean };
+const ExportStatus = ({ note }: { note: ExportNote }) => (
+  note.failed
+    ? <div role="alert" style={{ ...softText, color: danger }}>{note.text}</div>
+    : <div role="status" style={softText}>{note.text}</div>
+);
+
 type WaitingCard = Watchlist['recordedNotArrived'][number];
 const WAITING_COLUMNS: Column<WaitingCard>[] = [
   { key: 'merchant', label: 'Merchant', render: (p) => <span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span>, getValue: (p) => p.acquirerCode ?? '未标' },
   { key: 'document', label: 'Document', render: (p) => <DocLink source={p.source} docNo={p.docNo} />, getValue: (p) => p.docNo },
+  /* The order's Ref No. (owner 2026-11-06: 我要有那个 reference HC, ZNT 等等). */
+  { key: 'refNo', label: 'Ref No.', render: (p) => customerRefOf(p) || '—', getValue: (p) => customerRefOf(p) },
   { key: 'salesperson', label: 'Salesperson', render: (p) => p.salespersonName ?? '—', getValue: (p) => p.salespersonName ?? '' },
   { key: 'paidOn', label: 'Customer paid on', render: (p) => fmtDate(p.paidOn), getValue: (p) => p.paidOn, exportFormat: 'date' },
   {
@@ -364,6 +406,9 @@ const WAITING_COLUMNS: Column<WaitingCard>[] = [
     key: 'amount', label: 'Amount', align: 'right', render: (p) => fmt(p.amountSen),
     getValue: (p) => p.amountSen, exportValue: (p) => p.amountSen / 100, exportFormat: 'money',
   },
+  /* Beside Approval, as on the report's own lines: staff key the booklet number under one and
+     the swipe code under the other, in either order. */
+  { key: 'accountSheet', label: 'Account sheet', render: (p) => p.accountSheet ?? '—', getValue: (p) => p.accountSheet ?? '' },
   { key: 'approval', label: 'Approval', render: (p) => p.approvalCode ?? '—', getValue: (p) => p.approvalCode ?? '' },
 ];
 
@@ -602,9 +647,13 @@ const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
    list shows what is still to do, the upload summary shows everything that
    upload read. */
 
-const LinesTable = ({ batches, onOpen, openOnly }: {
+const LinesTable = ({ batches, onOpen, openOnly, onExport }: {
   batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
-}) => (
+  /** The work list exports from its header's right-click; the upload summary does not. */
+  onExport?: (how: 'excel' | 'pdf') => void;
+}) => {
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  return (
   /* TWO BANDS, not one column of stacked text. The owner, on a Report cell
      holding a chip, a file name, a period, a total and a button: 可以分成多个
      column 吗？不然有一点点难看，太多信息 — 我理想中应该左手边都是 merchant
@@ -615,8 +664,12 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
      seam. Each fact gets a column of its own, which is what makes a
      reconciliation readable down as well as across — the same gross under the
      same gross, the same fee under the same fee. */
+  <>
   <table className={grid.grid}>
-    <thead>
+    <thead
+      title={onExport ? 'Right-click to export to Excel or PDF' : undefined}
+      onContextMenu={onExport ? (e) => { e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }); } : undefined}
+    >
       <tr>
         <th rowSpan={2}>Report</th>
         <th colSpan={5} className={grid.band}>What the merchant reported</th>
@@ -640,7 +693,12 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
     </thead>
     {batches.map((b) => <BatchRows key={b.id} batch={b} onOpen={onOpen} openOnly={openOnly} />)}
   </table>
-);
+  {menuAt && onExport && (
+    <HeaderExportMenu at={menuAt} onClose={() => setMenuAt(null)} onExcel={() => onExport('excel')} onPdf={() => onExport('pdf')} />
+  )}
+  </>
+  );
+};
 
 const BatchRows = ({ batch, onOpen, openOnly }: {
   batch: SettlementBatch; onOpen: (id: number) => void; openOnly?: boolean;
@@ -649,7 +707,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
   const all = q.data?.rows ?? [];
   /* On the work list, only what is still to do — a line already decided is not
      work. On the upload summary, everything the file contained. */
-  const rows = openOnly ? all.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED') : all;
+  const rows = openOnly ? all.filter(isOpenLine) : all;
 
   /* The report names itself once, down the side of its own lines. */
   const reportCell = (span: number) => (
@@ -660,7 +718,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       </div>
       {/* The period is on every line below as its own date; only the report's
           TOTAL is worth repeating here, because no single line carries it. */}
-      <div className={grid.sub}>net {fmt(batch.net_sen)}</div>
+      <div className={grid.sub}>net {fmt(payableOf(batch))}</div>
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -683,31 +741,8 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
   return (
     <tbody>
       {rows.map((r, i) => {
-        /* Linked = it claimed a payment. Suggested = the system's answer,
-           pre-ticked but not taken. Neither = a human's job. */
-        const sale = r.linked.length > 0 ? r.linked : null;
-        const guess = r.suggested ?? [];
-        /* Whichever side is showing, the ORDER columns read from one shape, so
-           a claimed payment and a suggested one line up under the same
-           headings instead of each inventing its own layout. */
-        const orders = sale
-          ? sale.map((l) => ({
-            key: l.payment_id,
-            docNo: l.doc_no ?? l.payment_id,
-            /* No document number: the payment id is shown, and it opens nothing. */
-            source: l.doc_no ? l.payment_source : null,
-            customer: l.customer_name ?? null,
-            sales: l.salesperson ?? null,
-            sheet: l.account_sheet ?? null,
-            paidOn: l.paid_on ?? null,
-            code: l.approval_code ?? null,
-            amountSen: l.amount_sen,
-          }))
-          : guess.map((p) => ({
-            key: p.id, docNo: p.docNo, source: p.source, customer: p.customerName ?? null,
-            sales: p.salesperson ?? null, sheet: p.accountSheet ?? null,
-            paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
-          }));
+        const status = lineStatus(r);
+        const orders = ordersOf(r);
         /* One line settling several orders stacks INSIDE its cell — the rare
            case, and the only place stacking is still the honest shape. */
         const stack = (pick: (o: typeof orders[number]) => React.ReactNode) => (
@@ -741,20 +776,14 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             <td className={grid.num}>{stack((o) => fmt(o.amountSen))}</td>
 
             <td>
-              {r.confirmed_at
+              {status === 'done'
                 ? (
                   <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-                    <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                    <span className={grid.good}>{LINE_STATUS_WORDS.done}{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
                     <UndoDone rowId={r.id} />
                   </span>
                 )
-                : sale
-                  ? <span className={grid.good}>matched by reference</span>
-                  : guess.length > 0
-                    ? <span>the system&rsquo;s guess — check it</span>
-                    : r.bucket === 'UNMATCHED'
-                      ? <span className={grid.bad}>no sale in the ERP</span>
-                      : <span>you choose</span>}
+                : <span className={status === 'matched' ? grid.good : status === 'none' ? grid.bad : undefined}>{LINE_STATUS_WORDS[status]}</span>}
             </td>
           </tr>
         );
@@ -887,7 +916,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All reports</button>
         <b>{batch ? `${batch.acquirer_code} · ${batch.file_name}` : 'Loading…'}</b>
-        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</span>}
+        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(payableOf(batch))}</span>}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>

@@ -290,6 +290,7 @@
   cursor: pointer;
 }
 .whFilterOption:hover { background: #f4f6f3; }
+.whFilterOptionTick { display: flex; align-items: center; gap: 6px; }
 .whFilterOption[data-active='true'] { background: #e1efed; color: #0c3f39; }
 .whFilterOptionCode { font-weight: 700; }
 .whFilterOptionSub {

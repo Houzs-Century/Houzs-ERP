@@ -62,6 +62,7 @@ import {
 } from "../../vendor/scm/lib/sales-invoice-queries";
 import { useMfgCustomers } from "../../vendor/scm/lib/sales-order-queries";
 import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
+import { conditionDateRange } from "../../components/dataTableConditionFilters";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -854,7 +855,7 @@ export function SalesInvoicesListV2() {
   const customersQ = useMfgCustomers();
   const customerNames = useMemo(() => [...new Set((customersQ.data?.customers ?? []).map((cst) => cst.name).filter((n): n is string => !!n))], [customersQ.data]);
   const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
-    (cf) => ({ debtorNames: funnelValues(cf, "debtor_name"), currencies: funnelValues(cf, "currency") }),
+    (cf) => ({ ...conditionDateRange(cf["invoice_date"]), debtorNames: funnelValues(cf, "debtor_name"), currencies: funnelValues(cf, "currency") }),
     () => setPageParam(0),
   );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);

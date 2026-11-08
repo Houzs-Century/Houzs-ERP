@@ -20,6 +20,10 @@ export type HelperRow = {
   inHouse?: boolean;
   active: boolean;
   created_at: string;
+  /** The 3PL company this person is registered under, or null. */
+  threepl_company_id?: string | null;
+  /** Mig 20261107T2000: the warehouse this helper works from. */
+  warehouse_id?: string | null;
 };
 
 export type NewHelper = {
@@ -32,6 +36,7 @@ export type NewHelper = {
   icNumber?: string;
   inHouse?: boolean;
   active?: boolean;
+  warehouseId?: string | null;
 };
 
 export function useHelpers(opts?: { includeInactive?: boolean }) {

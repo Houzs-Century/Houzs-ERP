@@ -11,7 +11,7 @@
 import type { GrnExtracted } from './grn-scan-extract';
 import { isGiftRow, type GiftLine } from './grn-scan-gifts';
 import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
-import { bestLines } from './scan-word-match';
+import { bestLines, lineSizeOf, printedSize } from './scan-word-match';
 
 /** One line of the working copy. `poItemId` null = not yet tied to a PO line
  *  (the operator picks one, marks it a free gift, or deletes the line); `gift`
@@ -32,7 +32,7 @@ export type ReviewLine = {
 };
 
 /** Bumped when a working copy starts holding more: older copies are rebuilt from the read. */
-export const REVIEW_VERSION = 7;
+export const REVIEW_VERSION = 8;
 
 export type GrnReview = {
   v: number;
@@ -40,6 +40,8 @@ export type GrnReview = {
   // The supplier name as printed, kept beside the resolved one.
   supplierRead: string | null;
   doNo: string | null;
+  // The day we received it: the day of the scan, never the date printed on the
+  // delivery order, which reads as goods arriving early (owner 2026-11-06).
   deliveryDate: string | null;
   notes: string | null;
   lines: ReviewLine[];
@@ -54,7 +56,7 @@ const readOf = (l: { itemCode: string | null; description: string | null; qty: n
 /** The first working copy, from the read and the matcher. Matched lines arrive
  *  tied to their PO line; lines the matcher could not place arrive untied with
  *  what was printed, so nothing read is silently dropped. */
-export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>): GrnReview {
+export function buildReview(parsed: GrnExtracted | null, supplierId: string | null, match: GrnMatchResult | null, gifts: ReadonlyArray<GiftLine>, open: ReadonlyArray<OpenPoLine>, scanDate: string): GrnReview {
   const lines: ReviewLine[] = [];
   // Each piece of a set shows the one row that printed it.
   const setRow = new Map((match?.soMatches ?? []).flatMap((m) => m.poItemIds.map((id) => [id, readOf(m.line)] as const)));
@@ -76,7 +78,7 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     supplierId,
     supplierRead: parsed?.supplierName ?? null,
     doNo: parsed?.doNo ?? null,
-    deliveryDate: parsed?.deliveryDate ?? null,
+    deliveryDate: scanDate,
     notes: null,
     lines: inPrintedOrder(lines, parsed?.lines ?? [], open, new Set(setRow.keys())),
   };
@@ -131,6 +133,12 @@ export function inPrintedOrder(lines: ReviewLine[], printed: GrnExtracted['lines
  *  guesses a PO: the row must fit a PO this delivery order is known to be for,
  *  or, with no such PO, exactly one open line of the supplier. Each line takes
  *  only what it still owes. */
+/** One PO, a digit typed wrong in its year and month allowed: 2010279 is 2610279,
+ *  the same running number (Nice Future, HC-PO-2010-279). */
+const samePo = (a: string, b: string): boolean =>
+  a === b || (a.length === b.length && a.length > 3 && a.slice(-3) === b.slice(-3)
+    && [...a].filter((d, i) => d !== b[i]).length === 1);
+
 export function suggestByName(lines: ReviewLine[], open: ReadonlyArray<OpenPoLine>, printedPos: ReadonlyArray<string | null | undefined>): void {
   const left = new Map(open.map((l) => [l.poItemId, l.remaining]));
   for (const l of lines) if (l.poItemId) left.set(l.poItemId, (left.get(l.poItemId) ?? 0) - l.qty);
@@ -140,9 +148,10 @@ export function suggestByName(lines: ReviewLine[], open: ReadonlyArray<OpenPoLin
     if (l.poItemId || l.gift || !l.read?.description) continue;
     const rowPo = l.read.poNo ? poKey(l.read.poNo) : null;
     const owing = open.filter((o) => (left.get(o.poItemId) ?? 0) > 0);
-    const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode));
+    const size = printedSize(`${l.read.itemCode ?? ''} ${l.read.description}`);
+    const named = owing.filter((o) => nameFits(l.read?.description, o.itemCode) && (!size || !lineSizeOf(o.itemCode) || lineSizeOf(o.itemCode) === size));
     const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.materialName ?? ''}`);
-    const scoped = rowPo ? fits.filter((o) => poKey(o.poNumber) === rowPo) : onDoc.size > 0 ? fits.filter((o) => onDoc.has(poKey(o.poNumber))) : fits;
+    const scoped = rowPo ? fits.filter((o) => samePo(poKey(o.poNumber), rowPo)) : onDoc.size > 0 ? fits.filter((o) => onDoc.has(poKey(o.poNumber))) : fits;
     if (scoped.length === 0 || (!rowPo && onDoc.size === 0 && scoped.length > 1)) continue;
     const pick = scoped.find((o) => (left.get(o.poItemId) ?? 0) >= l.qty) ?? scoped[0];
     l.poItemId = pick.poItemId;

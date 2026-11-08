@@ -23,6 +23,7 @@ import { loadOpenPoLines, loadSuppliers } from '../lib/grn-scan-load';
 import { paginateAll } from '../lib/paginate-all';
 import { REVIEW_VERSION, blockedReason, cleanReview, codesToTeach, duplicateOf, giftsOf, picksOf, racksOf, refVariants, repeatsInList, type ExistingGrn, type GrnReview } from '../lib/grn-scan-check';
 import { reviewOfRead } from '../lib/grn-scan-check-read';
+import { mytDateOf, todayMyt } from '../lib/my-time';
 import type { GrnExtracted } from '../lib/grn-scan-extract';
 import { applyScanRacks, scanRackNote } from '../lib/grn-scan-racks';
 import { saveScanCodes } from '../lib/grn-scan-codes';
@@ -38,11 +39,11 @@ scanGrCheck.use('*', supabaseAuth);
 
 type CheckRow = SharedRow<GrnReview>;
 
-scanGrCheck.post('/upload', (c) => handleUpload(c, { documentType: 'GR', feature: 'scan_gr_split', reviewVersion: REVIEW_VERSION, runLocal: runGrnJobFromRow }));
+scanGrCheck.post('/upload', (c) => handleUpload(c, { documentType: 'GR', feature: 'scan_gr_split', reviewVersion: REVIEW_VERSION, scannedToday: (review) => ({ ...review, deliveryDate: todayMyt() }), runLocal: runGrnJobFromRow }));
 
-/* A working copy written before racks and name matching: rebuild it from the
-   stored read, once, keeping the head the operator may have edited and any row
-   they tied that the rebuild did not. */
+/* A working copy of an older shape: rebuild it from the stored read, once, keeping
+   the supplier and D.O. the operator may have edited and any row they tied that
+   the rebuild did not. Its date becomes the day it was scanned. */
 async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows: CheckRow[]): Promise<void> {
   for (const r of rows) {
     if (r.review_state !== 'pending' || !r.review || r.review.v === REVIEW_VERSION || !r.sample_id) continue;
@@ -50,7 +51,7 @@ async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows
     if (error) { console.warn('[scan-gr check] read not loaded, copy left as it is:', r.id, error.message); continue; }
     const parsed = (data as { extracted: GrnExtracted | null } | null)?.extracted ?? null;
     if (!parsed || !Array.isArray(parsed.lines)) continue;
-    const { review, note } = await reviewOfRead(svc, companyId, parsed);
+    const { review, note } = await reviewOfRead(svc, companyId, parsed, mytDateOf(r.created_at));
     // What the operator chose for a row still stands on the rebuilt row that printed the same code.
     const chosen = new Map(r.review.lines.filter((l) => l.read?.itemCode && (l.poItemId || l.gift) && !l.suggested).map((l) => [l.read?.itemCode, l]));
     const lines = review.lines.map((l) => {
@@ -59,7 +60,7 @@ async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows
     });
     const had = new Set(lines.map((l) => l.poItemId));
     const kept = r.review.lines.filter((l) => l.poItemId && !had.has(l.poItemId)).map((l) => ({ ...l, rack: l.rack ?? null, suggested: l.suggested === true }));
-    const next: GrnReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, doNo: r.review.doNo ?? review.doNo, deliveryDate: r.review.deliveryDate ?? review.deliveryDate, notes: r.review.notes, lines: [...lines, ...kept] };
+    const next: GrnReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, doNo: r.review.doNo ?? review.doNo, notes: r.review.notes, lines: [...lines, ...kept] };
     const { error: upErr } = await svc.from('scan_jobs').update({ review: next, error: note }).eq('id', r.id).eq('company_id', companyId).eq('review_state', 'pending');
     if (upErr) { console.warn('[scan-gr check] copy not upgraded:', r.id, upErr.message); continue; }
     r.review = next;

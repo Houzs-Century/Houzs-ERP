@@ -18,11 +18,16 @@
 
 export type SoColFilters = Record<string, string[] | undefined>;
 
+import { conditionDateRange } from "../../components/dataTableConditionFilters";
+
 export type SoServerFunnels = {
   debtorNames: string[] | undefined;
   currencies: string[] | undefined;
   brandings: string[] | undefined;
   cols: Record<string, string[]> | undefined;
+  /* The SO Date column's date filter, run by the server like its ticks. */
+  from: string | undefined;
+  to: string | undefined;
 };
 
 /** Grid column key -> list query param, for the funnels with their own param. */
@@ -66,6 +71,8 @@ export function soServerFunnels(cf: SoColFilters): SoServerFunnels {
     currencies: ticked(cf, "currency"),
     brandings: ticked(cf, "branding"),
     cols: Object.keys(cols).length > 0 ? cols : undefined,
+    from: conditionDateRange(cf.so_date).from,
+    to: conditionDateRange(cf.so_date).to,
   };
 }
 
@@ -77,7 +84,7 @@ const SERVER_KEYS = new Set<string>([...Object.keys(SO_SERVER_FUNNEL_COLUMNS), .
 export function soPageOnlyFunnelKeys(cf: SoColFilters): string[] {
   return Object.keys(cf).filter((k) => {
     const v = cf[k] ?? [];
-    return v.length > 0 && (!SERVER_KEYS.has(k) || v.some(isCondition));
+    return v.length > 0 && !(k === "so_date" && Object.keys(conditionDateRange(v)).length > 0) && (!SERVER_KEYS.has(k) || v.some(isCondition));
   });
 }
 

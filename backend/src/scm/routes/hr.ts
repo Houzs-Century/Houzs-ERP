@@ -11,6 +11,7 @@
 //   GET    /profiles               POST   /profiles
 //   PATCH  /profiles/:id           DELETE /profiles/:id
 //   GET    /item-kpi               POST   /item-kpi
+//   POST   /item-kpi/batch
 //   PATCH  /item-kpi/:id           DELETE /item-kpi/:id
 //   GET    /pickers                GET    /commission
 //   GET    /override-levels        POST   /override-levels          (new)
@@ -108,6 +109,7 @@ import { resolveCallerStaffId } from '../lib/salesScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { uplineChainSteps } from '../../services/orgScope';
 import type { Env, Variables } from '../env';
+import { fabricSeriesGroups } from '../lib/fabric-series';
 
 export const hr = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -516,6 +518,37 @@ hr.post('/item-kpi', async (c) => {
   return c.json({ item: toItemKpiApi(data as ItemKpiRow) }, 201);
 });
 
+/* POST /item-kpi/batch — several rules in ONE insert (YH 2026-11-06). Picking
+   a fabric series made the page save 13 rules one request at a time, each
+   waiting for every HR list to reload, and a run once stopped after five. One
+   statement is all or nothing: every rule lands, or none does and the error
+   says why. Each row is still its own rule (owner 2026-07-18). */
+const itemKpiBatchSchema = z.object({ items: z.array(itemKpiCreateSchema).min(1).max(200) });
+
+hr.post('/item-kpi/batch', async (c) => {
+  if (!hasHouzsPerm(c, HR_MANAGE)) return forbidden(c, HR_MANAGE);
+  const co = requireCompany(c);
+  if (!co.ok) return co.res;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = itemKpiBatchSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'validation_failed', issues: issues(parsed.error) }, 400);
+  const sb = c.get('supabase');
+  const { data, error } = await sb
+    .from('hr_item_kpi')
+    .insert(parsed.data.items.map((it) => ({
+      flag_type: it.flagType,
+      ref: it.ref,
+      label: it.label,
+      bonus_sen: it.bonusSen,
+      active: it.active,
+      company_id: co.companyId,
+    })))
+    .select(ITEM_KPI_SELECT);
+  if (error) return c.json({ error: 'create_failed', reason: error.message }, 500);
+  return c.json({ items: ((data ?? []) as ItemKpiRow[]).map(toItemKpiApi) }, 201);
+});
+
 const itemKpiPatchSchema = z.object({
   label: z.string().optional(),
   bonusSen: z.number().int().nonnegative().optional(),
@@ -741,7 +774,7 @@ hr.get('/pickers', async (c) => {
      not a column — same three-state contract as GET /staff/pickable: no
      companies master -> degrade to the full roster; master but no active
      company -> fail closed to []. */
-  const [staffRes, showroomRes, productRes, fabricRes, specialRes] = await Promise.all([
+  const [staffRes, showroomRes, productRes, fabricRes, specialRes, trackingRes] = await Promise.all([
     /* user_id is selected for the SCOPING, not for the response — it is the
        link scopeStaffRowsToActiveCompany derives the company from. Omit it and
        every row reads as UNLINKED, which the rule attributes to the 2990 mirror
@@ -756,8 +789,12 @@ hr.get('/pickers', async (c) => {
       sb.from('fabric_library').select('id, label').eq('company_id', co.companyId).order('label').range(from, to)),
     paginateAll<{ code: string; label: string }>((from, to) =>
       sb.from('special_addons').select('code, label').eq('company_id', co.companyId).order('label').range(from, to)),
+    // The named series (EMBRACE, HOMELY …) each fabric belongs to, so a fabric
+    // rule can be picked by series (YH 2026-11-06). Still one rule per fabric.
+    paginateAll<{ fabric_code: string; series: string | null }>((from, to) =>
+      sb.from('fabric_trackings').select('fabric_code, series').eq('company_id', co.companyId).order('fabric_code').range(from, to)),
   ]);
-  const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error;
+  const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error || trackingRes.error;
   if (firstErr) return c.json({ error: 'fetch_failed', reason: firstErr.message }, 500);
 
   const { scoped: scopedStaff } = await scopeStaffRowsToActiveCompany(
@@ -775,6 +812,7 @@ hr.get('/pickers', async (c) => {
        category rule is matched against exactly that column (kpi-units.ts). */
     categories: MFG_PRODUCT_CATEGORIES.map((code) => ({ ref: code, label: code })),
     fabrics: (fabricRes.data ?? []).map((f) => ({ ref: f.id, label: f.label })),
+    fabricSeries: fabricSeriesGroups(trackingRes.data ?? [], new Set((fabricRes.data ?? []).map((f) => f.id))),
     specials: (specialRes.data ?? []).map((s) => ({ ref: s.code, label: s.label })),
   });
 });

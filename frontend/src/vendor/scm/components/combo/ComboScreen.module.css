@@ -1,0 +1,175 @@
+/* The screen follows the room it is given, not the window: the same page sits beside
+   the sidebar on Products and inside a tab on a supplier. */
+.room {
+  container-type: inline-size;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
+}
+
+.models,
+.book,
+.panel {
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--c-cream);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.models,
+.book {
+  overflow: hidden;
+}
+
+.modelList {
+  max-height: max(320px, calc(100dvh - 300px));
+  overflow-y: auto;
+}
+
+.panel {
+  padding: 14px 16px;
+}
+
+/* Sideways for many sizes, down for many combos. The heading and the combo name stay. */
+.tableWrap {
+  overflow: auto;
+  max-height: max(320px, calc(100dvh - 360px));
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px;
+  background: var(--c-paper);
+  color: var(--fg-soft);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--c-cream);
+}
+
+.table .num {
+  width: 112px;
+  min-width: 112px;
+  padding-left: 6px;
+  padding-right: 6px;
+  text-align: right;
+}
+
+.table .tick {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  padding-left: 14px;
+  padding-right: 4px;
+}
+
+.table .name {
+  position: sticky;
+  left: 44px;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: 260px;
+  font-weight: 600;
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.table th.tick,
+.table th.name {
+  z-index: 3;
+}
+
+.table .note {
+  min-width: 92px;
+  white-space: nowrap;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.table .rowOn td {
+  background: var(--c-paper);
+}
+
+.panelBody {
+  display: block;
+}
+
+/* No room for the third column: the detail goes under the table, side by side. */
+@container (max-width: 1280px) {
+  .columns {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .panel {
+    grid-column: 1 / -1;
+  }
+
+  .panelBody {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0 24px;
+  }
+}
+
+/* Phone width: one column, the model list short enough to reach the table. */
+@container (max-width: 720px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modelList {
+    max-height: 200px;
+  }
+
+  .tableWrap {
+    max-height: none;
+  }
+
+  .table .name {
+    min-width: 132px;
+    max-width: 150px;
+  }
+}
+
+.field {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--c-cream);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+}
+
+.field::placeholder {
+  color: var(--c-ink);
+  opacity: 1;
+}

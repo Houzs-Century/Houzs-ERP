@@ -30,10 +30,11 @@ import { buildPiReview, type BillableLine, type PiReview } from './pi-scan-check
 import { loadOutstandingGrnLines, remainingToBill } from './outstanding-grn-lines';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
-  matchInvoiceLinesToGrnLines, docRefMatches, normalizeCode,
+  matchInvoiceLinesToGrnLines, docRefMatches, docRefsOf, normalizeCode,
   type PiMatchGrnLine,
 } from './pi-scan-match';
 import { CLAUDE_MODEL, type ContentBlock, type UploadedImage } from './scan-ocr';
+import { familiesByModelWord } from './scan-word-match';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as scan-so.ts / scan-sample-review.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -219,20 +220,21 @@ export async function loadBillableLines(svc: SupabaseClient, companyId: number |
  *  allows, for the operator to confirm. Codes the delivery-order scanner has
  *  learned for the supplier count here too. */
 export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | null, parsed: PiScanExtract | null): Promise<{ review: PiReview; note: string | null }> {
-  if (!parsed) return { review: buildPiReview(null, null, null, [], []), note: MSG.unreadable };
+  if (!parsed) return { review: buildPiReview(null, null, null, [], [], new Map()), note: MSG.unreadable };
   const anchors = await findAnchorGrns(svc, parsed, companyId);
   const supplierId = anchors[0]?.supplier_id ?? await resolveSupplierId(svc, parsed, companyId);
   const open = ((await loadBillableLines(svc, companyId)) ?? []).filter((l) => l.supplierId === supplierId);
   const anchorNumbers = anchors.map((a) => a.grn_number);
+  const families = await loadSupplierFamilies(svc, supplierId, companyId, open);
   if (anchors.length === 0) {
-    const review = buildPiReview(parsed, supplierId, null, open, []);
+    const review = buildPiReview(parsed, supplierId, null, open, [], families);
     return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noAnchor };
   }
   const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
   const bindingBySku = await loadSupplierBindings(svc, anchors, companyId);
   if (supplierId) for (const t of await loadScanCodes(svc, companyId, supplierId)) bindingBySku.set(normalizeCode(t.supplierSku), t.itemCode);
   const match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
-  const review = buildPiReview(parsed, supplierId, match, open, anchorNumbers);
+  const review = buildPiReview(parsed, supplierId, match, open, anchorNumbers, families);
   return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noLines };
 }
 
@@ -294,7 +296,8 @@ async function findAnchorGrns(
 
   // DO No is the strongest anchor (one D.O. = one GRN). Prefer it; fall back to
   // PO No (which may name several GRNs — multi-GR -> one PI is supported).
-  const byDo = rows.filter((g) => docRefMatches(doNo, g.delivery_note_ref) || docRefMatches(doNo, g.grn_number));
+  const refs = docRefsOf(doNo);
+  const byDo = rows.filter((g) => refs.some((d) => docRefMatches(d, g.delivery_note_ref) || docRefMatches(d, g.grn_number)));
   if (byDo.length > 0) return byDo;
   const byPo = rows.filter((g) => docRefMatches(poNo, g.po_number));
   return byPo;
@@ -362,6 +365,26 @@ async function loadGrnLinesForAnchors(
     });
   }
   return out;
+}
+
+/** Which of our families each of this supplier's model words names, from its
+ *  bindings, the codes the scanner learned and the lines waiting to be billed. A
+ *  failed read costs a suggestion, never a wrong link. */
+async function loadSupplierFamilies(
+  svc: SupabaseClient,
+  supplierId: string | null,
+  companyId: number | null,
+  open: ReadonlyArray<BillableLine>,
+): Promise<Map<string, Set<string>>> {
+  const known: Array<{ supplierSku: string | null; itemCode: string }> = open.map((l) => ({ supplierSku: l.supplierSku, itemCode: l.itemCode }));
+  if (!supplierId) return familiesByModelWord(known);
+  let q = svc.from('supplier_material_bindings').select('item_code, supplier_sku').eq('supplier_id', supplierId);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error) console.warn('[pi-scan-job] supplier families read failed:', error.message);
+  for (const r of (data as Array<{ item_code: string; supplier_sku: string | null }> | null) ?? []) known.push({ supplierSku: r.supplier_sku, itemCode: r.item_code });
+  for (const t of await loadScanCodes(svc, companyId, supplierId)) known.push({ supplierSku: t.supplierSku, itemCode: t.itemCode });
+  return familiesByModelWord(known);
 }
 
 /** supplier_material_bindings.supplier_sku -> item_code for the anchored GRNs'

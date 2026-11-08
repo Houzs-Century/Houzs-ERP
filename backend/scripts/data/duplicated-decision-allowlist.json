@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D1",
+      "key": "KL / SELANGOR,NORTHERN,SOUTHERN|backend/src/scm/shared/logistic-region.ts frontend/src/vendor/shared/logistic-region.ts",
+      "why": "The same shared file on both sides: the page recomputes a region's lorry figures in the browser. Pinned by tests/logisticPeriod.test.ts, the region rule."
+    },
+    {
       "check": "D2",
       "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
       "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
@@ -557,8 +562,13 @@
     },
     {
       "check": "D1",
-      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
-      "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
+      "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it on the map; the Delivery Zones page names and colours it (zoneModel.ts, pinned to zone-classify.ts by backend/tests/zoneModelPin.test.ts). Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+    },
+    {
+      "check": "D1",
+      "key": "KAJANG,KL,KLANG,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts",
+      "why": "THE KLANG VALLEY ZONES. zone-classify.ts decides they share trips; the Delivery Zones page groups them on its map. Pinned equal by backend/tests/zoneModelPin.test.ts."
     },
     {
       "check": "D1",
@@ -1718,7 +1728,7 @@
     {
       "check": "D1",
       "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/routes/lib/hr-trip-store.ts backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
-      "why": "THE scm.trip_stop_type ENUM, read four ways for four jobs: dp-orders.ts and delivery-planning-queries.ts list the job types a planner may raise, rate-rule-taxonomy.ts the ones a 3PL rate card prices, and hr-trip-store.ts STOP_KIND maps each stop onto the trip-pay kind HR pays the crew for (HC-0125 phase 5; HR can still change a row's kind). The database enum is the one vocabulary; a new stop type must be added to STOP_KIND deliberately or it pays nothing (NONE)."
+      "why": "logistic-overview.ts STOP_KIND answers another question over the same stop types: how a stop counts towards a lorry's trips (delivery, service, set-up, half-trip transport, or nothing for its own upkeep). THE scm.trip_stop_type ENUM, read four ways for four jobs: dp-orders.ts and delivery-planning-queries.ts list the job types a planner may raise, rate-rule-taxonomy.ts the ones a 3PL rate card prices, and hr-trip-store.ts STOP_KIND maps each stop onto the trip-pay kind HR pays the crew for (HC-0125 phase 5; HR can still change a row's kind). The database enum is the one vocabulary; a new stop type must be added to STOP_KIND deliberately or it pays nothing (NONE)."
     },
     {
       "check": "D2",
@@ -1734,6 +1744,11 @@
       "check": "D1",
       "key": "DELIVERED,INVOICED,SIGNED|backend/src/scm/routes/trips.ts frontend/src/vendor/scm/lib/delivery-stop-status.ts",
       "why": "THE DELIVERED-DO SET — which delivery_order statuses mean the customer has the goods (DELIVERED/SIGNED/INVOICED). Two homes across the FE/BE boundary that share no build graph: DO_DELIVERED_STATUSES (delivery-stop-status.ts) is the live Last Mile board's stop-status rule — it decides a drop's done/overdue colour; DO_DELIVERED (trips.ts) is the GET /trips/history query filter — it only chooses which past delivery orders the History tab pulls. Same vocabulary, two runtimes, the frontend cannot import backend/src. Divergence shows or hides a History row, never money or stock."
+    },
+    {
+      "check": "D2",
+      "key": "ACCOUNT SHEET,AMOUNT,APPROVAL,CUSTOMER,DATE,DOCUMENT,FEE,GROSS,LINE,MERCHANT,NET,PAID ON,REFERENCE,REPORT,SALES,STATUS ~ ACCOUNT SHEET,AMOUNT,APPROVAL,CUSTOMER,DATE,DOCUMENT,FEE,GROSS,NET,PAID ON,REFERENCE,SALES",
+      "why": "THE TWO FILES OF ONE LIST, and they are meant to differ (owner 2026-11-06, Merchant reports still to reconcile). The Excel is one flat heading row that filters and sums, so the merchant, the report, the line and the status are columns of their own; the PDF prints the screen's two bands, with the report in a band above its lines and the line under its date. Both read one PrintedReport (merchantReconExport.ts), so their cells cannot disagree."
     }
   ]
 }

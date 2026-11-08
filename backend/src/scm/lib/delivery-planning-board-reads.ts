@@ -159,6 +159,8 @@ export function kickOffSubBoardReads(
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
         delivery_by: string | null; pickup_by: string | null; pickup_pic: string | null; actual_pickup_at: string | null;
+        actual_inspection_at: string | null; actual_delivery_at: string | null;
+        pickup_cancelled_at: string | null; inspection_cancelled_at: string | null; delivery_cancelled_at: string | null;
         sched_pickup_date: string | null; sched_inspection_date: string | null; sched_delivery_date: string | null;
         pickup_time_range: string | null; inspection_time_range: string | null; delivery_time_range: string | null;
         pickup_remark: string | null; inspection_remark: string | null; delivery_remark: string | null;

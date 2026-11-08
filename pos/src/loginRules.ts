@@ -2,6 +2,16 @@
  * lock, the colour of "Last sync", and who may open Device setup. */
 import type { BundleCashier } from "./types";
 
+/** Setting a device up on a terminal that another device already holds takes
+ *  the terminal away from that device: its token dies and its cashier sees
+ *  device_not_registered until it is paired again (the booth laptop lost T01
+ *  this way on 2026-11-06). True unless the device is re-setting-up the
+ *  terminal it already is. */
+export function takesTerminalOver(terminal: { id: number; prepared_at: string | null }, device: { provisional: boolean; terminal_id: number }): boolean {
+  if (!terminal.prepared_at) return false;
+  return device.provisional || device.terminal_id !== terminal.id;
+}
+
 export const MAX_TILES = 8;
 export const LOCK_AFTER = 5;
 export const LOCK_SECONDS = 30;

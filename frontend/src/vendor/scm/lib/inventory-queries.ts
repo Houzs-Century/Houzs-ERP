@@ -293,14 +293,14 @@ export function useUpdateWarehouse() {
 /* PR #38 — AutoCount-style: one row per SKU, totals across all warehouses.
    ask A (2026-07-24): optional warehouseId narrows Stock / Value / demand /
    incoming to one warehouse. */
-export function useInventoryProductTotals(opts?: { search?: string; category?: string; warehouseId?: string | null }) {
+export function useInventoryProductTotals(opts?: { search?: string; category?: string; warehouseIds?: readonly string[] }) {
   return useQuery({
     queryKey: ['inventory', 'product-totals', opts ?? {}],
     queryFn: ({ signal }) => {
       const params = new URLSearchParams();
       if (opts?.search) params.set('search', opts.search);
       if (opts?.category && opts.category !== 'all') params.set('category', opts.category);
-      if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
+      if (opts?.warehouseIds?.length) params.set('warehouseIds', opts.warehouseIds.join(','));
       return authedFetch<{ products: InventoryProductTotal[] }>(
         `/inventory/products${params.toString() ? `?${params.toString()}` : ''}`,
         { signal },

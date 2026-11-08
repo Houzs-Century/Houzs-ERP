@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { CSVColumn } from "../lib/csv";
 import type { LayoutSeed } from "../lib/tableLayouts";
-import type { DataTableLineExport, ExportCell, ExportFormat } from "./dataTableLineExport";
+import type { DataTableLineExport, ExportCell, ExportFormat, TablePdfView } from "./dataTableLineExport";
 
 export interface Column<T, L = never> {
   key: string;
@@ -261,6 +261,9 @@ export interface DataTableProps<T, L = never> {
   /** Export the on-screen rows as .xlsx (each column's `exportFormat` kept)
    *  instead of CSV — what the SCM DataGrid lists always wrote. */
   exportXlsx?: boolean;
+  /** A table that prints: the header's right-click menu offers Export to PDF, and this
+   *  receives the cells the Excel would hold, for the same rows and the visible columns. */
+  onExportPdf?: (view: TablePdfView<T>) => void;
   /** Extra toolbar button(s) rendered beside Export/Columns, for a caller that
    *  needs a second export variant (e.g. MRP's per-tab export) without a whole
    *  second toolbar. */

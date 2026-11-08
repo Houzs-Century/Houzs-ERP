@@ -147,6 +147,19 @@ export const useUpdatePaymentVoucher = () => {
   });
 };
 
+/* A voucher's words alone, until it is approved (owner 2026-11-06: 有时我要改 description). */
+export const useUpdatePvText = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; notes: string; lines: Array<{ id: string; description: string }> }) =>
+      authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}/text`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+    },
+  });
+};
+
 export const usePostPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, X, Info, AlertTriangle } from "lucide-react";
 import { onForbidden } from "../api/client";
 
@@ -22,15 +22,24 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+  // A dismiss timer outliving the provider would set state after unmount (a
+  // test's torn-down window: "window is not defined"), so unmount clears them.
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const pending = timers.current;
+    return () => { pending.forEach(clearTimeout); pending.clear(); };
+  }, []);
 
   const show = useCallback((kind: ToastKind, message: string) => {
     const id = Date.now() + Math.random();
     setItems((prev) => [...prev, { id, kind, message }]);
     // Errors hang around a touch longer so users can read them.
     const ttl = kind === "error" ? 5000 : 3000;
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
       setItems((prev) => prev.filter((t) => t.id !== id));
     }, ttl);
+    timers.current.add(timer);
   }, []);
 
   const value: ToastContextValue = {

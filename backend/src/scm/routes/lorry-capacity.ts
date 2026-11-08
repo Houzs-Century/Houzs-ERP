@@ -59,6 +59,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jobs';
+import { flattenProjectCrew } from '../lib/delivery-planning-board-reads';
 import { downDays, loadDownWindows } from '../lib/lorry-down-days';
 import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
 
@@ -141,7 +142,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
   const sb = c.get('supabase');
   const { data: dos, error: doErr } = await paginateAll<Record<string, unknown>>((lo, hi) =>
     scopeToCompany(sb.from('delivery_orders')
-      .select('id, customer_delivery_date')
+      .select('id, customer_delivery_date, local_total_sen')
       .gte('customer_delivery_date', from)
       .lte('customer_delivery_date', to)
       .not('status', 'in', '(DRAFT,CANCELLED)'), c)
@@ -150,6 +151,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
   );
   if (doErr) return { data: [], error: doErr.message };
   const dateByDo = new Map((dos ?? []).map((d) => [dual<string>(d, 'id'), dual<string | null>(d, 'customer_delivery_date')]));
+  const senByDo = new Map((dos ?? []).map((d) => [dual<string>(d, 'id'), Number(dual(d, 'local_total_sen') ?? 0)]));
   const { data: crew, error: crewErr } = await chunkIn([...dateByDo.keys()], (batch, lo, hi) =>
     sb.from('delivery_order_crew')
       .select('do_id, lorry_id, lorry_plate')
@@ -165,6 +167,7 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
       lorryPlate: dual<string | null>(cr, 'lorry_plate') ?? null,
       date: dateByDo.get(dual<string>(cr, 'do_id')) ?? null,
       kind: 'delivery' as const,
+      revenueSen: senByDo.get(dual<string>(cr, 'do_id')) ?? 0,
     })),
   };
 }
@@ -172,18 +175,26 @@ async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<Lorr
 /* PMS project setup / dismantle windows with a lorry (420 of the 421 lorry rows
    on the board, 15 Oct 2026). Same raw-SQL read as the board's project rows,
    scoped to the active company. */
-async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
+export async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<Array<LorryJob & { stage: 'Setup' | 'Dismantle'; code: string | null; name: string | null }>>> {
   const proj = await c.env.DB.prepare(
-    `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
+    `SELECT code, name, setup_lorry_id, setup_start_at, setup_crew, dismantle_lorry_id, dismantle_start_at, dismantle_crew
        FROM projects WHERE archived_at IS NULL
-        AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)${activeCompanySql(c)}`,
+        AND (setup_start_at IS NOT NULL OR dismantle_start_at IS NOT NULL)${activeCompanySql(c)}`,
   ).all<Record<string, unknown>>();
-  const data: LorryJob[] = [];
+  const data: Array<LorryJob & { stage: 'Setup' | 'Dismantle'; code: string | null; name: string | null }> = [];
   for (const p of proj.results) {
+    const code = dual<string | null>(p, 'code') ?? null;
+    const name = dual<string | null>(p, 'name') ?? null;
     for (const k of ['setup', 'dismantle'] as const) {
+      const stage = k === 'setup' ? 'Setup' : 'Dismantle';
       const lorryId = dual<string | number | null>(p, `${k}_lorry_id`);
       const date = String(dual<string | null>(p, `${k}_start_at`) ?? '').slice(0, 10);
-      if (lorryId != null && date >= from && date <= to) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle' });
+      if (date < from || date > to) continue;
+      /* The crew the PMS editor stores, one lorry or several, as the board reads it; the
+         single lorry column is only the older projects' answer. */
+      const { plates } = flattenProjectCrew(dual<string | null>(p, `${k}_crew`) ?? null);
+      for (const plate of plates) data.push({ lorryId: null, lorryPlate: plate, date, kind: 'setupDismantle', revenueSen: 0, stage, code, name });
+      if (plates.length === 0 && lorryId != null) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle', revenueSen: 0, stage, code, name });
     }
   }
   return { data, error: null };
@@ -331,13 +342,14 @@ lorryCapacity.get('/', async (c) => {
         trip_id is in our in-range trip set. Paginated, chunked over the trip ids
         (a large fleet-month can exceed a 1000-element IN list). */
   const tripIds = [...tripMeta.keys()];
+  const unpricedDo = new Map<string, string[]>();
   if (tripIds.length > 0) {
     const CHUNK = 200;
     for (let i = 0; i < tripIds.length; i += CHUNK) {
       const batch = tripIds.slice(i, i + CHUNK);
       const { data: stops } = await paginateAll<Record<string, unknown>>((lo, hi) =>
         sb.from('trip_stops')
-          .select('trip_id, stop_type, revenue_sen')
+          .select('trip_id, stop_type, revenue_sen, do_id, assr_case_id')
           .in('trip_id', batch)
           .range(lo, hi),
       );
@@ -348,9 +360,18 @@ lorryCapacity.get('/', async (c) => {
         const acc = byLorry.get(meta.lorryId);
         if (!acc) continue;
         const kind = String(dual<string>(s, 'stop_type') ?? '').toUpperCase();
-        if (kind === 'DELIVERY') {
+        /* A service case's delivery leg rides the run as a service job, the same rule as
+           the Logistic Overview, so it is not a delivery order and earns no DO revenue. */
+        if (kind === 'DELIVERY' && dual(s, 'assr_case_id') != null) {
+          acc.services += 1;
+        } else if (kind === 'DELIVERY') {
           acc.deliveries += 1;
-          acc.deliveryRevenueSen += Number(dual(s, 'revenue_sen') ?? 0);
+          /* revenue_sen is stamped only when the board scheduled the stop; otherwise
+             the stop's delivery order carries the amount (read below). */
+          const stamped = Number(dual(s, 'revenue_sen') ?? 0);
+          const doId = dual<string | null>(s, 'do_id');
+          if (stamped > 0) acc.deliveryRevenueSen += stamped;
+          else if (doId) unpricedDo.set(doId, [...(unpricedDo.get(doId) ?? []), meta.lorryId]);
           if (meta.date) acc.deliveryTripDates.add(meta.date);
         } else if (kind === 'PICKUP') {
           acc.pickups += 1;
@@ -364,6 +385,20 @@ lorryCapacity.get('/', async (c) => {
         } else if (kind === 'SETUP' || kind === 'DISMANTLE') {
           acc.setupDismantle += 1;
         }
+      }
+    }
+  }
+
+  /* 4a. Revenue of the delivery stops that carry no stamped amount, from their DO. */
+  if (unpricedDo.size > 0) {
+    const { data: priced, error: priceErr } = await chunkIn([...unpricedDo.keys()], (batch, lo, hi) =>
+      scopeToCompany(sb.from('delivery_orders').select('id, local_total_sen').in('id', batch), c).order('id').range(lo, hi),
+    );
+    if (priceErr) return c.json({ error: 'load_failed', reason: `delivery order amounts: ${priceErr.message}` }, 500);
+    for (const d of priced) {
+      for (const lid of unpricedDo.get(dual<string>(d, 'id')) ?? []) {
+        const acc = byLorry.get(lid);
+        if (acc) acc.deliveryRevenueSen += Number(dual(d, 'local_total_sen') ?? 0);
       }
     }
   }
@@ -385,6 +420,7 @@ lorryCapacity.get('/', async (c) => {
     acc.totalTrips += t.dates.size;
     acc.deliveries += t.delivery;
     acc.setupDismantle += t.setupDismantle;
+    acc.deliveryRevenueSen += t.revenueSen;
     for (const d of t.dates) acc.tripDates.add(d);
     for (const d of t.deliveryDates) acc.deliveryTripDates.add(d);
   }
@@ -564,12 +600,14 @@ lorryCapacity.put('/lorries/:id/repair-days', async (c) => {
         window is an availability fact about a SHARED vehicle. A lorry that is in
         the workshop is in the workshop for both companies, so both must see (and
         be able to correct) the same window. */
-  await sb.from('lorry_maintenance')
+  /* A failed delete must stop the insert, or the lorry ends up with two windows. */
+  const { error: clearErr } = await sb.from('lorry_maintenance')
     .delete()
     .eq('lorry_id', id)
     .eq('reason', DASHBOARD_REASON)
     .lte('unavailable_from', to)
     .gte('unavailable_to', from);
+  if (clearErr) return c.json({ error: 'update_failed', reason: `Could not clear the earlier repair days: ${clearErr.message}` }, 500);
 
   /* 2. Insert one window holding exactly `days` Mon–Sat days, starting at `from`,
         clamped to `to`. Walk day-by-day from `from`, counting working days; the

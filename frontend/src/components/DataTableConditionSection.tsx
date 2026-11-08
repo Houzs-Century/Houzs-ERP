@@ -77,13 +77,13 @@ export function DataTableConditionSection({
           so the end date could not be picked at all (owner 2026-11-05: to 后面
           的日期选不到). One field per row gives each the full width. */}
       <div className="mt-2 flex flex-col gap-1.5">
-        <label className="flex items-center gap-1.5">
-          <span className="w-9 shrink-0 text-[11px] text-ink-muted">From</span>
-          <DateField aria-label="From date" value={from} onChange={setFrom} fullWidth />
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] text-ink-muted">From</span>
+          <DateField aria-label="From date" value={from} onChange={setFrom} fullWidth className="min-w-0" />
         </label>
-        <label className="flex items-center gap-1.5">
-          <span className="w-9 shrink-0 text-[11px] text-ink-muted">To</span>
-          <DateField aria-label="To date" value={to} onChange={setTo} fullWidth />
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] text-ink-muted">To</span>
+          <DateField aria-label="To date" value={to} onChange={setTo} fullWidth className="min-w-0" />
         </label>
       </div>
       <button type="button" className={cn(applyBtn, "mt-1.5 w-full")} disabled={!from && !to}

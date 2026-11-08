@@ -1101,6 +1101,10 @@ export type ScheduleDeliveryVars = {
   /* ASSR-only: forwarded so the backend knows which job (pickup vs delivery) is
      being scheduled. Ignored for 'so' | 'do'. */
   jobKind?: AssrJobKind | null;
+  /* ASSR-only: the leg status dropdown — delivered / cancelled / pending (owner
+     2026-11-06). Writes the leg's actual_* / cancelled_* marker; leg-only, never
+     closes the case. Cancelled drops the leg off the board. */
+  assrLegStatus?: 'delivered' | 'cancelled' | 'pending';
   /* Trip wiring: the origin warehouse for a find-or-created trip, or an explicit
      trip to append to. warehouseId lets the Phase 3 drawer pin the trip origin to
      the routed depot; both were already accepted by the backend schedule schema. */
@@ -1139,12 +1143,13 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, assrLegStatus, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
       if (scheduleDate !== undefined) body.scheduleDate = scheduleDate;
       if (deliveryState !== undefined) body.deliveryState = deliveryState;
+      if (assrLegStatus !== undefined) body.assrLegStatus = assrLegStatus;
       if (driverId !== undefined) body.driverId = driverId;
       if (lorryId !== undefined) body.lorryId = lorryId;
       if (helper1Id !== undefined) body.helper1Id = helper1Id;
@@ -1179,13 +1184,17 @@ export function useScheduleDelivery() {
                dp_order id (the board row's so_doc_no is `DP:<id>`); SO/DO rows
                key on so_doc_no. */
             const matches = vars.type === 'assr'
-              ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id
+              ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id && (vars.jobKind == null || o.job_kind === vars.jobKind)
               : vars.type === 'dp'
                 ? o.row_type === 'dp' && o.so_doc_no === `DP:${vars.id}`
                 : o.so_doc_no === vars.id;
             if (!matches) return o;
             const next: PlanningOrder = { ...o };
             if (vars.deliveryState !== undefined && vars.deliveryState !== null) next.delivery_state = vars.deliveryState;
+            // Leg status dropdown: Delivered → Delivered tab; pending → back to pending.
+            // Cancelled drops the leg off the board — left to the invalidate on settle.
+            if (vars.assrLegStatus === 'delivered') next.delivery_state = 'DELIVERED';
+            else if (vars.assrLegStatus === 'pending') next.delivery_state = 'PENDING_DELIVERY';
             if (vars.scheduleDate !== undefined) next.amended_delivery_date = vars.scheduleDate;
             if (vars.driverNameOptimistic !== undefined || vars.lorryPlateOptimistic !== undefined) {
               const crew = { ...(o.crew ?? { driver: null, helper: null, lorry: null, driver_1_name: null, driver_1_ic: null, driver_1_contact: null, driver_2_name: null, helper_1_name: null, helper_2_name: null, lorry_plate: null }) };

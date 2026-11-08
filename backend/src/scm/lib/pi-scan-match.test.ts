@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   normalizeDocRef,
-  docRefMatches,
+  docRefsOf, docRefMatches,
   normalizeCode,
   matchInvoiceLinesToGrnLines,
   type PiMatchGrnLine,
@@ -31,6 +31,11 @@ describe('normalizeDocRef', () => {
 describe('docRefMatches — anchors a scanned ref to our doc number', () => {
   test('the supplier bare PO No matches our HC- prefixed number (suffix)', () => {
     expect(docRefMatches('PO-010070', 'HC-PO-010070')).toBe(true);
+  });
+  test('an invoice naming several D.O. reaches each of them', () => {
+    expect(docRefsOf('DO-2610-01, DO-2610-02 & DO-2610-03')).toEqual(['DO-2610-01', 'DO-2610-02', 'DO-2610-03']);
+    expect(docRefsOf('DGSN26001880')).toEqual(['DGSN26001880']);
+    expect(docRefsOf(null)).toEqual([]);
   });
   test('DO No matches delivery_note_ref exactly after normalization', () => {
     expect(docRefMatches('DGSN26001880', 'DGSN26001880')).toBe(true);
@@ -85,6 +90,16 @@ describe('matchInvoiceLinesToGrnLines', () => {
     );
     expect(res.picks).toEqual([{ grnItemId: 'g1', qty: 2, grnNumber: 'HC-GRN-2609-001', invoiceLineIndex: 0 }]);
     expect(res.matchedLineCount).toBe(1);
+  });
+
+  test('a learned code naming another size is not used: a printed queen never bills a king (INV-2610-090)', () => {
+    const res = matchInvoiceLinesToGrnLines(
+      [line({ itemCode: 'DIVAN-(Q)', qty: 1 })],
+      [grn({ grnItemId: 'gk', itemCode: 'DIVAN ONLY-(K)', remaining: 1 })],
+      new Map([['DIVAN-(Q)', 'DIVAN ONLY-(K)']]),
+    );
+    expect(res.picks).toEqual([]);
+    expect(res.unmatched[0]).toMatchObject({ reason: 'no_code_match' });
   });
 
   test('a code that matches nothing is left unmatched, never guessed onto another line', () => {

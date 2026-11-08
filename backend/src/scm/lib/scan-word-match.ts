@@ -16,15 +16,44 @@ const wordsOf = (s: string | null | undefined): string[] =>
 /** A word that names one model, not a kind of thing: letters and digits, SF9050. */
 const isModel = (w: string): boolean => w.length >= 4 && /[A-Z]/.test(w) && /\d/.test(w);
 
-/** The bed size a row prints, as our codes spell it: 190X152 or 5 FTS is (Q). */
+/** The bed size a row prints, as our codes spell it: 190X152, W152 X L190 or 5 FTS is (Q). */
 export function printedSize(text: string | null | undefined): string | null {
   const t = (text ?? '').toUpperCase();
-  const cm = /(?<!\d)(?:190|200)\s*X\s*(91|107|152|183|200)(?!\d)|(?<!\d)(91|107|152|183|200)\s*X\s*(?:190|200)(?!\d)/.exec(t);
+  // ERGOTEX prints W152 X L190.
+  const cm = /(?<!\d)(?:190|200)\s*X\s*[WL]?(91|107|152|183|200)(?!\d)|(?<!\d)(91|107|152|183|200)\s*X\s*[WL]?(?:190|200)(?!\d)/.exec(t);
   const width = cm?.[1] ?? cm?.[2];
   if (width) return { 91: 'S', 107: 'SS', 152: 'Q', 183: 'K', 200: 'SK' }[width] ?? null;
   const ft = /\b(3\.5|3|5|6)\s*(?:FT|FTS|FEET)\b/.exec(t)?.[1];
   return ft ? ({ 3: 'S', 3.5: 'SS', 5: 'Q', 6: 'K' } as Record<string, string>)[ft] ?? null : null;
 }
+
+/** The model word of a supplier code: NB-KHJ50(K) and NB-KHJ57 (F) (Q) are KHJ50 and KHJ57. */
+export function skuModelWord(sku: string | null | undefined): string | null {
+  return wordsOf(sku).filter((w) => w !== 'NB').find(isModel) ?? null;
+}
+
+/** Our product family, the code without its size: HILTON (A)-(Q) is HILTON (A). */
+export const familyOf = (itemCode: string): string => itemCode.replace(/\s*-?\s*\((S|SS|Q|K|SK)\)\s*$/i, '').trim().toUpperCase();
+
+/** A supplier's model word -> our families, from every code bound to that supplier.
+ *  One size's binding names the family for all its sizes. */
+export function familiesByModelWord(bindings: ReadonlyArray<{ supplierSku: string | null; itemCode: string }>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const b of bindings) {
+    const word = skuModelWord(b.supplierSku);
+    if (word) out.set(word, (out.get(word) ?? new Set()).add(familyOf(b.itemCode)));
+  }
+  return out;
+}
+
+/** The families a printed row names: SB10-B11EC-KHJ50(A)(MH-12") carries KHJ50. */
+export function familiesPrinted(printed: string | null | undefined, known: ReadonlyMap<string, ReadonlySet<string>>): Set<string> {
+  const out = new Set<string>();
+  for (const w of wordsOf(printed)) for (const f of known.get(w) ?? []) out.add(f);
+  return out;
+}
+
+export const lineSizeOf = (itemCode: string): string | null => /\((S|SS|Q|K|SK)\)\s*$/.exec(itemCode.toUpperCase())?.[1] ?? null;
 
 const lineSize = (text: string): string | null => /\((S|SS|Q|K|SK)\)/.exec(text.toUpperCase())?.[1] ?? null;
 

@@ -40,6 +40,7 @@ import {
   DEFAULT_ZONE_PREFIX_MAP,
   KLANG_VALLEY_ZONES,
   zoneForAddress,
+  patchedPrefixRange,
   type ZonePrefixRule,
 } from '../lib/zone-classify';
 import { deriveSetCount, type SetLineCategory } from '../lib/set-count';
@@ -200,16 +201,28 @@ deliveryZones.patch('/:id', async (c) => {
   if (p.label !== undefined) updates.label = p.label;
   if (p.isActive !== undefined) updates.is_active = p.isActive;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
-  // A range flip (start > end) trips the table CHECK — guard for a clean 400.
-  const nextStart = updates.prefix_start ?? undefined;
-  const nextEnd = updates.prefix_end ?? undefined;
-  if (nextStart !== undefined && nextEnd !== undefined && Number(nextStart) > Number(nextEnd)) {
-    return c.json({ error: 'invalid_range', reason: 'prefixStart must be <= prefixEnd' }, 400);
-  }
   updates.updated_by = user?.id ?? null;
   updates.updated_at = new Date().toISOString();
 
   const sb = c.get('supabase');
+  // A range flip (start > end) trips the table CHECK, a 500. When the edit sends
+  // only one end, check it against the stored other end for a clean 400.
+  if (p.prefixStart !== undefined || p.prefixEnd !== undefined) {
+    let stored = { prefixStart: p.prefixStart ?? 0, prefixEnd: p.prefixEnd ?? 99 };
+    if (p.prefixStart === undefined || p.prefixEnd === undefined) {
+      const { data: cur, error: curErr } = await scopeToCompanyId(
+        sb.from('delivery_zone_postcodes').select('prefix_start, prefix_end').eq('id', id),
+        co.companyId,
+      ).maybeSingle();
+      if (curErr) return c.json({ error: 'fetch_failed', reason: curErr.message }, 500);
+      if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+      const row = cur as { prefix_start: number; prefix_end: number };
+      stored = { prefixStart: Number(row.prefix_start), prefixEnd: Number(row.prefix_end) };
+    }
+    if (!patchedPrefixRange(stored, p)) {
+      return c.json({ error: 'invalid_range', reason: 'prefixStart must be <= prefixEnd' }, 400);
+    }
+  }
   const { data, error } = await scopeToCompanyId(
     sb.from('delivery_zone_postcodes').update(updates).eq('id', id),
     co.companyId,
@@ -295,7 +308,8 @@ async function loadAndPack(
 
   // 1. Company zone map (falls back to the in-code default when unset).
   const { data: mapRows } = await paginateAll<MapRow>((from, to) =>
-    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).range(from, to),
+    /* A fixed order: when two rules of the same width overlap, the same one wins on every read. */
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap, usingDefault } = toPrefixMap(mapRows ?? []);
 
@@ -760,13 +774,20 @@ deliveryZones.post('/locks', async (c) => {
   const user = c.get('user') as { id?: string } | null;
 
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('delivery_day_locks').upsert({
-    company_id: co.companyId,
-    warehouse_id: p.warehouseId ?? null,
-    delivery_date: p.deliveryDate,
-    notes: p.notes ?? null,
-    locked_by: user?.id ?? null,
-  }, { onConflict: 'company_id,warehouse_id,delivery_date' }).select(LOCK_COLS).single();
+  const row = { company_id: co.companyId, warehouse_id: p.warehouseId ?? null, delivery_date: p.deliveryDate, notes: p.notes ?? null, locked_by: user?.id ?? null };
+  /* An all-warehouse lock has a NULL warehouse, which the (company, warehouse, date)
+     unique key never matches, so upsert added a second one each time. Update the
+     existing all-warehouse lock of that day instead. */
+  let existingId: string | null = null;
+  if (row.warehouse_id == null) {
+    const { data: found, error: findErr } = await scopeToCompany(sb.from('delivery_day_locks').select('id'), c)
+      .is('warehouse_id', null).eq('delivery_date', p.deliveryDate).maybeSingle();
+    if (findErr) return c.json({ error: 'lock_failed', reason: findErr.message }, 500);
+    existingId = (found?.id as string | undefined) ?? null;
+  }
+  const { data, error } = existingId
+    ? await scopeToCompany(sb.from('delivery_day_locks').update({ notes: row.notes, locked_by: row.locked_by }), c).eq('id', existingId).select(LOCK_COLS).single()
+    : await sb.from('delivery_day_locks').upsert(row, { onConflict: 'company_id,warehouse_id,delivery_date' }).select(LOCK_COLS).single();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'lock_failed', reason: error.message }, 500);

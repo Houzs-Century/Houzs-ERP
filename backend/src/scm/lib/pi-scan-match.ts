@@ -35,6 +35,11 @@ export function normalizeDocRef(s: string | null | undefined): string {
 /** Does a scanned reference identify our document number? Exact after
  *  normalization, or one is a suffix of the other (our "HCPO010070" ends with
  *  the supplier's "PO010070"). Empty scanned ref never matches. */
+/** Each D.O. an invoice names: it may print several in one field. */
+export function docRefsOf(printed: string | null | undefined): string[] {
+  return (printed ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+}
+
 export function docRefMatches(scanned: string | null | undefined, ours: string | null | undefined): boolean {
   const a = normalizeDocRef(scanned);
   const b = normalizeDocRef(ours);
@@ -49,6 +54,20 @@ export function docRefMatches(scanned: string | null | undefined, ours: string |
 /** Normalize an item code / article number for equality matching. */
 export function normalizeCode(s: string | null | undefined): string {
   return (s ?? '').toUpperCase().trim().replace(/\s+/g, ' ');
+}
+
+/** The size a code ends with, "(Q)" in "DIVAN-(Q)"; null when it names none. */
+export function sizeTag(code: string | null | undefined): string | null {
+  const m = /\(([^()]+)\)\s*$/.exec(normalizeCode(code));
+  return m ? m[1]! : null;
+}
+
+/** A learned or bound code may stand in for the printed one only when it does not name
+ *  another size: a printed queen is never billed against a king. */
+export function sameSize(printed: string | null | undefined, ours: string | null | undefined): boolean {
+  const a = sizeTag(printed);
+  const b = sizeTag(ours);
+  return a == null || b == null || a === b;
 }
 
 /** A candidate outstanding GRN line the matcher can bill. */
@@ -149,7 +168,7 @@ export function matchInvoiceLinesToGrnLines(
     }
     const skuCode = normalizeCode(line.articleNo) || normalizeCode(line.itemCode);
     const mapped = skuCode ? bindingBySku.get(skuCode) : undefined;
-    if (mapped) candidateCodes.add(normalizeCode(mapped));
+    if (mapped && sameSize(skuCode, mapped)) candidateCodes.add(normalizeCode(mapped));
 
     const matches = [...candidateCodes].flatMap((c) => byCode.get(c) ?? []);
     if (matches.length === 0) {

@@ -24,6 +24,16 @@ export interface Drill<R> {
   columns: Array<DrillColumn<R>>;
   rowKey: (row: R) => string;
   onRow: ((row: R) => void) | null;
+  /** Rows under a heading per value (a date, say), in its order; null = one list. */
+  groupBy: ((row: R) => string) | null;
+}
+
+/** Rows under their heading, headings in order. */
+export function drillGroups<R>(rows: readonly R[], groupBy: ((row: R) => string) | null): Array<{ key: string | null; rows: R[] }> {
+  if (!groupBy) return [{ key: null, rows: [...rows] }];
+  const by = new Map<string, R[]>();
+  for (const r of rows) { const k = groupBy(r); by.set(k, [...(by.get(k) ?? []), r]); }
+  return [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, list]) => ({ key, rows: list }));
 }
 
 /** Show `drill` when set; `onClose` clears it. */
@@ -47,12 +57,19 @@ export function DrillDrawer<R>({ drill, onClose }: { drill: Drill<R> | null; onC
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr>{drill.columns.map((c) => <Th key={c.label} left={c.left}>{c.label}</Th>)}</tr></thead>
             <tbody>
-              {shown.map((r) => (
-                <tr key={drill.rowKey(r)} onClick={drill.onRow ? () => (drill.onRow as (row: R) => void)(r) : undefined}
-                  className={cn(drill.onRow && "cursor-pointer hover:bg-surface-2/60")}>
-                  {drill.columns.map((c) => <Td key={c.label} left={c.left} className={c.left ? "max-w-[260px] truncate" : ""}>{c.render(r)}</Td>)}
-                </tr>
-              ))}
+              {drillGroups(shown, drill.groupBy).map((g) => [
+                g.key != null && (
+                  <tr key={`g-${g.key}`} className="bg-surface-2">
+                    <td colSpan={drill.columns.length} className="border-b border-border px-2.5 py-1.5 text-[12px] font-semibold text-ink">{g.key} · {g.rows.length}</td>
+                  </tr>
+                ),
+                ...g.rows.map((r) => (
+                  <tr key={drill.rowKey(r)} onClick={drill.onRow ? () => (drill.onRow as (row: R) => void)(r) : undefined}
+                    className={cn(drill.onRow && "cursor-pointer hover:bg-surface-2/60")}>
+                    {drill.columns.map((c) => <Td key={c.label} left={c.left} className={c.left ? "max-w-[260px] truncate" : ""}>{c.render(r)}</Td>)}
+                  </tr>
+                )),
+              ])}
               {sums.some((x) => x != null) && (
                 <tr className="font-semibold">
                   {drill.columns.map((c, i) => <Td key={c.label} left={c.left}>{i === 0 ? "Total" : sums[i] != null ? (c.format ? c.format(sums[i] as number) : (sums[i] as number).toLocaleString()) : ""}</Td>)}

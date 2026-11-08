@@ -63,6 +63,7 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
@@ -90,11 +91,12 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
 import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { logActivity } from '../../services/assr';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
-import { scheduleDpDate, writeNonSoFields } from '../lib/delivery-planning-nonso-edit';
+import { scheduleDpDate, writeNonSoFields, writeAssrLegStatus } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -106,6 +108,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
@@ -114,7 +117,6 @@ import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock 
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
-
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
@@ -496,7 +498,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // A CLOSED service case whose leg date is within the last 90 days surfaces on
   // the Delivered tab; older done work stays off the board (owner 2026-10-21).
   // today is YYYY-MM-DD, so the cutoff is too.
-  const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 90 * 86400000).toISOString().slice(0, 10);
+  // Done legs stay on the Delivered tab this many days, then drop off; open cases
+  // are never time-bound (owner 2026-11-06: shortened 90 -> 30, old ones cluttered).
+  const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 30 * 86400000).toISOString().slice(0, 10);
   const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
@@ -1219,8 +1223,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const date = (d.requested_date as string | null) ?? null;
       const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
         .filter(Boolean).join(', ') || null;
-      const scheduled = String(d.status ?? '') === 'SCHEDULED';
-      const dpDelivered = String(d.status ?? '') === 'DELIVERED';
+      const boardState = dpBoardState((d.status as string | null) ?? null);
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
@@ -1236,7 +1239,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         phone: (d.contact_phone as string | null) ?? null, agent: null, salesperson_id: null, venue: null,
         branding: null,
         status: String(d.status ?? ''),
-        delivery_state: dpDelivered ? 'DELIVERED' : (scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE'),
+        delivery_state: boardState,
         delivery_state_override: null,
         balance_sen: 0,
         balance_sen_live: null,
@@ -1306,7 +1309,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         trip_stop_no: null,
         trip_eta_offset_s: null,
         arrangement_stage: deriveArrangementStage({
-          deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          deliveryState: boardState,
           dateConfirmed: date != null,
           onActiveTrip: false, // an unscheduled DP job is never on a trip yet
         }),
@@ -1632,13 +1635,13 @@ deliveryPlanning.get('/geo', async (c) => {
   const scopedRows = dayRows.filter((r) => docNoSet.has(String(r.docNo ?? r.doc_no ?? '')));
 
   if (scopedRows.length === 0) {
-    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', ungeocoded: [] });
+    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', lorryDepots: {}, ungeocoded: [] });
   }
 
   /* 2. Zone map — the SAME company map + in-code default the delivery-zones
         router owns (exported helpers, one rule, two readers). */
   const { data: zoneRows } = await paginateAll<ZoneMapRow>((from, to) =>
-    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).range(from, to),
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap } = toPrefixMap(zoneRows ?? []);
 
@@ -1707,7 +1710,7 @@ deliveryPlanning.get('/geo', async (c) => {
     if (!best) depotReason = "the day's orders carry no warehouse";
     else {
       const { data: whRow } = await sb.from('warehouses')
-        .select('id, name, code, location, city, state, postcode')
+        .select('id, name, code, location, city, state, postcode, latitude, longitude')
         .eq('id', best.id)
         .maybeSingle();
       const w = (whRow ?? {}) as Record<string, unknown>;
@@ -1718,7 +1721,7 @@ deliveryPlanning.get('/geo', async (c) => {
         postcode: (w.postcode ?? null) as string | null,
         state: (w.state ?? null) as string | null,
       });
-      const hit = whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null;
+      const hit = w.latitude != null && w.longitude != null ? { lat: Number(w.latitude), lng: Number(w.longitude) } : whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null; // a set map position wins
       if (hit) {
         depot = { warehouseId: best.id, name: whName, code: (w.code ?? null) as string | null, lat: hit.lat, lng: hit.lng };
       } else {
@@ -1814,7 +1817,7 @@ deliveryPlanning.get('/geo', async (c) => {
     });
   }
 
-  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ungeocoded });
+  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ...(await loadLorryDepots(sb, c.env)), ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2137,6 +2140,9 @@ const scheduleSchema = z.object({
   // scheduleDate write-back targets the matching assr_cases column
   // (customer_pickup_at vs do_date). Ignored for so | do.
   jobKind: z.enum(ASSR_BOARD_LEGS).nullable().optional(),
+  // ASSR ONLY: the leg status dropdown — Delivered / Cancelled / pending (owner
+  // 2026-11-06). Writes the leg's actual_* / cancelled_* marker; leg-only.
+  assrLegStatus: z.enum(['delivered', 'cancelled', 'pending']).optional(),
   // ── Optional trip wiring ───────────────────────────────────────────────────
   // Scheduling an order onto a trip. Either tripId (append to an existing trip)
   // OR {lorryId, driverId, tripDate?} (find-or-create a trip for that lorry+date).
@@ -2238,7 +2244,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (type === 'assr') {
     const assrWantsTrip = p.tripId != null || p.lorryId != null;
     const assrCrewOnly = !assrWantsTrip && hasSeatPatch(p);
-    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) return c.json({ error: 'no_changes' }, 400);
+    const wantsStatus = p.assrLegStatus !== undefined;
+    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly && !wantsStatus) return c.json({ error: 'no_changes' }, 400);
     const caseId = Number(id);
     if (!Number.isFinite(caseId)) return c.json({ error: 'bad_id', reason: 'assr id must be numeric' }, 400);
     const jobKind: 'customer_pickup' | 'delivery' | 'inspection' =
@@ -2247,21 +2254,23 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* The case must EXIST and THIS job must be open (a sibling's POD closing the case does not lock it) before ANYTHING is written. The date write
-       below carries that guard in its own WHERE clause, but a crew-only edit (a
-       lorry with no scheduleDate — now reachable because the board's Driver /
-       Lorry cells are editable for ASSR) skips that write entirely. Without this
-       check such a call would mint a trip, a trip_stop and a DP number for a
-       closed / archived / non-existent case: fleet capacity consumed by work that
-       is finished or was never there, and invisible on the board because the
-       board has no row for it. Fails the same way the date path already does.
-       It is ALSO the company gate for everything below: assrLegGuardSql
-       carries the caller's granted-company predicate, so an out-of-scope case
-       404s here (owner ruling 2026-08-21). */
-    const legCase = (await c.env.DB.prepare(
-      assrLegGuardSql(c),
-    ).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
-    if (!legCase || !assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
+    // assrLegGuardSql = company predicate (out-of-scope 404s) + not-archived; assrLegOpen
+    // (below) gates only the date/crew/trip writes, not the status write (may touch a done leg).
+    const legCase = (await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+    if (!legCase) return c.json({ error: 'not_found' }, 404);
+    // "Who" for the history (assr_activity.user_id is bigint but scm users are UUIDs → keep the actor in the note).
+    const actor = c.get('user') as { name?: string; email?: string } | null;
+    const by = actor?.name ?? actor?.email ?? 'logistics';
+
+    // Leg status dropdown (owner 2026-11-06): Delivered / Cancelled / pending — records
+    // the step, never closes the case (logic in the board-writes module, size ceiling).
+    if (p.assrLegStatus !== undefined && p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) {
+      const r = await writeAssrLegStatus(c, caseId, jobKind, p.assrLegStatus, by);
+      return c.json(r.body, r.status);
+    }
+
+    // Date / crew / trip need the job still OPEN — no trip + trip_stop + DP number for a done leg.
+    if (!assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
@@ -2271,6 +2280,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
             WHERE id = ? AND archived_at IS NULL`,
         ).bind(p.scheduleDate, caseId).run();
         if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
+        await logActivity(c.env, caseId, 'leg_date_confirmed', null, p.scheduleDate,
+          `${jobKind} delivery date confirmed on the Delivery Planning board by ${by}`, null, 'service');
       } catch (e) {
         return c.json({ error: 'update_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
       }
@@ -2286,6 +2297,11 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     const wiring: TripWiring = assrWantsTrip
       ? await scheduleAssrOntoTrip(c, sb, caseId, jobKind, p)
       : { state: 'NOT_REQUESTED' };
+    if (hasSeatPatch(p) || assrWantsTrip) {
+      await logActivity(c.env, caseId, 'leg_crew_assigned', null, null,
+        `${jobKind} driver/lorry assigned on the Delivery Planning board by ${by}`, null, 'service')
+        .catch((e: Error) => console.warn(`[delivery-planning] ASSR crew activity log skipped: ${e.message.slice(0, 120)}`));
+    }
     return c.json({ ok: true, assr: { id: caseId, job_kind: jobKind, [col]: p.scheduleDate ?? null }, ...tripFieldsFor(wiring) });
   }
 

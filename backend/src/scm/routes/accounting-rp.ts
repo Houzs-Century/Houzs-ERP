@@ -55,7 +55,7 @@ import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
-import { inBankShares, loadCardPayoutFacts, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
+import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
@@ -114,11 +114,16 @@ const ADVANCE_KEY = 'ADV';
    yet in the bank. */
 export const CARD_COLUMN = 'CARD';
 const CARD_COLUMN_NAME = 'Card money not yet in the bank';
-/* A swipe's receipt row, by how much of it the acquirer has paid into a bank by the period's end. */
+/* A swipe's receipt rows (owner 2026-11-06: 分多一个 condition): the share the acquirer
+   has paid into a bank by the period's end, the rest by whether the merchant's report
+   has matched the payment. Only the rows differ: Cash In and the Card column are the
+   same whichever one a swipe reads. */
 export const CARD_IN_BANK = 'CARD-BANK';
-export const CARD_NOT_IN_BANK = 'CARD-TRANSIT';
+export const CARD_MATCHED = 'CARD-MATCHED';
+export const CARD_NOT_MATCHED = 'CARD-UNMATCHED';
 const CARD_IN_BANK_NAME = 'Card - in the bank';
-const CARD_NOT_IN_BANK_NAME = 'Card - not yet in the bank';
+const CARD_MATCHED_NAME = 'Card - merchant matched';
+const CARD_NOT_MATCHED_NAME = 'Card - not matched yet';
 /* The customers' money on the debtor control (owner 2026-11-05): an order's payments
    are Deposit or Balance (acc/order-payment-kind.ts), each by how it came in; a refund
    to a customer is a negative receipt; what reaches the debtor control otherwise
@@ -131,8 +136,8 @@ const CASH_PART = 'CASH';
 const CASH_PART_NAME = 'Transfer / cash';
 export const CUSTOMER_REFUND = 'REFUND';
 export const CUSTOMER_OTHER = 'OTHER';
-/* Where a debtor-control row prints among its siblings: Deposit's three, Balance's three, Refund, Other. */
-const CUSTOMER_ORDER = [`DEP:${CASH_PART}`, `DEP:${CARD_IN_BANK}`, `DEP:${CARD_NOT_IN_BANK}`, `BAL:${CASH_PART}`, `BAL:${CARD_IN_BANK}`, `BAL:${CARD_NOT_IN_BANK}`, CUSTOMER_REFUND, CUSTOMER_OTHER];
+/* Where a debtor-control row prints among its siblings: Deposit's four, Balance's four, Refund, Other. */
+const CUSTOMER_ORDER = (['DEP', 'BAL'] as const).flatMap((kind) => [CASH_PART, CARD_IN_BANK, CARD_MATCHED, CARD_NOT_MATCHED].map((part) => `${kind}:${part}`)).concat(CUSTOMER_REFUND, CUSTOMER_OTHER);
 const customerRank = (r: RpRow): number => {
   const i = r.code === null ? -1 : CUSTOMER_ORDER.indexOf(r.key.slice(r.code.length + 1));
   return i < 0 ? -1 : i;
@@ -380,6 +385,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const payouts = cardOn ? await src.cardPayouts() : { ok: true as const, facts: { matches: [], rows: [], batches: [], receipts: [] } };
   if (!payouts.ok) return { ok: false, reason: payouts.reason };
   const inBank = inBankShares(payouts.facts, to);
+  const matched = merchantMatched(payouts.facts);
 
   const opening: Record<string, number> = {};
   for (const col of columns) opening[col.code] = 0;
@@ -510,9 +516,12 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
       }
 
       /* A swipe into the Card column: the share its statement has paid into a bank by
-         the period's end, and the rest (a payment no statement claims: all of it). */
+         the period's end (a payment no statement claims: none), and the rest, by whether
+         its report has matched it. */
       const swipe = leg.account_code === CARD_COLUMN && !settlementOwn(first);
-      const bankShare = swipe && first.source_doc_no ? (inBank.get(paymentKey(base, first.source_doc_no)) ?? 0) : 0;
+      const payment = swipe && first.source_doc_no ? paymentKey(base, first.source_doc_no) : null;
+      const bankShare = payment ? (inBank.get(payment) ?? 0) : 0;
+      const rest = payment && matched.has(payment) ? { part: CARD_MATCHED, name: CARD_MATCHED_NAME } : { part: CARD_NOT_MATCHED, name: CARD_NOT_MATCHED_NAME };
       for (const l of counterparts) {
         const amt = shareOf(Math.abs(sen(l)));
         const onControl = controlCodes.has(l.account_code);
@@ -537,14 +546,14 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
           if (!swipe) { put(`${kind}:${CASH_PART}`, CASH_PART_NAME, signed, g); continue; }
           const banked = Math.round(signed * bankShare);
           put(`${kind}:${CARD_IN_BANK}`, CARD_IN_BANK_NAME, banked, g);
-          put(`${kind}:${CARD_NOT_IN_BANK}`, CARD_NOT_IN_BANK_NAME, signed - banked, g);
+          put(`${kind}:${rest.part}`, rest.name, signed - banked, g);
           continue;
         }
         if (!swipe) { add(side, key, l.account_code, name, leg.account_code, amt, lineMeta); continue; }
         const banked = Math.round(amt * bankShare);
         const cardName = (part: string) => (byParty && onControl ? `${name} · ${part}` : part);
         add(side, `${key}:${CARD_IN_BANK}`, l.account_code, cardName(CARD_IN_BANK_NAME), leg.account_code, banked, lineMeta);
-        add(side, `${key}:${CARD_NOT_IN_BANK}`, l.account_code, cardName(CARD_NOT_IN_BANK_NAME), leg.account_code, amt - banked, lineMeta);
+        add(side, `${key}:${rest.part}`, l.account_code, cardName(rest.name), leg.account_code, amt - banked, lineMeta);
       }
     };
     for (const leg of moneyLegs) {

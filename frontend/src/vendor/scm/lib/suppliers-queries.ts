@@ -708,11 +708,11 @@ export type PoStatusCounts = {
      `outstanding` is: an older deployment answers without it. */
   on_hold?: number;
 };
-export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }) {
-  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates } = params;
+export function usePurchaseOrdersPaged(params: { from?: string; to?: string; page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }) {
+  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates, from, to } = params;
   // The filter half is shared with the two exports (po-list-export.ts), so an
   // export can never be sent a different filter than the list it was pressed on.
-  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates });
+  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates, from, to });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({

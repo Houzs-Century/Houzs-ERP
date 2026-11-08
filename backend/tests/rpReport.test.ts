@@ -167,9 +167,9 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
 
   test('the card money: a swipe is Cash In on its day into the Card column, its fee a payment out of it (owner 2026-11-05)', async () => {
     const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
-    /* July's swipe, no statement has paid it out: Card - not yet in the bank, on the debtor's row. */
+    /* July's swipe, no report claims it: Card - not matched yet, on the debtor's row. */
     expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
-    expect(cell(july.receipts, '300-0000:BAL:CARD-TRANSIT', 'CARD')).toBe(30000);
+    expect(cell(july.receipts, '300-0000:BAL:CARD-UNMATCHED', 'CARD')).toBe(30000);
     expect(cell(july.payments, '900-T009', 'CARD')).toBe(300);
     /* The memo still reads: July's swipe (the fee is the settlement module's own, not a taking)
        and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee = the Card c/f. */

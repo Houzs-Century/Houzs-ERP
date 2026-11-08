@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from 'vitest';
 
-import { variantKeyLabel } from './variant-key-label';
+import { variantKeyLabel, variantWords } from './variant-key-label';
 
 describe('variantKeyLabel', () => {
   test('a real key reads as words, not as its storage form', () => {
@@ -42,5 +42,14 @@ describe('variantKeyLabel', () => {
 
   test('a key with no = at all is passed through rather than mangled', () => {
     expect(variantKeyLabel('LEGACY-BUCKET', '')).toBe('LEGACY-BUCKET');
+  });
+});
+
+describe('variantWords', () => {
+  test('reads a stored key in plain words', () => {
+    expect(variantWords('fabriccode=bf-17|gap=15"|divanheight=8"|legheight=1"')).toBe('bf-17 · gap 15" · divan 8" · leg 1"');
+  });
+  test('an unclassified item has no words', () => {
+    expect(variantWords('')).toBe('');
   });
 });
