@@ -71,7 +71,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
         <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt ? "GPS live" : "No GPS signal"}</span></span>}
       subtitle={[LORRY_TYPE_LABEL[lorry.type], lorry.model, lorry.active ? null : "Not in use"].filter(Boolean).join(" · ")}
       headerActions={!editing ? <span className="flex gap-2"><button type="button" onClick={() => setEditing(true)} className="rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white">Edit</button>
-        <Link to="/scm/lorry-live-map" className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">See on map</Link></span> : null}>
+        <Link to="/scm/delivery-maintenance?tab=live-map" className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">See on map</Link></span> : null}>
       {editing
         ? <LorryEdit lorry={lorry} warehouses={warehouses} drivers={drivers} helpers={helpers} carriers={carriers} onDone={() => setEditing(false)} />
         : (

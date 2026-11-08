@@ -16,6 +16,7 @@ import { fmtDate } from "../../vendor/shared/format";
 import { FleetHealthCharts } from "../FleetHealthCharts";
 import { NewInHouseLorry } from "./NewInHouseLorry";
 import { LorrySide } from "../scm-v2/fleet/Lorry3D";
+import { LorryLiveMap } from "../scm-v2/LorryLiveMap";
 import { lorryBox } from "./fleetHealthModel";
 import { CARD, KpiTile, PlateBadge, Segmented, TONE_DOT } from "./FleetUi";
 import {
@@ -44,6 +45,8 @@ export function FleetHealth() {
   const [params, setParams] = useSearchParams();
   const region = params.get("region") ?? "ALL";
   const statusFilter = params.get("status") ?? "ALL";
+  /* Owner 2026-11-08: the Lorry Live Map moved here (and into Coverage & Fleet) from the sidebar. */
+  const view = params.get("view") === "map" ? "map" : "health";
   const [openId, setOpenId] = useState<string | null>(null);
   const [allReminders, setAllReminders] = useState(false);
   const navigate = useNavigate();
@@ -182,6 +185,13 @@ export function FleetHealth() {
       </header>
       {addingLorry && <NewInHouseLorry onClose={() => setAddingLorry(false)} onCreated={() => dash.reload()} />}
 
+      <div>
+        <Segmented label="View" value={view} options={[{ value: "health", label: "Health" }, { value: "map", label: "Live map" }]}
+          onChange={(v) => setParam("view", v === "map" ? "map" : "ALL")} />
+      </div>
+
+      {view === "map" ? <LorryLiveMap embedded /> : <>
+
       {dash.error && dash.data && (
         <p role="alert" className="rounded-xl border border-err/30 bg-err-bg px-4 py-3 text-[13px] font-semibold text-err">Could not refresh the fleet: {dash.error}. Showing what was loaded before.</p>
       )}
@@ -298,6 +308,8 @@ export function FleetHealth() {
         </div>
         )}
       </section>
+
+      </>}
 
       <VehicleDrawer id={openId} onClose={() => setOpenId(null)} onChanged={() => dash.reload()} />
     </div>
