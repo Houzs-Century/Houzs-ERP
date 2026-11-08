@@ -14,7 +14,9 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 /* Hoisted with the mocks that read them (vi.mock factories run before the
    file's own consts exist). */
-const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
+const { updateAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
+  /* The voucher's stored files, as usePvFiles hands them (empty unless a test fills it). */
+  const FILES: Array<Record<string, unknown>> = [];
   const updateAsync = vi.fn(async (_b: Record<string, unknown>) => ({ ok: true }));
   const idle = () => ({ mutateAsync: vi.fn(async () => ({ ok: true })), isPending: false });
   /* The rejected voucher as prod holds it: its formal number kept, every mark
@@ -30,7 +32,7 @@ const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
     lines: [{ id: 'l1', line_no: 1, description: 'Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED', debit_account_code: '405-0000', amount_sen: 1007742 }],
     allocations: [{ id: 'a1', kind: 'API', apInvoiceId: 'api-meta', invoiceNumber: '2990-API-2609-004', supplierInvoiceRef: 'META-SEP', invoiceDate: '2026-09-01', amountSen: 1007742, status: 'POSTED' }],
   };
-  return { updateAsync, idle, DETAIL };
+  return { updateAsync, idle, DETAIL, FILES };
 });
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
@@ -49,7 +51,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   useCheckPaymentVoucher: idle, useApprovePaymentVoucher: idle, useRejectPaymentVoucher: idle,
   useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
-  usePvFiles: () => ({ data: { files: [] }, isLoading: false, refetch: async () => ({ data: { files: [] } }) }),
+  usePvFiles: () => ({ data: { files: FILES }, isLoading: false, refetch: async () => ({ data: { files: FILES } }) }),
   fetchPvFileBlobUrl: async () => ({ url: '', contentType: '' }),
   usePvReservations: () => ({ data: { byPi: {}, byApInvoice: {}, holders: {} }, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
@@ -164,6 +166,39 @@ describe('Edit text & bank: the words and the bank of a voucher the first yes ha
       </MemoryRouter>,
     );
     expect(screen.getByLabelText('Line 1 description')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-11-09: 「payment 的attachment 不能delete? 如果我不小心放错」 → 可以 —
+   a wrong file on a checked voucher may go until approval; approved, its files stay. */
+describe('Files: a wrong file may go until the voucher is approved', () => {
+  const MARK = '2026-11-06T03:00:00Z';
+  const atStage = (over: Record<string, unknown>) => {
+    FILES.splice(0, FILES.length, { id: 'f1', file_name: 'wrong-bill.jpg', mime: 'image/jpeg', sort_no: 1, size_bytes: 1024, created_at: MARK });
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
+    return render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+  afterEach(() => {
+    FILES.splice(0, FILES.length);
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null });
+  });
+
+  test('checked: the file can still be removed', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK });
+    expect(screen.getByRole('button', { name: 'Remove wrong-bill.jpg' })).toBeTruthy();
+  });
+
+  test.each([
+    ['approved', { submitted_at: MARK, checked_at: MARK, approved_at: MARK }],
+    ['posted', { status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK }],
+  ])('%s: the file stays, and the card says why', (_name, over) => {
+    atStage(over);
+    expect(screen.queryByRole('button', { name: 'Remove wrong-bill.jpg' })).toBeNull();
+    expect(screen.getByText(/Approved vouchers keep their files/)).toBeTruthy();
   });
 });
 

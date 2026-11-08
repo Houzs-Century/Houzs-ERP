@@ -1076,9 +1076,10 @@ export const PaymentVoucherDetail = () => {
       {/* ── Files — the bill behind this voucher (owner 2026-09-03: 我希望可以
           print pv include ocr 的文件一起, which first needs the file to LIVE
           here). Scan attaches automatically; this card takes manual adds,
-          views, and deletes — deleting only until CHECKED: evidence locks
-          with the document (server enforces both). */}
-      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isChecked} cancelled={pv.status === 'CANCELLED'} />
+          views, and deletes — deleting until APPROVED (owner 2026-11-09), each
+          removal on the voucher's history; then the evidence stays with the
+          journal (server enforces both). */}
+      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isApprovedPv} cancelled={pv.status === 'CANCELLED'} />
 
       {/* ── The advance this voucher holds, and the knock-off that spends it
           (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
@@ -1160,9 +1161,10 @@ export const PaymentVoucherDetail = () => {
 
 /* ── Files card — the bill pages behind this voucher (mig 0352). The card
    itself is the shared DocFilesCard (since 2026-09-06 the AP invoice shows
-   the same one); this binds the voucher's hooks and its four-layer rule:
-   a CHECKED voucher's evidence stays (remove hidden, server refuses too),
-   a CANCELLED one takes no more files. */
+   the same one); this binds the voucher's hooks and its rule: a wrong file
+   may go until the voucher is APPROVED (owner 2026-11-09: 「如果我不小心放错」
+   → 可以), each removal on its history; an approved voucher's evidence stays
+   (remove hidden, server refuses too); a CANCELLED one takes no more files. */
 const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
   const filesQ = usePvFiles(pvId);
   const upload = useUploadPvFile();
@@ -1171,9 +1173,9 @@ const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canW
     <DocFilesCard
       files={filesQ.data?.files ?? []}
       canWrite={canWrite} locked={locked} closed={cancelled}
-      lockedNote=" · Checked vouchers keep their files. Nothing can be removed."
+      lockedNote=" · Approved vouchers keep their files. Nothing can be removed."
       emptyNote="No files attached. The bill or quotation goes here and prints with the voucher; one opened from Scan bills attaches its scans by itself."
-      removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
+      removeBody="The stored file is deleted, and the voucher's history records who removed which file. Once the voucher is approved, its files stay."
       attachAriaLabel="Attach voucher files"
       uploading={upload.isPending} removing={remove.isPending}
       onUpload={(file) => upload.mutateAsync({ pvId, file })}
