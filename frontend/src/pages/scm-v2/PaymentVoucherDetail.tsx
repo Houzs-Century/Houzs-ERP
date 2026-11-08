@@ -65,6 +65,8 @@ import { PageHeader } from '../../components/Layout';
 import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { BooksLine, PvTrail, StageTag, VoucherTaskDrawer, pvStage } from './PvDocParts';
+import { NO_PAY_TO, isBlankPayTo, payToBody, payToOfVoucher, type PayTo } from './pv-pay-to';
+import { PvPayToFields } from './PvPayToFields';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
@@ -238,6 +240,7 @@ export const PaymentVoucherDetail = () => {
   const [creditAccountCode, setCreditAccountCode] = useState('');
   const [voucherDate, setVoucherDate]             = useState('');
   const [notes, setNotes]                         = useState('');
+  const [payTo, setPayTo]                         = useState<PayTo>(NO_PAY_TO);
   const [bankChargeSen, setBankChargeSen]         = useState(0);
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Seeded from the voucher on enter-edit; shown only for a foreign currency. */
@@ -279,6 +282,7 @@ export const PaymentVoucherDetail = () => {
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
+    setPayTo(payToOfVoucher(pv));
     setBankChargeSen(Number(pv.bank_charge_sen ?? 0));
     setExchangeRate(String(pv.exchange_rate ?? '1'));
     /* Cleared on entering edit, never back-derived from the stored rate: the MYR
@@ -473,6 +477,7 @@ export const PaymentVoucherDetail = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
+        ...payToBody(payTo),
         bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
@@ -698,7 +703,16 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
               <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
-              <InfoCell label="Notes" value={pv.notes ?? null} />
+              <InfoCell label="Description" value={pv.notes ?? null} />
+              {/* What it is for in the listing's words, and the bank it pays into (owner 2026-11-08). */}
+              <InfoCell label="Purpose" value={(pv.purpose_text as string | undefined) || null} />
+              {isBlankPayTo(payToOfVoucher(pv))
+                ? <InfoCell label="Bank" value={null} />
+                : <>
+                  <InfoCell label="Bank" value={payToOfVoucher(pv).bank || null} />
+                  <InfoCell label="Account no." value={payToOfVoucher(pv).accountNo || null} />
+                  <InfoCell label="Account name" value={payToOfVoucher(pv).accountName || null} />
+                </>}
               {/* The bill's own number and date (item 1) and its official invoice (欠正式单, item 3). */}
               {(pv.bill_ref || pv.bill_date) && <InfoCell label="Bill" value={`${pv.bill_ref ?? '—'}${pv.bill_date ? ` · ${fmtDateOrDash(pv.bill_date)}` : ''}`} />}
               {!isRefundPv && pv.status !== 'CANCELLED' && (
@@ -787,9 +801,10 @@ export const PaymentVoucherDetail = () => {
                   inputClassName={styles.fieldInput} selectOnFocus />
               </label>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Notes</span>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+                <span className={styles.fieldLabel}>Description</span>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher description" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
               </label>
+              <PvPayToFields value={payTo} onChange={setPayTo} />
             </div>
           )}
         </div>

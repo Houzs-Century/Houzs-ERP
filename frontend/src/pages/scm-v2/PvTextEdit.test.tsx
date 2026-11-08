@@ -26,14 +26,14 @@ beforeEach(() => {
 describe('Edit text', () => {
   test('starts from the voucher\'s own words', () => {
     show();
-    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('BILL 134 · DATED 2026-11-03');
+    expect((screen.getByLabelText('Description') as HTMLTextAreaElement).value).toBe('BILL 134 · DATED 2026-11-03');
     expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Rental deposit');
     expect((screen.getByLabelText('Line 2 description') as HTMLInputElement).value).toBe('');
   });
 
   test('Save sends the words and nothing else, then closes', async () => {
     show();
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Rental for Sunway Kluang' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Rental for Sunway Kluang' } });
     fireEvent.change(screen.getByLabelText('Line 2 description'), { target: { value: 'Balance of the rental' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save text' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -47,11 +47,11 @@ describe('Edit text', () => {
   test('a refusal is said on the form, which stays open with the words typed', async () => {
     h.mutateAsync.mockRejectedValue(new Error('This voucher is approved — its journal carries these words, so they stay as they are.'));
     show();
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'New words' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'New words' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save text' }));
     await screen.findByText('This voucher is approved — its journal carries these words, so they stay as they are.');
     expect(onClose).not.toHaveBeenCalled();
-    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('New words');
+    expect((screen.getByLabelText('Description') as HTMLTextAreaElement).value).toBe('New words');
   });
 
   test('Cancel closes and sends nothing', () => {

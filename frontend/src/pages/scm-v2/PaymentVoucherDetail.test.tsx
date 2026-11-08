@@ -216,3 +216,32 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     });
   });
 });
+
+/* Owner 2026-11-08 (pv notes 我不想要全部挤在一排，然后把notes 换成description): the
+   Description says what the money is for; the bank it pays into has fields of its own. */
+describe('the Description and the bank it pays into', () => {
+  const BANK = { notes: 'META ADS SEPTEMBER', purpose_text: 'META ADS SEPTEMBER INVOICE', pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: 'META PLATFORMS IRELAND' };
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { notes: null, purpose_text: undefined, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
+
+  test('the voucher shows its Description, its Purpose and its bank; the edit starts from that bank and saves a change', async () => {
+    updateAsync.mockClear();
+    Object.assign(DETAIL.paymentVoucher, BANK);
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    for (const value of ['META ADS SEPTEMBER', 'META ADS SEPTEMBER INVOICE', 'CITIBANK', '0123 4567', 'META PLATFORMS IRELAND']) expect(screen.getByText(value)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('META ADS SEPTEMBER');
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('META PLATFORMS IRELAND');
+    fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '0123 9999' } });
+    await waitFor(() => expect(screen.getByText('Save')).toBeTruthy());
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
+    expect(updateAsync.mock.calls[0]![0]).toMatchObject({
+      notes: 'META ADS SEPTEMBER', payToBankName: 'CITIBANK', payToAccountNo: '0123 9999', payToAccountName: 'META PLATFORMS IRELAND',
+    });
+  });
+});
