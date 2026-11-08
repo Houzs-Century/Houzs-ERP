@@ -252,13 +252,13 @@ describe('the next step on each row (the redesign)', () => {
     fireEvent.click(screen.getByLabelText('More for PV-2609-002'));
     let menu = screen.getByRole('menu');
     for (const label of ['Open', 'Edit', 'Print', 'Print + files', 'Copy as new', 'Cancel…']) expect(within(menu).getByText(label)).toBeTruthy();
-    expect(within(menu).queryByText('Edit text')).toBeNull();
+    expect(within(menu).queryByText('Edit text & bank')).toBeNull();
     fireEvent.click(within(menu).getByText('Open'));
     fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
     menu = screen.getByRole('menu');
     expect(within(menu).queryByText('Edit')).toBeNull();
-    /* A checked voucher takes its words only (owner 2026-11-06). */
-    expect(within(menu).getByText('Edit text')).toBeTruthy();
+    /* A checked voucher takes its words and its bank only (owner 2026-11-06, 2026-11-09). */
+    expect(within(menu).getByText('Edit text & bank')).toBeTruthy();
   });
 });
 

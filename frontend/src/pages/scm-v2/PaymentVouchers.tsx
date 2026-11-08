@@ -426,7 +426,7 @@ export const PaymentVouchers = () => {
       menu.push({ label: 'Edit', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?edit=1`) });
     }
     if (canWrite && isApprovable(r) && r.approved_at == null) {
-      menu.push({ label: 'Edit text', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
+      menu.push({ label: 'Edit text & bank', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
     }
     menu.push({ divider: true });
     menu.push({ label: 'Print', onClick: () => void printVouchers([r], false, 'print') });

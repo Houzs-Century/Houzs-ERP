@@ -113,8 +113,9 @@ const draw = () => render(
   </MemoryRouter>,
 );
 
-/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only. */
-describe('Edit text: the words of a voucher the first yes has locked', () => {
+/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only;
+   2026-11-09: 可以，开放 — and the bank it pays into. */
+describe('Edit text & bank: the words and the bank of a voucher the first yes has locked', () => {
   const atStage = (over: Record<string, unknown>) => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
     return render(
@@ -124,34 +125,38 @@ describe('Edit text: the words of a voucher the first yes has locked', () => {
     );
   };
   const MARK = '2026-11-06T03:00:00Z';
-  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null }); });
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
 
-  test('checked: Edit text and no Edit; it opens the form with the voucher\'s words, and closes', () => {
-    atStage({ submitted_at: MARK, checked_at: MARK });
+  test('checked: Edit text & bank and no Edit; it opens the form with the voucher\'s words and bank, and closes', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK, pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: null });
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit text & bank' }));
     expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED');
+    /* The bank the voucher pays into, as the page reads it (own, else request's, else supplier's). */
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('0123 4567');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('Line 1 description')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit text' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit text & bank' })).toBeTruthy();
   });
 
-  test('prepared: the whole Edit, no Edit text', () => {
+  test('prepared: the whole Edit, no Edit text & bank', () => {
     atStage({ submitted_at: MARK });
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
   });
 
   test('approved or posted: neither', () => {
     const { unmount } = atStage({ submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     unmount();
     atStage({ status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  test('the list\'s Edit text opens straight on the form', () => {
+  test('the list\'s Edit text & bank opens straight on the form', () => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: MARK, checked_at: MARK, approved_at: null });
     render(
       <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9?text=1']}>

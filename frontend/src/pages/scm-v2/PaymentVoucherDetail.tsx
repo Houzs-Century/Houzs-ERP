@@ -223,8 +223,9 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
-  /* The first yes locks the voucher but not its words, until the second (owner
-     2026-11-06: 有时我要改 description). The list's Edit text opens with ?text=1. */
+  /* The first yes locks the voucher but not its words or its bank, until the second
+     (owner 2026-11-06: 有时我要改 description; 2026-11-09: 可以，开放). The list's
+     Edit text & bank opens with ?text=1. */
   const mayEditText = isDraft && canWrite && isChecked && !isApprovedPv;
   const [editingText, setEditingText] = useState(() => searchParams.get('text') === '1');
   /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
@@ -607,7 +608,7 @@ export const PaymentVoucherDetail = () => {
                 )}
                 {mayEditText && !editingText && (
                   <Button variant="ghost" size="md" onClick={() => setEditingText(true)} disabled={busy}>
-                    <Pencil {...ICON} /> Edit text
+                    <Pencil {...ICON} /> Edit text &amp; bank
                   </Button>
                 )}
                 {isDraft && canWrite && !isPrepared && (
@@ -811,7 +812,7 @@ export const PaymentVoucherDetail = () => {
       </section>
 
       {mayEditText && editingText && (
-        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} onClose={() => setEditingText(false)}
+        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} payTo={payToOfVoucher(pv)} onClose={() => setEditingText(false)}
           lines={lines.map((l) => ({ id: String(l.id), description: l.description ?? null }))} />
       )}
 

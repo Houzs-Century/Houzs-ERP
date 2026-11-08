@@ -172,15 +172,21 @@ export const useUpdatePaymentVoucher = () => {
   });
 };
 
-/* A voucher's words alone, until it is approved (owner 2026-11-06: 有时我要改 description). */
+/* A voucher's words and the bank it pays into, until it is approved (owner
+   2026-11-06: 有时我要改 description; 2026-11-09: 可以，开放). The bank rides only
+   when it was changed. */
 export const useUpdatePvText = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; notes: string; lines: Array<{ id: string; description: string }> }) =>
+    mutationFn: ({ id, ...body }: {
+      id: string; notes: string; lines: Array<{ id: string; description: string }>;
+      payToBankName?: string | null; payToAccountNo?: string | null; payToAccountName?: string | null;
+    }) =>
       authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}/text`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-listing'] });
     },
   });
 };
