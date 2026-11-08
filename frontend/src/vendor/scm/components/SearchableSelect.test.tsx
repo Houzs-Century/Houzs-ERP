@@ -222,3 +222,23 @@ describe("SearchableSelect groups", () => {
     expect(picked).toEqual(["2235"]);
   });
 });
+
+/* A blur's delayed close firing after the field unmounted crashed a CI run with
+   "window is not defined" (jsdom already torn down). Unmount clears it. */
+describe("SearchableSelect blur timer", () => {
+  test("unmounting right after a blur leaves no pending close", () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<SearchableSelect value="" onChange={() => {}} options={[{ value: "a", label: "A" }]} />);
+      const input = screen.getByRole("textbox");
+      fireEvent.focus(input);
+      const before = vi.getTimerCount(); // React's own scheduler may hold one
+      fireEvent.blur(input);
+      expect(vi.getTimerCount()).toBe(before + 1);
+      unmount();
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

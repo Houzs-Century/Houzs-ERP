@@ -11,7 +11,7 @@
 // shows when closed (a saved value never blanks); an empty search shows every
 // option, so a short list still just opens-and-picks.
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
@@ -96,6 +96,10 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
+  // The blur's delayed close must not outlive the field: firing after unmount sets
+  // state on a gone component (in a test, after jsdom is torn down: "window is not defined").
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
   // Pin the portalled menu to the input, tracking scroll/resize, and FLIP it
   // above when the room below cannot hold it. Portalling alone only escapes the
   // card's clip — measured on prod's New Sales Order, the City menu still ran
@@ -156,7 +160,8 @@ export function SearchableSelect({
           // Text deleted, then the operator moved on: that is a clear, not a
           // cancel. (A pick closes the menu first, so it never lands here.)
           if (open && !search.trim() && selectedLabel) onChange("");
-          setTimeout(() => setOpen(false), 150);
+          if (closeTimer.current) clearTimeout(closeTimer.current);
+          closeTimer.current = setTimeout(() => { closeTimer.current = null; setOpen(false); }, 150);
         }}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
