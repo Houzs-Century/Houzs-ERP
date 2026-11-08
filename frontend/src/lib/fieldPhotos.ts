@@ -15,6 +15,7 @@
    not finished uploading. */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { stampLines, stampNow, stampPhoto } from "./photoStamp";
+import { ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 
 export type FieldPhotoStatus = "queued" | "uploading" | "done" | "failed";
 
@@ -106,7 +107,9 @@ export type FieldPhotosApi = {
   gate: (noneMessage: string) => CompletionGate;
 };
 
-export const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+/* The upload pipeline's own whitelist (slip.ts), images only: one home, so a
+   type the server refuses is never offered here. */
+export const ACCEPTED_PHOTO_TYPES: readonly string[] = ALLOWED_SLIP_MIMES.filter((m) => m.startsWith("image/"));
 
 /**
  * @param stampLabel the DO / job number burned into each photo with the server
@@ -160,7 +163,7 @@ export function useFieldPhotos({ stampLabel, max, upload }: {
   }, [next]);
 
   const add = useCallback((files: File[]) => {
-    const bad = files.filter((f) => !(ACCEPTED_PHOTO_TYPES as readonly string[]).includes(f.type));
+    const bad = files.filter((f) => !ACCEPTED_PHOTO_TYPES.includes(f.type));
     const good = files.filter((f) => !bad.includes(f));
     const { take, message } = admit(photosRef.current.length, good.length, max);
     const parts = [bad.length ? `${bad.length} file${bad.length === 1 ? " is" : "s are"} not a JPEG, PNG or WebP photo and ${bad.length === 1 ? "was" : "were"} not added.` : null, message].filter(Boolean);

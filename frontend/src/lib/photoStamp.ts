@@ -13,6 +13,7 @@
    (imagePipeline.ts via uploadFieldPhoto), which still does the compression.
    A file the browser cannot draw goes up unstamped rather than not at all. */
 import { APP_TZ } from "./utils";
+import { correlatedFetch } from "./requestCorrelation";
 
 export type StampClock = { at: Date; source: "server" | "device" };
 
@@ -38,7 +39,7 @@ function clockProbeUrl(): string {
 }
 
 export async function stampNow(
-  fetcher: (url: string) => Promise<{ headers: { get(name: string): string | null } }> = (url) => fetch(url, { cache: "no-store" }),
+  fetcher: (url: string) => Promise<{ headers: { get(name: string): string | null } }> = (url) => correlatedFetch(url, { cache: "no-store" }),
   nowMs: () => number = Date.now,
 ): Promise<StampClock> {
   if (!cached || nowMs() - cached.readAt > CLOCK_TTL_MS) {
