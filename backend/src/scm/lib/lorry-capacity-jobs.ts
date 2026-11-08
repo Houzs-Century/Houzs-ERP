@@ -7,8 +7,9 @@
 // real trip is skipped whole: that trip's stops already counted its work.
 
 export type JobKind = 'delivery' | 'setupDismantle';
-export type LorryJob = { lorryId: string | null; lorryPlate: string | null; date: string | null; kind: JobKind };
-export type LorryJobDays = { dates: Set<string>; deliveryDates: Set<string>; delivery: number; setupDismantle: number };
+/** revenueSen: the delivery order's amount for a delivery job (0 for a set-up / dismantle). */
+export type LorryJob = { lorryId: string | null; lorryPlate: string | null; date: string | null; kind: JobKind; revenueSen: number };
+export type LorryJobDays = { dates: Set<string>; deliveryDates: Set<string>; delivery: number; setupDismantle: number; revenueSen: number };
 
 export const plateKey = (p: string) => p.replace(/[\s-]/g, '').toUpperCase();
 
@@ -22,9 +23,10 @@ export function tripsFromJobs(
     const date = j.date?.slice(0, 10);
     const lorryId = j.lorryId ?? (j.lorryPlate ? idByPlate.get(plateKey(j.lorryPlate)) : undefined);
     if (!date || !lorryId || realTripDatesByLorry.get(lorryId)?.has(date)) continue;
-    const acc = out.get(lorryId) ?? { dates: new Set<string>(), deliveryDates: new Set<string>(), delivery: 0, setupDismantle: 0 };
+    const acc = out.get(lorryId) ?? { dates: new Set<string>(), deliveryDates: new Set<string>(), delivery: 0, setupDismantle: 0, revenueSen: 0 };
     acc.dates.add(date);
     acc[j.kind] += 1;
+    acc.revenueSen += j.revenueSen;
     if (j.kind === 'delivery') acc.deliveryDates.add(date);
     out.set(lorryId, acc);
   }

@@ -9,30 +9,19 @@ import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
 
 export type DayRow = { date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null };
 export type RegionRow = { region: string; orders: number; amountSen: number; avgOrderSen: number | null };
-export type LorryRow = { lorry: string; internal: boolean; daysOut: number; workingDays: number; downDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
+export type LorryRow = { lorry: string; internal: boolean; daysOut: number; fairTrips: number; stockTrips: number; usedDays: number; trips: number; otherTrips: number; doOrders: number; serviceOrders: number; workingDays: number; downDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
 export type LorryDay = { date: string; lorry: string; orders: number; amountSen: number };
 /** Open the delivery orders behind a figure (title, which DOs). */
 export type DoDrill = (title: string, keep: (d: { date: string; region: string; lorry: string | null }) => boolean) => void;
 
 const dd = (d: string) => d.slice(5).replace("-", "/");
 const money = (x: number | null) => (x == null ? "—" : fmtSen(x));
+/** Capacity: 100% and over is a lorry earning its day, under is not (owner 2026-11-07). */
+export const capacityTone = (pct: number | null) => ((pct ?? 0) >= 100 ? TONE.good : TONE.bad);
 
-type DayDo = { date: string; region: string; amountSen: number; lorry: string | null };
-
-export function LogisticDailySection({ days: allDays, regions, doList, onDrill }: { days: DayRow[]; regions: RegionRow[]; doList: DayDo[]; onDrill: DoDrill }) {
+export function LogisticDailySection({ days, regions, region, setRegion, day, setDay, onDrill }: { days: DayRow[]; regions: RegionRow[]; region: string | null; setRegion: (r: string | null) => void; day: string | null; setDay: (d: string | null) => void; onDrill: DoDrill }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
-  /* Click a region and the day by day follows it (owner 2026-10-19), like the
-     Project breakdown filters its project list; click it again for all. */
-  const [region, setRegion] = useState<string | null>(null);
-  const days: DayRow[] = region == null ? allDays : allDays.map((x) => {
-    const ds = doList.filter((d) => d.date === x.date && d.region === region);
-    const withLorry = ds.filter((d) => d.lorry);
-    const lorries = new Set(withLorry.map((d) => d.lorry)).size;
-    const amountSen = ds.reduce((a, d) => a + d.amountSen, 0);
-    return { date: x.date, orders: ds.length, amountSen, avgOrderSen: ds.length ? Math.round(amountSen / ds.length) : null, lorries, lorryOrders: withLorry.length,
-      perLorrySen: lorries ? Math.round(withLorry.reduce((a, d) => a + d.amountSen, 0) / lorries) : null };
-  });
   const shown = days.filter((x) => x.orders);
   const tot = days.reduce((a, x) => ({ orders: a.orders + x.orders, amountSen: a.amountSen + x.amountSen, lorries: a.lorries + x.lorries, lorryOrders: a.lorryOrders + x.lorryOrders }), { orders: 0, amountSen: 0, lorries: 0, lorryOrders: 0 });
   const lorrySen = days.reduce((a, x) => a + (x.perLorrySen ?? 0) * x.lorries, 0);
@@ -40,24 +29,29 @@ export function LogisticDailySection({ days: allDays, regions, doList, onDrill }
   const regionMax = Math.max(1, ...regions.map((r) => (amt ? r.amountSen : r.orders)));
   return (
     <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-      <Panel title={region ? `Day by day · ${region}` : "Day by day"} hint="delivery orders issued each day · click a day for its orders · click a region on the right to follow it"
+      <Panel title={region ? `Day by day · ${region}` : "Day by day"} hint="delivery orders issued each day · click a day or a region and the page follows it"
         right={<span className="flex items-center gap-2">
           {region && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setRegion(null)}>All regions</button>}
+          {day && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => onDrill(`Delivered on ${day}${region ? ` · ${region}` : ""}`, (d) => d.date === day && (!region || d.region === region))}>See orders</button>}
+          {day && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setDay(null)}>All days</button>}
           <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />
         </span>}>
-        <Columns axes={false} valueLabels={!amt} height={190} stacked={false} format={amt ? fmtSen : (x) => `${x} orders`} highlight={null}
+        <Columns axes={false} valueLabels={by === "orders"} height={190} stacked={false} format={by === "orders" ? (x) => `${x} orders` : fmtSen} highlight={null}
           labels={days.map((x) => dd(x.date))}
           series={[{ name: amt ? "Delivered amount" : "Orders delivered", color: TONE.good }]}
           values={[days.map((x) => (amt ? x.amountSen : x.orders))]}
-          line={amt ? { name: "Average order", color: PALETTE[1]!, values: days.map((x) => x.avgOrderSen), format: fmtSen } : null} />
+          line={amt ? [
+            { name: "Average order", color: PALETTE[1]!, values: days.map((x) => x.avgOrderSen), format: fmtSen },
+            { name: "Average per delivery lorry", color: PALETTE[2]!, values: days.map((x) => x.perLorrySen), format: fmtSen },
+          ] : null} />
         <div className="mt-3 max-h-[340px] overflow-y-auto">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr>
-              <Th left>Date</Th><Th>Orders</Th><Th>Delivered amount</Th><Th>Average order</Th><Th>Lorries</Th><Th>Average per lorry</Th>
+              <Th left>Date</Th><Th>Orders</Th><Th>Delivered amount</Th><Th>Average order</Th><Th>Delivery lorries</Th><Th>Average per delivery lorry</Th>
             </tr></thead>
             <tbody>
               {shown.map((x) => (
-                <tr key={x.date} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Delivered on ${x.date}${region ? ` · ${region}` : ""}`, (d) => d.date === x.date && (!region || d.region === region))}>
+                <tr key={x.date} className={cn("cursor-pointer hover:bg-surface-2/50", day === x.date && "bg-primary-soft/50")} onClick={() => setDay(day === x.date ? null : x.date)}>
                   <Td left>{x.date}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td><Td>{money(x.avgOrderSen)}</Td>
                   <Td>{x.lorries || "—"}</Td><Td>{money(x.perLorrySen)}</Td>
                 </tr>
@@ -67,19 +61,19 @@ export function LogisticDailySection({ days: allDays, regions, doList, onDrill }
                 <tr className="font-semibold">
                   <Td left>Total</Td><Td>{tot.orders}</Td><Td>{fmtSen(tot.amountSen)}</Td>
                   <Td>{tot.orders ? fmtSen(Math.round(tot.amountSen / tot.orders)) : "—"}</Td>
-                  <Td>{tot.lorries || "—"}</Td><Td>{tot.lorries ? fmtSen(Math.round(lorrySen / tot.lorries)) : "—"}</Td>
+                  <Td>{tot.lorries ? `${tot.lorries} lorry-days` : "—"}</Td><Td>{tot.lorries ? fmtSen(Math.round(lorrySen / tot.lorries)) : "—"}</Td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
         <p className="mt-2 text-[11.5px] text-ink-muted">
-          Average per lorry = the day&apos;s orders whose lorry is known, divided by the lorries that went out.
+          Average per delivery lorry = the day&apos;s KL, Southern and Northern orders whose lorry is known, divided by the lorries that carried them. East Malaysia goes out trip by trip and is not counted. Other jobs are not counted.
           {tot.lorryOrders < tot.orders && ` The lorry is recorded on ${tot.lorryOrders} of ${tot.orders} delivery orders; it fills in as the crew and lorry are set on each DO (or the DO is put on a lorry run).`}
         </p>
       </Panel>
 
-      <Panel title="By region" hint="the customer's state, in Delivery Planning's regions · click a region to follow it on the left">
+      <Panel title="By region" hint="the customer's state, in Delivery Planning's regions · click a region and the whole page follows it">
         <table className="w-full border-collapse">
           <thead><tr><Th left>Region</Th><Th left> </Th><Th>Orders</Th><Th>Amount</Th><Th>Share</Th><Th>Average order</Th></tr></thead>
           <tbody>
@@ -102,36 +96,41 @@ export function LogisticDailySection({ days: allDays, regions, doList, onDrill }
   );
 }
 
-/* Each lorry's revenue and occupancy (owner 2026-10-17): days it went out over
-   the working days so far (Sundays off). Our own lorries carry a fixed crew
-   and instalment, so every working day one stays in costs money. */
-export function LorrySection({ lorries, days, recorded, total, onDrill }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number; onDrill: DoDrill }) {
+/* Each lorry's revenue and occupancy: delivery days earn the revenue, days in use
+   show how full it is, both over the days it could work (Sundays and workshop days
+   off). Our own lorries carry a fixed crew and instalment, so every working day one
+   stays in costs money. */
+export function LorrySection({ lorries, days, recorded, total, region, day, onLorry }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number; region: string | null; day: string | null; onLorry: (plate: string) => void }) {
   const own = lorries.filter((l) => l.internal);
   const ownDays = own.reduce((a, l) => a + l.daysOut, 0);
+  const ownTrips = own.reduce((a, l) => a + l.trips, 0);
+  const ownOther = own.reduce((a, l) => a + l.otherTrips, 0);
+  const scope = [region, day].filter(Boolean).join(" · ");
   const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
   return (
     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-      <Panel title="Lorries · revenue and occupancy" hint="Delivery day = a day with at least one delivery order · occupancy = delivery days ÷ days it could work (Sundays and workshop days off)">
+      <Panel title={`Lorries · revenue and capacity${scope ? ` · ${scope}` : ""}`} hint="KL, Southern and Northern only · Delivery trip = a day's delivery or service run; under 3 orders (delivery orders and service jobs) it is half a trip · Fair trip = a set-up or dismantle · Stock trip = a supplier pickup or stock transfer, half a trip · Capacity = total trips ÷ days it could work (workshop days off, Sundays only if it went out), and can pass 100% · Per delivery trip = revenue ÷ delivery trips">
         {own.length > 0 && (
           <p className="mb-2 text-[12.5px] text-ink-secondary">
-            Our own lorries delivered on <b className="text-ink">{ownDays}</b> of <b className="text-ink">{ownPossible}</b> lorry working days
-            ({ownPossible ? Math.round((ownDays / ownPossible) * 100) : 0}% occupied); {ownPossible - ownDays} lorry-days had no delivery.
+            Our own lorries had <b className="text-ink">{ownPossible}</b> lorry working days: <b className="text-ink">{ownDays}</b> delivery trips and
+            {" "}<b className="text-ink">{ownOther}</b> other trips, <b className="text-ink">{ownPossible ? Math.round((ownTrips / ownPossible) * 100) : 0}%</b> capacity used.
           </p>
         )}
         <table className="w-full border-collapse">
-          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery days</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery day</Th></tr></thead>
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Delivery trips</Th><Th>Fair trips</Th><Th>Stock trips</Th><Th>Total trips</Th><Th>Day in use</Th><Th left>Capacity</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per delivery trip</Th><Th>Per order</Th></tr></thead>
           <tbody>{lorries.map((l) => (
-            <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Carried by ${l.lorry}`, (d) => d.lorry === l.lorry)}>
+            <tr key={l.lorry} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onLorry(l.lorry)}>
               <Td left className="font-semibold">{l.lorry}</Td>
               <Td left className="text-[11px] text-ink-muted">{l.internal ? "own" : "3PL"}</Td>
-              <Td>{l.daysOut} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td>
+              <Td>{l.daysOut}</Td><Td>{l.fairTrips}</Td><Td>{l.stockTrips}</Td><Td className="font-semibold">{l.trips}</Td>
+              <Td>{l.usedDays} / {l.workingDays}{l.downDays > 0 && <span className="ml-1 text-[11px] text-warning-text">{l.downDays} in workshop</span>}</Td>
               <Td left className="w-[22%]">
                 <div className="flex items-center gap-2">
-                  <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: (l.occupancyPct ?? 0) >= 80 ? TONE.good : (l.occupancyPct ?? 0) >= 60 ? TONE.warn : TONE.bad }} /></div>
-                  <span className="w-12 text-right tabular-nums text-[12px]">{l.occupancyPct == null ? "—" : `${l.occupancyPct}%`}</span>
+                  <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: capacityTone(l.occupancyPct) }} /></div>
+                  <span className="w-12 text-right tabular-nums text-[12px] font-semibold" style={{ color: capacityTone(l.occupancyPct) }}>{l.occupancyPct == null ? "—" : `${l.occupancyPct}%`}</span>
                 </div>
               </Td>
-              <Td>{l.orders}</Td><Td>{fmtSen(l.amountSen)}</Td><Td>{money(l.perDayOutSen)}</Td>
+              <Td><span title={`${l.doOrders} delivery orders + ${l.serviceOrders} service jobs`}>{l.orders}</span></Td><Td>{fmtSen(l.amountSen)}</Td><Td>{money(l.perDayOutSen)}</Td><Td>{l.orders ? fmtSen(Math.round(l.amountSen / l.orders)) : "—"}</Td>
             </tr>
           ))}
             {lorries.length === 0 && <tr><Td left className="text-ink-muted">No lorry recorded in this period.</Td></tr>}
@@ -144,7 +143,7 @@ export function LorrySection({ lorries, days, recorded, total, onDrill }: { lorr
           <div className="max-h-[420px] overflow-y-auto">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 bg-surface"><tr><Th left>Date</Th><Th left>Lorry</Th><Th>Orders</Th><Th>Revenue</Th></tr></thead>
-              <tbody>{days.map((x) => <tr key={`${x.date}-${x.lorry}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`${x.lorry} on ${x.date}`, (d) => d.lorry === x.lorry && d.date === x.date)}><Td left>{x.date}</Td><Td left>{x.lorry}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td></tr>)}</tbody>
+              <tbody>{days.map((x) => <tr key={`${x.date}-${x.lorry}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onLorry(x.lorry)}><Td left>{x.date}</Td><Td left>{x.lorry}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td></tr>)}</tbody>
             </table>
           </div>
         )}

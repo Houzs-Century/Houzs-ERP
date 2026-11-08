@@ -123,6 +123,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/ar/*", "scm.finance.outstanding"],
   ["/scan-lorry-invoice/*", "scm.transportation.drivers"],
   ["/lorry-capacity/*", "scm.transportation.drivers"],
+  ["/lorry-routes/*", "scm.transportation.drivers"],
   ["/helpers/*", "scm.transportation.drivers"],
   ["/lorries/*", "scm.transportation.drivers"],
   ["/lorry-service-records/*", "scm.transportation.drivers"],

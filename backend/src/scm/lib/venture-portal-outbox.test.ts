@@ -379,6 +379,8 @@ describe('refusing to send', () => {
       }),
       [payloadFor('HC-SO-013403')],
     );
+    /* Not one of the old orders the portal wants (scm.vp_old_orders_wanted). */
+    sb.rpcHandlers.vp_old_orders_wanted = () => [];
     currentSb = sb;
     const fetchImpl = vi.fn() as never;
 
@@ -388,6 +390,105 @@ describe('refusing to send', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(outbox(sb)[0].status).toBe('skipped');
     expect(String(outbox(sb)[0].last_error)).toMatch(/since/i);
+    expect(sb.rpcCalls.filter((c) => c.fn === 'vp_old_orders_wanted')).toEqual([
+      { fn: 'vp_old_orders_wanted', args: { p_doc_nos: ['HC-SO-013403'], p_since: '2026-08-01' } },
+    ]);
+  });
+
+  /* The one exception to the date floor (owner 2026-11-07): the portal pays the
+     colleague who collected the top-up of a departed salesperson's order that
+     was under its deposit when the portal started paying. HC-SO-010734 (paper
+     ZNT4813, sold 2026-03-10 by a salesperson who has since left) took RM 3,200
+     from a colleague on 2026-11-02, and every delivery of that day used to be
+     skipped here. */
+  test('an old order the portal wants is delivered after all', async () => {
+    const sb = withBuilder(
+      db({
+        flag: '1',
+        config: [URL_ROW, SECRET_ROW, { k: 'vp.since', v: '2026-08-01' }],
+        outbox: [
+          { id: 'vp-1', doc_no: 'HC-SO-010734', op: 'INSERT:mfg_sales_order_payments', status: 'pending', attempts: 0, revision: 0, created_at: '2026-11-02T12:03:14Z' },
+          { id: 'vp-2', doc_no: 'HC-SO-010735', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-11-02T12:04:00Z' },
+        ],
+        orders: [
+          { doc_no: 'HC-SO-010734', company_id: 1, so_date: '2026-03-10' },
+          { doc_no: 'HC-SO-010735', company_id: 1, so_date: '2026-03-11' },
+        ],
+      }),
+      [payloadFor('HC-SO-010734')],
+    );
+    sb.rpcHandlers.vp_old_orders_wanted = () => ['HC-SO-010734'];
+    currentSb = sb;
+    const fetchImpl = vi.fn(async () => res(200, { outcome: 'applied' }));
+
+    const r = await drainVenturePortalOutbox(env, 25, fetchImpl as unknown as typeof fetch);
+
+    expect(r).toMatchObject({ sent: 1, outOfScope: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body)).docNo).toBe('HC-SO-010734');
+    expect(outbox(sb).map((row) => [row.doc_no, row.status, row.portal_outcome ?? null])).toEqual([
+      ['HC-SO-010734', 'sent', 'applied'],
+      ['HC-SO-010735', 'skipped', null],
+    ]);
+    /* ONE question for the whole sweep, naming both old orders. */
+    expect(sb.rpcCalls.filter((c) => c.fn === 'vp_old_orders_wanted')).toEqual([
+      { fn: 'vp_old_orders_wanted', args: { p_doc_nos: ['HC-SO-010734', 'HC-SO-010735'], p_since: '2026-08-01' } },
+    ]);
+  });
+
+  test('a FAILED old-order question sends nothing and marks nothing', async () => {
+    const sb = withBuilder(
+      db({
+        flag: '1',
+        config: [URL_ROW, SECRET_ROW, { k: 'vp.since', v: '2026-08-01' }],
+        outbox: [
+          { id: 'vp-1', doc_no: 'HC-SO-010734', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-11-02T12:03:14Z' },
+          { id: 'vp-2', doc_no: 'HC-SO-013403', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-11-02T12:04:00Z' },
+        ],
+        orders: [
+          { doc_no: 'HC-SO-010734', company_id: 1, so_date: '2026-03-10' },
+          { doc_no: 'HC-SO-013403', company_id: 1, so_date: '2026-09-01' },
+        ],
+      }),
+      [payloadFor('HC-SO-010734'), payloadFor('HC-SO-013403')],
+    );
+    sb.rpcHandlers.vp_old_orders_wanted = () => { throw new Error('canceling statement due to statement timeout'); };
+    currentSb = sb;
+    const fetchImpl = vi.fn();
+
+    const r = await drainVenturePortalOutbox(env, 25, fetchImpl as unknown as typeof fetch);
+
+    expect(r.skipped).toBe('scope_read_failed');
+    expect(r.sent + r.outOfScope).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    /* Both still pending: the old one was not skipped by a blip, the new one goes next sweep. */
+    expect(outbox(sb).map((row) => [row.status, row.attempts])).toEqual([['pending', 0], ['pending', 0]]);
+  });
+
+  test('nothing too old in the sweep, nothing asked', async () => {
+    const sb = withBuilder(
+      db({
+        flag: '1',
+        config: [URL_ROW, SECRET_ROW, { k: 'vp.since', v: '2026-08-01' }],
+        outbox: [
+          { id: 'vp-1', doc_no: 'HC-SO-013403', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-09-12T01:00:00Z' },
+          /* Old, but another company's: refused for its company, never asked about. */
+          { id: 'vp-2', doc_no: 'HC2990-SO-000101', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-09-12T01:01:00Z' },
+        ],
+        orders: [
+          { doc_no: 'HC-SO-013403', company_id: 1, so_date: '2026-09-01' },
+          { doc_no: 'HC2990-SO-000101', company_id: 2, so_date: '2026-03-01' },
+        ],
+      }),
+      [payloadFor('HC-SO-013403')],
+    );
+    currentSb = sb;
+
+    const r = await drainVenturePortalOutbox(env, 25, vi.fn(async () => res(200)) as unknown as typeof fetch);
+
+    expect(r).toMatchObject({ sent: 1, outOfScope: 1 });
+    expect(sb.rpcCalls.map((c) => c.fn)).not.toContain('vp_old_orders_wanted');
+    expect(outbox(sb)[1].status).toBe('skipped');
   });
 
   /* THE MOST IMPORTANT TEST IN THIS FILE, and it exists because

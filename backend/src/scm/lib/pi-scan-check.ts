@@ -9,7 +9,7 @@
 
 import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
-import type { PiLineMatchResult } from './pi-scan-match';
+import { sameSize, type PiLineMatchResult } from './pi-scan-match';
 import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize } from './scan-word-match';
 
 /** A posted GRN line with something left to bill. */
@@ -292,6 +292,6 @@ export function repeatedPis(docs: ReadonlyArray<{ id: string; fileName: string |
 export function billCodesToTeach(review: PiReview, itemOf: (grnItemId: string) => string | undefined): Array<{ printedCode: string; itemCode: string }> {
   return review.lines.flatMap((l) => {
     const item = l.grnItemId ? itemOf(l.grnItemId) : undefined;
-    return item && l.read?.itemCode ? [{ printedCode: l.read.itemCode, itemCode: item }] : [];
+    return item && l.read?.itemCode && sameSize(l.read.itemCode, item) ? [{ printedCode: l.read.itemCode, itemCode: item }] : [];
   });
 }

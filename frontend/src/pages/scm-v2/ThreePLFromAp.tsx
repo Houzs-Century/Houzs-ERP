@@ -190,11 +190,12 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
   const t = result?.totals;
   const keptSen = result ? result.dos.filter((d) => ticked.has(d.doId)).reduce((s, d) => s + (toSen(billed[d.doId] ?? '') ?? 0), 0) : 0;
   return (
-    <section aria-label="From an AP invoice" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <h3 style={{ margin: 0, fontSize: 'var(--fs-13)' }}>From an AP invoice</h3>
-        <span style={{ ...muted, fontSize: 'var(--fs-12)' }}>Reads the transport company’s bill attached to the AP invoice; nothing is saved until you press Save.</span>
-        <span style={{ flex: 1 }} />
+    <section aria-label="From an AP invoice" className="flex flex-col gap-3 rounded-2xl border-2 border-primary/30 bg-surface px-5 py-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <h3 className="text-[16px] font-bold text-ink">From an AP invoice</h3>
+          <span className="text-[12px] text-ink-muted">Reads the transport company’s bill attached to the AP invoice; nothing is saved until you press Save.</span>
+        </div>
         <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
       </div>
       {err && <p role="alert" style={{ margin: 0, color: 'var(--c-danger, #dc2626)', fontSize: 'var(--fs-12)' }}>{err}</p>}
@@ -252,10 +253,10 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
               {t.service_case ? ` · service cases ${fmtSen(t.service_case)}` : ''} · not a delivery {fmtSen(t.not_delivery)}.
             </p>
           )}
-          <p style={{ margin: 0, fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
+          <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-[#5a3a14]">
             A handwritten bill can be misread (an “SO” read as “80”). Check each DO and its amount before saving.
           </p>
-          <h4 style={{ margin: '4px 0 0', fontSize: 'var(--fs-13)' }}>Matched to a delivery order ({result.dos.length})</h4>
+          <h4 className="mt-1 text-[14px] font-bold text-ink">Matched to a delivery order ({result.dos.length})</h4>
           <DataTable<ReadDo>
             tableId="threepl-from-ap-dos" columns={doColumns} rows={result.dos} emptyLabel="No line on the bill matched a delivery order."
             getRowKey={(r) => r.doId}
@@ -269,7 +270,7 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
           />
           {result.lines.some((l) => l.status !== 'matched') && (
             <>
-              <h4 style={{ margin: '4px 0 0', fontSize: 'var(--fs-13)' }}>Not on a DO</h4>
+              <h4 className="mt-1 text-[14px] font-bold text-ink">Not on a DO</h4>
               <p style={{ margin: 0, fontSize: 'var(--fs-12)', ...muted }}>
                 Saved with the bill. A line marked To check waits under To check, where you say where it goes — it can be changed there later too.
               </p>

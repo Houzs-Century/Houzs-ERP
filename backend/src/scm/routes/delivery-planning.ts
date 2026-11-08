@@ -63,6 +63,7 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
@@ -107,6 +108,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
@@ -115,7 +117,6 @@ import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock 
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
-
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
@@ -1222,8 +1223,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const date = (d.requested_date as string | null) ?? null;
       const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
         .filter(Boolean).join(', ') || null;
-      const scheduled = String(d.status ?? '') === 'SCHEDULED';
-      const dpDelivered = String(d.status ?? '') === 'DELIVERED';
+      const boardState = dpBoardState((d.status as string | null) ?? null);
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
@@ -1239,7 +1239,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         phone: (d.contact_phone as string | null) ?? null, agent: null, salesperson_id: null, venue: null,
         branding: null,
         status: String(d.status ?? ''),
-        delivery_state: dpDelivered ? 'DELIVERED' : (scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE'),
+        delivery_state: boardState,
         delivery_state_override: null,
         balance_sen: 0,
         balance_sen_live: null,
@@ -1309,7 +1309,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         trip_stop_no: null,
         trip_eta_offset_s: null,
         arrangement_stage: deriveArrangementStage({
-          deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          deliveryState: boardState,
           dateConfirmed: date != null,
           onActiveTrip: false, // an unscheduled DP job is never on a trip yet
         }),
@@ -1635,13 +1635,13 @@ deliveryPlanning.get('/geo', async (c) => {
   const scopedRows = dayRows.filter((r) => docNoSet.has(String(r.docNo ?? r.doc_no ?? '')));
 
   if (scopedRows.length === 0) {
-    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', ungeocoded: [] });
+    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', lorryDepots: {}, ungeocoded: [] });
   }
 
   /* 2. Zone map — the SAME company map + in-code default the delivery-zones
         router owns (exported helpers, one rule, two readers). */
   const { data: zoneRows } = await paginateAll<ZoneMapRow>((from, to) =>
-    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).range(from, to),
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap } = toPrefixMap(zoneRows ?? []);
 
@@ -1710,7 +1710,7 @@ deliveryPlanning.get('/geo', async (c) => {
     if (!best) depotReason = "the day's orders carry no warehouse";
     else {
       const { data: whRow } = await sb.from('warehouses')
-        .select('id, name, code, location, city, state, postcode')
+        .select('id, name, code, location, city, state, postcode, latitude, longitude')
         .eq('id', best.id)
         .maybeSingle();
       const w = (whRow ?? {}) as Record<string, unknown>;
@@ -1721,7 +1721,7 @@ deliveryPlanning.get('/geo', async (c) => {
         postcode: (w.postcode ?? null) as string | null,
         state: (w.state ?? null) as string | null,
       });
-      const hit = whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null;
+      const hit = w.latitude != null && w.longitude != null ? { lat: Number(w.latitude), lng: Number(w.longitude) } : whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null; // a set map position wins
       if (hit) {
         depot = { warehouseId: best.id, name: whName, code: (w.code ?? null) as string | null, lat: hit.lat, lng: hit.lng };
       } else {
@@ -1817,7 +1817,7 @@ deliveryPlanning.get('/geo', async (c) => {
     });
   }
 
-  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ungeocoded });
+  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ...(await loadLorryDepots(sb, c.env)), ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────

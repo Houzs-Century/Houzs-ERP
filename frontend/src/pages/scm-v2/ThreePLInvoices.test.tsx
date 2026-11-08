@@ -13,12 +13,13 @@ const perms = vi.hoisted(() => ({ finance: true }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (p: string) => perms.finance && p === 'scm.finance.accounting' }) }));
 
 import { ThreePLInvoices, toSen } from './ThreePLInvoices';
+import { ConfirmProvider } from '../../vendor/scm/components/ConfirmDialog';
 
 afterEach(() => { cleanup(); fetchMock.mockReset(); });
 
 const row = { id: 'c1', doNumber: 'DO-1', doDate: '2026-10-01', doStatus: 'DELIVERED', customer: 'Tan', doCompanyCode: '2990', carrierId: 'msj', carrierName: 'MSJ TRANSPORT', cardName: 'MSJ', invoiceNo: 'INV9', invoiceDate: '2026-10-05', billedSen: 12000, expectedSen: 10000, varianceSen: 2000, note: null };
 const mount = () => render(
-  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ThreePLInvoices /></QueryClientProvider>,
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ConfirmProvider><ThreePLInvoices /></ConfirmProvider></QueryClientProvider>,
 );
 
 describe('3PL invoices (HC-0031)', () => {
@@ -117,5 +118,36 @@ describe('3PL invoices (HC-0031)', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('do_not_found'));
     const put = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT')!;
     expect(JSON.parse(put[1].body)).toMatchObject({ doNumber: 'DO-404', threeplCompanyId: 'msj', billedSen: 15000 });
+  });
+
+  /* Audit 2026-11-07: the trash removed a row with no question, and a second
+     key-in for the same DO and 3PL replaced the first in silence. */
+  it('asks before removing a DO row', async () => {
+    fetchMock.mockImplementation((_p: string, init?: RequestInit) => Promise.resolve(init?.method === 'DELETE' ? { ok: true } : { rows: [row], invoices: [] }));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove DO-1' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('RM 120.00');
+    expect(fetchMock.mock.calls.some((c) => c[1]?.method === 'DELETE')).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'DELETE').map((c) => c[0])).toEqual(['/threepl-do-charges/c1']));
+  });
+
+  it('a DO already keyed in for the 3PL is replaced only after a yes', async () => {
+    const taken = Object.assign(new Error('already keyed'), { status: 409, body: JSON.stringify({ error: 'already_keyed', existing: { billedSen: 12000, invoiceNo: 'INV9' } }) });
+    fetchMock.mockImplementation((_p: string, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return Promise.resolve({ rows: [], invoices: [] });
+      return JSON.parse(String(init.body)).replace ? Promise.resolve({ id: 'c1' }) : Promise.reject(taken);
+    });
+    mount();
+    fireEvent.change(screen.getByLabelText('DO number'), { target: { value: 'DO-1' } });
+    fireEvent.change(screen.getByLabelText('3PL'), { target: { value: 'msj' } });
+    fireEvent.change(screen.getByLabelText('Billed (RM)'), { target: { value: '90' } });
+    fireEvent.click(screen.getByText('Save'));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('RM 120.00');
+    expect(dialog.textContent).toContain('INV9');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace' }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'PUT').map((c) => JSON.parse(c[1].body).replace)).toEqual([false, true]));
   });
 });

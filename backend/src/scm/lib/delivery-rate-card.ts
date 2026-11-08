@@ -67,6 +67,7 @@ export type RateRuleType =
   | 'SERVICE'
   | 'PICKUP'
   | 'INSPECTION'
+  | 'SUPPLIER_PICKUP'
   | 'TRANSFER';
 
 export interface RateRuleSpec {
@@ -122,6 +123,7 @@ export interface DeliveryFacts {
   serviceCount?: number | null;
   pickupCount?: number | null;
   inspectionCount?: number | null;
+  supplierPickupCount?: number | null;
   transferCount?: number | null;
 }
 
@@ -370,6 +372,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     ['SERVICE', intOf(facts.serviceCount), 'Service'],
     ['PICKUP', intOf(facts.pickupCount), 'Pickup'],
     ['INSPECTION', intOf(facts.inspectionCount), 'Inspection'],
+    ['SUPPLIER_PICKUP', intOf(facts.supplierPickupCount), 'Supplier pickup'],
     ['TRANSFER', intOf(facts.transferCount), 'Transfer'],
   ];
   for (const [type, count, label] of occurrence) {

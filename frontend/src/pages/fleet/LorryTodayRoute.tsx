@@ -15,6 +15,8 @@ import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-quer
 import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
 import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
+import { BTN_SEC, Tile } from "./FleetUi";
+import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
 
 const MAPS_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "";
 
@@ -28,9 +30,15 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     [day.data, lorryId],
   );
   const live = runs.some((t) => String(t.status).toUpperCase() === "IN_PROGRESS");
-  const tracker = (useLorryPositions().data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
-  const track = useLorryTrack(lorryId, date).data;
+  const positions = useLorryPositions();
+  const tracker = (positions.data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
+  const trackQ = useLorryTrack(lorryId, date);
+  const track = trackQ.data;
   const kmCost = (useLorryKmCost().data ?? []).find((k) => k.lorry_id === lorryId) ?? null;
+  /* The run by road, home and back, as Last Mile worked it out (owner 2026-11-08). */
+  const road = useRoadFigures(`${date.slice(0, 7)}-01`, date, lorryId);
+  const roadToday = (road.data ?? []).find((r) => r.date === date) ?? null;
+  const roadMonth = (road.data ?? []).reduce((a, r) => ({ m: a.m + r.distanceM, s: a.s + r.durationS, d: a.d + 1 }), { m: 0, s: 0, d: 0 });
   const phones = useActiveTripLocations(live && !tracker);
   const phoneFix = useMemo(() => {
     const ids = new Set(runs.map((t) => t.id));
@@ -52,17 +60,24 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type }));
   const driven = (track?.fixes ?? []).map((f) => ({ lat: f.lat, lng: f.lng }));
 
+  /* A failed read used to look exactly like "no run today / no position yet". */
+  const failed = [day.isError && "today's runs", positions.isError && "the GPS position", trackQ.isError && "today's track"].filter(Boolean);
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <Fact label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
+      {failed.length > 0 && (
+        <p role="alert" className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">Could not load {failed.join(", ")}. What shows below may be incomplete.</p>
+      )}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
           hint={position
             ? `${fmtTime(position.at)} · ${position.source}${position.speed != null ? ` · ${Math.round(position.speed)} km/h` : ""}`
             : "Shows once the GPS tracker reports, or the driver taps On the way"} />
-        <Fact label="Driven today" value={track ? `${track.km.toFixed(1)} km` : "—"}
+        <Tile label="Driven today" value={track ? `${track.km.toFixed(1)} km` : "No track yet"}
           hint={kmCost?.cost_sen != null ? `running cost ${fmtSen(kmCost.cost_sen)}` : "set RM/km in Vehicle details to see the cost"} />
-        <Fact label="Today's run" value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : "No run today"}
+        <Tile label="Today's run" value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : "No run today"}
           hint={runs.length ? `${runs[0]?.driver?.name ?? "no driver"} · ${stops.length} stop${stops.length === 1 ? "" : "s"}` : "Runs are planned in Delivery Time Arrangement"} />
+        <Tile label="By road today" value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
+          hint={roadMonth.d ? `this month ${fmtKm(roadMonth.m)} · ${fmtDrive(roadMonth.s)} over ${roadMonth.d} day${roadMonth.d === 1 ? "" : "s"}` : "from its warehouse and back, worked out on Last Mile"} />
       </div>
 
       {MAPS_KEY ? (
@@ -74,22 +89,22 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           vehicle={position ? { lat: position.lat, lng: position.lng, label: "Lorry now" } : null}
         />
       ) : (
-        <p className="rounded-md border border-dashed border-border px-3 py-2 text-[11.5px] text-ink-muted">
+        <p className="rounded-xl border border-dashed border-[#d9d3c6] px-3 py-2.5 text-[13px] text-ink-muted">
           The map needs VITE_GOOGLE_MAPS_API_KEY. The facts and stop list still work.
         </p>
       )}
-      {MAPS_KEY && <p className="text-[10.5px] text-ink-muted">Grey line: where it drove today. Blue: today&apos;s planned stops. Dark marker: where it is now.</p>}
+      {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove today. Blue: today&apos;s planned stops. Dark marker: where it is now.</p>}
 
       {stops.length > 0 && (
-        <ol className="divide-y divide-border rounded-md border border-border">
+        <ol className="flex flex-col gap-2">
           {stops.map((s, i) => (
-            <li key={s.id} className="flex items-start gap-3 px-3 py-2 text-[12px]">
-              <span className="w-5 flex-none text-right font-semibold tabular-nums text-ink-muted">{i + 1}</span>
+            <li key={s.id} className="flex items-start gap-2.5 text-[13px]">
+              <span className="grid h-6 w-6 flex-none place-items-center rounded-full bg-[#2c6aa0] text-[12px] font-bold text-white">{i + 1}</span>
               <span className="min-w-0 flex-1">
-                <span className="text-ink">{s.customer_name ?? s.stop_type}</span>
-                {s.address && <span className="block truncate text-[11px] text-ink-muted">{s.address}</span>}
+                <span className="font-semibold text-ink">{s.customer_name ?? s.stop_type}</span>
+                {s.address && <span className="block truncate text-[12.5px] text-ink-muted">{s.address}</span>}
               </span>
-              <span className="flex-none text-right text-[11px] tabular-nums text-ink-muted">
+              <span className="flex-none text-right text-[12px] tabular-nums text-ink-muted">
                 {hm(s.earliest_time) || hm(s.latest_time) ? `${hm(s.earliest_time) ?? ""}–${hm(s.latest_time) ?? ""}` : ""}
                 {!s.geocoded && <span className="block">not on map</span>}
               </span>
@@ -98,18 +113,8 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
         </ol>
       )}
       {runs.length > 0 && (
-        <Link to={`/scm/fleet-day?date=${date}&trip=${runs[0]?.id ?? ""}`} className="inline-block text-[11.5px] text-primary hover:underline">Open today&apos;s run in Last Mile</Link>
+        <Link to={`/scm/fleet-day?date=${date}&trip=${runs[0]?.id ?? ""}`} className={BTN_SEC}>Open today&apos;s run in Last Mile</Link>
       )}
-    </div>
-  );
-}
-
-function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="rounded-md border border-border bg-surface-2/40 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{label}</div>
-      <div className="mt-0.5 truncate text-[13px] font-semibold text-ink">{value}</div>
-      {hint && <div className="text-[10.5px] text-ink-muted">{hint}</div>}
     </div>
   );
 }

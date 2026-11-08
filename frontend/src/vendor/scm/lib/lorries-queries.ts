@@ -93,6 +93,11 @@ export type LorryRow = {
   // fleet / not attached).
   threepl_company_id?: string | null;
   threeplCompanyId?: string | null;
+  /** Every warehouse it serves; warehouse_id is its home, always among these. */
+  warehouse_ids?: string[] | null;
+  /** Mig 20261107T2000: the crew usually on it (a default; each trip keeps its own). */
+  usual_driver_id?: string | null;
+  usual_helper_id?: string | null;
 };
 
 export const CAPACITY_LAYERS = ['SETS', 'REVENUE', 'BOTH'] as const;
@@ -138,6 +143,10 @@ export type NewLorry = {
   // WS4a: the 3PL carrier company this lorry belongs to (null = own fleet).
   // Setting it forces the row OUTSOURCE server-side (scm/lib/threepl-link.ts).
   threeplCompanyId?: string | null;
+  /** The home warehouse, chosen on its own; the server keeps it in warehouseIds. */
+  homeWarehouseId?: string | null;
+  usualDriverId?: string | null;
+  usualHelperId?: string | null;
 };
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
@@ -177,7 +186,7 @@ export function useUpdateLorry() {
       authedFetch<{ lorry: LorryRow }>(`/lorries/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorries'] }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['lorries'] }), qc.invalidateQueries({ queryKey: ['lorry-capacity'] })]),
   });
 }
 
@@ -218,6 +227,26 @@ export type NewLorryServiceRecord = {
   nextServiceKm?: number | null;
   notes?: string | null;
 };
+
+/** Delete a lorry that never worked; the server refuses one with history (409). */
+export function useDeleteLorry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true }>(`/lorries/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorries'] }),
+  });
+}
+
+export type NewServiceRecord = { serviceDate: string; description: string; workshop: string | null; costSen: number; odometerKm: number | null; nextServiceDate: string | null; nextServiceKm: number | null; notes: string | null };
+
+export function useCreateLorryServiceRecord(lorryId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: NewServiceRecord) =>
+      authedFetch<{ record: LorryServiceRecord }>(`/lorry-service-records`, { method: 'POST', body: JSON.stringify({ lorryId, ...body }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-service-records', lorryId] }),
+  });
+}
 
 export function useLorryServiceRecords(lorryId: string | null) {
   return useQuery({

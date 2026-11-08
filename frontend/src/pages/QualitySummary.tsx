@@ -77,7 +77,7 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
   const [drill, setDrill] = useState<Drill<CaseRow> | null>(null);
   const openCases = (title: string, keep: (c: CaseRow) => boolean) => setDrill({
     title, subtitle: periodLabel, rows: (d?.caseList ?? []).filter(keep).sort((a, b) => b.ageDays - a.ageDays), rowKey: (c) => String(c.id),
-    onRow: (c) => navigate(`/assr/${c.id}`),
+    onRow: (c) => navigate(`/assr/${c.id}`), groupBy: null,
     columns: [
       col<CaseRow>("Case", true, (c) => <span className="text-primary">{c.assrNo ?? `#${c.id}`}</span>, (c) => c.assrNo ?? "", null, null),
       col<CaseRow>("Customer", true, (c) => c.customer ?? "—", (c) => c.customer ?? "", null, null),
@@ -197,13 +197,13 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
           {enough.length > 0 && (enough[0]?.months.length ?? 0) > 1 && (
             <div className="mt-4 overflow-x-auto">
               <div className="mb-1 text-[12px] font-semibold text-ink">Month by month · service case rate <span className="font-normal text-ink-muted">(hover a rate for items in cases / received)</span></div>
-              <table className="w-auto border-collapse">
+              <table className="w-full min-w-[560px] border-collapse">
                 <thead><tr><Th left>Supplier</Th>{(enough[0]?.months ?? []).map((m) => <Th key={m.month}>{m.month}</Th>)}</tr></thead>
                 <tbody>{enough.map((s) => (
                   <tr key={s.creditor}>
-                    <Td left className="max-w-[220px] truncate">{s.name}</Td>
+                    <Td left>{s.name}</Td>
                     {s.months.map((m) => (
-                      <Td key={m.month} className={cn("w-[84px]", m.ratePct == null ? "text-ink-muted" : m.ratePct > 100 ? "text-warning-text" : m.ratePct >= 5 ? "font-semibold text-err" : "")}>
+                      <Td key={m.month} className={cn("w-[14%]", m.ratePct == null ? "text-ink-muted" : m.ratePct > 100 ? "text-warning-text" : m.ratePct >= 5 ? "font-semibold text-err" : "")}>
                         <span title={`${m.items} items in cases / ${m.receivedQty.toLocaleString()} received`}>{m.ratePct == null ? "—" : m.ratePct > 100 ? "check code" : `${m.ratePct}%`}</span>
                       </Td>
                     ))}

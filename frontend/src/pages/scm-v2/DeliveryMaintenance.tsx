@@ -26,131 +26,58 @@
 // ----------------------------------------------------------------------------
 
 import { type ReactElement } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/Layout';
-import { CollapsibleSection, useOpenSections } from '../../components/CollapsibleSection';
+import { cn } from '../../lib/utils';
 import { DeliveryPlanningRegions } from './DeliveryPlanningRegions';
 import { DeliveryResidenceRules } from './DeliveryResidenceRules';
-import { Fleet } from './Fleet';
+import { DriversSection, HelpersSection, LorriesSection } from './Fleet';
+import { LorryLiveMap } from './LorryLiveMap';
 import { SavedLocations } from './SavedLocations';
 
-type Section = { key: string; title: string; hint: string; path: string; render: () => ReactElement };
+type Tab = { key: string; title: string; path: string; render: () => ReactElement };
 
-const SECTIONS: Section[] = [
-  {
-    key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions',
-    hint: 'Warehouse = region. Which depot serves which postcodes.',
-    render: () => <DeliveryPlanningRegions embedded />,
-  },
-  {
-    key: 'residence-rules', title: 'Residence Rules', path: '/scm/delivery-residence-rules',
-    hint: 'Building type -> handling time and access constraints.',
-    render: () => <DeliveryResidenceRules embedded />,
-  },
-  {
-    key: 'fleet', title: 'Fleet', path: '/scm/fleet',
-    hint: 'Drivers, helpers and lorries — in-house and outsourced.',
-    render: () => <Fleet embedded />,
-  },
-  {
-    key: 'saved-locations', title: 'Saved Locations', path: '/scm/saved-locations',
-    hint: 'Common from/to points a transfer is driven between.',
-    render: () => <SavedLocations embedded />,
-  },
+/* Owner 2026-11-07 (the Coverage & Fleet design): one tab per screen instead of stacked
+   folds, Lorries first. The tab lives in ?tab= so a link opens the same screen. */
+const TABS: Tab[] = [
+  { key: 'lorries', title: 'Lorries', path: '/scm/fleet', render: () => <LorriesSection /> },
+  { key: 'drivers', title: 'Drivers', path: '/scm/fleet', render: () => <DriversSection /> },
+  { key: 'helpers', title: 'Helpers', path: '/scm/fleet', render: () => <HelpersSection /> },
+  /* Owner 2026-11-08: the Lorry Live Map left the sidebar for a tab here and in Fleet Health. */
+  { key: 'live-map', title: 'Live map', path: '/scm/lorry-live-map', render: () => <LorryLiveMap embedded /> },
+  { key: 'residence-rules', title: 'Residence rules', path: '/scm/delivery-residence-rules', render: () => <DeliveryResidenceRules embedded /> },
+  { key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions', render: () => <DeliveryPlanningRegions embedded /> },
+  { key: 'saved-locations', title: 'Places', path: '/scm/saved-locations', render: () => <SavedLocations embedded /> },
 ];
+/* Old ?open= links (the folds) land on the tab they named. */
+const LEGACY: Partial<Record<string, string>> = { fleet: 'lorries', regions: 'regions', 'residence-rules': 'residence-rules', 'saved-locations': 'saved-locations' };
 
-const ALL_KEYS = SECTIONS.map((s) => s.key);
+/** The tab a link asks for: ?tab=, else the fold an old ?open= named, else Lorries. */
+export const tabKeyOf = (tab: string | null, open: string | null): string => tab ?? LEGACY[open?.split(',')[0] ?? ''] ?? 'lorries';
 
 export const DeliveryMaintenance = () => {
-  /* Regions open by default: landing on three closed chevrons is the "table of
-     contents instead of the page" the owner rejected. */
-  const { isOpen, toggle, setAll, ensureOpen } = useOpenSections(['regions']);
-
-  /* Open a key that may be closed, THEN scroll to it. Scrolling first lands on
-     a collapsed header and reads as a link that did nothing. */
-  const reveal = (key: string) => {
-    ensureOpen(key);
-    requestAnimationFrame(() => {
-      document.getElementById(key)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  };
-
-  const openCount = SECTIONS.filter((s) => isOpen(s.key)).length;
-  const allOpen = openCount === SECTIONS.length;
-
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.find((t) => t.key === tabKeyOf(params.get('tab'), params.get('open'))) ?? TABS[0]!;
   return (
     <div className="space-y-4">
       <PageHeader
         eyebrow="Reference data"
         title="Coverage & Fleet"
-        description="Who covers which postcodes, how each building type is handled, and the crew and lorries that go. Every screen here is the same one as its own page."
-        actions={
-          <Link
-            to="/scm/delivery-planning"
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary"
-          >
-            <ArrowLeft size={14} /> Delivery Planning
-          </Link>
-        }
+        description="Lorries, crews, where each lorry is now, building rules, regions and places."
       />
-
-      {/* Jump row, the shape Sales Order Maintenance uses. Each entry OPENS its
-          section before scrolling, so it works from a fully collapsed page. */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-surface p-1.5">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.key}
-            type="button"
-            onClick={() => reveal(s.key)}
-            className={`rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-              isOpen(s.key)
-                ? 'bg-primary-soft text-primary'
-                : 'text-ink-secondary hover:bg-primary-soft hover:text-primary'
-            }`}
-          >
-            {s.title}
+      <div role="tablist" aria-label="Coverage and fleet" className="flex gap-1 overflow-x-auto border-b border-border">
+        {TABS.map((t) => (
+          <button key={t.key} type="button" role="tab" aria-selected={t.key === tab.key}
+            onClick={() => setParams((p) => { p.set('tab', t.key); p.delete('open'); return p; }, { replace: true })}
+            className={cn('-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-[13px] font-semibold',
+              t.key === tab.key ? 'border-primary text-primary' : 'border-transparent text-ink-muted hover:text-ink')}>
+            {t.title}
           </button>
         ))}
-        <span className="ml-auto flex items-center gap-2 pr-1">
-          <span className="text-[11.5px] text-ink-muted">
-            {openCount === 0 ? 'All closed' : `${openCount} of ${SECTIONS.length} open`}
-          </span>
-          <button
-            type="button"
-            onClick={() => setAll(allOpen ? [] : ALL_KEYS)}
-            className="rounded-md border border-border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary"
-          >
-            {allOpen ? 'Collapse all' : 'Expand all'}
-          </button>
-        </span>
       </div>
-
-      <div className="space-y-2.5">
-        {SECTIONS.map((s) => (
-          <CollapsibleSection
-            key={s.key}
-            id={s.key}
-            title={s.title}
-            hint={s.hint}
-            open={isOpen(s.key)}
-            onToggle={() => toggle(s.key)}
-            count={
-              <Link
-                to={s.path}
-                className="text-[11px] uppercase tracking-wider text-ink-muted underline-offset-2 hover:text-primary hover:underline"
-              >
-                Open on its own
-              </Link>
-            }
-          >
-            {s.render()}
-          </CollapsibleSection>
-        ))}
-      </div>
+      <div role="tabpanel">{tab.render()}</div>
     </div>
   );
 };
-
 
 export default DeliveryMaintenance;

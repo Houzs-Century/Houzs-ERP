@@ -79,7 +79,11 @@ export function useUpdateDeliveryPlanningRegion() {
       authedFetch<{ region: RegionMasterRow }>(`/delivery-planning-regions/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: REGIONS_KEY }),
+    /* A renamed code changes which regions the state mapping points at, so refresh both. */
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: REGIONS_KEY });
+      void qc.invalidateQueries({ queryKey: STATES_KEY });
+    },
     onError: writeFailed,
   });
 }

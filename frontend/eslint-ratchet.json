@@ -943,8 +943,7 @@
       "@typescript-eslint/no-unnecessary-condition": 7
     },
     "src/vendor/scm/components/SofaComboTab.tsx": {
-      "@typescript-eslint/no-floating-promises": 4,
-      "@typescript-eslint/no-unnecessary-condition": 15
+      "@typescript-eslint/no-unnecessary-condition": 8
     },
     "src/vendor/scm/components/StatePicker.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 1

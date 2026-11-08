@@ -872,9 +872,10 @@ export function DeliveryMapPanel({
                         </span>
                       </span>
                     </span>
-                    {(row.timeRange || isFocused) && (
+                    {(row.timeRange || isFocused || row.roadLabel) && (
                       <span className="mt-0.5 flex items-center gap-2 pl-[22px] text-[10.5px]">
                         {row.timeRange && <span className="tabular-nums text-ink-muted">{row.timeRange}</span>}
+                        {row.roadLabel && <span className="tabular-nums font-semibold text-ink-secondary">{row.roadLabel}</span>}
                         {isFocused && <span className="font-semibold text-accent">Showing only this lorry</span>}
                       </span>
                     )}

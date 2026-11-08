@@ -7,35 +7,41 @@
 //   3. reports — weekly and monthly volume, and the process gaps.
 // Data: the Delivery Planning board (open orders) and
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
+import { LorryCapacity } from "./LorryCapacity";
+import { jobDone } from "./logisticDone";
+import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
-import { useDeliveryPlanning, DELIVERY_STATES, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { useDeliveryPlanning, DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
-import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
+import { LogisticLorryDrawer, type LorryWorkRow } from "./LogisticLorryDrawer";
+import { focusPeriod, jobDate, lorryOtherJobs, windowsInRange } from "./logisticFocus";
+import { regionOf } from "../../vendor/shared/logistic-region";
 import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
 import type { DoRow } from "./LogisticPeriodSection";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { Columns, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
-import { deliveryProgressBreakdown, messageStatusBreakdown, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
+import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, progressKeyOf, topWithOther, NO_MESSAGE_STATUS, OUT_NOT_CLOSED } from "./logisticStatus";
 
 /* Progress tile tone per state, in DELIVERY_STATES order (pending-delivery,
    pending-schedule, overdue, delivered) — derived from that one list so the
    state vocabulary keeps its single home and cannot drift. */
 const PROGRESS_TONES = ["main", "warn", "bad", "good"] as const;
 const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
-  DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]),
+  [...DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]), [OUT_NOT_CLOSED, "warn"]],
 );
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
-  today: string; thisMonday: string; weeks: Week[];
+  today: string; thisMonday: string; weeks: Week[]; deliveredMonths: Array<{ month: string; doCount: number; doAmountSen: number }>;
   months: Array<{ month: string; doCount: number; doAmountSen: number }>;
   deliveredOwing: { count: number; balanceSen: number; oldestDays: number };
   deliveredOwingOver30: { count: number; balanceSen: number; oldestDays: number };
@@ -95,11 +101,27 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? [])
     .filter((o) => !activeCode || !o.company_code || o.company_code === activeCode)
     .filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse, activeCode]);
+  /* A region clicked on By region: every figure in this page's first and third
+     parts follows it. It lives in the URL, so a refresh or a shared link keeps it. */
+  const region = params.get("region");
+  const setRegion = (r: string | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (r) next.set("region", r); else next.delete("region");
+    return next;
+  }, { replace: true });
+  const day = params.get("day");
+  const setDay = (d: string | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (d) next.set("day", d); else next.delete("day");
+    return next;
+  }, { replace: true });
+  const regionRows: PlanningOrder[] = useMemo(() => (region ? allRows.filter((o) => regionOf(o.customer_state) === region) : allRows), [allRows, region]);
   const rows: PlanningOrder[] = useMemo(() => allRows.filter((o) => o.row_type === "so"), [allRows]);
   /* Every open sales order, as of today, by when it is due (owner 2026-10-17:
      3 days, a week, two weeks, a month, later), with how many are short of
      stock and how many have a date agreed with the customer. */
-  const open = useMemo(() => rows.filter((o) => o.delivery_state !== "DELIVERED"), [rows]);
+  const progressMap = useJobProgressMap(true);
+  const open = useMemo(() => rows.filter((o) => !jobDone(o, progressMap)), [rows, progressMap]);
   const buckets = useMemo(() => {
     const defs: Array<{ key: string; label: string; color: string; test: (e: string | null) => boolean }> = [
       { key: "overdue", label: "Past delivery date", color: TONE.bad, test: (e) => !!e && e < today },
@@ -128,34 +150,22 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const ready = open.filter((o) => o.is_ship_ready);
 
   const h = hist.data;
-  /* The weekly report follows the picked period, by week of the month
-     (owner 2026-10-18): W1 = 1st–7th, W2 = 8th–14th, W3 = 15th–21st,
-     W4 = 22nd–28th, W5 = 29th to the month's end. */
+  const focus = useMemo(() => (h?.period ? focusPeriod(h.period, region, day) : null), [h, region, day]);
+  /* The weekly and bi-weekly reports read Delivery Planning, not issued DOs (owner
+     2026-11-07): every order by its delivery date, confirmed with the customer or
+     not, so a week ahead is a forecast and moves as dates move on the board. */
+  const [reportSize, setReportSize] = useState<"week" | "fortnight" | "month">("week");
   const weeks = useMemo(() => {
-    const out: Array<{ key: string; label: string; from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean }> = [];
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const months: string[] = [];
-    for (let m = period.from.slice(0, 7); m <= period.to.slice(0, 7);) {
-      months.push(m);
-      const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
-      m = mm === 12 ? `${y + 1}-01` : `${y}-${pad(mm + 1)}`;
-    }
-    for (const m of months) {
-      const last = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
-      [[1, 7], [8, 14], [15, 21], [22, 28], [29, last]].forEach(([a, b], i) => {
-        if (a! > last) return;
-        const from = `${m}-${pad(a!)}`; const to = `${m}-${pad(b!)}`;
-        const ds = (h?.period.doList ?? []).filter((d) => d.date >= from && d.date <= to);
-        out.push({
-          key: from, label: months.length > 1 ? `${m} · W${i + 1}` : `W${i + 1}`, from, to,
-          doCount: ds.length, doAmountSen: ds.reduce((x, d) => x + d.amountSen, 0), delivered: ds.filter((d) => d.status === "DELIVERED").length,
-          current: today >= from && today <= to,
-        });
-      });
-    }
-    return out;
-  }, [h, period.from, period.to, today]);
-  const months = h?.months ?? [];
+    const orders = regionRows.filter((o) => o.row_type === "so");
+    return windowsInRange(period.from, periodEnd(period), reportSize).map((w) => {
+      const xs = orders.filter((o) => { const d = jobDate(o); return !!d && d >= w.from && d <= w.to; });
+      return {
+        ...w, rows: xs, doCount: xs.length, doAmountSen: xs.reduce((x, o) => x + o.local_total_sen, 0),
+        delivered: xs.filter((o) => jobDone(o, progressMap)).length, current: today >= w.from && today <= w.to,
+      };
+    });
+  }, [regionRows, reportSize, period, today]);
+  const months = (h?.months ?? []).map((m) => ({ ...m, confirmed: h?.deliveredMonths.find((x) => x.month === m.month)?.doCount ?? 0 }));
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
@@ -164,8 +174,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const [doDrill, setDoDrill] = useState<Drill<DoRow> | null>(null);
   const [soDrill, setSoDrill] = useState<Drill<PlanningOrder> | null>(null);
   const openDos: DoDrill = (title, keep) => setDoDrill({
-    title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep), rowKey: (d) => d.id,
-    onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`),
+    title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep).sort((a, b) => b.date.localeCompare(a.date)), rowKey: (d) => d.id,
+    onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`), groupBy: (d) => d.date,
     columns: [
       col<DoRow>("DO", true, (d) => <span className="text-primary">{d.doNumber ?? "—"}</span>, (d) => d.doNumber ?? "", null, null),
       col<DoRow>("Date", false, (d) => d.date, null, null, null),
@@ -175,10 +185,29 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       col<DoRow>("Amount", false, (d) => fmtSen(d.amountSen), null, (d) => d.amountSen, fmtSen),
     ],
   });
-  const openSos = (title: string, xs: PlanningOrder[]) => setSoDrill({
-    title, subtitle: "open sales orders, as of today", rows: xs, rowKey: (o) => o.so_doc_no,
+  const [lorryDrill, setLorryDrill] = useState<string | null>(null);
+  /* Everything on the lorry: its delivery orders, and every other board job whose crew
+     names it, on the job's date. */
+  const lorryWork = (plate: string): LorryWorkRow[] => {
+    const from = day ?? period.from;
+    const to = day ?? period.to;
+    const dos = (h?.period.doList ?? []).filter((d) => d.lorry === plate && d.date >= from && d.date <= to && (!region || d.region === region)).map((d): LorryWorkRow => ({
+      key: d.id, date: d.date, type: "Delivery", ref: d.doNumber ?? "—", customer: d.customer ?? "—", region: d.region, amountSen: d.amountSen,
+      onOpen: () => navigate(`/scm/delivery-orders/${d.id}`),
+    }));
+    const others = lorryOtherJobs(h?.period.lorryJobs ?? [], plate, from, to, region, new Set(dos.map((d) => d.key))).map((j, i): LorryWorkRow => ({
+      key: `job-${i}`, date: j.date, type: j.type, ref: j.ref ?? "—", customer: j.customer ?? "—", region: "—", amountSen: 0,
+      onOpen: j.assrId ? () => navigate(`/assr/${j.assrId}`) : null,
+    }));
+    return [...dos, ...others];
+  };
+  const openSos = (title: string, xs: PlanningOrder[], subtitle: string, byDay: boolean) => setSoDrill({
+    title, subtitle, rowKey: (o) => o.so_doc_no,
+    rows: byDay ? [...xs].sort((a, b) => (jobDate(a) ?? "").localeCompare(jobDate(b) ?? "")) : xs,
+    groupBy: byDay ? (o) => jobDate(o) ?? "No date" : null,
     onRow: (o) => navigate(`/scm/sales-orders/${o.so_doc_no}`),
     columns: [
+      col<PlanningOrder>("Status", true, (o) => DELIVERY_STATE_LABEL[o.delivery_state as keyof typeof DELIVERY_STATE_LABEL] , (o) => o.delivery_state, null, null),
       col<PlanningOrder>("Order", true, (o) => <span className="text-primary">{o.so_doc_no}</span>, (o) => o.so_doc_no, null, null),
       col<PlanningOrder>("Customer", true, (o) => o.debtor_name ?? "—", (o) => o.debtor_name ?? "", null, null),
       col<PlanningOrder>("Delivery", false, (o) => o.effective_delivery_date ?? "—", null, null, null),
@@ -192,15 +221,53 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
   /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
      by delivery progress and by the customer-message status. */
-  const progress = useMemo(() => deliveryProgressBreakdown(rows), [rows]);
-  const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(rows), 7), [rows]);
+  const progress = useMemo(() => deliveryProgressBreakdown(rows, (o) => jobDone(o, progressMap)), [rows, progressMap]);
+  /* A delivery progress card picks the orders the message table below reads. */
+  const [progressPick, setProgressPick] = useState<string | null>(null);
+  const pickedRows = useMemo(() => (progressPick ? rows.filter((o) => progressKeyOf(o, (x) => jobDone(x, progressMap)) === progressPick) : rows), [rows, progressPick, progressMap]);
+  const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(pickedRows), 7), [pickedRows]);
+  const pickedLabel = progress.find((s) => s.key === progressPick)?.label ?? null;
   const daysOver = (e: string | null) => (e ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${e}T00:00:00Z`)) / DAY) : 0);
+
+  /* Owner 2026-11-07: Lorry Capacity is this page's second view, on the same period and
+     the same lorry figures. ?view=capacity holds it. */
+  const view = params.get("view") === "capacity" ? "capacity" : "deliveries";
+  const setView = (v: "deliveries" | "capacity") => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (v === "capacity") next.set("view", "capacity"); else next.delete("view");
+    return next;
+  }, { replace: true });
+  const viewSwitch = (
+    <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="tablist" aria-label="Logistic view">
+      {([["deliveries", "Deliveries"], ["capacity", "Lorry capacity"]] as const).map(([k, label]) => (
+        <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k)}
+          className={view === k ? "rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white" : "rounded-md px-3 py-1.5 text-[12.5px] font-semibold text-ink-secondary hover:text-ink"}>{label}</button>
+      ))}
+    </div>
+  );
+  const header = !embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
+    description="What was delivered in the period, what is still to deliver and when, what is overdue, and the weekly report — straight from the orders and delivery orders." />;
+
+  if (view === "capacity") {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="flex flex-wrap items-center gap-2">
+          {viewSwitch}
+          <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
+          {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+        </div>
+        {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
+        <LorryCapacity period={{ from: period.from, to: period.to }} overviewLorries={h?.period.byLorry ?? []} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {!embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
-        description="What was delivered in the period, what is still to deliver and when, what is overdue, and the weekly report — straight from the orders and delivery orders." />}
+      {header}
       <div className="flex flex-wrap items-center gap-2">
+        {viewSwitch}
         <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
         <select className={SELECT_CLS} value={warehouse} onChange={(e) => setWarehouse(e.target.value)} aria-label="Warehouse">
           <option value="">All warehouses</option>
@@ -211,10 +278,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
-      <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
-        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
-      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} doList={h.period.doList} onDrill={openDos} />}
-      {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} onDrill={openDos} />}
+      <LogisticPeriodSection rows={regionRows} period={period} progress={progressMap} totals={focus}
+        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows, "open sales orders, as of today", false)} onDrill={openDos} />
+      {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
+      {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.lorry.lorryRegionOrders} region={region} day={day} onLorry={setLorryDrill} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
@@ -229,7 +296,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <thead><tr><Th left>Due</Th><Th>Orders</Th><Th>Amount</Th><Th>Not ready (stock)</Th><Th>Date agreed with customer</Th></tr></thead>
             <tbody>
               {buckets.map((b) => (
-                <tr key={b.key} onClick={() => openSos(`Due · ${b.label}`, b.rows)} className="cursor-pointer hover:bg-surface-2/50">
+                <tr key={b.key} onClick={() => openSos(`Due · ${b.label}`, b.rows, "open sales orders, as of today, by day", true)} className="cursor-pointer hover:bg-surface-2/50">
                   <Td left><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: b.color }} />{b.label}</Td>
                   <Td className={b.key === "overdue" && b.count ? "font-semibold text-err" : ""}>{b.count}</Td>
                   <Td>{fmtSen(b.sen)}</Td>
@@ -256,22 +323,31 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             {/* Delivery progress — a colour card per state (click opens its orders). */}
             <div>
               <div className="mb-2 text-[12px] font-semibold text-ink">By delivery progress</div>
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                 {progress.map((s) => (
-                  <Tile key={s.key} label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}
-                    onClick={() => openSos(`${s.label} · on the board`, rows.filter((o) => o.delivery_state === s.key))}
-                    value={n(s.count)} note={`${s.pct}% · ${fmtSen(s.sen)}`} />
+                  <div key={s.key} className={cn("rounded-xl", progressPick === s.key && "ring-2 ring-primary")}>
+                    <Tile label={s.label} tone={PROGRESS_TONE[s.key] ?? "muted"} trend={null}
+                      onClick={() => setProgressPick(progressPick === s.key ? null : s.key)}
+                      value={n(s.count)} note={`${s.pct}% · ${fmtSen(s.sen)}`} />
+                  </div>
                 ))}
               </div>
             </div>
             {/* Message status — top few, the long tail folded into "Other". */}
             <div>
-              <div className="mb-1.5 text-[12px] font-semibold text-ink">By message status</div>
+              <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] font-semibold text-ink">
+                By message status{pickedLabel ? ` · ${pickedLabel}` : " · all orders"}
+                {pickedLabel && <button type="button" className="font-normal text-primary hover:underline" onClick={() => setProgressPick(null)}>All orders</button>}
+                {pickedLabel && <button type="button" className="font-normal text-primary hover:underline" onClick={() => openSos(`${pickedLabel} · on the board`, pickedRows, "sales orders on the board", true)}>See these orders</button>}
+              </div>
               <table className="w-full border-collapse">
                 <thead><tr><Th left>Message status</Th><Th>Orders</Th><Th>Share</Th><Th>Amount</Th></tr></thead>
                 <tbody>
                   {msgStatus.map((s) => (
-                    <tr key={s.key}><Td left className={s.key === NO_MESSAGE_STATUS || s.key === "__other__" ? "text-ink-muted" : ""}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td></tr>
+                    <tr key={s.key} className="cursor-pointer hover:bg-surface-2/50"
+                      onClick={() => openSos([s.label, pickedLabel].filter(Boolean).join(" · "), ordersOfSlice(pickedRows, s.key, msgStatus), "sales orders on the board", true)}>
+                      <Td left className={s.key === NO_MESSAGE_STATUS || s.key === "__other__" ? "text-ink-muted" : "text-primary"}>{s.label}</Td><Td>{n(s.count)}</Td><Td>{s.pct}%</Td><Td>{fmtSen(s.sen)}</Td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -282,38 +358,42 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
-      <Panel title="Weekly logistic report" hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
-        right={<Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />}>
+      <Panel title={`${{ week: "Weekly", fortnight: "Bi-weekly", month: "Monthly" }[reportSize]} logistic report${region ? ` · ${region}` : ""}`} hint={`${period.label} every order by its delivery date, else its sales exemption date, on Delivery Planning, confirmed or not · how much is due and how much is left · click a row for its orders`}
+        right={<span className="flex items-center gap-2">
+          <Toggle value={reportSize} options={[["week", "Weekly"], ["fortnight", "Bi-weekly"], ["month", "Monthly"]]} onChange={setReportSize} />
+          <Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />
+        </span>}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
           <Columns axes={false} valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
-            series={weekBy === "amount" ? [{ name: "DO amount", color: PALETTE[0]! }] : [{ name: "DO issued", color: PALETTE[0]! }, { name: "Marked delivered", color: TONE.good }]}
+            series={weekBy === "amount" ? [{ name: "Amount due", color: PALETTE[0]! }] : [{ name: "Orders due", color: PALETTE[0]! }, { name: "Delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
             line={weekBy === "amount" ? { name: "Average order", color: PALETTE[1]!, values: weeks.map((w) => (w.doCount ? Math.round(w.doAmountSen / w.doCount) : null)), format: rm } : null} />
           <table className="w-full border-collapse self-start">
-            <thead><tr><Th left>Week</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Marked delivered</Th></tr></thead>
+            <thead><tr><Th left>{{ week: "Week", fortnight: "Fortnight", month: "Month" }[reportSize]}</Th><Th>Orders due</Th><Th>Amount</Th><Th>Average order</Th><Th>Delivered</Th><Th>To deliver</Th></tr></thead>
             <tbody>{weeks.map((w) => (
-              <tr key={w.key} onClick={() => openDos(`Delivered · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, (d) => d.date >= w.from && d.date <= w.to)}
+              <tr key={w.key} onClick={() => openSos(`Due · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, w.rows, "every order due, delivered or not, by day", true)}
                 className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>
                 <Td left>{w.label} <span className="text-ink-muted">{dd(w.from)} – {dd(w.to)}</span>{w.current ? " · now" : ""}</Td>
                 <Td>{w.doCount}</Td><Td>{rm(w.doAmountSen)}</Td><Td>{w.doCount ? rm(Math.round(w.doAmountSen / w.doCount)) : "—"}</Td>
-                <Td className={w.doCount > 5 && w.delivered === 0 && w.to < today ? "text-err" : ""}>{w.delivered}</Td>
+                <Td>{w.delivered}</Td>
+                <Td className={w.doCount > w.delivered && w.to < today ? "text-err" : ""}>{w.doCount - w.delivered}</Td>
               </tr>))}</tbody>
           </table>
         </div>
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Monthly delivery volume" hint="delivery orders issued each month"
+        <Panel title="Monthly delivery volume" hint="delivery orders out each month · Confirmed = closed as delivered, in the month it was delivered"
           right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
           <Columns axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
-            series={[{ name: monthBy === "amount" ? "DO amount" : "DO issued", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
+            series={[{ name: monthBy === "amount" ? "DO amount" : "DO out", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
             line={null} />
           <table className="mt-2 w-full border-collapse">
-            <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th></tr></thead>
-            <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td></tr>)}</tbody>
+            <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Confirmed</Th></tr></thead>
+            <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td><Td>{x.confirmed}</Td></tr>)}</tbody>
           </table>
-          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders raised in the ERP; months before the ERP took over delivery orders read low.</p>
+          <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders raised in the ERP; months before the ERP took over read low. Confirmed stays low until the crew closes each DO.</p>
         </Panel>
         <section id="gaps">
           <Panel title="Process gaps" hint="why some figures above read low">
@@ -388,6 +468,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <DrillDrawer drill={doDrill} onClose={() => setDoDrill(null)} />
+      {lorryDrill && <LogisticLorryDrawer plate={lorryDrill} subtitle={[day ?? `${period.from} – ${period.to}`, region].filter(Boolean).join(" · ")} rows={lorryWork(lorryDrill)} onClose={() => setLorryDrill(null)} />}
       <DrillDrawer drill={soDrill} onClose={() => setSoDrill(null)} />
     </div>
   );

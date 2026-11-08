@@ -156,7 +156,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     setDrill({
       title: group ? `${title} · ${label(group)}` : title, subtitle: `${period.from} – ${period.to}`,
       rows: (d?.lines ?? []).filter(keep).sort((a, b) => amount(b) - amount(a)), rowKey: (l) => `${l.poId}|${l.itemCode}|${l.qty}|${l.dueDate}`,
-      onRow: (l) => navigate(`/scm/purchase-orders/${l.poId}`),
+      onRow: (l) => navigate(`/scm/purchase-orders/${l.poId}`), groupBy: null,
       columns: [
         col<PeriodLine>("PO", true, (l) => <span className="text-primary">{l.poNumber}</span>, (l) => l.poNumber, null, null),
         col<PeriodLine>("PO date", false, (l) => l.poDate, null, null, null),

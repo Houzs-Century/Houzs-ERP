@@ -52,6 +52,7 @@ import {
   type RateRuleType,
   type DeliveryFacts,
 } from '../lib/delivery-rate-card';
+import { RATE_RULE_TYPES } from '../lib/rate-rule-taxonomy';
 import { ZONE_SET, DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress } from '../lib/geocode';
@@ -67,10 +68,10 @@ deliveryRateCards.use('*', supabaseAuth);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const rc = (sb: unknown): any => sb;
 
-const RULE_TYPES: readonly RateRuleType[] = [
-  'POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', 'OUTSTATION', 'OUTSTATION_TRIP',
-  'DISPOSE', 'SETUP', 'DISMANTLE', 'SERVICE', 'PICKUP', 'INSPECTION', 'TRANSFER',
-];
+/* The ONE list (rate-rule-taxonomy.ts, which audit:job-types holds to the
+   rule_type CHECK). A local copy here lacked SUPPLIER_PICKUP after mig 0243
+   added it, so the editor offered a rule this route refused with 400. */
+const RULE_TYPES: readonly RateRuleType[] = RATE_RULE_TYPES;
 const RULE_TYPE_SET = new Set<string>(RULE_TYPES);
 
 const CARD_COLS =
@@ -287,7 +288,19 @@ deliveryRateCards.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined) updates.name = p.name;
   if (p.carrierLorryId !== undefined) updates.carrier_lorry_id = p.carrierLorryId;
+  const sb = c.get('supabase');
   if (p.carrierCompanyId !== undefined) {
+    /* Moving a card to a carrier (a card whose company was deleted is
+       reassigned this way): the carrier must be this company's, and the card
+       takes its name, as on create. */
+    if (p.carrierCompanyId) {
+      const { data: carrier, error: cErr } = await scopeToCompanyId(
+        sb.from('threepl_companies').select('id, name'), co.companyId,
+      ).eq('id', p.carrierCompanyId).maybeSingle();
+      if (cErr) return c.json({ error: 'fetch_failed', reason: cErr.message }, 500);
+      if (!carrier) return c.json({ error: 'carrier_not_found', reason: 'That 3PL company does not exist for this company.' }, 404);
+      if (p.name === undefined) updates.name = String((carrier as Record<string, unknown>).name ?? '');
+    }
     updates.carrier_company_id = p.carrierCompanyId;
     // Moved together, always. Writing the carrier without the flag is what let a
     // card read "MSJ TRANSPORT" and "Own-fleet card" at the same time.
@@ -305,10 +318,13 @@ deliveryRateCards.patch('/:id', async (c) => {
   const user = c.get('user') as { id?: string } | null;
   updates.updated_by = user?.id ?? null;
   updates.updated_at = new Date().toISOString();
-  const sb = c.get('supabase');
   const { data, error } = await scopeToCompanyId(rc(sb).from('delivery_rate_cards').update(updates).eq('id', id), co.companyId).select(CARD_COLS).maybeSingle();
   if (error) {
-    if (error.code === '23505') return c.json({ error: 'duplicate_name', reason: 'A card with that name already exists.' }, 409);
+    if (error.code === '23505') {
+      return c.json(/carrier_company/i.test(error.message ?? '')
+        ? { error: 'duplicate_carrier', reason: 'That 3PL company already has a rate card.' }
+        : { error: 'duplicate_name', reason: 'A card with that name already exists.' }, 409);
+    }
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
@@ -446,6 +462,7 @@ const factsSchema = z.object({
   serviceCount: z.number().int().min(0).nullable().optional(),
   pickupCount: z.number().int().min(0).nullable().optional(),
   inspectionCount: z.number().int().min(0).nullable().optional(),
+  supplierPickupCount: z.number().int().min(0).nullable().optional(),
   transferCount: z.number().int().min(0).nullable().optional(),
 });
 
