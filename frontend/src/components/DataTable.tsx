@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { TableLoadError } from "./TableLoadError";
+import { scrollPanelNearRow } from "./dataTableScrollToRow";
 import {
   Download,
   Upload,
@@ -2095,8 +2097,7 @@ function DataTableInner<T, L>({
       wrap.scrollTop = offset;
       wrap.dispatchEvent(new Event("scroll"));
     } else if (tbodyRef.current) {
-      window.scrollTo({ top: window.scrollY + tbodyRef.current.getBoundingClientRect().top + offset - window.innerHeight / 2 });
-      window.dispatchEvent(new Event("scroll"));
+      scrollPanelNearRow(tbodyRef.current, offset);
     }
     const raf = requestAnimationFrame(() => requestAnimationFrame(settle));
     return () => cancelAnimationFrame(raf);
@@ -2678,8 +2679,7 @@ function DataTableInner<T, L>({
                     colSpan={totalColSpan}
                     className="px-3 py-14 text-center text-sm text-err"
                   >
-                    <div className="font-semibold">Failed to load</div>
-                    <div className="mt-1 text-xs text-ink-muted">{error}</div>
+                    <TableLoadError error={String(error)} />
                   </td>
                 </tr>
               )}
@@ -3014,8 +3014,7 @@ function DataTableInner<T, L>({
         )}
         {!effectiveLoading && error && (
           <div className="rounded-lg border border-err/40 bg-err/5 p-4 text-center text-sm text-err">
-            <div className="font-semibold">Failed to load</div>
-            <div className="mt-1 text-xs text-ink-muted">{error}</div>
+            <TableLoadError error={String(error)} />
           </div>
         )}
         {!effectiveLoading && !error && sortedRows && sortedRows.length === 0 && (

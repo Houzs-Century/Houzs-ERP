@@ -71,7 +71,8 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
       return;
     }
     const BOTTOM_GAP = 12;
-    const MIN_FREEZE_H = 240;
+    /* Below this a frozen box shows about 3 rows of a long table (a 42-line SO): the page scrolls instead. */
+    const MIN_FREEZE_H = 360;
     const recompute = () => {
       const el = scrollWrapRef.current;
       const rootEl = freezeRootRef.current;
@@ -179,7 +180,13 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
         );
         runway = Math.max(0, target - baseScrollable);
         const surplus = Math.max(0, baseScrollable - target);
-        cappedMaxH = Math.max(MIN_FREEZE_H, maxH - surplus);
+        cappedMaxH = maxH - surplus;
+        /* A table with a lot of page below it (a sales order's payments and contract) has no room left to fill: held at
+           the minimum it was a five-row box on a 40-line order. The page scrolls instead and every line shows. */
+        if (cappedMaxH < MIN_FREEZE_H) {
+          setFreezeBox((prev) => (prev === null ? prev : null));
+          return;
+        }
       }
       setFreezeBox((prev) =>
         prev && prev.top === stickTop && prev.maxH === cappedMaxH && prev.runway === runway
