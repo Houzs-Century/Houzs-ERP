@@ -27,6 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from '../lib/companyScope';
+import { coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
@@ -439,8 +440,10 @@ async function editTask(c: any, companyId: number, t: TodoTask, row: Record<stri
   said((after.link?.to ?? null) !== (t.link?.to ?? null), `Linked to: ${t.link?.no || '—'} → ${after.link?.no || '—'}`, ['link']);
   if (lines.length === 0) return c.json({ task: t, unchanged: true });
 
-  /* Guarded on the row: a delete landing in between wins, and nothing is written. */
-  const { data, error } = await sb.from('acc_todo_tasks').update({ ...writes, updated_at: new Date().toISOString() })
+  /* Guarded on the row: a delete landing in between wins, and nothing is written. The due day
+     was checked as YYYY-MM-DD above; the payload still goes through the shared blank-date
+     coercion, the shape every request-built write takes (tests/dateWriteCoercion.test.ts). */
+  const { data, error } = await sb.from('acc_todo_tasks').update(coerceEmptyDates({ ...writes, updated_at: new Date().toISOString() }))
     .eq('company_id', companyId).eq('id', t.id).eq('is_off', false).select(TASK_COLS).maybeSingle();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'deleted', message: 'This task was deleted a moment ago.' }, 409);
