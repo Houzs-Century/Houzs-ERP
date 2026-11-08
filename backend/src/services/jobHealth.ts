@@ -18,6 +18,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "vp-feed": 5,
   "vp-catalogue": 5,
   "ac-relink-sweep": 5,
+  "health-hub": 5,
   "ac-delivery-dates": 5,
   "so-allocation": 5,
   "mrp-snapshot": 15,

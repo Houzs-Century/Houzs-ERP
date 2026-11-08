@@ -25,6 +25,7 @@
 
 import { dailyTotalsByLorry, diffPct, fmtDrive, fmtKm, roadTotalsByLorry, useRoadDaily, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
 import { LorryRoadDaily } from './LorryRoadDaily';
+import { ratePctText, useOnTime } from '../../vendor/scm/lib/on-time-queries';
 import { useMemo, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { fmtSen, fmtDate } from '@2990s/shared';
@@ -171,6 +172,9 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
   /* GPS km, Drive time and On-site time per lorry-day, worked out on the server. */
   const daily = useRoadDaily(from, to);
   const dailyBy = useMemo(() => dailyTotalsByLorry(daily.data?.days ?? []), [daily.data]);
+  /* On-time rate per lorry, worked out on the server (the Deliveries view's on-time KPI). */
+  const onTime = useOnTime(from, to, null);
+  const onTimeBy = useMemo(() => new Map((onTime.data?.byLorry ?? []).filter((g) => g.lorryId).map((g) => [g.lorryId as string, g])), [onTime.data]);
   const plateById = useMemo(() => new Map((data?.lorries ?? []).map((l) => [l.lorry_id, l.plate])), [data]);
   const totals = useMemo(() => capacityTotals(rows), [rows]);
 
@@ -265,9 +269,13 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
       key: 'time_diff', label: 'Time diff', align: 'right', getValue: (l) => dailyBy.get(l.lorry_id)?.driveS ?? null,
       render: (l) => { const t = dailyBy.get(l.lorry_id); return (t?.timedStops ? diffPct(t.driveS, t.googleTimedS) : null) ?? dash; },
     },
+    {
+      key: 'on_time_rate', label: 'On-time rate', align: 'right', getValue: (l) => onTimeBy.get(l.lorry_id)?.ratePct ?? null,
+      render: (l) => { const g = onTimeBy.get(l.lorry_id); return g?.delivered ? <span title={`${g.onTime + g.early} of ${g.delivered} delivered on or before the promised date`}>{ratePctText(g.ratePct)}</span> : dash; },
+    },
     { key: 'running_cost', label: 'Running Cost', align: 'right', getValue: (l) => l.running_cost_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.running_cost_sen)}</span> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [toggleInHouse, setRepair, from, to, notify, roadBy, dailyBy]);
+  ], [toggleInHouse, setRepair, from, to, notify, roadBy, dailyBy, onTimeBy]);
 
   return (
     <div>

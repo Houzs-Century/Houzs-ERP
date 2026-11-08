@@ -43,4 +43,35 @@ describe('MoneyInput', () => {
     expect(onCommit).toHaveBeenCalledWith(7_500);
     expect(box.value).toBe('75.00');
   });
+
+  /* Regression: the default used to be selectOnFocus=false, so clicking a cell
+     showing 0.00 left the caret before the 0 and typing 5000 read as 50000. */
+  test('selects the whole value on focus by default, so typing replaces it', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MoneyInput bare valueSen={0} onCommit={vi.fn()} aria-label="price" />);
+      const box = screen.getByLabelText('price') as HTMLInputElement;
+      fireEvent.focus(box);
+      vi.runAllTimers();
+      expect(box.value).toBe('0.00');
+      expect(box.selectionStart).toBe(0);
+      expect(box.selectionEnd).toBe(box.value.length);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('selectOnFocus={false} still opts out', () => {
+    vi.useFakeTimers();
+    try {
+      render(<MoneyInput bare valueSen={0} onCommit={vi.fn()} selectOnFocus={false} aria-label="price" />);
+      const box = screen.getByLabelText('price') as HTMLInputElement;
+      box.setSelectionRange(0, 0);
+      fireEvent.focus(box);
+      vi.runAllTimers();
+      expect(box.selectionEnd).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

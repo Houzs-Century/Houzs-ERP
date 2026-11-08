@@ -1,6 +1,6 @@
 // Logistic Overview (owner, 2026-10-16/17), in three parts:
 //   1. delivered in the period — amount, orders, average order, average per
-//      lorry, day by day, by region, by category, jobs by type;
+//      lorry, day by day, by region, by category, jobs by type, on-time delivery;
 //   2. still to deliver as of today — by when it is due (3 days, a week, two
 //      weeks, a month, later), the overdue list with its delivery date, the
 //      orders due in 3 days and not ready, and today's deliveries;
@@ -8,6 +8,8 @@
 // Data: the Delivery Planning board (open orders) and
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
 import { LorryCapacity } from "./LorryCapacity";
+import { LogisticOnTimeSection } from "./LogisticOnTimeSection";
+import { useOnTime } from "../../vendor/scm/lib/on-time-queries";
 import { jobDone } from "./logisticDone";
 import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
@@ -92,6 +94,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     queryFn: () => authedFetch<History>(`/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`),
     staleTime: 60_000,
   });
+  const onTime = useOnTime(period.from, period.to, warehouse || null);
 
   const warehouses = useMemo(() => {
     const map = new Map<string, string>();
@@ -282,6 +285,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows, "open sales orders, as of today", false)} onDrill={openDos} />
       {h?.period && focus && <LogisticDailySection days={focus.days} regions={h.period.byRegion} region={region} setRegion={setRegion} day={day} setDay={setDay} onDrill={openDos} />}
       {focus && <LorrySection lorries={focus.byLorry} days={focus.lorryDayList} recorded={focus.lorry.recordedOrders} total={focus.lorry.lorryRegionOrders} region={region} day={day} onLorry={setLorryDrill} />}
+      <LogisticOnTimeSection data={onTime.data ?? null} loading={onTime.isLoading} error={onTime.error ? (onTime.error as Error).message : null} />
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
