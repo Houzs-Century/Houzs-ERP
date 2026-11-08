@@ -37,7 +37,7 @@ export async function loadAutoCountReceipts(
     .gte('paid_at', from).lte('paid_at', `${to}T23:59:59`)
     .order('paid_at').order('id').range(f, t));
   if (error) return { ok: false, reason: `AutoCount payments: ${error.message}` };
-  const inPeriod = data.filter((p) => {
+  const inPeriod = (data ?? []).filter((p) => {
     const on = day(p.paid_at);
     return on >= from && on <= to && (openedOn == null || on > openedOn) && Number(p.amount_sen ?? 0) !== 0;
   });
