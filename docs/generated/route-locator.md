@@ -604,23 +604,23 @@ Total: 1715 route registrations across 236 files.
 - L2312  GET    /debtors/search
 
 ## backend/src/scm/routes/credit-notes.ts  (17)
-- L637  GET    /
-- L638  POST   /
-- L639  POST   /scan
-- L641  GET    /knock-off
-- L642  GET    /:id
-- L643  PATCH  /:id
-- L644  POST   /:id/post
-- L645  POST   /:id/cancel
-- L646  GET    /:id/open-invoices
-- L647  POST   /:id/apply
-- L648  POST   /:id/allocations/:allocationId/remove
-- L649  GET    /:id/knock-off
-- L650  PUT    /:id/allocations
-- L651  POST   /:id/files
-- L652  GET    /:id/files
-- L653  GET    /:id/files/:fileId
-- L654  DELETE /:id/files/:fileId
+- L703  GET    /
+- L704  POST   /
+- L705  POST   /scan
+- L707  GET    /knock-off
+- L708  GET    /:id
+- L709  PATCH  /:id
+- L710  POST   /:id/post
+- L711  POST   /:id/cancel
+- L712  GET    /:id/open-invoices
+- L713  POST   /:id/apply
+- L714  POST   /:id/allocations/:allocationId/remove
+- L715  GET    /:id/knock-off
+- L716  PUT    /:id/allocations
+- L717  POST   /:id/files
+- L718  GET    /:id/files
+- L719  GET    /:id/files/:fileId
+- L720  DELETE /:id/files/:fileId
 
 ## backend/src/scm/routes/inventory.ts  (17)
 - L136  GET    /warehouses
@@ -770,21 +770,21 @@ Total: 1715 route registrations across 236 files.
 - L5355  POST   /:id/revert
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
-- L438  GET    /
-- L520  GET    /invoiceable-do-lines
-- L538  GET    /:id
-- L920  POST   /
-- L942  POST   /from-dos
-- L1088  POST   /:id/items/from-do/:doId
-- L1091  PATCH  /:id
-- L1289  POST   /:id/items
-- L1291  PATCH  /:id/items/:itemId
-- L1436  DELETE /:id/items/:itemId
-- L1500  GET    /:id/payments
-- L1613  POST   /:id/payments
-- L1615  DELETE /:id/payments/:paymentId
-- L2017  PATCH  /:id/status
-- L2021  PATCH  /:id/payment
+- L440  GET    /
+- L522  GET    /invoiceable-do-lines
+- L540  GET    /:id
+- L925  POST   /
+- L947  POST   /from-dos
+- L1093  POST   /:id/items/from-do/:doId
+- L1096  PATCH  /:id
+- L1294  POST   /:id/items
+- L1296  PATCH  /:id/items/:itemId
+- L1441  DELETE /:id/items/:itemId
+- L1505  GET    /:id/payments
+- L1618  POST   /:id/payments
+- L1620  DELETE /:id/payments/:paymentId
+- L2024  PATCH  /:id/status
+- L2028  PATCH  /:id/payment
 
 ## backend/src/scm/routes/suppliers.ts  (15)
 - L454  GET    /
@@ -1472,13 +1472,13 @@ Total: 1715 route registrations across 236 files.
 - L718  PATCH  /:id/withdraw
 
 ## backend/src/scm/routes/reports.ts  (7)
-- L90  GET    /sales-order-detail-listing
-- L353  GET    /costing-gap-listing
-- L449  GET    /delivery-order-detail-listing
-- L507  GET    /sales-invoice-detail-listing
-- L608  GET    /delivery-return-detail-listing
-- L1467  GET    /fair-report
-- L1574  GET    /fair-report/:docNo
+- L91  GET    /sales-order-detail-listing
+- L354  GET    /costing-gap-listing
+- L450  GET    /delivery-order-detail-listing
+- L508  GET    /sales-invoice-detail-listing
+- L616  GET    /delivery-return-detail-listing
+- L1475  GET    /fair-report
+- L1582  GET    /fair-report/:docNo
 
 ## backend/src/scm/routes/scan-gr.ts  (7)
 - L249  POST   /enqueue
@@ -1785,6 +1785,11 @@ Total: 1715 route registrations across 236 files.
 - L107  PUT    /:positionId
 - L165  DELETE /:positionId
 
+## backend/src/scm/routes/ar-invoices.ts  (3)
+- L305  GET    /
+- L306  GET    /bills/:billId
+- L307  GET    /sales/:siId/credit-notes
+
 ## backend/src/scm/routes/currencies.ts  (3)
 - L74  GET    /
 - L84  POST   /
@@ -1846,9 +1851,9 @@ Total: 1715 route registrations across 236 files.
 - L119  DELETE /
 
 ## backend/src/scm/routes/outstanding.ts  (3)
-- L68  GET    /${slug}
-- L158  GET    /po-lines
-- L244  GET    /summary
+- L69  GET    /${slug}
+- L161  GET    /po-lines
+- L247  GET    /summary
 
 ## backend/src/scm/routes/personal-quick-picks.ts  (3)
 - L102  GET    /
@@ -1933,10 +1938,6 @@ Total: 1715 route registrations across 236 files.
 ## backend/src/routes/systemHealthJobs.ts  (2)
 - L16  GET    /jobs
 - L152  GET    /queues
-
-## backend/src/scm/routes/ar-invoices.ts  (2)
-- L248  GET    /
-- L249  GET    /bills/:billId
 
 ## backend/src/scm/routes/delivery-order-item-photos.ts  (2)
 - L118  GET    /:id/items/:itemId/photos/:photoKey/signed
@@ -2163,7 +2164,7 @@ Total: 1715 route registrations across 236 files.
 - L36  GET    /export/rows
 
 ## backend/src/scm/routes/sales-invoice-exports.ts  (1)
-- L69  GET    /export/rows
+- L70  GET    /export/rows
 
 ## backend/src/scm/routes/scan-lorry-invoice.ts  (1)
 - L263  POST   /extract

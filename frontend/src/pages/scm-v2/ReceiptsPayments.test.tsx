@@ -11,7 +11,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RpReport } from '../../vendor/scm/lib/rp-report-queries';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 
@@ -67,18 +67,20 @@ const report: RpReport = {
   },
 };
 const lastRead = { value: '' };
+/* A test that needs another report puts it here, and puts it back. */
+const shownReport = { value: null as RpReport | null };
 
 vi.mock('../../vendor/scm/lib/rp-report-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useRpReport: (from: string, to: string, accounts: string[], byParty: boolean) => {
     lastRead.value = `${from}|${to}|${accounts.join(',')}|${byParty}`;
-    return from ? { data: report, isLoading: false, isError: false } : { data: undefined, isLoading: false, isError: false };
+    return from ? { data: shownReport.value ?? report, isLoading: false, isError: false } : { data: undefined, isLoading: false, isError: false };
   },
 }));
 /* By month: each column one read of the same endpoint. */
 const columnPaths = vi.hoisted(() => [] as string[]);
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
-  authedFetch: async (path: string) => { columnPaths.push(path); return report; },
+  authedFetch: async (path: string) => { columnPaths.push(path); return shownReport.value ?? report; },
 }));
 vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -238,5 +240,88 @@ describe('the Cash Flow tab', () => {
     expect(screen.getByText('PURCHASE OF SOFA')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
     expect(screen.getByRole('dialog', { name: 'Layout · Receipts & Payments' })).toBeTruthy();
+  });
+});
+
+/* Owner 2026-11-08: 可以帮我注明是从auto count带过来的吗？ Customers' money AutoCount recorded after the
+   books started posts no journal; the Cash Flow names it below the customer receipts, grey, in no total,
+   and its figure opens the payments behind it. */
+describe('AutoCount money on the Cash Flow', () => {
+  const customer = (key: string, label: string, sen: number) => line(key, '300-0000', label, { '310-0010': sen }, 0, 'in');
+  const withAutoCount: RpReport = {
+    ...report,
+    autoCount: {
+      sen: 54608600, count: 2,
+      entries: [
+        { jeNo: '', entryDate: '2026-07-01', sourceType: 'AUTOCOUNT', sourceDocNo: 'HC-SO-013406', narration: 'DATE NOT OBSERVED', party: 'TAN AH KOW', side: 'R', rowKey: 'AUTOCOUNT', column: 'AUTOCOUNT', sen: 204000 },
+        { jeNo: '', entryDate: '2026-07-02', sourceType: 'AUTOCOUNT', sourceDocNo: 'HC-SO-013410', narration: null, party: 'LIM AH BENG', side: 'R', rowKey: 'AUTOCOUNT', column: 'AUTOCOUNT', sen: 54404600 },
+      ],
+    },
+    layout: {
+      ...report.layout,
+      tree: [
+        { ...report.layout.tree[0]!, children: [
+          { kind: 'category', id: 'in:cat:deposit', label: 'DEPOSIT RECEIVED', amountSen: 50000, pct: 71.4, cells: { '310-0010': 50000 }, children: [
+            customer('300-0000:DEP:CASH', 'Deposit · Transfer / cash', 30000),
+            customer('300-0000:BAL:CASH', 'Balance · Transfer / cash', 20000),
+          ] },
+          line('XFER:310-0010', '310-0010', 'Transfer from 310-0010 · CASH AT BANK - MAYBANK', { '320-0000': 20000 }, 28.6, 'in'),
+        ] },
+        ...report.layout.tree.slice(1),
+      ],
+    },
+  };
+  const memoText = 'From AutoCount, not in the books';
+  afterEach(() => { shownReport.value = null; });
+
+  test('it prints right below the customer receipts’ own total, grey, and Total receipts does not count it', () => {
+    shownReport.value = withAutoCount;
+    at();
+    const memo = screen.getByText(memoText).closest('tr')!;
+    expect(memo.getAttribute('data-kind')).toBe('memo');
+    expect(memo.textContent).toContain('546,086.00');
+    const rows = screen.getAllByRole('row').map((r) => String(r.textContent));
+    expect(rows.findIndex((t) => t.includes(memoText))).toBe(rows.findIndex((t) => t.startsWith('Total DEPOSIT RECEIVED')) + 1);
+    expect(screen.getByText('Total receipts').closest('tr')!.textContent).toContain('700.00');
+    shownReport.value = null;
+  });
+
+  test('its figure opens the payments AutoCount recorded', () => {
+    shownReport.value = withAutoCount;
+    at();
+    fireEvent.click(screen.getByRole('button', { name: `${memoText} · Total` }));
+    const region = screen.getByRole('region', { name: `Entries of ${memoText}` });
+    expect(region.textContent).toContain('Total · 2 entries');
+    expect(within(region).getByText(/AutoCount HC-SO-013406/)).toBeTruthy();
+    expect(within(region).getByText('TAN AH KOW')).toBeTruthy();
+    shownReport.value = null;
+  });
+
+  test('PDF carries it as the screen shows it', async () => {
+    shownReport.value = withAutoCount;
+    at();
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    await waitFor(() => expect(pdf).toHaveBeenCalledTimes(1));
+    const [sheet] = pdf.mock.calls[0]! as [Sheet];
+    const rows = sheet.tables[0]!.rows as Array<{ label: string; depth: number; kind: string }>;
+    const idx = rows.findIndex((x) => x.label === memoText);
+    /* Right after the customer receipts, at their category's depth: paper prints that category's Total above it. */
+    expect(rows[idx - 1]!.label).toBe('Balance · Transfer / cash');
+    expect(rows[idx]).toMatchObject({ kind: 'memo', depth: rows.find((x) => x.label === 'DEPOSIT RECEIVED')!.depth });
+    shownReport.value = null;
+  });
+
+  test('By month: each month’s own figure, the line where the Total view has it', async () => {
+    shownReport.value = withAutoCount;
+    at();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'By month' }));
+    await waitFor(() => expect(screen.getAllByText(memoText).length).toBeGreaterThan(0));
+    expect(screen.getByText(memoText).closest('tr')!.textContent).toContain('546,086.00');
+    shownReport.value = null;
+  });
+
+  test('no AutoCount money, no line', () => {
+    at();
+    expect(screen.queryByText(memoText)).toBeNull();
   });
 });

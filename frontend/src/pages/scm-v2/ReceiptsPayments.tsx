@@ -25,7 +25,7 @@ import { BookOpen, Check, ChevronDown, X } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
-import { balanceParts, CARD_COLUMN, rpReportPath, useRpReport, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, CARD_COLUMN, rpReportPath, useRpReport, withAutoCountLine, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { mergeColumns, rpLines } from '../../vendor/scm/lib/report-monthly';
@@ -83,7 +83,7 @@ const nodesById = (r: RpReport | undefined): Map<string, LaidNode> => {
 
 const SOURCE_WORD: Partial<Record<string, string>> = {
   PV: 'Payment voucher', SOPAY: 'Customer payment', SIPAY: 'Customer payment', RCT: 'Receipt', ODR: 'Other debtor receipt',
-  SETTLE: 'Settlement', SETTLEBANK: 'Settlement', MANUAL: 'Journal', CASHUP: 'Cash-up',
+  SETTLE: 'Settlement', SETTLEBANK: 'Settlement', MANUAL: 'Journal', CASHUP: 'Cash-up', AUTOCOUNT: 'AutoCount',
 };
 
 type DrillEntry = RpEntry & { idx: number };
@@ -141,7 +141,9 @@ export function cashFlowLines(r: RpReport, codes: readonly string[]): StatementL
   out.push(...parts('bal:opening', r.opening, t.openingTotalSen));
   out.push({ id: 'bal:closing', label: 'Balance c/f', kind: 'net', depth: 0, cells: cells(t.closing, t.closingTotalSen, null) });
   out.push(...parts('bal:closing', t.closing, t.closingTotalSen));
-  return out;
+  /* Customers' money AutoCount recorded after the books started (owner 2026-11-08): grey, in the Total column only, in no total. */
+  return withAutoCountLine(r, out, (depth, sen): StatementLine =>
+    ({ id: AUTOCOUNT_LINE_ID, label: AUTOCOUNT_LINE_LABEL, kind: 'memo', depth, drill: true, cells: { total: { amountSen: sen, pct: null } } }));
 }
 
 /** By month: each column the report for its month (rpLines: every line's % of
@@ -207,6 +209,7 @@ export const ReceiptsPaymentsTab = () => {
     /* Total: the one read, an account's column filtering by account. By month:
        the column's own read — the name opens the Total column's, the whole span. */
     const src = view === 'total' ? report : byKey[col?.key ?? 'total'];
+    if (l.id === AUTOCOUNT_LINE_ID) return { entries: (src?.autoCount?.entries ?? []).map((e, idx) => ({ ...e, idx })), label: col?.label ?? 'Total' };
     const node = nodesById(src).get(l.id);
     const label = col?.label ?? 'Total';
     if (!src || !node) return { entries: [], label };

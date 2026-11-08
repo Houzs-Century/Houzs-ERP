@@ -13,7 +13,7 @@
 // as before. The SI carries ONE flat address, not the SO's
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
-import { siDepositAppliedSen } from './si-outstanding';
+import { siCreditNotesSen, siDepositAppliedSen } from './si-outstanding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
 import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { getBrandingCache } from '../../../lib/branding';
@@ -37,6 +37,8 @@ export type SiHeader = {
      absent reads as 0, which prints the LARGER outstanding — the only
      direction a customer's copy may be wrong in. */
   so_deposit_applied_sen?: number | null;
+  /** The customers' credit notes knocked off it (backend si-credit-notes.ts) — printed as their own line. */
+  credit_notes_sen?: number | null;
   /* Every sum received towards this invoice — the order's rows and its own —
      stamped by GET /sales-invoices/:id (backend lib/si-receipts). Absent or
      null prints one line per document instead of one per payment. */
@@ -265,8 +267,11 @@ export async function renderSalesInvoiceInto(
      customer sees the credit rather than a silent "0". The deposit cannot make
      this MORE negative — the allocation never exceeds what the invoice still
      owed, so `paid + deposit <= total` whenever `paid <= total`. */
+  /* A credit note knocked off it (owner 2026-11-03) is no payment: its own line, then off the balance. */
+  const credited = siCreditNotesSen(header);
+  if (credited > 0) { drawRow('Credit notes', `-${fmtRm(credited, header.currency)}`, ty + 4); ty += 5.5; }
   drawRow('Outstanding',
-          fmtRm(header.total_sen - header.paid_sen - siDeposit, header.currency), ty + 4, true);
+          fmtRm(header.total_sen - header.paid_sen - siDeposit - credited, header.currency), ty + 4, true);
   /* Signature boxes removed (owner 2026-09-20): the invoice ends on the Terms
      line right under the totals — no dangling gap where the two boxes were. */
   ty += 10;

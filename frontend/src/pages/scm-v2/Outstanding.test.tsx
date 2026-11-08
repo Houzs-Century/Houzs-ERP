@@ -129,10 +129,20 @@ describe('Outstanding — the sales invoice list', () => {
     expect(screen.getByText('Partially Paid')).toBeTruthy();
     expect(screen.getByText(`${fmtDate(TEN_DAYS_AGO)} · 10d late`)).toBeTruthy();
     expect(screen.getByText(fmtDate(IN_25_DAYS))).toBeTruthy();
-    // Credit notes can only read 0 until the knock-off ships, so it waits in
-    // Columns rather than squeeze the dates and amounts (headers are title-cased).
-    expect(screen.queryByRole('columnheader', { name: /Credit Notes/ })).toBeNull();
+    // The credit notes knocked off each invoice show beside its deposit (headers are title-cased).
+    expect(screen.getByRole('columnheader', { name: /Credit Notes/ })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: /SO Deposit/ })).toBeTruthy();
+  });
+
+  /* A customer's credit note knocked off it (owner 2026-11-03: 「要」): its own
+     column, out of the outstanding already, and the invoice reads part paid. */
+  test('a credit note knocked off an invoice reads in its own column and makes it part paid', () => {
+    state.rows = { si: [{ ...SI_ROWS[0], credit_notes_sen: 25_000, outstanding_sen: 75_000 }] };
+    renderAt();
+    const row = screen.getByRole('link', { name: 'HC-SI-2610-001' }).closest('tr') as HTMLTableRowElement;
+    expect(within(row).getByText('RM 250.00')).toBeTruthy();
+    expect(within(row).getByText('RM 750.00')).toBeTruthy();
+    expect(within(row).getByText('Submitted').className).toContain('toneInfo');
   });
 
   test('a cancelled invoice: struck number, no amounts, never late, out of the totals', () => {

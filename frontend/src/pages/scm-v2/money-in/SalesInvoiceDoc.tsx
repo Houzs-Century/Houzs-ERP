@@ -2,14 +2,18 @@
 // SalesInvoiceDoc — /scm/ar-invoices/sales/:id, a sales invoice read from
 // Sales (the owner's Claude Design, batch 5 §8; it was a pop-out over the AR
 // invoices list). Raised, edited and cancelled in Sales — this page only reads:
-// who it bills, its dates and order, the order's deposit applied to it, what is
-// paid and outstanding, its lines, its journal, and the page as it prints, with
-// Print, Save PDF and `Open in Sales`.
+// who it bills, its dates and order, the order's deposit applied to it, the
+// credit notes knocked off it (owner 2026-11-03: 「要」) and those closing its
+// deposits, what is paid and outstanding, its lines, its journal, and the page
+// as it prints, with Print, Save PDF and `Open in Sales`.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useSalesInvoiceDetail } from '../../../vendor/scm/lib/sales-invoice-queries';
+import { useSalesInvoiceCreditNotes, type SalesInvoiceCreditNote } from '../../../vendor/scm/lib/ar-invoice-queries';
+import { siCreditNotesSen, siOutstandingSen } from '../../../vendor/scm/lib/si-outstanding';
+import { FinanceDocLink } from '../finance/FinanceDocLink';
 import type { SiHeader, SiItem } from '../../../vendor/scm/lib/sales-invoice-pdf';
 import { useAccounts } from '../../../vendor/scm/lib/accounting-queries';
 import type { PdfAction } from '../../../vendor/scm/lib/pdf-common';
@@ -29,6 +33,19 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 type Header = SiHeader & { id?: string; created_at?: string | null; created_by?: string | null };
 
+/* The notes on it (the design's Credit notes section): each knock-off, and each
+   close-out of its order's deposit invoices — said for what it is, the deposit
+   having lowered the invoice already. */
+const NOTE_COLUMNS: Column<SalesInvoiceCreditNote>[] = [
+  { key: 'note', label: 'Note', getValue: (n) => n.number, render: (n) => <FinanceDocLink to={moneyInDocHref('note', n.id)}>{n.number}</FinanceDocLink> },
+  { key: 'date', label: 'Date', render: (n) => <span className={ui.muted}>{fmtDate(n.date)}</span>, getValue: (n) => n.date ?? '' },
+  { key: 'what', label: 'What', width: '320px', render: (n) => <span className={ui.muted}>{n.what}</span>, getValue: (n) => n.what },
+  {
+    key: 'knocked_off', label: 'Knocked off', align: 'right', render: (n) => <span className={ui.money}>{fmtSen(n.amountSen)}</span>, getValue: (n) => n.amountSen,
+    total: (rows) => fmtSen(rows.reduce((s2, n) => s2 + n.amountSen, 0)),
+  },
+];
+
 const LINE_COLUMNS: Column<SiItem>[] = [
   { key: 'item', label: 'Item', render: (l) => l.item_code, getValue: (l) => l.item_code },
   { key: 'description', label: 'Description', width: '320px', render: (l) => l.description ?? '—', getValue: (l) => l.description ?? '' },
@@ -44,6 +61,7 @@ export const SalesInvoiceDoc = () => {
   const header = q.data?.salesInvoice as Header | undefined;
   const items = q.data?.items as SiItem[] | undefined;
   const journals = useDocJournals('SI', header?.invoice_number);
+  const notesQ = useSalesInvoiceCreditNotes(id || null);
   const accountsQ = useAccounts();
   const [printing, setPrinting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -67,11 +85,13 @@ export const SalesInvoiceDoc = () => {
   };
 
   /* The AR list's own figures: paid = the invoice's receipts plus the order's
-     deposit applied; outstanding = what is left (backend ar-invoices.ts shapeSi). */
+     deposit applied; the credit notes knocked off it apart; outstanding = what
+     is left (backend ar-invoices.ts shapeSi). */
   const total = Number(header.total_sen);
   const own = Number(header.paid_sen);
   const deposit = Number(header.so_deposit_applied_sen ?? 0);
-  const outstanding = Math.max(0, total - own - deposit);
+  const credited = siCreditNotesSen(header);
+  const outstanding = siOutstandingSen(total, own, deposit, credited);
   const today = todayMY();
   const due = String(header.due_date ?? '').slice(0, 10);
   const late = outstanding > 0 && due !== '' && due < today;
@@ -80,6 +100,7 @@ export const SalesInvoiceDoc = () => {
     { label: 'Due date', value: due ? fmtDate(due) : '—', tone: late ? 'late' : null },
     { label: 'Sales order', value: header.so_doc_no ?? '—', to: header.so_doc_no ? `/scm/sales-orders/${encodeURIComponent(header.so_doc_no)}` : null },
     { label: 'Deposit applied', value: deposit > 0 ? fmtSen(deposit) : '—', title: deposit > 0 ? `${fmtSen(deposit)} was collected on ${header.so_doc_no ?? 'the sales order'} and settles this invoice.` : undefined },
+    { label: 'Credit notes', value: credited > 0 ? fmtSen(credited) : '—', title: credited > 0 ? `${fmtSen(credited)} was knocked off this invoice by credit notes.` : undefined },
     { label: 'Paid', value: fmtSen(own) },
     { label: 'Outstanding', value: fmtSen(outstanding), tone: outstanding > 0 ? 'brass' : null },
   ];
@@ -92,7 +113,7 @@ export const SalesInvoiceDoc = () => {
   return (
     <MoneyInDocPage
       kind="salesInvoice" kindLabel="Sales invoice" number={header.invoice_number}
-      tag={salesInvoiceTag({ outstandingSen: outstanding, paidSen: own + deposit, dueDate: header.due_date, status: header.status }, today)}
+      tag={salesInvoiceTag({ outstandingSen: outstanding, paidSen: own + deposit + credited, dueDate: header.due_date, status: header.status }, today)}
       sub="raised in Sales · edit or cancel it there"
       taskLink={{ type: 'Sales invoice', no: header.invoice_number, name: header.debtor_name, to: moneyInDocHref('salesInvoice', id) }}
       printJob={{
@@ -116,6 +137,12 @@ export const SalesInvoiceDoc = () => {
       <DocSection title="Lines">
         <DataTable<SiItem> tableId="mi-si-lines" embedded columns={LINE_COLUMNS} rows={items} getRowKey={(l) => `${l.item_code}-${items.indexOf(l)}`}
           emptyLabel="No lines on this invoice." />
+      </DocSection>
+      <DocSection title="Credit notes">
+        {notesQ.isLoading ? <div className={s.empty}>Reading the credit notes…</div>
+          : notesQ.isError ? <div role="alert" className={`${s.empty} ${s.toneLate}`}>The credit notes did not load — {errText(notesQ.error)}</div>
+            : (notesQ.data?.creditNotes ?? []).length === 0 ? <div className={s.empty}>No credit note knocks this invoice off.</div>
+              : <DataTable<SalesInvoiceCreditNote> tableId="mi-si-notes" embedded columns={NOTE_COLUMNS} rows={notesQ.data?.creditNotes ?? []} getRowKey={(n) => n.id} />}
       </DocSection>
       <DocSection title="As printed" buttons={(
         <button type="button" className={`${ui.btn} ${ui.btnSmall}`} onClick={() => void deliver('save')} disabled={printing}>Save PDF</button>

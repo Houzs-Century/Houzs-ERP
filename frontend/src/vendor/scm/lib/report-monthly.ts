@@ -17,13 +17,15 @@
 
 import type { LaidNode } from './report-layout';
 import { flattenLaid } from './report-layout';
-import { balanceParts, type RpColumn } from './rp-report-queries';
+import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpColumn, type RpReport } from './rp-report-queries';
 
 /** One line of a report as one column printed it. */
 export type FlatLine = {
   id: string;
   label: string;
   kind: 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
+  /** A memo line whose figures open entries of their own (the Cash Flow's AutoCount line). */
+  drill?: boolean;
   depth: number;
   amountSen: number;
   pct: number | null;
@@ -110,7 +112,7 @@ export function mergeColumns(columns: Array<{ key: string; lines: FlatLine[] }>)
     for (const l of col.lines) {
       let line = at.get(l.id);
       if (!line) {
-        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}), ...(l.caption ? { caption: l.caption } : {}), ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}) };
+        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.drill ? { drill: true } : {}), ...(l.code ? { code: l.code } : {}), ...(l.caption ? { caption: l.caption } : {}), ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}) };
         at.set(l.id, line);
         const after = prevId ? out.findIndex((x) => x.id === prevId) : -1;
         out.splice(after + 1, 0, line);
@@ -214,6 +216,7 @@ type RpLike = {
   opening: Record<string, number>;
   layout: { tree: LaidNode[]; inSen: number; outSen: number };
   totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number; closing: Record<string, number> };
+  autoCount?: RpReport['autoCount'];
 };
 
 /** The Cash Flow as lines, the Total column only: each top category as a
@@ -237,7 +240,7 @@ export const rpLines = (r: RpLike): FlatLine[] => {
   out.push(...parts('bal:opening', r.opening, t.openingTotalSen));
   out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
   out.push(...parts('bal:closing', t.closing, t.closingTotalSen));
-  return out;
+  return withAutoCountLine(r, out, (depth, sen): FlatLine => ({ id: AUTOCOUNT_LINE_ID, label: AUTOCOUNT_LINE_LABEL, kind: 'memo', depth, amountSen: sen, pct: null, drill: true }));
 };
 
 /* ── The CSV ─────────────────────────────────────────────────────────────── */

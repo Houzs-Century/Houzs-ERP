@@ -7,7 +7,8 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
-import type { CreditNotePdfHeader, CreditNotePdfLine } from './credit-note-pdf';
+import type { CreditNoteKnockedOff, CreditNotePdfHeader, CreditNotePdfLine } from './credit-note-pdf';
+import type { CreditNote } from './credit-note-queries';
 
 type JsPdf = import('jspdf').jsPDF;
 type TextDraw = { text: string; y: number };
@@ -112,5 +113,48 @@ describe('the credit note sheet', () => {
     const dn = await render({ kind: 'DN', status: 'CANCELLED' });
     expect(has(dn, 'DEBIT NOTE')).toBe(true);
     expect(has(dn, 'CANCELLED')).toBe(true);
+  });
+});
+
+/* What a credit note knocked off (the design's KNOCKED OFF AGAINST; owner 2026-11-03: 「要」). */
+describe('KNOCKED OFF AGAINST', () => {
+  const HAND = { source_doc_no: 'DR-2611-001', sales_invoice_number: null, reason: 'Scratched headboard', total_sen: 50_000, note_number: 'HC-CN-2611-001' };
+  const GOODWILL: CreditNotePdfLine[] = [{ description: 'Goodwill', account_code: '510-0000', amount_sen: 50_000 }];
+  async function renderKo(over: Partial<CreditNotePdfHeader>, lines: CreditNotePdfLine[], knockedOff: CreditNoteKnockedOff | null): Promise<TextDraw[]> {
+    setUpBranding();
+    const [{ jsPDF }, { default: autoTable }, { renderCreditNoteInto }] = await Promise.all([import('jspdf'), import('jspdf-autotable'), import('./credit-note-pdf')]);
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const draws = captureTextDraws(doc);
+    renderCreditNoteInto(doc, autoTable, { ...HEADER, ...over }, lines, nameOf, knockedOff);
+    return draws;
+  }
+
+  test('each invoice it knocked off, then what stays as credit on the account', async () => {
+    const draws = await renderKo(HAND, GOODWILL, { rows: [{ number: 'HC-SI-2611-001', date: '2026-11-01', totalSen: 300_000, knockedSen: 30_000 }], leftSen: 20_000 });
+    expect(has(draws, 'KNOCKED OFF AGAINST')).toBe(true);
+    expect(has(draws, 'Invoice No')).toBe(true);
+    expect(has(draws, 'HC-SI-2611-001')).toBe(true);
+    expect(has(draws, '3,000.00')).toBe(true);
+    expect(has(draws, '300.00')).toBe(true);
+    expect(has(draws, 'Not applied · credit on account')).toBe(true);
+  });
+
+  test('nothing knocked off says so; a debit note and a note without the block print none', async () => {
+    expect(has(await renderKo(HAND, GOODWILL, { rows: [], leftSen: 50_000 }), 'Not knocked off · credit on account')).toBe(true);
+    expect(has(await renderKo({ ...HAND, kind: 'DN' }, GOODWILL, { rows: [], leftSen: 50_000 }), 'KNOCKED OFF AGAINST')).toBe(false);
+    expect(has(await renderKo(HAND, GOODWILL, null), 'KNOCKED OFF AGAINST')).toBe(false);
+  });
+
+  test('knockedOffOf: a posted note takes what was applied, a draft its plan, a close-out its final invoice; a refund and a cancelled note none', async () => {
+    const { knockedOffOf } = await import('./credit-note-pdf');
+    const n = { kind: 'CN', status: 'POSTED', total_sen: 50_000 } as unknown as CreditNote;
+    const al = (amountSen: number, appliedSen: number) => ({ id: 'a', kind: 'SI' as const, docId: 'si-1', number: 'HC-SI-2611-001', docDate: '2026-11-01', docTotalSen: 300_000, amountSen, appliedSen, createdAt: null, createdBy: null });
+    expect(knockedOffOf({ note: n, allocations: [al(30_000, 30_000)] })).toEqual({ rows: [{ number: 'HC-SI-2611-001', date: '2026-11-01', totalSen: 300_000, knockedSen: 30_000 }], leftSen: 20_000 });
+    expect(knockedOffOf({ note: { ...n, status: 'DRAFT' }, allocations: [al(10_000, 0)] })?.rows[0]?.knockedSen).toBe(10_000);
+    expect(knockedOffOf({ note: n, allocations: [], depositPaper: { kind: 'closes', di: 'HC-DI-2611-001' }, closedInvoice: { id: 'si-7', number: 'HC-SI-2611-007', date: '2026-11-01', totalSen: 400_000 } }))
+      .toEqual({ rows: [{ number: 'HC-SI-2611-007', date: '2026-11-01', totalSen: 400_000, knockedSen: 50_000 }], leftSen: 0 });
+    expect(knockedOffOf({ note: n, allocations: [], depositPaper: { kind: 'refund', di: 'HC-DI-2611-001' } })).toBeNull();
+    expect(knockedOffOf({ note: { ...n, status: 'CANCELLED' }, allocations: [al(30_000, 30_000)] })).toBeNull();
+    expect(knockedOffOf({ note: { ...n, kind: 'SCN' }, allocations: [] })).toBeNull();
   });
 });

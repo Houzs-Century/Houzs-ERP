@@ -21,10 +21,17 @@
 // `paid_sen` still means what it always meant: receipts banked against THIS
 // invoice. The two are kept apart on purpose so a screen can say which document
 // took the money.
+//
+// A customer's CREDIT NOTE knocked off the invoice (owner 2026-11-03: 「要」)
+// settles it a third way, stamped beside the deposit as `credit_notes_sen`
+// (backend scm/lib/si-credit-notes.ts) and never folded into paid_sen — the
+// overpayment rule reads paid_sen alone.
 // ----------------------------------------------------------------------------
 
 /** Any shape carrying the server-stamped slice. */
 export type WithOrderDeposit = { so_deposit_applied_sen?: number | null };
+/** Any shape carrying the server-stamped credit notes knocked off it. */
+export type WithCreditNotes = { credit_notes_sen?: number | null };
 
 /**
  * The slice of the ORDER's deposit applied to this invoice, in sen.
@@ -39,18 +46,28 @@ export const siDepositAppliedSen = (r: WithOrderDeposit | null | undefined): num
   return Number.isFinite(v) && v > 0 ? v : 0;
 };
 
-/** Everything settling this invoice: its own receipts PLUS the order's deposit. */
-export const siSettledSen = (paidSen: number, depositSen: number): number =>
-  (Number.isFinite(paidSen) ? paidSen : 0) + (Number.isFinite(depositSen) ? depositSen : 0);
+/**
+ * What customers' credit notes knocked off this invoice, in sen. Absent or
+ * `null` (the server could not read them) reads as 0 — the LARGER outstanding,
+ * for the same reason as the deposit.
+ */
+export const siCreditNotesSen = (r: WithCreditNotes | null | undefined): number => {
+  const v = Number(r?.credit_notes_sen ?? 0);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+};
+
+/** Everything settling this invoice: its own receipts, the order's deposit and the credit notes knocked off it. */
+export const siSettledSen = (paidSen: number, depositSen: number, creditSen: number): number =>
+  (Number.isFinite(paidSen) ? paidSen : 0) + (Number.isFinite(depositSen) ? depositSen : 0) + (Number.isFinite(creditSen) ? creditSen : 0);
 
 /**
  * What the invoice still owes. Floored at 0 — an over-payment is a customer
  * credit, and every screen this replaces already floored it.
  *
- * `depositSen` is REQUIRED, not optional. Its absence changes the answer, so an
- * optional parameter would leave every caller that forgot it silently rendering
- * the old, wrong figure with no compile error — the bug class CLAUDE.md calls
- * `optional-param-noop`.
+ * `depositSen` and `creditSen` are REQUIRED, not optional. Their absence changes
+ * the answer, so an optional parameter would leave every caller that forgot one
+ * silently rendering the old, wrong figure with no compile error — the bug
+ * class CLAUDE.md calls `optional-param-noop`.
  */
-export const siOutstandingSen = (totalSen: number, paidSen: number, depositSen: number): number =>
-  Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - siSettledSen(paidSen, depositSen));
+export const siOutstandingSen = (totalSen: number, paidSen: number, depositSen: number, creditSen: number): number =>
+  Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - siSettledSen(paidSen, depositSen, creditSen));

@@ -25,6 +25,7 @@
 // ----------------------------------------------------------------------------
 import { chunkSizeForUrl, PAGE } from './paginate-all';
 import { stampOrderDeposit } from './si-order-deposit';
+import { creditNotesBySi } from './si-credit-notes';
 
 /**
  * How many outstanding invoices this will read before it stops trying.
@@ -157,10 +158,17 @@ export async function summariseSiOutstanding(
   /* An invoice with no order behind it has a REAL zero deposit, and it is never
      in any batch below — so it must be answered here or it would fall through
      as "unresolved" and drag a whole page's figure back up to the ceiling on
-     the strength of manual invoices that were never in question. */
-  for (const r of rows) if (!r.so_doc_no) r.so_deposit_applied_sen = 0;
+     the strength of manual invoices that were never in question. Its credit
+     notes (si-credit-notes.ts) are read here for the same reason. */
+  const manual = rows.filter((r) => !r.so_doc_no);
+  for (const r of manual) { r.so_deposit_applied_sen = 0; r.credit_notes_sen = null; }
+  if (manual.length > 0 && companyId != null) {
+    const credited = await creditNotesBySi(sb, companyId, manual.map((r) => String(r.id ?? '')));
+    if (credited.ok) for (const r of manual) r.credit_notes_sen = credited.bySi.get(String(r.id)) ?? 0;
+  }
   const batch = chunkSizeForUrl(docNos);
   let unresolved = 0;
+  let creditsUnread = 0;
   if (docNos.length > 0) {
     for (let i = 0; i < docNos.length; i += batch) {
       const slice = new Set(docNos.slice(i, i + batch));
@@ -177,21 +185,28 @@ export async function summariseSiOutstanding(
     totalSen += Number(r.total_sen ?? 0);
     const raw = Math.max(0, Number(r.outstanding_sen ?? 0));
     const dep = r.so_deposit_applied_sen;
+    /* The credit notes knocked off it come off like the deposit; unread, they
+       are subtracted as nothing and the answer says the figure may be too high. */
+    const cn = r.credit_notes_sen;
+    if (cn === null || cn === undefined) creditsUnread += 1;
+    const credit = cn === null || cn === undefined ? 0 : Math.max(0, Number(cn));
     /* `null` is the stamp saying it could not read that row's order. Subtract
        NOTHING for it and count it — the row keeps its larger figure, and the
        answer below stops claiming the deposits are in. Subtracting a guess here
        would be the only way this endpoint could under-state. */
-    if (dep === null || dep === undefined) { unresolved += 1; outstandingSen += raw; continue; }
-    outstandingSen += Math.max(0, raw - Math.max(0, Number(dep)));
+    if (dep === null || dep === undefined) { unresolved += 1; outstandingSen += Math.max(0, raw - credit); continue; }
+    outstandingSen += Math.max(0, raw - Math.max(0, Number(dep)) - credit);
   }
 
+  const notes = [
+    unresolved === 0 ? null : `${unresolved} of ${count} invoices had a sales order that could not be read, so their deposits are not subtracted here and the figure may be too high.`,
+    creditsUnread === 0 ? null : `The credit notes knocked off ${creditsUnread} of ${count} invoices could not be read, so they are not subtracted here and the figure may be too high.`,
+  ].filter((t): t is string => t !== null);
   return {
     count,
     total_sen: totalSen,
     total_outstanding_sen: outstandingSen,
-    deposit_applied: unresolved === 0,
-    deposit_note: unresolved === 0
-      ? null
-      : `${unresolved} of ${count} invoices had a sales order that could not be read, so their deposits are not subtracted here and the figure may be too high.`,
+    deposit_applied: notes.length === 0,
+    deposit_note: notes.length === 0 ? null : notes.join(' '),
   };
 }

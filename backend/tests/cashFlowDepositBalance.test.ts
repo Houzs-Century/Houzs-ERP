@@ -75,7 +75,8 @@ const into = (je: string, date: string, source: string, doc: string, code: strin
   gl(je, date, source, doc, AR, 'ACCOUNT RECEIVEABLE', 0, sen),
 ];
 
-const world = () => fakeSb({
+type More = { gl?: Row[]; orders?: Row[]; payments?: Row[] };
+const world = (more: More = {}) => fakeSb({
   accounts: [
     acct(BANK, 'CASH AT BANK - MAYBANK', true, 'ASSET', 'CURRENT ASSETS'),
     acct(PBB, 'CARD MACHINE CLEARING - PBB', false, 'ASSET', 'CURRENT ASSETS'),
@@ -94,13 +95,15 @@ const world = () => fakeSb({
     /* A refund to a customer out of the bank. */
     gl('JE-6', '2026-10-10', 'PV', 'PV-R1', AR, 'ACCOUNT RECEIVEABLE', 9000, 0),
     gl('JE-6', '2026-10-10', 'PV', 'PV-R1', BANK, 'CASH AT BANK - MAYBANK', 0, 9000),
+    ...(more.gl ?? []),
   ],
-  mfg_sales_orders: [{ company_id: CO, doc_no: 'SO-1', local_total_sen: 100000 }, { company_id: CO, doc_no: 'SO-2', local_total_sen: 40000 }],
+  mfg_sales_orders: [{ company_id: CO, doc_no: 'SO-1', local_total_sen: 100000 }, { company_id: CO, doc_no: 'SO-2', local_total_sen: 40000 }, ...(more.orders ?? [])],
   mfg_sales_order_payments: [
     { company_id: CO, ...pay('p1', 'SO-1', 30000, '2026-09-03') },
     { company_id: CO, ...pay('p2', 'SO-1', 20000, '2026-09-20') },
     { company_id: CO, ...pay('p3', 'SO-1', 50000, '2026-10-02') },
     { company_id: CO, ...pay('q1', 'SO-2', 40000, '2026-10-05') },
+    ...(more.payments ?? []),
   ],
   payment_vouchers: [], pv_allocations: [], purchase_invoices: [], ap_invoices: [], ap_invoice_lines: [],
   acc_settlement_matches: [], acc_settlement_rows: [], acc_settlement_batches: [], acc_settlement_receipts: [],
@@ -108,9 +111,9 @@ const world = () => fakeSb({
   acc_acquirers: [{ company_id: CO, code: 'PBB', display_name: 'PBB', transit_account_code: PBB, is_active: true }],
 });
 
-function harness() {
+function harness(more: More = {}) {
   const app = new Hono();
-  const sb = world();
+  const sb = world(more);
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
     c.set('companyId' as never, CO as never);
@@ -122,9 +125,12 @@ function harness() {
   return app;
 }
 type Laid = { kind: string; key?: string; label: string; amountSen: number; children: Laid[] };
-type Report = { layout: { tree: Laid[]; inSen: number; outSen: number }; totals: { openingTotalSen: number; closingTotalSen: number } };
-const get = async (qs: string): Promise<Report> => {
-  const res = await harness().request(`/accounting/reports/receipts-payments?${qs}`);
+type Report = {
+  layout: { tree: Laid[]; inSen: number; outSen: number }; totals: { openingTotalSen: number; closingTotalSen: number };
+  autoCount: { sen: number; count: number; entries: unknown[] };
+};
+const get = async (qs: string, more: More = {}): Promise<Report> => {
+  const res = await harness(more).request(`/accounting/reports/receipts-payments?${qs}`);
   expect(res.status, await res.clone().text()).toBe(200);
   return await res.json() as Report;
 };
@@ -165,5 +171,54 @@ describe('Cash Flow: Deposit and Balance under CASH IN', () => {
     const labels = JSON.stringify(debtorPlace(r));
     expect(labels).not.toContain('"Deposit"');
     expect(labels).not.toContain('"Balance"');
+  });
+});
+
+/* Owner 2026-11-08: 可以帮我注明是从auto count带过来的吗？ Customers' money AutoCount recorded after
+   the books started came over on its order as 'imported' and posts no journal, so the ledger the
+   Cash Flow reads never has it. The report names it, in no total. */
+describe('Cash Flow: AutoCount money after the books started, named in no total', () => {
+  const opening = [
+    gl('JE-0', '2026-08-31', 'OPENING', null, BANK, 'CASH AT BANK - MAYBANK', 100000, 0),
+    gl('JE-0', '2026-08-31', 'OPENING', null, '190-0000', 'OPENING BALANCE CLEARING', 0, 100000),
+  ];
+  const imported = (id: string, doc: string, sen: number, paidAt: string): Row =>
+    ({ company_id: CO, ...pay(id, doc, sen, paidAt), method: 'imported', note: 'DATE NOT OBSERVED' });
+  const orders: Row[] = [
+    { company_id: CO, doc_no: 'SO-A', local_total_sen: 500000, debtor_name: 'TAN AH KOW', status: 'CONFIRMED' },
+    { company_id: CO, doc_no: 'SO-X', local_total_sen: 20000, debtor_name: 'GONE', status: 'CANCELLED' },
+  ];
+  const payments: Row[] = [
+    imported('a1', 'SO-A', 300000, '2026-09-05'),
+    /* Inside the opening balances: AutoCount's 31/08 position already holds it. */
+    imported('a0', 'SO-A', 100000, '2026-08-30'),
+    /* A cancelled order's. */
+    imported('x1', 'SO-X', 20000, '2026-09-06'),
+    /* October's, not September's. */
+    imported('a2', 'SO-A', 50000, '2026-10-02'),
+  ];
+
+  test('September names its own: after the opening, on a live order; no total and no row moves', async () => {
+    const plain = await get('from=2026-09-01&to=2026-09-30');
+    const r = await get('from=2026-09-01&to=2026-09-30', { gl: opening, orders, payments });
+    expect(r.autoCount).toEqual({
+      sen: 300000, count: 1,
+      entries: [{
+        jeNo: '', entryDate: '2026-09-05', sourceType: 'AUTOCOUNT', sourceDocNo: 'SO-A', narration: 'DATE NOT OBSERVED',
+        party: 'TAN AH KOW', side: 'R', rowKey: 'AUTOCOUNT', column: 'AUTOCOUNT', sen: 300000,
+      }],
+    });
+    expect(r.layout.inSen).toBe(plain.layout.inSen);
+    expect(debtorPlace(r).children.map(shape)).toEqual(debtorPlace(plain).children.map(shape));
+  });
+
+  test('a company with no opening journal names every one in the period', async () => {
+    const r = await get('from=2026-08-01&to=2026-09-30', { orders, payments });
+    expect(r.autoCount.sen).toBe(400000);
+    expect(r.autoCount.count).toBe(2);
+  });
+
+  test('none from AutoCount: zero, and an empty list', async () => {
+    expect((await get('from=2026-09-01&to=2026-09-30')).autoCount).toEqual({ sen: 0, count: 0, entries: [] });
   });
 });

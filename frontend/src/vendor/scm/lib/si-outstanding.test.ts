@@ -17,22 +17,34 @@ import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import { siDepositAppliedSen, siSettledSen, siOutstandingSen } from './si-outstanding';
+import { siCreditNotesSen, siDepositAppliedSen, siSettledSen, siOutstandingSen } from './si-outstanding';
 
 describe('the rule', () => {
   test('the order deposit settles the invoice alongside its own receipts', () => {
     // The owner's reported chain: 4,400 invoice, 2,000 taken on the order.
-    expect(siOutstandingSen(440_000, 0, 200_000)).toBe(240_000);
-    expect(siSettledSen(0, 200_000)).toBe(200_000);
+    expect(siOutstandingSen(440_000, 0, 200_000, 0)).toBe(240_000);
+    expect(siSettledSen(0, 200_000, 0)).toBe(200_000);
   });
 
   test('the two kinds of money add up rather than replacing one another', () => {
-    expect(siOutstandingSen(440_000, 100_000, 200_000)).toBe(140_000);
+    expect(siOutstandingSen(440_000, 100_000, 200_000, 0)).toBe(140_000);
+  });
+
+  /* A customer's credit note knocked off it (owner 2026-11-03: 「要」) settles
+     it a third way — beside the receipts and the deposit, never inside them. */
+  test('the credit notes knocked off it come off too', () => {
+    expect(siOutstandingSen(440_000, 100_000, 200_000, 30_000)).toBe(110_000);
+    expect(siSettledSen(100_000, 200_000, 30_000)).toBe(330_000);
+    expect(siCreditNotesSen({ credit_notes_sen: 30_000 })).toBe(30_000);
+    expect(siCreditNotesSen({ credit_notes_sen: null })).toBe(0);
+    expect(siCreditNotesSen(undefined)).toBe(0);
+    expect(siCreditNotesSen({ credit_notes_sen: -1 })).toBe(0);
   });
 
   test('it never goes negative — an over-payment is a credit, not a debt', () => {
-    expect(siOutstandingSen(100_000, 150_000, 0)).toBe(0);
-    expect(siOutstandingSen(100_000, 0, 150_000)).toBe(0);
+    expect(siOutstandingSen(100_000, 150_000, 0, 0)).toBe(0);
+    expect(siOutstandingSen(100_000, 0, 150_000, 0)).toBe(0);
+    expect(siOutstandingSen(100_000, 0, 50_000, 60_000)).toBe(0);
   });
 
   /* A missing field means the server could NOT resolve the order, and it must
@@ -44,7 +56,7 @@ describe('the rule', () => {
     expect(siDepositAppliedSen({})).toBe(0);
     expect(siDepositAppliedSen({ so_deposit_applied_sen: null })).toBe(0);
     expect(siDepositAppliedSen({ so_deposit_applied_sen: Number.NaN })).toBe(0);
-    expect(siOutstandingSen(440_000, 0, siDepositAppliedSen(null))).toBe(440_000);
+    expect(siOutstandingSen(440_000, 0, siDepositAppliedSen(null), siCreditNotesSen(null))).toBe(440_000);
   });
 
   test('a negative stamp cannot inflate what has been settled', () => {
@@ -123,7 +135,7 @@ const SURFACES: Array<{ file: string; anchor: string; span: number; mustCall: st
     span: 200,
     /* The sheet is Sales-Invoice-only since docs/bugs/0889 (a purchase invoice is
        paid with an AP Payment), so the deposit is no longer gated on a kind. */
-    mustCall: 'siOutstandingSen(total, paid, siDepositAppliedSen(header))',
+    mustCall: 'siOutstandingSen(total, paid, siDepositAppliedSen(header), siCreditNotesSen(header))',
     why: 'the Record-Payment sheet PRE-FILLS this amount — it would ask the customer for the deposit twice',
   },
   {
@@ -132,6 +144,13 @@ const SURFACES: Array<{ file: string; anchor: string; span: number; mustCall: st
     span: 200,
     mustCall: 'siDeposit',
     why: 'the invoice PDF handed to the customer who paid the deposit',
+  },
+  {
+    file: 'src/vendor/scm/lib/sales-invoice-pdf.ts',
+    anchor: "drawRow('Outstanding'",
+    span: 200,
+    mustCall: '- credited',
+    why: 'the same paper, after a credit note knocked part of it off',
   },
 ];
 

@@ -35,8 +35,8 @@ const tables = (t: Tables) => ({
   mfg_sales_orders: [], mfg_sales_order_payments: [], supplier_material_bindings: [], staff: [{ id: 'staff-1', name: 'Siti' }],
   warehouses: [{ id: 'wh-kl', code: 'KL WAREHOUSE', name: 'BALAKONG' }, { id: 'wh-pg', code: 'PG WAREHOUSE', name: 'PENANG' }],
 });
-function app(t: Tables, companyId = 1, maxRows: number | null = null) {
-  const sb = fakeSb(tables(t), {}, [], [], maxRows);
+function app(t: Tables, companyId = 1, maxRows: number | null = null, missing: Record<string, string[]> = {}) {
+  const sb = fakeSb(tables(t), missing, [], [], maxRows);
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
   a.use('*', async (c, next) => {
     c.set('supabase', sb as unknown as Variables['supabase']);
@@ -66,6 +66,13 @@ describe('GET /sales-invoices/export/rows', () => {
     expect(body.lineCount).toBe(1_001);
     expect(body.salesInvoices.map((r) => r.id)).not.toContain(paid.id);
     expect(body.salesInvoices.every((r) => r.so_deposit_applied_sen === 0)).toBe(true);
+  });
+
+  it('a file carries no figure nobody could compute: an unread credit note knock-off refuses it', async () => {
+    const h = si();
+    const res = await app({ sis: [h], lines: [line(h)] }, 1, null, { acc_credit_note_allocations: ['applied_sen'] }).request('/export/rows');
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: 'export_failed', reason: 'credit notes: the knock-off read failed' });
   });
 
   it('reaches the delivery order through the DO line, company-scoped, and prints the agent as the book spells it', async () => {

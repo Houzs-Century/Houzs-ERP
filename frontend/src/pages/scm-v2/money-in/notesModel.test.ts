@@ -18,7 +18,7 @@ const cn = (over: Partial<CreditNote>): CreditNote => ({
 const odn: ArListRow = {
   kind: 'ODB', docKind: 'DN', id: 'b7', invoiceNumber: 'HC-ODN-2611-001', partyKey: 'D:d2', partyCode: null, partyName: 'OLD DEBTOR', debtorId: 'd2',
   ref: null, description: 'Damaged booth', invoiceDate: '2026-11-01', dueDate: null, currency: 'MYR', totalSen: 10_000, paidSen: 0,
-  depositAppliedSen: 0, outstandingSen: 10_000, status: 'POSTED',
+  depositAppliedSen: 0, creditNotesSen: 0, outstandingSen: 10_000, status: 'POSTED',
 };
 
 describe('a note as a row', () => {

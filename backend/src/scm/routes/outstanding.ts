@@ -41,6 +41,7 @@ import {
   withCompanyCode,
 } from "../lib/companyScope";
 import { stampOrderDeposit } from "../lib/si-list-stamps";
+import { creditNotesOf } from "../lib/si-credit-notes";
 import {
   summariseSiOutstanding, unavailableSiSummary, SI_SUMMARY_COLS,
 } from "../lib/si-outstanding-summary";
@@ -113,13 +114,15 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
 
        `so_deposit_applied_sen === null` means the stamp could not read the
        orders; the row then keeps the view's larger figure, which is the only
-       direction this page may be wrong in. */
+       direction this page may be wrong in. The customers' credit notes knocked
+       off each invoice (`credit_notes_sen`, si-credit-notes.ts) come off the
+       same way and degrade the same way. */
     if (slug === 'si') {
       const rows = (data ?? []) as Array<Record<string, unknown>>;
       await stampOrderDeposit(sb, rows, activeCompanyId(c) ?? null);
       for (const r of rows) {
-        const dep = Number(r.so_deposit_applied_sen ?? 0);
-        if (dep > 0) r.outstanding_sen = Math.max(0, Number(r.outstanding_sen ?? 0) - dep);
+        const less = Math.max(0, Number(r.so_deposit_applied_sen ?? 0)) + creditNotesOf(r);
+        if (less > 0) r.outstanding_sen = Math.max(0, Number(r.outstanding_sen ?? 0) - less);
       }
     }
     /* The order's customer reference, so the tab's search finds a row by it
