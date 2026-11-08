@@ -120,12 +120,12 @@ function RoadThisMonth({ lorryId }: { lorryId: string }) {
   const rows = road.data ?? [];
   const m = rows.reduce((a, r) => a + r.distanceM, 0), s = rows.reduce((a, r) => a + r.durationS, 0);
   return (
-    <Card title="On the road this month">
+    <Card title="Google this month">
       {road.isError ? <p className="text-[12.5px] text-[#8a2c2c]">Road figures could not be loaded.</p>
         : rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No run worked out yet this month.</p>
         : <div className="grid grid-cols-3 gap-2 text-[12.5px]">
-            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">By road</div><div className="text-[16px] font-semibold">{fmtKm(m)}</div></div>
-            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Driving time</div><div className="text-[16px] font-semibold">{fmtDrive(s)}</div></div>
+            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Google km</div><div className="text-[16px] font-semibold">{fmtKm(m)}</div></div>
+            <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Google time</div><div className="text-[16px] font-semibold">{fmtDrive(s)}</div></div>
             <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Days out</div><div className="text-[16px] font-semibold">{rows.length}</div></div>
           </div>}
     </Card>

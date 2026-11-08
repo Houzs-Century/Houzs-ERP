@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef } from './lorry-routes-queries';
+import { fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef, diffPct, dailyTotalsByLorry } from './lorry-routes-queries';
 import { slotSortKey } from './fleet-day-cards';
 
 describe('road figures', () => {
@@ -32,5 +32,24 @@ describe('each order by road from the stop before', () => {
     ] };
     const m = legLabelsByRef([fig, { ...fig, lorryId: 'l2', legs: null }]);
     expect([...m]).toEqual([['SO-1', '12.0 km · 18 min'], ['SO-2', '8.0 km · 15 min']]);
+  });
+});
+
+describe('Google against what really happened', () => {
+  it('the difference is a whole percent of the Google figure, blank with nothing to compare', () => {
+    expect(diffPct(1120, 1000)).toBe('+12%');
+    expect(diffPct(920, 1000)).toBe('-8%');
+    expect(diffPct(null, 1000)).toBeNull();
+    expect(diffPct(500, 0)).toBeNull();
+  });
+  it('per lorry, GPS km stays blank for a lorry that never sent GPS', () => {
+    const day = { date: '2026-11-07', googleM: 0, googleS: 0, stops: 2, onSiteS: 0, onSiteStops: 0 };
+    const t = dailyTotalsByLorry([
+      { ...day, lorryId: 'A', gpsKm: 80.5, timedStops: 2, driveS: 3000, googleTimedS: 2500 },
+      { ...day, lorryId: 'A', gpsKm: null, timedStops: 1, driveS: 600, googleTimedS: 500 },
+      { ...day, lorryId: 'B', gpsKm: null, timedStops: 0, driveS: 0, googleTimedS: 0 },
+    ]);
+    expect(t.get('A')).toEqual({ gpsKm: 80.5, driveS: 3600, googleTimedS: 3000, timedStops: 3 });
+    expect(t.get('B')?.gpsKm).toBeNull();
   });
 });
