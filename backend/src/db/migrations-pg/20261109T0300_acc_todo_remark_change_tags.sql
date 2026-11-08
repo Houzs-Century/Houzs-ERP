@@ -12,7 +12,7 @@
 --
 -- HOUSE STYLE. Idempotent, schema-qualified. RE-CHECK THE NUMBER AT MERGE.
 --
--- REVERSAL (only while no row carries 'edit' or 'deleted'):
+-- REVERSAL: only while no row carries 'edit' or 'deleted' —
 --   ALTER TABLE scm.acc_todo_remarks DROP CONSTRAINT IF EXISTS acc_todo_remarks_tag_check;
 --   ALTER TABLE scm.acc_todo_remarks ADD CONSTRAINT acc_todo_remarks_tag_check
 --     CHECK (tag IS NULL OR tag IN ('done', 'reopen'));
