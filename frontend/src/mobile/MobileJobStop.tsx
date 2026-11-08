@@ -3,6 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
+import {
+  deliveryIssueDraftError, invalidateDeliveryIssues, reportJobDeliveryIssue, useRunDeliveryIssues,
+  type DeliveryIssueDraft,
+} from "../vendor/scm/lib/delivery-issue-queries";
+import { DeliveryIssueForm, MobileDeliveryIssues, EMPTY_ISSUE_DRAFT } from "./DeliveryIssueForm";
 import "./mobile.css";
 import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import {
@@ -30,6 +35,11 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const [notes, setNotes] = useState("");
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [capturing, setCapturing] = useState(false);
+  /* "Report a problem": sent AFTER the job is completed, so a problem never
+     blocks the job (A2). */
+  const [issueOn, setIssueOn] = useState(false);
+  const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
+  const issuesQ = useRunDeliveryIssues({ jobs: [jobKey(jobRef)] });
 
   const progress = q.data?.progress ?? null;
   const ctx = q.data?.context;
@@ -66,6 +76,8 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
 
   const complete = async () => {
     if (!photos.length) { setError("Take at least one POD photo first."); return; }
+    const issueError = issueOn ? deliveryIssueDraftError(issueDraft) : null;
+    if (issueError) { setError(issueError); return; }
     setError(null); setBusy(true);
     try {
       const keys: string[] = [];
@@ -75,10 +87,35 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
         body: JSON.stringify({ photoKeys: keys, notes, ...(gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM, locatedAt: gps.atIso } : {}) }),
       });
       await refresh();
-      onDone();
     } catch (e) {
       setError((e as Error).message || "Could not complete the job. Nothing was saved; try again.");
-    } finally { setBusy(false); }
+      setBusy(false);
+      return;
+    }
+    if (issueOn && !(await sendIssue("The job is completed, but the problem report did not send"))) { setBusy(false); return; }
+    setBusy(false);
+    onDone();
+  };
+
+  const sendIssue = async (failPrefix: string): Promise<boolean> => {
+    try {
+      await reportJobDeliveryIssue(jobRef, issueDraft);
+      setIssueDraft(EMPTY_ISSUE_DRAFT);
+      setIssueOn(false);
+      await invalidateDeliveryIssues(qc);
+      return true;
+    } catch (e) {
+      setError(`${failPrefix}: ${(e as Error).message || "please try again"}.`);
+      return false;
+    }
+  };
+  const sendIssueOnly = async () => {
+    if (busy) return;
+    const err = deliveryIssueDraftError(issueDraft);
+    if (err) { setError(err); return; }
+    setError(null); setBusy(true);
+    await sendIssue("The problem report did not send");
+    setBusy(false);
   };
 
   const label = LEG_LABEL[jobRef.leg] ?? jobRef.leg;
@@ -156,6 +193,23 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
                 </button>
               </div>
             )}
+            <MobileDeliveryIssues issues={issuesQ.data} />
+            {(step === "arrived" || done) && (
+              !issueOn ? (
+                <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", marginTop: 12, color: "var(--red)", borderColor: "var(--red)" }}>
+                  {done ? "Report a problem" : "Completed with issue"}
+                </button>
+              ) : (
+                <div className="card" style={{ padding: 12, marginTop: 12, border: "1px solid var(--red)" }}>
+                  <DeliveryIssueForm value={issueDraft} onChange={setIssueDraft} disabled={busy} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button type="button" className="btn-ghost" disabled={busy} onClick={() => { setIssueOn(false); setIssueDraft(EMPTY_ISSUE_DRAFT); }} style={{ flex: 1 }}>No problem</button>
+                    {done && <button type="button" className="btn" disabled={busy} onClick={sendIssueOnly} style={{ flex: 1 }}>{busy ? "Sending…" : "Send report"}</button>}
+                  </div>
+                  {!done && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 8 }}>The job is still completed; the office gets a service case with your photos.</div>}
+                </div>
+              )
+            )}
             {error && <div style={{ marginTop: 12, fontSize: 12, color: "var(--red)", textAlign: "center" }}>{error}</div>}
           </>
         )}
@@ -164,7 +218,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
       <footer className="actbar">
         {ctx && step === "sched" && <button type="button" className="btn" disabled={busy} onClick={() => post("depart")}>Start — I'm on the way</button>}
         {ctx && step === "otw" && <button type="button" className="btn" disabled={busy} onClick={() => post("arrive")}>Mark arrived</button>}
-        {ctx && step === "arrived" && <button type="button" className="btn" disabled={busy} onClick={complete}>{busy ? "Uploading…" : "Complete job →"}</button>}
+        {ctx && step === "arrived" && <button type="button" className="btn" disabled={busy} onClick={complete}>{busy ? "Uploading…" : issueOn ? "Complete with issue →" : "Complete job →"}</button>}
         {ctx && done && <div style={{ textAlign: "center", fontSize: 12, color: "var(--green)", fontWeight: 700, padding: 6 }}>This job is completed.</div>}
         {!ctx && <button type="button" className="btn-ghost" onClick={onBack}>Back</button>}
       </footer>

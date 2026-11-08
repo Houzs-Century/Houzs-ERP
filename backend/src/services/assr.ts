@@ -47,6 +47,9 @@ export interface CreateAssrInput {
   /** Operations PIC — assr_cases.assigned_to. When provided, overrides
    *  the admin-configured default assignee. */
   assigned_to?: number | null;
+  /** The delivery order the case is about (assr_cases.delivery_order) — set
+   *  when the delivery crew reports a problem at POD. */
+  delivery_order?: string | null;
   created_by?: number;
   /** Multi-company (Phase 0b) — the active company (companies.id) resolved
    *  from the request via activeCompanyId(c). Left undefined pre-migration /
@@ -589,9 +592,9 @@ export async function createAssrCase(
       // delivery_order / do_date <- the SO's linked DO. The AutoCount
       // /SalesOrder/getSingle context does not expose a DO doc no or
       // date, so these stay NULL at create time (case manager fills
-      // them via PATCH). Bound explicitly so the columns stay covered
-      // if the context ever starts carrying DO fields.
-      null,
+      // them via PATCH) — except a crew POD issue report, which knows
+      // its DO. do_date stays NULL: it is the SERVICE delivery leg's date.
+      input.delivery_order ?? null,
       null,
       defaultAssigneeId,
       defaultAssignee2Id,
