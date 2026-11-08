@@ -2,6 +2,12 @@
 // - UTF-8 with BOM
 // - CRLF line endings
 // - Field quoting per RFC 4180
+// - Formula-injection guard on every cell (rule and reasons in
+//   vendor/shared/csv-guard.ts, shared with the backend's POS summary CSV);
+//   parseCSV undoes it so an export re-imports unchanged.
+
+import { guardFormula, unguardFormula } from "../vendor/shared/csv-guard";
+export { guardFormula };
 
 /* Re-exported at the CSV boundary so a caller has one import for "how a cell
    leaves". The rule itself lives beside fmtDate — export is the INVERSE of
@@ -14,12 +20,13 @@ export interface CSVColumn<T> {
   getValue: (row: T) => string | number | boolean | null | undefined;
 }
 
+
 function escapeField(value: unknown): string {
   if (value === null || value === undefined) return "";
-  let s = String(value);
+  let s = guardFormula(String(value));
   // Normalise newlines
   s = s.replace(/\r\n/g, "\n");
-  if (/[",\n]/.test(s)) {
+  if (/[",\r\n]/.test(s)) {
     s = `"${s.replace(/"/g, '""')}"`;
   }
   return s;
@@ -108,7 +115,7 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
     if (ch === ",") {
-      row.push(field);
+      row.push(unguardFormula(field));
       field = "";
       i++;
       continue;
@@ -116,7 +123,7 @@ export function parseCSV(text: string): string[][] {
     if (ch === "\r") {
       // handle CRLF
       if (text[i + 1] === "\n") i++;
-      row.push(field);
+      row.push(unguardFormula(field));
       rows.push(row);
       row = [];
       field = "";
@@ -124,7 +131,7 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
     if (ch === "\n") {
-      row.push(field);
+      row.push(unguardFormula(field));
       rows.push(row);
       row = [];
       field = "";
@@ -137,7 +144,7 @@ export function parseCSV(text: string): string[][] {
 
   // Flush trailing field/row (if any non-empty content)
   if (field.length > 0 || row.length > 0) {
-    row.push(field);
+    row.push(unguardFormula(field));
     rows.push(row);
   }
 

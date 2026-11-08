@@ -1,3 +1,4 @@
+import { guardFormula } from "../../lib/csv";
 import type { AnnMediaLayout } from "../../components/AnnouncementMedia";
 import {
   categoryOf,
@@ -511,7 +512,7 @@ export function manageStats(
 
 /** Rows for a CSV export of one notice's read receipts. */
 export function receiptsCsv(a: Announcement, acks: AcksData): string {
-  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const esc = (v: unknown) => `"${guardFormula(String(v ?? "")).replace(/"/g, '""')}"`;
   const lines = [
     ["Notice", "Doc no", "Name", "Email", "Department", "Position", "Status", "Acknowledged at"].map(esc).join(","),
   ];

@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 
 import type { FabricTier, FabricTrackingRow } from './fabric-queries';
-import { parseCSV } from '../../../lib/csv';
+import { guardFormula, parseCSV } from '../../../lib/csv';
 import {
   isWorkbookFile, normalizeImportHeader, readWorkbookSheets, resolveImportHeaders, UNREADABLE_WORKBOOK,
 } from '../../../lib/import-sheet';
@@ -76,7 +76,7 @@ function parseTier(raw: string): FabricTier | null | undefined {
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return '';
-  const s = String(v);
+  const s = guardFormula(String(v));
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
