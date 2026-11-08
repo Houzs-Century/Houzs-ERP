@@ -249,6 +249,7 @@ export function FleetDay() {
     return figs.length ? `All lorries by road: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
   })();
   const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
+  const mapNoByRef = useMemo(() => new Map(lorryRoutes.routes.flatMap((r) => r.stops.map((st) => [st.ref, st.order] as const))), [lorryRoutes.routes]);
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
   // The board's own drops that could not be placed (surfaced, never dropped),
   // then any server-ungeocoded order not already named.
@@ -309,6 +310,7 @@ export function FleetDay() {
       remarkKeys={remarkKeys}
       road={roadLabelOf(r.plate)}
       legByRef={legByRef}
+      mapNoByRef={mapNoByRef}
       onFocus={() => toggleFocus(platekey(r.plate))}
       onOpenDoc={(d) => setSelected(d)}
       onCrew={() => setCrewRun(r)}

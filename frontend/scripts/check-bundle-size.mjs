@@ -282,7 +282,11 @@ const CEILINGS = {
   // entry: initial-app 89.05 -> 89.88 KB gzip (main 176.5 -> 177.3). The
   // list's icons and one-line descriptions stayed lazy (reports/
   // reportListLook.ts) — moving them too measured +1.9 KB.
-  INITIAL_JS_GZIP: 178 * KB,
+  // 178 -> 179 on 2026-11-08: main sat AT 178.0 again; the Last Mile pin-number
+  // change (PR #5395) adds no eager module (LorryCard / FleetDay are lazy) and
+  // crossed it by bytes, the renamed lazy-chunk hashes in the entry's map. Same
+  // mechanism as the 176 -> 177 bump: one more KB of headroom.
+  INITIAL_JS_GZIP: 179 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
