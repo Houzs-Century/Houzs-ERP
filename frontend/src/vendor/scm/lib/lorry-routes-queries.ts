@@ -4,7 +4,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-export type RoadFigure = { lorryId: string; date: string; distanceM: number; durationS: number; stopCount: number; polyline: string | null };
+/** One stop's drive from the stop before (the first from home); `ref` null is the drive home. */
+export type RoadLeg = { ref: string | null; distanceM: number; durationS: number };
+export type RoadFigure = { lorryId: string; date: string; distanceM: number; durationS: number; stopCount: number; polyline: string | null; legs: RoadLeg[] | null };
 
 /** "86.4 km" — one decimal under 100 km, whole above. PURE. */
 export const fmtKm = (m: number): string => { const km = m / 1000; return `${km < 100 ? km.toFixed(1) : Math.round(km).toLocaleString()} km`; };
@@ -39,5 +41,12 @@ export function roadTotalsByLorry(rows: readonly RoadFigure[]): Map<string, { di
     t.distanceM += r.distanceM; t.durationS += r.durationS; t.days += 1;
     out.set(r.lorryId, t);
   }
+  return out;
+}
+
+/** "12.0 km · 18 min" for each order on the day's runs, by sales order number. PURE. */
+export function legLabelsByRef(figs: Iterable<RoadFigure>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of figs) for (const l of f.legs ?? []) if (l.ref) out.set(l.ref, `${fmtKm(l.distanceM)} · ${fmtDrive(l.durationS)}`);
   return out;
 }

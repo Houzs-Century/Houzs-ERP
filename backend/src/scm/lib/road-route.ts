@@ -4,7 +4,9 @@
 // Gated on GOOGLE_MAPS_API_KEY like the rest of maps.ts: no key, no call.
 
 export type Point = { lat: number; lng: number };
-export type RoadRoute = { ok: true; distanceM: number; durationS: number; polyline: string | null } | { ok: false; reason: string };
+export type RoadLeg = { distanceM: number; durationS: number };
+/** `legs[i]` is the drive INTO stop i (from home, then from the stop before); the last leg is the drive home. */
+export type RoadRoute = { ok: true; distanceM: number; durationS: number; polyline: string | null; legs: RoadLeg[] } | { ok: false; reason: string };
 
 const DIRECTIONS = 'https://maps.googleapis.com/maps/api/directions/json';
 /** Directions takes at most 25 waypoints in one request. */
@@ -28,12 +30,13 @@ type Body = { status?: string; routes?: Array<{ legs?: Array<{ distance?: { valu
 export function parseRoadRoute(body: Body): RoadRoute {
   const route = body.status === 'OK' ? body.routes?.[0] : undefined;
   if (!route) return { ok: false, reason: `Directions status ${body.status ?? 'unknown'}` };
-  const legs = route.legs ?? [];
+  const legs = (route.legs ?? []).map((l) => ({ distanceM: Number(l.distance?.value ?? 0), durationS: Number(l.duration?.value ?? 0) }));
   return {
     ok: true,
-    distanceM: legs.reduce((a, l) => a + Number(l.distance?.value ?? 0), 0),
-    durationS: legs.reduce((a, l) => a + Number(l.duration?.value ?? 0), 0),
+    distanceM: legs.reduce((a, l) => a + l.distanceM, 0),
+    durationS: legs.reduce((a, l) => a + l.durationS, 0),
     polyline: route.overview_polyline?.points ?? null,
+    legs,
   };
 }
 

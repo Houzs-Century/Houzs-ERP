@@ -1,7 +1,7 @@
 /* /api/scm/lorry-routes: each lorry's day by road (owner 2026-11-08), worked out ONCE on
    the server (scm/lib/lorry-day-runs.ts) and read by every page.
    POST /day   works out the day's runs now and returns them (Last Mile opens a day with it;
-               the nightly cron does the same for the days just gone). Google is asked
+               the nightly cron does the same for the days just gone, today and tomorrow). Google is asked
                only for a run that changed.
    GET  /      the kept figures for a date range, for Lorry Capacity, Fleet Health and the
                lorry record.
@@ -22,8 +22,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const out = (r: Record<string, unknown>) => ({
   lorryId: String(r.lorry_id), date: String(r.route_date).slice(0, 10), distanceM: Number(r.distance_m), durationS: Number(r.duration_s),
   stopCount: Number(r.stop_count), polyline: (r.polyline as string | null) ?? null, computedAt: String(r.computed_at),
+  legs: Array.isArray(r.legs) ? (r.legs as Array<{ ref: string | null; distanceM: number; durationS: number }>) : null,
 });
-const COLS = 'lorry_id, route_date, distance_m, duration_s, stop_count, polyline, computed_at';
+const COLS = 'lorry_id, route_date, distance_m, duration_s, stop_count, polyline, legs, computed_at';
 
 lorryRoutes.post('/day', async (c) => { // company-scope: the shared fleet's runs, see the header
   let body: unknown;

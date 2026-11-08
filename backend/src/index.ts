@@ -1322,8 +1322,10 @@ export default {
         track("lorry-day-routes", async () => {
           const sb = getSupabaseService(env);
           const today = new Date(Date.now() + 8 * 3600_000);
-          for (const back of [1, 2]) {
-            const date = new Date(today.getTime() - back * 86_400_000).toISOString().slice(0, 10);
+          // The two days just gone (final), then today and tomorrow so the plan is
+          // ready before the lorries leave; an unchanged run asks Google nothing.
+          for (const offset of [-2, -1, 0, 1]) {
+            const date = new Date(today.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
             const outcomes = await computeDayRoutes(sb, env, date);
             const skipped = outcomes.filter((o) => o.result === "skipped");
             console.log(
