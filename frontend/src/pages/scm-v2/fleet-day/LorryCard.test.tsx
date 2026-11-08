@@ -48,7 +48,6 @@ describe('LorryCard', () => {
         road={null}
         legByRef={new Map()}
         mapNoByRef={new Map()}
-        mapNoByRef={new Map()}
         onFocus={() => {}}
         onOpenDoc={() => {}}
         onCrew={() => {}}
