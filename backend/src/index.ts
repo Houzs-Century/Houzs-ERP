@@ -179,6 +179,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { computeDayRoutes } from "./scm/lib/lorry-day-runs";
 import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
 import { todayMyt } from "./scm/lib/my-time";
@@ -1313,6 +1314,25 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // Each lorry's day by road (owner 2026-11-08): the two days just gone are worked
+      // out on the server, so Fleet Health and Lorry Capacity have every day whether or
+      // not anyone opened Last Mile. Two days, so a late edit to yesterday is caught.
+      ctx.waitUntil(
+        track("lorry-day-routes", async () => {
+          const sb = getSupabaseService(env);
+          const today = new Date(Date.now() + 8 * 3600_000);
+          for (const back of [1, 2]) {
+            const date = new Date(today.getTime() - back * 86_400_000).toISOString().slice(0, 10);
+            const outcomes = await computeDayRoutes(sb, env, date);
+            const skipped = outcomes.filter((o) => o.result === "skipped");
+            console.log(
+              `[cron lorry-day-routes] ${date}: ${outcomes.length} lorr${outcomes.length === 1 ? "y" : "ies"}, ` +
+              `${outcomes.filter((o) => o.result === "worked-out").length} worked out` +
+              (skipped.length ? `, skipped ${skipped.map((o) => `${o.plate} (${o.reason})`).join("; ")}` : ""),
+            );
+          }
+        }).catch((e) => console.error("[cron lorry-day-routes]", e)),
       );
       // Books › Self-check summed for To do (batch 6 c3): the control check is
       // too heavy for every To do read, so each night leaves one row per

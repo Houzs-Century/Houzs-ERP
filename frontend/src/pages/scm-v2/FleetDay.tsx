@@ -11,7 +11,7 @@
 // here is a labelled placeholder). The page keeps the scm.transportation.last_mile
 // gate (applied on the route) and the real Google-Maps panel.
 // ----------------------------------------------------------------------------
-import { fmtDrive, fmtKm, useRoadRuns } from '../../vendor/scm/lib/lorry-routes-queries';
+import { fmtDrive, fmtKm, useRoadDay } from '../../vendor/scm/lib/lorry-routes-queries';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Map as MapIcon, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -236,16 +236,16 @@ export function FleetDay() {
     () => buildLorryRoutes(runs, pointByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
     [runs, pointByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
   );
-  /* Each lorry's run by road, from its home and back (owner 2026-11-08). */
-  const roadInputs = useMemo(() => lorryRoutes.routes.filter((r) => r.depot && r.stops.length > 0)
-    .map((r) => ({ plate: r.title, home: { lat: r.depot!.lat, lng: r.depot!.lng }, stops: r.stops.map((s) => ({ lat: s.lat, lng: s.lng })) })), [lorryRoutes.routes]);
-  const roadRuns = useRoadRuns(date, roadInputs);
+  /* Each lorry's run by road, from its home and back (owner 2026-11-08), worked out on
+     the server for the whole day; the board's region filter does not change it. */
+  const roadDay = useRoadDay(date);
   const roadLabelOf = (plate: string): string | null => {
-    const f = roadRuns.get(plate)?.figure;
+    const id = runByPlate.get(platekey(plate))?.lorryId;
+    const f = id ? roadDay.data?.get(id) : undefined;
     return f ? `${fmtKm(f.distanceM)} · ${fmtDrive(f.durationS)}` : null;
   };
   const roadTotal = (() => {
-    const figs = [...roadRuns.values()].map((x) => x.figure).filter((f): f is NonNullable<typeof f> => f != null);
+    const figs = [...(roadDay.data?.values() ?? [])];
     return figs.length ? `All lorries by road: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
   })();
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));

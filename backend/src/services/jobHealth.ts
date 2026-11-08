@@ -49,6 +49,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "job-runs-retention": DAY,
   "failed-logins-retention": DAY,
   "stock-close": DAY,
+  "lorry-day-routes": DAY,
   "self-check": DAY,
   "supplier-price-apply": DAY,
   "deliver-due": DAY,
