@@ -47,7 +47,7 @@ function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: strin
   );
 }
 
-function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM; color: string; selected: boolean; hasRemark: boolean; onOpen: () => void }) {
+function UndeliveredRow({ d, color, selected, hasRemark, leg, onOpen }: { d: DocRowVM; color: string; selected: boolean; hasRemark: boolean; leg: string | null; onOpen: () => void }) {
   const meta = STATUS_META[d.status];
   return (
     <button
@@ -71,6 +71,7 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
         </span>
         {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {d.address && <span className="block truncate text-[12px] text-ink-secondary">{d.address}</span>}
+        {leg && <span className="block text-[11px] text-ink-muted">From the stop before: <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex flex-col items-end gap-1">
         {d.rowType === 'so' && <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">{fmtSen(d.amountSen)}</span>}
@@ -86,7 +87,7 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
   );
 }
 
-function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { roadMin: number | null; siteMin: number | null } | null; selected: boolean; onOpen: () => void }) {
+function DeliveredRow({ d, times, selected, leg, onOpen }: { d: DocRowVM; times: { roadMin: number | null; siteMin: number | null } | null; selected: boolean; leg: string | null; onOpen: () => void }) {
   return (
     <button
       type="button"
@@ -104,6 +105,7 @@ function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { ro
             {[times.roadMin != null ? `On the road ${fmtMinutes(times.roadMin)}` : null, times.siteMin != null ? `On site ${fmtMinutes(times.siteMin)}` : null].filter(Boolean).join(' · ')}
           </span>
         )}
+        {leg && <span className="block text-[11px] text-ink-muted">From the stop before: <span className="font-semibold text-ink-secondary">{leg}</span></span>}
       </span>
       <span className="flex items-center gap-2">
         {d.rowType === 'so' && <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>}
@@ -117,12 +119,14 @@ function DeliveredRow({ d, times, selected, onOpen }: { d: DocRowVM; times: { ro
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road,
+  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road, legByRef,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
   /** The run by road from the lorry's home and back (Google); null when not worked out. */
   road: string | null;
+  /** Each order's drive from the stop before, by sales order number (server-worked). */
+  legByRef: ReadonlyMap<string, string>;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
@@ -244,7 +248,7 @@ export function LorryCard({
       ) : (
         <>
           {undelivered.map((d) => (
-            <UndeliveredRow key={d.key} d={d} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} onOpen={() => onOpenDoc(d)} />
+            <UndeliveredRow key={d.key} d={d} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
           ))}
           {delivered.length > 0 && (
             <>
@@ -257,7 +261,7 @@ export function LorryCard({
                 {delivered.length} delivered
               </button>
               {showDone && delivered.map((d) => (
-                <DeliveredRow key={d.key} d={d} times={times.get(d.key) ?? null} selected={selectedKey === d.key} onOpen={() => onOpenDoc(d)} />
+                <DeliveredRow key={d.key} d={d} times={times.get(d.key) ?? null} selected={selectedKey === d.key} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
               ))}
             </>
           )}

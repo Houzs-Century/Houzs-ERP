@@ -20,7 +20,7 @@ import { chunkIn } from './paginate-all';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from './geocode';
 import { loadLorryDepots } from './lorry-depots';
 import { normalizePlate } from './plate-normalize';
-import { MAX_STOPS, roadRoute, stopKey, type Point } from './road-route';
+import { MAX_STOPS, roadRoute, stopKey, type Point, type RoadLeg } from './road-route';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as geocode.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -270,15 +270,25 @@ async function locate(sb: SupabaseClient, env: Env, addrByDoc: Map<string, strin
 
 /* ── Work out and keep ──────────────────────────────────────────────────── */
 
+export type StopLeg = { ref: string | null; distanceM: number; durationS: number };
+
+/** Each stop's drive from the one before (the first from home), keyed by the stop's
+ *  order; the last entry (ref null) is the drive home. Null when Google's legs do not
+ *  line up with the stops, so a mismatch never pins a figure on the wrong order. PURE. */
+export function stopLegs(stops: ReadonlyArray<{ ref: string }>, legs: readonly RoadLeg[]): StopLeg[] | null {
+  if (legs.length !== stops.length + 1) return null;
+  return legs.map((l, i) => ({ ref: stops[i]?.ref ?? null, distanceM: l.distanceM, durationS: l.durationS }));
+}
+
 export type DayRouteOutcome = { plate: string; lorryId: string | null; stops: number; unlocated: string[]; result: 'kept' | 'worked-out' | 'skipped'; reason: string | null };
 
 /** Work out every lorry's run for the day and keep it; Google is asked only when a run
  *  changed (stop_key). A lorry that no longer runs that day loses its kept figure. */
 export async function computeDayRoutes(sb: SupabaseClient, env: Env, date: string): Promise<DayRouteOutcome[]> {
   const { runs, homes, warehousePoints } = await loadDayRuns(sb, env, date);
-  const { data: keptRows, error: kErr } = await sb.from('lorry_day_routes').select('id, company_id, lorry_id, stop_key').eq('route_date', date);
+  const { data: keptRows, error: kErr } = await sb.from('lorry_day_routes').select('id, company_id, lorry_id, stop_key, legs').eq('route_date', date);
   if (kErr) throw new Error(`kept routes: ${kErr.message}`);
-  const kept = keptRows as Array<{ id: string; company_id: number; lorry_id: string; stop_key: string }>;
+  const kept = keptRows as Array<{ id: string; company_id: number; lorry_id: string; stop_key: string; legs: unknown }>;
   const outcomes: DayRouteOutcome[] = [];
   const keep = new Set<string>();
   for (const run of runs) {
@@ -290,7 +300,8 @@ export async function computeDayRoutes(sb: SupabaseClient, env: Env, date: strin
     if (run.stops.length > MAX_STOPS) { outcomes.push({ ...base, result: 'skipped', reason: `more than ${MAX_STOPS} located stops` }); continue; }
     const key = stopKey(home, run.stops);
     const prev = kept.find((k) => k.lorry_id === run.lorryId && Number(k.company_id) === run.companyId);
-    if (prev && prev.stop_key === key) { keep.add(prev.id); outcomes.push({ ...base, result: 'kept', reason: null }); continue; }
+    // A figure kept before the per-stop legs were stored is worked out once more.
+    if (prev && prev.stop_key === key && prev.legs != null) { keep.add(prev.id); outcomes.push({ ...base, result: 'kept', reason: null }); continue; }
     const road = await roadRoute(env, home, run.stops);
     if (!road.ok) {
       if (prev) keep.add(prev.id); // a Google failure keeps yesterday's answer rather than none
@@ -299,7 +310,7 @@ export async function computeDayRoutes(sb: SupabaseClient, env: Env, date: strin
     }
     const { data: saved, error: sErr } = await sb.from('lorry_day_routes').upsert({
       company_id: run.companyId, lorry_id: run.lorryId, route_date: date, stop_key: key, stop_count: run.stops.length,
-      distance_m: road.distanceM, duration_s: road.durationS, polyline: road.polyline, computed_at: new Date().toISOString(),
+      distance_m: road.distanceM, duration_s: road.durationS, polyline: road.polyline, legs: stopLegs(run.stops, road.legs), computed_at: new Date().toISOString(),
     }, { onConflict: 'company_id,lorry_id,route_date' }).select('id').single();
     if (sErr) throw new Error(`save ${run.plate}: ${sErr.message}`);
     keep.add(String((saved as { id: string }).id));
