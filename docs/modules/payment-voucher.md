@@ -18,6 +18,13 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `scm.payment_voucher.write`; owner 2026-11-06): notes and line descriptions only, the
   body's other fields are ignored, the voucher stays checked, the change is on its trail.
   Approve writes the journal with the lines' words, so approved, posted and cancelled refuse.
+- **Description and bank** (owner 2026-11-08): the header `notes` reads **Description** (what the
+  money is for); the bank it pays into has its own `pay_to_bank_name/_account_no/_account_name`,
+  filled from the supplier or the payment request, editable until Checked (`pvCanEdit`). A voucher
+  made before them reads its request's bank, else its supplier's (`payment-vouchers-describe.ts`).
+- **Payment listing** (`/scm/payment-listing`, `GET /payment-vouchers/listing?from=&to=&stages=`): by
+  default Prepared + Checked dated up to today, oldest first, whole (paged); Purpose = the payment
+  requests by number and purpose, else the lines; payee and Pay from narrow it on the page.
 - **Reject** (either check or approve key) → back to raw `DRAFT`, every mark
   cleared, reason on the audit trail.
 - **Withdraw** — preparer's own back-out — only works before Check.
@@ -178,7 +185,8 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 
 ## Where the code is
 
-- `backend/src/scm/routes/payment-vouchers.ts` — routes, handlers.
+- `backend/src/scm/routes/payment-vouchers.ts` — routes, handlers; `payment-vouchers-describe.ts`
+  (purpose + bank), `payment-vouchers-listing.ts` (the Payment listing).
 - `backend/src/scm/routes/pv-files.ts`, `backend/src/scm/lib/doc-files.ts` —
   attachments + print-bundle.
 - `backend/src/scm/lib/pv-approval.ts` — the four-layer state machine.
@@ -192,7 +200,8 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - `frontend/src/pages/scm-v2/PaymentRequests.tsx` (申请付款; `?open=<id>` opens
   one) over `PaymentRequestForm.tsx` (the request form — also opened from a
   PMS CONTRACT row with the row's files as the bill).
-- `frontend/src/pages/scm-v2/PaymentVouchers.tsx` (list),
+- `frontend/src/pages/scm-v2/PaymentVouchers.tsx` (list), `PaymentListing.tsx` (the day's payments,
+  `payment-listing-pdf.ts` over `listing-pdf.ts`), `pv-pay-to.ts` + `PvPayToFields.tsx` (the bank fields),
   `PaymentVoucherNew.tsx` (create/AP Payment/refund/transfer),
   `PaymentVoucherScan.tsx` (bill pile), `PaymentVoucherDetail.tsx`
   (detail/edit).

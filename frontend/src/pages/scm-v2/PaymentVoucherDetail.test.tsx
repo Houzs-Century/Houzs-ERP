@@ -113,8 +113,9 @@ const draw = () => render(
   </MemoryRouter>,
 );
 
-/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only. */
-describe('Edit text: the words of a voucher the first yes has locked', () => {
+/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only;
+   2026-11-09: 可以，开放 — and the bank it pays into. */
+describe('Edit text & bank: the words and the bank of a voucher the first yes has locked', () => {
   const atStage = (over: Record<string, unknown>) => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
     return render(
@@ -124,34 +125,38 @@ describe('Edit text: the words of a voucher the first yes has locked', () => {
     );
   };
   const MARK = '2026-11-06T03:00:00Z';
-  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null }); });
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
 
-  test('checked: Edit text and no Edit; it opens the form with the voucher\'s words, and closes', () => {
-    atStage({ submitted_at: MARK, checked_at: MARK });
+  test('checked: Edit text & bank and no Edit; it opens the form with the voucher\'s words and bank, and closes', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK, pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: null });
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit text & bank' }));
     expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED');
+    /* The bank the voucher pays into, as the page reads it (own, else request's, else supplier's). */
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('0123 4567');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('Line 1 description')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit text' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit text & bank' })).toBeTruthy();
   });
 
-  test('prepared: the whole Edit, no Edit text', () => {
+  test('prepared: the whole Edit, no Edit text & bank', () => {
     atStage({ submitted_at: MARK });
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
   });
 
   test('approved or posted: neither', () => {
     const { unmount } = atStage({ submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     unmount();
     atStage({ status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  test('the list\'s Edit text opens straight on the form', () => {
+  test('the list\'s Edit text & bank opens straight on the form', () => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: MARK, checked_at: MARK, approved_at: null });
     render(
       <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9?text=1']}>
@@ -213,6 +218,35 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     expect(updateAsync.mock.calls[0]![0]).toMatchObject({
       lines: [{ debitAccountCode: '405-0000', amountSen: 250000, description: 'prepay 2500.00 — META PLATFORM IRELAND LIMITED' }],
       allocations: [],
+    });
+  });
+});
+
+/* Owner 2026-11-08 (pv notes 我不想要全部挤在一排，然后把notes 换成description): the
+   Description says what the money is for; the bank it pays into has fields of its own. */
+describe('the Description and the bank it pays into', () => {
+  const BANK = { notes: 'META ADS SEPTEMBER', purpose_text: 'META ADS SEPTEMBER INVOICE', pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: 'META PLATFORMS IRELAND' };
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { notes: null, purpose_text: undefined, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
+
+  test('the voucher shows its Description, its Purpose and its bank; the edit starts from that bank and saves a change', async () => {
+    updateAsync.mockClear();
+    Object.assign(DETAIL.paymentVoucher, BANK);
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    for (const value of ['META ADS SEPTEMBER', 'META ADS SEPTEMBER INVOICE', 'CITIBANK', '0123 4567', 'META PLATFORMS IRELAND']) expect(screen.getByText(value)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('META ADS SEPTEMBER');
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('META PLATFORMS IRELAND');
+    fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '0123 9999' } });
+    await waitFor(() => expect(screen.getByText('Save')).toBeTruthy());
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
+    expect(updateAsync.mock.calls[0]![0]).toMatchObject({
+      notes: 'META ADS SEPTEMBER', payToBankName: 'CITIBANK', payToAccountNo: '0123 9999', payToAccountName: 'META PLATFORMS IRELAND',
     });
   });
 });

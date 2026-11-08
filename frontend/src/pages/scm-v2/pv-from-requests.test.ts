@@ -32,16 +32,25 @@ describe('combining payment requests into one voucher', () => {
     expect(requestIdsOf('a, b,,a')).toEqual(['a', 'b']);
   });
 
-  it('one payee is kept; different payees leave it blank; one line per request; each bank in the notes', () => {
+  it('one payee is kept; different payees leave it blank; one line per request; one bank is kept, different banks leave it blank', () => {
     const same = prefillFromRequests([req({}), req({ id: 'b', request_no: '2990-PRQ-2611-003', purpose: 'soy sauce', amount_sen: 749, payee_name: 'chow wai man ' })]);
     expect(same.payeeName).toBe('CHOW WAI MAN');
     expect(same.totalSen).toBe(4069);
+    /* The same bank on both: it fills the bank fields; the Description is what the money is for. */
+    expect(same.payTo).toEqual({ bank: 'Maybank', accountNo: '5232', accountName: 'CHOW WAI MAN' });
+    expect(same.banksDiffer).toBe(false);
+    expect(same.notes).toBe('lalamove; soy sauce');
     const mixed = prefillFromRequests([req({}), req({ id: 'c', request_no: '2990-PRQ-2611-010', payee_name: 'LOO WEN WEI', purpose: 'meta ads', amount_sen: 11786, bank_account_no: null, bank_account_name: 'LOO WEN WEI' })]);
     expect(mixed.payeeName).toBe('');
     expect(mixed.lines).toEqual([
       { description: '2990-PRQ-2611-002 lalamove', amountSen: 3320, projectId: null },
       { description: '2990-PRQ-2611-010 meta ads', amountSen: 11786, projectId: null },
     ]);
-    expect(mixed.notes).toBe('Payment requests 2990-PRQ-2611-002 (CHOW WAI MAN · Maybank 5232 CHOW WAI MAN); 2990-PRQ-2611-010 (LOO WEN WEI · Maybank LOO WEN WEI)');
+    expect(mixed.notes).toBe('lalamove; meta ads');
+    expect(mixed.payTo).toEqual({ bank: '', accountNo: '', accountName: '' });
+    expect(mixed.banksDiffer).toBe(true);
+    /* A request with no bank at all does not stand in the way of one that has. */
+    const oneAsks = prefillFromRequests([req({}), req({ id: 'd', bank_name: null, bank_account_no: null, bank_account_name: null })]);
+    expect(oneAsks.payTo.accountNo).toBe('5232');
   });
 });
