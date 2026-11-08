@@ -193,7 +193,7 @@ export function StatementTable({
                  with figures opens what is behind a figure (a category's: every row under it). */
               const account = l.kind === 'row' && (drillRows === 'figures' || Boolean(l.code));
               const opensElsewhere = Boolean(onOpenRow) && account;
-              const drillable = !onOpenRow && !l.bare && (account || (drillRows === 'figures' && (sub || l.kind === 'category' || l.kind === 'unassigned')));
+              const drillable = !onOpenRow && !l.bare && (account || (drillRows === 'figures' && (sub || l.kind === 'category' || l.kind === 'unassigned' || l.drill === true)));
               const drilled = drillable ? drill[own.id] : undefined;
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
