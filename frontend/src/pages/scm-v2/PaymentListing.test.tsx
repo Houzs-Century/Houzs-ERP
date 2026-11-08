@@ -13,19 +13,19 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 type Row = Record<string, unknown> & { id: string; pv_number: string; stage: string };
 const { asks, printed, ROWS } = vi.hoisted(() => {
-  const at = (over: Record<string, unknown>) => ({
-    status: 'DRAFT', currency: 'MYR', exchange_rate: 1, credit_account_code: '310-0010', supplier: null,
+  const at = (id: string, pv_number: string, stage: string, over: Record<string, unknown>): Row => ({
+    id, pv_number, stage, status: 'DRAFT', currency: 'MYR', exchange_rate: 1, credit_account_code: '310-0010', supplier: null,
     notes: null, purpose_text: '', pay_bank: null, pay_account_no: null, pay_account_name: null, ...over,
   });
   return {
     asks: [] as Array<{ from: string; to: string; stages: string[] }>,
     printed: [] as Array<{ view: { keys: string[]; matrix: { body: unknown[][] }; rows: readonly Row[] }; opts: { subtitle: string; action?: string } }>,
     ROWS: [
-      at({ id: 'a', pv_number: 'HC-Draft-2611-002', stage: 'PREPARED', voucher_date: '2026-11-02', payee_name: 'MK PROPERTIES', total_sen: 150_000, notes: 'Booth deposit IOI City', purpose_text: 'HC-PRQ-2611-004 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' }),
-      at({ id: 'b', pv_number: 'HC-HPV-2611-001', stage: 'CHECKED', voucher_date: '2026-11-03', payee_name: 'TNB', total_sen: 32_050, notes: 'Electricity October', purpose_text: 'ELECTRICITY', credit_account_code: '310-0020' }),
-      at({ id: 'c', pv_number: 'HC-HPV-2611-002', stage: 'CHECKED', voucher_date: '2026-11-04', payee_name: 'FOSHAN CHAIRS', total_sen: 100_000, currency: 'RMB', exchange_rate: 0.65, pay_bank: 'BANK OF CHINA', pay_account_no: '6217 0000' }),
-      at({ id: 'd', pv_number: 'HC-HPV-2610-009', stage: 'POSTED', status: 'POSTED', voucher_date: '2026-10-05', payee_name: 'OLD CO', total_sen: 5_000 }),
-    ] as Row[],
+      at('a', 'HC-Draft-2611-002', 'PREPARED', { voucher_date: '2026-11-02', payee_name: 'MK PROPERTIES', total_sen: 150_000, notes: 'Booth deposit IOI City', purpose_text: 'HC-PRQ-2611-004 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' }),
+      at('b', 'HC-HPV-2611-001', 'CHECKED', { voucher_date: '2026-11-03', payee_name: 'TNB', total_sen: 32_050, notes: 'Electricity October', purpose_text: 'ELECTRICITY', credit_account_code: '310-0020' }),
+      at('c', 'HC-HPV-2611-002', 'CHECKED', { voucher_date: '2026-11-04', payee_name: 'FOSHAN CHAIRS', total_sen: 100_000, currency: 'RMB', exchange_rate: 0.65, pay_bank: 'BANK OF CHINA', pay_account_no: '6217 0000' }),
+      at('d', 'HC-HPV-2610-009', 'POSTED', { status: 'POSTED', voucher_date: '2026-10-05', payee_name: 'OLD CO', total_sen: 5_000 }),
+    ],
   };
 });
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({

@@ -24,7 +24,7 @@ export function paymentListingTable(view: PaymentListingView): {
   return {
     ...t,
     body: t.body.map((cells, i) => {
-      const r = view.rows[i];
+      const r = view.rows.at(i);
       const cur = String(r?.currency ?? 'MYR').toUpperCase();
       return cur === 'MYR' ? cells : cells.map((c, j) => (j === amount ? `${c}\n${fmtMoneySen(Number(r?.total_sen ?? 0), cur)}` : c));
     }),
