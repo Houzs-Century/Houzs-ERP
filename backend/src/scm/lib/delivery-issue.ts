@@ -13,6 +13,7 @@ import { scopeToAllowedCompanies, activeCompanyId } from './companyScope';
 import { claimPodPhotos } from './pod-photo-claim';
 import { createAssrCase, saveAttachment, logActivity } from '../../services/assr';
 import { notifyServiceCaseResponsible } from '../../services/assrNotify';
+import { JOB_SOURCE_TYPES } from '../routes/delivery-job-progress';
 import {
   DELIVERY_ISSUE_KINDS, DELIVERY_ISSUE_MAX_PHOTOS, DELIVERY_ISSUE_NOTE_MAX,
   deliveryIssueKindLabel, type DeliveryIssueKind,
@@ -200,7 +201,7 @@ export async function listDeliveryIssues(c: Ctx, f: DeliveryIssueFilter): Promis
   const ids = clean(f.deliveryOrderIds).filter((x) => /^[0-9a-f-]{36}$/i.test(x));
   const dos = clean(f.doNumbers);
   const sos = clean(f.soDocNos);
-  const jobs = clean(f.jobKeys).map((k) => k.split(':')).filter((p) => p.length === 3 && ['dp', 'project', 'assr'].includes(p[0]!));
+  const jobs = clean(f.jobKeys).map((k) => k.split(':')).filter((p) => p.length === 3 && (JOB_SOURCE_TYPES as readonly string[]).includes(p[0]!));
   // PostgREST or() values: quote each one so a comma or a dot in a doc number is data.
   const q = (v: string) => `"${v.replace(/["\\]/g, '')}"`;
   const arms: string[] = [];

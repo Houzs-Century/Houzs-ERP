@@ -30,7 +30,8 @@ import { setChecklistStatus, getUserPhasesOnProject } from '../../services/proje
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
-type SourceType = 'dp' | 'project' | 'assr';
+export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
+type SourceType = (typeof JOB_SOURCE_TYPES)[number];
 
 const PROJECT_LEGS = ['SETUP', 'DISMANTLE'] as const;
 const MAX_PHOTOS = 10;
@@ -42,7 +43,7 @@ export function parseJob(c: Ctx): { sourceType: SourceType; sourceId: string; le
   const sourceType = c.req.param('sourceType') as SourceType;
   const sourceId = c.req.param('sourceId') ?? '';
   const leg = c.req.param('leg') ?? '';
-  if (!['dp', 'project', 'assr'].includes(sourceType)) return { error: 'Unknown job type.' };
+  if (!(JOB_SOURCE_TYPES as readonly string[]).includes(sourceType)) return { error: 'Unknown job type.' };
   if (!sourceId) return { error: 'Missing job id.' };
   if (sourceType === 'project' && !(PROJECT_LEGS as readonly string[]).includes(leg)) return { error: 'A project job is SETUP or DISMANTLE.' };
   if (sourceType === 'assr' && !(ASSR_BOARD_LEGS as readonly string[]).includes(leg)) return { error: 'A service case job is customer_pickup, inspection or delivery.' };
