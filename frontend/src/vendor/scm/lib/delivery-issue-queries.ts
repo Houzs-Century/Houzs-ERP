@@ -74,7 +74,7 @@ export const reportJobDeliveryIssue = (job: JobRef, d: DeliveryIssueDraft) =>
 export function useDoDeliveryIssues(doId: string | null | undefined) {
   return useQuery({
     queryKey: [...DELIVERY_ISSUES_KEY, 'do', doId ?? ''],
-    queryFn: () => authedFetch<{ issues: DeliveryIssue[] }>(`/delivery-orders-mfg/${encodeURIComponent(doId!)}/delivery-issues`).then((r) => r.issues),
+    queryFn: () => authedFetch<{ issues?: DeliveryIssue[] }>(`/delivery-orders-mfg/${encodeURIComponent(doId!)}/delivery-issues`).then((r) => r.issues ?? []),
     enabled: !!doId,
     staleTime: 30_000,
   });
@@ -83,7 +83,7 @@ export function useDoDeliveryIssues(doId: string | null | undefined) {
 export function useSoDeliveryIssues(docNo: string | null | undefined) {
   return useQuery({
     queryKey: [...DELIVERY_ISSUES_KEY, 'so', docNo ?? ''],
-    queryFn: () => authedFetch<{ issues: DeliveryIssue[] }>(`/mfg-sales-orders/${encodeURIComponent(docNo!)}/delivery-issues`).then((r) => r.issues),
+    queryFn: () => authedFetch<{ issues?: DeliveryIssue[] }>(`/mfg-sales-orders/${encodeURIComponent(docNo!)}/delivery-issues`).then((r) => r.issues ?? []),
     enabled: !!docNo,
     staleTime: 30_000,
   });
@@ -104,7 +104,7 @@ export function useRunDeliveryIssues(keys: RunKeys, enabled = true) {
       if (so.length) usp.set('so', so.join(','));
       if (dos.length) usp.set('do', dos.join(','));
       if (jobs.length) usp.set('jobs', jobs.join(','));
-      return authedFetch<{ issues: DeliveryIssue[] }>(`/delivery-planning/delivery-issues?${usp.toString()}`).then((r) => r.issues);
+      return authedFetch<{ issues?: DeliveryIssue[] }>(`/delivery-planning/delivery-issues?${usp.toString()}`).then((r) => r.issues ?? []);
     },
     enabled: enabled && any,
     staleTime: 30_000,
