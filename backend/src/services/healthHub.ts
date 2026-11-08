@@ -223,10 +223,10 @@ async function readAi(db: DB, cutoffIso: string) {
      ORDER BY created_at DESC LIMIT ${MAX_LINES}`);
   return {
     stats: {
-      lastSuccessAt: iso(stats?.last_success_at),
-      lastFailureAt: iso(stats?.last_failure_at),
-      attempts24h: Number(stats?.attempts_24h ?? 0),
-      failures24h: Number(stats?.failures_24h ?? 0),
+      lastSuccessAt: iso(stats.last_success_at),
+      lastFailureAt: iso(stats.last_failure_at),
+      attempts24h: Number(stats.attempts_24h ?? 0),
+      failures24h: Number(stats.failures_24h ?? 0),
     } satisfies ServiceStats,
     groups: [...groups].map((g): AiGroup => ({
       feature: g.feature, model: g.model, total: Number(g.total), failed: Number(g.failed),

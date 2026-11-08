@@ -75,9 +75,9 @@ app.get("/hub-report", async (c) => {
     return c.json({
       ok: true,
       configured,
-      last_success_at: iso(r?.last_success_at),
-      last_failure_at: iso(r?.last_failure_at),
-      last_error: scrubError(r?.last_error),
+      last_success_at: iso(r.last_success_at),
+      last_failure_at: iso(r.last_failure_at),
+      last_error: scrubError(r.last_error),
     });
   } catch (e) {
     return c.json({ ok: false, configured, error: errMsg(e) });
