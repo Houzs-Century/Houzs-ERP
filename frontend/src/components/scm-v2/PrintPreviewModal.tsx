@@ -27,7 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useInRouterContext, useLocation, useSearchParams } from "react-router-dom";
 import { Download, FileText, Printer } from "lucide-react";
 import { Button } from "../Button";
 import { ModalOverlay } from "./DocumentRelationshipMapModal";
@@ -132,6 +132,20 @@ export type PrintPreviewRow = {
    second render. */
 type PrintAction = () => void | Promise<void>;
 
+/* A preview belongs to the page it was opened on. The print-chain provider sits in
+   the SCM shell, which outlives a move to another SCM page, so leaving the page
+   closes the card instead of leaving it open over the next one. */
+function ClosesOnLeave({ onLeave }: { onLeave: () => void }) {
+  const { pathname } = useLocation();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    onLeave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the page changing is the trigger
+  }, [pathname]);
+  return null;
+}
+
 export function PrintPreviewModal({
   open,
   onClose,
@@ -173,6 +187,7 @@ export function PrintPreviewModal({
   // with a hardcoded Houzs literal). Same source as the jspdf letterhead, so the
   // card and the document it previews always name the same company.
   const branding = useBranding();
+  const inRouter = useInRouterContext();
   const [pending, setPending] = useState<"view" | "print" | "download" | null>(null);
 
   const run = (key: "view" | "print" | "download", fn: PrintAction) => async () => {
@@ -186,6 +201,8 @@ export function PrintPreviewModal({
   };
 
   return (
+    <>
+    {open && inRouter && <ClosesOnLeave onLeave={onClose} />}
     <ModalOverlay
       open={open}
       onClose={onClose}
@@ -255,6 +272,7 @@ export function PrintPreviewModal({
         </div>
       </div>
     </ModalOverlay>
+    </>
   );
 }
 

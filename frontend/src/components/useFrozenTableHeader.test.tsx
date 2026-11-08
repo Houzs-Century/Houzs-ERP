@@ -1,8 +1,11 @@
 /* useFrozenTableHeader — how tall a frozen table may be.
    By default a table with more page below it shrinks so the page's scroll can
-   end on it, down to the 240px minimum; on Event Commission, a report of four
-   stacked tables, that left each one six rows in a box (owner 2026-10-26:
-   这个可以做宽一点吗？ → 做). fillScreen keeps it as tall as the screen allows.
+   end on it, but never below 360px: a table that would have to go smaller (a
+   40-line sales order with payments and the contract below it) is not frozen
+   at all, the page scrolls and every line shows (Conts-ERP #647, #657). On
+   Event Commission, a report of four stacked tables, the old 240px floor left
+   each one six rows in a box (owner 2026-10-26: 这个可以做宽一点吗？ → 做).
+   fillScreen keeps it as tall as the screen allows.
    jsdom lays nothing out, so the geometry the hook measures is given here: an
    800px window, the table's toolbar 50px above its rows, 1,500px of rows, and
    2,000px more page below the table. */
@@ -29,6 +32,7 @@ const RECTS: Partial<Record<string, { top: number; bottom: number }>> = {
   root: { top: 300, bottom: 1850 }, // 50px of toolbar, then the rows
   wrap: { top: 350, bottom: 1850 },
 };
+let mainScrollH = 3_000;
 const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 1200, width: 1200, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
 
 beforeEach(() => {
@@ -39,20 +43,28 @@ beforeEach(() => {
     return r ? rect(r.top, r.bottom) : rect(0, 0);
   });
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
-    return this.tagName === 'MAIN' ? 3_000 : this.dataset.testid === 'wrap' ? 1_500 : 0;
+    return this.tagName === 'MAIN' ? mainScrollH : this.dataset.testid === 'wrap' ? 1_500 : 0;
   });
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
     return this.tagName === 'MAIN' ? 800 : this.dataset.testid === 'wrap' ? 1_500 : 0;
   });
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); mainScrollH = 3_000; });
 
 describe('how tall a frozen table may be', () => {
   /* The page header clears 64px; the rows start 50px under the table's top:
      the screen leaves 800 − 64 − 50 − 12 = 674px for them. */
-  test('by default, with more page below, it shrinks to the 240px minimum', () => {
+  test('by default, with a lot of page below, it is not boxed: the page scrolls', () => {
     render(<Harness />);
-    expect(screen.getByTestId('wrap').style.maxHeight).toBe('240px');
+    expect(screen.getByTestId('wrap').style.maxHeight).toBe('');
+    expect(screen.queryByTestId('runway')).toBeNull();
+  });
+
+  /* 150px of page below the table: the box gives that back, 674 − 138 = 536px. */
+  test('by default, with a little page below, it stays frozen and shrinks to fit', () => {
+    mainScrollH = 2_000;
+    render(<Harness />);
+    expect(screen.getByTestId('wrap').style.maxHeight).toBe('536px');
   });
 
   test('fillScreen: as tall as the screen allows, and no runway added below it', () => {
