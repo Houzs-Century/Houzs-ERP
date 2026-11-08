@@ -8,8 +8,11 @@
 //   PUT    /accounting/todo/settings          {rulesOff}
 //   POST   /accounting/todo/groups            {label} — a group beside the four
 //   POST   /accounting/todo/tasks             a task (optionally repeating, linked, with a first remark)
-//   GET    /accounting/todo/tasks/:id         the task, its touched occurrences and its remarks
-//   PATCH  /accounting/todo/tasks/:id         switch it off / on; a routine's amount, payee, title
+//   GET    /accounting/todo/tasks/:id         the task, its touched occurrences and its remarks, mayEdit
+//   PATCH  /accounting/todo/tasks/:id         a task: its words, day, repeat, person, group, link —
+//                                             whoever asked for it or an Owner (owner 2026-11-09);
+//                                             a routine: switch it off / on, its amount, payee, title
+//   DELETE /accounting/todo/tasks/:id         a task: switched off, its history kept (same people)
 //   POST   /accounting/todo/tasks/:id/done    {occursOn, remark?}
 //   POST   /accounting/todo/tasks/:id/reopen  {occursOn}
 //   POST   /accounting/todo/tasks/:id/move    {occursOn, to} — this time only
@@ -19,21 +22,23 @@
 //
 // Reads ride the /accounting area guard; every write is Finance's (prepares or
 // posts vouchers). Nothing here posts to the books, and nothing is deleted — a
-// task is switched off.
+// task is switched off. A change or a delete leaves a line in the task's thread
+// (tag edit / deleted) that nobody can rewrite.
 // ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
-import { hasHouzsPerm } from '../lib/houzs-perms';
+import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
 import { parsePermissions } from '../../services/permissions';
 import {
-  BUILT_IN_GROUPS, BUILT_IN_RULES, CUSTOM_TEMPLATES, addDays,
+  BUILT_IN_GROUPS, BUILT_IN_GROUP_LABELS, BUILT_IN_RULES, CUSTOM_TEMPLATES, addDays,
   type CustomItem, type CustomRule, type CustomTemplate, type TodoGroupDef,
 } from '../../acc/finance-todo';
 import { OPEN_AP_STATUSES, OPEN_PI_STATUSES } from '../lib/open-invoice-states';
 import { toMyrSen } from '../lib/fx';
-import { occurrenceDays, type TaskLink, type TaskOccurrence, type TodoTask } from '../../acc/todo-tasks';
+import { fmtDate } from '../shared/format';
+import { occurrenceDays, repeatText, type TaskLink, type TaskOccurrence, type TodoTask } from '../../acc/todo-tasks';
 
 type Rows = Array<Record<string, any>>;
 
@@ -119,7 +124,7 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_todo_tasks').select(TASK_COLS).eq('company_id', companyId).order('created_at').range(lo, hi)),
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_todo_occurrences').select('task_id, occurs_on, moved_to, done_at, done_by')
       .eq('company_id', companyId).order('task_id').order('occurs_on').range(lo, hi)),
-    paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_todo_remarks').select('id, task_id').eq('company_id', companyId).neq('body', '')
+    paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_todo_remarks').select('id, task_id, tag').eq('company_id', companyId).neq('body', '')
       .order('id').range(lo, hi)),
     sb.from('acc_todo_settings').select('rules_off, groups, custom_rules').eq('company_id', companyId).maybeSingle(),
   ]);
@@ -128,7 +133,11 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
   const occurrences: Record<string, TaskOccurrence[]> = {};
   for (const r of (occ.data ?? []) as Rows) (occurrences[String(r.task_id)] ??= []).push(occurrenceOf(r));
   const remarkCounts: Record<string, number> = {};
-  for (const r of (remarks.data ?? []) as Rows) remarkCounts[String(r.task_id)] = (remarkCounts[String(r.task_id)] ?? 0) + 1;
+  /* People's remarks only: a line recording a change to the task is its history, not a remark. */
+  for (const r of (remarks.data ?? []) as Rows) {
+    if (r.tag === 'edit') continue;
+    remarkCounts[String(r.task_id)] = (remarkCounts[String(r.task_id)] ?? 0) + 1;
+  }
   const s = (settings.data ?? null) as Record<string, any> | null;
   return {
     ok: true,
@@ -312,15 +321,25 @@ export const todoTaskCreateHandler = async (c: any): Promise<Response> => {
   return c.json({ task: taskOf(data) }, 201);
 };
 
-/** One task of this company, or the response that says why not. */
-async function loadTask(c: any, companyId: number): Promise<{ task: TodoTask } | { resp: Response }> {
+/** One task of this company (and its row), or the response that says why not. */
+async function loadTask(c: any, companyId: number): Promise<{ task: TodoTask; row: Record<string, any> } | { resp: Response }> {
   const id = String(c.req.param('id') ?? '');
   if (!/^[0-9a-f-]{36}$/i.test(id)) return { resp: c.json({ error: 'not_found', message: 'No such task.' }, 404) };
   const { data, error } = await c.get('supabase').from('acc_todo_tasks').select(TASK_COLS).eq('company_id', companyId).eq('id', id).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!data) return { resp: c.json({ error: 'not_found', message: 'No such task.' }, 404) };
-  return { task: taskOf(data) };
+  return { task: taskOf(data), row: data as Record<string, any> };
 }
+
+/** Who may change or delete a task (owner 2026-11-09: 可以): whoever asked for it, or an
+    Owner / IT Admin — the `*` holder, literally. The person it was given to marks it done. */
+const mayChangeTask = (c: any, t: TodoTask): boolean => {
+  const me = actor(c);
+  return t.kind === 'task' && mayWork(c) && ((me.id != null && t.createdById === me.id) || holdsHouzsPermLiterally(c, '*'));
+};
+const notYours = (t: TodoTask) => ({
+  error: 'not_yours', message: `Only ${t.createdByName ?? 'whoever asked for it'} or an Owner can change this task.`,
+});
 
 export const todoTaskGetHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
@@ -344,8 +363,94 @@ export const todoTaskGetHandler = async (c: any): Promise<Response> => {
       editedAt: r.edited_at ?? null, createdAt: String(r.created_at), mine: me.id != null && Number(r.author_id) === me.id,
     })),
     me,
+    /* Edit and Delete show for these only; the server asks again on the write. */
+    mayEdit: !found.task.isOff && mayChangeTask(c, found.task),
   });
 };
+
+/** A task's change, checked field by field against what it holds; only what moved is written and said. */
+async function editTask(c: any, companyId: number, t: TodoTask, row: Record<string, any>, b: Fields): Promise<Response> {
+  if (!mayChangeTask(c, t)) return c.json(notYours(t), 403);
+  if (t.isOff) return c.json({ error: 'deleted', message: 'This task was deleted.' }, 409);
+  const patch: Fields = {};
+  if ('title' in b) {
+    const title = String(b.title ?? '').trim().replace(/\s+/g, ' ');
+    if (!title || title.length > 200) return c.json({ error: 'bad_title', message: 'Say what the task is, in up to 200 characters.' }, 400);
+    patch.title = title;
+  }
+  if ('dueDate' in b) {
+    const dueDate = String(b.dueDate ?? '');
+    if (!DAY.test(dueDate)) return c.json({ error: 'bad_due', message: 'Give the day it is due, as YYYY-MM-DD.' }, 400);
+    patch.due_date = dueDate;
+  }
+  if ('repeat' in b) {
+    const rep = readRepeat(b);
+    if (!rep.ok) return c.json({ error: 'bad_repeat', message: rep.message }, 400);
+    Object.assign(patch, rep.row);
+  }
+  const sb = c.get('supabase');
+  const s = await loadSettings(sb, companyId);
+  if (!s.ok) return c.json({ error: 'load_failed', reason: s.reason }, 500);
+  if ('groupKey' in b) {
+    const groupKey = String(b.groupKey ?? 'misc');
+    if (!(BUILT_IN_GROUPS as readonly string[]).includes(groupKey) && !s.groups.some((g) => g.id === groupKey)) {
+      return c.json({ error: 'bad_group', message: 'Put it under one of the groups on the page.' }, 400);
+    }
+    patch.group_key = groupKey;
+  }
+  if ('assigneeId' in b) {
+    /* Whoever it is given to must work Finance here — the one changing it always may take it. */
+    const me = actor(c);
+    const assigneeId = b.assigneeId == null ? me.id : Number(b.assigneeId);
+    if (assigneeId === me.id) {
+      Object.assign(patch, { assignee_id: me.id, assignee_name: me.name });
+    } else if (assigneeId !== t.assigneeId) {
+      let people: Array<{ id: number; name: string }>;
+      try { people = await financePeople(c.env, companyId); } catch (e) {
+        return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+      }
+      const who = people.find((p) => p.id === assigneeId);
+      if (!who) return c.json({ error: 'bad_assignee', message: 'A task can be given to someone who works Finance here.' }, 400);
+      Object.assign(patch, { assignee_id: who.id, assignee_name: who.name });
+    }
+  }
+  if ('link' in b) {
+    const link = b.link == null ? null : linkOf(b.link);
+    if (b.link != null && !link) return c.json({ error: 'bad_link', message: 'A link is a page of this ERP (an address that starts with /).' }, 400);
+    patch.link = link;
+  }
+
+  /* What moved, in the page's words; nothing moved, nothing written. */
+  const after = taskOf({ ...row, ...patch });
+  const groupName = (key: string): string =>
+    (BUILT_IN_GROUP_LABELS as Record<string, string>)[key] ?? s.groups.find((g) => g.id === key)?.label ?? key;
+  const lines: string[] = [];
+  const writes: Fields = {};
+  const said = (moved: boolean, line: string, cols: string[]) => {
+    if (!moved) return;
+    lines.push(line);
+    for (const col of cols) if (col in patch) writes[col] = patch[col];
+  };
+  said(after.title !== t.title, `Task: ${t.title} → ${after.title}`, ['title']);
+  said(after.dueDate !== t.dueDate, `Due: ${fmtDate(t.dueDate)} → ${fmtDate(after.dueDate)}`, ['due_date']);
+  said(repeatText(after) !== repeatText(t), `Repeat: ${repeatText(t)} → ${repeatText(after)}`, ['repeat', 'day_mode', 'weekdays', 'month_day', 'every_months']);
+  said(after.assigneeId !== t.assigneeId, `Assigned to: ${t.assigneeName ?? '—'} → ${after.assigneeName ?? '—'}`, ['assignee_id', 'assignee_name']);
+  said(after.groupKey !== t.groupKey, `Group: ${groupName(t.groupKey)} → ${groupName(after.groupKey)}`, ['group_key']);
+  said((after.link?.to ?? null) !== (t.link?.to ?? null), `Linked to: ${t.link?.no || '—'} → ${after.link?.no || '—'}`, ['link']);
+  if (lines.length === 0) return c.json({ task: t, unchanged: true });
+
+  /* Guarded on the row: a delete landing in between wins, and nothing is written. */
+  const { data, error } = await sb.from('acc_todo_tasks').update({ ...writes, updated_at: new Date().toISOString() })
+    .eq('company_id', companyId).eq('id', t.id).eq('is_off', false).select(TASK_COLS).maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'deleted', message: 'This task was deleted a moment ago.' }, 409);
+  const me = actor(c);
+  const r = await sb.from('acc_todo_remarks').insert({
+    task_id: t.id, company_id: companyId, author_id: me.id, author_name: me.name, body: lines.join('\n'), tag: 'edit',
+  });
+  if (r.error) return c.json({ error: 'save_failed', reason: `the task is changed, its line in the thread is not: ${r.error.message}` }, 500);
+  return c.json({ task: taskOf(data), changed: lines });
+}
 
 export const todoTaskPatchHandler = async (c: any): Promise<Response> => {
   if (!mayWork(c)) return c.json(NO_PERM, 403);
@@ -354,6 +459,8 @@ export const todoTaskPatchHandler = async (c: any): Promise<Response> => {
   const found = await loadTask(c, co.companyId);
   if ('resp' in found) return found.resp;
   const b = await c.req.json().catch(() => ({})) as Fields;
+  /* A task is its asker's to change (Edit); below is a routine's, Setup › To do rules. */
+  if (found.task.kind === 'task') return editTask(c, co.companyId, found.task, found.row, b);
   const patch: Fields = {};
   if ('isOff' in b) patch.is_off = b.isOff === true;
   if (found.task.kind === 'routine') {
@@ -374,6 +481,31 @@ export const todoTaskPatchHandler = async (c: any): Promise<Response> => {
     .eq('company_id', co.companyId).eq('id', found.task.id).select(TASK_COLS).single();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ task: taskOf(data) });
+};
+
+/* DELETE /accounting/todo/tasks/:id — the To do's own rule: nothing is deleted, a task
+   is switched off. It leaves the To do and the calendar; its done days and remarks
+   stay, and the thread says who deleted it. A routine is switched off under Setup. */
+export const todoTaskDeleteHandler = async (c: any): Promise<Response> => {
+  if (!mayWork(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadTask(c, co.companyId);
+  if ('resp' in found) return found.resp;
+  const t = found.task;
+  if (t.kind === 'routine') return c.json({ error: 'routine', message: 'A routine is switched off under Setup › To do rules.' }, 409);
+  if (!mayChangeTask(c, t)) return c.json(notYours(t), 403);
+  if (t.isOff) return c.json({ ok: true, already: true });
+  const sb = c.get('supabase');
+  const { error } = await sb.from('acc_todo_tasks').update({ is_off: true, updated_at: new Date().toISOString() })
+    .eq('company_id', co.companyId).eq('id', t.id);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  const me = actor(c);
+  const r = await sb.from('acc_todo_remarks').insert({
+    task_id: t.id, company_id: co.companyId, author_id: me.id, author_name: me.name, body: '', tag: 'deleted',
+  });
+  if (r.error) return c.json({ error: 'save_failed', reason: `the task is deleted, its line in the thread is not: ${r.error.message}` }, 500);
+  return c.json({ ok: true });
 };
 
 /** Whether `day` is a day this task falls on. */
@@ -449,10 +581,14 @@ export const todoRemarkEditHandler = async (c: any): Promise<Response> => {
   const text = String(b.text ?? '').trim();
   if (!text || text.length > 2000) return c.json({ error: 'bad_text', message: 'Write the remark, in up to 2,000 characters.' }, 400);
   const sb = c.get('supabase');
-  const { data: r, error: rErr } = await sb.from('acc_todo_remarks').select('id, author_id, body, history, edited_at, created_at')
+  const { data: r, error: rErr } = await sb.from('acc_todo_remarks').select('id, author_id, body, tag, history, edited_at, created_at')
     .eq('company_id', co.companyId).eq('id', id).maybeSingle();
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   if (!r) return c.json({ error: 'not_found', message: 'No such remark.' }, 404);
+  /* A line that records a change or a delete is the task's history: nobody rewrites it. */
+  if (r.tag === 'edit' || r.tag === 'deleted') {
+    return c.json({ error: 'change_line', message: 'This line records a change to the task — it stays as it is.' }, 409);
+  }
   const me = actor(c);
   if (me.id == null || Number(r.author_id) !== me.id) return c.json({ error: 'not_yours', message: 'Only whoever wrote a remark can change it.' }, 403);
   if (text === String(r.body ?? '')) return c.json({ ok: true, unchanged: true });
