@@ -97,11 +97,14 @@ const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
    while everything came back (FilterPills' own rule). */
 const LIST_CAP = 500;
 
+/** The Remark: what Finance typed beside the voucher (stored as notes). */
 const notesOf = (r: PaymentVoucherRow): string => (r.notes ?? '').trim();
-/** The For line: the voucher's own notes, and how much of an advance is still open. */
+/** The Description: what is paid for, as the bills say it (the server's words, never the bill number). */
+const descriptionOf = (r: PaymentVoucherRow): string => (r.description_text ?? '').trim();
+/** The For line: what it pays for, and how much of an advance is still open. */
 const forOf = (r: PaymentVoucherRow): string => {
   const open = advanceOpenSen(r);
-  return [notesOf(r), open > 0 ? `${fmtMoney(open, r.currency)} not knocked off` : ''].filter(Boolean).join(' · ');
+  return [descriptionOf(r), open > 0 ? `${fmtMoney(open, r.currency)} not knocked off` : ''].filter(Boolean).join(' · ');
 };
 
 /* Batch eligibility — the same questions the detail page's buttons ask, so
@@ -479,26 +482,27 @@ export const PaymentVouchers = () => {
       sortFn: (a, b) => (a.payee_name ?? '').localeCompare(b.payee_name ?? ''),
     },
     {
-      /* The header's Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes
-         显示出来吗？), called Description since 2026-11-08 (把notes 换成description).
-         A long one is cut with … and reads whole on hover (the cell's title comes
-         from filterValue) or with WRAP on; the search box and Export carry it. */
+      /* The Description (owner 2026-11-09: 对我来说 description 就是 purpose; 我只想
+         显示单上的费用，不要像之前一样显示bill no. 等等): what is paid for, as the bills
+         say it — the server's words, never the bill number. The key stays `notes`, the
+         column's key since 2026-10-14, so every reader's saved widths and order hold.
+         A long one is cut with … and reads whole on hover (the cell's title comes from
+         filterValue) or with WRAP on; Export carries it. */
       key: 'notes', label: 'Description', width: 260, sortable: true, groupable: false,
       accessor: (r) => forOf(r) || '—',
       filterValue: (r) => forOf(r),
+      searchValue: (r) => descriptionOf(r),
+      exportValue: (r) => descriptionOf(r),
+      sortFn: (a, b) => descriptionOf(a).localeCompare(descriptionOf(b)),
+    },
+    {
+      /* The Remark: what Finance typed beside the voucher (Edit text & bank), off the list by default. */
+      key: 'remark', label: 'Remark', width: 220, sortable: true, groupable: false, defaultHidden: true,
+      accessor: (r) => notesOf(r) || '—',
+      filterValue: (r) => notesOf(r),
       searchValue: (r) => notesOf(r),
       exportValue: (r) => notesOf(r),
       sortFn: (a, b) => notesOf(a).localeCompare(notesOf(b)),
-    },
-    {
-      /* What it is for in the listing's words, and the bank it pays into (owner
-         2026-11-08: listing 包含 bank account number; the server reads them). */
-      key: 'purpose_text', label: 'Purpose', width: 220, sortable: true, groupable: false,
-      accessor: (r) => r.purpose_text || '—',
-      filterValue: (r) => r.purpose_text ?? '',
-      searchValue: (r) => r.purpose_text ?? '',
-      exportValue: (r) => r.purpose_text ?? '',
-      sortFn: (a, b) => (a.purpose_text ?? '').localeCompare(b.purpose_text ?? ''),
     },
     {
       key: 'pay_bank', label: 'Bank', width: 130, sortable: true, groupable: true,
