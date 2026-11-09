@@ -82,6 +82,7 @@ import { salesInvoices } from "./routes/sales-invoices";
 import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
+import { grnFiles, purchaseInvoiceFiles, deliveryReturnFiles, purchaseReturnFiles } from "./routes/flow-doc-files";
 import { deliveryReturnExports } from "./routes/delivery-return-exports";
 import { purchaseReturnExports } from "./routes/purchase-return-exports";
 import { consignmentOrders } from "./routes/consignment-orders";
@@ -393,6 +394,7 @@ scm.route("/grns", grnsListEnrichment);
 // The list's two exports (every page the filters match) — static /export/...
 // paths, so also BEFORE the main router's `/:id`.
 scm.route("/grns", grnExports);
+scm.route("/grns", grnFiles);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
@@ -402,6 +404,7 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 // The list's two exports — static /export/... paths, BEFORE the main router.
 scm.route("/purchase-invoices", purchaseInvoiceExports);
+scm.route("/purchase-invoices", purchaseInvoiceFiles);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 // Same key-not-area admission as the PO mount above: the Purchaser signs
@@ -573,9 +576,11 @@ scm.use("/delivery-returns/*", scmAreaGuard("scm.sales.returns"));
 // The list's ONE export (every return the filters match) — a static
 // /export/rows path, so BEFORE the main router's `/:id`; same area guard.
 scm.route("/delivery-returns", deliveryReturnExports);
+scm.route("/delivery-returns", deliveryReturnFiles);
 scm.route("/delivery-returns", deliveryReturns);
 scm.use("/purchase-returns/*", scmAreaGuard("scm.procurement.pr"));
 scm.route("/purchase-returns", purchaseReturnExports);
+scm.route("/purchase-returns", purchaseReturnFiles);
 scm.route("/purchase-returns", purchaseReturns);
 // ── Consignment (scm.consignment.*) ─────────────────────────────────────────
 scm.use("/consignment-orders/*", scmAreaGuard("scm.consignment.orders"));
