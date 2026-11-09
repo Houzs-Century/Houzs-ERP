@@ -168,11 +168,16 @@ function TripFields({ r, caseId, isCurrent, canWrite, busy, onPatch, onArchive, 
 
       <div className={PAIR}>
         {dateField("pickup_at", "Sent to Supplier")}
-        {dateField("expected_return_at", "Expected Back (ETA)")}
+        {dateField("expected_return_at", "Back from Supplier (ETA)")}
       </div>
 
+      {textField(
+        "reason",
+        r.round_no > 1 ? "Why Sent Back Again" : "Reason for Return",
+        r.round_no > 1 ? "QC failed / broke again / wrong part…" : "",
+      )}
+
       <div className={PAIR}>
-        {dateField("returned_at", "Back from Supplier")}
         {canWrite ? (
           <Labeled label="QC Result">
             <select
@@ -191,13 +196,9 @@ function TripFields({ r, caseId, isCurrent, canWrite, busy, onPatch, onArchive, 
         ) : (
           <ReadOnly label="QC Result" value={r.qc_result ? qcResultLabel(r.qc_result) : "Pending QC"} />
         )}
+        {dateField("returned_at", "Actual Back Date")}
       </div>
 
-      {textField(
-        "reason",
-        r.round_no > 1 ? "Why Sent Back Again" : "Reason for Return",
-        r.round_no > 1 ? "QC failed / broke again / wrong part…" : "",
-      )}
       {(canWrite || r.note) && textField("note", "Remarks", "Additional notes…")}
     </div>
   );

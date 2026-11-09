@@ -114,10 +114,11 @@ export function MobileFactoryTrips({
           <input style={inp} defaultValue={shown.creditor_code ?? ""} placeholder={shown.creditor_name ?? "Supplier code"} disabled={off} key={`cr:${shown.creditor_code ?? ""}`} onBlur={(e) => patch(shown.id, { creditor_code: e.target.value.trim() || null })} />
           <div style={pair}>
             {dateInput(shown, "pickup_at", "Sent to Supplier")}
-            {dateInput(shown, "expected_return_at", "Expected Back (ETA)")}
+            {dateInput(shown, "expected_return_at", "Back from Supplier (ETA)")}
           </div>
+          <label style={lbl}>{shown.round_no > 1 ? "Why Sent Back Again" : "Reason for Return"}</label>
+          <textarea style={inp} rows={2} defaultValue={shown.reason ?? ""} disabled={off} key={`rs:${shown.reason ?? ""}`} onBlur={(e) => patch(shown.id, { reason: e.target.value.trim() || null })} />
           <div style={pair}>
-            {dateInput(shown, "returned_at", "Back from Supplier")}
             <div>
               <label style={lbl}>QC Result</label>
               <select style={inp} value={shown.qc_result ?? ""} disabled={off} onChange={(e) => patch(shown.id, { qc_result: e.target.value || null })}>
@@ -125,9 +126,8 @@ export function MobileFactoryTrips({
                 {QC_RESULTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
+            {dateInput(shown, "returned_at", "Actual Back Date")}
           </div>
-          <label style={lbl}>{shown.round_no > 1 ? "Why Sent Back Again" : "Reason for Return"}</label>
-          <textarea style={inp} rows={2} defaultValue={shown.reason ?? ""} disabled={off} key={`rs:${shown.reason ?? ""}`} onBlur={(e) => patch(shown.id, { reason: e.target.value.trim() || null })} />
           <label style={lbl}>Remarks</label>
           <textarea style={inp} rows={2} defaultValue={shown.note ?? ""} placeholder="Additional notes…" disabled={off} key={`nt:${shown.note ?? ""}`} onBlur={(e) => patch(shown.id, { note: e.target.value.trim() || null })} />
         </div>
