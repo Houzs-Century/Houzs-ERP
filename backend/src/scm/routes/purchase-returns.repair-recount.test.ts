@@ -41,10 +41,10 @@ function fakeSb(tables: Record<string, Row[]>) {
   return { from, tables };
 }
 
-const world = (kind: 'CREDIT' | 'REPAIR') => ({
-  purchase_returns: [{ id: 'pr-1', status: 'POSTED', kind }],
+const world = (kind: 'CREDIT' | 'REPAIR', supplier_replaces = true) => ({
+  purchase_returns: [{ id: 'pr-1', status: 'POSTED', kind, supplier_replaces }],
   purchase_return_items: [{ grn_item_id: 'gi-1', purchase_return_id: 'pr-1', qty_returned: 1 }],
-  grn_items: [{ id: 'gi-1', grn_id: 'g-1', purchase_order_item_id: 'poi-1', qty_accepted: 1, returned_qty: 0 }],
+  grn_items: [{ id: 'gi-1', grn_id: 'g-1', purchase_order_item_id: 'poi-1', qty_accepted: 1, returned_qty: 0, returned_closed_qty: 0 }],
   grns: [{ id: 'g-1', status: 'POSTED' }],
   purchase_order_items: [{ id: 'poi-1', purchase_order_id: 'po-1', qty: 1, received_qty: 1 }],
   purchase_orders: [{ id: 'po-1', status: 'RECEIVED', received_at: '2026-10-01T00:00:00Z' }],
@@ -62,5 +62,56 @@ describe('adjustGrnReturnedQty counts CREDIT returns only', () => {
     const sb = fakeSb(world('CREDIT'));
     await adjustGrnReturnedQty(sb, 'gi-1');
     expect(sb.tables.grn_items[0].returned_qty).toBe(1);
+  });
+});
+
+/* HC-0221: HC-PO-2609-035's only unit went back on HC-PRT-2611-001 with nothing
+ * coming to replace it, yet the PO fell to SUBMITTED and sat in Purchase
+ * Outstanding with no way to cancel it (it has a GRN). A return the supplier
+ * will NOT replace keeps the PO received; the default keeps today's re-open. */
+describe('a CREDIT return says whether the supplier sends a replacement', () => {
+  test('replacement expected (default): the PO line re-opens, as before', async () => {
+    const sb = fakeSb(world('CREDIT'));
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    expect(sb.tables.grn_items[0].returned_closed_qty).toBe(0);
+    expect(sb.tables.purchase_order_items[0].received_qty).toBe(0);
+    expect(sb.tables.purchase_orders[0].status).toBe('SUBMITTED');
+  });
+
+  test('no replacement: returned_qty still moves, but the PO stays RECEIVED', async () => {
+    const sb = fakeSb(world('CREDIT', false));
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    // returned_qty feeds the returnable cap + PI headroom, so it still counts the unit.
+    expect(sb.tables.grn_items[0].returned_qty).toBe(1);
+    expect(sb.tables.grn_items[0].returned_closed_qty).toBe(1);
+    expect(sb.tables.purchase_order_items[0].received_qty).toBe(1);
+    expect(sb.tables.purchase_orders[0].status).toBe('RECEIVED');
+  });
+
+  test('cancelling a no-replacement return clears returned_closed_qty', async () => {
+    const sb = fakeSb(world('CREDIT', false));
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    sb.tables.purchase_returns[0].status = 'CANCELLED';
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    expect(sb.tables.grn_items[0].returned_qty).toBe(0);
+    expect(sb.tables.grn_items[0].returned_closed_qty).toBe(0);
+    expect(sb.tables.purchase_orders[0].status).toBe('RECEIVED');
+  });
+
+  test('changing the answer to Yes re-opens the PO line', async () => {
+    const sb = fakeSb(world('CREDIT', false));
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    sb.tables.purchase_returns[0].supplier_replaces = true;
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    expect(sb.tables.grn_items[0].returned_closed_qty).toBe(0);
+    expect(sb.tables.purchase_orders[0].status).toBe('SUBMITTED');
+  });
+
+  test('a REPAIR return ignores the answer', async () => {
+    const sb = fakeSb(world('REPAIR', false));
+    await adjustGrnReturnedQty(sb, 'gi-1');
+    expect(sb.tables.grn_items[0].returned_qty).toBe(0);
+    expect(sb.tables.grn_items[0].returned_closed_qty).toBe(0);
+    expect(sb.tables.purchase_orders[0].status).toBe('RECEIVED');
   });
 });

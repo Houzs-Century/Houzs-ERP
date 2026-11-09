@@ -183,6 +183,8 @@ export const PurchaseReturnNew = () => {
      (KL / PG "RETURNED TO SUPPLIER FOR SERVICE"), so the destination is read
      from the master data rather than matched on its name. */
   const [repairWarehouseId, setRepairWarehouseId] = useState<string>('');
+  // HC-0221: No keeps the PO received instead of re-opening it for a replacement.
+  const [supplierReplaces, setSupplierReplaces] = useState<boolean>(true);
   const warehousesQ = useWarehouses();
   const serviceWarehouses = useMemo(
     () => (warehousesQ.data ?? []).filter((w) => (w as { type?: string | null }).type === 'service'),
@@ -330,6 +332,7 @@ export const PurchaseReturnNew = () => {
         reason,
         kind: isRepair ? 'REPAIR' : 'CREDIT',
         repairWarehouseId: isRepair ? repairWarehouseId : undefined,
+        supplierReplaces: isRepair || supplierReplaces,
         notes: notes || undefined,
         items: validLines.map((l) => ({
           grnItemId:      l.grnItemId,
@@ -458,6 +461,19 @@ export const PurchaseReturnNew = () => {
                   {serviceWarehouses.map((w) => (
                     <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
                   ))}
+                </select>
+              </label>
+            )}
+            {!isRepair && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Supplier sends a replacement? *</span>
+                <select
+                  value={supplierReplaces ? 'yes' : 'no'}
+                  onChange={(e) => setSupplierReplaces(e.target.value === 'yes')}
+                  className={styles.fieldInput}
+                >
+                  <option value="yes">Yes — the PO stays open for the replacement</option>
+                  <option value="no">No — the PO is done, nothing more is coming</option>
                 </select>
               </label>
             )}
