@@ -980,6 +980,8 @@ describe('a DuitNow QR line', () => {
   const JENNY = {
     source: 'SOPAY' as const, id: 'jenny', docNo: '2990-SO-2611-041', paidOn: '2026-11-07', amountSen: 324000,
     approvalCode: '20261031HLBBMYKLA30OQR77370349', accountSheet: 'Bank transfer', customerName: 'Jenny',
+    /* An Online payment carries no bank: that is not "keyed without a bank". */
+    merchantProvider: null,
   };
   const QR_ROW: SettlementRow = {
     id: 857, line_no: 23, txn_date: '2026-10-31', ref: null, channel: 'QR',
@@ -1027,6 +1029,21 @@ describe('a DuitNow QR line', () => {
     expect(confirmMutate).toHaveBeenCalledWith(expect.objectContaining({
       rowId: 857, payments: [expect.objectContaining({ id: 'jenny', amountSen: 324000 })],
     }));
+  }));
+
+  /* Owner 2026-11-09 (「为什么我按find the sales 还有这么多？」 → 做): 未标 merchant
+     means a CARD payment keyed without its bank. An Online payment has no bank
+     to key, so a QR line never says it — not on its sale, not in Find the sale. */
+  test('a QR line never marks its Online payments 未标 merchant', () => withQr(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
+    const line = screen.getByLabelText('Select 2990-SO-2611-041').closest('section') as HTMLElement;
+    expect(within(line).queryByText('未标 merchant')).toBeNull();
+    fireEvent.click(within(line).getByText('Find the sale'));
+    expect(within(line).getByText(/Any Online payment of this company not yet on the bank statement/)).toBeTruthy();
+    expect(within(line).getAllByLabelText(/^Select /).length).toBeGreaterThan(1);
+    expect(within(line).queryByText('未标 merchant')).toBeNull();
   }));
 
   test('with no Online sale keyed it says to key the sale as Online', () => withQr(() => {
