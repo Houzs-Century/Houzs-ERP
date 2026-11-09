@@ -110,10 +110,10 @@
     ]
   },
   "OWNER-2026-11-06": {
-    "ruling": "Owner 2026-11-06: TIFANNY / TIFFANI and CS2 COOL FRESH / FRESH COOL, left out of HC-0202 for different main suppliers, are one product each. AMIRA PREMIUM is the right spelling, so AMIRA PREMUIM folds into it.",
+    "ruling": "Owner 2026-11-06: TIFANNY / TIFFANI and CS2 COOL FRESH / FRESH COOL, left out of HC-0202 for different main suppliers, are one product each. AMIRA PREMIUM is the right spelling, so AMIRA PREMUIM folds into it. Owner 2026-11-10: TIFANNY / TIFFANI stays ruled one product; CS2 COOL FRESH / FRESH COOL is NOT merged (different suppliers).",
     "groups": [
       { "category": "BEDFRAME", "keep": "TIFANNY", "drops": ["TIFFANI"], "ruledOneProduct": true },
-      { "category": "MATTRESS", "keep": "CS2 COOL FRESH", "drops": ["FRESH COOL"], "ruledOneProduct": true, "skip": "owner confirming: Dunlopillo and Happi Sleep names, K and Q would keep one and S and SS the other" },
+      { "category": "MATTRESS", "keep": "CS2 COOL FRESH", "drops": ["FRESH COOL"], "skip": "owner 2026-11-10: different main suppliers (Dunlopillo 400-D001 / Happi Sleep 400-E001), never merged" },
       { "category": "MATTRESS", "keep": "AMIRA PREMIUM", "drops": ["AMIRA PREMUIM"] }
     ]
   }
