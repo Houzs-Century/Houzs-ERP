@@ -13,7 +13,8 @@ import { haversineKm, MAX_KMH, MIN_HOP_KM, type Fix } from './lorry-km';
 
 export type Point = { lat: number; lng: number };
 export type RoadTrack = { path: Point[]; chunks: number; roadChunks: number };
-/** A stored road for a chunk; `null` = Google answered but the road is not usable, keep it straight. */
+/** A stored road for a chunk; `null` = Google answered but the road is not usable, keep it straight.
+ *  Never throws: a failed read is a miss (`undefined`), a failed write is dropped. */
 export type ChunkCache = {
   get(key: string): Promise<Point[] | null | undefined>;
   put(key: string, road: Point[] | null): Promise<void>;
@@ -109,7 +110,7 @@ export function parseChunkRoad(body: Body, chunk: readonly Point[]): Point[] | n
 
 async function chunkRoad(apiKey: string, chunk: Point[], cache: ChunkCache): Promise<Point[] | null> {
   const key = chunkKey(chunk);
-  const kept = await cache.get(key).catch(() => undefined);
+  const kept = await cache.get(key);
   if (kept !== undefined) return kept;
   try {
     const res = await fetch(chunkUrl(chunk, apiKey), { signal: AbortSignal.timeout(10_000) });
@@ -118,7 +119,7 @@ async function chunkRoad(apiKey: string, chunk: Point[], cache: ChunkCache): Pro
     // A quota or key refusal can clear up; only a real answer about this chunk is kept.
     if (body.status !== 'OK' && body.status !== 'ZERO_RESULTS' && body.status !== 'NOT_FOUND') return null;
     const road = parseChunkRoad(body, chunk);
-    await cache.put(key, road).catch(() => undefined);
+    await cache.put(key, road);
     return road;
   } catch {
     return null;
