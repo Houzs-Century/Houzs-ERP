@@ -40,6 +40,8 @@ import {
   Phone,
   MapPin,
   Play,
+  Target,
+  Image as ImageIcon,
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
@@ -77,6 +79,9 @@ import { QcStageChipView } from "../components/assr/QcStageChipView";
 import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
 import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
+import { CaseSection } from "../components/assr/CaseSection";
+import { InspectByToggle } from "../components/assr/InspectByToggle";
+import { VerificationOutcomeChips } from "../components/assr/VerificationOutcomeChips";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -5148,11 +5153,6 @@ function useStageAutoAdvance({
 // `verified_at` / `verified_by` are server-stamped on PATCH, so the
 // timestamp can't drift from the actor.
 
-const VERIFICATION_OPTIONS = [
-  { value: "accepted", label: "Accepted", tone: "ok" as const },
-  { value: "needs_more_info", label: "Needs more info", tone: "warn" as const },
-  { value: "rejected", label: "Rejected", tone: "err" as const },
-];
 
 // ── Detail top-of-page redesign (PR 1) ─────────────────────────
 // Two card components lifted from `Service Case Detail — Redesign.dc.html`:
@@ -5711,34 +5711,11 @@ function VerificationCard({
           0105) — who inspects the reported issue. Own team routes the
           visit into Delivery Planning via customer_pickup_at; supplier
           handles it on their side via the supplier portal. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Inspect by
-        </div>
-        <div className="flex gap-1.5">
-          {([
-            { v: "own", label: "Own team" },
-            { v: "supplier", label: "Supplier" },
-          ] as const).map((o) => (
-            <button
-              key={o.v}
-              type="button"
-              onClick={() =>
-                patch({ inspection_by: c.inspection_by === o.v ? null : o.v })
-              }
-              disabled={archived || saving}
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                c.inspection_by === o.v
-                  ? "border-primary bg-primary-soft text-primary"
-                  : "border-border bg-surface text-ink-secondary hover:border-primary/40",
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <InspectByToggle
+        value={c.inspection_by ?? null}
+        isDisabled={archived || saving}
+        onPick={(next) => patch({ inspection_by: next })}
+      />
       {c.inspection_by === "own" && (
         <>
           <InlineEdit
@@ -5773,65 +5750,33 @@ function VerificationCard({
           </div>
         </>
       )}
-      {c.inspection_by === "supplier" && (
-        <div className="rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-          Supplier performs the inspection — progress lands in the
-          supplier portal's service note (see the Supplier Pickup /
-          Item Ready rows).
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">QC Issue Inspection Date</span>
+          <div className="min-w-[190px]">
+            <InlineEdit
+              label="QC Issue Inspection Date"
+              isLabelHidden
+              type="date"
+              value={c.qc_receipt_date}
+              onSave={(v) => patch({ qc_receipt_date: v || null })}
+            />
+          </div>
         </div>
-      )}
-      <InlineEdit
-        label="QC Issue Inspection Date"
-        type="date"
-        value={c.qc_receipt_date}
-        onSave={(v) => patch({ qc_receipt_date: v || null })}
-      />
-      {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
-          2026-07-14: the on-receipt check only needs the date + photos;
-          the pass/fail verdict lives in Outcome below. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Outcome
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {VERIFICATION_OPTIONS.map((opt) => {
-            const active = outcome === opt.value;
-            const toneClass =
-              opt.tone === "ok"
-                ? active
-                  ? "border-ok bg-ok/15 text-ok"
-                  : "border-border text-ink-secondary hover:border-ok/40"
-                : opt.tone === "warn"
-                ? active
-                  ? "border-warn bg-warn/15 text-warn"
-                  : "border-border text-ink-secondary hover:border-warn/40"
-                : active
-                ? "border-err bg-err/15 text-err"
-                : "border-border text-ink-secondary hover:border-err/40";
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                disabled={saving}
-                onClick={() => setOutcome(active ? null : opt.value)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-50",
-                  toneClass
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
+        <div className="hidden h-8 w-px bg-border sm:block" />
+        {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
+            2026-07-14: the on-receipt check only needs the date + photos;
+            the pass/fail verdict lives in Outcome. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">Outcome</span>
+          <VerificationOutcomeChips outcome={outcome} isDisabled={saving} onPick={setOutcome} />
         </div>
       </div>
 
-      <div>
-        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Root cause
-        </label>
+      <CaseSection title="Root Cause" badge={null} icon={<Target size={16} />} action={null} isCollapsible={false}>
         <input
           type="text"
+          aria-label="Root cause"
           value={rootDraft}
           onChange={(e) => setRootDraft(e.target.value)}
           onBlur={saveRootCause}
@@ -5853,7 +5798,7 @@ function VerificationCard({
             Fill the root cause to advance to Pending Solution.
           </div>
         )}
-      </div>
+      </CaseSection>
       <VerificationFindingsFields c={c} patch={patch} />
 
       {c.verified_at && (
@@ -5867,18 +5812,20 @@ function VerificationCard({
           what the item looked like BEFORE it went to the supplier.
           Distinct category from the post-return QC report so both
           checkpoints keep their own paper trail. */}
-      <MilestoneAttachmentSlot
-        caseId={caseId}
-        category="receipt_evidence"
-        label="QC Issue Inspection Photos / Videos"
-        emptyLabel="No inspection photos uploaded yet."
-        uploadLabel="Upload photo / video"
-        attachments={attachments}
-        archived={archived}
-        detail={detail}
-        dialog={dialog}
-        toast={toast}
-      />
+      <CaseSection title="QC Issue Inspection Photos / Videos" badge={null} icon={<ImageIcon size={16} />} action={null} isCollapsible={false}>
+        <MilestoneAttachmentSlot
+          caseId={caseId}
+          category="receipt_evidence"
+          label="QC Issue Inspection Photos / Videos"
+          uploadLabel="Upload photo / video"
+          attachments={attachments}
+          archived={archived}
+          detail={detail}
+          dialog={dialog}
+          toast={toast}
+          compact
+        />
+      </CaseSection>
     </>
   );
   if (hideHeader) {

@@ -1707,11 +1707,6 @@
     },
     {
       "check": "D1",
-      "key": "CUSTOMER,LOGISTICS,MANAGEMENT,PRODUCTION,SUPPLIER|backend/src/scm/shared/assr-verification-fields.ts frontend/src/vendor/scm/lib/assr-verification-fields.ts",
-      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PENDING_WITH_OPTIONS."
-    },
-    {
-      "check": "D1",
       "key": "ANNUAL_LEAVE,MEDICAL_LEAVE,REST_DAY|backend/src/scm/shared/hr-attendance.ts frontend/src/vendor/shared/hr-attendance.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PAID_LEAVE_STATUSES (HC-0125 phase 5)."
     },

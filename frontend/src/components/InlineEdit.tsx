@@ -20,9 +20,11 @@ interface Props {
      the same field reads two different ways on one screen. Defaults to the
      raw value, so callers with already-readable options need not pass it. */
   optionLabel?: (value: string) => string;
+  /** The surrounding section header already names the field. */
+  isLabelHidden?: boolean;
 }
 
-export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options, optionLabel }: Props) {
+export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options, optionLabel, isLabelHidden }: Props) {
   const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +57,8 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+      <div className={cn("flex items-center justify-between", !isLabelHidden && "mb-1.5")}>
+        <label className={cn("text-[10px] font-semibold uppercase tracking-wider text-ink-muted", isLabelHidden && "sr-only")}>
           {label}
         </label>
         {status === "saving" && (
