@@ -1,42 +1,42 @@
 /* Scan, check, then create, for supplier invoices (owner 2026-11-04): the working copy an invoice scan keeps. */
 import { describe, expect, test } from 'vitest';
-import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
+import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, extractOfReview, repeatedPis, setPieces, suggestBills, NO_CODES, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
 import { familiesByModelWord } from './scan-word-match';
 import type { PiLineMatchResult } from './pi-scan-match';
 
-const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, supplierSku: null, description: null, remaining, unitPriceSen: 100_00 });
+const bill = (grnItemId: string, grnNumber: string, itemCode: string, remaining: number): BillableLine => ({ grnItemId, grnNumber, supplierId: 's1', poNumber: 'HC-PO-1', itemCode, supplierSku: null, description: null, remaining, unitPriceSen: 100_00, receivedAt: null });
 const parsed: PiScanExtract = { supplierName: 'DIGLANT', supplierCode: null, invoiceNumber: 'INV 7', invoiceDate: '2026-11-03', poNo: null, doNo: 'DO-1', salesTax: null, totalAmount: null, lines: [
   { itemCode: 'T1MAMJA0MK', articleNo: null, description: 'Mattress Akemi Equinox K King', qty: 2, unitPrice: 500, salesTax: null, lineTotal: 1000 },
   { itemCode: 'ZZ', articleNo: null, description: 'Mattress Akemi Guardian Q Queen', qty: 1, unitPrice: 300, salesTax: null, lineTotal: 300 },
 ] };
-const row = (description: string, qty: number): PiReviewLine => ({ key: description, grnItemId: null, grnNumber: null, qty, suggested: false, read: { itemCode: 'T1', description, qty, unitPrice: null, lineTotal: null } });
+const row = (description: string, qty: number): PiReviewLine => ({ key: description, grnItemId: null, grnNumber: null, qty, suggested: false, ai: false, read: { itemCode: 'T1', description, qty, unitPrice: null, lineTotal: null } });
 
 describe('pi scan check', () => {
   test('matched rows arrive tied, with what was printed; the rest stay to choose', () => {
     const match = { picks: [{ grnItemId: 'g1', qty: 2, grnNumber: 'HC-GRN-1', invoiceLineIndex: 0 }], unmatched: [{ invoiceLineIndex: 1, itemCode: 'ZZ', articleNo: null, description: 'x', qty: 1, billed: 0, reason: 'no_code_match' }], matchedLineCount: 1 } as PiLineMatchResult;
-    const r = buildPiReview(parsed, 's1', match, [], ['HC-GRN-1'], new Map());
+    const r = buildPiReview(parsed, 's1', match, [], ['HC-GRN-1'], NO_CODES, null);
     expect(r).toMatchObject({ supplierId: 's1', invoiceNumber: 'INV 7', invoiceDate: '2026-11-03' });
     expect(r.lines.map((l) => [l.grnItemId, l.qty, l.read?.itemCode])).toEqual([['g1', 2, 'T1MAMJA0MK'], [null, 1, 'ZZ']]);
   });
   test('an invoice anchored to no GRN keeps every printed row', () => {
-    expect(buildPiReview(parsed, null, null, [], [], new Map()).lines).toHaveLength(2);
+    expect(buildPiReview(parsed, null, null, [], [], NO_CODES, null).lines).toHaveLength(2);
   });
   test('a part billed row keeps only what the match could not bill', () => {
     const match = { picks: [], unmatched: [{ invoiceLineIndex: 0, itemCode: null, articleNo: null, description: null, qty: 2, billed: 1, reason: 'qty_short' }], matchedLineCount: 0 } as PiLineMatchResult;
-    expect(buildPiReview(parsed, 's1', match, [], [], new Map()).lines[0].qty).toBe(1);
+    expect(buildPiReview(parsed, 's1', match, [], [], NO_CODES, null).lines[0].qty).toBe(1);
   });
   test('rows tie by name on the anchored GRN, never to the same SKU on another', () => {
     const lines = [row('Mattress Akemi Equinox K King', 1)];
-    suggestBills(lines, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-1', 'AKEMI EQUINOX MATT (K)', 1)], ['HC-GRN-1'], new Map());
+    suggestBills(lines, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-1', 'AKEMI EQUINOX MATT (K)', 1)], ['HC-GRN-1'], new Map(), new Map());
     expect(lines[0]).toMatchObject({ grnItemId: 'y', suggested: true });
   });
   test('with no anchor, only a single fitting line of the supplier', () => {
     const one = [row('Akemi Equinox K King', 1)];
-    suggestBills(one, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map());
+    suggestBills(one, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map(), new Map());
     expect(one[0].grnItemId).toBe('x');
     const two = [row('Akemi Equinox K King', 1)];
-    suggestBills(two, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-3', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map());
+    suggestBills(two, [bill('x', 'HC-GRN-2', 'AKEMI EQUINOX MATT (K)', 1), bill('y', 'HC-GRN-3', 'AKEMI EQUINOX MATT (K)', 1)], [], new Map(), new Map());
     expect(two[0].grnItemId).toBeNull();
   });
   test('the saved edit keeps known fields, drops a bad date and a negative qty', () => {
@@ -87,7 +87,7 @@ describe('pi scan check', () => {
 
 describe('a set billed on one row', () => {
   const piece = (id: string, sen: number): BillableLine => ({ ...bill(id, 'HC-GRN-1', id, 1), unitPriceSen: sen });
-  const row = (unitPrice: number | null, qty = 1): PiReviewLine => ({ key: 'r', grnItemId: null, grnNumber: null, qty, suggested: false, read: { itemCode: 'DSL 8075', description: '2 + L', qty, unitPrice, lineTotal: unitPrice } });
+  const row = (unitPrice: number | null, qty = 1): PiReviewLine => ({ key: 'r', grnItemId: null, grnNumber: null, qty, suggested: false, ai: false, read: { itemCode: 'DSL 8075', description: '2 + L', qty, unitPrice, lineTotal: unitPrice } });
   test('one row becomes its pieces, the price shared as theirs is', () => {
     const out = setPieces(row(2000), [piece('a', 90000), piece('b', 110000)]);
     expect(out?.map((l) => [l.grnItemId, l.read?.unitPrice])).toEqual([['a', 900], ['b', 1100]]);
@@ -100,7 +100,7 @@ describe('a set billed on one row', () => {
 });
 
 describe('sales tax printed once at the bottom (Diglant)', () => {
-  const row = (grnItemId: string | null, qty: number, unitPrice: number | null): PiReviewLine => ({ key: `${grnItemId}${unitPrice}`, grnItemId, grnNumber: null, qty, suggested: false, read: { itemCode: null, description: 'x', qty, unitPrice, lineTotal: unitPrice == null ? null : unitPrice * qty } });
+  const row = (grnItemId: string | null, qty: number, unitPrice: number | null): PiReviewLine => ({ key: `${grnItemId}${unitPrice}`, grnItemId, grnNumber: null, qty, suggested: false, ai: false, read: { itemCode: null, description: 'x', qty, unitPrice, lineTotal: unitPrice == null ? null : unitPrice * qty } });
   const priced = (id: string, sen: number): BillableLine => ({ ...bill(id, 'GRN-1', id, 9), unitPriceSen: sen });
   test('DGSIZ26002253: each row reaches the PO price and the rows reach the total', () => {
     const lines = [row('a', 3, 544.55), row('b', 1, 1181.82), row('c', 1, 727.27), row('d', 1, 1409.09), row('e', 1, null)];
@@ -152,7 +152,7 @@ describe('sales tax printed once at the bottom (Diglant)', () => {
 });
 
 describe('NB prints its own code and the size in words (NBF2610-1322)', () => {
-  const row = (itemCode: string, description: string): PiReviewLine => ({ key: itemCode, grnItemId: null, grnNumber: null, qty: 1, suggested: false, read: { itemCode, description, qty: 1, unitPrice: 1380, lineTotal: 1380 } });
+  const row = (itemCode: string, description: string): PiReviewLine => ({ key: itemCode, grnItemId: null, grnNumber: null, qty: 1, suggested: false, ai: false, read: { itemCode, description, qty: 1, unitPrice: 1380, lineTotal: 1380 } });
   const receipt = [bill('h1', 'GRN-2', 'HILTON (A)-(Q)', 1), bill('h2', 'GRN-2', 'HILTON (A)-(Q)', 1), bill('c1', 'GRN-2', 'CODY-(Q)', 1), bill('g1', 'GRN-2', 'GOYO (A)-(K)', 1), bill('x1', 'GRN-9', 'HILTON (A)-(Q)', 1)];
   const families = familiesByModelWord([{ supplierSku: 'NB-KHJ50(K)', itemCode: 'HILTON (A)-(K)' }, { supplierSku: 'NB-KHJ57(K)', itemCode: 'CODY-(K)' }]);
   test('the code names the family through another size, the row names the size', () => {
@@ -162,13 +162,35 @@ describe('NB prints its own code and the size in words (NBF2610-1322)', () => {
       row('SB10-B14EC-KHJ50(A)(MH-12")', 'FABRIC 3 DIVAN BED SEATER:5 FTS COL: FG66151-2'),
       row('SB12-KHB(C)-NH79(A)(MH-12")', 'FABRIC 3 DIVAN BED SEATER:6 FTS COL: FG66151-6'),
     ];
-    suggestBills(lines, receipt, ['GRN-2'], families);
+    suggestBills(lines, receipt, ['GRN-2'], families, new Map());
     expect(lines.map((l) => l.grnItemId)).toEqual(['h1', 'c1', 'h2', 'g1']);
     expect(lines.every((l) => l.suggested)).toBe(true);
   });
   test('with no receipt to anchor on, the last row of a size stays for a person', () => {
     const lines = [row('SB12-KHB(C)-NH79(A)(MH-12")', '6 FTS')];
-    suggestBills(lines, receipt, [], families);
+    suggestBills(lines, receipt, [], families, new Map());
     expect(lines[0]!.grnItemId).toBeNull();
+  });
+});
+
+describe('a waiting copy with no stored read rebuilds from its own rows', () => {
+  const row = (itemCode: string, qty: number, readQty: number, unitPrice: number) => ({
+    key: itemCode + qty, grnItemId: null, grnNumber: null, qty, suggested: false, ai: false,
+    read: { itemCode, description: `${itemCode} desc`, qty: readQty, unitPrice, lineTotal: unitPrice * readQty },
+  });
+  const review = {
+    v: 4, supplierId: null, supplierRead: 'HOOKKA INDUSTRIES SDN BHD', invoiceNumber: 'INV-2610-097', invoiceDate: '2026-10-22',
+    doNo: 'DO-2610-090', poNo: null, notes: null, taxNote: null,
+    lines: [row('1007-(Q)', 1, 1, 425), row('1007-(Q)', 1, 1, 425), row('1013-(Q)', 2, 3, 305), row('1013-(Q)', 1, 3, 305)],
+  };
+  test('keeps the supplier name, D.O. and every printed row with its own pieces', () => {
+    const x = extractOfReview(review)!;
+    expect(x).toMatchObject({ supplierName: 'HOOKKA INDUSTRIES SDN BHD', doNo: 'DO-2610-090', invoiceNumber: 'INV-2610-097' });
+    expect(x.lines.map((l) => [l.itemCode, l.qty, l.lineTotal])).toEqual([
+      ['1007-(Q)', 1, 425], ['1007-(Q)', 1, 425], ['1013-(Q)', 2, 610], ['1013-(Q)', 1, 305],
+    ]);
+  });
+  test('a copy with no printed rows has nothing to rebuild', () => {
+    expect(extractOfReview({ ...review, lines: [] })).toBeNull();
   });
 });

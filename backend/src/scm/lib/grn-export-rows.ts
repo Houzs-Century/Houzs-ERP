@@ -49,7 +49,7 @@ export const GRN_INVOICED_EXCLUDED_PI_STATUSES: ReadonlySet<string> = new Set(['
    no grid column reads it (Location comes per line, below), and the read-only
    production check's PostgREST stand-in cannot run an FK hint. */
 export const GRN_EXPORT_ROWS_SELECT =
-  `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), ` +
+  `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), ` +
   'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 
 const LINE_COLS =

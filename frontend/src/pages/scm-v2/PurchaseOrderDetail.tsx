@@ -81,6 +81,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
+import { poDriftMode } from '../../vendor/scm/lib/po-drift';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { usePoCancelAction } from './use-po-cancel-action';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -99,12 +100,14 @@ import {
   type SoRevisionRow,
 } from '../../vendor/scm/lib/so-amendment-queries';
 import styles from './SalesOrderDetail.module.css';
+import { DetailLoadFailure } from './DetailLoadFailure';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { purchaseOrderLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
+import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -499,10 +502,7 @@ export const PurchaseOrderDetail = () => {
           <ArrowLeft {...ICON} />
           <span>Back</span>
         </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Purchase order not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
+        <DetailLoadFailure noun="Purchase order" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
       </div>
     );
   }
@@ -546,7 +546,15 @@ export const PurchaseOrderDetail = () => {
      while the PO is still open (pre-receipt): a received / cancelled PO can't be
      re-sent anyway, so we hide the warning there. */
   const driftCount = visibleItems.filter((it) => it.so_drift).length;
-  const showDrift = po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED';
+  /* While the order is with the supplier the purchaser can still sync + re-send;
+     once it is RECEIVED the goods came in to the PO's spec, so the drift is
+     shown as a check-before-delivery note (owner 2026-11-09: the SO gained
+     "HB Fully Cover + Divan Top Fully Cover" after HC-PO-2610-142 was raised and
+     the received PO page said nothing). */
+  const driftMode = poDriftMode(po.status);
+  const driftActionable = driftMode === 'actionable';
+  const driftReceived = driftMode === 'received';
+  const showDrift = driftActionable || driftReceived;
   /* Totals — in Edit, sum the live editLines (incl. unsaved variant/qty/price
      edits) so the rail can't drift; in View, the stored line totals. */
   const itemsSubtotal = isEditing
@@ -1295,11 +1303,19 @@ export const PurchaseOrderDetail = () => {
             {/* bannerWarn is a COLUMN flex — bare text + <strong> children become
                 separate flex rows (the old Chinese copy broke the same way), so
                 the whole sentence rides in ONE span. */}
-            <span>
-              ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
-              PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
-              supplier</strong> — otherwise the factory keeps building to the old spec.
-            </span>
+            {driftActionable ? (
+              <span>
+                ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
+                PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
+                supplier</strong> — otherwise the factory keeps building to the old spec.
+              </span>
+            ) : (
+              <span>
+                ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
+                PO was raised, and the goods were <strong>received to this PO's spec</strong>. Check the
+                received goods against the SO (red notes below) before delivery.
+              </span>
+            )}
           </div>
         )}
 
@@ -1463,7 +1479,7 @@ export const PurchaseOrderDetail = () => {
                           <div>⚠ SO now orders {it.so_drift.itemSo} (this PO still has {it.so_drift.itemPo}) — cancel &amp; re-raise is safer than editing.</div>
                         )}
                         {!it.so_drift.itemChanged && it.so_drift.specSo !== it.so_drift.specPo && (
-                          <div>⚠ SO spec now: {it.so_drift.specSo || '—'} (this PO still: {it.so_drift.specPo || '—'})</div>
+                          <div>⚠ SO spec now: {it.so_drift.specSo || '—'} ({driftReceived ? 'ordered and received' : 'this PO still'}: {it.so_drift.specPo || '—'})</div>
                         )}
                         {/* Staff #12 — SO line's ship-from warehouse moved after this PO
                             was raised; the PO still points at the old warehouse. Rebind
@@ -1777,7 +1793,7 @@ const SupplierCard = ({
             <InfoCell label="Contact"       value={supplier.contact_person ?? supplier.attention} />
             <InfoCell label="Phone"         value={formatPhone(supplier.phone ?? supplier.mobile)} />
             <InfoCell label="Payment terms" value={supplier.payment_terms} />
-            <InfoCell label="Email"         value={supplier.email} />
+            <InfoCell label="Email"         value={supplierEmailList(supplier).join(", ") || null} />
             <InfoCell label="TIN"           value={supplier.tin_number} />
             <InfoCell label="Country / state" value={[supplier.country, supplier.state].filter(Boolean).join(' / ') || null} />
             <InfoCell label="Bindings count" value={String(supplierDetail.data?.bindings?.length ?? 0)} />

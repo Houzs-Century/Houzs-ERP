@@ -222,17 +222,11 @@ export const PaymentVoucherNew = () => {
     if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
     /* The voucher stays dated TODAY — the bill's date no longer overwrites it
        (owner 2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做): the
-       voucher's date is when he records the payment. The bill's own date rides
-       in the notes instead, so nothing read is lost. The AP invoice form keeps
-       the bill's date — there it IS the invoice date. */
-    /* What the reader fills goes upper case (owner 2026-09-08; ocr-fill.ts);
-       the payee above keeps the operator's own saved casing. */
-    const noteBits = upperFill([
-      ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
-      ex.invoiceDate ? `dated ${ex.invoiceDate}` : null,
-      ex.dueDate ? `due ${ex.dueDate}` : null,
-    ].filter(Boolean).join(' · '));
-    if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+       voucher's date is when he records the payment. The bill's number and date
+       ride in their own fields (Bill no., Bill date), so nothing read is lost —
+       and no longer in the Remark (owner 2026-11-09: 不要像之前一样显示bill no.):
+       the Description reads the bill's items. The AP invoice form keeps the
+       bill's date — there it IS the invoice date. */
     takeBillPair(ex.invoiceNumber, ex.invoiceDate);
     takeProvisional(ex.documentKind);
     /* The account: ONLY what this operator saved for this vendor before
@@ -245,7 +239,9 @@ export const PaymentVoucherNew = () => {
       .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
     /* A bill with no readable lines still carries its total — one line. */
     if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ ...newLine(), description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
+      /* No items read: the line says so, never the bill's number (owner 2026-11-09) —
+         the bill number is in Bill no.; the operator types what it is for. */
+      drafts.push({ ...newLine(), description: upperFill('As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
     }
     if (drafts.length > 0) setLines(drafts);
   };
@@ -470,8 +466,7 @@ export const PaymentVoucherNew = () => {
         .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: account, projectId: r.project_id }));
       if (read.length > 0) setLines(read);
       else if (account) setLines((prev) => prev.map((l) => ({ ...l, debitAccountCode: l.debitAccountCode || account })));
-      const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
-      if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
+      /* The bill's number and date go to their own fields, not the Remark (owner 2026-11-09). */
       takeBillPair(ex.invoiceNumber, ex.invoiceDate);
       takeProvisional(ex.documentKind);
       if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
@@ -901,7 +896,7 @@ export const PaymentVoucherNew = () => {
             ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Pay to *</span>
-              <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
+              <input data-upper type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
                 placeholder="Payee, e.g. TENAGA NASIONAL BERHAD" className={styles.fieldInput} required />
             </label>
             )}
@@ -950,8 +945,9 @@ export const PaymentVoucherNew = () => {
                 inputClassName={styles.fieldInput} selectOnFocus />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Description</span>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What this payment is for" aria-label="Voucher description"
+              {/* The Remark (owner 2026-11-09): the Description is what the lines say is paid for. */}
+              <span className={styles.fieldLabel}>Remark</span>
+              <textarea data-upper value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="A note beside this payment (optional)" aria-label="Voucher remark"
                 className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
             {!transferMode && <PvPayToFields value={payTo} onChange={setPayTo} />}
@@ -977,7 +973,7 @@ export const PaymentVoucherNew = () => {
             {showBill && officialOwed && (
               <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
                 <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
-                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                <input data-upper className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
                   aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
               </label>
             )}
@@ -1217,7 +1213,7 @@ export const PaymentVoucherNew = () => {
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Description</span>
-                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
+                  <input data-upper type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
                     placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
                 </label>
               </div>

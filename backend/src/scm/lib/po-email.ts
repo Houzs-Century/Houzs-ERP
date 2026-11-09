@@ -12,6 +12,7 @@
 
 import { documentEmailHtml } from '../../services/email';
 import { fmtDate } from '../shared/format';
+import { isValidEmailAddress, resolvePoRecipients } from '../shared/supplier-emails';
 
 /* Attachment cap. Resend's own documented limit is 40 MB across the whole
    message, but the number that matters is smaller and comes from HOOKKA:
@@ -97,10 +98,8 @@ export function validatePoAttachment(pdfBase64: unknown, poNo: string): PoAttach
    malformed supplier address costs a provider error and an operator who thinks
    the PO went out. Deliberately permissive on the domain (no TLD allowlist) —
    this rejects nonsense, it does not adjudicate real domains. */
-const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
-
 export function isSendableEmail(addr: string | null | undefined): boolean {
-  return EMAIL_RE.test((addr ?? '').trim());
+  return isValidEmailAddress(addr);
 }
 
 export interface PoEmailRow {
@@ -110,7 +109,7 @@ export interface PoEmailRow {
   total_sen: number | null;
   currency: string | null;
   po_date: string | null;
-  supplier?: { name?: string | null; email?: string | null } | null;
+  supplier?: { name?: string | null; email?: string | null; email2?: string | null; email3?: string | null } | null;
 }
 
 /**
@@ -123,9 +122,12 @@ export function buildPurchaseOrderEmail(
   row: PoEmailRow,
   companyName: string,
   note?: string | null,
-): { to: string; subject: string; html: string } | null {
-  const to = (row.supplier?.email ?? '').trim();
-  if (!isSendableEmail(to)) return null;
+): { to: string; cc: string[]; subject: string; html: string } | null {
+  /* To = Email, Cc = Email 2 / Email 3 (owner 2026-11-09) — the rule is
+     shared/supplier-emails.ts, which the PO page's confirm also reads. */
+  const recipients = resolvePoRecipients(row.supplier);
+  if (!recipients.ok) return null;
+  const { to, cc } = recipients;
 
   const docNo = row.po_number ?? row.id;
   const total = (Number(row.total_sen ?? 0) / 100).toFixed(2);
@@ -133,6 +135,7 @@ export function buildPurchaseOrderEmail(
 
   return {
     to,
+    cc,
     subject: `${companyName} — Purchase Order ${docNo}`,
     /* documentEmailHtml escapes every interpolated value (supplier names carry
        apostrophes, ampersands and Chinese characters) and inlines the summary,

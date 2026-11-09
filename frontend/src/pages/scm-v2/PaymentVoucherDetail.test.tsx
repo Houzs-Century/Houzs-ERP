@@ -259,11 +259,13 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
 
 /* Owner 2026-11-08 (pv notes 我不想要全部挤在一排，然后把notes 换成description): the
    Description says what the money is for; the bank it pays into has fields of its own. */
-describe('the Description and the bank it pays into', () => {
-  const BANK = { notes: 'META ADS SEPTEMBER', purpose_text: 'META ADS SEPTEMBER INVOICE', pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: 'META PLATFORMS IRELAND' };
-  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { notes: null, purpose_text: undefined, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
+/* 2026-11-09 (对我来说 description 就是 purpose; 只显示单上的费用): the Description is
+   what the bills say is paid for; the typed words are the Remark. */
+describe('the Description, the Remark and the bank it pays into', () => {
+  const BANK = { notes: 'META ADS SEPTEMBER', description_text: 'META ADS SEPTEMBER INVOICE', pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: 'META PLATFORMS IRELAND' };
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { notes: null, description_text: undefined, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
 
-  test('the voucher shows its Description, its Purpose and its bank; the edit starts from that bank and saves a change', async () => {
+  test('the voucher shows its Description, its Remark and its bank; the edit starts from that bank and saves a change', async () => {
     updateAsync.mockClear();
     Object.assign(DETAIL.paymentVoucher, BANK);
     render(
@@ -272,8 +274,10 @@ describe('the Description and the bank it pays into', () => {
       </MemoryRouter>,
     );
     for (const value of ['META ADS SEPTEMBER', 'META ADS SEPTEMBER INVOICE', 'CITIBANK', '0123 4567', 'META PLATFORMS IRELAND']) expect(screen.getByText(value)).toBeTruthy();
+    expect(screen.queryByText('Purpose')).toBeNull();
+    expect(screen.getByText('Remark')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('META ADS SEPTEMBER');
+    expect((screen.getByLabelText('Voucher remark') as HTMLTextAreaElement).value).toBe('META ADS SEPTEMBER');
     expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
     expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('META PLATFORMS IRELAND');
     fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '0123 9999' } });

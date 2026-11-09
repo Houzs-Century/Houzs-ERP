@@ -30,8 +30,8 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
     ? { data: { paymentVouchers: searched(opts.q), q: opts.q }, isLoading: false, error: null }
     : { data: { counts: { all: 61, DRAFT: 11, PREPARED: 12, CHECKED: 13, POSTED: 14, ADVANCE: 15, CANCELLED: 16 }, paymentVouchers: [
-    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)',
-      purpose_text: 'HC-PRQ-2610-030 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' },
+    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BOOTH F1 RENTAL · BILL MLE-0925 · DATED 2026-09-01',
+      description_text: 'BOOTH RENTAL (ZANOTTI) - 6 UNIT @ 5,000.00', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
     { id: 'done', pv_number: 'PV-2609-004', payee_name: 'Posted Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 40000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' },
@@ -58,6 +58,13 @@ const notifyFn = vi.fn((_a: unknown) => undefined);
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifyFn }));
 /* The waiting-requests reminder has its own contract (PaymentRequestsWaiting.test.tsx). */
 vi.mock('./PaymentRequestsWaiting', () => ({ PaymentRequestsWaiting: () => null }));
+/* The list on paper has its own contract (pv-list-pdf.test.ts): here, what the header's
+   Export to PDF hands it. The words on top stay real. */
+const printed: Array<{ view: { keys: string[]; rows: ReadonlyArray<{ id: string }> }; opts: { cutTo: string; action?: string } }> = [];
+vi.mock('../../vendor/scm/lib/pv-list-pdf', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/pv-list-pdf')>()),
+  generatePvListPdf: async (view: (typeof printed)[number]['view'], opts: (typeof printed)[number]['opts']) => { printed.push({ view, opts }); },
+}));
 
 import { PaymentVouchers } from './PaymentVouchers';
 
@@ -169,22 +176,25 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
   });
 });
 
-describe('the Description column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？; 2026-11-08: 把notes 换成description)', () => {
-  test('each row shows its Description, whole on hover; a voucher without one reads —', () => {
+describe('the Description column (owner 2026-11-09: 对我来说 description 就是 purpose; 我只想显示单上的费用，不要像之前一样显示bill no. 等等)', () => {
+  test('each row shows what it pays for, as the server read it from the bills, whole on hover; a voucher without one reads —', () => {
     draw();
     expect(screen.getByRole('columnheader', { name: /^Description/ })).toBeTruthy();
-    const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
-    const cell = screen.getByText(note).closest('td');
-    expect(cell?.getAttribute('title')).toBe(note);
+    const items = 'BOOTH RENTAL (ZANOTTI) - 6 UNIT @ 5,000.00';
+    const cell = screen.getByText(items).closest('td');
+    expect(cell?.getAttribute('title')).toBe(items);
+    /* The typed remark, with its bill number, is not the Description. */
+    expect(screen.queryByText(/BILL MLE-0925/)).toBeNull();
     /* The other five carry none. */
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
   });
 
-  test('Purpose, Bank and Account no. stand beside it (owner 2026-11-08)', () => {
+  test('Bank and Account no. stand beside it; no Purpose column, and the Remark is off the list unless chosen', () => {
     draw();
     /* The grid title-cases a header: Account no. reads Account No. */
-    for (const name of [/^Purpose/, /^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
-    expect(screen.getByText('HC-PRQ-2610-030 Booth deposit')).toBeTruthy();
+    for (const name of [/^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: /^Purpose/ })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /^Remark/ })).toBeNull();
     expect(screen.getByText('MAYBANK')).toBeTruthy();
     expect(screen.getByText('5140 1234 5678')).toBeTruthy();
   });
@@ -199,6 +209,49 @@ describe('the Description column — the Notes (owner 2026-10-14: pv 那边的 l
     expect(screen.getByText(/Search “penang” · 1 voucher across every stage and month/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Clear the search'));
     expect(await screen.findByText('PV-2609-002')).toBeTruthy();
+  });
+});
+
+describe('the Total and the list on paper (owner 2026-11-09: 表格最下面的总数（Total）- payment voucher 可以加; 我filter 了，right click header print 不行？)', () => {
+  const totalOf = (key: string) => document.querySelector(`[data-total-key="${key}"]`)?.textContent;
+
+  test('the footer totals the ringgit of the vouchers showing', () => {
+    draw();
+    expect(totalOf('total_sen')).toBe('RM 4,050.00');
+    expect(screen.getByText('Total · 6 rows')).toBeTruthy();
+    expect(totalOf('status')).toBe('');
+  });
+
+  test('a cancelled voucher stays listed but is not counted, and the footer says so', async () => {
+    const was = searched.getMockImplementation()!;
+    searched.mockImplementation(() => [
+      { id: 'gone', pv_number: 'HCMPV-2601-009', payee_name: 'Gone Co', status: 'CANCELLED', voucher_date: '2026-01-09', total_sen: 99_900, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: null, notes: '', je_no: null },
+      { id: 'kept', pv_number: 'HCMPV-2601-010', payee_name: 'Kept Co', status: 'POSTED', voucher_date: '2026-01-10', total_sen: 7_000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: '', je_no: null },
+    ] as unknown as ReturnType<typeof was>);
+    try {
+      draw();
+      fireEvent.change(screen.getByLabelText('Find any voucher'), { target: { value: 'co' } });
+      expect(await screen.findByText('HCMPV-2601-009')).toBeTruthy();
+      expect(totalOf('total_sen')).toBe('RM 70.00');
+      expect(totalOf('status')).toBe('1 cancelled not counted');
+    } finally {
+      searched.mockImplementation(was);
+    }
+  });
+
+  test("the header's right-click prints the list showing, and says the stage and month it was cut to", async () => {
+    printed.length = 0;
+    draw();
+    /* The chip comes first, the row's tag after it. */
+    fireEvent.click(screen.getAllByText('Checked')[0]!);
+    expect(screen.queryByText('PV-2609-001')).toBeNull();
+    fireEvent.contextMenu(screen.getByRole('columnheader', { name: /^Payee/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export to PDF' }));
+    await waitFor(() => expect(printed).toHaveLength(1));
+    const { view, opts } = printed[0]!;
+    expect(view.rows.map((r) => r.id)).toEqual(['chk']);
+    expect(view.keys).toContain('total_sen');
+    expect(opts).toEqual({ cutTo: 'Payment vouchers as filtered on the screen. Stage: Checked. Month: All months.', action: 'preview' });
   });
 });
 

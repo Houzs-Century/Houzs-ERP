@@ -14,7 +14,6 @@ import { validatePasswordStrength } from "../lib/passwordStrength";
 import { AmbientSnow } from "../components/AmbientSnow";
 import { consumeCorrelated, correlatedFetch } from "../lib/requestCorrelation";
 import { readRememberedEmail } from "../lib/rememberedEmail";
-import { STAGING_SIGN_IN_TEXT, STAGING_SIGN_IN_TITLE, currentHostIsStaging } from "./stagingSignIn";
 
 // NOTE: this module is lazy-loaded by auth/AuthGate.tsx — every screen here is
 // unauthenticated-only UI, kept out of the initial bundle on purpose. AuthGate
@@ -332,12 +331,6 @@ export function LoginScreen() {
       subtitle="Enter your credentials to access the workspace."
     >
       <form onSubmit={submit} className="space-y-4">
-        {currentHostIsStaging() && (
-          <div role="note" data-testid="staging-sign-in-note" className="rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-[11px] leading-snug text-ink-secondary">
-            <div className="font-semibold text-ink">{STAGING_SIGN_IN_TITLE}</div>
-            <div className="mt-0.5">{STAGING_SIGN_IN_TEXT}</div>
-          </div>
-        )}
         <div>
           <FieldLabel>Email</FieldLabel>
           <TextInput
