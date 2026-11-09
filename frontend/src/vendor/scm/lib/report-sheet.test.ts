@@ -9,7 +9,7 @@ import type { LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import type { RpReport } from './rp-report-queries';
 import type { PerformanceReport } from './performance-report-queries';
-import { cashFlowTable, exportFileName, monthlyTable, performanceTables, sheetText, statementTable } from './report-sheet';
+import { cashFlowTable, exportFileName, monthlyTable, performanceTables, rowsWithTotalsBelow, sheetText, statementColumnsTable, statementTable } from './report-sheet';
 
 const acc = (code: string, label: string, amountSen: number, pct: number | null): LaidNode =>
   ({ kind: 'account', id: `acc:${code}`, label, code, key: code, amountSen, pct, children: [] });
@@ -173,5 +173,36 @@ describe('the monthly grid as a table', () => {
       { label: '累计 08/2026 – 09/2026', kind: 'pct', edge: true }, { label: '09/2026', kind: 'pct', edge: false }, { label: '08/2026', kind: 'pct', edge: false },
     ]);
     expect(t.rows[2]!.cells).toEqual([0.5, null, 2]);
+  });
+});
+
+describe('the Cash Flow\'s Settlement / Deposit columns as a table (owner 2026-11-09)', () => {
+  const columns = [
+    { key: 'total', label: 'Total', pct: true, edge: true },
+    { key: '2026-10:S', label: 'Settlement', pct: false, group: 'Oct 2026' },
+    { key: '2026-10:D', label: 'Deposit', pct: false, group: 'Oct 2026' },
+  ];
+  const shown: MonthlyLine[] = [
+    { id: 'in', label: 'DEPOSIT RECEIVED', kind: 'category', depth: 1, cells: { total: { amountSen: 90_000, pct: 100 }, '2026-10:S': { amountSen: 50_000, pct: null }, '2026-10:D': { amountSen: 40_000, pct: null } } },
+    { id: 'a', label: '300-0000', kind: 'row', depth: 2, cells: { total: { amountSen: 90_000, pct: 100 }, '2026-10:S': { amountSen: 50_000, pct: null }, '2026-10:D': { amountSen: 40_000, pct: null } } },
+    { id: 'tax', label: 'TAXATION', kind: 'row', depth: 1, cells: { total: { amountSen: 5_000, pct: 2.5 }, '2026-10:S': { amountSen: 5_000, pct: null } }, spans: { '2026-10:S': 2 } },
+  ];
+  it('a column keeps its heading; a line not split runs one cell across the month, the covered cell left empty', () => {
+    const t = statementColumnsTable(columns, shown);
+    expect(t.columns).toEqual([
+      { label: 'Total', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
+      { label: 'Settlement', kind: 'amount', group: 'Oct 2026' }, { label: 'Deposit', kind: 'amount', group: 'Oct 2026' },
+    ]);
+    expect(t.rows[0]!.cells).toEqual([90_000, 100, 50_000, 40_000]);
+    expect(t.rows[0]!.spans).toBeUndefined();
+    expect(t.rows[2]).toMatchObject({ cells: [5_000, 2.5, 5_000, null], spans: { 2: 2 } });
+  });
+  it('an open group\'s merged cells move with its figures to its Total row; its bare title has none', () => {
+    const rows = rowsWithTotalsBelow([
+      { kind: 'category', depth: 1, label: 'OTHER', cells: [5, null, 5, null], spans: { 2: 2 } },
+      { kind: 'row', depth: 2, label: 'x', cells: [5, null, 5, null], spans: { 2: 2 } },
+    ]);
+    expect(rows[0]).toEqual({ kind: 'category', depth: 1, label: 'OTHER', cells: [] });
+    expect(rows[2]).toEqual({ kind: 'total', depth: 1, label: 'Total OTHER', cells: [5, null, 5, null], spans: { 2: 2 } });
   });
 });

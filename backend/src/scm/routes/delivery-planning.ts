@@ -812,7 +812,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* multi-company: id → code map (HOUZS / 2990 / …) so each shared-queue row can
      carry a readable company_code label. Built once. */
   const codeMap = companyCodeMap(c);
-  /* PO lock per row (owner 2026-08-12, 2990 only) — the drawer decides
+  /* PO lock per row (owner 2026-08-12; every company since 2026-11-09) — the drawer decides
      client-side whether a replacement_disposal change saves directly or routes
      into an amendment, and it decides from the row. Without this fact on the row
      the drawer would attempt the direct write, collect the guard's 409, and
@@ -2030,7 +2030,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     const current = (before.data as { replacement_disposal?: string | null } | null)?.replacement_disposal ?? null;
     const requested = (soUpdates['replacement_disposal'] ?? null) as string | null;
     const genuineChange = String(current ?? '') !== String(requested ?? '');
-    /* Owner 2026-08-12 — the PO lock (2990 only) is the same soft lock reached
+    /* Owner 2026-08-12 — the PO lock (every company) is the same soft lock reached
        by the other road, so the board write must respect it identically or the
        drawer's amendment routing has a hole exactly where a supplier is already
        building. ONE 409 body for both: from this board the operator's next

@@ -22,7 +22,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  createReceiptForPayment, ensureReceiptForPayment, followPaymentEdit, followPaymentRemoval, formaliseReceiptsForSettlement,
+  createReceiptForPayment, ensureReceiptForPayment, followPaymentEdit, followPaymentRemoval, formaliseReceiptsForBankMatch, formaliseReceiptsForSettlement,
 } from '../src/acc/receipts';
 import { receiptFormalise } from '../src/scm/routes/accounting-receipts';
 import { receiptFieldChange, repostSoPaymentBestEffort } from '../src/scm/lib/so-payment-row';
@@ -70,6 +70,23 @@ describe('birth', () => {
     const r2 = await createReceiptForPayment(sb, CARD);
     expect(r2.ok && r2.id).toBe(r1.ok && r1.id);
     expect(sb.tables.acc_official_receipts).toHaveLength(1);
+  });
+
+  /* Owner 2026-11-09 (为甚没有name 这些): no writer passed the customer, so every receipt
+     was born nameless. The receipt reads its order's name (an invoice payment's, its
+     invoice's) when the writer names nobody; a name the writer gives still wins. */
+  test('a receipt keeps its customer\'s name — the order\'s, or the invoice\'s', async () => {
+    const sb = world({
+      mfg_sales_orders: [{ company_id: CO, doc_no: CARD.docNo, debtor_name: 'Lisa Gan' }],
+      sales_invoices: [{ id: 'inv-1', company_id: CO, debtor_name: 'Acme Sdn Bhd', so_doc_no: CARD.docNo }],
+    });
+    await createReceiptForPayment(sb, CARD);
+    await createReceiptForPayment(sb, { ...CARD, source: 'SIPAY', paymentId: 'si-p1', docNo: 'inv-1' });
+    await createReceiptForPayment(sb, { ...CARD, paymentId: 'p7', customerName: 'Named By Writer' });
+    await createReceiptForPayment(sb, { ...CARD, paymentId: 'p8', docNo: '2990-SO-NOWHERE' });
+    expect(sb.tables.acc_official_receipts.map((r) => [r.payment_id, r.customer_name ?? null])).toEqual([
+      ['p1', 'Lisa Gan'], ['si-p1', 'Acme Sdn Bhd'], ['p7', 'Named By Writer'], ['p8', null],
+    ]);
   });
 
   test('a CASH payment is FORMAL in the same breath, on the COR series', async () => {
@@ -135,6 +152,50 @@ describe('settlement confirm turns card receipts formal', () => {
     ]);
     // -010: the series already held -009, and max+1 never re-issues.
     expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', or_number: `2990-MOR-${yymm}-010` });
+  });
+});
+
+/* Owner 2026-11-09 (Receipts › Draft · money not confirmed: 这个不是我bank recon了就confirm
+   了？): a bank movement matched to a customer payment's entry is the money seen in the
+   bank, so that payment's receipt turns formal on that bank — the transfer's own
+   "merchant line confirmed". */
+describe('a bank match turns the receipts of the payments it holds formal', () => {
+  const gl = (je: string, source: string, doc: string, account = '310-0010') =>
+    ({ company_id: CO, je_no: je, account_code: account, source_type: source, source_doc_no: doc, debit_sen: 1, credit_sen: 0, entry_date: '2026-07-05' });
+  const draft = (id: number, source: string, paymentId: string) =>
+    ({ id, company_id: CO, or_number: `2990-DraftOR-${yymm}-00${id}`, status: 'DRAFT', payment_source: source, payment_id: paymentId, amount_sen: 1, paid_at: '2026-07-05' });
+
+  test('the payments behind the matched entries turn formal on that bank; any other entry is left alone', async () => {
+    const sb = world({
+      acc_official_receipts: [
+        draft(1, 'SOPAY', 'p1'),
+        draft(2, 'SIPAY', 'i1'),
+        { id: 3, company_id: CO, or_number: `2990-MOR-${yymm}-004`, status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p2', amount_sen: 1, paid_at: '2026-07-05' },
+      ],
+      v_gl_entries: [
+        gl('JE-1', 'SOPAY', 'p1'), gl('JE-1', 'SOPAY', 'p1', '300-0000'),
+        gl('JE-2', 'SIPAY', 'i1'),
+        gl('JE-3', 'SOPAY', 'p2'),
+        gl('JE-4', 'PV', '2990-HPV-2607-001'),
+        gl('JE-5', 'SOPAY_REVERSAL', 'p9'),
+      ],
+    });
+    const out = await formaliseReceiptsForBankMatch(sb, CO, '310-0010', ['JE-1', 'JE-2', 'JE-3', 'JE-4', 'JE-5'], 'Chew');
+    expect(out).toEqual([
+      { paymentId: 'p1', outcome: 'formalised' },
+      { paymentId: 'i1', outcome: 'formalised' },
+      { paymentId: 'p2', outcome: 'already_formal' },
+    ]);
+    const [p1, i1] = sb.tables.acc_official_receipts;
+    expect([p1, i1].map((r) => [r!.status, r!.channel_account_code, r!.issued_by])).toEqual([['FORMAL', '310-0010', 'Chew'], ['FORMAL', '310-0010', 'Chew']]);
+    expect([p1!.or_number, i1!.or_number]).toEqual([`2990-MOR-${yymm}-005`, `2990-MOR-${yymm}-006`]);
+  });
+
+  test('no entries, or a read that fails, is nothing — a match never fails over a receipt', async () => {
+    expect(await formaliseReceiptsForBankMatch(world(), CO, '310-0010', [], 'Chew')).toEqual([]);
+    const broken = world();
+    (broken as unknown as { from: () => never }).from = () => { throw new Error('down'); };
+    expect(await formaliseReceiptsForBankMatch(broken, CO, '310-0010', ['JE-1'], 'Chew')).toEqual([]);
   });
 });
 

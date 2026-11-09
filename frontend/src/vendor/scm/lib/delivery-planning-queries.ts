@@ -200,7 +200,7 @@ export type PlanningOrder = {
   amend_reason_from_customer?: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
-  /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
+  /* Owner 2026-08-12 (every company since 2026-11-09) — a live PO already claims one of this SO's
      lines, so the SO is soft-locked with no processing date involved. Read by
      DeliveryFieldsDrawer's procLockActive call to route a replacement_disposal
      change into an amendment instead of a direct save. */

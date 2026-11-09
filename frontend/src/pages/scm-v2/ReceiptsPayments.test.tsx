@@ -243,6 +243,78 @@ describe('the Cash Flow tab', () => {
   });
 });
 
+/* Owner 2026-11-09 (his Receipt & Payment workbook: 「就是一行settlement一行deposit」): each month as
+   Settlement | Deposit, as the server split each line; a line not split runs one figure across the
+   month; a split running subtotal gets its two figures added up under it. */
+describe('Settlement / Deposit on the Cash Flow', () => {
+  const sd = (settlementSen: number, depositSen: number) => ({ settlementSen, depositSen });
+  const withSd = (n: LaidNode, pair: ReturnType<typeof sd> | null, kids?: LaidNode[]): LaidNode =>
+    ({ ...n, ...(pair ? { sd: pair } : {}), children: kids ?? n.children });
+  const [rin, rout, unassigned] = report.layout.tree as [LaidNode, LaidNode, LaidNode];
+  const [ca] = rin.children as [LaidNode];
+  const [ar, xfer] = ca.children as [LaidNode, LaidNode];
+  const [purchases, utilities] = rout.children as [LaidNode, LaidNode];
+  const split: RpReport = {
+    ...report,
+    layout: {
+      ...report.layout,
+      tree: [
+        withSd(rin, sd(20_000, 50_000), [withSd(ca, sd(20_000, 50_000), [withSd(ar, sd(0, 50_000)), withSd(xfer, sd(20_000, 0))])]),
+        withSd(rout, sd(42_000, 4_000), [withSd(purchases, sd(40_000, 0), [withSd(purchases.children[0]!, sd(40_000, 0))]), withSd(utilities, sd(2_000, 4_000))]),
+        { kind: 'subtotal', id: 'sub:ops', label: 'NET OPERATION SURPLUS / (DEFICIT)', amountSen: 24_000, pct: null, sd: sd(-22_000, 46_000), children: [] },
+        unassigned,
+      ],
+    },
+  };
+  beforeEach(() => { shownReport.value = split; });
+  afterEach(() => { shownReport.value = null; });
+  const openSplit = async () => {
+    at();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'Settlement / Deposit' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
+    await waitFor(() => expect(heads()).toEqual(['Account', 'Total3 months%', 'Jul 2026', 'Jun 2026', 'May 2026', 'Settlement', 'Deposit', 'Settlement', 'Deposit', 'Settlement', 'Deposit']));
+  };
+  const cells = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')].map((td) => [td.textContent, td.getAttribute('colspan')]);
+
+  test('each month as Settlement | Deposit under the month; Total whole with its %; one read per month', async () => {
+    await openSplit();
+    expect(columnPaths.some((p) => p.includes('from=2026-06-01&to=2026-06-30'))).toBe(true);
+    /* The customer's deposit: nothing under Settlement, the money under Deposit. (Total is
+       its own read of the three months; this mock answers every read with the one report.) */
+    expect(cells('ACCOUNT RECEIVEABLE')).toEqual([['500.0071.4%', null], ...Array(3).fill(['-', null]).flatMap((dash) => [dash, ['500.00', null]])]);
+    expect(cells('UTILITIES').slice(1, 3)).toEqual([['20.00', null], ['40.00', null]]);
+    /* Not split: one figure across each month, centred. */
+    expect(cells('Supplier advances (预付)')).toEqual([['300.0039.5%', null], ['300.00', '2'], ['300.00', '2'], ['300.00', '2']]);
+  });
+
+  test('a split running subtotal shows its two figures, then Settlement + Deposit under it', async () => {
+    await openSplit();
+    expect(cells('NET OPERATION SURPLUS / (DEFICIT)').slice(1, 3)).toEqual([['(220.00)', null], ['460.00', null]]);
+    const sum = screen.getByText('Settlement + Deposit').closest('tr')!;
+    expect(sum.getAttribute('data-kind')).toBe('memo');
+    expect(cells('Settlement + Deposit').slice(1)).toEqual([['240.00', '2'], ['240.00', '2'], ['240.00', '2']]);
+  });
+
+  test('a figure across a month opens that month’s entries; a Settlement or Deposit share does not open', async () => {
+    await openSplit();
+    expect(screen.queryByRole('button', { name: 'UTILITIES · Jul 2026 Settlement' })).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Supplier advances (预付) · Jul 2026' })[0]!);
+    expect(screen.getByRole('region', { name: 'Entries of Supplier advances (预付)' }).textContent).toContain('Jul 2026 · 1 entry');
+  });
+
+  test('Excel carries the months over their two columns and the figures run across as on the screen', async () => {
+    await openSplit();
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
+    const [xs, name] = xlsx.mock.calls[0]! as [{ tables: Array<{ columns: Array<{ label: string; group?: string }>; rows: Array<{ label: string; cells: unknown[]; spans?: Record<number, number> }> }> }, string];
+    expect(name).toBe('cash-flow-settlement-deposit-2026-05-2026-07.xlsx');
+    expect(xs.tables[0]!.columns.map((c) => `${c.group ?? ''}|${c.label}`)).toEqual([
+      '|Total', '|%', 'Jul 2026|Settlement', 'Jul 2026|Deposit', 'Jun 2026|Settlement', 'Jun 2026|Deposit', 'May 2026|Settlement', 'May 2026|Deposit',
+    ]);
+    expect(xs.tables[0]!.rows.find((r) => r.label === 'Supplier advances (预付)')!.spans).toEqual({ 2: 2, 4: 2, 6: 2 });
+  });
+});
+
 /* Owner 2026-11-08: 可以帮我注明是从auto count带过来的吗？ Customers' money AutoCount recorded after the
    books started posts no journal; the Cash Flow names it below the customer receipts, grey, in no total,
    and its figure opens the payments behind it. */

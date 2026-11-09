@@ -28,6 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { upperTyped } from '../../acc/typed-text';
 import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { dailyBankHandler } from './accounting-daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
@@ -543,7 +544,8 @@ accounting.post('/journal-entries', async (c) => {
      idempotency and dodging the manual-journal control-account block. */
   const sourceType = 'MANUAL';
   const sourceDocNo = body.sourceDocNo ?? null;
-  const narration = body.narration ?? null;
+  /* A hand-written journal's words in upper case (owner 2026-11-09; acc/typed-text.ts). */
+  const narration = upperTyped(typeof body.narration === 'string' ? body.narration : null);
   const lines = Array.isArray(body.lines) ? (body.lines as JeLineIn[]) : [];
   if (lines.length < 2) return c.json({ error: 'min_2_lines' }, 400);
 
@@ -576,7 +578,7 @@ accounting.post('/journal-entries', async (c) => {
       partyType: l.partyType ?? null,
       partyCode: l.partyCode ?? null,
       partyName: l.partyName ?? null,
-      notes: l.notes ?? null,
+      notes: upperTyped(typeof l.notes === 'string' ? l.notes : null),
     })),
     postNow: false,
   });

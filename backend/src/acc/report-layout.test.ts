@@ -415,6 +415,74 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
   });
 });
 
+/* Owner 2026-11-09 (his Receipt & Payment workbook: 一行settlement一行deposit; 每一行放哪
+   一栏 … 你以后可以在版面设定里自己改，包括 1/3 和 2/3 → 可以): a Cash Flow category may
+   say how its money splits between the Settlement and Deposit columns, in parts; a
+   category without one follows the category above; a customer's order payment goes by
+   its kind; a group with any line not split prints whole, and so does what follows it. */
+describe('Settlement / Deposit on the Cash Flow tree', () => {
+  const cf = (children: unknown[], split?: unknown) => ({ version: 1, blocks: { accounts: [
+    { kind: 'category', id: 'ops', label: 'Operations', flow: 'out', ...(split !== undefined ? { split } : {}), children },
+  ] } });
+
+  test('a category keeps its split in parts, at any depth; a bad one is refused by name; other reports carry none', () => {
+    const ok = validateLayout('rp', cf([
+      { kind: 'category', id: 'wh', label: 'Warehouse', split: { settlement: 1, deposit: 2 }, children: [{ kind: 'account', code: '900-R002' }] },
+    ], { settlement: 0, deposit: 1 }));
+    expect(ok.ok).toBe(true);
+    const top = (ok as { layout: Layout }).layout.blocks.accounts![0] as LayoutCategory;
+    expect(top.split).toEqual({ settlement: 0, deposit: 1 });
+    expect((top.children[0] as LayoutCategory).split).toEqual({ settlement: 1, deposit: 2 });
+    const bad = (split: unknown) => (validateLayout('rp', cf([], split)) as { ok: false; reason: string }).reason;
+    const word = 'Operations: the Settlement / Deposit split is two whole parts from 0 to 99, not both 0.';
+    for (const split of [{ settlement: 0, deposit: 0 }, { settlement: -1, deposit: 2 }, { settlement: 1.5, deposit: 2 }, { settlement: 100, deposit: 1 }, 'half', { settlement: 1 }]) {
+      expect(bad(split)).toBe(word);
+    }
+    const pnl = validateLayout('pnl', { version: 1, blocks: { expenses: [{ kind: 'category', id: 'e', label: 'E', split: { settlement: 1, deposit: 0 }, children: [] }] } });
+    expect(((pnl as { layout: Layout }).layout.blocks.expenses![0] as LayoutCategory).split).toBeUndefined();
+  });
+
+  test('laid out: a line by its category or the one above, a customer payment by its kind; groups and subtotals sum; anything not split prints whole', () => {
+    const tree: LayoutItem[] = [
+      { kind: 'category', id: 'in', label: 'CASH IN', flow: 'in', split: { settlement: 0, deposit: 1 }, children: [
+        { kind: 'account', code: '300-0000', flow: 'in' },
+        { kind: 'account', code: '500-0003', flow: 'net' },
+      ] },
+      { kind: 'category', id: 'ops', label: 'OPERATIONS OUTFLOWS', flow: 'out', split: { settlement: 1, deposit: 2 }, children: [
+        { kind: 'category', id: 'cost', label: 'COST OF FUNDS', split: { settlement: 1, deposit: 0 }, children: [{ kind: 'account', code: '601-0003', flow: 'net' }] },
+        { kind: 'category', id: 'wh', label: 'WAREHOUSE', children: [{ kind: 'account', code: '900-R002', flow: 'net' }] },
+      ] },
+      { kind: 'subtotal', id: 'net-ops', label: 'NET OPERATION SURPLUS / (DEFICIT)' },
+      { kind: 'category', id: 'tax', label: 'TAXATION', flow: 'out', children: [{ kind: 'account', code: '910-0000', flow: 'out' }] },
+      { kind: 'subtotal', id: 'after', label: 'CASH SURPLUS / (DEFICIT) AFTER OTHERS' },
+    ];
+    const receipts: LaidLine[] = [
+      { code: '300-0000', key: '300-0000:DEP:CASH', name: 'Transfer / cash', label: 'Transfer / cash', amountSen: 100_000, group: { id: 'DEP', label: 'Deposit' }, splitTo: 'deposit' },
+      { code: '300-0000', key: '300-0000:BAL:CASH', name: 'Transfer / cash', label: 'Transfer / cash', amountSen: 40_000, group: { id: 'BAL', label: 'Settlement' }, splitTo: 'settlement' },
+      { code: '500-0003', name: 'SALES OF SOFA', amountSen: 9_000 },
+    ];
+    const payments: LaidLine[] = [
+      { code: '601-0003', name: 'PURCHASE OF SOFA', amountSen: 30_000 },
+      { code: '900-R002', name: 'RENTAL - WAREHOUSE', amountSen: 10_000 },
+      { code: '910-0000', name: 'INCOME TAX', amountSen: 5_000 },
+    ];
+    const laid = layOutCashFlow(tree, receipts, payments, 1);
+    const sd = (n: LaidNode | undefined): unknown => (n?.sd ? [n.sd.settlementSen, n.sd.depositSen] : null);
+    const [cashIn, ops, netOps, tax, after] = laid.nodes;
+    /* The customer's money by its kind, under its own sub-headings; the sales by CASH IN's Deposit. */
+    expect(cashIn!.children.map((n) => [n.label, sd(n)])).toEqual([['Deposit', [0, 100_000]], ['Settlement', [40_000, 0]], ['500-0003 · SALES OF SOFA', [0, 9_000]]]);
+    expect(sd(cashIn)).toEqual([40_000, 109_000]);
+    /* Cost of funds all Settlement; the warehouse follows OPERATIONS' 1 : 2 — a third, the rest Deposit. */
+    expect(ops!.children.map((n) => [n.label, sd(n)])).toEqual([['COST OF FUNDS', [30_000, 0]], ['WAREHOUSE', [3_333, 6_667]]]);
+    expect(sd(ops)).toEqual([33_333, 6_667]);
+    /* The running subtotal splits while everything above it does: in less out, column by column. */
+    expect([netOps!.amountSen, sd(netOps)]).toEqual([109_000, [6_667, 102_333]]);
+    /* Taxation is not split: one figure, and every subtotal after it the same. */
+    expect([tax!.amountSen, sd(tax), sd(tax!.children[0])]).toEqual([5_000, null, null]);
+    expect([after!.amountSen, sd(after)]).toEqual([104_000, null]);
+  });
+});
+
 /* Owner 2026-11-05 (L5 with a subtotal under each): any category, in any report and
    at any depth, may name its Total line; the name rides onto the laid node. */
 describe('a Total name at any depth', () => {
