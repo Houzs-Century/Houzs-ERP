@@ -22,7 +22,7 @@ import { getDb } from "../db/client";
 import { pos_audit, pos_heartbeats, pos_terminals } from "../db/schema";
 import { getBrandingForCompany } from "../services/branding";
 import { deviceTokenHash, isDeviceToken, mintDeviceToken } from "./lib/pos-bundle";
-import { isPairingCode, pairingCodeHash } from "../scm/shared/pos-pairing";
+import { isPairingCode, pairingCodeHash, pairingCodeLive } from "../scm/shared/pos-pairing";
 import { loadPosBundle, type BundleCompany } from "./lib/pos-bundle-load";
 import { parseIncomingSale, type BatchResult } from "./lib/pos-sync";
 import { ingestSale, stockLocationFor } from "./lib/pos-ingest";
@@ -115,7 +115,7 @@ posDevice.post("/pair", async (c: Ctx) => {
   const now = new Date().toISOString();
   const found = await db.select().from(pos_terminals).where(and(eq(pos_terminals.pairing_code_hash, hash), eq(pos_terminals.active, true))).limit(1);
   const t = found.length ? found[0] : null;
-  if (!t || !t.pairing_expires_at || t.pairing_expires_at < now || t.project_id == null) return c.json({ error: "code_unknown", reason: "This code is not valid any more. Ask for a new one in POS Admin > Terminals." }, 404);
+  if (!t || !pairingCodeLive(t.pairing_expires_at, Date.now()) || t.project_id == null) return c.json({ error: "code_unknown", reason: "This code is not valid any more. Ask for a new one in POS Admin > Terminals." }, 404);
   const token = mintDeviceToken();
   const deviceName = typeof body.device_name === "string" && body.device_name.trim() ? body.device_name.trim().slice(0, 80) : null;
   const platform = typeof body.platform === "string" && body.platform.trim() ? body.platform.trim().slice(0, 40) : null;
