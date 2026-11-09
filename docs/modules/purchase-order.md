@@ -39,6 +39,7 @@ Locks and required fields
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
 - Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
+- Send-to-supplier sets Reply-To to the user who pressed Send (`poReplyTo` in `scm/lib/po-email.ts`), so a supplier's reply goes to that purchaser, not the shared no-reply sender. No valid address on the user: the default Reply-To (`EMAIL_REPLY_TO`) applies. The PO stores no purchaser of its own.
 - A GRN may not receive against a held PO: receive gates read the ROW via `isReceivablePo` (status + `on_hold`), never status alone.
 
 Linking PO lines to SO lines
@@ -57,6 +58,7 @@ Line identity, variants, order
 - `variants` jsonb has several writers: always MERGE owned keys, never rebuild the object.
 - `line_no` is 1-based dense and MIRRORS the SO line order; set at write time on all six write paths via `lib/po-line-order.ts` (pinned by `backend/tests/poLineOrderWiring.test.ts`); reads order `line_no NULLS FIRST, created_at, id`; display never re-derives it; the PDF sorts table and photo block from the same stored order.
 - `POST /from-sos` buckets per `po-grouping.ts` `groupKeyFor`, key always starts (warehouse, supplier). PER-SO: each (SO, category) own PO. COMBINE: sofa per SO with that SO's accessories riding on it (`sofaSoDocNos`); bedframe per SO either way; mattress per supplier within a Monday-anchored 7-day delivery window; standalone accessory merges across SOs; `fabric_accessory` keyed as sofa.
+- `POST /from-sos` with `fromMrp` skips the per-line qty cap on a pooled line, so the duplicate guard is plan freshness instead: `planAsOf` older than a live PO line on a picked SO line -> 409 `mrp_plan_stale` (see `docs/modules/mrp.md`). A 201 that created POs defers an MRP snapshot refresh (`deferMrpSnapshotRefresh`, as cancel and reopen do).
 
 Allocations (`scm.purchase_order_item_allocations`)
 - Slices `(seq, qty, so_item_id | NULL=stock)`; positive integer qty, SUM <= line qty (409 `allocation_exceeds_line_qty`, DB triggers are the concurrency backstop); line qty cannot shrink below allocated (409 `line_qty_below_allocated`); seq resequenced dense on delete.
@@ -113,7 +115,7 @@ Export and print
 - PO hooks live in `vendor/scm/lib/suppliers-queries.ts`, not a purchase-order-queries file.
 - The desktop list key `mfg-purchase-orders-paged` is not localStorage-persisted — a cold open really loads.
 - `GET /` without `?page` is the legacy path capped at 500 rows (still used by `GrnNew.tsx`); do not build new pickers on it.
-- List search `q` covers only `po_number` and `notes`, not supplier name.
+- List search `q` covers `po_number`, `notes`, the SO reference and line `item_code`, not supplier name; the SO-reference and item-code matches share a cap of 60 POs (URL budget); item-code matches keep the newest.
 - A status count that cannot be read must return 500 `status_counts_failed`, never 0.
 - Assigned SO / Delivered columns arrive later from `GET /list-mrp-enrichment`; while loading show WORKING… / NOT LOADED, never `STOCK` or a dash.
 - `/outstanding-so-items` shows only lines with pooled MRP shortage > 0; a line MRP did not plan reads the same as a covered one. A DRAFT SO is never convertible — confirm it first.
