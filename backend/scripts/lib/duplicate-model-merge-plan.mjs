@@ -19,9 +19,12 @@
 // The kept Model's size pool gains every size that now lives on it; the folded
 // Models switch off (active = false). INACTIVE SKUs are left where they are.
 //
-// A GROUP IS REFUSED WHOLE when the twins of a size are bound to different main
-// suppliers: that is two products with similar names, not one under two codes,
-// unless the group says `ruledOneProduct` (the owner ruled they are one).
+// A GROUP IS REFUSED WHOLE when its ACTIVE SKUs, on any of its Models and of any
+// size, are bound to more than one main supplier (owner, 2026-11-10: Models of
+// different suppliers are never merged). Twins of one size bound to different
+// suppliers are the sharpest case: two products with similar names, not one
+// under two codes. Only a book group that says `ruledOneProduct` (the owner ruled
+// that very pair one product) passes; the Modular screen never sets it.
 //
 // NO SHEBANG: tests/duplicateModelMergePlan.test.mjs imports this module.
 
@@ -91,6 +94,14 @@ export function planModelGroup({ group, models, skus }) {
   const mine = skus.filter((s) => groupModelIds.has(s.model_id));
   const active = mine.filter((s) => s.status === "ACTIVE");
 
+  const supByModel = new Map();
+  for (const s of active) if (s.main) supByModel.set(s.model_id, new Set([...(supByModel.get(s.model_id) ?? []), s.main]));
+  const groupMains = new Set([...supByModel.values()].flatMap((x) => [...x]));
+  if (groupMains.size > 1 && !group.ruledOneProduct) {
+    const name = (id) => models.find((m) => m.id === id)?.model_code ?? id;
+    refusals.push(`the Models are bound to different main suppliers (${[...supByModel.entries()].map(([id, x]) => `"${name(id)}" ${[...x].sort().join("/")}`).join(" vs ")}) - Models of different suppliers are never merged`);
+  }
+
   const bySize = new Map();
   for (const s of active) {
     const z = group.sizes?.[s.code] ?? sizeOf(s);
@@ -103,8 +114,6 @@ export function planModelGroup({ group, models, skus }) {
   const fills = [];
   const sizes = [];
   for (const [size, twins] of [...bySize.entries()].sort()) {
-    const mains = new Set(twins.map((t) => t.main).filter(Boolean));
-    if (mains.size > 1 && !group.ruledOneProduct) refusals.push(`size ${size}: ${twins.map((t) => `"${t.code}" (${t.main ?? "no main supplier"})`).join(" vs ")} - different main suppliers, so not one product`);
     const ranked = [...twins].sort((a, b) => cmpRank(survivorRank(a, keptId), survivorRank(b, keptId)));
     const survivor = ranked[0];
     sizes.push(size);
