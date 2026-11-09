@@ -68,7 +68,12 @@ async function readPlan(db) {
 }
 
 // ── Plan ─────────────────────────────────────────────────────────────────────
-const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+/* A DATE comes back as its 'YYYY-MM-DD' text, as PostgREST hands it to the app. postgres.js
+   would hand formaliseReceipt a Date, and docMonthTag reads only the text — the rehearsal
+   of 2026-11-09 minted 2990-HOR-2611-… for June payments that way; the series follows the
+   PAYMENT's month (2606). */
+const DATE_AS_TEXT = { dateText: { to: 1082, from: [1082], serialize: (x) => x, parse: (x) => x } };
+const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, types: DATE_AS_TEXT });
 let plan;
 try {
   plan = await readPlan(sql);
@@ -148,6 +153,11 @@ async function shapeProblems(db, confirmed) {
     const x = byId.get(Number(c.r.id));
     if (!x || x.status !== 'FORMAL' || x.or_number !== c.orNumber || x.channel_account_code !== c.r.account_code) {
       out.push(`${c.r.or_number}: reads ${JSON.stringify(x)}, expected FORMAL ${c.orNumber} on ${c.r.account_code}`);
+    }
+    /* The series follows the payment's month (owner 2026-09-07), never the day this ran. */
+    const paid = day(c.r.paid_at);
+    if (!c.orNumber.includes(`OR-${paid.slice(2, 4)}${paid.slice(5, 7)}-`)) {
+      out.push(`${c.r.or_number} paid ${paid} was numbered ${c.orNumber} — not its payment's month`);
     }
   }
   const nums = confirmed.map((c) => c.orNumber);
