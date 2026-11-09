@@ -5,11 +5,11 @@
 import { describe, expect, test, vi } from 'vitest';
 
 type JsPdf = import('jspdf').jsPDF;
-let delivered: JsPdf | null = null;
+const captured: { doc: JsPdf | null } = { doc: null };
 
 vi.mock('./pdf-common', async (orig) => {
   const real = await orig<typeof import('./pdf-common')>();
-  return { ...real, deliverPdf: (doc: JsPdf) => { delivered = doc; } };
+  return { ...real, deliverPdf: (doc: JsPdf) => { captured.doc = doc; } };
 });
 
 // jsPDF writes a fill colour as `r g b rg`, each channel to two decimals.
@@ -18,7 +18,7 @@ const fill = (r: number, g: number, b: number) =>
 
 async function drawnContent(): Promise<string> {
   const { generateAmendmentPdf } = await import('./amendment-pdf');
-  delivered = null;
+  captured.doc = null;
   await generateAmendmentPdf({
     kind: 'SO',
     amendmentNo: 'SOA-0001',
@@ -32,9 +32,10 @@ async function drawnContent(): Promise<string> {
     changes: [
       { kind: 'CHANGE', item: 'SOFA-01', field: 'Qty', before: '1', after: '2', department: 'Sales' },
     ],
-  } as never);
-  if (!delivered) throw new Error('the PDF was never delivered');
-  return (delivered as JsPdf).output();
+  });
+  const doc = captured.doc as JsPdf | null;
+  if (!doc) throw new Error('the PDF was never delivered');
+  return doc.output();
 }
 
 describe('amendment PDF — change table header follows the house print style', () => {
