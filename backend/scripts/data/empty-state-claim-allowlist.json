@@ -18,17 +18,7 @@
     "The recurring legitimate case, so it does not have to be re-derived: a claim",
     "tied to a NAMED document whose lines the server COUNTED is evidence, not",
     "inference. frontend/src/lib/outstandingEmptyReason.ts is the worked example.",
-    "An absence is never evidence, however many documents it covers.",
-    {
-      "file": "backend/src/scm/lib/po-warehouse-move.ts",
-      "text": "message: `Goods were already received on ${received.map((l) => l.item_code ?? l.id).join(', ')} into the current warehouse, `",
-      "why": "A refusal built from the lines it found WITH received qty > 0 (a non-empty read naming them), not a claim drawn from an empty result."
-    },
-    {
-      "file": "backend/src/scm/routes/mfgPoWarehouseLines.test.ts",
-      "text": "it('refuses, and changes nothing, when goods were already received on a line of the old warehouse', async () => {",
-      "why": "A test title describing the refusal case above; no user-facing claim."
-    }
+    "An absence is never evidence, however many documents it covers."
   ],
   "reviewed": [
     {
@@ -325,6 +315,16 @@
       "file": "frontend/src/vendor/scm/lib/authed-fetch.ts",
       "text": "'This line is already fully received on its purchase order, so no more can be received against it — refreshing will not change that. Receive the purchase-order line that still has an outstanding balance instead.',",
       "why": "Not an empty read - this is the server's over-receipt REFUSAL message (grns.ts qty_exceeds_remaining), shown only when the PO line's own counted received_qty already equals its ordered qty. It reports that named document's status, which is why the receive was refused, not an inference from an absent result."
+    },
+    {
+      "file": "backend/src/scm/lib/po-warehouse-move.ts",
+      "text": "message: `Goods were already received on ${received.map((l) => l.item_code ?? l.id).join(', ')} into the current warehouse, `",
+      "why": "A refusal built from the lines it found WITH received qty > 0 (a non-empty read naming them), not a claim drawn from an empty result."
+    },
+    {
+      "file": "backend/src/scm/routes/mfgPoWarehouseLines.test.ts",
+      "text": "it('refuses, and changes nothing, when goods were already received on a line of the old warehouse', async () => {",
+      "why": "A test title describing the refusal case above; no user-facing claim."
     }
   ]
 }
