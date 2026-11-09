@@ -114,21 +114,21 @@ export function ItemReadyFields(props: ItemReadyFieldsProps): ReactElement {
       </CaseSection>
 
       <CaseSection title="QC Inspection Details" badge={null} icon={<Search size={16} />} action={null} isCollapsible>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2">
           <InlineEdit label="QC Inspection Date *" type="date" value={c.qc_inspected_at}
             onSave={(value) => patch({ qc_inspected_at: value })} />
           <InlineEdit label="QC By *" value={c.qc_by} placeholder="Who did the QC, e.g. Farra"
             onSave={(value) => patch({ qc_by: value?.trim() || null })} />
           <TripQcResult caseId={caseId} trip={trip} canWrite={canWrite} onChanged={onChanged} onError={onError} />
-        </div>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          <ReadOnly label="Original Defect / Issue" value={trip?.reason || c.complaint_issue || "—"} />
+          <InlineEdit label="Action Required *" value={c.inspection_result} options={ACTION_VALUES}
+            optionLabel={actionRequiredLabel} onSave={(value) => patch({ inspection_result: value })} />
+          <div className="sm:col-span-2">
+            <ReadOnly label="Original Defect / Issue" value={trip?.reason || c.complaint_issue || "—"} />
+          </div>
           <InlineEdit label="Supplier Rectification" textarea value={c.supplier_service_note}
             placeholder="What the supplier did to fix it" onSave={(value) => patch({ supplier_service_note: value })} />
           <InlineEdit label="QC Findings" textarea value={c.qc_findings}
             placeholder="What QC found on the returned item" onSave={(value) => patch({ qc_findings: value })} />
-          <InlineEdit label="Action Required *" value={c.inspection_result} options={ACTION_VALUES}
-            optionLabel={actionRequiredLabel} onSave={(value) => patch({ inspection_result: value })} />
         </div>
       </CaseSection>
 
