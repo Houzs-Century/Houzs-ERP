@@ -129,8 +129,9 @@ const SAVE_EMAILS = new Set([
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
-  const role = (user.role_name ?? "").trim().toLowerCase();
-  const email = (user.email || "").trim().toLowerCase();
+  // role_name + email are non-null on AuthUser (types.ts), so no `?? ""` fallback.
+  const role = user.role_name.trim().toLowerCase();
+  const email = user.email.trim().toLowerCase();
   if (position === "owner") return true;
   if (SAVE_EMAILS.has(email)) return true;
   if (position === "sales director" || role === "sales director") return true;
