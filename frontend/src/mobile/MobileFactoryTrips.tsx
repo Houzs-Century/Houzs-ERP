@@ -29,7 +29,7 @@ const SECTION_INK = "#1d5a3a";
 
 const lbl: CSSProperties = { fontSize: 11, color: MUTED, display: "block", margin: "8px 0 3px" };
 const inp: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "10px", border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 16, fontFamily: "inherit" };
-const pair: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 };
+const pair: CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 8 };
 const tab = (active: boolean): CSSProperties => ({
   minHeight: 40, padding: "6px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
   border: `1px solid ${active ? BLUE : LINE}`, background: active ? "#eef1fb" : "#fff", color: active ? BLUE : INK,
