@@ -4855,6 +4855,7 @@ mfgSalesOrders.post('/validate', async (c) => {
   const problems = collectSoSubmitProblems({
     customerName: str(body.debtorName) || str(body.customerName),
     phone: str(body.phone),
+    origPhone: isEdit && typeof body.origPhone === 'string' ? body.origPhone : null,
     hasNamedLine,
     asDraft,
     hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,

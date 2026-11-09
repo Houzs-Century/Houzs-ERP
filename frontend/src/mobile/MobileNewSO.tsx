@@ -860,6 +860,9 @@ export function MobileNewSO({
      CHANGED (an unchanged past date must not block the save), and the amendment
      needs a before-value for the frozen-field diff. */
   const [origDelivDate, setOrigDelivDate] = useState<string>("");
+  /* The PERSISTED phone ('' when the order has none, e.g. an import): the submit
+     check asks for a phone only when this edit would blank a stored one. */
+  const [origPhone, setOrigPhone] = useState<string>("");
   /* PERSISTED State / Postcode / City — the other columns the processing lock
      freezes. Needed to diff what an amendment is actually requesting.
      City joined 2026-07-17: this screen already DISABLED City under the lock
@@ -990,6 +993,7 @@ export function MobileNewSO({
         setName(h.debtor_name ?? "");
         setCustRef(h.customer_so_no ?? h.ref ?? "");
         setPhone(toE164(h.phone));
+        setOrigPhone(h.phone ?? "");
         setEmail(h.email ?? "");
         setCustType(h.customer_type ?? "");
         setBuildingType(h.building_type ?? "");
@@ -1442,6 +1446,7 @@ export function MobileNewSO({
     postcode,
     origProcessingDate: origProcDate,
     origDeliveryDate: origDelivDate,
+    origPhone,
     origItemGroups: origItems.map((it) => it.item_group),
     payments: pays.map((p) => ({
       methodLabel: p.method,
@@ -1451,7 +1456,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */
