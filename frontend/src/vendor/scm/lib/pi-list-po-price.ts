@@ -22,6 +22,8 @@ export type PiPoPriceSummary = {
   lines: number;
   /** Those comparable lines at the PO's price: qty x PO unit price. */
   poAmountSen: number;
+  /** Every PO the invoice's lines bill, each line's own (owner 2026-11-10). */
+  poNumbers?: string[];
 };
 
 export type PoPriceMarker = { label: string; tone: 'differs' | 'matches' | 'none'; diffSen: number };

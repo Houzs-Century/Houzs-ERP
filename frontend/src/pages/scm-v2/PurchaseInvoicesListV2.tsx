@@ -54,6 +54,8 @@ import { useSuppliers } from "../../vendor/scm/lib/suppliers-queries";
 import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
 import { conditionDateRange } from "../../components/dataTableConditionFilters";
 import { poPriceMarker, usePiListPoPriceMap } from "../../vendor/scm/lib/pi-list-po-price";
+import { PoNumberList } from "../../vendor/scm/components/PoNumberList";
+import { PI_PO_SHOWN, piPoNumbers } from "../../vendor/scm/lib/pi-header-pos";
 import {
   usePurchaseInvoicesPaged,
   useEnrichedPiListRows,
@@ -939,6 +941,8 @@ export function PurchaseInvoicesListV2() {
      picked; the export follows whatever the operator shows. */
   const lineCols = piLineColumns<PiRow>();
   const docNoOf = (r: PiRow): string => r.linked_ac_docno?.trim() || r.invoice_number;
+  const poNumbersOf = (r: PiRow): string[] =>
+    piPoNumbers((r.po_price_summary ?? poPriceById.get(String(r.id)))?.poNumbers ?? [], r.purchase_order?.po_number ?? null);
   const moneyCell = (sen: number | null | undefined) => <span className="font-money text-[13px] text-ink">{fmtRm(sen ?? 0)}</span>;
   const rateOf = (r: PiRow): number => { const n = Number(r.exchange_rate ?? 1); return Number.isFinite(n) && n > 0 ? n : 1; };
   const blankCol = (key: string, label: string): Column<PiRow, PiListLine> => ({
@@ -1011,6 +1015,21 @@ export function PurchaseInvoicesListV2() {
       key: "total", label: "Invoice Amount", exportLabel: PI_LABELS.total, width: "128px", align: "right",
       getValue: (r) => totalOf(r), exportValue: (r) => senToRinggit(totalOf(r), 2), exportFormat: "money",
       render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
+    },
+    /* Every PO the invoice bills, read off its lines (owner 2026-11-10); the
+       header's own FK holds only the first receipt's PO. Screen-only, like PO
+       Amount, so the default export stays AutoCount's. */
+    po_numbers: {
+      key: "po_numbers",
+      label: "PO No",
+      width: "170px",
+      disableSort: true,
+      description: "Every purchase order this invoice's lines come from.",
+      render: (r) => (
+        <span className="font-mono text-[12px] text-ink-secondary">
+          <PoNumberList poNumbers={poNumbersOf(r)} shown={PI_PO_SHOWN} />
+        </span>
+      ),
     },
     po_amount: {
       key: "po_amount",
@@ -1153,7 +1172,7 @@ export function PurchaseInvoicesListV2() {
       },
     },
   };
-  const beside: Record<string, string> = { total: "po_amount", qty: "po_price" };
+  const beside: Record<string, string> = { supplier_invoice_ref: "po_numbers", total: "po_amount", qty: "po_price" };
   const columns: Column<PiRow, PiListLine>[] = [
     ...PI_DEFAULT_COLUMN_KEYS.flatMap((k) => (beside[k] ? [byKey[k]!, byKey[beside[k]]!] : [byKey[k]!])),
     ...Object.keys(byKey).filter((k) => !(PI_DEFAULT_COLUMN_KEYS as readonly string[]).includes(k) && !Object.values(beside).includes(k)).map((k) => byKey[k]!),

@@ -50,6 +50,8 @@ import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { PoNumberList } from "../../vendor/scm/components/PoNumberList";
+import { PI_PO_SHOWN, piPoNumbers } from "../../vendor/scm/lib/pi-header-pos";
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
@@ -409,6 +411,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const supplierDoRefs = useMemo(
     () => [...new Set(sourceGrns.map((g) => (g.delivery_note_ref ?? '').trim()).filter(Boolean))],
     [sourceGrns]
+  );
+  const poNumbers = useMemo(
+    () => piPoNumbers(items.map((l) => l.source_po_number), purchaseInvoice?.purchase_order?.po_number ?? null),
+    [items, purchaseInvoice?.purchase_order?.po_number]
   );
 
   useSetBreadcrumbs([
@@ -869,6 +875,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                   mono={sourceGrns.length > 0 || sourceOf(purchaseInvoice) !== "—"}
                   muted={!sourceGrns.length && sourceOf(purchaseInvoice) === "—"}
                 />
+                <Field
+                  label={poNumbers.length > 1 ? `Purchase orders · ${poNumbers.length}` : "Purchase order"}
+                  value={<PoNumberList poNumbers={poNumbers} shown={PI_PO_SHOWN} />}
+                  mono={poNumbers.length > 0}
+                  muted={poNumbers.length === 0}
+                />
                 {supplierDoRefs.length > 0 && (
                   <Field
                     label={supplierDoRefs.length > 1 ? "Supplier DO #s" : "Supplier DO #"}
@@ -1007,6 +1019,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         rows={[
           { label: "Supplier", value: supplierNameOf(purchaseInvoice) },
           { label: "Against", value: sourceOf(purchaseInvoice) },
+          { label: poNumbers.length > 1 ? "Purchase orders" : "Purchase order", value: poNumbers.join(", ") || "—" },
           { label: "Invoice date", value: fmtDate(purchaseInvoice.invoice_date) },
           { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
           {

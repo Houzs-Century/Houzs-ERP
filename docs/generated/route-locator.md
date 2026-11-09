@@ -681,23 +681,23 @@ Total: 1725 route registrations across 237 files.
 - L829  POST   /:id/link-po
 
 ## backend/src/scm/routes/trips.ts  (17)
-- L152  GET    /
-- L207  GET    /day
-- L463  GET    /packing
-- L617  GET    /history
-- L668  GET    /:id
-- L710  POST   /
-- L841  PATCH  /:id
-- L897  PATCH  /:id/status
-- L916  POST   /move-stop
-- L988  POST   /:id/stops
-- L1099  DELETE /:id/stops/:stopId
-- L1146  DELETE /:id
-- L1210  POST   /:id/optimize-route
-- L1233  POST   /propose-schedule
-- L1409  POST   /:id/location
-- L1485  GET    /:id/locations/latest
-- L1518  GET    /active/locations
+- L153  GET    /
+- L208  GET    /day
+- L464  GET    /packing
+- L618  GET    /history
+- L669  GET    /:id
+- L711  POST   /
+- L842  PATCH  /:id
+- L898  PATCH  /:id/status
+- L917  POST   /move-stop
+- L989  POST   /:id/stops
+- L1100  DELETE /:id/stops/:stopId
+- L1147  DELETE /:id
+- L1211  POST   /:id/optimize-route
+- L1234  POST   /propose-schedule
+- L1410  POST   /:id/location
+- L1486  GET    /:id/locations/latest
+- L1519  GET    /active/locations
 
 ## backend/src/scm/routes/grns.ts  (16)
 - L988  GET    /
@@ -765,10 +765,10 @@ Total: 1725 route registrations across 237 files.
 - L4521  POST   /:id/items
 - L4523  PATCH  /:id/items/:itemId
 - L4842  DELETE /:id/items/:itemId
-- L5312  PATCH  /:id/status
-- L5351  PATCH  /:id/arrival
-- L5352  GET    /:id/pod-photo/:n
-- L5353  POST   /:id/revert
+- L5320  PATCH  /:id/status
+- L5359  PATCH  /:id/arrival
+- L5360  GET    /:id/pod-photo/:n
+- L5361  POST   /:id/revert
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
 - L441  GET    /

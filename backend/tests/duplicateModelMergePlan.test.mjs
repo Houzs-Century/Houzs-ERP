@@ -117,6 +117,36 @@ describe('twins with different main suppliers', () => {
   });
 });
 
+describe('Models of different suppliers (owner, 2026-11-10)', () => {
+  it('are refused even when no size is on both sides', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('FOLD-SIDE (K)', 'm-fold', { main: '400-D002' })],
+    });
+    expect(p.refusals).toHaveLength(1);
+    expect(p.refusals[0]).toMatch(/different main suppliers .*400-D001 vs .*400-D002/);
+    expect(p.moves).toEqual([]);
+    expect(p.foldModels).toEqual([]);
+  });
+
+  it('still merge when one side has no main supplier yet', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('FOLD-SIDE (K)', 'm-fold')],
+    });
+    expect(p.refusals).toEqual([]);
+    expect(p.moves.map((m) => m.code)).toEqual(['FOLD-SIDE (K)']);
+  });
+
+  it('ignore an INACTIVE SKU, which stays where it is', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('OLD (K)', 'm-fold', { main: '400-D002', status: 'INACTIVE' })],
+    });
+    expect(p.refusals).toEqual([]);
+  });
+});
+
 describe('ruling file', () => {
   it('names no Model twice and reads its size from a code ending in "(K" too', () => {
     for (const e of Object.values(BOOK)) {

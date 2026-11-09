@@ -95,7 +95,7 @@ import { buildVariantSummary, fmtDate, orderLineIdentity, fmtQty } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
-import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
+import { DO_SHIPPED_STATES, doHasArrived } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -776,8 +776,10 @@ export function DeliveryOrderDetailV2() {
      The server owns the legal transitions, the downstream lock and the stock
      reversal; a reason is mandatory (it lands in the audit trail). */
   const doStatusUpper = (deliveryOrder?.status || "").toUpperCase();
-  const revertPlan: { to: "LOADED" | "DRAFT"; label: string; body: string } | null =
-    doStatusUpper === "LOADED"
+  const revertPlan: { to: "DISPATCHED" | "LOADED" | "DRAFT"; label: string; body: string } | null =
+    doHasArrived(doStatusUpper)
+      ? { to: "DISPATCHED", label: "Undo delivered", body: "Moves the delivery order back to Loaded (on the lorry). No stock moves. The proof-of-delivery photos and signature stay on the order. Refused if an invoice, a delivery return or a delivery issue is on it." }
+      : doStatusUpper === "LOADED"
       ? { to: "DRAFT", label: "Undo load", body: "Returns the goods to warehouse stock and moves the delivery order back to Draft." }
       : doStatusUpper === "DISPATCHED"
         ? { to: "LOADED", label: "Undo dispatch", body: "Moves the delivery order back to Loaded. The goods stay out of stock — undo the load next to return them." }
