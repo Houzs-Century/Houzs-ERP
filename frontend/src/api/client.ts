@@ -741,6 +741,17 @@ export const api = {
     });
   },
 
+  /** A stored photo plus its Last-Modified (when it reached storage), for the
+   *  POD photos PDF, which prints each photo's time. */
+  async fetchBlobWithTime(path: string): Promise<{ blob: Blob; storedAt: string | null }> {
+    const token = tokenStore.get();
+    const res = await binaryFetch(`${baseUrl}${path}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
+    }, BINARY_GET_TIMEOUT_MS);
+    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
+    return consumeCorrelated(res, async () => ({ blob: await res.blob(), storedAt: res.headers.get("Last-Modified") }));
+  },
+
   /**
    * The same asset as a blob URL, because <img src> can't pass the
    * Authorization header.
