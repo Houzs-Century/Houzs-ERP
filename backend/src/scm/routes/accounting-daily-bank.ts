@@ -10,6 +10,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
+import { describeVouchers } from './payment-vouchers-describe';
 import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
 
@@ -87,7 +88,15 @@ export async function loadDailyBankBoard(
     .not('checked_at', 'is', null)
     .lte('checked_at', `${date}T23:59:59.999`);
   if (pErr) return { ok: false, reason: pErr.message };
-  const pending = (pendingRaw ?? []) as PendingVoucherRow[];
+  let pending = (pendingRaw ?? []) as PendingVoucherRow[];
+  /* Each listed voucher reads as the PV list's Description does: what it pays for,
+     never its bill number (owner 2026-11-09). The To do's sum needs no words. */
+  if (opts.withNames && pending.length > 0) {
+    const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
+      pending.map((v) => ({ ...v, id: String(v.id) })));
+    if (!described.ok) return { ok: false, reason: described.reason };
+    pending = pending.map((v) => ({ ...v, description_text: described.byId.get(String(v.id))?.description_text ?? null }));
+  }
 
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {

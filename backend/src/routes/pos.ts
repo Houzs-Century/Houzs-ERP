@@ -293,6 +293,14 @@ export function canTargetSalesperson(
     || isDirectorUser({ position_name: caller?.position_name ?? null, permissions_set: caller?.permissions_set } as never);
 }
 
+/** The caller's Team Directory team (`users.division`, free text) as the key
+ *  the Team card matches on: trimmed + lowercased, the AudiencePicker rule.
+ *  null = no team, so no Team card. Exported so the test runs it. */
+export function salesTeamKey(division: string | null | undefined): { name: string; key: string } | null {
+  const name = (division ?? "").trim();
+  return name ? { name, key: name.toLowerCase() } : null;
+}
+
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
   // company-scope: scoped by string-built SQL the checker cannot see — :366 pushes `company_id = ?` into `conds` from the companyContext value read at :298, and every statement below joins `conds` into its own WHERE (aggSql :368, docSql :396), so all four reads carry the predicate. The KPI resolve at :411 takes companyId as an explicit argument and is guarded on it being present. NOT a cross-company surface: companyContext is on the registration line precisely because /api/pos is mounted pre-auth and would otherwise pool both companies. Verified 2026-08-26.
@@ -393,6 +401,23 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomBinds.push(...ids);
   }
 
+  /* Team scope (ticket 2990-0045): everyone in the caller's Team Directory team
+     (same department, same `users.division`). Every member sees it, not only
+     the leader (YH 2026-11-09). Not keyed on showroom: 5 of Kris Team's 9 have
+     none. Always the CALLER's team, like the Showroom card. */
+  const meUser = await DB.prepare(`SELECT department_id, division FROM public.users WHERE id = ?`)
+    .bind(uid).first<{ department_id: number | null; division: string | null }>();
+  const team = meUser?.department_id == null ? null : salesTeamKey(meUser.division);
+  let teamIds: string[] = [];
+  if (team) {
+    const rows = await DB.prepare(
+      `SELECT s.id FROM scm.staff s JOIN public.users u ON u.id = s.user_id
+        WHERE u.department_id = ? AND lower(btrim(u.division)) = ?`,
+    ).bind(meUser!.department_id, team.key).all<{ id: string }>();
+    teamIds = (rows.results ?? []).map((r) => r.id);
+  }
+  const teamWhere = teamIds.length > 0 ? `salesperson_id IN (${teamIds.map(() => "?").join(",")})` : null;
+
   /* The picker's list: the Showroom card's orders, one entry per event they are
      linked to and one per venue of the unlinked rest. Read BEFORE the pick
      narrows `conds`, so picking one does not empty the list it came from. */
@@ -427,6 +452,10 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   const showroomRow = await DB.prepare(aggSql(showroomWhere)).bind(...binds, ...showroomBinds).first<Agg>();
   const personalRow = await DB.prepare(aggSql("salesperson_id = ?"))
     .bind(...binds, target?.id ?? me.id).first<Agg>();
+  // company-scope: same aggSql, so the same `conds` (company_id = ?).
+  const teamRow = teamWhere
+    ? await DB.prepare(aggSql(teamWhere)).bind(...binds, ...teamIds).first<Agg>()
+    : null;
 
   /* The item-KPI portion is per-LINE, so it cannot come out of the header
      aggregate above — these read the doc numbers the same predicate matched, and
@@ -446,16 +475,21 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     .bind(...binds, target?.id ?? me.id).all<{ doc_no: string }>();
   const showroomDocNos = showroomDocs.results.map((r) => r.doc_no);
   const personalDocNos = personalDocs.results.map((r) => r.doc_no);
+  // company-scope: same docSql, same `conds`.
+  const teamDocNos = teamWhere
+    ? (await DB.prepare(docSql(teamWhere)).bind(...binds, ...teamIds).all<{ doc_no: string }>())
+        .results.map((r) => r.doc_no)
+    : [];
 
-  /* Resolved ONCE for both scopes — personal orders are a subset of showroom
-     ones, so a second pass would re-read the same lines. */
+  /* Resolved ONCE for every scope — the doc lists overlap (a team can span
+     showrooms), so one pass over their union. */
   let kpiFlags: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["flags"] = [];
   let kpiUnitsByDoc: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["unitsByDoc"] = new Map();
-  if (companyId != null && (showroomDocNos.length > 0 || personalDocNos.length > 0)) {
+  if (companyId != null && (showroomDocNos.length > 0 || personalDocNos.length > 0 || teamDocNos.length > 0)) {
     try {
       const kpi = await loadKpiUnitsByDoc(
         getSupabaseService(c.env),
-        [...new Set([...showroomDocNos, ...personalDocNos])],
+        [...new Set([...showroomDocNos, ...personalDocNos, ...teamDocNos])],
         Number(companyId),
       );
       kpiFlags = kpi.flags;
@@ -482,6 +516,7 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   });
   const s = card(showroomRow, showroomDocNos);
   const p = card(personalRow, personalDocNos);
+  const t = teamWhere ? card(teamRow, teamDocNos) : null;
 
   return c.json({
     monthLabel, monthStart, monthEnd,
@@ -493,6 +528,12 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomProducts: s.products, showroomService: s.service, showroomKpi: s.kpi,
     personalTotal: p.total, personalCount: p.count,
     personalProducts: p.products, personalService: p.service, personalKpi: p.kpi,
+    /* The caller's team. ABSENT (not 0) when they have none: the POS shows its
+       Team card only when `teamTotal` is here. */
+    ...(team && t ? {
+      teamName: team.name, teamTotal: t.total, teamCount: t.count,
+      teamProducts: t.products, teamService: t.service, teamKpi: t.kpi,
+    } : {}),
     /* The pick both tiles were narrowed to (null = every place), and the list
        to pick from. The POS shows its picker only when `places` is present. */
     place, places,

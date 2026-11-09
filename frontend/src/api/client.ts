@@ -26,6 +26,7 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 import { abortableDelay, abortReason, combineAbortSignals } from "../lib/abort";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 export { requestIdFromError } from "../lib/requestCorrelation";
 
@@ -799,20 +800,14 @@ export const api = {
     return html;
   },
 
+  /* The tab opens before the fetch (inside openLoadedTab): opened after it, a
+     phone blocks it as a popup. Revoke after the new tab has had time to parse;
+     an instant revoke breaks some browsers. */
   async openHtml(path: string): Promise<void> {
-    const token = tokenStore.get();
-    const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
-    }, BINARY_GET_TIMEOUT_MS);
-    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
-    await consumeCorrelated(res, async () => {
-      const html = await res.text();
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
-      // Revoke after the new tab has had time to parse; instant revoke breaks some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    });
+    await openLoadedTab(async () => {
+      const html = await api.getHtml(path);
+      return URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    }, 60_000);
   },
 };
 

@@ -464,7 +464,7 @@ export async function runProcurementAgent(
       await db
         .prepare(
           `INSERT INTO procurement_agent_proposals (id, kind, key, status, payload, summary, created_at)
-           VALUES (?, 'REORDER', ?, 'PENDING', ?::jsonb, ?, ?)`,
+           VALUES (?, 'REORDER', ?, 'PENDING', ?::text::jsonb, ?, ?)`,
         )
         .bind(crypto.randomUUID(), key, JSON.stringify(payload), proposalSummary, nowIso)
         .run();
@@ -501,7 +501,7 @@ export async function runProcurementAgent(
   try {
     await db
       .prepare(
-        'INSERT INTO procurement_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::jsonb, NULL, ?)',
+        'INSERT INTO procurement_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)',
       )
       .bind(crypto.randomUUID(), JSON.stringify(brief), nowIso)
       .run();

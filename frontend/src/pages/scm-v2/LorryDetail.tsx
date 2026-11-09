@@ -43,6 +43,7 @@ import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { openLoadedTab } from "../../lib/openLoadedTab";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -401,8 +402,7 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
 
   const openInvoice = async () => {
     try {
-      const { url } = await fetchServiceInvoiceUrl(record.id);
-      window.open(url, '_blank', 'noopener');
+      await openLoadedTab(async () => (await fetchServiceInvoiceUrl(record.id)).url, null);
     } catch (e) {
       notify({ title: (e as Error)?.message ?? 'Could not open the invoice.', tone: 'error' });
     }

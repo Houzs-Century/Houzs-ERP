@@ -45,10 +45,16 @@ const { authedFetch } = vi.hoisted(() => ({ authedFetch: vi.fn() }));
 vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
 vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
 /* Every delivery closes with a photo (2026-10-07), so each case attaches one;
-   the upload itself is stubbed and its key is what the payload must carry. */
+   the upload itself is stubbed and its key is what the payload must carry.
+   Photos upload the moment they are picked (FieldPhotos -> uploadFieldPhoto). */
 vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
-  uploadSlipFull: vi.fn(async () => ({ r2Key: "slips/2026/10/pod-test.jpg" })),
+  uploadFieldPhoto: vi.fn(async () => ({ r2Key: "slips/2026/10/pod-test.jpg" })),
+}));
+/* No network for the stamp's server clock in a unit test. */
+vi.mock("../lib/photoStamp", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/photoStamp")>()),
+  stampNow: vi.fn(async () => ({ at: new Date("2026-11-08T06:00:00Z"), source: "server" as const })),
 }));
 
 /* The confirm dialog names what is being lost and then lets the delivery close
@@ -153,11 +159,13 @@ function sentBody(): Record<string, unknown> {
   return JSON.parse(String(init.body));
 }
 
-/** What the camera hands the screen: one JPEG on the photo input. */
-const attachPhoto = (container: HTMLElement) => {
+/** What the camera hands the screen: one JPEG on the photo input, then wait
+ *  until it shows as uploaded (it uploads on pick, before Confirm). */
+const attachPhoto = async (container: HTMLElement) => {
   const input = container.querySelector('input[type="file"]');
   if (!input) throw new Error("the photo input did not render");
   fireEvent.change(input, { target: { files: [new File(["jpeg"], "pod.jpg", { type: "image/jpeg" })] } });
+  await screen.findByText("Uploaded");
 };
 
 const pad = (container: HTMLElement): HTMLCanvasElement => {
@@ -180,7 +188,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
        and the payload are driven by the same flag, and a driver reads it. */
     expect(screen.getByText("Signed")).toBeTruthy();
 
-    attachPhoto(container);
+    await attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
@@ -208,7 +216,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     expect(pad(container)).toBeTruthy();
     expect(screen.getByText("Ask the customer to sign above")).toBeTruthy();
 
-    attachPhoto(container);
+    await attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
@@ -229,7 +237,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     fireEvent.click(screen.getByText("Clear & re-sign"));
     expect(screen.getByText("Ask the customer to sign above")).toBeTruthy();
 
-    attachPhoto(container);
+    await attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
@@ -242,6 +250,8 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     wrap();
     fireEvent.click(screen.getByText("Confirm delivered →"));
     expect(await screen.findByText(/Take a POD photo first/)).toBeTruthy();
-    expect(authedFetch).not.toHaveBeenCalled();
+    // Nothing WRITTEN (the screen's reads, e.g. the DO's reported issues, may run).
+    const writes = (authedFetch.mock.calls as Array<[string, RequestInit | undefined]>).filter(([, init]) => init?.method && init.method !== "GET");
+    expect(writes).toEqual([]);
   });
 });

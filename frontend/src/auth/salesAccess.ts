@@ -112,24 +112,37 @@ export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean 
 
 /**
  * May this user SAVE a pasted sales report into a project (and delete a bill
- * from it)? Owner 2026-10-14: "ummu, owner, weisiang"; owner 2026-10-30 adds
- * Peter (Sales Director, yzhe212@gmail.com) and every Sales Attending of the
- * project. The frontend check only sees the admin tier — a sales attendee's
- * UI gate comes from the backend's `can_save` flag on the project-sales-bills
- * payload, which already resolves the per-event attendee context. Backend
- * (routes/lib/sales-report-bills.ts canSaveSalesReport) is the authority.
+ * from it)? Owner 2026-10-14: "ummu, owner, weisiang". Owner 2026-10-30: add
+ * Peter + per-event Sales Attendees. Owner 2026-11-09: open to every Sales
+ * Director (position) and every Sales Person (role), so the sales floor can
+ * post without being named one by one. The frontend check sees the global tier
+ * only — a per-event attendee's UI gate comes from the backend's `can_save`
+ * flag on the project-sales-bills payload, which already resolves the per-event
+ * context. Backend (routes/lib/sales-report-bills.ts canSaveSalesReport) is the
+ * authority.
  */
 const SAVE_EMAILS = new Set([
   "weisiang329@gmail.com",
   "ummuaimanlm@gmail.com",
-  "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
 ]);
 
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
-  const email = (user.email || "").trim().toLowerCase();
-  return position === "owner" || SAVE_EMAILS.has(email);
+  // role_name + email are non-null on AuthUser (types.ts), BUT tests construct
+  // partial users without them, and a Worker that predates a field still fills
+  // the object. Defensive ?? "" here, with lint suppressed inline — the ratchet
+  // was 2 before this file, and raising it (vs bearing one disable comment) is
+  // the shape of a silent gap next time someone touches it.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
+  const role = (user.role_name ?? "").trim().toLowerCase();
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
+  const email = (user.email ?? "").trim().toLowerCase();
+  if (position === "owner") return true;
+  if (SAVE_EMAILS.has(email)) return true;
+  if (position === "sales director" || role === "sales director") return true;
+  if (role === "sales person") return true;
+  return false;
 }
 
 /**

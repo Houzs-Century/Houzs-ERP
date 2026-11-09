@@ -192,6 +192,9 @@ export function matchStatement(
   rows: ParsedRow[],
   payments: PaymentCandidate[],
   alreadySettled: Set<string> = new Set(),
+  /** The company's ONLINE payments (method `transfer`) in the window — the only
+      pool a QR line is matched against. A card line never sees them. */
+  online: PaymentCandidate[] = [],
 ): MatchDecision[] {
   const key = (p: PaymentCandidate) => `${p.source}:${p.id}`;
   const claimed = new Set<string>(alreadySettled);
@@ -210,7 +213,68 @@ export function matchStatement(
   const trustsRef = cfg.has_unique_ref === true;
   const decisions: MatchDecision[] = [];
 
+  /* A QR LINE (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct 去bank
+     的，不算卡机的). The customer's money went straight to the bank, so its sale
+     was keyed Online, and that is the only pool it is matched against: offering
+     it a card payment of the same amount is how 2990's 31/10 RM 3,240 QR line
+     came to "guess" HOW YEE WEN's card instalment while Jenny's QR sale sat
+     keyed Online with the QR's own code. Never auto-taken — a QR line has no
+     reference — and never claimed here, so a suggestion takes nothing from the
+     next line: linking is a person's press. A QR code on the payment ranks it
+     first; then the nearer day. */
+  const qrFirst = (a: PaymentCandidate, b: PaymentCandidate, day: string) =>
+    Number(/QR/i.test(b.approvalCode ?? '')) - Number(/QR/i.test(a.approvalCode ?? ''))
+    || dayGap(a.paidOn, day) - dayGap(b.paidOn, day);
+  const decideQr = (row: ParsedRow): MatchDecision => {
+    const pool = online.filter((p) => !claimed.has(key(p)) && dayGap(p.paidOn, row.txnDate) <= tolerance);
+    const same = pool.filter((p) => p.amountSen === row.grossSen).sort((a, b) => qrFirst(a, b, row.txnDate));
+    if (same.length > 0) {
+      const only = same.length === 1 ? same : [];
+      return {
+        row, bucket: 'NEEDS_CONFIRM', matchReason: 'amount+date', matched: [], candidates: same, comboHints: [], suggested: only,
+        clue: only.length === 1
+          ? `DuitNow QR — the money went straight to the bank. ${only[0]!.docNo} is the only Online payment of this amount within ${tolerance} day(s). Check it and link it.`
+          : `DuitNow QR — ${same.length} Online payments of this amount within ${tolerance} day(s). Pick the one this QR paid.`,
+      };
+    }
+    /* One QR for two orders is one payment like any other — of ONE payer. The
+       Online pool is every bank transfer of the window, so a set across
+       customers is arithmetic, not a payment: on production 2990's 31/10
+       RM 3,500 QR line was pre-ticked with four orders of four customers that
+       happened to add up. A set counts only when every order in it is the same
+       named customer. */
+    const payerOf = (p: PaymentCandidate) => String(p.customerName ?? '').trim().toUpperCase();
+    const smaller = pool.filter((p) => Math.abs(p.amountSen) <= Math.abs(row.grossSen)).sort((a, b) => b.amountSen - a.amountSen);
+    const byId = new Map(smaller.map((p) => [p.id, p]));
+    const hints = exactPairs(smaller, row.grossSen).filter((set) => {
+      const payers = new Set(set.map((id) => payerOf(byId.get(id)!)));
+      return payers.size === 1 && !payers.has('');
+    });
+    if (hints.length > 0) {
+      const inSets = smaller.filter((p) => hints.some((set) => set.includes(p.id)));
+      const onlySet = hints.length === 1 ? smaller.filter((p) => hints[0]!.includes(p.id)) : [];
+      return {
+        row, bucket: 'NEEDS_CONFIRM', matchReason: 'amount+date', matched: [], candidates: inSets, comboHints: hints, suggested: onlySet,
+        clue: onlySet.length > 0
+          ? `DuitNow QR — ${onlySet.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and link them.`
+          : `DuitNow QR — ${hints.length} set(s) of Online payments add up to this amount. Pick the right one.`,
+      };
+    }
+    /* Nothing keyed Online. A card payment of the amount near the day is most
+       often this very QR, keyed as a card swipe — said, never offered: card
+       money is not what a QR is made of. */
+    const asCard = available().filter((p) => p.amountSen === row.grossSen && dayGap(p.paidOn, row.txnDate) <= tolerance);
+    return {
+      row, bucket: 'UNMATCHED', matchReason: null, matched: [], candidates: [], comboHints: [], suggested: [],
+      clue: `DuitNow QR — no Online payment of ${fmtSen(row.grossSen)} near ${row.txnDate}. Key the sale as Online, with the QR's code.`
+        + (asCard.length > 0
+          ? ` ${asCard.map((p) => p.docNo).join(', ')} ${asCard.length === 1 ? 'is' : 'are'} keyed as a card payment of this amount — if that was this QR, change it to Online.`
+          : ''),
+    };
+  };
+
   for (const row of rows) {
+    if (row.channel === 'QR') { decisions.push(decideQr(row)); continue; }
     /* 1. The unique reference — the only path that may auto-match. */
     if (trustsRef && row.ref) {
       const hits = (byRef.get(normRef(row.ref)) ?? []).filter((p) => !claimed.has(key(p)));

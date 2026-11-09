@@ -30,6 +30,8 @@ import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../components/DataGridCompat';
+import type { TablePdfView } from '../../components/dataTableLineExport';
+import { pvListTotal, pvListTotalNote, ringgitSenOfPv } from '../../vendor/scm/lib/pv-list-total';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -95,11 +97,14 @@ const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
    while everything came back (FilterPills' own rule). */
 const LIST_CAP = 500;
 
+/** The Remark: what Finance typed beside the voucher (stored as notes). */
 const notesOf = (r: PaymentVoucherRow): string => (r.notes ?? '').trim();
-/** The For line: the voucher's own notes, and how much of an advance is still open. */
+/** The Description: what is paid for, as the bills say it (the server's words, never the bill number). */
+const descriptionOf = (r: PaymentVoucherRow): string => (r.description_text ?? '').trim();
+/** The For line: what it pays for, and how much of an advance is still open. */
 const forOf = (r: PaymentVoucherRow): string => {
   const open = advanceOpenSen(r);
-  return [notesOf(r), open > 0 ? `${fmtMoney(open, r.currency)} not knocked off` : ''].filter(Boolean).join(' · ');
+  return [descriptionOf(r), open > 0 ? `${fmtMoney(open, r.currency)} not knocked off` : ''].filter(Boolean).join(' · ');
 };
 
 /* Batch eligibility — the same questions the detail page's buttons ask, so
@@ -136,13 +141,9 @@ function queueLabel(r: PaymentVoucherRow): string {
   return `${stageTag(r).text}${advanceOpenSen(r) > 0 ? ' · Advance open' : ''}`;
 }
 
-/* MYR-equivalent for the approve dialog — the same conversion Daily Bank and
-   posting use: round(total_sen × exchange_rate). */
-const myrSen = (r: PaymentVoucherRow): number => {
-  const raw = Number(r.exchange_rate ?? 1);
-  const rate = Number.isFinite(raw) && raw > 0 ? raw : 1;
-  return Math.round(Number(r.total_sen ?? 0) * rate);
-};
+/* MYR-equivalent for the approve dialog and the Total — the same conversion Daily
+   Bank and posting use: round(total_sen × exchange_rate) (lib/pv-list-total.ts). */
+const myrSen = ringgitSenOfPv;
 
 /** The last three months, newest first: the month chips (the design). */
 const lastMonths = (today: string, n: number): string[] => {
@@ -409,6 +410,18 @@ export const PaymentVouchers = () => {
     }
   };
   const printSelected = (action: PdfAction) => printVouchers(rows.filter((r) => selected.has(r.id)), batchWithFiles, action);
+  /* The list itself on paper (owner 2026-11-09: 我filter 了，right click header print
+     不行？): the header's Export to PDF prints the rows showing, the listing paper the
+     Payment listing prints on, saying what the screen was cut to. */
+  const printList = async (view: TablePdfView<PaymentVoucherRow>) => {
+    try {
+      const { generatePvListPdf, pvListCutTo } = await import('../../vendor/scm/lib/pv-list-pdf');
+      const cutTo = pvListCutTo({ stage: CHIP_LABELS[statusChip] ?? statusChip, month: monthChip === 'all' ? '' : monthName(monthChip), search: searching ? q : '' });
+      await generatePvListPdf(view, { cutTo, action: 'preview' });
+    } catch (e) {
+      void notify({ title: 'The list was not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   const doCancelPv = async (r: PaymentVoucherRow) => {
     if (!(await askConfirm({ title: `Cancel ${r.pv_number}?`, body: 'It turns Cancelled; a posted journal is reversed with a contra entry. Nothing is deleted and the number stays.', confirmLabel: 'Cancel voucher', danger: true }))) return;
@@ -426,7 +439,7 @@ export const PaymentVouchers = () => {
       menu.push({ label: 'Edit', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?edit=1`) });
     }
     if (canWrite && isApprovable(r) && r.approved_at == null) {
-      menu.push({ label: 'Edit text', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
+      menu.push({ label: 'Edit text & bank', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
     }
     menu.push({ divider: true });
     menu.push({ label: 'Print', onClick: () => void printVouchers([r], false, 'print') });
@@ -469,16 +482,41 @@ export const PaymentVouchers = () => {
       sortFn: (a, b) => (a.payee_name ?? '').localeCompare(b.payee_name ?? ''),
     },
     {
-      /* The header's Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes
-         显示出来吗？) — the design calls it For. A long note is cut with … and
-         reads whole on hover (the cell's title comes from filterValue) or with
-         WRAP on; the search box and Export carry it. */
-      key: 'notes', label: 'For', width: 260, sortable: true, groupable: false,
+      /* The Description (owner 2026-11-09: 对我来说 description 就是 purpose; 我只想
+         显示单上的费用，不要像之前一样显示bill no. 等等): what is paid for, as the bills
+         say it — the server's words, never the bill number. The key stays `notes`, the
+         column's key since 2026-10-14, so every reader's saved widths and order hold.
+         A long one is cut with … and reads whole on hover (the cell's title comes from
+         filterValue) or with WRAP on; Export carries it. */
+      key: 'notes', label: 'Description', width: 260, sortable: true, groupable: false,
       accessor: (r) => forOf(r) || '—',
       filterValue: (r) => forOf(r),
+      searchValue: (r) => descriptionOf(r),
+      exportValue: (r) => descriptionOf(r),
+      sortFn: (a, b) => descriptionOf(a).localeCompare(descriptionOf(b)),
+    },
+    {
+      /* The Remark: what Finance typed beside the voucher (Edit text & bank), off the list by default. */
+      key: 'remark', label: 'Remark', width: 220, sortable: true, groupable: false, defaultHidden: true,
+      accessor: (r) => notesOf(r) || '—',
+      filterValue: (r) => notesOf(r),
       searchValue: (r) => notesOf(r),
       exportValue: (r) => notesOf(r),
       sortFn: (a, b) => notesOf(a).localeCompare(notesOf(b)),
+    },
+    {
+      key: 'pay_bank', label: 'Bank', width: 130, sortable: true, groupable: true,
+      accessor: (r) => r.pay_bank || '—',
+      searchValue: (r) => r.pay_bank ?? '',
+      groupValue: (r) => r.pay_bank || '(none)',
+      exportValue: (r) => r.pay_bank ?? '',
+      sortFn: (a, b) => (a.pay_bank ?? '').localeCompare(b.pay_bank ?? ''),
+    },
+    {
+      key: 'pay_account_no', label: 'Account no.', width: 150, sortable: true, groupable: false,
+      accessor: (r) => r.pay_account_no || '—',
+      searchValue: (r) => r.pay_account_no ?? '',
+      exportValue: (r) => r.pay_account_no ?? '',
     },
     {
       /* The money account it is paid from: code on one line, name below (owner 2026-09-15). */
@@ -494,6 +532,12 @@ export const PaymentVouchers = () => {
       exportValue: (r) => Number(r.total_sen ?? 0) / 100,
       exportFormat: 'money',
       sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
+      /* The Total (owner 2026-11-09: 表格最下面的总数（Total）- payment voucher 可以加):
+         the ringgit of the rows showing, a cancelled voucher not counted. */
+      total: (shown) => {
+        const t = pvListTotal(shown);
+        return <span className={mo.money} title={pvListTotalNote(t) || undefined}>{fmtMoney(t.sen)}</span>;
+      },
     },
     {
       /* The four layers' marks ride as the tag, never inside the status enum
@@ -513,6 +557,11 @@ export const PaymentVouchers = () => {
       groupValue: (r) => queueLabel(r),
       exportValue: (r) => queueLabel(r),
       sortFn: (a, b) => a.status.localeCompare(b.status),
+      /* Beside the Total: what it left out, or converted. */
+      total: (shown) => {
+        const note = pvListTotalNote(pvListTotal(shown));
+        return note ? <span style={{ fontWeight: 400, color: 'var(--fg-muted)' }}>{note}</span> : null;
+      },
     },
     {
       /* The next step on the row (the design): the voucher's own door. */
@@ -735,6 +784,7 @@ export const PaymentVouchers = () => {
         columns={columns}
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
+        onExportPdf={(view) => void printList(view)}
         rowKey={(r) => r.id}
         selectable={{
           selectedKeys: selected,

@@ -44,6 +44,7 @@
 // orders open in the page under it rather than in a box of their own.
 // ----------------------------------------------------------------------------
 
+import { guardFormula } from '../../lib/csv';
 import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import {
@@ -118,7 +119,7 @@ export const basisOf = (r: EventCommission): CommissionBasis => r.basis ?? 'fair
 
 /* Both parts as CSV: each fair, its orders beneath it; then the earlier lines. */
 export const eventCommissionCsv = (r: EventCommission): string => {
-  const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const row = (cells: Array<string | number | null>) => cells.map(esc).join(',');
   const byFair = basisOf(r) === 'fair';
   const lines = [row(['Fair', 'Dates', 'Rate %', 'Total Sales', 'Estimate', 'Order', 'SO date', 'Salesperson', 'Goods', 'Paid %', '30% reached', 'Commission'])];

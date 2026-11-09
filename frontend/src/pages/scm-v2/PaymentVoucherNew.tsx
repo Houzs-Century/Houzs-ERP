@@ -43,12 +43,13 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/components/SupplierFinanceReminder';
-import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-queries';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { useBillMatches, usePaymentRequest, usePaymentRequestsByIds } from '../../vendor/scm/lib/payment-request-queries';
 import { prefillFromRequests, requestIdsOf } from './pv-from-requests';
+import { NO_PAY_TO, isBlankPayTo, payToBody, payToOf, payToOfVoucher, samePayTo, type PayTo } from './pv-pay-to';
+import { PvPayToFields } from './PvPayToFields';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
@@ -164,6 +165,8 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+  /* The bank it pays into, in fields of its own (owner 2026-11-08; pv-pay-to.ts). */
+  const [payTo, setPayTo]                         = useState<PayTo>(NO_PAY_TO);
   const [bankChargeSen, setBankChargeSen]         = useState<number>(0);
   /* The bill's own number and date (owner 2026-10-01: 同一张单 — the same pair on
      another request, voucher or AP invoice is said out loud, never refused). */
@@ -219,17 +222,11 @@ export const PaymentVoucherNew = () => {
     if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
     /* The voucher stays dated TODAY — the bill's date no longer overwrites it
        (owner 2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做): the
-       voucher's date is when he records the payment. The bill's own date rides
-       in the notes instead, so nothing read is lost. The AP invoice form keeps
-       the bill's date — there it IS the invoice date. */
-    /* What the reader fills goes upper case (owner 2026-09-08; ocr-fill.ts);
-       the payee above keeps the operator's own saved casing. */
-    const noteBits = upperFill([
-      ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
-      ex.invoiceDate ? `dated ${ex.invoiceDate}` : null,
-      ex.dueDate ? `due ${ex.dueDate}` : null,
-    ].filter(Boolean).join(' · '));
-    if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+       voucher's date is when he records the payment. The bill's number and date
+       ride in their own fields (Bill no., Bill date), so nothing read is lost —
+       and no longer in the Remark (owner 2026-11-09: 不要像之前一样显示bill no.):
+       the Description reads the bill's items. The AP invoice form keeps the
+       bill's date — there it IS the invoice date. */
     takeBillPair(ex.invoiceNumber, ex.invoiceDate);
     takeProvisional(ex.documentKind);
     /* The account: ONLY what this operator saved for this vendor before
@@ -242,7 +239,9 @@ export const PaymentVoucherNew = () => {
       .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
     /* A bill with no readable lines still carries its total — one line. */
     if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ ...newLine(), description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
+      /* No items read: the line says so, never the bill's number (owner 2026-11-09) —
+         the bill number is in Bill no.; the operator types what it is for. */
+      drafts.push({ ...newLine(), description: upperFill('As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
     }
     if (drafts.length > 0) setLines(drafts);
   };
@@ -349,6 +348,7 @@ export const PaymentVoucherNew = () => {
     if (v.supplier_id) setSupplierId(String(v.supplier_id));
     if (v.credit_account_code) setCreditAccountCode(String(v.credit_account_code));
     if (v.notes) setNotes(String(v.notes));
+    setPayTo(payToOfVoucher(v));
     /* A copied refund carries its document, never its amount — the headroom
        is re-read live. */
     if (v.purpose === 'CUSTOMER_REFUND' && v.refund_source_doc_no) {
@@ -377,8 +377,8 @@ export const PaymentVoucherNew = () => {
 
   /* ── Answering a payment request (申请付款, owner 2026-09-30) ─────────────
      ?fromRequest=<id> fills the payee, one line for what was asked — the
-     purpose as its description, the event on it and on the header — and names
-     the request (and the payee's bank) in the notes. Saving sends
+     purpose as its description, the event on it and on the header — the purpose
+     in the Description and the bank it asks for in the bank fields. Saving sends
      paymentRequestId: the server claims the request for this voucher and
      copies its bill across (backend lib/payment-request.ts). */
   const fromRequest = searchParams.get('fromRequest');
@@ -389,19 +389,20 @@ export const PaymentVoucherNew = () => {
     if (!fromRequest || requestApplied.current || !r) return;
     requestApplied.current = true;
     setPayeeName(r.payee_name);
-    const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
-    /* The requester's note comes along (owner 2026-10-02: 多一个第五给他们写note). */
-    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}${r.note ? ` · Note: ${r.note}` : ''}`);
+    /* What the money is for, and the requester's note (owner 2026-10-02: 多一个第五给他们写note);
+       the request's number is the voucher's Purpose, its bank the bank fields (owner 2026-11-08). */
+    setNotes(`${r.purpose}${r.note ? ` · ${r.note}` : ''}`);
+    setPayTo(payToOf(r));
     /* A refund request (owner 2026-10-14): the Customer Refund on its own order —
        the order named and fixed, the amount asked, the customer's bank in the
-       notes above; there is no bill to read. */
+       bank fields; there is no bill to read. */
     if (isRefund) {
       const doc = r.refund_source_doc_no ?? '';
       setRefundType('SO');
       setRefundDocInput(doc);
       setRefundDocNo(doc);
       setRefundAmountSen(r.amount_sen);
-      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — a refund of ${fmtRm(r.amount_sen)} on ${doc}. Pay it to the customer's bank in the notes.`);
+      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — a refund of ${fmtRm(r.amount_sen)} on ${doc}. Pay it into the customer's bank below.`);
       return;
     }
     /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
@@ -429,8 +430,9 @@ export const PaymentVoucherNew = () => {
     const pre = prefillFromRequests(manyQ.requests);
     setPayeeName(pre.payeeName);
     setNotes(pre.notes);
+    setPayTo(pre.payTo);
     setLines(pre.lines.map((l) => ({ ...newLine(), ...l })));
-    setScanNote(`Answering ${manyQ.requests.length} payment requests, ${fmtRm(pre.totalSen)} in all — one line each; every request's bill is attached to this voucher when you save.${pre.payeeName ? '' : ' They name different payees: type the payee yourself.'} Pick each line's account.`);
+    setScanNote(`Answering ${manyQ.requests.length} payment requests, ${fmtRm(pre.totalSen)} in all — one line each; every request's bill is attached to this voucher when you save.${pre.payeeName ? '' : ' They name different payees: type the payee yourself.'}${pre.banksDiffer ? ' They name different banks: type the bank yourself.' : ''} Pick each line's account.`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manyQ.requests]);
 
@@ -464,8 +466,7 @@ export const PaymentVoucherNew = () => {
         .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: account, projectId: r.project_id }));
       if (read.length > 0) setLines(read);
       else if (account) setLines((prev) => prev.map((l) => ({ ...l, debitAccountCode: l.debitAccountCode || account })));
-      const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
-      if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
+      /* The bill's number and date go to their own fields, not the Remark (owner 2026-11-09). */
       takeBillPair(ex.invoiceNumber, ex.invoiceDate);
       takeProvisional(ex.documentKind);
       if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
@@ -489,16 +490,17 @@ export const PaymentVoucherNew = () => {
     if (!supplierRow) return;
     setPayeeName((prev) => prev.trim() ? prev : supplierRow.name);
   }, [supplierRow]);
-  /* The supplier's bank rides into the Notes, which the voucher prints under PAY
-     TO (owner 2026-10-02, A3a: 付款时自动带出来). Only into empty Notes, or Notes
-     still holding the last supplier's bank line — what Finance typed stays. */
-  const lastBankNote = useRef('');
+  /* The supplier's bank fills the bank fields, which the voucher prints under PAY
+     TO (owner 2026-10-02, A3a: 付款时自动带出来; 2026-11-08: fields of their own,
+     no longer in the notes). Only while they are empty, or still hold the last
+     supplier's bank — what Finance typed stays. */
+  const lastSupplierPayTo = useRef<PayTo>(NO_PAY_TO);
   useEffect(() => {
     if (!isAp) return;
-    const line = supplierBankLine(supplierDetail);
-    const next = line ? `Pay to ${line}` : '';
-    setNotes((prev) => (!prev.trim() || prev === lastBankNote.current ? next : prev));
-    lastBankNote.current = next;
+    const next = payToOf(supplierDetail);
+    /* The same bank keeps the same state: a fresh object every render would render again, for ever. */
+    setPayTo((prev) => (!isBlankPayTo(prev) && !samePayTo(prev, lastSupplierPayTo.current)) || samePayTo(prev, next) ? prev : next);
+    lastSupplierPayTo.current = next;
   }, [isAp, supplierDetail]);
 
   /* Multi-currency (Phase 1-A) — the PV's currency defaults to the linked
@@ -768,6 +770,7 @@ export const PaymentVoucherNew = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
+        ...(transferMode ? {} : payToBody(payTo)),
         bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
@@ -893,7 +896,7 @@ export const PaymentVoucherNew = () => {
             ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Pay to *</span>
-              <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
+              <input data-upper type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
                 placeholder="Payee, e.g. TENAGA NASIONAL BERHAD" className={styles.fieldInput} required />
             </label>
             )}
@@ -942,9 +945,12 @@ export const PaymentVoucherNew = () => {
                 inputClassName={styles.fieldInput} selectOnFocus />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Note</span>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+              {/* The Remark (owner 2026-11-09): the Description is what the lines say is paid for. */}
+              <span className={styles.fieldLabel}>Remark</span>
+              <textarea data-upper value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="A note beside this payment (optional)" aria-label="Voucher remark"
+                className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
+            {!transferMode && <PvPayToFields value={payTo} onChange={setPayTo} />}
             {showBill && (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Bill no. (the supplier's own)</span>
@@ -967,7 +973,7 @@ export const PaymentVoucherNew = () => {
             {showBill && officialOwed && (
               <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
                 <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
-                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                <input data-upper className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
                   aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
               </label>
             )}
@@ -1207,7 +1213,7 @@ export const PaymentVoucherNew = () => {
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Description</span>
-                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
+                  <input data-upper type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
                     placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
                 </label>
               </div>

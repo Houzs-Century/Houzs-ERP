@@ -206,3 +206,40 @@ test('the text funnel is still the way out, through a variable too', () => {
   `);
   assert.equal(found.length, 0);
 });
+
+// -- shape 3: D1-compat .prepare(sql).bind(...) (B19, Conts #122) ------------
+
+test('flags ?::jsonb bound to JSON.stringify through .prepare().bind() (B19, collection-agent.ts)', () => {
+  const src = "await db.prepare(`INSERT INTO t (id, payload) VALUES (?, ?::jsonb)`).bind(id, JSON.stringify(chase)).run();";
+  const f = scan(src);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].kind, 'bind');
+  assert.match(f[0].snippet, /^\?2 <- JSON\.stringify/);
+});
+
+test('?::text::jsonb with .bind() is the fix, not a finding', () => {
+  const src = "await db.prepare(`INSERT INTO t (id, payload) VALUES (?, ?::text::jsonb)`).bind(id, JSON.stringify(chase)).run();";
+  assert.deepEqual(scan(src), []);
+});
+
+test('a plain ? bound to a string is left alone unless the file is strict (TEXT columns take strings)', () => {
+  const src = "await db.prepare('INSERT INTO audit (id, meta) VALUES (?, ?)').bind(id, JSON.stringify(meta)).run();";
+  assert.deepEqual(scan(src), []);
+  const strict = scanSource('backend/src/services/agents/x.ts', src, { strictBind: true });
+  assert.equal(strict.length, 1);
+  assert.equal(strict[0].kind, 'bind');
+});
+
+test('a ? inside a SQL string literal does not shift the placeholder count', () => {
+  const src = "await db.prepare(\"UPDATE t SET note = 'why?', payload = ?::jsonb WHERE id = ?\").bind(JSON.stringify(p), id).run();";
+  const f = scan(src);
+  assert.equal(f.length, 1);
+  assert.match(f[0].snippet, /^\?1 </);
+});
+
+test('a single-quoted JS SQL string still exposes its placeholders (pms-agent.ts brief insert)', () => {
+  const bad = "await db.prepare('INSERT INTO b (id, brief) VALUES (?, ?::jsonb)').bind(id, JSON.stringify(brief)).run();";
+  assert.equal(scan(bad).length, 1);
+  const good = "await db.prepare('INSERT INTO b (id, brief) VALUES (?, ?::text::jsonb)').bind(id, JSON.stringify(brief)).run();";
+  assert.deepEqual(scanSource('backend/src/services/agents/x.ts', good, { strictBind: true }), []);
+});

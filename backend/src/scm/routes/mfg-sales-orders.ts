@@ -146,7 +146,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { readAggregate } from '../lib/postgrest-aggregate';
 /* "A PO is already out for this SO" — the second road to the same soft lock
-   (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
+   (owner 2026-08-12; every company since 2026-11-09). See lib/so-po-lock.ts. */
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
 import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY } from '../shared/so-po-date-rule';
 import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
@@ -1676,7 +1676,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const amendDateLocked = soProcessingLocked(
     h.data as { processing_date?: string | null; status: string | null },
   );
-  /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so a 2990 SO with a live
+  /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so an SO with a live
      PO flips the FE's Save into "Submit amendment request" exactly as an elapsed
      processing date does. Shipped as its own header field (`po_locked`) too: the
      desktop + mobile detail gates need to disable the line editors, and they are
@@ -4855,6 +4855,7 @@ mfgSalesOrders.post('/validate', async (c) => {
   const problems = collectSoSubmitProblems({
     customerName: str(body.debtorName) || str(body.customerName),
     phone: str(body.phone),
+    origPhone: isEdit && typeof body.origPhone === 'string' ? body.origPhone : null,
     hasNamedLine,
     asDraft,
     hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,
@@ -6388,7 +6389,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      and stay open. Sits AFTER the cancelled/downstream-agnostic validations
      above but before any write. (`before` carries processing_date via
      the map above.) */
-  /* Owner 2026-08-12 — the PO lock (2990 only) reaches the SAME field-scoped
+  /* Owner 2026-08-12 — the PO lock (every company) reaches the SAME field-scoped
      diff by the other road. Evaluated once, here, so both roads share one
      rejection and a future CONTROLLED-column change cannot land on one and miss
      the other. */
@@ -7205,7 +7206,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   if (!header) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
-     2026-08-12 — nor once a live PO actually exists (2990), which is the case
+     2026-08-12 — nor once a live PO actually exists (every company since 2026-11-09), which is the case
      this rule was always describing and only sometimes catching. */
   if (!afterDoTarget && soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
     return refuseWithoutWriting(c, SO_PROCESSING_LOCKED_RESPONSE, 409);
@@ -11290,7 +11291,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
 
   /* Guard 2 — an amendment only makes sense once the SO is locked; an unlocked
      SO is still directly editable, so no amendment is needed. Owner 2026-08-12:
-     "locked" now means date-locked OR PO-locked (2990). This guard is the MIRROR
+     "locked" now means date-locked OR PO-locked (any company). This guard is the MIRROR
      of the write guards above — if it kept asking only about the date, a
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything

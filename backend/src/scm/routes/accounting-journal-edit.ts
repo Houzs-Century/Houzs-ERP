@@ -31,6 +31,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal, validateJournal, type EngineLine } from '../../acc/engine';
+import { upperTyped } from '../../acc/typed-text';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -67,7 +68,8 @@ const linesOf = (raw: unknown): EngineLine[] =>
     partyType: text(l.partyType),
     partyCode: text(l.partyCode),
     partyName: text(l.partyName),
-    notes: text(l.notes),
+    /* Typed words in upper case (owner 2026-11-09; acc/typed-text.ts). */
+    notes: upperTyped(text(l.notes)),
   }));
 
 /* The same key the create, post and reverse routes ask for (accounting.ts:
@@ -101,7 +103,7 @@ export const journalEntryEdit = async (c: Ctx) => {
   /* The corrected entry, as the engine will see it. A blank date keeps the
      entry's own day — an edit of the figures is not a move to today. */
   const entryDate = dateOrNull(body.entryDate) ?? String(je.entry_date).slice(0, 10);
-  const narration = body.narration === undefined ? je.narration : text(body.narration);
+  const narration = body.narration === undefined ? je.narration : upperTyped(text(body.narration));
   const lines = linesOf(body.lines);
   const draft = { companyId: co.companyId, entryDate, sourceType: 'MANUAL', sourceDocNo: null, narration, lines };
 

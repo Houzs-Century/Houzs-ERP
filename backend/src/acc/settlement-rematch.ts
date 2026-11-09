@@ -22,7 +22,7 @@
 // upload makes inside one file, kept across files.
 // ----------------------------------------------------------------------------
 
-import { loadAcquirer, loadPaymentCandidates, loadSettledKeys, notThisOf } from './settlement';
+import { QR_CHANNEL, loadAcquirer, loadPaymentCandidates, loadSettledKeys, notThisOf } from './settlement';
 import { matchStatement, type MatchBucket, type PaymentCandidate } from './settlement-match';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { mapBounded } from '../scm/lib/concurrency';
@@ -33,6 +33,8 @@ type LineRow = {
   gross_sen: number; fee_sen: number; net_sen: number;
   bucket: string; match_reason: string | null; notes: string | null; confirmed_at: string | null;
   not_this?: unknown;
+  /** 'QR' for a DuitNow QR line (owner 2026-11-09) — decided against Online money. */
+  channel?: string | null;
 };
 type LinkRow = { settlement_row_id: number; payment_source: string; payment_id: string };
 
@@ -73,7 +75,7 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
 
   const lines = await chunkIn<LineRow, number>(batchIds, (batch, f, t) => sb
     .from('acc_settlement_rows')
-    .select('id, batch_id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, notes, confirmed_at, not_this')
+    .select('id, batch_id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, notes, confirmed_at, not_this, channel')
     .eq('company_id', companyId).in('batch_id', batch)
     .order('id').range(f, t));
   if (lines.error) return { ok: false, reason: `report lines: ${lines.error.message}` };
@@ -115,9 +117,16 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   const cands = await loadPaymentCandidates(sb, companyId, acq.acquirer, from, to,
     open.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r.trim() !== ''));
   if (!cands.ok) return { ok: false, reason: cands.reason };
+  /* A QR line is decided against Online money, never card (owner 2026-11-09). */
+  const online = open.some((r) => r.channel === QR_CHANNEL)
+    ? await loadPaymentCandidates(sb, companyId, acq.acquirer, from, to, [], { online: true })
+    : { ok: true as const, payments: [] as PaymentCandidate[] };
+  if (!online.ok) return { ok: false, reason: online.reason };
 
   const cfg = { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days };
-  type Change = { row: LineRow; bucket: MatchBucket; matchReason: string | null; notes: string; link: PaymentCandidate[]; held: string[] };
+  /* notesOnly: the same answer in new words — a QR line whose stored clue still
+     names the card payment it used to be offered. Only the words are written. */
+  type Change = { row: LineRow; bucket: MatchBucket; matchReason: string | null; notes: string; link: PaymentCandidate[]; held: string[]; notesOnly?: boolean };
   const changes: Change[] = [];
   let matched = 0;
   for (const b of openBatches) {
@@ -126,7 +135,8 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
     const decided = matchStatement(cfg, rowsOf.map((r) => ({
       lineNo: Number(r.line_no), txnDate: day(r.txn_date), ref: r.ref,
       grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen),
-    })), cands.payments, taken);
+      ...(r.channel === QR_CHANNEL ? { channel: 'QR' as const } : {}),
+    })), cands.payments, taken, online.payments);
     for (const d of decided) {
       const row = byLine.get(d.row.lineNo);
       if (!row) continue;
@@ -141,7 +151,10 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
       const held = heldBy.get(Number(row.id)) ?? [];
       const wantKeys = want.map(keyOf).sort();
       const sameLinks = held.length === wantKeys.length && [...held].sort().every((k, i) => k === wantKeys[i]);
-      if (sameLinks && row.bucket === bucket) continue;
+      if (sameLinks && row.bucket === bucket) {
+        if ((row.notes ?? '') !== d.clue) changes.push({ row, bucket, matchReason: row.match_reason, notes: d.clue, link: want, held, notesOnly: true });
+        continue;
+      }
       changes.push({ row, bucket, matchReason: refused ? null : d.matchReason, notes: d.clue, link: want, held });
     }
   }
@@ -157,7 +170,7 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
 
   /* Release first, link after: the payment-once index would refuse a payment
      moving from one open line to another while the first still held it. */
-  const releaseIds = todo.filter((c) => c.held.length > 0).map((c) => Number(c.row.id));
+  const releaseIds = todo.filter((c) => !c.notesOnly && c.held.length > 0).map((c) => Number(c.row.id));
   for (let i = 0; i < releaseIds.length; i += 150) {
     const { error } = await sb.from('acc_settlement_matches').delete()
       .eq('company_id', companyId).in('settlement_row_id', releaseIds.slice(i, i + 150));
@@ -168,6 +181,13 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   let newlyMatched = 0;
   let released = 0;
   await mapBounded(todo, 6, async (c) => {
+    if (c.notesOnly) {
+      const { error } = await sb.from('acc_settlement_rows')
+        .update({ notes: c.notes, updated_at: new Date().toISOString() })
+        .eq('id', c.row.id).eq('company_id', companyId).is('confirmed_at', null);
+      if (error) failed.push({ rowId: Number(c.row.id), reason: error.message });
+      return;
+    }
     let bucket = c.bucket;
     let notes = c.notes;
     if (bucket === 'MATCHED') {

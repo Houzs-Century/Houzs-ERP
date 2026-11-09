@@ -96,6 +96,7 @@ import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { resolvePoRecipients, supplierEmailList } from "../../vendor/shared/supplier-emails";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -619,8 +620,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   const doSendToSupplier = async () => {
     if (!id || !purchaseOrder) return;
     if (sendingToSupplier) return;
-    const recipient = purchaseOrder.supplier?.email?.trim();
-    if (!recipient) {
+    /* To = Email, Cc = Email 2 / Email 3 — the same rule the server sends by
+       (vendor/shared/supplier-emails), so the confirm names every address. */
+    const recipients = resolvePoRecipients(purchaseOrder.supplier);
+    if (!recipients.ok && recipients.error === "no_supplier_email") {
       notify({
         title: "No supplier email",
         body: "This supplier has no email address on file. Add one on the supplier record, then send.",
@@ -628,9 +631,20 @@ function PurchaseOrderDetailV2ReadOnly() {
       });
       return;
     }
+    if (!recipients.ok) {
+      void notify({
+        title: "Supplier email not valid",
+        body: `The supplier's email address (${recipients.address}) is not a valid address. Fix it on the supplier record, then send again.`,
+        tone: "error",
+      });
+      return;
+    }
+    const recipientLine = recipients.cc.length
+      ? `${recipients.to}, with a copy (Cc) to ${recipients.cc.join(", ")}`
+      : recipients.to;
     const ok = await confirm({
       title: `Email PO ${purchaseOrder.po_number} to the supplier?`,
-      body: `It will be sent to ${recipient} with the PO attached as a PDF. Check the address is the right one for this supplier.`,
+      body: `It will be sent to ${recipientLine} with the PO attached as a PDF. Check the addresses are the right ones for this supplier.`,
       confirmLabel: "Send to supplier",
     });
     if (!ok) return;
@@ -1341,8 +1355,8 @@ function PurchaseOrderDetailV2ReadOnly() {
                 />
                 <Field
                   label="Email"
-                  value={purchaseOrder.supplier?.email || "Not provided"}
-                  muted={!purchaseOrder.supplier?.email}
+                  value={supplierEmailList(purchaseOrder.supplier).join(", ") || "Not provided"}
+                  muted={supplierEmailList(purchaseOrder.supplier).length === 0}
                 />
                 <Field
                   label="Address"

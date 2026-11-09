@@ -35,6 +35,21 @@ export async function pairingCodeHash(raw: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Whether a stored code is still redeemable at `nowMs`. The expiry is
+ *  compared as a moment, never as text: Postgres hands the column back as
+ *  "2026-11-09 02:14:45.665+00" while the server's clock reads
+ *  "2026-11-09T02:09:00.000Z", and the space sorts before the "T", so a text
+ *  comparison called every code expired (no device ever paired by code in
+ *  production until 2026-11-09). */
+export function pairingCodeLive(expiresAt: string | null, nowMs: number): boolean {
+  if (!expiresAt) return false;
+  /* "2026-11-09 02:14:45.665+00" -> "2026-11-09T02:14:45.665+00:00": the
+     space and the hour-only offset are Postgres spellings Date.parse rejects. */
+  const iso = expiresAt.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && t > nowMs;
+}
+
 /** The ?pair= code in a POS app link, if any. */
 export function pairingCodeFromUrl(href: string): string | null {
   try {

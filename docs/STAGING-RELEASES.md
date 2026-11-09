@@ -89,11 +89,12 @@ repoints the row without re-running the SQL. So:
   that says "migration 0165" has to change when the file becomes 0167, the
   checksum moves, and the automatic path is lost.
 
-If the content did change, the deploy stops with `DRIFT … probable_renumber`
-naming both filenames and printing the exact `UPDATE _pg_migrations …` to run.
-That is a deliberate stop: from checksums alone, a renumbered migration and an
-edited applied migration look the same, and only one of them is safe. Read the
-diff before running the statement it suggests.
+If the content did change, production stops with `DRIFT … probable_renumber`.
+Staging does not: every staging workflow runs the runner with
+`--tolerate-preview-leftovers`, so a tracker row whose file is gone (a preview
+branch that was renumbered, closed or never merged) is a warning, and a file
+edited after its preview ran is applied again. The tables and columns a preview
+created stay on staging. Do not delete `_pg_migrations` rows by hand for this.
 
 ## Rollback
 

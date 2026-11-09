@@ -10,6 +10,7 @@ import { SOFA_MIX_REASON } from '../lib/main-mix';
 const OK: SoSubmitFacts = {
   customerName: 'Ada Lovelace',
   phone: '0123456789',
+  origPhone: null,
   hasNamedLine: true,
   asDraft: false,
   hasVenue: true,
@@ -33,6 +34,14 @@ const messages = (fs: SoSubmitFacts) => collectSoSubmitProblems(fs).map((p) => p
 describe('collectSoSubmitProblems', () => {
   it('returns [] when every gate passes', () => {
     expect(collectSoSubmitProblems(OK)).toEqual([]);
+  });
+
+  it('an edit of an order saved without a phone is not blocked for it (B16)', () => {
+    expect(codes({ ...OK, phone: '', origPhone: '' })).toEqual([]);
+    expect(codes({ ...OK, phone: '  ', origPhone: '   ' })).toEqual([]);
+    // A create, and an edit that blanks a stored phone, still need one.
+    expect(messages({ ...OK, phone: '', origPhone: null })).toContain('Phone number is required.');
+    expect(messages({ ...OK, phone: '', origPhone: '+60123456789' })).toContain('Phone number is required.');
   });
 
   it('names every missing always-required identity field at once', () => {

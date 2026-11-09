@@ -62,6 +62,7 @@ import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption } from "./MobileOrderMoney";
 import { CONVERT_LABEL, CONVERTED_METHOD } from "../vendor/scm/lib/so-money-queries";
 import { DateField } from "../vendor/scm/components/DateField";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 /* A persisted payment as either mobile surface holds it. Superset of
    RecordedPaymentLike; the casing pairs cover the postgres.js / PostgREST drift
@@ -166,8 +167,7 @@ function SlipLink({ docNo, paymentId }: { docNo: string; paymentId: string }) {
     if (busy) return;
     setBusy(true);
     try {
-      const resolved = url ?? (await fetchPaymentSlipUrl(docNo, paymentId)).url;
-      window.open(resolved, "_blank", "noopener");
+      await openLoadedTab(async () => url ?? (await fetchPaymentSlipUrl(docNo, paymentId)).url, null);
     } catch (e) {
       void notify({ title: "Couldn't open slip", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
     } finally {
