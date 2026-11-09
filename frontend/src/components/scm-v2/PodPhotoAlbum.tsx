@@ -7,14 +7,18 @@ import { api } from "../../api/client";
    job panel, Stock Transfer, work order, phone): a thumbnail grid, and a
    full-screen viewer with previous / next (arrow keys too), "n / total", a
    download for the photo in view and one for all of them (owner, 2026-10-08:
-   a job can carry many photos and must not take many pages to open).
+   a job can carry many photos and must not take many pages to open), and all
+   of them as ONE PDF, two to a page with the document number and each photo's
+   time, to send on WhatsApp instead of N separate JPGs (pod-photos-pdf.ts).
 
    `paths` are API paths that each return one image (auth-protected, so they
    are fetched as blobs). */
-export function PodPhotoAlbum({ paths, fileStem, emptyText }: {
+export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
   paths: string[];
   /** Download file names: `${fileStem}-1.jpg`, … */
   fileStem: string;
+  /** The document number printed on every page of the photos PDF. */
+  title: string;
   emptyText?: string;
 }) {
   const blobs = useQueries({
@@ -25,6 +29,8 @@ export function PodPhotoAlbum({ paths, fileStem, emptyText }: {
     })),
   });
   const [open, setOpen] = useState<number | null>(null);
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const total = paths.length;
   const step = useCallback((d: number) => setOpen((i) => (i == null ? i : (i + d + total) % total)), [total]);
 
@@ -56,6 +62,38 @@ export function PodPhotoAlbum({ paths, fileStem, emptyText }: {
     }
   };
 
+  const savePdf = async () => {
+    setPdfProgress("");
+    setPdfError(null);
+    try {
+      const { makePodPhotosPdf } = await import("../../vendor/scm/lib/pod-photos-pdf");
+      const out = await makePodPhotosPdf({
+        title, paths,
+        fetchPhoto: (p) => api.fetchBlobWithTime(p),
+        onProgress: (done, all) => setPdfProgress(`${done} / ${all}`),
+      });
+      // A phone gets the share sheet (straight to WhatsApp); a desktop, or a
+      // phone whose browser refuses (the tap is too long ago once the PDF is
+      // built), gets a download.
+      const file = new File([out.blob], out.filename, { type: "application/pdf" });
+      const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+      if (touch && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: out.filename });
+          return;
+        } catch (e) {
+          if ((e as Error).name === "AbortError") return;
+        }
+      }
+      const { deliverPdfBlob } = await import("../../vendor/scm/lib/pdf-common");
+      deliverPdfBlob(out.blob, out.filename, "save");
+    } catch (e) {
+      setPdfError((e as Error).message || "The PDF could not be made. Try again.");
+    } finally {
+      setPdfProgress(null);
+    }
+  };
+
   if (!total) return emptyText ? <div className="text-[12.5px] text-ink-muted">{emptyText}</div> : null;
   const loaded = blobs.filter((b) => b.data).length;
 
@@ -63,11 +101,19 @@ export function PodPhotoAlbum({ paths, fileStem, emptyText }: {
     <div>
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[12.5px] text-ink-muted">{total} photo{total === 1 ? "" : "s"}</span>
-        <button type="button" onClick={saveAll} disabled={loaded < total}
-          className="text-[12.5px] font-semibold text-accent underline disabled:opacity-50">
-          Download all
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => void savePdf()} disabled={pdfProgress !== null}
+            title="All photos in one PDF, two per page, to send on WhatsApp"
+            className="text-[12.5px] font-semibold text-accent underline disabled:opacity-50">
+            {pdfProgress === null ? "Download PDF" : `Making PDF${pdfProgress ? ` ${pdfProgress}` : "…"}`}
+          </button>
+          <button type="button" onClick={saveAll} disabled={loaded < total}
+            className="text-[12.5px] font-semibold text-accent underline disabled:opacity-50">
+            Download all
+          </button>
+        </div>
       </div>
+      {pdfError && <div role="alert" className="mb-2 text-[12.5px] text-red-600">{pdfError}</div>}
       <div className="grid max-w-[420px] grid-cols-3 gap-2">
         {blobs.map((b, i) => (
           <button key={paths[i]} type="button" onClick={() => setOpen(i)} aria-label={`Open photo ${i + 1} of ${total}`}

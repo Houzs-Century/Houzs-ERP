@@ -34,6 +34,7 @@ import { withoutSupplierFinance } from '../shared/supplier-finance-fields';
 import { SUPPLIER_COLS } from './suppliers';
 import { apControlRole, resolveRoles } from '../../acc/rules';
 import { creditorBalances, loadControlLines } from '../../acc/party-ledger';
+import { mytDateOf } from '../lib/my-time';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped in this router family */
 type Row = Record<string, any>;
@@ -231,7 +232,7 @@ export const getSupplierMaintenanceHandler = async (c: any): Promise<Response> =
   ].filter((i) => i.outstandingSen > 0)
     .sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')) || a.number.localeCompare(b.number));
   const advanceRows = ((advances.data ?? []) as Row[])
-    .map((a) => ({ pvId: String(a.pv_id), pvNumber: String(a.pv_number ?? ''), date: String(a.created_at ?? '').slice(0, 10), leftSen: Number(a.amount_sen ?? 0) - Number(a.applied_sen ?? 0) }))
+    .map((a) => ({ pvId: String(a.pv_id), pvNumber: String(a.pv_number ?? ''), date: a.created_at ? mytDateOf(String(a.created_at)) : '', leftSen: Number(a.amount_sen ?? 0) - Number(a.applied_sen ?? 0) }))
     .filter((a) => a.leftSen > 0);
   const credits = noteRows
     .map((n) => ({ id: String(n.id), noteNumber: String(n.note_number ?? ''), date: n.note_date ?? null, leftSen: Number(n.total_sen ?? 0) - (taken.get(String(n.id)) ?? 0) }))

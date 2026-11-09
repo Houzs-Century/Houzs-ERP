@@ -79,6 +79,7 @@ import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/com
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
 import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -841,7 +842,7 @@ export function PurchaseInvoicesListV2() {
       for (const r of chosen) bundles.push(await fetchPiBundle(r));
       if (how === "one") {
         await generateCombinedPurchaseInvoicePdf(bundles as never, {
-          fileName: `purchase-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `purchase-invoices-${todayMyt()}.pdf`,
           action,
         });
       } else {

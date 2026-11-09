@@ -9,6 +9,8 @@ import { DO_DELIVERED_STATUSES } from "../../vendor/scm/lib/delivery-stop-status
 
 export type DoPodFields = {
   id: string;
+  /** Every caller reads GET /delivery-orders-mfg/:id, which carries it. */
+  do_number?: string | null;
   status?: string | null;
   departure_at?: string | null;
   arrival_at?: string | null;
@@ -32,6 +34,7 @@ export const doIsDelivered = (h: DoPodFields): boolean =>
 export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
   // Every photo the POD carries; a DO closed before multi-photo has just pod_r2_key.
   const count = h.pod_photo_keys?.length ? h.pod_photo_keys.length : h.pod_r2_key ? 1 : 0;
+  const docNo = h.do_number || `DO ${h.id.slice(0, 8)}`;
   const paths = Array.from({ length: count }, (_, n) => `/api/scm/delivery-orders-mfg/${encodeURIComponent(h.id)}/pod-photo/${n}`);
   const rows: Array<[string, string | null]> = [
     ["On the way", when(h.departure_at)],
@@ -54,7 +57,7 @@ export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
           ))}
           {count > 0 && (
             <div className="mt-3">
-              <PodPhotoAlbum paths={paths} fileStem={`POD-${h.id.slice(0, 8)}`} />
+              <PodPhotoAlbum paths={paths} fileStem={`POD-${docNo}`} title={docNo} />
             </div>
           )}
           {h.signature_data && (

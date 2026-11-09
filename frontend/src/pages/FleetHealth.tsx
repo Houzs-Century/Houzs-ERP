@@ -18,6 +18,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
 import { BTN_GHOST, BTN_PRI, BTN_SEC, EMPTY, LABEL, PlateBadge, orNotSet } from "./fleet/FleetUi";
 import { uploadEach } from "./fleet/fleetHealthModel";
+import { todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
 // ---------------------------------------------------------------------------
@@ -1453,7 +1454,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       {/* Parts table */}
       {(wo.photoRefs?.length ?? 0) > 0 && (
         <div className="mt-3">
-          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} />
+          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} title={wo.woNo ?? `Work order ${wo.id}`} />
         </div>
       )}
       {wo.parts.length > 0 && (
@@ -1528,7 +1529,7 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
     try {
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/components`, {
         componentType: type, position, brand: brand.trim() || undefined, serial: serial.trim() || undefined,
-        fittedKm: fittedKm ? Number(fittedKm) : undefined, fittedDate: new Date().toISOString().slice(0, 10),
+        fittedKm: fittedKm ? Number(fittedKm) : undefined, fittedDate: todayMyt(),
         purchasePriceSen: price ? Math.round(Number(price) * 100) : undefined, warrantyUntil: warranty || undefined,
       });
       setAdding(false); setBrand(""); setSerial(""); setPrice(""); setWarranty(""); onChanged();
@@ -1594,14 +1595,14 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
   const remove = async () => {
     if (busy) return;
     setBusy(true); setErr(null);
-    try { await api.patch(`/api/fleet-maintenance/components/${c.id}`, { status: "REMOVED", removedDate: new Date().toISOString().slice(0, 10), removedKm: currentKm ?? undefined }); onChanged(); }
+    try { await api.patch(`/api/fleet-maintenance/components/${c.id}`, { status: "REMOVED", removedDate: todayMyt(), removedKm: currentKm ?? undefined }); onChanged(); }
     catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
   const logEvent = async () => {
     if (busy) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/components/${c.id}/events`, { eventType, eventDate: new Date().toISOString().slice(0, 10), odometerKm: currentKm ?? undefined, note: eventNote.trim() || undefined });
+      await api.post(`/api/fleet-maintenance/components/${c.id}/events`, { eventType, eventDate: todayMyt(), odometerKm: currentKm ?? undefined, note: eventNote.trim() || undefined });
       setLogging(false); setEventNote(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };

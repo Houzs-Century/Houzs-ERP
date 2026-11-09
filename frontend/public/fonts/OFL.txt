@@ -1,4 +1,4 @@
-Self-hosted web fonts (*.woff2 + fonts-v2.css)
+Self-hosted web fonts (*.woff2 + fonts-v3.css + fonts-cjk-v1.css)
 =====================================================
 
 The woff2 files in this directory are the unmodified builds served by the
@@ -16,9 +16,10 @@ License, Version 1.1 (http://scripts.sil.org/OFL):
   Archivo
       Copyright 2019 Omnibus-Type, with Reserved Font Name "Archivo"
 
-fonts-v2.css carries the @font-face declarations (including Google's
-unicode-range slicing for the CJK families) rewritten to load the files
-above from /fonts/.
+fonts-v3.css (Latin families) and fonts-cjk-v1.css (Noto Sans/Serif SC,
+with Google's unicode-range slicing) carry the @font-face declarations
+rewritten to load the files above from /fonts/. fonts-v2.css is the older
+single sheet, kept for tabs still open on an older build.
 
 Noto Sans SC — subset bundled with this application (PDF export, *.ttf)
 =====================================================

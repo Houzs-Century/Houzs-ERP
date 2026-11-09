@@ -22,6 +22,7 @@
 //
 // Mounted at '/consignment-notes' in apps/api/src/index.ts. Numbering CN-YYMM-NNN.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
@@ -164,8 +165,7 @@ function gateCnFinance(
 const SHIPPED_STATES: string[] = [...DO_SHIPPED_STATES];
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'consignment_delivery_orders', 'do_number', `${p}CN-${yymm}`);
 };

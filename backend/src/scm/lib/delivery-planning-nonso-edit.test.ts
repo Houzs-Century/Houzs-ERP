@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { writeNonSoFields } from './delivery-planning-nonso-edit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { writeAssrLegStatus, writeNonSoFields } from './delivery-planning-nonso-edit';
 
 // HC-0194: a service case keeps one Time Slot per leg, written to that leg's column.
 function fakeCtx() {
@@ -160,5 +160,28 @@ describe('writeNonSoFields (remarks)', () => {
     expect(sqls[0]).toContain('AND company_id IN (1)');
     await writeNonSoFields(ctxFor([]), {}, 'project', '11', { remark: 'x' });
     expect(sqls[1]).toContain('AND 1=0');
+  });
+});
+
+/* The leg's delivered / cancelled date is the Malaysian day. 17:30 UTC on 9 Nov
+   is 01:30 on 10 Nov in Malaysia; the UTC date stamped it the day before. */
+describe('writeAssrLegStatus (Malaysian date)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('stamps a leg delivered at 01:30 Malaysia time with that Malaysian day', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-09T17:30:00Z'));
+    const { c, runs } = fakeCtx();
+    const r = await writeAssrLegStatus(c, 7, 'delivery', 'delivered', 'Ali');
+    expect(r.body).toMatchObject({ assr: { delivered_at: '2026-11-10', cancelled_at: null } });
+    expect(runs[0]!.binds).toEqual(['2026-11-10', null, 7]);
+  });
+
+  it('stamps a cancelled leg the same way', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-09T17:30:00Z'));
+    const { c } = fakeCtx();
+    const r = await writeAssrLegStatus(c, 7, 'customer_pickup', 'cancelled', 'Ali');
+    expect(r.body).toMatchObject({ assr: { delivered_at: null, cancelled_at: '2026-11-10' } });
   });
 });

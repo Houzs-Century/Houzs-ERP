@@ -1,6 +1,7 @@
 // /mfg-sales-orders — B2B sales orders (HOUZS pattern).
 // Separate from retail `orders` (POS) — different lifecycle, different ID format.
 
+import { yymmFor } from '../../services/documentRefs';
 import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
 import { activeSoEditLease, soCallerUserId, soHeaderLeaseIntent, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
 import { Hono } from 'hono';
@@ -972,17 +973,14 @@ export const deriveWarehouseIdFromState = async (
   return null;
 };
 
-const nextDocNo = async (sb: any, c: any): Promise<string> => {
+export const nextDocNo = async (sb: any, c: any): Promise<string> => {
   // Format: SO-YYMM-NNN — matches PO/DO/GRN/SI/DR/PI/PRT.
   // Legacy SO-NNNNNN numbers stay as-is; only newly created SOs use this scheme.
   // max+1 via nextMonthlyDocNo, NOT count+1 — see lib/doc-no.ts for why
   // (2026-06-12: count+1 re-minted a surviving doc_no after a mid-month
   // delete and jammed every SO create on the pkey).
   const p = companyDocPrefix(c);
-  const yymm = (() => {
-    const d = new Date();
-    return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
+  const yymm = yymmFor();
   return mintMonthlyDocNo(sb, 'mfg_sales_orders', 'doc_no', `${p}SO-${yymm}`);
 };
 

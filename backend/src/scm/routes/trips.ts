@@ -34,6 +34,7 @@
 // scm.trip_stops already exist (migration 0053). Mounted at '/trips'.
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { syncTripCrewToDos } from '../lib/trip-crew-sync';
 import { z } from 'zod';
@@ -99,8 +100,7 @@ function dual<T = unknown>(row: Record<string, unknown>, snake: string): T {
 /* Next TRIP-YYMM-NNN. Mirrors the sibling scm minters — max(suffix)+1 via
    mintMonthlyDocNo (self-healing; never count+1). */
 async function nextTripNo(sb: any): Promise<string> {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // TRIP stays CROSS-COMPANY (no companyDocPrefix) — one shared sequence, per
   // lib/companyScope.ts. mintMonthlyDocNo reads the row's single selected value,
   // so it keeps working whichever of trip_no/tripNo the driver hands back.

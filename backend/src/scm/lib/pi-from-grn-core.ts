@@ -24,6 +24,7 @@
    The over-invoice verify DOES force-count this draft (`countDraftPiId: h.id`),
    so it catches an over-billing pick at creation time exactly as the inline
    POSTED insert did — see verifyGrnLinesNotOverInvoiced's countDraftPiId note. */
+import { yymmFor } from '../../services/documentRefs';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Env, Variables } from '../env';
 import { getSupabaseService } from '../../db/supabase';
@@ -217,8 +218,7 @@ export async function createDraftPisFromGrnItemsCore(
   }
 
   // Generate PI numbers sequentially within this batch.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
   // delete re-mints a surviving number → UNIQUE collision). Derive the next
   // suffix via nextMonthlyDocNo, then counter starts one below it.

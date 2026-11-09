@@ -24,6 +24,7 @@ import type { ThreePLCompanyRow } from "../../../vendor/scm/lib/threepl-companie
 import { alsoServes, boxOf, groupWarehouses, lorryHome, type WarehouseLite } from "./lorryModel";
 import { Lorry3D } from "./Lorry3D";
 import { ServiceRecords } from "./LorryService";
+import { todayMyt } from "../../../vendor/scm/lib/dates";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
   expired: "bg-[#f6dcdc] text-[#8a2c2c]", critical: "bg-[#f6dcdc] text-[#8a2c2c]",
@@ -115,7 +116,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
 
 /** Kilometres and driving time by road this month, home and back, from Last Mile. */
 function RoadThisMonth({ lorryId }: { lorryId: string }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayMyt();
   const road = useRoadFigures(`${today.slice(0, 7)}-01`, today, lorryId);
   const rows = road.data ?? [];
   const m = rows.reduce((a, r) => a + r.distanceM, 0), s = rows.reduce((a, r) => a + r.durationS, 0);

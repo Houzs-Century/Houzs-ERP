@@ -25,6 +25,7 @@ import { activeInstructions } from '../agent-console';
 import { AGENT_BRAIN_MODEL, askAgentBrain, type AgentBrainUsageSink } from '../agent-brain';
 import { agentFeature } from '../aiUsage';
 import { fmtSen } from '../../scm/shared/format';
+import { todayMyt } from '../../scm/lib/my-time';
 
 export const SI_AGENT_SETTING_KEY = 'agents.si';
 
@@ -71,7 +72,7 @@ export interface SiPatrolResult {
 export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult> {
   const db = env.DB;
   const nowIso = new Date().toISOString();
-  const since = new Date(Date.now() - WINDOW_DAYS * 86400_000).toISOString().slice(0, 10);
+  const since = todayMyt(-WINDOW_DAYS);
 
   const res = await db
     .prepare(

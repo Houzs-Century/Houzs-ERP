@@ -37,6 +37,7 @@ import { HC_SUBSTATUS_VALUES } from "../vendor/scm/lib/delivery-planning-queries
 import { procLockActive } from "../vendor/scm/lib/so-detail-gates";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
+import { instantToMytLocal, mytLocalToInstant } from "../vendor/scm/lib/dates";
 import { formatDate } from "../lib/utils";
 
 // ── Shared presentational primitives (see the header note) ──
@@ -63,11 +64,6 @@ export function pdRow(label: string, val: ReactNode, strong?: boolean, last?: bo
   );
 }
 
-// A TIMESTAMPTZ ISO → the wall-clock YYYY-MM-DDTHH:mm DateTimeField reads and
-// writes (the same shape the native datetime-local used, unchanged when
-// Departure/Arrival moved onto DateTimeField on 2026-08-18).
-const toDtLocal = (iso: string | null | undefined): string =>
-  iso ? String(iso).slice(0, 16) : "";
 // A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
@@ -159,8 +155,8 @@ export function buildDeliveryFieldsPatch(
   if (opts.hasDo) {
     if (form.timeRange !== initial.timeRange) body.timeRange = form.timeRange || null;
     if (form.timeConfirmed !== initial.timeConfirmed) body.timeConfirmed = form.timeConfirmed;
-    if (form.arrivalAt !== initial.arrivalAt) body.arrivalAt = form.arrivalAt || null;
-    if (form.departureAt !== initial.departureAt) body.departureAt = form.departureAt || null;
+    if (form.arrivalAt !== initial.arrivalAt) body.arrivalAt = mytLocalToInstant(form.arrivalAt);
+    if (form.departureAt !== initial.departureAt) body.departureAt = mytLocalToInstant(form.departureAt);
     if (form.shipoutDate !== initial.shipoutDate) body.shipoutDate = form.shipoutDate || null;
     if (form.customerDeliveredDate !== initial.customerDeliveredDate)
       body.customerDeliveredDate = form.customerDeliveredDate || null;
@@ -219,8 +215,8 @@ export function DeliveryFieldsCard({
       replacementDisposal: order.replacement_disposal ?? "",
       timeRange: order.time_range ?? "",
       timeConfirmed: !!order.time_confirmed,
-      arrivalAt: toDtLocal(order.arrival_at),
-      departureAt: toDtLocal(order.departure_at),
+      arrivalAt: instantToMytLocal(order.arrival_at),
+      departureAt: instantToMytLocal(order.departure_at),
       shipoutDate: toDateInput(order.shipout_date),
       customerDeliveredDate: toDateInput(order.customer_delivered_date),
       etaArrivingPort: order.eta_arriving_port ?? "",

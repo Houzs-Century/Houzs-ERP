@@ -248,7 +248,7 @@ export async function decideAgentRuns(
       });
       continue;
     }
-    const since = st.lastRunIso ?? `${todayMyt}T00:00:00Z`;
+    const since = st.lastRunIso ?? `${todayMyt}T00:00:00+08:00`; // Malaysian midnight, not 08:00
     try {
       const extra = await reg.shouldRunExtra(db, since);
       if (extra.fire) {

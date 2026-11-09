@@ -81,6 +81,7 @@ import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } 
 import { formatPhone } from "@2990s/shared/phone";
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
+import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
 
 // ─── Row shapes (subset — see DeliveryReturnDetail.tsx for full 40-field
 // header) ────────────────────────────────────────────────────────────────
@@ -1143,6 +1144,7 @@ function DeliveryReturnDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+            <FlowDocFilesCard kind="delivery-return" docId={String(deliveryReturn.id)} status={deliveryReturn.status} />
           </DetailMain>
 
           <DetailAside>
