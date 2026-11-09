@@ -250,6 +250,8 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     wrap();
     fireEvent.click(screen.getByText("Confirm delivered →"));
     expect(await screen.findByText(/Take a POD photo first/)).toBeTruthy();
-    expect(authedFetch).not.toHaveBeenCalled();
+    // Nothing WRITTEN (the screen's reads, e.g. the DO's reported issues, may run).
+    const writes = (authedFetch.mock.calls as Array<[string, RequestInit | undefined]>).filter(([, init]) => init?.method && init.method !== "GET");
+    expect(writes).toEqual([]);
   });
 });

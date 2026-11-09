@@ -17,6 +17,7 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
+import { SoDeliveryIssuesCard } from "../../components/scm-v2/DeliveryIssuesCard";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -1619,6 +1620,8 @@ function SalesOrderDetailV2ReadOnly() {
                   <OrderSlipPhoto imageKey={slipImageKey} maxWidth={320} />
                 </AsideCard>
               )}
+
+              <SoDeliveryIssuesCard docNo={salesOrder.doc_no} />
 
               <AsideCard title="Key dates">
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />
