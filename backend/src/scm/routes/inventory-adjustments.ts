@@ -47,6 +47,7 @@ import { resolveCallerStaffId } from '../lib/salesScope';
 import { scmDb, companyScope, CENTRALISED, type ScopedDb } from '../lib/scopedDb';
 import { mintMonthlyDocNo, insertWithDocNoRetry, docMonthTag } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { mytDayWindow } from '../lib/my-time';
 import {
   linesFromBody,
   parseAdjustmentLines,
@@ -147,14 +148,16 @@ inventoryAdjustments.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const dateFrom = c.req.query('dateFrom');
   const dateTo = c.req.query('dateTo');
+  const win = mytDayWindow(dateFrom, dateTo);
+  if (!win) return c.json({ error: 'invalid_date', message: 'Dates must be YYYY-MM-DD.' }, 400);
 
   const { data, error } = await paginateAll((from, to) => {
     let q = db.from('stock_adjustments', companyScope(c))
       .select(HEADER)
       .order('created_at', { ascending: false });
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    if (dateFrom) q = q.gte('created_at', dateFrom);
-    if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59Z`);
+    if (win.startUtc) q = q.gte('created_at', win.startUtc);
+    if (win.endUtc) q = q.lt('created_at', win.endUtc);
     return q.range(from, to);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
