@@ -53,7 +53,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
+import { layOutCashFlow, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
@@ -75,8 +75,11 @@ type GlLine = RpGlLine;
 
 export type RpRow = {
   key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number;
-  /** A sub-heading the row prints under, within its account's place on the tree (Deposit / Balance). */
+  /** A sub-heading the row prints under, within its account's place on the tree (Deposit / Settlement). */
   group?: { id: string; label: string };
+  /** The Settlement / Deposit column the row's money goes to whatever its category says
+      (a customer's order payment by its kind, a refund to Deposit — owner 2026-11-09). */
+  splitTo?: SplitTo;
 };
 export type RpEntry = {
   jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null;
@@ -132,12 +135,13 @@ const CARD_IN_BANK_NAME = 'Card - in the bank';
 const CARD_MATCHED_NAME = 'Card - merchant matched';
 const CARD_NOT_MATCHED_NAME = 'Card - not matched yet';
 /* The customers' money on the debtor control (owner 2026-11-05): an order's payments
-   are Deposit or Balance (acc/order-payment-kind.ts), each by how it came in; a refund
-   to a customer is a negative receipt; what reaches the debtor control otherwise
-   (a sales-invoice payment, a journal) is Other receipts. Not by party. */
+   are Deposit or Settlement (acc/order-payment-kind.ts; "Balance" until 2026-11-09, his
+   workbook's word is Settlement), each by how it came in; a refund to a customer is a
+   negative receipt; what reaches the debtor control otherwise (a sales-invoice
+   payment, a journal) is Other receipts. Not by party. */
 const KIND_GROUP: Record<PaymentKind, { id: string; label: string }> = {
   DEP: { id: 'DEP', label: 'Deposit' },
-  BAL: { id: 'BAL', label: 'Balance' },
+  BAL: { id: 'BAL', label: 'Settlement' },
 };
 const CASH_PART = 'CASH';
 const CASH_PART_NAME = 'Transfer / cash';
@@ -431,10 +435,10 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const receipts = new Map<string, RpRow>();
   const payments = new Map<string, RpRow>();
   const entries: RpEntry[] = [];
-  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }, group?: RpRow['group']) => {
+  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }, group?: RpRow['group'], splitTo?: SplitTo) => {
     if (amount === 0) return;
     const book = side === 'R' ? receipts : payments;
-    const row: RpRow = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0, ...(group ? { group } : {}) };
+    const row: RpRow = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0, ...(group ? { group } : {}), ...(splitTo ? { splitTo } : {}) };
     row.cells[column] = (row.cells[column] ?? 0) + amount;
     row.totalSen += amount;
     book.set(key, row);
@@ -546,18 +550,20 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
           /* A customer's money, always a receipt: money back out of the bank is a negative one. */
           const signed = side === 'R' ? amt : -amt;
           const kind = base === 'SOPAY' && first.source_doc_no ? kinds.get(first.source_doc_no) : undefined;
-          const put = (part: string, partName: string, value: number, group?: RpRow['group']) =>
-            add('R', `${l.account_code}:${part}`, l.account_code, partName, leg.account_code, value, lineMeta, group);
+          const put = (part: string, partName: string, value: number, group?: RpRow['group'], to?: SplitTo) =>
+            add('R', `${l.account_code}:${part}`, l.account_code, partName, leg.account_code, value, lineMeta, group, to);
           if (!kind) {
-            if (side === 'P') put(CUSTOMER_REFUND, '(-) Refund', signed);
+            /* A refund is a deposit given back (his workbook: Sales returns/refunds under Deposit). */
+            if (side === 'P') put(CUSTOMER_REFUND, '(-) Refund', signed, undefined, 'deposit');
             else put(CUSTOMER_OTHER, 'Other receipts (not order payments)', signed);
             continue;
           }
           const g = KIND_GROUP[kind];
-          if (!swipe) { put(`${kind}:${CASH_PART}`, CASH_PART_NAME, signed, g); continue; }
+          const to: SplitTo = kind === 'DEP' ? 'deposit' : 'settlement';
+          if (!swipe) { put(`${kind}:${CASH_PART}`, CASH_PART_NAME, signed, g, to); continue; }
           const banked = Math.round(signed * bankShare);
-          put(`${kind}:${CARD_IN_BANK}`, CARD_IN_BANK_NAME, banked, g);
-          put(`${kind}:${rest.part}`, rest.name, signed - banked, g);
+          put(`${kind}:${CARD_IN_BANK}`, CARD_IN_BANK_NAME, banked, g, to);
+          put(`${kind}:${rest.part}`, rest.name, signed - banked, g, to);
           continue;
         }
         if (!swipe) { add(side, key, l.account_code, name, leg.account_code, amt, lineMeta); continue; }
@@ -657,5 +663,6 @@ export function cashFlowLines(rows: RpRow[]): LaidLine[] {
     label: r.key === r.code ? `${r.code} · ${r.name}` : r.name,
     amountSen: r.totalSen, cells: { ...r.cells },
     ...(r.group ? { group: r.group } : {}),
+    ...(r.splitTo ? { splitTo: r.splitTo } : {}),
   }));
 }
