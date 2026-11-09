@@ -194,3 +194,28 @@ describe('a waiting copy with no stored read rebuilds from its own rows', () => 
     expect(extractOfReview({ ...review, lines: [] })).toBeNull();
   });
 });
+
+describe('a printed size never picks a different model (owner 2026-11-09, HOOKKA)', () => {
+  const row = (itemCode: string, description: string): PiReviewLine => ({ key: itemCode + description, grnItemId: null, grnNumber: null, qty: 1, suggested: false, ai: false, read: { itemCode, description, qty: 1, unitPrice: 0, lineTotal: 0 } });
+  const withDesc = (b: BillableLine, description: string): BillableLine => ({ ...b, description });
+  test('CODY (HF) 3FT is not JAGER-(S), even as the last 3FT line on the receipt (INV-2610-097)', () => {
+    const lines = [row('1007(HF)(W)-(S)', 'CODY BEDFRAME (HF) (3FT) (90X190CM)')];
+    suggestBills(lines, [withDesc(bill('j', 'GRN-1', 'JAGER-(S)', 1), 'JAGER BEDFRAME (3FT) (90X190CM)')], ['GRN-1'], new Map(), new Map());
+    expect(lines[0]!.grnItemId).toBeNull();
+  });
+  test('BREEVA 6FT is not DIVAN ONLY-(K) (INV-2610-027 row 12)', () => {
+    const lines = [row('2137-(K)', 'BREEVA BEDFRAME (6FT) (183X190CM)')];
+    suggestBills(lines, [withDesc(bill('d', 'GRN-1', 'DIVAN ONLY-(K)', 1), 'DIVAN ONLY BEDFRAME (6FT) (183X190CM)'), withDesc(bill('c', 'GRN-1', 'CODY-(K)', 1), 'CODY BEDFRAME (6FT) (183X190CM)')], ['GRN-1'], new Map(), new Map());
+    expect(lines[0]!.grnItemId).toBeNull();
+  });
+  test('DIVAN ONLY 3FT is not JAGER-(S) (INV-2610-027 row 16)', () => {
+    const lines = [row('DIVAN-(S)', 'DIVAN ONLY (3FT) (90X190CM)')];
+    suggestBills(lines, [withDesc(bill('j', 'GRN-1', 'JAGER-(S)', 1), 'JAGER BEDFRAME (3FT) (90X190CM)')], ['GRN-1'], new Map(), new Map());
+    expect(lines[0]!.grnItemId).toBeNull();
+  });
+  test('the same model of the size still matches by name', () => {
+    const lines = [row('1013-(S)', 'JAGER BEDFRAME (3FT) (90X190CM)')];
+    suggestBills(lines, [withDesc(bill('j', 'GRN-1', 'JAGER-(S)', 1), 'JAGER BEDFRAME (3FT) (90X190CM)'), withDesc(bill('c', 'GRN-1', 'CODY-(S)', 1), 'CODY BEDFRAME (3FT) (90X190CM)')], ['GRN-1'], new Map(), new Map());
+    expect(lines[0]!.grnItemId).toBe('j');
+  });
+});

@@ -42,6 +42,7 @@ import { pickState } from '../../vendor/scm/lib/address-cascade';
 import { useStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
+import { parseReturnLineQty, returnLineQtyMessage } from '../../vendor/shared/return-line-qty';
 import { DetailLoadFailure } from './DetailLoadFailure';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -208,6 +209,11 @@ export const DeliveryReturnDetail = () => {
     const lineEntries = Object.entries(drafts).filter((e): e is [string, SoLineDraft] => e[1] !== undefined);
     if (lineEntries.some(([, d]) => !d.itemCode.trim())) {
       setSaveError('Every line must have a product selected before saving.');
+      return;
+    }
+    const badQty = lineEntries.find(([, d]) => parseReturnLineQty(d.qty) === null);
+    if (badQty) {
+      setSaveError(returnLineQtyMessage(badQty[1].itemCode, Number.isFinite(badQty[1].qty) ? badQty[1].qty : null));
       return;
     }
     setSaving(true);
