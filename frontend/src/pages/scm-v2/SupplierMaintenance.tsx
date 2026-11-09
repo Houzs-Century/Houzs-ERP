@@ -353,6 +353,8 @@ type FormState = {
 };
 /** The form's plain text fields — what the one-line field helper edits. */
 type TextKey = { [K in keyof FormState]: FormState[K] extends string ? K : never }[keyof FormState];
+/* The supplier's name and bank are kept in upper case (owner 2026-11-09; the database upper-cases them too). */
+const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankName', 'bankAccountName']);
 
 const fromSupplier = (s: SupplierRow | null): FormState => ({
   code: s?.code ?? '', name: s?.name ?? '', status: s?.status ?? 'ACTIVE',
@@ -389,6 +391,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
     <label className={styles.field} style={opts.full ? { gridColumn: '1 / -1' } : undefined}>
       <span className={styles.fieldLabel}>{label}</span>
       <input className={styles.fieldInput} value={f[k]} placeholder={opts.placeholder} aria-label={label}
+        data-upper={UPPER_FIELDS.has(k) ? '' : undefined}
         onChange={(e) => set(k, e.target.value)} />
     </label>
   );

@@ -728,7 +728,7 @@ export const PaymentVoucherDetail = () => {
             <div className={styles.formGrid2}>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>{isRefundPv ? 'Customer' : 'Payee *'}</span>
-                <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} readOnly={isRefundPv} />
+                <input data-upper type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} readOnly={isRefundPv} />
               </label>
               {isRefundPv && (
                 <label className={styles.field}>
@@ -804,7 +804,7 @@ export const PaymentVoucherDetail = () => {
               </label>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Remark</span>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher remark" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+                <textarea data-upper value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher remark" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
               </label>
               <PvPayToFields value={payTo} onChange={setPayTo} />
             </div>
@@ -903,7 +903,7 @@ export const PaymentVoucherDetail = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Description</span>
-                      <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
+                      <input data-upper type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
                     </label>
                   </div>
                   <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>

@@ -129,7 +129,8 @@ export async function renderPaymentVoucherInto(
      batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
     docTitle: header.purpose === 'CUSTOMER_REFUND' ? 'CUSTOMER REFUND'
-      : String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
+      /* Case-blind: the payee is stored in upper case from 2026-11-09 (INTERNAL TRANSFER TO …). */
+      : /^internal transfer to /i.test(String(header.payee_name)) ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
       { label: 'Date',  value: fmtDocDate(header.voucher_date) },
