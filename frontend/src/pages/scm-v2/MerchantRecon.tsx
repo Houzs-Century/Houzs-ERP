@@ -1154,7 +1154,12 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle, qr = false }: {
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find the sale"
           placeholder="SO number, customer, approval code or amount"
           style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.25))', borderRadius: 'var(--radius-sm)', minWidth: 260 }} />
-        <span style={softText}>Any {kind} payment of this company, whatever its date — the exact {fmt(grossSen)} is marked possible.</span>
+        <span style={softText}>
+          {qr
+            /* Owner 2026-11-09: 已经match 的就不应该出现 — a transfer already on the bank statement is not a QR's. */
+            ? `Any Online payment of this company not yet on the bank statement, whatever its date — the exact ${fmt(grossSen)} is marked possible.`
+            : `Any card payment of this company, whatever its date — the exact ${fmt(grossSen)} is marked possible.`}
+        </span>
       </div>
       {found.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{refusalText(found.error, 'The search did not run.')}</div>
@@ -1181,7 +1186,8 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle, qr = false }: {
                 <td style={cell}>
                   <DocLink source={p.source} docNo={p.docNo} />
                   {p.possible && <span className={styles.codeChip} style={{ marginLeft: 6 }}>possible</span>}
-                  {p.merchantProvider === null && (
+                  {/* A card payment keyed without its bank. An Online payment has no bank to key. */}
+                  {!qr && p.merchantProvider === null && (
                     <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
                   )}
                 </td>
@@ -1367,8 +1373,9 @@ const SettlementLine = ({ row, others = [] }: {
                     {/* A migration-era payment carries no merchant tag; say so
                         where it is being claimed. Confirming writes the tag.
                         Strictly null: a candidate WITHOUT the field (an older
-                        cached response) is unknown, not untagged. */}
-                    {p.merchantProvider === null && (
+                        cached response) is unknown, not untagged. A QR line's
+                        sale is an Online payment, which has no bank to key. */}
+                    {!qr && p.merchantProvider === null && (
                       <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
                     )}
                   </td>

@@ -73,6 +73,8 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
     mfg_so_audit_log: [],
     journal_entries: [],
     journal_entry_lines: [],
+    acc_bank_statement_lines: [],
+    acc_bank_statement_matches: [],
     ...over,
   },
   {},
@@ -176,5 +178,57 @@ describe('postBatchReceipt — a QR report is never paid out through the clearin
     expect((r as { reason: string }).reason).toMatch(/QR/);
     expect(sb.tables.journal_entries).toEqual([]);
     expect(sb.tables.acc_settlement_receipts).toEqual([]);
+  });
+});
+
+/* Owner 2026-11-09, on Find the sale for a QR line listing 73 Online payments,
+   61 of them long matched on the bank statement: 「为什么我按find the sales 还有
+   这么多？」 → 做, and 「已经match 的就不应该出现」. A transfer whose entry a
+   bank line already holds is that customer's own money on the statement — it
+   cannot be a QR's. A match row left on an OPEN line (docs/bugs/0802) holds
+   nothing. */
+describe('a transfer already matched on the bank statement is never offered to a QR line', () => {
+  const BANKED: Record<string, Row[]> = {
+    journal_entries: [
+      { id: 'je-small', company_id: 2, je_no: '2990-JE-2611-0090', source_type: 'SOPAY', source_doc_no: 'small', posted: true, reversed: false },
+      { id: 'je-jenny', company_id: 2, je_no: '2990-JE-2611-0106', source_type: 'SOPAY', source_doc_no: 'jenny', posted: true, reversed: false },
+    ],
+    acc_bank_statement_lines: [
+      { id: 1055, company_id: 2, state: 'POSTED', posted_je_no: '2990-JE-2611-0090' },
+      { id: 1064, company_id: 2, state: 'OPEN', posted_je_no: null },
+    ],
+    acc_bank_statement_matches: [
+      { id: 1, company_id: 2, bank_line_id: 1055, je_no: '2990-JE-2611-0090', amount_sen: 10000 },
+      { id: 2, company_id: 2, bank_line_id: 1064, je_no: '2990-JE-2611-0106', amount_sen: 324000 },
+    ],
+  };
+
+  it('the Online pool leaves it out; a leftover row on an open line holds nothing', async () => {
+    const r = await loadPaymentCandidates(world(BANKED), 2, { display_name: 'HLB', date_tolerance_days: 7 }, '2026-10-31', '2026-11-01', [], { online: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.payments.map((p) => p.id)).toEqual(['jenny']);
+  });
+
+  it('Find the sale on a QR line leaves it out too', async () => {
+    const out = await findPaymentsForRow(world(BANKED), 2, 856, '');
+    expect(out.ok && out.payments.map((p) => p.id)).toEqual(['jenny']);
+  });
+
+  it('a card line is not affected', async () => {
+    const out = await findPaymentsForRow(world(BANKED), 2, 853, '');
+    expect(out.ok && out.payments.map((p) => p.id)).toEqual(['how']);
+  });
+
+  it('a read that fails is a refusal, not "nothing is matched"', async () => {
+    const sb = fakeSb(
+      {
+        acc_settlement_rows: [{ ...QR_ROW }], acc_settlement_matches: [], mfg_sales_order_payments: PAYMENTS.map((p) => ({ ...p })),
+        mfg_sales_orders: [], sales_invoice_payments: [], sales_invoices: [], ...BANKED,
+      },
+      { acc_bank_statement_matches: ['je_no'] },
+    );
+    const out = await findPaymentsForRow(sb, 2, 857, '');
+    expect(out).toMatchObject({ ok: false, status: 'load_failed' });
   });
 });
