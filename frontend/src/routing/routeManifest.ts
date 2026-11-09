@@ -99,6 +99,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/product-requests",
   "/scm/official-docs",
   "/scm/supplier-maintenance",
+  // The day's payments, a line each with the bank (owner 2026-11-08).
+  "/scm/payment-listing",
   "/scm/forecast",
   "/scm/finance-dashboard",
   "/scm/payment-vouchers/:id",

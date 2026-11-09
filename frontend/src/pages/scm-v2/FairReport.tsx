@@ -70,6 +70,7 @@ import {
 import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import sr from './reports/SalesReport.module.css';
+import { guardFormula } from '../../lib/csv';
 
 // ── money / number formatting ────────────────────────────────────────────────
 /** A grid cell: nothing reads as a dash, so a wide grid reads cleanly. */
@@ -576,7 +577,7 @@ export function salesSheet<R>(o: {
 // ── CSV export (the report's own, under ⋯) ──────────────────────────────────
 function toCsv(headers: string[], rows: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined) => {
-    const s = v == null ? '' : String(v);
+    const s = v == null ? '' : guardFormula(String(v));
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return [headers, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');

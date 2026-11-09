@@ -144,6 +144,7 @@ const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests")
 const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
 const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
+const ScmPaymentListingV2 = lazy(() => import("./pages/scm-v2/PaymentListing").then((m) => ({ default: m.PaymentListing })));
 const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
 /* Money in › Credit / debit notes — its own list since the owner's Claude Design (batch 5 step 7); Money out keeps CreditNotes. */
 const ScmMoneyInNotesV2 = lazy(() => import("./pages/scm-v2/money-in/MoneyInNotes").then((m) => ({ default: m.MoneyInNotes })));
@@ -867,6 +868,7 @@ export default function App() {
         <Route path="/scm/official-docs" element={<Guard anyPerm={["*", "scm.payment_voucher.create"]}><Scm2990Shell><ScmOfficialDocsV2 /></Scm2990Shell></Guard>} />
         {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}
         <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/payment-listing" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentListingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApBillPage /></Scm2990Shell></ScmGuard>} />
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — two pages since

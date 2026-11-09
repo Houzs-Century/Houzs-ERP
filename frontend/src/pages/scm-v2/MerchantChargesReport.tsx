@@ -19,6 +19,7 @@
 // columns (fin-mc-cw), Excel / PDF / Print as shown, the CSV under ⋯.
 // ----------------------------------------------------------------------------
 
+import { guardFormula } from '../../lib/csv';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
@@ -54,7 +55,7 @@ const WIDTHS: ColumnWidthSpec = {
 /* The table as CSV: a month line, its merchants, their reports — or, under
    Cash and Online, the payments. */
 export const merchantChargesCsv = (r: MerchantChargesReport): string => {
-  const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const figures = (f: ChargeFigures) => [f.lines, fmtRm(f.grossSen), fmtRm(f.feeSen), fmtPct(f.feePct), fmtRm(f.bankChargeSen), fmtRm(f.chargeSen), fmtPct(f.chargePct), fmtRm(f.netSen)];
   const lines: string[] = [COLUMNS.map(esc).join(',')];
   for (const m of r.months) {
