@@ -31,6 +31,38 @@ appended) → `BREAKDOWN` (a non-RESOLVED breakdown case on a lorry that cannot 
   Lorry Capacity and come off occupancy on the Logistic Overview.
 - **Component**: `ACTIVE → REMOVED`; at most one ACTIVE component per
   `(lorry, position)` (position `NA` excluded).
+- **Off the road** (`scm.lorry_maintenance`, mig 0053): a window of DAYS
+  (`unavailable_from`..`unavailable_to`, both `DATE NOT NULL`, no time, no
+  "ended" column). Three writers: staff by hand from the lorry (Coverage & Fleet
+  lorry drawer, and the Maintenance tab of `/fleet-health/:lorryId`), a
+  scheduled lorry-service DP job (reason `DP lorry service — <DP no>`), and
+  Repair Days on Lorry Capacity (reason `Repair days (dashboard)`). Readers ask
+  `from <= today <= to`: Fleet Health's `OUT_OF_SERVICE`, the delivery-planning
+  fleet board (`fleet-availability.ts`), and repair days on Lorry Capacity /
+  Logistic Overview (`lorry-down-days.ts`).
+  - No expected return is stored as `unavailable_to = 9999-12-31`
+    (`OPEN_ENDED_TO`), which every reader already treats as "still off"; the
+    API returns it as `to: null, openEnded: true`.
+  - "Back on the road" makes the lorry usable TODAY (Malaysia date): a window
+    that began before today gets `unavailable_to = yesterday`; one that begins
+    today or later is deleted. Both write an `entity_audit_log` row
+    (`LORRY_OFF_ROAD`, keyed by the window id).
+  - A window written by a DP job or Repair Days is refused here (409
+    `owned_by_dp_job` / `owned_by_repair_days`): those owners find their rows
+    by the reason string, so a manual reason may not use either wording (400
+    `reserved_reason`).
+
+## Endpoints added outside fleet-maintenance.ts
+
+- `GET  /api/fleet-maintenance/vehicles/:id/off-road` (`fleet.read`) — the
+  lorry's windows, newest first, each with `id`, `from`, `to`, `openEnded`,
+  `reason`, `source` (`manual` / `dp_job` / `repair_days`).
+- `POST /api/fleet-maintenance/vehicles/:id/off-road` (`fleet.write`) —
+  `{ from, expectedReturn | null, reason }`; reason required.
+- `PATCH /api/fleet-maintenance/off-road/:windowId/end` (`fleet.write`) —
+  answers `outcome: "ended" | "removed"`; 409 `already_ended` on a past window.
+- All three in `backend/src/scm/routes/fleet-off-road.ts`; unified fleet like
+  the rest of this module (no company predicate, `company_id` stamped).
 
 ## Permissions
 
@@ -129,6 +161,11 @@ appended) → `BREAKDOWN` (a non-RESOLVED breakdown case on a lorry that cannot 
 - `frontend/src/pages/FleetHealth.tsx` — desktop board + drawer (section
   components exported for reuse).
 - `frontend/src/pages/LorryRecord.tsx` — the full per-lorry record page.
+- `frontend/src/pages/fleet/OffRoadPanel.tsx` — take off / back on the road,
+  used by the record page and the Coverage & Fleet lorry drawer
+  (`pages/scm-v2/fleet/LorryDrawer.tsx`). Errors and the confirm are inline
+  because `/fleet-health/:lorryId` is not inside the SCM dialog shell. There is
+  no mobile lorry screen (`/fleet-health` on a phone is mileage capture).
 - `frontend/src/mobile/MobileMileageCapture.tsx` — driver mileage +
   breakdown-report screen.
 - `backend/scripts/seed-fleet-maintenance.mjs`,

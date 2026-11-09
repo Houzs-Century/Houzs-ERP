@@ -27,6 +27,9 @@ describe("offRoadRows", () => {
   it("a window with no dates is not given a length", () => {
     expect(offRoadRows([{ from: null, to: null, reason: "x" }], today)[0]).toMatchObject({ state: "now", days: null });
   });
+  it("a window with no expected return is off now, with no end and no length", () => {
+    expect(offRoadRows([{ from: "2026-11-05", to: "9999-12-31", reason: "Accident" }], today)[0]).toMatchObject({ to: null, state: "now", days: null });
+  });
 });
 
 describe("attentionScore", () => {
