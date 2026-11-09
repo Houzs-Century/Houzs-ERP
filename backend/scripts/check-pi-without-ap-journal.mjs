@@ -107,8 +107,28 @@ async function main() {
         FROM scm.purchase_invoice_items i
         JOIN gap g ON g.id = i.purchase_invoice_id
        GROUP BY i.purchase_invoice_id
+    ),
+    totals AS (
+      SELECT p.company_id,
+             COUNT(*) FILTER (WHERE NOT p.migrated)::int AS n_posted,
+             COALESCE(SUM(ROUND(p.total_sen * COALESCE(NULLIF(p.exchange_rate, 0), 1))) FILTER (WHERE NOT p.migrated), 0)::bigint AS sen_posted,
+             (SELECT COUNT(*)::int FROM scm.entity_audit_log a
+                JOIN scm.purchase_invoices x ON a.entity_id = x.id::text
+               WHERE a.entity_type = 'PURCHASE_INVOICE' AND a.action = 'CREATE'
+                 AND x.company_id IS NOT DISTINCT FROM p.company_id
+                 AND COALESCE(a.note, '') LIKE 'Converted from Goods Receipt%'
+                 AND UPPER(COALESCE(a.status_snapshot, '')) = 'POSTED') AS n_autopost_ever
+        FROM pis p
+       GROUP BY p.company_id
     )
-    SELECT g.company_id, co.code AS company_code, g.invoice_number, g.invoice_date,
+    SELECT 'total' AS kind, t.company_id, co.code AS company_code, NULL::text AS invoice_number,
+           NULL::date AS invoice_date, NULL::text AS status, t.sen_posted AS total_sen, NULL::text AS currency,
+           NULL::text AS exchange_rate, false AS migrated, false AS has_active, false AS from_grn_fingerprint,
+           NULL::text AS path, t.n_posted AS n_lines, t.n_autopost_ever AS n_ungrouped, 0 AS n_unbound
+      FROM totals t
+      LEFT JOIN public.companies co ON co.id = t.company_id
+    UNION ALL
+    SELECT 'gap' AS kind, g.company_id, co.code AS company_code, g.invoice_number, g.invoice_date,
            g.status::text AS status, g.total_sen::bigint AS total_sen, g.currency,
            g.exchange_rate::text AS exchange_rate, g.migrated, g.has_active,
            (g.grn_id IS NOT NULL AND COALESCE(g.notes, '') LIKE 'From %') AS from_grn_fingerprint,
@@ -125,14 +145,17 @@ async function main() {
       LEFT JOIN created c ON c.entity_id::text = g.id::text
       LEFT JOIN lines l ON l.pi_id = g.id
       LEFT JOIN public.companies co ON co.id = g.company_id
-     ORDER BY g.company_id NULLS LAST, g.invoice_date, g.invoice_number`;
+     ORDER BY kind DESC, company_id NULLS LAST, invoice_date, invoice_number`;
 
+  const keyOf = (r) => `${r.company_id ?? "null"} ${r.company_code ?? ""}`.trim();
+  const totals = new Map(rows.filter((r) => r.kind === "total").map((r) => [keyOf(r), r]));
+  const gaps = rows.filter((r) => r.kind === "gap");
   notice("=== POSTED purchase invoices with NO posted AP journal (READ-ONLY) ===");
-  notice(`rows found: ${rows.length} (migrated AutoCount paperwork included and counted separately; it has no journal by design)`);
+  notice(`rows found: ${gaps.length} (migrated AutoCount paperwork included and counted separately; it has no journal by design)`);
 
-  const byCompany = new Map();
-  for (const r of rows) {
-    const k = `${r.company_id ?? "null"} ${r.company_code ?? ""}`.trim();
+  const byCompany = new Map([...totals.keys()].map((k) => [k, []]));
+  for (const r of gaps) {
+    const k = keyOf(r);
     if (!byCompany.has(k)) byCompany.set(k, []);
     byCompany.get(k).push(r);
   }
@@ -143,6 +166,11 @@ async function main() {
     const myr = (rs) => rs.reduce((s, r) => s + Math.round(Number(r.total_sen) * (Number(r.exchange_rate) || 1)), 0);
     notice("");
     notice(`--- company ${k} ---`);
+    const t = totals.get(k);
+    if (t) {
+      notice(`posted invoices in the population (not draft, not cancelled, not migrated): ${t.n_lines}, ${rm(t.total_sen)}`);
+      notice(`invoices ever created already-POSTED by /from-grn or /from-grn-items (audit CREATE rows): ${t.n_ungrouped}`);
+    }
     notice(`missing AP journal (excluding migrated): ${real.length} invoices, ${rm(myr(real))} (MYR at each invoice's own rate)`);
     notice(`migrated AutoCount paperwork (no journal by design): ${migrated.length} invoices, ${rm(myr(migrated))}`);
     if (real.length === 0) continue;
@@ -176,7 +204,7 @@ async function main() {
       notice(`   ${String(r.invoice_number).padEnd(18)} ${day(r.invoice_date)}  ${rm(r.total_sen).padStart(16)}${cur}  ${String(r.status).padEnd(14)} ${r.path.padEnd(22)} ${reasonOf(r)}`);
     }
   }
-  if (rows.length === 0) notice("No POSTED purchase invoice is missing its AP journal.");
+  if (gaps.length === 0) notice("No POSTED purchase invoice is missing its AP journal.");
 }
 
 try {
