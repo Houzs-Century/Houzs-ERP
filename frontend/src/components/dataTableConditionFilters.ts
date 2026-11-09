@@ -9,6 +9,7 @@
  * the active-filter counts need no second path.
  */
 import type { ReactNode } from "react";
+import { mytDayOfValue } from "../vendor/scm/lib/dates";
 
 const MARK = "\u0001";
 
@@ -97,10 +98,12 @@ export function presetRange(preset: DatePreset, now = Date.now()): DateRange {
   }
 }
 
-export function dateMatchesPreset(iso: string | null | undefined, preset: DatePreset, now = Date.now()): boolean {
-  if (!iso) return false;
-  const d = String(iso).slice(0, 10);
-  if (d.length < 10) return false;
+/* A row is judged by the Malaysian day its value falls on: a timestamp's first
+   ten characters are the UTC day, which puts 00:00-08:00 Malaysia time on the
+   day before (owner 2026-11-09). */
+export function dateMatchesPreset(value: string | null | undefined, preset: DatePreset, now = Date.now()): boolean {
+  const d = mytDayOfValue(value);
+  if (!d) return false;
   const { from, to } = presetRange(preset, now);
   return (!from || d >= from) && (!to || d <= to);
 }
@@ -145,7 +148,7 @@ export function rowMatchesCondition<T>(row: T, c: Condition, col: ConditionColum
     return true;
   }
   const raw = col.dateValue ? col.dateValue(row) : col.getValue?.(row);
-  const iso = raw == null ? "" : String(raw).slice(0, 10).replaceAll("/", "-");
+  const iso = typeof raw === "boolean" ? null : mytDayOfValue(raw);
   if (c.kind === "preset") return dateMatchesPreset(iso, c.preset);
   if (!iso) return false;
   if (c.from && iso < c.from) return false;
