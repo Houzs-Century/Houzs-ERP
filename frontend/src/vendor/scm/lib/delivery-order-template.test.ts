@@ -472,6 +472,29 @@ describe('Delivery Order — Theme C template', () => {
     expect(without.spans.some((s) => s.text === 'Salesperson')).toBe(false);
   });
 
+  test('the ship-from warehouse prints by name, falls back to its code, and is omitted when unrecorded', async () => {
+    /* Conts-ERP #717: with several warehouses the paper DO must say where the
+       goods leave from. The DO detail GET carries warehouse_name / warehouse_code. */
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const named = await renderDo(
+      [itemAt(1)],
+      { ...HEADER, warehouse_name: 'Balakong Warehouse', warehouse_code: 'BLK' } as typeof HEADER,
+    );
+    const label = named.spans.find((s) => s.text === 'Warehouse');
+    expect(label).toBeDefined();
+    const value = named.spans.find((s) => s.text === 'Balakong Warehouse');
+    expect(value).toBeDefined();
+    expect(value!.y).toBe(label!.y);
+    expect(value!.left).toBeGreaterThan(label!.right);
+    expect(named.spans.some((s) => s.text === 'BLK')).toBe(false);
+
+    const codeOnly = await renderDo([itemAt(1)], { ...HEADER, warehouse_name: null, warehouse_code: 'BLK' } as typeof HEADER);
+    expect(codeOnly.spans.some((s) => s.text === 'BLK')).toBe(true);
+
+    const none = await renderDo([itemAt(1)]);
+    expect(none.spans.some((s) => s.text === 'Warehouse')).toBe(false);
+  });
+
   test('the DELIVERY DETAILS block does not print a Status row', async () => {
     /* Owner 2026-09-21: the customer's copy states what is delivered, not the
        order's workflow state. HEADER.status is 'dispatched', so a value exists
