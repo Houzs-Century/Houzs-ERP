@@ -376,7 +376,7 @@ purchaseConsignmentReturns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
     scopeToCompany(sb.from('purchase_consignment_returns')
-      .select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_consignment_order:purchase_consignment_orders(id, pc_number), pc_receive:purchase_consignment_receives(id, receive_number)`)
+      .select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_consignment_order:purchase_consignment_orders(id, pc_number), pc_receive:purchase_consignment_receives(id, receive_number)`)
       .eq('id', id), c).maybeSingle(),
     sb.from('purchase_consignment_return_items').select(ITEM).eq('purchase_consignment_return_id', id).order('created_at'),
   ]);
