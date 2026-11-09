@@ -84,6 +84,7 @@ follows the new SLA at once.
 - `items[]` is NOT required at create — a case need not be about a defective
   product. Create refuses a duplicate open case for the same
   `item_code`+`doc_no` (409 `duplicate_open_case`).
+- A crew "Delivered with issue" report (POD / job stop) creates its case in `scm/lib/delivery-issue.ts` via `createAssrCase` (issue category "Delivery issue", `delivery_order` = the DO, no items, photos as `complaint`), not through `POST /api/assr`: the delivery route has already proved company scope and the crew's own job. See `docs/modules/delivery-tms.md`.
 - `service_category` is an ARRAY join table — every save must send the
   complete list; `PATCH` rewrites the join rows from exactly what it is
   given, so a partial list silently deletes categories.

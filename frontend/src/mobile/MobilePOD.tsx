@@ -14,6 +14,11 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import {
+  deliveryIssueDraftError, invalidateDeliveryIssues, reportDoDeliveryIssue, useDoDeliveryIssues, useRunDeliveryIssues,
+  type DeliveryIssueDraft,
+} from "../vendor/scm/lib/delivery-issue-queries";
+import { DeliveryIssueForm, MobileDeliveryIssues, EMPTY_ISSUE_DRAFT } from "./DeliveryIssueForm";
 import "./mobile.css";
 
 /* Proof-of-Delivery (POD) — mobile driver screen for confirming a Delivery
@@ -158,6 +163,13 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /* "Delivered with issue": the crew ticks the problem and it is sent AFTER the
+     delivery is saved, so a problem never blocks the delivery (A2). */
+  const [issueOn, setIssueOn] = useState(false);
+  const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
+  const crewIssuesQ = useRunDeliveryIssues({ do: [docNo] }, isCrew);
+  const officeIssuesQ = useDoDeliveryIssues(isCrew ? null : doId);
+  const reportedIssues = isCrew ? crewIssuesQ.data : officeIssuesQ.data;
 
   const delivered = h ? isDelivered(h.status) : false;
   const cancelled = h ? isCancelled(h.status) : false;
@@ -176,6 +188,8 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       setActionError(gate.reason);
       return;
     }
+    const issueError = issueOn ? deliveryIssueDraftError(issueDraft) : null;
+    if (issueError) { setActionError(issueError); return; }
     const notes: string[] = [];
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
@@ -187,8 +201,9 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
        the SILENCE: this screen offered a signature pad and then filed the
        delivery either way without saying which had happened. */
     if (!hasSignature) notes.push("No customer signature has been captured.");
+    if (issueOn) notes.push("The problem will be reported and a service case opened.");
     if (!(await confirm({
-      title: `Mark ${h.do_number ?? docNo} delivered?`,
+      title: issueOn ? `Mark ${h.do_number ?? docNo} delivered with issue?` : `Mark ${h.do_number ?? docNo} delivered?`,
       body: notes.length ? notes.join(" ") : undefined,
       confirmLabel: "Confirm delivered",
     }))) return;
@@ -255,12 +270,42 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       invalidateDoShared(qc);
       invalidateInventoryShared(qc);
       invalidateSoShared(qc);
-      onDone?.();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-    } finally {
       setBusy(false);
+      return;
     }
+    if (issueOn && !(await sendIssue("The delivery is saved, but the problem report did not send"))) {
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    onDone?.();
+  };
+
+  /* Sends the problem report. The DO is already delivered when this runs (from
+     Confirm, or later on a delivered DO); a failure keeps the form so the crew
+     can send it again. */
+  const sendIssue = async (failPrefix: string): Promise<boolean> => {
+    try {
+      await reportDoDeliveryIssue(h?.do_number ?? doId ?? docNo, issueDraft);
+      setIssueDraft(EMPTY_ISSUE_DRAFT);
+      setIssueOn(false);
+      await invalidateDeliveryIssues(qc);
+      return true;
+    } catch (e) {
+      setActionError(`${failPrefix}: ${e instanceof Error ? e.message : "please try again"}.`);
+      return false;
+    }
+  };
+  const sendIssueOnly = async () => {
+    if (busy) return;
+    const err = deliveryIssueDraftError(issueDraft);
+    if (err) { setActionError(err); return; }
+    setActionError(null);
+    setBusy(true);
+    await sendIssue("The problem report did not send");
+    setBusy(false);
   };
 
   const captureGps = () => {
@@ -424,6 +469,26 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               </button>
             </div>
 
+            {/* Delivered with issue — reported problems, then the form. */}
+            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Problem with this delivery?</div>
+            <MobileDeliveryIssues issues={reportedIssues} />
+            {!cancelled && canComplete && (
+              !issueOn ? (
+                <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", color: "var(--red)", borderColor: "var(--red)" }}>
+                  {delivered ? "Report a problem" : "Delivered with issue"}
+                </button>
+              ) : (
+                <div className="card" style={{ padding: 12, border: "1px solid var(--red)" }}>
+                  <DeliveryIssueForm value={issueDraft} onChange={setIssueDraft} disabled={busy} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button type="button" className="btn-ghost" disabled={busy} onClick={() => { setIssueOn(false); setIssueDraft(EMPTY_ISSUE_DRAFT); }} style={{ flex: 1 }}>No problem</button>
+                    {delivered && <button type="button" className="btn" disabled={busy} onClick={sendIssueOnly} style={{ flex: 1 }}>{busy ? "Sending…" : "Send report"}</button>}
+                  </div>
+                  {!delivered && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 8 }}>The delivery is still recorded as delivered; the office gets a service case with your photos.</div>}
+                </div>
+              )
+            )}
+
             {actionError && <div style={{ marginTop: 14, fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{actionError}</div>}
           </>
         )}
@@ -433,7 +498,7 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       <footer className="actbar">
         {!loading && !notFound && !loadError && h && !delivered && !cancelled && canComplete && (
           <button type="button" className="btn" disabled={busy} onClick={confirmDelivered} style={{ opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}>
-            {busy ? "Working…" : "Confirm delivered →"}
+            {busy ? "Working…" : issueOn ? "Confirm delivered with issue →" : "Confirm delivered →"}
           </button>
         )}
         {/* View-only (Sales cohort): confirming a delivery is the Office team's
