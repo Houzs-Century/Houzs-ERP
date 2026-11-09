@@ -148,7 +148,7 @@ export const usePostPurchaseInvoice = () => {
     onSuccess: async (res, id) => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', id] });
-      const gap = piLedgerGap(res?.ledger);
+      const gap = piLedgerGap(res.ledger);
       if (gap) await serviceNotify({ title: 'Invoice posted without its AP journal', body: gap.charAt(0).toUpperCase() + gap.slice(1), tone: 'error' });
     },
     /* The AP commit had no error path until 2026-08-21, while every sibling in
