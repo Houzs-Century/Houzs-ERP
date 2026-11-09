@@ -234,11 +234,16 @@ export async function loadPayoutAdvices(
 export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
 ): Promise<{ ok: true; movements: LedgerMovement[] } | Fail> {
-  const { data, error } = await sb.from('v_gl_entries')
+  /* Paged (Conts #334): a bank account passes 1,000 ledger lines within a year,
+     and an unpaged read got the first 1,000 and no error, so the rest of the
+     postings read as "not in the books". line_id keeps the pages stable. */
+  const { data, error } = await paginateAll<Record<string, any>>((lo, hi) => sb.from('v_gl_entries')
     .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes, party_name, reversed, reversed_by_je')
     .eq('company_id', companyId)
     .eq('account_code', accountCode)
-    .lte('entry_date', upTo);
+    .lte('entry_date', upTo)
+    .order('line_id')
+    .range(lo, hi));
   if (error) return { ok: false, reason: error.message };
 
   /* One ENTRY per row, not one line: an entry can touch the bank account twice
@@ -298,28 +303,29 @@ export async function loadClaimedElsewhere(
   sb: Parameters<typeof loadAccountLedger>[0], companyId: number, accountCode: string, exceptStatementId: number | null,
   upTo: string | null = null,
 ): Promise<{ ok: true; claimed: Set<string>; firstPeriodFrom: string | null } | Fail> {
-  const { data: stmts, error: sErr } = await sb.from('acc_bank_statements')
-    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode);
+  const { data: stmts, error: sErr } = await paginateAll<{ id: number; period_from: string | null }>((lo, hi) => sb.from('acc_bank_statements')
+    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode).order('id').range(lo, hi));
   if (sErr) return { ok: false, reason: sErr.message };
-  const all = (stmts ?? []) as Array<{ id: number; period_from: string | null }>;
+  const all = stmts ?? [];
   const firstPeriodFrom = all.map((s) => String(s.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
   const ids = all.map((s) => Number(s.id)).filter((id) => id !== exceptStatementId);
   const claimed = new Set<string>();
   if (ids.length === 0) return { ok: true, claimed, firstPeriodFrom };
 
-  const { data: lines, error: lErr } = await sb.from('acc_bank_statement_lines')
-    .select('id, posted_je_no, state, booked_on').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
+  const { data: lines, error: lErr } = await chunkIn<{ id: number; posted_je_no: string | null; booked_on: string | null }, number>(ids, (batch, lo, hi) => sb.from('acc_bank_statement_lines')
+    .select('id, posted_je_no, state, booked_on').eq('company_id', companyId).in('statement_id', batch).eq('state', 'POSTED')
+    .order('id').range(lo, hi));
   if (lErr) return { ok: false, reason: lErr.message };
-  const posted = ((lines ?? []) as Array<{ id: number; posted_je_no: string | null; booked_on: string | null }>)
+  const posted = lines
     .filter((l) => upTo == null || String(l.booked_on ?? '').slice(0, 10) <= upTo);
   for (const l of posted) for (const je of jeNosOf(l.posted_je_no)) claimed.add(je);
 
   const postedIds = posted.map((l) => Number(l.id));
   if (postedIds.length > 0) {
-    const { data: matches, error: mErr } = await sb.from('acc_bank_statement_matches')
-      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', postedIds);
+    const { data: matches, error: mErr } = await chunkIn<{ je_no: string }, number>(postedIds, (batch, lo, hi) => sb.from('acc_bank_statement_matches')
+      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', batch).order('id').range(lo, hi));
     if (mErr) return { ok: false, reason: mErr.message };
-    for (const m of (matches ?? []) as Array<{ je_no: string }>) claimed.add(String(m.je_no));
+    for (const m of matches) claimed.add(String(m.je_no));
   }
   return { ok: true, claimed, firstPeriodFrom };
 }
@@ -448,4 +454,37 @@ export async function loadLinesForRepeats(
         : `${file}${state === 'OPEN' ? ' (still open there)' : state === 'IGNORED' ? ' (left out there)' : ''}`);
     }),
   };
+}
+
+/** Rows or the read's error, the shape a single PostgREST call answers with,
+    so a call site swaps its query for one of these and keeps its handling. */
+type Rows = { data: Array<Record<string, any>>; error: { message: string } | null };
+
+/**
+ * Every statement line of these statements, paged and chunked (Conts #334):
+ * an account's lines pass PostgREST's 1,000-row reply within a year, and the
+ * unpaged read dropped the rest without an error. Sorted by day, then where the
+ * line sat in its file — the order the month screens read downwards.
+ */
+export async function loadStatementLines(
+  sb: any, companyId: number, statementIds: readonly number[], fields: string,
+): Promise<Rows> {
+  if (statementIds.length === 0) return { data: [], error: null };
+  const res = await chunkIn<Record<string, any>, number>([...statementIds], (batch, lo, hi) => sb.from('acc_bank_statement_lines')
+    .select(fields).eq('company_id', companyId).in('statement_id', batch).order('id').range(lo, hi));
+  if (res.error) return { data: [], error: res.error };
+  const data = [...res.data].sort((a, b) =>
+    String(a.booked_on ?? '').localeCompare(String(b.booked_on ?? ''))
+    || Number(a.line_no ?? 0) - Number(b.line_no ?? 0)
+    || Number(a.id ?? 0) - Number(b.id ?? 0));
+  return { data, error: null };
+}
+
+/** Every match row of the company, paged: a company's matches pass 1,000 long
+    before any one account's lines do, and a dropped match row turned a
+    reconciled line back into an unexplained one (Conts #334). */
+export async function loadCompanyMatches(sb: any, companyId: number, fields: string): Promise<Rows> {
+  const res = await paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_bank_statement_matches')
+    .select(fields).eq('company_id', companyId).order('id').range(lo, hi));
+  return { data: res.data ?? [], error: res.error };
 }

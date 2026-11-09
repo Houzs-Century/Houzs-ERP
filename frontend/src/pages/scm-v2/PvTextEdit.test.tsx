@@ -31,7 +31,7 @@ beforeEach(() => {
 describe('Edit text & bank', () => {
   test('starts from the voucher\'s own words and the bank it pays into', () => {
     show();
-    expect(valueOf('Description')).toBe('BILL 134 · DATED 2026-11-03');
+    expect(valueOf('Remark')).toBe('BILL 134 · DATED 2026-11-03');
     expect(valueOf('Line 1 description')).toBe('Rental deposit');
     expect(valueOf('Line 2 description')).toBe('');
     expect(valueOf('Bank')).toBe('CIMB');
@@ -41,7 +41,7 @@ describe('Edit text & bank', () => {
 
   test('Save sends the words and nothing else when the bank is left as it was, then closes', async () => {
     show();
-    typeInto('Description', 'Rental for Sunway Kluang');
+    typeInto('Remark', 'Rental for Sunway Kluang');
     typeInto('Line 2 description', 'Balance of the rental');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -82,12 +82,12 @@ describe('Edit text & bank', () => {
   test('a refusal is said on the form, which stays open with what was typed', async () => {
     h.mutateAsync.mockRejectedValue(new Error('This voucher is approved — its journal carries these words, so they stay as they are.'));
     show();
-    typeInto('Description', 'New words');
+    typeInto('Remark', 'New words');
     typeInto('Bank', 'MAYBANK');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('This voucher is approved — its journal carries these words, so they stay as they are.');
     expect(onClose).not.toHaveBeenCalled();
-    expect(valueOf('Description')).toBe('New words');
+    expect(valueOf('Remark')).toBe('New words');
     expect(valueOf('Bank')).toBe('MAYBANK');
   });
 

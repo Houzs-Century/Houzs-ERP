@@ -456,10 +456,10 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
         </>
       )}
       <div className="sc-sl"><span className="t">{initial ? "付给谁 · Pay to" : "② 付给谁 · Pay to"}</span><span className="ln" /></div>
-      {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
-      {field("Payee's bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
+      {field("Pay to *", <input data-upper className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
+      {field("Payee's bank", <input data-upper className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
       {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
-      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
+      {field("Account name", <input data-upper className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
       <div className="sc-sl"><span className="t">{initial ? "付多少 · Amount" : "③ 付多少 · Amount"}</span><span className="ln" /></div>
       {!isBalance && field("Bill total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
         onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />)}
@@ -467,7 +467,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
       {billTotal != null && field("…or a percent of the bill", <input className="cal-sel" inputMode="decimal" aria-label="Percent of the bill" value={pct} placeholder="e.g. 50" onChange={(e) => applyPct(e.target.value, billTotal)} />)}
       {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
       <div className="sc-sl"><span className="t">{initial ? "用途 · What for" : "④ 用途 · What for"}</span><span className="ln" /></div>
-      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
+      {field("What is it for *", <textarea data-upper className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
       {hasEvents && field(eventNeeded ? "Event * — this bill is for an event" : "Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
       {eventNeeded && billRead.state.status === "done" && (
         <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
@@ -478,11 +478,11 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
             <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
             I cannot find this event · 找不到这场活动
           </label>
-          {noEvent && field("Why there is no event *", <input className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
+          {noEvent && field("Why there is no event *", <input data-upper className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
         </>
       )}
       <div className="sc-sl"><span className="t">{initial ? "备注 · Note" : "⑤ 备注 · Note"}</span><span className="ln" /></div>
-      {field("Note to Finance (optional)", <textarea className="cal-sel" rows={3} aria-label="Note" maxLength={2000} value={v.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. Please pay before the fair starts" />)}
+      {field("Note to Finance (optional)", <textarea data-upper className="cal-sel" rows={3} aria-label="Note" maxLength={2000} value={v.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. Please pay before the fair starts" />)}
     </Shell>
   );
 }
@@ -545,7 +545,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
         onChange={(e) => { setPct(e.target.value); const n = Number(e.target.value); if (Number.isFinite(n) && n > 0 && n <= 100) setAmount(pctOf(total, n)); }} />)}
       {left != null && amount > left && <div className="st-warn" role="alert">More than is left to ask ({fmtSen(left)}) — it still goes, and Finance sees it.</div>}
       {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Balance pay by" value={dueDate ?? ""} onChange={(iso) => setDueDate(iso || null)} />)}
-      {field("What is it for", <input className="cal-sel" aria-label="Balance purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} />)}
+      {field("What is it for", <input data-upper className="cal-sel" aria-label="Balance purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} />)}
       <div className="sc-sl"><span className="t">The official invoice (optional)</span><span className="ln" /></div>
       <input ref={camRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Official invoice files"
         onChange={(e) => { setFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />

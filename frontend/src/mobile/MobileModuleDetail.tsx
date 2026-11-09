@@ -317,7 +317,7 @@ function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onE
             </button>
           )}
           {onEdit && (
-            <button className="tinybtn" onClick={onEdit} style={{ background: "#e1efed", border: "1px solid #16695f", color: "#0c3f39" }}>
+            <button className="tinybtn" onClick={() => onEdit()} style={{ background: "#e1efed", border: "1px solid #16695f", color: "#0c3f39" }}>
               Edit
             </button>
           )}
@@ -373,7 +373,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
-      ["Ship-from", firstOf(h.sales_location)], // the BRANCH (owner 2026-09-07, header-level); the customer_state fallback was a different concept under one label
+      // The DO's own warehouse (stored at create), else the order's branch text for an older DO (owner 2026-09-07, header-level).
+      ["Ship-from", firstOf(h.warehouse_code, h.sales_location)],
       ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
@@ -1733,7 +1734,7 @@ const SIMPLE_DOC_PATHS: Record<string, { path: string; headerKey: string }> = {}
 // Resend invitation) moved to ./MemberAccountActions so this file stays under its
 // size ceiling. The admin-reset invariant test scans that module by path.
 
-function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: string; row: any; title: string; onBack: () => void; onEdit?: () => void }) {
+function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: string; row: any; title: string; onBack: () => void; onEdit?: (fresh?: Record<string, unknown>) => void }) {
   /* Owner 2026-07-17 — cost is director-only. Its own useAuth: the costing gate
      further up this file lives in a DIFFERENT component, so there is nothing to
      borrow here. */
@@ -1824,7 +1825,8 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         status={status}
         statusDoc={null}
         onBack={onBack}
-        onEdit={onEdit}
+        /* A supplier edits from its full record, not the list row: the list view lacks Email 2 / 3. */
+        onEdit={onEdit && wantSupplier && supplierQ.data?.supplier ? () => onEdit(effectiveRow) : onEdit}
       />
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: 96 } : scrollStyle}>
         {cancelled && <CancelledRibbon header={docHeader} />}
@@ -1874,8 +1876,9 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   moduleKey: string; row: any; title: string; onBack: () => void; onPOD?: () => void;
   /** Wired by the parent when the module's form supports edit (updatePath).
    *  The header "Edit" button calls this. MobileApp passes the current row's
-   *  id + the module's FormSchema through to MobileModuleForm. */
-  onEdit?: () => void;
+   *  id + the module's FormSchema through to MobileModuleForm; `fresh` is the
+   *  full record when the detail loaded one (suppliers). */
+  onEdit?: (fresh?: Record<string, unknown>) => void;
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {

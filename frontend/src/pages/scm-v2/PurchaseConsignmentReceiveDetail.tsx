@@ -60,6 +60,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -816,7 +817,7 @@ const SupplierCard = ({
             <InfoCell label="Contact"       value={supplier.contact_person ?? supplier.attention} />
             <InfoCell label="Phone"         value={formatPhone(supplier.phone ?? supplier.mobile) || null} />
             <InfoCell label="Payment terms" value={supplier.payment_terms} />
-            <InfoCell label="Email"         value={supplier.email} />
+            <InfoCell label="Email"         value={supplierEmailList(supplier).join(", ") || null} />
             <InfoCell label="TIN"           value={supplier.tin_number} />
             <InfoCell label="Country / state" value={[supplier.country, supplier.state].filter(Boolean).join(' / ') || null} />
             <InfoCell label="Bindings count" value={String(supplierDetail.data?.bindings?.length ?? 0)} />

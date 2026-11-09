@@ -26,6 +26,13 @@ describe("supplierFormFor", () => {
     for (const f of SUPPLIER_FINANCE_BODY_KEYS) expect(k).not.toContain(f);
   });
 
+  it("the phone form carries Email, Email 2 and Email 3 for everyone (owner 2026-11-09)", () => {
+    for (const finance of [true, false]) {
+      const labels = supplierFormFor(FORM_SUPPLIERS, finance, "edit").fields.filter((f) => f.type === "email").map((f) => f.label);
+      expect(labels).toEqual(["Email", "Email 2", "Email 3"]);
+    }
+  });
+
   it("Finance gets the form as it is", () => {
     expect(supplierFormFor(FORM_SUPPLIERS, true, "edit")).toBe(FORM_SUPPLIERS);
     expect(supplierFormFor(FORM_SUPPLIERS, true, "new")).toBe(FORM_SUPPLIERS);
