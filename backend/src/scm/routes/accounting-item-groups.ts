@@ -26,6 +26,8 @@
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { CONTROL_ROLES, resolveRoles } from '../../acc/rules';
+import { whyNotPostable } from './accounting-chart';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to manage the chart of accounts." };
@@ -68,6 +70,12 @@ function readBinding(raw: any): { ok: true; binding: GroupBinding } | { ok: fals
  * checked against the company's own rows, not the union, because posting will
  * resolve against exactly these rows. A failure names the slot and the code:
  * "some account was wrong" is not actionable at a maintenance screen.
+ *
+ * And it must be a POSTABLE account (Conts #338): never a header (父户不记账 —
+ * every invoice of the group would then fail to post), never a control account
+ * (a role of CONTROL_ROLES or an SDC/SCC/SBS special — binding AR as the sales
+ * account posts revenue as Dr AR / Cr AR). The rule itself is whyNotPostable in
+ * accounting-chart.ts; this only gathers its inputs. Fails closed on a read error.
  */
 async function verifyBinding(
   sb: any,
@@ -75,22 +83,44 @@ async function verifyBinding(
   binding: GroupBinding,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const codes = [...new Set(Object.values(binding))];
-  const { data, error } = await sb
-    .from('accounts')
-    .select('account_code, is_active')
-    .eq('company_id', companyId)
-    .in('account_code', codes);
-  if (error) return { ok: false, message: error.message };
-  const found = new Map(((data ?? []) as Array<{ account_code: string; is_active: boolean }>)
-    .map((r) => [r.account_code, r.is_active]));
+  const [self, kids, roles] = await Promise.all([
+    sb.from('accounts')
+      .select('account_code, is_active, special_type')
+      .eq('company_id', companyId)
+      .in('account_code', codes),
+    /* Retired sub-accounts count too: the posting gate counts every child. */
+    sb.from('accounts')
+      .select('parent_code')
+      .eq('company_id', companyId)
+      .in('parent_code', codes),
+    resolveRoles(sb, companyId),
+  ]);
+  if (self.error) return { ok: false, message: self.error.message };
+  if (kids.error) return { ok: false, message: kids.error.message };
+  const found = new Map(((self.data ?? []) as Array<{ account_code: string; is_active: boolean; special_type?: string | null }>)
+    .map((r) => [r.account_code, r]));
+  const headers = new Set(((kids.data ?? []) as Array<{ parent_code: string | null }>).map((r) => String(r.parent_code ?? '')));
+  const controlRoleOf = new Map<string, string>();
+  for (const role of CONTROL_ROLES) if (roles[role]) controlRoleOf.set(roles[role], role);
   for (const slot of Object.keys(SLOT_LABEL) as Array<keyof GroupBinding>) {
     const code = binding[slot];
-    const active = found.get(code);
-    if (active === undefined) {
+    const row = found.get(code);
+    if (row === undefined) {
       return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is not in this company's chart.` };
     }
-    if (active !== true) {
+    if (row.is_active !== true) {
       return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is switched off for this company — tick it on the chart first.` };
+    }
+    const blocked = whyNotPostable({
+      hasChildren: headers.has(code),
+      specialType: row.special_type,
+      controlRole: controlRoleOf.get(code),
+    });
+    if (blocked?.kind === 'header') {
+      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a header with sub-accounts — 父户不记账: bind one of its sub-accounts instead.` };
+    }
+    if (blocked?.kind === 'control') {
+      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a control account (${blocked.label}) — its balance belongs to its own module; bind an ordinary ${slot === 'sales' || slot === 'salesReturn' ? 'sales' : 'purchase'} account instead.` };
     }
   }
   return { ok: true };
