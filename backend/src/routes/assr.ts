@@ -2890,7 +2890,7 @@ function noteCategory(v?: string): "service" | "customer" | "supplier" | "sales"
   return NOTE_CATEGORIES.has(v ?? "") ? (v as any) : "service";
 }
 
-app.post("/:id/notes", requirePermission("service_cases.write"), async (c) => {
+app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
