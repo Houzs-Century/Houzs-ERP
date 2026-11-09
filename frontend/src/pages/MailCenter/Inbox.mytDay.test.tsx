@@ -6,6 +6,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadList } from "./Inbox";
 
+type ThreadListProps = Parameters<typeof ThreadList>[0];
+
 const row = (lastMessageAt: string) =>
   ({
     id: "t1",
@@ -23,7 +25,7 @@ const row = (lastMessageAt: string) =>
     hasOutbound: false,
     lastDirection: "inbound",
     createdAt: lastMessageAt,
-  }) as any;
+  }) as unknown as ThreadListProps["threads"][number];
 
 const mount = (lastMessageAt: string) =>
   render(
@@ -31,8 +33,8 @@ const mount = (lastMessageAt: string) =>
       threads={[row(lastMessageAt)]}
       loading={false}
       activeId={null}
-      folder={"inbox" as any}
-      density={"comfortable" as any}
+      folder={"inbox" as ThreadListProps["folder"]}
+      density={"comfortable" as ThreadListProps["density"]}
       selectedIds={new Set()}
       colorMap={new Map()}
       onToggleSelect={vi.fn()}
