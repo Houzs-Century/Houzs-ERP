@@ -365,7 +365,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4407 files, 1078319 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (4408 files, 1078531 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -647,7 +647,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1253 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 520 |
-| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2397 |
+| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2378 |
 | `frontend/src/mobile/MobileDoHeaderEdit.tsx` | 306 |
 | `frontend/src/mobile/MobileEditProjectSheet.tsx` | 167 |
 | `frontend/src/mobile/MobileFabricPicker.tsx` | 137 |
@@ -699,7 +699,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileReopenControl.tsx` | 103 |
 | `frontend/src/mobile/MobileRoles.tsx` | 652 |
 | `frontend/src/mobile/MobileSODetail.tsx` | 2118 |
-| `frontend/src/mobile/MobileSalesOrders.tsx` | 818 |
+| `frontend/src/mobile/MobileSalesOrders.tsx` | 816 |
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileScanInvoice.tsx` | 154 |
