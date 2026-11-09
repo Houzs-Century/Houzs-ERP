@@ -1,4 +1,5 @@
 import type { SupplierReturn } from "./vendor/scm/lib/assr/returns";
+import type { ReturnDo } from "./vendor/scm/lib/assr/item-ready";
 
 export type Region = "WEST" | "EAST" | "SG";
 export type SyncStatus = "SYNCED" | "ERROR";
@@ -249,6 +250,9 @@ export interface AssrCase {
   // supplier_service_note from their portal.
   goods_returned_note?: string | null;
   supplier_service_note?: string | null;
+  qc_inspected_at?: string | null;
+  qc_by?: string | null;
+  qc_findings?: string | null;
   // Soft-delete
   archived_at?: string | null;
   archived_by?: number | null;
@@ -284,6 +288,7 @@ export interface AssrAttachment {
     | "receipt_evidence"
     | "pickup_form"
     | "ready_doc"
+    | "return_do"
     | "delivery_pod";
   uploaded_by: number | null;
   created_at: string;
@@ -350,6 +355,8 @@ export interface AssrDetail {
   logistics: AssrLogistics[];
   /** Factory/supplier return trips (返厂 rounds), one row per trip. */
   supplier_returns?: SupplierReturn[];
+  /** Supplier DOs that came back with the repaired item (Pending Item Ready). */
+  return_dos?: ReturnDo[];
   related_pos: PurchaseOrder[];
   portal_token?: string | null;
   stage_history?: AssrStageHistoryRow[];

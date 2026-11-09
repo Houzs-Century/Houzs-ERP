@@ -30,6 +30,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips, MobileSectionHead } from "./MobileFactoryTrips";
+import { MobileItemReady } from "./MobileItemReady";
 import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
@@ -146,13 +147,6 @@ const VERIFICATION_OPTIONS = [
   { value: "accepted", label: "Accepted" },
   { value: "needs_more_info", label: "Needs more info" },
   { value: "rejected", label: "Rejected" },
-] as const;
-// QC result values shared by qc_issue_result (on receipt, mig 0105) and
-// inspection_result (after repair, v3.1).
-const QC_RESULT_OPTIONS = [
-  { value: "pass", label: "Pass" },
-  { value: "fail", label: "Fail" },
-  { value: "na", label: "N/A" },
 ] as const;
 // Print copy variants — desktop opens /api/assr-print/:id?variant=…
 const PRINT_VARIANTS = [
@@ -1120,40 +1114,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
         );
       case "pending_item_ready":
         return (
-          <>
-            <div className="fld-l">QC result (after repair)</div>
-            <div style={{ display: "flex", gap: 7, margin: "6px 0 4px" }}>
-              {QC_RESULT_OPTIONS.map((o) => {
-                const active = String(get(c, "inspectionResult", "inspection_result") ?? "") === o.value;
-                return (
-                  <button
-                    key={o.value}
-                    onClick={() => { if (!dis) patchCase({ inspection_result: active ? null : o.value }, "Couldn't save QC result"); }}
-                    disabled={dis}
-                    className="tinybtn"
-                    style={active ? { background: GREEN, borderColor: GREEN, color: "#fff" } : undefined}
-                  >
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
-            <EditRow label="QC inspection date" type="date" value={get(c, "itemsReadyAt", "items_ready_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, "Couldn't save QC date")} />
-            <div style={{ fontSize: 10, color: GREY, marginTop: 2 }}>Pass + date → becomes the Item Ready date. Fail → stays pending.</div>
-            {/* After-repair QC photos / report — same category the old
-                "Upload inspection report" button used (qc). */}
-            <PhotoGrid
-              caseId={id}
-              attachments={attachments.filter((a) => ["qc", "inspection_report"].includes(String(get(a, "category") ?? "")))}
-              category="qc"
-              label="QC photos"
-              hint="After-repair QC evidence / report"
-              accent={GREEN}
-              onChanged={refetch}
-              notify={notify}
-              confirm={confirm}
-            />
-          </>
+          <MobileItemReady c={c} caseId={id} trips={(data?.supplier_returns ?? []) as SupplierReturn[]} returnDos={data?.return_dos ?? []} busy={busy} disabled={dis} runWrite={runWrite}
+            doFiles={<PhotoGrid caseId={id} attachments={attachments.filter((a) => String(get(a, "category") ?? "") === "return_do")} category="return_do" label="DO attachment" hint="Supplier DO photo or PDF" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />}
+            report={<PhotoGrid caseId={id} attachments={attachments.filter((a) => ["qc", "inspection_report"].includes(String(get(a, "category") ?? "")))} category="qc" label="QC photos / video" hint="After-repair QC evidence / report" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />} />
         );
       case "pending_delivery_service":
         return (

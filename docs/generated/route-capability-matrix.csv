@@ -105,6 +105,9 @@ POST,/api/assr/:id/notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"require
 POST,/api/assr/:id/notes/:noteId/correct,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/reopen,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/resolve-creditor,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+POST,/api/assr/:id/return-dos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+DELETE,/api/assr/:id/return-dos/:doId{[0-9]+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+PATCH,/api/assr/:id/return-dos/:doId{[0-9]+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/sales-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 DELETE,/api/assr/:id/supplier-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/supplier-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts

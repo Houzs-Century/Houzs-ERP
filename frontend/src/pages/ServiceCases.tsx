@@ -71,6 +71,7 @@ import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
 import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
 import { CaseSection } from "../components/assr/CaseSection";
+import { ItemReadyFields } from "../components/assr/ItemReadyFields";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
@@ -4340,16 +4341,22 @@ function DetailContent({
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
-              <InspectionCard
+              <ItemReadyFields
                 c={c}
-                patch={patch}
                 caseId={id}
-                attachments={attachments}
-                archived={!!c.archived_at}
-                detail={detail}
-                dialog={dialog}
-                toast={toast}
-                hideHeader
+                trips={supplierReturns}
+                returnDos={detail.data?.return_dos ?? []}
+                canWrite={!c.archived_at}
+                patch={patch}
+                onChanged={() => { detail.reload(); onUpdated(); }}
+                onError={(m) => toast.error(m)}
+                confirm={dialog.confirm}
+                doAttachments={<MilestoneAttachmentSlot caseId={id} category="return_do" label="DO Attachment"
+                  emptyLabel="No DO file yet." uploadLabel="Upload DO" attachments={attachments}
+                  archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
+                inspectionReport={<MilestoneAttachmentSlot caseId={id} category="inspection_report" label="QC Inspection Report"
+                  emptyLabel="No inspection report uploaded yet." uploadLabel="Upload photo / video / report" attachments={attachments}
+                  archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
               />
             </StageRow>
 
@@ -5947,187 +5954,6 @@ function CollapsibleBlock({
   );
 }
 
-function InspectionCard({
-  c,
-  patch,
-  caseId,
-  attachments,
-  archived,
-  detail,
-  dialog,
-  toast,
-  hideHeader,
-}: {
-  c: AssrCase;
-  patch: (body: Record<string, any>) => Promise<void>;
-  caseId: number;
-  attachments: any[];
-  archived: boolean;
-  detail: ReturnType<typeof useQuery>;
-  dialog: ReturnType<typeof useDialog>;
-  toast: ReturnType<typeof useToast>;
-  // Refresh — when rendered inside a StageRow the surrounding
-  // accordion already labels the section, so skip the PanelSection
-  // wrapper here to avoid double headers.
-  hideHeader?: boolean;
-}) {
-  // Always visible so ops can pre-fill / cross-check even before the
-  // item reaches the post-supplier-return checkpoint. Matches the
-  // VerificationCard (QC Issue Inspection) which also has no gate.
-  const [qcOpen, setQcOpen] = useState(false);
-  // Refresh — QC Result dropdown carries a tone chip per option so
-  // ops sees the downstream route at a glance. DB values (pass /
-  // fail / na) stay unchanged; only the on-screen label + chip are
-  // remapped to match the design's language.
-  const QC_TAGS: {
-    value: "pass" | "fail" | "na";
-    slug: string;
-    label: string;
-    tone: "ok" | "warn" | "muted";
-  }[] = [
-    { value: "pass", slug: "approved", label: "Approved — to Delivery", tone: "ok" },
-    { value: "fail", slug: "need_send_back_supplier", label: "Send back to supplier", tone: "warn" },
-    { value: "na", slug: "others", label: "Others", tone: "muted" },
-  ];
-  const qcSel = QC_TAGS.find((o) => o.value === c.inspection_result);
-  const toneChip = (t: "ok" | "warn" | "muted") =>
-    t === "ok"
-      ? "bg-synced/15 text-synced"
-      : t === "warn"
-      ? "bg-accent-soft/60 text-accent"
-      : "bg-bg text-ink-muted";
-  const inner = (
-    <>
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          QC Result
-        </div>
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setQcOpen((v) => !v)}
-            className={cn(
-              "flex w-full items-center justify-between gap-2 rounded-md border bg-surface px-3 py-2.5 text-left text-[13px] outline-none transition-colors",
-              qcOpen ? "border-primary" : "border-border",
-            )}
-          >
-            {qcSel ? (
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-[11.5px] font-semibold text-primary">
-                  {qcSel.slug}
-                </span>
-                <span className="text-ink-secondary">· {qcSel.label}</span>
-                <span
-                  className={cn(
-                    "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                    toneChip(qcSel.tone),
-                  )}
-                >
-                  {qcSel.tone === "ok" ? "OK" : qcSel.tone === "warn" ? "Warn" : "Muted"}
-                </span>
-              </span>
-            ) : (
-              <span className="text-ink-muted">— select —</span>
-            )}
-            <span
-              className={cn(
-                "shrink-0 text-[12px] text-ink-muted transition-transform",
-                qcOpen && "rotate-180",
-              )}
-            >
-              ▾
-            </span>
-          </button>
-          {qcOpen && (
-            <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-border bg-surface shadow-slab">
-              {QC_TAGS.map((o) => {
-                const active = c.inspection_result === o.value;
-                return (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => {
-                      patch({ inspection_result: o.value });
-                      setQcOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-2.5 border-b border-border-subtle px-3 py-2.5 text-left last:border-b-0 hover:bg-accent-soft/20",
-                      active && "bg-accent-soft/40",
-                    )}
-                  >
-                    <span className="font-mono text-[11.5px] font-semibold text-primary">
-                      {o.slug}
-                    </span>
-                    <span className="flex-1 text-[12.5px] text-ink-secondary">· {o.label}</span>
-                    <span
-                      className={cn(
-                        "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                        toneChip(o.tone),
-                      )}
-                    >
-                      {o.tone === "ok" ? "OK" : o.tone === "warn" ? "Warn" : "Muted"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-      {/* The return date is the CURRENT factory round's "back" date now, edited
-          in the Factory Returns list under the Supplier stage and mirrored to
-          items_ready_at. Read-only here for QC context so the two can't drift. */}
-      <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Return date (current trip)</span>
-        <span className="text-[13px] text-ink-secondary">{c.items_ready_at ? formatDate(c.items_ready_at) : "—"}</span>
-      </div>
-      <p className="-mt-1 text-[10.5px] leading-snug text-ink-muted">
-        Edit the return date in Factory Returns (Supplier stage). Pass here confirms the item ready.
-      </p>
-      {/* Mig 106 — the service note the supplier hands back with the
-          item on return. Supplier edits this from their portal;
-          shown here read-in-context so QC can cross-check what the
-          supplier claims to have done. */}
-      <InlineEdit
-        label="Supplier Service Note"
-        textarea
-        value={c.supplier_service_note}
-        onSave={(v) => patch({ supplier_service_note: v })}
-        placeholder="What the supplier did / findings on the returned item"
-      />
-      <MilestoneAttachmentSlot
-        caseId={caseId}
-        category="inspection_report"
-        label="QC Inspection Report"
-        emptyLabel="No inspection report uploaded yet."
-        uploadLabel="Upload inspection report"
-        attachments={attachments}
-        archived={archived}
-        detail={detail}
-        dialog={dialog}
-        toast={toast}
-      />
-    </>
-  );
-  if (hideHeader) {
-    return <div className="space-y-2.5">{inner}</div>;
-  }
-  return (
-    <PanelSection
-      icon={<ShieldCheck size={13} />}
-      accent="bg-synced"
-      title={
-        <>
-          QC Inspection{" "}
-          <span className="font-normal normal-case tracking-normal text-ink-muted/70">— after supplier return</span>
-        </>
-      }
-    >
-      {inner}
-    </PanelSection>
-  );
-}
-
 function VerificationCard({
   c,
   patch,
@@ -6430,6 +6256,7 @@ type MilestoneCategory =
   | "receipt_evidence"
   | "pickup_form"
   | "ready_doc"
+  | "return_do"
   | "delivery_pod";
 
 function MilestoneAttachmentSlot({

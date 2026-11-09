@@ -3,6 +3,7 @@ import type { Env } from "../types";
 // because callers and tests have imported slaHoursFor from here since mig 065.
 import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
+import { listReturnDos } from "./assrReturnDos";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
 import { BASE_COMPANY_CODE, MIRRORED_COMPANY_CODE, docPrefixForCode } from "../scm/lib/companyScope";
@@ -894,6 +895,7 @@ export async function getAssrDetail(env: Env, id: number) {
     activity: activity.results ?? [],
     logistics: logistics.results ?? [],
     supplier_returns: supplierReturns,
+    return_dos: await listReturnDos(env, id),
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
@@ -1071,6 +1073,8 @@ const PATCH_FIELDS = [
   "customer_pickup_at", "pickup_status", "actual_pickup_at", "pickup_pic", "item_location", // HC-0129, values checked in the route
   // Mig 127 — own-team inspection visit date (not customer_pickup_at); drives the INSPECTION leg on Delivery Planning.
   "inspection_visit_at",
+  // Pending Item Ready QC details (Operation Dept 2026-11-09), values checked in the route
+  "qc_inspected_at", "qc_by", "qc_findings",
   // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
   // Mig 081 — verification card (Under Verification → Pending Solution gate)
@@ -1122,6 +1126,7 @@ const FIELD_LABELS: Record<string, string> = {
   supplier_pickup_at: "Supplier Pickup Date", items_ready_at: "Supplier Return / Item Ready Date",
   customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
   pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
+  qc_inspected_at: "QC Inspection Date", qc_by: "QC By", qc_findings: "QC Findings",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
