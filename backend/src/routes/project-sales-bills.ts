@@ -41,7 +41,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env, Variables } from "../scm/env";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { getDb } from "../db/client";
-import { projects, project_activity, project_finance, project_sales_attendees, positions, sales_reps, users } from "../db/schema";
+import { projects, project_activity, project_finance, project_sales_attendees, positions, roles, sales_reps, users } from "../db/schema";
 import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from "../scm/lib/companyScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
 import { postPersonalNotice } from "../services/personalNotice";
@@ -66,9 +66,9 @@ const ONLY_THREE = "Only the Owner, Ummu, Wei Siang, Peter, or an attending rep 
 
 /** The real caller — supabaseAuth has replaced `user` with the pinned scm
  *  staff row by the time a handler runs; the person is in houzsUser. */
-function realUser(c: Ctx): { email?: string | null; position_name?: string | null; id: number } | null {
+function realUser(c: Ctx): { email?: string | null; position_name?: string | null; role_name?: string | null; id: number } | null {
   const hu = c.get("houzsUser");
-  return hu ? { id: hu.id, email: hu.email ?? null, position_name: hu.position_name ?? null } : null;
+  return hu ? { id: hu.id, email: hu.email ?? null, position_name: hu.position_name ?? null, role_name: hu.role_name ?? null } : null;
 }
 
 function parseProjectId(c: Ctx): number | null {
@@ -133,10 +133,12 @@ async function loadNotes(db: Db, projectId: number): Promise<NoteRow[]> {
       created_at: project_activity.created_at,
       author_email: users.email,
       author_position: positions.name,
+      author_role: roles.name,
     })
     .from(project_activity)
     .leftJoin(users, eq(users.id, project_activity.user_id))
     .leftJoin(positions, eq(positions.id, users.position_id))
+    .leftJoin(roles, eq(roles.id, users.role_id))
     .where(and(eq(project_activity.project_id, projectId), eq(project_activity.action, "note"), isNull(project_activity.archived_at)))
     .orderBy(asc(project_activity.created_at), asc(project_activity.id));
   return rows.map((r) => ({
@@ -145,6 +147,7 @@ async function loadNotes(db: Db, projectId: number): Promise<NoteRow[]> {
     created_at: r.created_at,
     author_email: r.author_email,
     author_position: r.author_position,
+    author_role: r.author_role,
   }));
 }
 
