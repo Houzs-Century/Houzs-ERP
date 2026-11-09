@@ -13,6 +13,11 @@ vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
 vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadSlipFull: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
+  uploadFieldPhoto: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
+}));
+vi.mock("../lib/photoStamp", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/photoStamp")>()),
+  stampNow: vi.fn(async () => ({ at: new Date("2026-11-09T06:00:00Z"), source: "server" as const })),
 }));
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("../auth/salesAccess", async (importOriginal) => ({
@@ -70,13 +75,16 @@ const wrap = () => {
   return { ...r, onDone };
 };
 const jpeg = (name: string) => new File(["jpeg"], name, { type: "image/jpeg" });
-const attachPodPhoto = (c: HTMLElement) =>
+/* POD photos upload on pick, so wait until the photo shows as uploaded. */
+const attachPodPhoto = async (c: HTMLElement) => {
   fireEvent.change(c.querySelector('input[type="file"]')!, { target: { files: [jpeg("pod.jpg")] } });
+  await screen.findByText("Uploaded");
+};
 
 describe("MobilePOD — delivered with issue", () => {
   it("refuses to confirm with the issue form open and nothing ticked, before saving anything", async () => {
     const { container } = wrap();
-    attachPodPhoto(container);
+    await attachPodPhoto(container);
     fireEvent.click(screen.getByText("Delivered with issue"));
     fireEvent.click(screen.getByText("Confirm delivered with issue →"));
     expect(await screen.findByText("Tick at least one problem.")).toBeTruthy();
@@ -85,7 +93,7 @@ describe("MobilePOD — delivered with issue", () => {
 
   it("saves the delivery first, then reports the ticked problems with their photos", async () => {
     const { container, onDone } = wrap();
-    attachPodPhoto(container);
+    await attachPodPhoto(container);
     fireEvent.click(screen.getByText("Delivered with issue"));
     const form = screen.getByTestId("delivery-issue-form");
     fireEvent.click(within(form).getByLabelText("Damaged"));
@@ -108,7 +116,7 @@ describe("MobilePOD — delivered with issue", () => {
   it("a failed report keeps the screen open and says the delivery is saved", async () => {
     reportFails = true;
     const { container, onDone } = wrap();
-    attachPodPhoto(container);
+    await attachPodPhoto(container);
     fireEvent.click(screen.getByText("Delivered with issue"));
     fireEvent.click(within(screen.getByTestId("delivery-issue-form")).getByLabelText("Wrong item or colour"));
     fireEvent.click(screen.getByText("Confirm delivered with issue →"));
@@ -119,7 +127,7 @@ describe("MobilePOD — delivered with issue", () => {
 
   it("Other needs a note", async () => {
     const { container } = wrap();
-    attachPodPhoto(container);
+    await attachPodPhoto(container);
     fireEvent.click(screen.getByText("Delivered with issue"));
     fireEvent.click(within(screen.getByTestId("delivery-issue-form")).getByLabelText("Other"));
     fireEvent.click(screen.getByText("Confirm delivered with issue →"));
@@ -129,7 +137,7 @@ describe("MobilePOD — delivered with issue", () => {
 
   it("a plain delivery sends no problem report", async () => {
     const { container, onDone } = wrap();
-    attachPodPhoto(container);
+    await attachPodPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(posted("/delivery-issue")).toBeUndefined();
