@@ -90,6 +90,9 @@ for (const r of plan) {
 }
 console.log(`Company ${COMPANY_ID}: ${plan.length} draft receipt(s) whose money a matched bank line holds.`);
 for (const [k, v] of byBank) console.log(`  ${k}: ${v.n} receipt(s), ${rm(v.sen)}, paid ${v.from} – ${v.to}`);
+const byMonth = new Map();
+for (const r of plan) byMonth.set(day(r.paid_at).slice(0, 7), (byMonth.get(day(r.paid_at).slice(0, 7)) ?? 0) + 1);
+console.log(`  by month paid: ${[...byMonth].map(([m, n]) => `${m} ${n}`).join(' · ')}`);
 for (const r of plan.slice(0, 5)) console.log(`    e.g. ${r.or_number} ${r.payment_source} ${day(r.paid_at)} ${rm(r.amount_sen)} ← ${r.je_no}`);
 if (plan.length === 0 || (!APPLY && !REHEARSE)) {
   await sql.end();
