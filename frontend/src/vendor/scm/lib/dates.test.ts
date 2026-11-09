@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { instantToMytLocal, mytLocalToInstant, todayMyt } from "./dates";
+import { instantToMytLocal, mytDayOfValue, mytLocalToInstant, todayMyt } from "./dates";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -31,5 +31,27 @@ describe("instantToMytLocal / mytLocalToInstant", () => {
     expect(new Date(mytLocalToInstant("2026-11-10T11:00")!).toISOString()).toBe("2026-11-10T03:00:00.000Z");
     expect(mytLocalToInstant("")).toBeNull();
     expect(mytLocalToInstant(instantToMytLocal("2026-11-10T03:00:00Z"))).toBe("2026-11-10T11:00:00+08:00");
+  });
+});
+
+describe("mytDayOfValue", () => {
+  it("an instant is converted to its Malaysian day", () => {
+    expect(mytDayOfValue("2026-11-09T17:30:00Z")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-09T17:30:00.123456+00:00")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-09 17:30:00+00")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-09T17:30:00+0000")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-10T01:30:00+08:00")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-09T15:59:59Z")).toBe("2026-11-09");
+  });
+  it("a plain date or an offset-less timestamp stays as written", () => {
+    expect(mytDayOfValue("2026-11-10")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026/11/10")).toBe("2026-11-10");
+    expect(mytDayOfValue("2026-11-09T23:30:00")).toBe("2026-11-09");
+  });
+  it("anything else is null", () => {
+    expect(mytDayOfValue(null)).toBeNull();
+    expect(mytDayOfValue("")).toBeNull();
+    expect(mytDayOfValue("10/11/2026")).toBeNull();
+    expect(mytDayOfValue(42)).toBeNull();
   });
 });

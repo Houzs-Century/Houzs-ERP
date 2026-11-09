@@ -256,6 +256,18 @@ const SHAPES = [
     re: /new\s+Date\s*\(\s*(?:Date\.now\(\)\s*(?:-|\+(?!\s*8\s*\*))[^)]*)?\)\s*\.toISOString\(\)\s*\.\s*(?:(?:slice|substring|substr)\(\s*0\s*,\s*(?:10|7)\s*\)|split\(\s*["']T["']\s*\)\s*\[\s*0\s*\])/,
   },
   {
+    id: "local-clock-day",
+    /* A calendar day read off the BROWSER's clock and zone:
+       `${d.getFullYear()}-${…getMonth()…}`. Correct only on a machine set to
+       Malaysia time; a laptop abroad or a phone on another zone moved every
+       "today" / "this month" window with it (owner 2026-11-09: every date
+       filter judges by the Malaysian day). todayMyt() / mytDayOfValue()
+       (frontend vendor/scm/lib/dates.ts) are the fix. A value already parsed
+       from a typed date and shifted locally is a legitimate use — that is what
+       the allowlist records. */
+    re: /\$\{\s*\w+\.getFullYear\(\)\s*\}\s*[-/]\s*\$\{/,
+  },
+  {
     id: "intl-datetimeformat",
     // `new Intl.DateTimeFormat(...)` — the memoised formatters in lib/utils.ts
     // and the en-MY ones in my-time.ts were all this shape.
@@ -368,6 +380,8 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     ["const today = new Date().toISOString().slice(0, 10);", "utc-today"],
     ["const since = new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10);", "utc-today"],
     ["const m = new Date().toISOString().split('T')[0];", "utc-today"],
+    ["return `${d.getFullYear()}-${m}-${day}`;", "local-clock-day"],
+    ['patch({ cmonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` });', "local-clock-day"],
   ];
   for (const probe of mustHit) {
     const [text, id] = Array.isArray(probe) ? probe : [probe, null];

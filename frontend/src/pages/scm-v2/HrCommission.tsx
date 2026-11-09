@@ -37,6 +37,8 @@ import {
 import { DataTable, type Column } from '../../components/DataTable';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { writeLineExportXlsx } from "../../vendor/scm/lib/line-export-file";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { soDatePresetRange } from "../../vendor/shared/so-list-filter-model";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -46,17 +48,9 @@ const INPUT_CLASS =
 /** bps -> a human percent. Display only; the integer bps is never mutated. */
 const fmtPct = (bps: number) => `${(bps / 100).toFixed(1)}%`;
 
-const isoDay = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-/** First and last day of the current month — the default period. */
-const monthRange = () => {
-  const now = new Date();
-  return {
-    from: isoDay(new Date(now.getFullYear(), now.getMonth(), 1)),
-    to: isoDay(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
-  };
-};
+/** First and last day of the current Malaysian month — the default period, not
+ *  the browser's own month (owner 2026-11-09). */
+const monthRange = () => soDatePresetRange('this_month', todayMyt());
 
 export const HrCommission = () => {
   const initial = useMemo(monthRange, []);
