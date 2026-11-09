@@ -37,6 +37,7 @@ class FakeQuery {
   select() { return this; }
   order() { return this; }
   limit() { return this; }
+  range() { return this; }
   like() { return this; }
   update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   delete() { this.op = 'delete'; return this; }

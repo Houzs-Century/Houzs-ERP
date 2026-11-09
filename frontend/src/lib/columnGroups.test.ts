@@ -103,6 +103,10 @@ describe("column grouping", () => {
       ["reference", "Reference", COLUMN_GROUPS.basic],
       ["branding", "Branding", COLUMN_GROUPS.basic],
       ["note", "Note", COLUMN_GROUPS.basic],
+      ["purpose_text", "Purpose", COLUMN_GROUPS.basic],
+      ["pay_bank", "Bank", COLUMN_GROUPS.party],
+      ["bank", "Bank charges", COLUMN_GROUPS.amounts],
+      ["now", "Bank & cash now", COLUMN_GROUPS.amounts],
     ];
 
     const wrong = cases
