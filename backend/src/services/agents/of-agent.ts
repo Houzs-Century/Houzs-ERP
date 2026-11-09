@@ -145,7 +145,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
         .prepare(
           `INSERT INTO of_agent_findings
              (id, kind, severity, so_doc_no, readiness, top_blocker, owner, summary, payload, status, created_at, last_seen_at)
-           VALUES (?, 'NOT_READY', ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+           VALUES (?, 'NOT_READY', ?, ?, ?, ?, ?, ?, ?::text::jsonb, 'OPEN', ?, ?)
            ON CONFLICT (so_doc_no) WHERE status = 'OPEN' DO NOTHING`,
         )
         .bind(crypto.randomUUID(), f.severity, doc, f.readiness, f.topBlocker, f.owner, f.summary, JSON.stringify(f.payload), nowIso, nowIso)
@@ -155,7 +155,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
       await db
         .prepare(
           `UPDATE of_agent_findings
-              SET severity = ?, readiness = ?, top_blocker = ?, owner = ?, summary = ?, payload = ?, last_seen_at = ?
+              SET severity = ?, readiness = ?, top_blocker = ?, owner = ?, summary = ?, payload = ?::text::jsonb, last_seen_at = ?
             WHERE id = ? AND status = 'OPEN'`,
         )
         .bind(f.severity, f.readiness, f.topBlocker, f.owner, f.summary, JSON.stringify(f.payload), nowIso, exId)
@@ -189,7 +189,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
     byOwner,
   };
   await db
-    .prepare(`INSERT INTO of_agent_briefs (id, generated_at, brief) VALUES (?, ?, ?)`)
+    .prepare(`INSERT INTO of_agent_briefs (id, generated_at, brief) VALUES (?, ?, ?::text::jsonb)`)
     .bind(crypto.randomUUID(), nowIso, JSON.stringify(brief))
     .run();
 

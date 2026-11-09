@@ -770,7 +770,7 @@ export async function patrolDocuments(env: Env): Promise<DocumentPatrolResult> {
           `INSERT INTO document_agent_findings
              (id, kind, severity, doc_type, doc_id, doc_no, summary, payload,
               status, created_at, last_seen_at)
-           VALUES (?,?,?,?,?,?,?,?, 'OPEN', ?, ?)
+           VALUES (?,?,?,?,?,?,?,?::text::jsonb, 'OPEN', ?, ?)
            ON CONFLICT (kind, doc_type, doc_id) WHERE status = 'OPEN' DO NOTHING`,
         )
         .bind(
@@ -793,7 +793,7 @@ export async function patrolDocuments(env: Env): Promise<DocumentPatrolResult> {
       await db
         .prepare(
           `UPDATE document_agent_findings
-              SET severity = ?, summary = ?, payload = ?, last_seen_at = ?
+              SET severity = ?, summary = ?, payload = ?::text::jsonb, last_seen_at = ?
             WHERE id = ? AND status = 'OPEN'`,
         )
         .bind(f.severity, f.summary, JSON.stringify(f.payload), nowIso, ex.id)
@@ -940,7 +940,7 @@ export async function collectDocumentBrief(env: Env): Promise<DocumentBrief> {
   try {
     await db
       .prepare(
-        "INSERT INTO document_agent_briefs (id, generated_at, brief) VALUES (?,?,?)",
+        "INSERT INTO document_agent_briefs (id, generated_at, brief) VALUES (?,?,?::text::jsonb)",
       )
       .bind(crypto.randomUUID(), nowIso, JSON.stringify(brief))
       .run();

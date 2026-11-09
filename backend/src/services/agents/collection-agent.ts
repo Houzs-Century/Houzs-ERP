@@ -286,7 +286,7 @@ export async function generateCollectionProposals(
     await db
       .prepare(
         `INSERT INTO collection_agent_proposals (id, kind, key, status, payload, summary, created_at)
-         VALUES (?, 'DEBTOR_CHASE', ?, 'PENDING', ?::jsonb, ?, ?)`,
+         VALUES (?, 'DEBTOR_CHASE', ?, 'PENDING', ?::text::jsonb, ?, ?)`,
       )
       .bind(crypto.randomUUID(), key, JSON.stringify(chase), summary, nowIso)
       .run();
@@ -361,7 +361,7 @@ export async function collectCollectionBrief(
   try {
     await db
       .prepare(
-        "INSERT INTO collection_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::jsonb, NULL, ?)",
+        "INSERT INTO collection_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)",
       )
       .bind(crypto.randomUUID(), JSON.stringify(brief), nowIso)
       .run();
