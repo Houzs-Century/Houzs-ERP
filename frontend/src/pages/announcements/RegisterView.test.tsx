@@ -112,6 +112,23 @@ describe("Register mode", () => {
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Registered as OPS-WARN-2609-0001"));
   });
 
+  it("the document date defaults to the Malaysian day: 01:30 on 10 Nov in Malaysia is the 10th, not the 9th", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
+    try {
+      seed();
+      apiPost.mockResolvedValue({ data: { ...ROWS[0], refNo: "OPS-MEMO-2609-0002" } });
+      render(<RegisterView docTypes={TYPES} />);
+      await waitFor(() => expect(screen.getByText("OPS-MEMO-2609-0001")).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: /Register a document/ }));
+      fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Early memo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Register & number" }));
+      await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/memos", expect.objectContaining({ title: "Early memo", memoDate: "2026-11-10" })));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a type whose policy demands a file holds Register until one is uploaded; a manager picks any department, a department without a code is refused before posting", async () => {
     seed();
     authState.canManage = true;

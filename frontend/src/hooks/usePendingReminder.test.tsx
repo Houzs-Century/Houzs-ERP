@@ -96,16 +96,18 @@ describe("usePendingReminder", () => {
 
   it("a stored acknowledgement from TODAY keeps it shut on the next load", async () => {
     apiGet.mockResolvedValue({ data: [row(1, "2020-01-01", "2020-01-02")], total: 1 });
-    const today = new Date();
-    const p = (n: number) => String(n).padStart(2, "0");
-    localStorage.setItem(
-      `pending-reminder:u7:c1:${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}`,
-      "1",
-    );
-    const { result } = renderHook(() => usePendingReminder(), { wrapper });
-    expect(result.current.open).toBe(false);
-    // ...and it does not even ask, so an acknowledged day costs no request.
-    expect(apiGet).not.toHaveBeenCalled();
+    // 01:30 on 10 Nov in Malaysia (still the 9th in UTC): today's key is the 10th.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
+    try {
+      localStorage.setItem("pending-reminder:u7:c1:2026-11-10", "1");
+      const { result } = renderHook(() => usePendingReminder(), { wrapper });
+      expect(result.current.open).toBe(false);
+      // ...and it does not even ask, so an acknowledged day costs no request.
+      expect(apiGet).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("YESTERDAY's acknowledgement does not silence today", async () => {

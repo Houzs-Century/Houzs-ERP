@@ -37,11 +37,9 @@ const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const shiftDate = (date: string, days: number): string => {
-  const d = new Date(`${date}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 };
 
 const btnStyle = (primary?: boolean): React.CSSProperties => ({

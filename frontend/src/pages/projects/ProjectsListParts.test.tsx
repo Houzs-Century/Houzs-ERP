@@ -58,4 +58,16 @@ describe("SectionTaskBadges", () => {
     expect(titles).toEqual(["Floorplan", "Driver Info", "Setup Image"]);
     expect(screen.getByTitle("Floorplan").textContent).toMatch(/^Floorplan\d+d$/);
   });
+
+  it("judges overdue by the Malaysian day: at 01:30 on 10 Nov in Malaysia a task due the 9th is 1 day late, one due the 10th is pending", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
+    try {
+      render(<SectionTaskBadges map="Due Ninth=pending=2026-11-09|Due Tenth=pending=2026-11-10" />);
+      expect(screen.getByTitle("Due Ninth").textContent).toBe("Due Ninth1d");
+      expect(screen.getByTitle("Due Tenth").textContent).toBe("Due Tenth");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

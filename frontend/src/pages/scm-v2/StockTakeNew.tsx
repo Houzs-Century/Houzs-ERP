@@ -41,14 +41,9 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-const todayISO = () => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 const CATEGORIES: Array<{ value: string; label: string }> = [
   { value: 'BEDFRAME',  label: 'Bedframe'  },
@@ -71,7 +66,7 @@ export const StockTakeNew = () => {
 
   const [warehouseId, setWarehouseId] = useState<string>('');
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
-  const [takeDate,    setTakeDate]    = useState<string>(todayISO());
+  const [takeDate,    setTakeDate]    = useState<string>(todayMyt());
   const [scopeType,   setScopeType]   = useState<StockTakeScopeType>('ALL');
   const [scopeValue,  setScopeValue]  = useState<string>('');
   const [notes,       setNotes]       = useState<string>('');

@@ -9,6 +9,7 @@ import { consumeCorrelated, correlateError, correlatedFetch, requestIdFromError,
 import { cn } from "../../lib/utils";
 import { fmtDate } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 /** Generic multi-select filter (owner 2026-08-07: "add multiple choice for all
  *  dropdown also"). A native <select multiple> is unusable in a filter bar
@@ -233,10 +234,7 @@ export function MultiSelectFilter({
 // so the default project list is unchanged.
 export function SectionTaskBadges({ map }: { map?: string | null }) {
   if (!map) return null;
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
+  const today = todayMyt();
   const tasks = map
     .split("|")
     .filter(Boolean)
