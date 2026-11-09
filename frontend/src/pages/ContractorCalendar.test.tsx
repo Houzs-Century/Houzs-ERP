@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContractorCalendar } from "./ContractorCalendar";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 const TOKEN = "abcdefghijklmnopqrstuvwx012345_-"; // 32 chars, matches the token shape
 
@@ -33,13 +34,7 @@ const json = (body: unknown, status = 200) =>
     }),
   );
 
-function todayIso(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${da}`;
-}
+const todayIso = (): string => todayMyt();
 
 describe("ContractorCalendar (public, no-login)", () => {
   it("shows the contractor's confirmed events with booth numbers", async () => {

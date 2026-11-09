@@ -654,6 +654,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Inspected", dmy(h.inspected_at)],
       ["Refunded", dmy(h.refunded_at)],
       ["Ref No.", firstOf(h.ref)],
+      ["Credit note", returnCreditLabel(h.credit_note_state) || "—"],
     ],
     stats: (h) => [
       ["Total", money(h.local_total_sen), "var(--ink)"],
@@ -1911,3 +1912,4 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";
 import { MobileDoDeliveryIssues } from "./DeliveryIssueForm";
 import { poDriftMode } from "../vendor/scm/lib/po-drift";
+import { returnCreditLabel } from "../vendor/scm/lib/return-credit-state";

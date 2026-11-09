@@ -7,7 +7,17 @@ import { movedText } from './mergeWords';
 
 /* Merge duplicate SKU codes into one kept code (POST /mfg-products/merge/*).
    Check plans and writes nothing; Merge sends back the phrase Check returned,
-   so the server refuses if anything changed in between. */
+   so the server refuses if anything changed in between. A dropped code's Model
+   that is left with no active code is folded into the kept code's Model in the
+   same Merge; Check says which, and the result says what happened. */
+
+type ModelFold = { from: string | null; into: string; fold: boolean; codes: number; reason: string | null };
+
+export function foldLines(folds: ReadonlyArray<ModelFold> | undefined, done: boolean): string[] {
+  return (folds ?? []).map((f) => (f.fold
+    ? `Model ${f.from} ${done ? 'was' : 'will be'} merged into Model ${f.into}${f.codes > 0 ? ` (${f.codes} switched-off code(s) move with it)` : ''}.`
+    : `Model ${f.from} ${done ? 'was not merged' : 'will not be merged'}: ${f.reason}.`));
+}
 
 type Plan = {
   pairs: Array<{
@@ -19,6 +29,7 @@ type Plan = {
   keepStock: Array<{ warehouse: string; qty: number }>;
   totals: { pairs: number; refused: number; rowsToRekey: number; unitsMoved: number; toRetire: number };
   confirm: string;
+  modelFolds?: ModelFold[];
 };
 
 const stockText = (s: Array<{ warehouse: string; qty: number }>) => s.map((x) => `${x.warehouse} ${x.qty}`).join(', ') || 'none';
@@ -35,8 +46,9 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [doneFolds, setDoneFolds] = useState<string[]>([]);
 
-  const changed = () => { setPlan(null); setDone(null); setError(null); };
+  const changed = () => { setPlan(null); setDone(null); setDoneFolds([]); setError(null); };
   const add = () => {
     const code = draft.trim();
     if (!code) return;
@@ -59,12 +71,14 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
     if (!plan) return;
     setBusy(true);
     try {
-      const r = await authedFetch<{ merged: string[]; rekeyed: number }>('/mfg-products/merge/apply', {
+      const r = await authedFetch<{ merged: string[]; rekeyed: number; modelFolds?: ModelFold[] }>('/mfg-products/merge/apply', {
         method: 'POST', body: JSON.stringify({ keep: keep.trim(), drops, confirm: plan.confirm }),
       });
       setDone(`Merged ${r.merged.length} code(s) into ${keep.trim()}.`);
+      setDoneFolds(foldLines(r.modelFolds, true));
       setPlan(null); setDrops([]);
       void qc.invalidateQueries({ queryKey: ['mfg-products'] });
+      void qc.invalidateQueries({ queryKey: ['product-models'] });
     } catch (e) {
       setError(`The merge was not done: ${e instanceof Error ? e.message : 'please try again.'}`);
     } finally { setBusy(false); }
@@ -114,6 +128,7 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
                 )}
             </div>
           ))}
+          {foldLines(plan.modelFolds, false).map((l) => <p key={l} style={{ margin: '8px 0 0' }}>{l}</p>)}
         </div>
       )}
 
@@ -122,6 +137,7 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
       {!plan && <p style={hint}>Press Check first. It changes nothing and shows what will move. Then press Merge.</p>}
       {error && <p role="alert" style={{ color: 'var(--c-err, #b3261e)', margin: 0 }}>{error}</p>}
       {done && <p role="status" style={{ margin: 0 }}>{done}</p>}
+      {doneFolds.map((l) => <p key={l} style={{ margin: 0 }}>{l}</p>)}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <Button variant="secondary" onClick={() => void check()} disabled={busy || !keep.trim() || drops.length === 0}>Check</Button>
         <Button variant="danger" onClick={() => void merge()} disabled={busy || !canMerge}>

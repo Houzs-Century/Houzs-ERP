@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ShareCalendar } from "./ShareCalendar";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 const TOKEN = "abcdefghijklmnopqrstuvwx012345_-";
 
@@ -64,10 +65,7 @@ afterEach(() => {
 const json = (body: unknown, status = 200) =>
   Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+const todayIso = (): string => todayMyt();
 
 const event = {
   eventId: 7,
@@ -151,8 +149,7 @@ describe("ShareCalendar", () => {
     await screen.findByText(/Booth 3053-3055/);
     fireEvent.click(screen.getByText("Export to Excel"));
     await waitFor(() => expect(written.length).toBe(1));
-    const d = new Date();
-    const thisMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const thisMonth = todayMyt().slice(0, 7);
     expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
       expect.stringMatching(new RegExp(`/contractor-calendar/.*/export\\?month=${thisMonth}$`)),
     ]);
@@ -224,6 +221,23 @@ describe("ShareCalendar", () => {
     expect(screen.getByText("Export to Excel")).toBeTruthy();
     expect(screen.queryByText("Display Floorplan")).toBeNull();
     expect(screen.queryByText("Event List")).toBeNull();
+  });
+
+  it("opens on the Malaysian month: 01:30 on 1 December in Malaysia is December, not November", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-30T17:30:00Z"));
+    try {
+      window.history.pushState({}, "", `/c/${TOKEN}`);
+      fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
+      render(<ShareCalendar mode="contractor" />);
+      fireEvent.click(await screen.findByText("Export to Excel"));
+      await waitFor(() => expect(written.length).toBe(1));
+      expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
+        expect.stringMatching(/\/export\?month=2026-12$/),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows a friendly message for an invalid or revoked link", async () => {

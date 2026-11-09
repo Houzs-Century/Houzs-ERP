@@ -52,6 +52,8 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
+import { ReturnCreditNoteCard, type ReturnCreditNote } from "./ReturnCreditNoteCard";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { Button } from "../../components/Button";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
@@ -508,6 +510,8 @@ function DeliveryReturnDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = useDeliveryReturnDetail(id ?? null);
+  const { can } = useHouzsAuth();
+  const creditNote = (detail.data as { creditNote?: ReturnCreditNote } | undefined)?.creditNote;
   const updateStatus = useUpdateDeliveryReturnStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
@@ -982,6 +986,9 @@ function DeliveryReturnDetailV2ReadOnly() {
                 </div>
               </div>
             )}
+
+            <ReturnCreditNoteCard returnId={deliveryReturn.id} credit={creditNote} cancelled={isCancelled}
+              canCreate={can("scm.payment_voucher.create") || can("scm.payment_voucher.write")} />
 
             {/* Customer */}
             <Section title="Customer">
