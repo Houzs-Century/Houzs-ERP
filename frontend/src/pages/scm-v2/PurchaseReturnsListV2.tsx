@@ -65,6 +65,7 @@ import {
 } from "../../vendor/scm/lib/return-line-export-columns";
 import { fetchPurchaseReturnExportRows } from "../../vendor/scm/lib/return-list-export";
 import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 type PrRow = {
   id: string;
@@ -660,7 +661,7 @@ export function PurchaseReturnsListV2() {
       for (const r of chosen) bundles.push(await fetchPrBundle(r));
       if (how === "one") {
         await generateCombinedPurchaseReturnPdf(bundles as never, {
-          fileName: `purchase-returns-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `purchase-returns-${todayMyt()}.pdf`,
           action,
         });
       } else {

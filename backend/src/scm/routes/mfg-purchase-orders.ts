@@ -103,6 +103,9 @@ import { withSoRefPoIds } from '../lib/so-ref-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
 
+/** YYMM of today in Malaysia, for the monthly PO number. */
+const yymmMyt = (): string => { const t = todayMyt(); return `${t.slice(2, 4)}${t.slice(5, 7)}`; };
+
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
    single deal. When a PO sofa line's modules MATCH one of the supplier's own
@@ -1110,10 +1113,9 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     }
   }
 
-  const yymm = (() => {
-    const d = new Date();
-    return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
+  /* The Malaysian month: the Worker clock is UTC, so getMonth() put a PO cut
+     before 08:00 on the 1st under the previous month's number. */
+  const yymm = yymmMyt();
 
   // PO# generation: max(suffix)+1 over the month's POs (see lib/doc-no.ts).
   // NOT count+1 — count+1 is non-self-healing (a mid-month delete leaves a gap
@@ -1227,8 +1229,9 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
        PR #157 — now required (see validation above). */
     purchase_location_id: purchaseLocationId,
   };
-  // Optional poDate — if absent, the column default (now()) wins.
-  if (body.poDate) headerInsert.po_date = body.poDate;
+  /* Optional poDate — if absent, today in Malaysia. The column default (now())
+     is the UTC date, a day early for a PO made before 08:00. */
+  headerInsert.po_date = body.poDate || todayMyt();
 
   /* Doc-no collision retry (2026-07-14): two buyers cutting a PO in the same
      company + YYMM both read the same max and mint the same po_number; without a
@@ -2229,8 +2232,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   }
 
   // Generate PO numbers + create one PO per supplier.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmMyt(); // Malaysian month, not the Worker's UTC one
   // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
   // delete re-mints a surviving number → UNIQUE collision). Derive the next
   // suffix via mintMonthlyDocNo, then counter starts one below it.
@@ -2302,6 +2304,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       created_by: user.id,
       expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
       purchase_location_id: headerPurchaseLocationId,
+      po_date: todayMyt(), // not the column's UTC now() default: a day early before 08:00
     };
     /* Audit (ported from 2990) — the PO suffix is an in-memory counter off a
        non-locking snapshot, so a CONCURRENT SO→PO convert can mint the same

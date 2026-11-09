@@ -19,6 +19,7 @@ import { scopeToAllowedCompanies, allowedCompaniesSql } from './companyScope';
 import { dateOrNull } from './date-coerce';
 import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_STATUS_PICK_SOURCE, ASSR_ACTUAL_COL, ASSR_CANCELLED_COL } from './assr-board-scope';
 import { logActivity } from '../../services/assr';
+import { todayMyt } from './my-time';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -141,7 +142,7 @@ export async function writeNonSoFields(
 export async function writeAssrLegStatus(
   c: Ctx, caseId: number, jobKind: keyof typeof ASSR_ACTUAL_COL, status: 'delivered' | 'cancelled' | 'pending', by: string,
 ): Promise<EditResult> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayMyt();
   const deliveredAt = status === 'delivered' ? today : null;
   const cancelledAt = status === 'cancelled' ? today : null;
   const action = status === 'delivered' ? 'leg_delivered' : status === 'cancelled' ? 'leg_cancelled' : 'leg_reopened';

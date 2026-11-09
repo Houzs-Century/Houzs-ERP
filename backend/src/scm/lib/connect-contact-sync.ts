@@ -34,6 +34,7 @@ import {
   type ConnectContact,
   type ConnectCompanyProfile,
 } from '../../services/connect';
+import { todayMyt } from './my-time';
 
 /* The SCM PostgREST client is untyped at every call site in this tree (see
    venture-portal-outbox.ts); one named alias keeps the `any` in one place. */
@@ -158,7 +159,7 @@ export async function runScheduledConnectSync(
   if (!companyIds.length) return { skipped: 'no_companies', ...zero, cursorFrom: cursor };
 
   // The next batch of in-window orders after the cursor, by doc_no.
-  const floor = new Date(Date.now() - CONNECT_SYNC_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const floor = todayMyt(-CONNECT_SYNC_WINDOW_DAYS);
   const { data: rowsRaw, error: readErr } = await sb
     .from('mfg_sales_orders')
     .select(SYNC_SO_SELECT)

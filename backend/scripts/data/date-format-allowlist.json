@@ -317,6 +317,25 @@
       "text": "type=\"date\"",
       "why": "A type=\"date\" PROP on the InlineEdit wrapper (HC-0129 scheduled + actual pickup dates), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
-    {"file": "frontend/src/components/DataTable.tsx", "text": "const filterType = col.filterType ?? (looksLikeDateColumn(values.map(([v]) => v)) ? \"date\" : undefined);", "why": "The kind of column filter, not an input type: no date is rendered or formatted here."}
+    {
+      "file": "frontend/src/components/DataTable.tsx",
+      "text": "const filterType = col.filterType ?? (looksLikeDateColumn(values.map(([v]) => v)) ? \"date\" : undefined);",
+      "why": "The kind of column filter, not an input type: no date is rendered or formatted here."
+    },
+    {
+      "file": "backend/src/scm/lib/my-time.test.ts",
+      "text": "expect(new Date().toISOString().slice(0, 10)).toBe(\"2026-07-16\");",
+      "why": "my-time.test.ts pins the UTC clock on purpose: it fakes the time and shows the raw UTC date is the day before Malaysia's, which is the bug todayMyt() exists for."
+    },
+    {
+      "file": "backend/src/scm/lib/my-time.test.ts",
+      "text": "expect(new Date().toISOString().slice(0, 10)).toBe(\"2026-07-31\");",
+      "why": "my-time.test.ts pins the UTC clock on purpose: it fakes the time and shows the raw UTC date is the day before Malaysia's, which is the bug todayMyt() exists for."
+    },
+    {
+      "file": "backend/src/scm/lib/my-time.test.ts",
+      "text": "expect(new Date().toISOString().slice(0, 10)).toBe(\"2026-07-17\");",
+      "why": "my-time.test.ts pins the UTC clock on purpose: it fakes the time and shows the raw UTC date is the day before Malaysia's, which is the bug todayMyt() exists for."
+    }
   ]
 }

@@ -1,3 +1,4 @@
+import { todayMyt } from "../vendor/scm/lib/dates";
 // CSV utilities — Google Sheets / Excel compatible.
 // - UTF-8 with BOM
 // - CRLF line endings
@@ -69,7 +70,7 @@ export async function downloadAllPagesCSV<T>(
   fetchPage: (page: number, perPage: number) => Promise<{ data: T[]; total: number }>,
 ) {
   const rows = await fetchAllPages(fetchPage);
-  downloadCSV(`${name}-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(rows, columns));
+  downloadCSV(`${name}-${todayMyt()}.csv`, toCSV(rows, columns));
 }
 
 // Parses RFC4180-style CSV. Supports quoted fields, doubled quotes, CRLF/LF.

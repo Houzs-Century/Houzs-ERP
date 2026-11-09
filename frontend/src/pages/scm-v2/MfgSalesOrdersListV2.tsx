@@ -112,6 +112,7 @@ import { soExemptionExpiryOf } from "../../lib/so-exemption-expiry";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
 import { soStreetTail } from '../../vendor/scm/lib/order-address';
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -1401,7 +1402,7 @@ export function MfgSalesOrdersListV2() {
             payments: b.payments as never,
             pwpCodes: b.pwpCodes as never,
           })),
-          { fileName: `sales-orders-${new Date().toISOString().slice(0, 10)}.pdf`, action }
+          { fileName: `sales-orders-${todayMyt()}.pdf`, action }
         );
       } else {
         for (const b of bundles)

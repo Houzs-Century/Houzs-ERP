@@ -88,6 +88,7 @@ import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { purchaseOrderPrintChain } from "../../lib/printChain";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1140,7 +1141,7 @@ export function PurchaseOrdersListV2() {
       }
       if (how === "one") {
         await pdf.generateCombinedPurchaseOrderPdf(pos as never, {
-          fileName: `purchase-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `purchase-orders-${todayMyt()}.pdf`,
           action,
         });
       } else {

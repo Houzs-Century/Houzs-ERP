@@ -36,16 +36,14 @@ import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
 import { DateTimeField } from "./DateTimeField";
+import { instantToMytLocal, mytLocalToInstant } from "../lib/dates";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A TIMESTAMPTZ ISO string → the wall-clock YYYY-MM-DDTHH:mm that DateTimeField
-   reads and writes (the same shape a native datetime-local used, unchanged when
-   Arrival/Departure moved onto DateTimeField on 2026-08-18).
-   Best-effort: slice the ISO; empty when null. */
-const toDtLocal = (iso: string | null): string =>
-  iso ? String(iso).slice(0, 16) : '';
+/* A TIMESTAMPTZ ISO string → the Malaysian wall clock YYYY-MM-DDTHH:mm that
+   DateTimeField reads and writes; saved back with +08:00 (lib/dates.ts). */
+const toDtLocal = (iso: string | null): string => instantToMytLocal(iso);
 /* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
@@ -131,8 +129,8 @@ export const DeliveryFieldsDrawer = ({
       Object.assign(body, {
         timeRange: form.timeRange || null,
         timeConfirmed: form.timeConfirmed,
-        arrivalAt: form.arrivalAt || null,
-        departureAt: form.departureAt || null,
+        arrivalAt: mytLocalToInstant(form.arrivalAt),
+        departureAt: mytLocalToInstant(form.departureAt),
         shipoutDate: form.shipoutDate || null,
         customerDeliveredDate: form.customerDeliveredDate || null,
         etaArrivingPort: form.etaArrivingPort || null,

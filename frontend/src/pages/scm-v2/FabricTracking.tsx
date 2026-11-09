@@ -32,6 +32,7 @@ import {
 import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { toCsv, parseImportFile, importErrorDetail, triggerDownload, type ParsedImport } from '../../vendor/scm/lib/fabric-csv';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -74,7 +75,7 @@ export const FabricTracking = () => {
   const onExport = () => {
     const all = (search.trim() ? exportFetch : rows) ?? rows;
     if (all.length === 0) { notify({ title: 'No fabrics to export.', tone: 'error' }); return; }
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const stamp = todayMyt().replace(/-/g, '');
     triggerDownload(`fabric-converter-${stamp}.csv`, toCsv(all));
   };
 

@@ -244,6 +244,18 @@ const SHAPES = [
     re: /\$\{\s*(?:y{2,4}|year)\w*\s*\}\s*[-/]\s*\$\{\s*(?:mm?|mon|month)\w*\s*\}\s*[-/]\s*\$\{\s*(?:dd?|day)\w*\s*\}/i,
   },
   {
+    id: "utc-today",
+    /* "Today" (or "N days ago") read off the UTC clock: `new Date()` turned
+       into an ISO string and cut to the date. Malaysia is UTC+8, so before
+       08:00 this is YESTERDAY: a service-case delivery, a lorry part change or
+       a PO made in the morning was dated the day before, and on the 1st a
+       "this month" view showed last month. todayMyt() (backend
+       scm/lib/my-time.ts, frontend vendor/scm/lib/dates.ts) is the fix.
+       A `+ 8 * 3600…` shift is the Malaysian idiom and stays silent. A `now`
+       held in a variable and cut later is INVISIBLE here, stated not claimed. */
+    re: /new\s+Date\s*\(\s*(?:Date\.now\(\)\s*(?:-|\+(?!\s*8\s*\*))[^)]*)?\)\s*\.toISOString\(\)\s*\.\s*(?:(?:slice|substring|substr)\(\s*0\s*,\s*(?:10|7)\s*\)|split\(\s*["']T["']\s*\)\s*\[\s*0\s*\])/,
+  },
+  {
     id: "intl-datetimeformat",
     // `new Intl.DateTimeFormat(...)` — the memoised formatters in lib/utils.ts
     // and the en-MY ones in my-time.ts were all this shape.
@@ -353,6 +365,9 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     "return `${dd}/${mm}/${yyyy}`;",
     "return `${yyyy}-${mm}-${dd} ${hh}:${min}`;",
     'const f = new Intl.DateTimeFormat("en-GB", { timeZone: TZ });',
+    ["const today = new Date().toISOString().slice(0, 10);", "utc-today"],
+    ["const since = new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10);", "utc-today"],
+    ["const m = new Date().toISOString().split('T')[0];", "utc-today"],
   ];
   for (const probe of mustHit) {
     const [text, id] = Array.isArray(probe) ? probe : [probe, null];
@@ -371,6 +386,8 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     "const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;",
     // ISO VALUE PRODUCERS — the correct idiom at every input and payload site.
     "const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);",
+    "const d = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);",
+    "const stamp = new Date().toISOString();",
     "value={draft.lineDeliveryDate ?? ''}",
     // The one formatter's own callers.
     "<td>{fmtDate(row.po_date)}</td>",
