@@ -3286,6 +3286,7 @@ function DetailContent({
   const ncrOptions = (ncrCategoriesQ.data?.data ?? []).map((r) => r.slug);
   const [note, setNote] = useState("");
   const [noteFormOpen, setNoteFormOpen] = useState(false);
+  const [isPostingNote, setIsPostingNote] = useState(false);
   // Mig 064 / 0108 — note posting picks an audience bucket. Default
   // 'service' (internal); only 'customer' is portal-visible.
   // (internal team comms) since most notes are operational. Switch to
@@ -3362,14 +3363,21 @@ function DetailContent({
   useStageAutoAdvance({ c, logistics, transition, dialog });
 
   async function addNote() {
-    if (!note.trim()) return;
-    await api.post(`/api/assr/${id}/notes`, {
-      note: note.trim(),
-      category: noteCategory,
-    });
-    setNote("");
-    setNoteFormOpen(false);
-    detail.reload();
+    if (!note.trim() || isPostingNote) return;
+    setIsPostingNote(true);
+    try {
+      await api.post(`/api/assr/${id}/notes`, {
+        note: note.trim(),
+        category: noteCategory,
+      });
+      setNote("");
+      setNoteFormOpen(false);
+      detail.reload();
+    } catch (error: unknown) {
+      toast.error(`Note not posted: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsPostingNote(false);
+    }
   }
 
   // Keep a mistargeted drop from navigating the SPA to the file, and
@@ -4914,10 +4922,10 @@ function DetailContent({
                   </button>
                   <button
                     onClick={addNote}
-                    disabled={!note.trim()}
+                    disabled={!note.trim() || isPostingNote}
                     className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
                   >
-                    Post note
+                    {isPostingNote ? "Posting…" : "Post note"}
                   </button>
                 </div>
               </div>

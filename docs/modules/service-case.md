@@ -50,7 +50,9 @@ follows the new SLA at once.
 - **Read + create admission** (`requireServiceCaseAccess`): passes if the
   caller holds any listed permission, **or** holds any company grant
   (`holdsAnyCompanyGrant`), **or** is a director. Not job-title based.
-- **Every mutation/manage/approve route**: plain `requirePermission`.
+- **Every mutation/manage/approve route**: plain `requirePermission`, except
+  adding a note and uploading attachments, which also accept `.create` (staff
+  who only log cases can still add notes and photos).
 - **Row visibility** (list/detail/aggregates): `*`/`.manage`/director sees
   everything; everyone else is scoped to their reporting subtree via
   `assrVisibilityPredicateSql` — an ERP-native-SO case keys on
