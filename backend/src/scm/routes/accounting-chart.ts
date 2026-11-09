@@ -39,7 +39,7 @@ const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENS
    customer deposits), SBS balance-sheet stock. The owner's 2026-09-03 call:
    lock them — 由模块自动过账. */
 const SPECIAL_RE = /^[A-Z]{2,4}$/;
-const CONTROL_SPECIALS = new Set(['SDC', 'SCC', 'SBS']);
+export const CONTROL_SPECIALS: ReadonlySet<string> = new Set(['SDC', 'SCC', 'SBS']);
 const ACCOUNT_CODE_RE = /^\d{3}-[A-Za-z0-9]{4}$/;
 
 type AccountRow = {

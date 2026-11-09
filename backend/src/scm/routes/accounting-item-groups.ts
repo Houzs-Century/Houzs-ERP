@@ -27,6 +27,8 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { CONTROL_ROLES, resolveRoles } from '../../acc/rules';
+/* The CONTROL specials (SDC / SCC / SBS): one home, the chart route's. */
+import { CONTROL_SPECIALS } from './accounting-chart';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to manage the chart of accounts." };
@@ -63,11 +65,6 @@ function readBinding(raw: any): { ok: true; binding: GroupBinding } | { ok: fals
   }
   return { ok: true, binding: out as GroupBinding };
 }
-
-/* The CONTROL specials (AutoCount's column 9): SDC debtor control, SCC
-   creditor control + customer deposits, SBS balance-sheet stock — the same set
-   requireLeafAccount (accounting-chart.ts) refuses on a voucher line. */
-const CONTROL_SPECIALS = new Set(['SDC', 'SCC', 'SBS']);
 
 /**
  * Every bound account must EXIST in this company's chart and be ACTIVE —
