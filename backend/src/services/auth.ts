@@ -192,8 +192,12 @@ export const AUTHZ_ENVELOPE_VERSION = 9;
    `undefined` (every non-POS door) stores NULL, which reads as not-POS — the
    pre-migration behaviour, and the safe direction. Keep this a closed union:
    a new origin must be a deliberate edit here, not a string a route invents. */
-export type SessionOrigin = "pos";
+export type SessionOrigin = "pos" | "field";
 export const SESSION_ORIGIN_POS: SessionOrigin = "pos";
+/* 'field' — minted ONLY at the crew PIN door (routes/fieldPinLogin.ts). The
+   auth gate (middleware/auth.ts) holds such a session to the field screens
+   (services/fieldPin.ts FIELD_API_PREFIXES), whatever the member's role. */
+export const SESSION_ORIGIN_FIELD: SessionOrigin = "field";
 
 export interface AuthUser {
   id: number;

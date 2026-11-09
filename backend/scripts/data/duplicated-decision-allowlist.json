@@ -1742,8 +1742,8 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERED,INVOICED,SIGNED|backend/src/scm/routes/trips.ts frontend/src/vendor/scm/lib/delivery-stop-status.ts",
-      "why": "THE DELIVERED-DO SET — which delivery_order statuses mean the customer has the goods (DELIVERED/SIGNED/INVOICED). Two homes across the FE/BE boundary that share no build graph: DO_DELIVERED_STATUSES (delivery-stop-status.ts) is the live Last Mile board's stop-status rule — it decides a drop's done/overdue colour; DO_DELIVERED (trips.ts) is the GET /trips/history query filter — it only chooses which past delivery orders the History tab pulls. Same vocabulary, two runtimes, the frontend cannot import backend/src. Divergence shows or hides a History row, never money or stock."
+      "key": "DELIVERED,INVOICED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE DELIVERED-DO SET (DO_ARRIVED_STATES) — which delivery_order statuses mean the customer has the goods. ONE rule in the mirrored shared module: the frontend copy is the byte-identical vendored twin (check-shared-mirrors), because the frontend cannot import backend/src. Added 2026-11-09 for Undo delivered; the two hand copies this entry used to record (trips.ts DO_DELIVERED, delivery-stop-status.ts DO_DELIVERED_STATUSES) now import it."
     },
     {
       "check": "D2",

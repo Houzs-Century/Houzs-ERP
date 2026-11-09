@@ -22,9 +22,12 @@
 // instead of lingering in Modular with codes that were merged away (2026-11-10:
 // "AMIRA PREMUIM" stayed with 4 SKUs after its codes merged into AMIRA PREMIUM).
 //
-// A GROUP IS REFUSED WHOLE when the twins of a size are bound to different main
-// suppliers: that is two products with similar names, not one under two codes,
-// unless the group says `ruledOneProduct` (the owner ruled they are one).
+// A GROUP IS REFUSED WHOLE when its ACTIVE SKUs, on any of its Models and of any
+// size, are bound to more than one main supplier (owner, 2026-11-10: Models of
+// different suppliers are never merged). Twins of one size bound to different
+// suppliers are the sharpest case: two products with similar names, not one
+// under two codes. Only a book group that says `ruledOneProduct` (the owner ruled
+// that very pair one product) passes; the Modular screen never sets it.
 //
 // NO SHEBANG: tests/duplicateModelMergePlan.test.mjs imports this module.
 
@@ -93,15 +96,23 @@ export function planModelGroup({ group, models, skus }) {
   const groupModelIds = new Set([keptId, ...folds.map((f) => f.id)].filter(Boolean));
   const mine = skus.filter((s) => groupModelIds.has(s.model_id));
   const active = mine.filter((s) => s.status === "ACTIVE");
-  /* Owner rule 2026-11-10: Models with different suppliers are never merged.
-     Every code counts, a merged-away INACTIVE one too, because a fold moves it. */
-  const mainsOf = (id) => new Set(mine.filter((s) => s.model_id === id && s.main).map((s) => s.main));
-  const keptMains = mainsOf(keptId);
+  /* Owner rule 2026-11-10, Models of different suppliers are never merged, for
+     the codes the supplier check below does not see: a fold now moves a folded
+     Model's INACTIVE (merged-away) codes too, so their supplier counts. */
+  const mainsOf = (id, st) => new Set(mine.filter((s) => s.model_id === id && s.main && (st === null || s.status !== "ACTIVE")).map((s) => s.main));
+  const keptMains = mainsOf(keptId, null);
   if (keptMains.size > 0 && !group.ruledOneProduct) {
     for (const f of folds) {
-      const other = [...mainsOf(f.id)].filter((m) => !keptMains.has(m));
-      if (other.length > 0) refusals.push(`different supplier: Model "${f.model_code}" is supplied by ${other.join(", ")}, "${label}" by ${[...keptMains].join(", ")}`);
+      const other = [...mainsOf(f.id, "INACTIVE")].filter((m) => !keptMains.has(m));
+      if (other.length > 0) refusals.push(`different supplier: Model "${f.model_code}" has switched-off codes supplied by ${other.join(", ")}, "${label}" by ${[...keptMains].join(", ")}`);
     }
+  }
+  const supByModel = new Map();
+  for (const s of active) if (s.main) supByModel.set(s.model_id, new Set([...(supByModel.get(s.model_id) ?? []), s.main]));
+  const groupMains = new Set([...supByModel.values()].flatMap((x) => [...x]));
+  if (groupMains.size > 1 && !group.ruledOneProduct) {
+    const name = (id) => models.find((m) => m.id === id)?.model_code ?? id;
+    refusals.push(`the Models are bound to different main suppliers (${[...supByModel.entries()].map(([id, x]) => `"${name(id)}" ${[...x].sort().join("/")}`).join(" vs ")}) - Models of different suppliers are never merged`);
   }
 
   const bySize = new Map();
@@ -116,8 +127,6 @@ export function planModelGroup({ group, models, skus }) {
   const fills = [];
   const sizes = [];
   for (const [size, twins] of [...bySize.entries()].sort()) {
-    const mains = new Set(twins.map((t) => t.main).filter(Boolean));
-    if (mains.size > 1 && !group.ruledOneProduct) refusals.push(`size ${size}: ${twins.map((t) => `"${t.code}" (${t.main ?? "no main supplier"})`).join(" vs ")} - different main suppliers, so not one product`);
     const ranked = [...twins].sort((a, b) => cmpRank(survivorRank(a, keptId), survivorRank(b, keptId)));
     const survivor = ranked[0];
     sizes.push(size);
@@ -165,7 +174,10 @@ export function planModelGroup({ group, models, skus }) {
  * @returns {{ok: true, plan: object} | {ok: false, reason: string}}
  */
 export function foldOnlyPlan(plan, keptModelActive) {
-  if (plan.refusals.length > 0) return { ok: false, reason: plan.refusals.join("; ") };
+  if (plan.refusals.length > 0) {
+    const supplier = plan.refusals.some((r) => /different (main )?supplier/.test(r)) && !plan.refusals[0].startsWith("different supplier");
+    return { ok: false, reason: `${supplier ? "different supplier: " : ""}${plan.refusals.join("; ")}` };
+  }
   if (plan.pairs.length > 0) {
     return { ok: false, reason: `Model "${plan.label}" holds two codes of one size (${plan.pairs.map((p) => `${p.drop} / ${p.keep}`).join(", ")}); settle them with Merge models` };
   }

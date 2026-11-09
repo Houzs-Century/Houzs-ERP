@@ -107,7 +107,7 @@ describe('planModelGroup', () => {
       group: { category: 'MATTRESS', keep: 'AMIRA PREMIUM', drops: ['AMIRA PREMUIM'] }, models: offModels,
       skus: [sku('AMIRA PREMIUM (K)', 'm-keep', { main: '400-D001' }), sku('AMIRA PREMUIM (K)', 'm-fold', { status: 'INACTIVE', main: '400-E001' })],
     });
-    expect(p.refusals).toEqual(['different supplier: Model "AMIRA PREMUIM" is supplied by 400-E001, "AMIRA PREMIUM" by 400-D001']);
+    expect(p.refusals).toEqual(['different supplier: Model "AMIRA PREMUIM" has switched-off codes supplied by 400-E001, "AMIRA PREMIUM" by 400-D001']);
     expect(p.inactiveMoves).toEqual([]);
     const v = foldOnlyPlan(p, true);
     expect(v.ok).toBe(false);
@@ -116,8 +116,8 @@ describe('planModelGroup', () => {
 
   it('refuses a fold whose ACTIVE code of a new size has a different supplier too', () => {
     const p = planModelGroup({ group, models, skus: [sku('A (K)', 'm-keep', { main: 'S1' }), sku('B (SS)', 'm-fold', { main: 'S2' })] });
-    expect(p.refusals[0]).toMatch(/^different supplier/);
     expect(p.moves).toEqual([]);
+    expect(foldOnlyPlan(p, true).reason).toMatch(/^different supplier: /);
   });
 
   it('moves no INACTIVE SKU when the group is refused', () => {
@@ -155,6 +155,47 @@ describe('twins with different main suppliers', () => {
     const ruled = planModelGroup({ group: { ...group, ruledOneProduct: true }, models, skus: twins });
     expect(ruled.refusals).toEqual([]);
     expect(ruled.pairs).toHaveLength(1);
+  });
+});
+
+describe('Models of different suppliers (owner, 2026-11-10)', () => {
+  it('are refused even when no size is on both sides', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('FOLD-SIDE (K)', 'm-fold', { main: '400-D002' })],
+    });
+    expect(p.refusals).toHaveLength(1);
+    expect(p.refusals[0]).toMatch(/different main suppliers .*400-D001 vs .*400-D002/);
+    expect(p.moves).toEqual([]);
+    expect(p.foldModels).toEqual([]);
+  });
+
+  it('still merge when one side has no main supplier yet', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('FOLD-SIDE (K)', 'm-fold')],
+    });
+    expect(p.refusals).toEqual([]);
+    expect(p.moves.map((m) => m.code)).toEqual(['FOLD-SIDE (K)']);
+  });
+
+  // An INACTIVE SKU used to stay where it was, so its supplier did not count. A
+  // fold now moves it under the kept Model (option C), so it counts.
+  it('count a folded Model\'s INACTIVE SKU, because the fold moves it', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('OLD (K)', 'm-fold', { main: '400-D002', status: 'INACTIVE' })],
+    });
+    expect(p.refusals).toEqual(['different supplier: Model "CS2 VISCO BLISS" has switched-off codes supplied by 400-D002, "COOLSILK 2.0 VISCO BLISS" by 400-D001']);
+    expect(p.inactiveMoves).toEqual([]);
+  });
+
+  it('but not one on the kept Model, which does not move', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('KEEP-SIDE (Q)', 'm-keep', { main: '400-D001' }), sku('KEEP OLD (K)', 'm-keep', { main: '400-D002', status: 'INACTIVE' })],
+    });
+    expect(p.refusals).toEqual([]);
   });
 });
 
@@ -229,7 +270,9 @@ describe('foldOnlyPlan', () => {
     expect(v.plan.activateKept).toBe(false);
   });
   it('reports the planner\'s refusal and anything that is more than a fold', () => {
-    expect(foldOnlyPlan({ ...base, refusals: ['size K: different main suppliers'] }, true)).toEqual({ ok: false, reason: 'size K: different main suppliers' });
+    expect(foldOnlyPlan({ ...base, refusals: ['the Models are bound to different main suppliers (A vs B)'] }, true))
+      .toEqual({ ok: false, reason: 'different supplier: the Models are bound to different main suppliers (A vs B)' });
+    expect(foldOnlyPlan({ ...base, refusals: ['a SKU has no size'] }, true)).toEqual({ ok: false, reason: 'a SKU has no size' });
     expect(foldOnlyPlan({ ...base, pairs: [{ drop: 'A', keep: 'B' }] }, true).reason).toMatch(/two codes of one size \(A \/ B\)/);
     expect(foldOnlyPlan(base, false)).toEqual({ ok: false, reason: 'Model "M" is switched off' });
   });

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { signInErrorMessage } from "../auth/loginErrors";
+import { CrewPinForm } from "../auth/CrewPinForm";
 import { AmbientSnow } from "../components/AmbientSnow";
 import { readRememberedEmail } from "../lib/rememberedEmail";
 import {
@@ -31,6 +32,8 @@ export function MobileLogin() {
   const [code, setCode] = useState("");
   /* Nick 2026-07-09 — show-password toggle on both login + code steps. */
   const [showPw, setShowPw] = useState(false);
+  // Crew sign-in (staff code + PIN) — the shared form, on a light card.
+  const [crew, setCrew] = useState(false);
 
   async function onSignIn() {
     if (busy) return;
@@ -100,7 +103,11 @@ export function MobileLogin() {
           {challenge ? "Enter your 6-digit code" : "Sign in to your workspace"}
         </div>
 
-        {!challenge ? (
+        {!challenge && crew ? (
+          <div className="hz-lg-item" style={{ ...delay(3), marginTop: 18, background: "#fff", borderRadius: 14, padding: 16 }}>
+            <CrewPinForm onTotp={(c) => { setChallenge(c); setCrew(false); }} onBack={() => setCrew(false)} />
+          </div>
+        ) : !challenge ? (
           <>
             <div className="hz-lg-item" style={{ ...delay(3), display: "flex", flexDirection: "column", gap: 13, marginTop: 18 }}>
               <label style={{ display: "block" }}>
@@ -141,6 +148,9 @@ export function MobileLogin() {
             {err && <div className="hz-lg-item" style={{ ...delay(4), marginTop: 12, fontSize: 12.5, color: "#f3b0a6", background: "rgba(226,75,74,.12)", border: "1px solid rgba(226,75,74,.3)", borderRadius: 10, padding: "9px 12px" }}>{err}</div>}
             <button onClick={onSignIn} disabled={busy} className="hz-lg-item lg-btn" style={{ ...delay(5), width: "100%", marginTop: 18, textAlign: "center", fontSize: 15, fontWeight: 800, color: "#fff", background: "var(--teal)", border: "none", borderRadius: 13, padding: 15, cursor: busy ? "default" : "pointer", fontFamily: "inherit", opacity: busy ? 0.7 : 1 }}>
               {busy ? "Signing in…" : "Sign in"}
+            </button>
+            <button type="button" onClick={() => { setErr(null); setCrew(true); }} style={{ width: "100%", marginTop: 12, background: "none", border: "none", color: "var(--gold)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              Driver or helper? Sign in with staff code and PIN
             </button>
           </>
         ) : (

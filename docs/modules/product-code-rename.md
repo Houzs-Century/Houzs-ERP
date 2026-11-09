@@ -152,7 +152,12 @@ Each ACTIVE SKU moves under the kept Model; two codes of one size go through the
 A folded Model's INACTIVE SKUs move under the kept Model too (`inactiveMoves`: model_id + base_model),
 so a folded Model ends with no SKU and switched off; the kept Model's own INACTIVE SKUs stay.
 A kept Model that was off switches on.
-Refused whole: twins with different main suppliers, a SKU with no size, a folded Model with sofa rows.
+Refused whole: Models whose ACTIVE SKUs are bound to more than one main supplier, of any size (owner
+2026-11-10: Models of different suppliers are never merged; a SKU with no main supplier does not count),
+a folded Model whose INACTIVE (merged-away) codes carry a main supplier the kept Model does not have
+(`different supplier: ...`, because the fold moves them), a SKU with no size, a folded Model with sofa
+rows. Only a script book group marked `ruledOneProduct` passes the supplier rules; the Modular screen,
+the SKU-merge fold and the orphan repair never can.
 
 **Modular list** (`GET /api/scm/product-models`) returns `sku_count` and `active_sku_count`. The page
 hides a Model whose codes are all off (a merge leftover) unless "Show inactive" is ticked

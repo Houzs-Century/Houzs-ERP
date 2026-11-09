@@ -51,6 +51,46 @@ Sales-Director carve-out for their own department.
   and follows its name (an unknown name is full) until it is set there.
   Renaming a Title no longer changes anyone's access once its row exists.
 
+## Crew PIN sign-in (staff code + PIN)
+
+For drivers and helpers with no usable email (issue #5459 R3).
+
+- **Who may hold one:** a member whose Title's `position_policy` row is
+  cohort `restricted` + profile `driver_helper` (on the seed: Driver, Helper,
+  Outsource Transporter). A Title with NO row is refused — it resolves to the
+  full cohort. Rule lives once in `services/fieldPin.ts` `isFieldPinEligible`
+  and is checked at set time, at sign-in, AND on every request of a PIN session.
+- **Login:** the member's `scm.staff.staff_code` (`EMP-0042`); the screen fixes
+  the `EMP-` prefix and the member types the digits. A staff code not in that
+  shape cannot hold a PIN (the card says so).
+- **Admin:** `GET`/`POST`/`DELETE /api/field-pin/:userId`, `users.manage`, plus
+  the account-takeover company rule (`targetWithinActorCompanies`). Desktop
+  `pages/team/FieldPinCard.tsx` on the profile Details tab; phone
+  `mobile/MobileFieldPin.tsx` inside `MemberAccountActions`; both read
+  `lib/fieldPin.ts`. Setting or removing a PIN ends that member's PIN sessions
+  (`sessions.origin = 'field'`), never their password sessions. Audited as
+  `user.field_pin.set` / `.replace` / `.clear`.
+- **Storage:** `public.field_pins` (migration `20261110T1200_field_pins.sql`),
+  PBKDF2 via `hashPassword`, compared with `verifyPassword` (constant-time).
+  The PIN is never returned or logged. Obvious PINs (one digit repeated, a run)
+  are refused at set time.
+- **Sign-in:** `POST /api/auth/pin-login {login, pin}` (`routes/fieldPinLogin.ts`).
+  5 wrong PINs lock the account for 15 minutes on the `field_pins` row (holds
+  when KV is down; a new PIN lifts it; audited `auth.field_pin.locked`). KV
+  speed bumps: 5 per staff code and 30 per IP per 15 minutes. Failures go to
+  `auth_failed_logins` with the staff code in the email column; successes are
+  audited `auth.field_pin.login`.
+- **What a PIN session reaches — enforced on the SERVER:** the session is
+  minted with origin `field`, and `middleware/auth.ts` `fieldSessionRefusal`
+  refuses (403 `field_session_scope`) every API outside `FIELD_API_PREFIXES`
+  in `services/fieldPin.ts`, on both the signed-pass and DB auth paths. The
+  list is the delivery board / job stops / POD and their photos, project crew
+  pages, mileage, and the shell basics (notices, presence, push, selfie punch).
+  `/api/pos` is deliberately absent (its exchange-web-session would mint an
+  unconfined session). A 2FA member's challenge carries the field door through
+  `/api/auth/totp/login`. If the Title stops being crew, every live PIN session
+  is refused 401 on its next request.
+
 ## Rules that must not break
 
 - Invite links (`token` / `invite_url`) are live credentials — never give
@@ -128,6 +168,10 @@ Sales-Director carve-out for their own department.
 - `frontend/src/mobile/member-invite-form.ts` — the shared scoped-caller
   field-list rule.
 - `backend/src/routes/pos.ts` — POS PIN issue/reset/status routes.
+- `backend/src/services/fieldPin.ts`, `backend/src/routes/fieldPinLogin.ts`,
+  `backend/src/routes/fieldPinAdmin.ts` — crew PIN sign-in;
+  `frontend/src/auth/CrewPinForm.tsx` (both sign-in screens),
+  `frontend/src/pages/team/FieldPinCard.tsx`, `frontend/src/mobile/MobileFieldPin.tsx`.
 - `backend/src/scm/lib/staffCompanyScope.ts` — staff-picker company
   derivation.
 - `backend/src/routes/departments.ts` — department lead/headcount/code.

@@ -185,6 +185,7 @@ POST,/api/auth/logout,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTA
 GET,/api/auth/me,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/auth.ts
 PATCH,/api/auth/me,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
 POST,/api/auth/me/password,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,verifyPassword,YES,HANDLER_GUARD_REVIEW,backend/src/routes/auth.ts
+POST,/api/auth/pin-login,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
 GET,/api/auth/reset/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/auth.ts
 POST,/api/auth/reset/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
 GET,/api/auth/status,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/auth.ts
@@ -221,6 +222,9 @@ GET,/api/document-refs/next,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,
 GET,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
 POST,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
 PATCH,/api/document-types/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
+DELETE,/api/field-pin/:userId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/fieldPinAdmin.ts
+GET,/api/field-pin/:userId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,NO,DECLARED_GATE,backend/src/routes/fieldPinAdmin.ts
+POST,/api/field-pin/:userId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/fieldPinAdmin.ts
 GET,/api/finance/pnl,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.read"")",,NO,DECLARED_GATE,backend/src/routes/finance.ts
 GET,/api/finance/pnl/bucket,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.read"")",,NO,DECLARED_GATE,backend/src/routes/finance.ts
 DELETE,/api/fleet-breakdown-files/:caseId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-breakdown-files.ts
