@@ -47,6 +47,7 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
+import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
 
 type PrStatus = "DRAFT" | "POSTED" | "COMPLETED" | "CANCELLED" | string;
 
@@ -616,6 +617,7 @@ function PurchaseReturnDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+            <FlowDocFilesCard kind="purchase-return" docId={String(purchaseReturn.id)} status={purchaseReturn.status ?? null} />
           </DetailMain>
 
           <DetailAside>

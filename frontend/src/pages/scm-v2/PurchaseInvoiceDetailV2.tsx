@@ -57,6 +57,7 @@ import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { PoPriceReference } from "../../vendor/scm/components/PoPriceReference";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
+import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiStatus =
@@ -903,6 +904,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+            <FlowDocFilesCard kind="purchase-invoice" docId={String(purchaseInvoice.id)} status={purchaseInvoice.status ?? null} />
           </DetailMain>
 
           <DetailAside>

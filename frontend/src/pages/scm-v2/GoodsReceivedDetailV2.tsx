@@ -59,6 +59,7 @@ import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-hando
 import { useAuth } from "../../auth/AuthContext";
 import { canPostGoodsReceipts } from "../../auth/salesAccess";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
+import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -791,6 +792,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+            <FlowDocFilesCard kind="grn" docId={String(grn.id)} status={grn.status ?? null} />
           </DetailMain>
 
           <DetailAside>
