@@ -38,6 +38,7 @@ import { paginateAll } from '../lib/paginate-all';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
+import { formaliseReceiptsForBankMatch } from '../../acc/receipts';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
 import { bankName } from '../../acc/finance-todo';
@@ -420,6 +421,8 @@ export const bankUpload = guard(async (c) => {
     ? { ok: true as const, matched: 0, jeNos: [] as string[], contraPairs: 0 }
     : await applyObviousMatches(sb, co.companyId, { id: statementId, account_code: accountCode, period_to: periodTo });
   if (!obvious.ok) return c.json({ error: 'match_failed', reason: obvious.reason, message: `The file was read, but the obvious matches could not be applied: ${obvious.reason}` }, 500);
+  /* A customer transfer matched is its money seen: its receipt turns formal (owner 2026-11-09). */
+  await formaliseReceiptsForBankMatch(sb, co.companyId, accountCode, obvious.jeNos, userName(c));
 
   const counts = decisions.reduce<Record<string, number>>((acc, d, idx) => {
     const kind = alreadyRecorded[idx] ? 'DUPLICATE' : d.kind;
@@ -587,6 +590,7 @@ export const bankStatementAutoMatch = guard(async (c) => {
   }
   const r = await applyObviousMatches(sb, co.companyId, statement);
   if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, statement.account_code, r.jeNos, userName(c));
   return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos, contraPairs: r.contraPairs });
 });
 
@@ -1234,6 +1238,7 @@ export const bankLineMatch = guard(async (c) => {
     .update({ state: 'POSTED', posted_je_no: jeNo, updated_at: new Date().toISOString() })
     .eq('id', lineId).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, account.accountCode, [jeNo], userName(c));
 
   return c.json({ ok: true, status: 'matched', jeNo });
 });
@@ -1331,6 +1336,7 @@ export const bankLinesMatchGroup = guard(async (c) => {
     .update({ state: 'POSTED', posted_je_no: jeNos[0]!, updated_at: new Date().toISOString() })
     .in('id', lineIds).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, accountCode, jeNos, userName(c));
 
   return c.json({ ok: true, status: 'matched', lines: lineIds.length, entries: jeNos.length, jeNos });
 });
