@@ -82,7 +82,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
-import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
+import { soOffersTransferToDo } from "../../lib/so-transfer-to-do";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage, useSoFunnelValues } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
@@ -170,6 +170,8 @@ type SoRow = HoldFields & {
   /* Server-derived here (mfg-sales-orders.ts:1800-1806); optional because an
      older bundle carries neither. sales-order.md §0.4c and SoListStatusCell. */
   delivery_state?: "none" | "partial" | "full" | null;
+  /** Server-derived (lib/so-list-rows.ts): something is still left to put on a DO. */
+  has_undelivered?: boolean | null;
   lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
@@ -729,7 +731,8 @@ function DetailDrawer({
                     </>
                   );
                 }
-                if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
+                /* Not offered once nothing is left to deliver (Conts #699). */
+                if (soOffersTransferToDo(row)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
                   /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
