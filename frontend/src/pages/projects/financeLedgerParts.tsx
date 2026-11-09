@@ -164,9 +164,10 @@ function CategoryDetailLines({
     }
   }
   async function openFile(line: FinanceLine) {
-    if (!line.r2_key) return;
+    const key = line.r2_key;
+    if (!key) return;
     try {
-      await openLoadedTab(() => api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key)), 30_000);
+      await openLoadedTab(() => api.fetchBlobUrl(`/api/projects/attachments/${key}`, viewableMime(key)), 30_000);
     } catch (e) {
       toast.error((e as { message?: string } | null)?.message || "Something went wrong. Please try again.");
     }
