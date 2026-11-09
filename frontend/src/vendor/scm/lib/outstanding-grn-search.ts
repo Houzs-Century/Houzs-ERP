@@ -41,3 +41,12 @@ export function filterOutstandingGrnLines<T extends OutstandingGrnItem>(items: T
     return terms.every((t) => text.includes(t));
   });
 }
+
+/* The PO part of one note card's heading. A note can take lines from several
+   POs (staff 2026-11-09, HC-GRN-2611-052), so the heading lists every PO its
+   lines name rather than the first line's, which read as if the whole note
+   came from one PO. */
+export function notePoLabel(lines: ReadonlyArray<Pick<OutstandingGrnItem, 'poDocNo'>>): string | null {
+  const pos = [...new Set(lines.map((l) => l.poDocNo).filter((p): p is string => !!p))];
+  return pos.length === 0 ? null : `PO ${pos.join(', ')}`;
+}
