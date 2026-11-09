@@ -1680,16 +1680,16 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     <div key={row.id} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: "1px solid #eceee9" }}>
                       <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: `2px solid ${row.isEscalation ? RED : TEAL}`, marginTop: 4 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {row.status && (
-                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: toneBackground, color: toneColor }}>{row.status.label}</span>
-                          )}
-                          <span style={{ marginLeft: "auto", fontSize: 10.5, color: GREY, whiteSpace: "nowrap" }}>{dtm(row.at)}</span>
+                        <div style={{ display: "flex", gap: 8, fontSize: 10.5, color: GREY }}>
+                          <span style={{ whiteSpace: "nowrap" }}>{dtm(row.at)}</span>
+                          <span style={{ color: INK_SEC, fontWeight: 600, minWidth: 0, overflowWrap: "anywhere" }}>{row.by}</span>
                         </div>
+                        {row.status && (
+                          <span style={{ display: "inline-block", marginTop: 4, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: toneBackground, color: toneColor }}>{row.status.label}</span>
+                        )}
                         {row.remarks && (
                           <div style={{ fontSize: 12.5, color: row.isEscalation ? RED : INK, marginTop: 4, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{row.remarks}</div>
                         )}
-                        <div style={{ fontSize: 10.5, color: MUTED, marginTop: 2 }}>by {row.by}</div>
                       </div>
                     </div>
                   );
