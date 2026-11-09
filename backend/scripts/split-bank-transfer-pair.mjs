@@ -25,9 +25,12 @@
 // transaction:
 //   1. the credit row takes back its gross, charge 0, and what the matcher
 //      makes of it alone;
-//   2. the debit row is written beside it, OPEN — the first line number after
-//      the credit's that the statement does not use (the upload never wrote
-//      it), the credit's day, words and reference, what the matcher makes of it;
+//   2. the debit row is written beside it, OPEN — on its own line number: the
+//      upload numbered it and never wrote it, so it is the one number missing
+//      among that day's lines (statement 21: #22, between #21 and #23 of
+//      05/11); failing exactly one such gap, the first number after the
+//      credit's that the statement does not use — with the credit's day, words
+//      and reference, and what the matcher makes of it;
 //   3. the statement's line count goes up by one.
 // A line that is not OPEN, or a closed month, is refused. After the commit the
 // rows are read again on a FRESH connection.
@@ -83,7 +86,11 @@ async function readPlan(sb) {
     const charge = Number(r.charge_sen ?? 0);
     if (!(charge > 0) || Number(r.amount_sen) <= 0) continue;
     const gross = Number(r.amount_sen) + charge;
-    let debitNo = Number(r.line_no) + 1;
+    /* The number the upload gave the debit: the one missing among the day's lines. */
+    const sameDay = (rows ?? []).filter((x) => day(x.booked_on) === day(r.booked_on)).map((x) => Number(x.line_no));
+    const gaps = [];
+    for (let n = Math.min(...sameDay) + 1; n < Math.max(...sameDay); n += 1) if (!used.has(n)) gaps.push(n);
+    let debitNo = gaps.length === 1 ? gaps[0] : Number(r.line_no) + 1;
     while (used.has(debitNo)) debitNo += 1;
     const lines = [
       { lineNo: Number(r.line_no), bookedOn: day(r.booked_on), description: String(r.description ?? ''), reference: r.reference ?? null, amountSen: gross, balanceSen: null },
