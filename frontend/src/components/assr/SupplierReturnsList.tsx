@@ -6,19 +6,24 @@
 // delivery board + HC sheet. The logic (labels, next number, count, which is
 // current) lives in vendor/scm/lib/assr/returns.ts and is shared with the
 // server. Self-contained: it owns its writes (caseId + api) so the host surface
-// only supplies the rows + a reload/error hook.
-import { useState } from "react";
+// only supplies the rows + a reload/error hook. Trips are tabs (Operation Dept
+// 2026-11-09): the current one opens, older ones stay one tap away.
+import { useState, type ReactElement, type ReactNode } from "react";
 import {
   type SupplierReturn,
   currentRound,
   roundCount,
   roundLabel,
+  shownRound,
+  tripTabLabel,
   QC_RESULTS,
   qcResultLabel,
   returnNotePath,
 } from "../../vendor/scm/lib/assr/returns";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { api } from "../../api/client";
+import { cn } from "../../lib/utils";
+import { CaseSection } from "./CaseSection";
 
 export interface SupplierReturnsListProps {
   returns: SupplierReturn[];
@@ -35,31 +40,32 @@ export interface SupplierReturnsListProps {
   confirm?: (msg: string) => boolean | Promise<boolean>;
 }
 
-const LABEL = "text-[11px] font-medium text-ink-muted";
-const FIELD =
-  "w-full rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-ink-secondary outline-none focus:border-primary disabled:opacity-60";
+type TripDateField = "pickup_at" | "expected_return_at" | "returned_at";
 
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+const LABEL = "text-[10px] font-semibold uppercase tracking-wider text-ink-muted";
+const FIELD =
+  "w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60";
+const PAIR = "grid grid-cols-1 gap-2.5 sm:grid-cols-2";
+
+function Labeled({ label, children }: { label: string; children: ReactNode }): ReactElement {
   return (
-    <label className="flex flex-col gap-1">
+    <label className="flex flex-col gap-1.5">
       <span className={LABEL}>{label}</span>
       {children}
     </label>
   );
 }
 
-function TripCard({
-  r,
-  caseId,
-  isCurrent,
-  canWrite,
-  busy,
-  onPatch,
-  onArchive,
-  onError,
-  formatDate,
-  confirm,
-}: {
+function ReadOnly({ label, value }: { label: string; value: string }): ReactElement {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className={LABEL}>{label}</span>
+      <span className="whitespace-pre-wrap text-[13px] text-ink-secondary">{value}</span>
+    </div>
+  );
+}
+
+interface TripFieldsProps {
   r: SupplierReturn;
   caseId: number;
   isCurrent: boolean;
@@ -70,36 +76,46 @@ function TripCard({
   onError: (msg: string) => void;
   formatDate?: (s: string | null | undefined) => string;
   confirm?: (msg: string) => boolean | Promise<boolean>;
-}) {
+}
+
+function TripFields({ r, caseId, isCurrent, canWrite, busy, onPatch, onArchive, onError, formatDate, confirm }: TripFieldsProps): ReactElement {
   const fmt = formatDate ?? ((s) => s || "—");
   // Uncontrolled inputs keyed by the persisted value: a save + parent reload
   // resets them; text saves on blur so a reload never yanks focus mid-word.
-  const save = (field: string, v: string) => {
-    if ((r[field as keyof SupplierReturn] ?? "") === v) return;
-    void onPatch(r.id, { [field]: v || null });
+  const save = (field: keyof SupplierReturn, value: string) => {
+    if ((r[field] ?? "") === value) return;
+    void onPatch(r.id, { [field]: value || null });
   };
 
-  const dateField = (field: "pickup_at" | "returned_at", label: string) =>
+  const dateField = (field: TripDateField, label: string) =>
     canWrite ? (
       <Labeled label={label}>
-        <DateField
-          value={r[field] ?? ""}
-          onChange={(iso) => save(field, iso)}
+        <DateField value={r[field] ?? ""} onChange={(iso) => save(field, iso)} disabled={busy} fullWidth aria-label={label} />
+      </Labeled>
+    ) : (
+      <ReadOnly label={label} value={fmt(r[field])} />
+    );
+
+  const textField = (field: "reason" | "note", label: string, placeholder: string) =>
+    canWrite ? (
+      <Labeled label={label}>
+        <textarea
+          className={cn(FIELD, "min-h-[60px] resize-y")}
+          rows={2}
+          defaultValue={r[field] ?? ""}
+          placeholder={placeholder}
           disabled={busy}
-          fullWidth
-          aria-label={label}
+          key={`${field}:${r[field] ?? ""}`}
+          onBlur={(e) => save(field, e.target.value.trim())}
         />
       </Labeled>
     ) : (
-      <div className="flex flex-col gap-1">
-        <span className={LABEL}>{label}</span>
-        <span className="text-[13px] text-ink-secondary">{fmt(r[field])}</span>
-      </div>
+      <ReadOnly label={label} value={r[field] || "—"} />
     );
 
   return (
-    <div className={`space-y-2 rounded-md border bg-surface px-3 py-2.5 ${isCurrent ? "border-primary/50" : "border-border-subtle"}`}>
-      <div className="flex items-center justify-between">
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-[12px] font-semibold text-ink">{roundLabel(r.round_no)}</span>
           {r.ref_no && <span className="font-mono text-[11px] text-ink-muted">{r.ref_no}</span>}
@@ -108,38 +124,62 @@ function TripCard({
           )}
         </div>
         <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="text-[11px] font-semibold text-primary hover:opacity-80"
-          onClick={() => {
-            void api.openHtml(returnNotePath(caseId, r.id)).catch((e: unknown) =>
-              onError(e instanceof Error ? e.message : "Couldn't open the return note"),
-            );
-          }}
-        >
-          Print
-        </button>
-        {canWrite && (
           <button
             type="button"
-            disabled={busy}
-            className="text-[11px] font-semibold text-ink-muted hover:text-ink-secondary disabled:opacity-60"
-            onClick={async () => {
-              const ok = confirm ? await confirm(`Remove ${roundLabel(r.round_no)}?`) : true;
-              if (ok) void onArchive(r.id);
+            className="min-h-[32px] text-[11px] font-semibold text-primary hover:opacity-80"
+            onClick={() => {
+              void api.openHtml(returnNotePath(caseId, r.id)).catch((e: unknown) =>
+                onError(e instanceof Error ? e.message : "Couldn't open the return note"),
+              );
             }}
           >
-            Remove
+            Print
           </button>
-        )}
+          {canWrite && (
+            <button
+              type="button"
+              disabled={busy}
+              className="min-h-[32px] text-[11px] font-semibold text-ink-muted hover:text-ink-secondary disabled:opacity-60"
+              onClick={async () => {
+                const ok = confirm ? await confirm(`Remove ${roundLabel(r.round_no)}?`) : true;
+                if (ok) void onArchive(r.id);
+              }}
+            >
+              Remove
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      {canWrite ? (
+        <Labeled label="Supplier">
+          <input
+            className={FIELD}
+            defaultValue={r.creditor_code ?? ""}
+            placeholder={r.creditor_name ?? "Supplier code"}
+            disabled={busy}
+            key={`cr:${r.creditor_code ?? ""}`}
+            onBlur={(e) => save("creditor_code", e.target.value.trim())}
+          />
+        </Labeled>
+      ) : (
+        <ReadOnly label="Supplier" value={r.creditor_name || r.creditor_code || "—"} />
+      )}
+
+      <div className={PAIR}>
         {dateField("pickup_at", "Sent to Supplier")}
-        {dateField("returned_at", "Back from Supplier")}
-        <Labeled label="QC Result">
-          {canWrite ? (
+        {dateField("expected_return_at", "Back from Supplier (ETA)")}
+      </div>
+
+      {textField(
+        "reason",
+        r.round_no > 1 ? "Why Sent Back Again" : "Reason for Return",
+        r.round_no > 1 ? "QC failed / broke again / wrong part…" : "",
+      )}
+
+      <div className={PAIR}>
+        {canWrite ? (
+          <Labeled label="QC Result">
             <select
               className={FIELD}
               defaultValue={r.qc_result ?? ""}
@@ -147,62 +187,49 @@ function TripCard({
               key={`qc:${r.qc_result ?? ""}`}
               onChange={(e) => save("qc_result", e.target.value)}
             >
-              <option value="">—</option>
+              <option value="">Pending QC</option>
               {QC_RESULTS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-          ) : (
-            <span className="text-[13px] text-ink-secondary">{qcResultLabel(r.qc_result)}</span>
-          )}
-        </Labeled>
-        <Labeled label="Supplier">
-          {canWrite ? (
-            <input
-              className={FIELD}
-              defaultValue={r.creditor_code ?? ""}
-              placeholder={r.creditor_name ?? "Supplier code"}
-              disabled={busy}
-              key={`cr:${r.creditor_code ?? ""}`}
-              onBlur={(e) => save("creditor_code", e.target.value.trim())}
-            />
-          ) : (
-            <span className="text-[13px] text-ink-secondary">{r.creditor_name || r.creditor_code || "—"}</span>
-          )}
-        </Labeled>
+          </Labeled>
+        ) : (
+          <ReadOnly label="QC Result" value={r.qc_result ? qcResultLabel(r.qc_result) : "Pending QC"} />
+        )}
+        {dateField("returned_at", "Actual Back Date")}
       </div>
 
-      <Labeled label={r.round_no > 1 ? "Why Sent Back Again" : "Reason (Optional)"}>
-        {canWrite ? (
-          <input
-            className={FIELD}
-            defaultValue={r.reason ?? ""}
-            placeholder={r.round_no > 1 ? "QC failed / broke again / wrong part…" : ""}
-            disabled={busy}
-            key={`rs:${r.reason ?? ""}`}
-            onBlur={(e) => save("reason", e.target.value.trim())}
-          />
-        ) : (
-          <span className="text-[13px] text-ink-secondary">{r.reason || "—"}</span>
-        )}
-      </Labeled>
+      {(canWrite || r.note) && textField("note", "Remarks", "Additional notes…")}
+    </div>
+  );
+}
 
-      {(canWrite || r.note) && (
-        <Labeled label="Note">
-          {canWrite ? (
-            <textarea
-              className={FIELD}
-              rows={2}
-              defaultValue={r.note ?? ""}
-              disabled={busy}
-              key={`nt:${r.note ?? ""}`}
-              onBlur={(e) => save("note", e.target.value.trim())}
-            />
-          ) : (
-            <span className="whitespace-pre-wrap text-[13px] text-ink-secondary">{r.note}</span>
+function TripTabs({ trips, shownId, currentId, onPick }: {
+  trips: SupplierReturn[];
+  shownId: number | null;
+  currentId: number | null;
+  onPick: (id: number) => void;
+}): ReactElement {
+  return (
+    <div role="tablist" aria-label="Supplier return trips" className="flex flex-wrap gap-1.5">
+      {trips.map((trip) => (
+        <button
+          key={trip.id}
+          type="button"
+          role="tab"
+          aria-selected={trip.id === shownId}
+          onClick={() => onPick(trip.id)}
+          className={cn(
+            "min-h-[36px] rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+            trip.id === shownId
+              ? "border-primary bg-primary-soft text-primary"
+              : "border-border bg-surface text-ink-secondary hover:border-primary/40",
           )}
-        </Labeled>
-      )}
+        >
+          {tripTabLabel(trip.round_no)}
+          {trip.id === currentId ? " · Current" : ""}
+        </button>
+      ))}
     </div>
   );
 }
@@ -215,30 +242,34 @@ export function SupplierReturnsList({
   onError,
   formatDate,
   confirm,
-}: SupplierReturnsListProps) {
+}: SupplierReturnsListProps): ReactElement {
   const [reason, setReason] = useState("");
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const ordered = [...returns].sort((a, b) => a.round_no - b.round_no);
+  const [pickedTripId, setPickedTripId] = useState<number | null>(null);
+  const ordered = [...returns].filter((r) => !r.archived_at).sort((a, b) => a.round_no - b.round_no);
   const cur = currentRound(returns);
+  const shown = shownRound(ordered, pickedTripId);
   const count = roundCount(returns);
   const firstTrip = count === 0;
 
-  const run = (fn: () => Promise<unknown>) => {
+  const run = (fn: () => Promise<unknown>, afterSave?: () => void) => {
     setBusy(true);
     void fn()
-      .then(() => onChanged())
+      .then(() => { afterSave?.(); onChanged(); })
       .catch((e: unknown) => onError(e instanceof Error ? e.message : "Couldn't save the supplier return"))
       .finally(() => setBusy(false));
   };
-  const onAdd = (r: string | null) => run(() => api.post(`/api/assr/${caseId}/supplier-returns`, { reason: r }));
+  const onAdd = (r: string | null) =>
+    run(() => api.post(`/api/assr/${caseId}/supplier-returns`, { reason: r }), () => setPickedTripId(null));
   const onPatch = (roundId: number, patch: Record<string, string | null>) => run(() => api.patch(`/api/assr/${caseId}/supplier-returns/${roundId}`, patch));
-  const onArchive = (roundId: number) => run(() => api.del(`/api/assr/${caseId}/supplier-returns/${roundId}`));
+  const onArchive = (roundId: number) =>
+    run(() => api.del(`/api/assr/${caseId}/supplier-returns/${roundId}`), () => setPickedTripId(null));
 
   const add = async () => {
     const ok = firstTrip || !confirm
       ? true
-      : await confirm("Add another supplier return? This reopens the case onto the supplier stage and starts a new return.");
+      : await confirm("Add another supplier return? This reopens the case onto the supplier stage and starts a new return. Earlier trips stay on their own tabs.");
     if (!ok) return;
     onAdd(reason.trim() || null);
     setReason("");
@@ -246,26 +277,21 @@ export function SupplierReturnsList({
   };
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-2">
-        <span className="text-[12px] font-semibold text-ink-secondary">Supplier Returns</span>
-        {count > 0 && (
-          <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-            {count === 1 ? "1 trip" : `${count} trips`}
-          </span>
-        )}
-      </div>
-
+    <CaseSection title="3. Supplier Service / Return" badge={count > 1 ? `${count} trips` : null} icon={null} action={null} isCollapsible={false}>
       {firstTrip && (
         <p className="text-[12px] text-ink-muted">No supplier return recorded yet.</p>
       )}
 
-      {ordered.map((r) => (
-        <TripCard
-          key={r.id}
-          r={r}
+      {count > 1 && (
+        <TripTabs trips={ordered} shownId={shown?.id ?? null} currentId={cur?.id ?? null} onPick={setPickedTripId} />
+      )}
+
+      {shown && (
+        <TripFields
+          key={shown.id}
+          r={shown}
           caseId={caseId}
-          isCurrent={cur?.id === r.id}
+          isCurrent={cur?.id === shown.id}
           canWrite={canWrite}
           busy={busy}
           onPatch={onPatch}
@@ -274,11 +300,11 @@ export function SupplierReturnsList({
           formatDate={formatDate}
           confirm={confirm}
         />
-      ))}
+      )}
 
       {canWrite && (
         adding && !firstTrip ? (
-          <div className="space-y-2 rounded-md border border-dashed border-border bg-surface px-3 py-2.5">
+          <div className="space-y-2 rounded-md border border-dashed border-border px-3 py-2.5">
             <Labeled label="Why Sent Back Again">
               <input
                 className={FIELD}
@@ -293,14 +319,14 @@ export function SupplierReturnsList({
                 type="button"
                 disabled={busy}
                 onClick={add}
-                className="rounded-md border border-primary bg-primary-soft px-3 py-1.5 text-[12px] font-semibold text-primary hover:opacity-90 disabled:opacity-60"
+                className="min-h-[36px] rounded-md border border-primary bg-primary-soft px-3 py-1.5 text-[12px] font-semibold text-primary hover:opacity-90 disabled:opacity-60"
               >
                 Add Return
               </button>
               <button
                 type="button"
                 onClick={() => { setAdding(false); setReason(""); }}
-                className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:border-primary/40"
+                className="min-h-[36px] rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:border-primary/40"
               >
                 Cancel
               </button>
@@ -311,12 +337,12 @@ export function SupplierReturnsList({
             type="button"
             disabled={busy}
             onClick={() => (firstTrip ? add() : setAdding(true))}
-            className="rounded-md border border-primary bg-primary-soft px-3 py-1.5 text-[12px] font-semibold text-primary hover:opacity-90 disabled:opacity-60"
+            className="min-h-[36px] rounded-md border border-primary bg-primary-soft px-3 py-1.5 text-[12px] font-semibold text-primary hover:opacity-90 disabled:opacity-60"
           >
-            + Add Supplier Return
+            {firstTrip ? "+ Add Supplier Return" : "+ Send Back Again (New Trip)"}
           </button>
         )
       )}
-    </div>
+    </CaseSection>
   );
 }

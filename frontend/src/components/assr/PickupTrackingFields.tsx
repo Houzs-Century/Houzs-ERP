@@ -1,22 +1,20 @@
-// Pickup / Return step tracking (HC-0129): status, scheduled (ETA) + actual
-// pickup date side by side, PIC, and where the item is now. The scheduled date
-// IS customer_pickup_at (the date the board / HC sheet already plan on), so it
-// is relabelled here rather than duplicated. Kept out of ServiceCases.tsx,
-// which is at its size ceiling.
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../../api/client";
+// Pickup / Return step tracking (HC-0129), shown as two sections: Pickup Details
+// (who collects, status, scheduled (ETA) + actual date, PIC) and Item Tracking
+// (where the item is now). The scheduled date IS customer_pickup_at (the date
+// the board / HC sheet already plan on), so it is relabelled here rather than
+// duplicated. PIC and location are typed by hand (Operation Dept 2026-11-09).
+// Kept out of ServiceCases.tsx, which is at its size ceiling.
+import type { ReactElement } from "react";
+import { cn } from "../../lib/utils";
 import { InlineEdit } from "../InlineEdit";
-import {
-  ITEM_LOCATION_OPTIONS,
-  PICKUP_STATUS_OPTIONS,
-  pickupTrackingLabel,
-} from "../../vendor/scm/lib/assr-pickup-tracking";
+import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel } from "../../vendor/scm/lib/assr-pickup-tracking";
+import { CaseSection } from "./CaseSection";
+import { LogisticsConfirmedNote } from "./LogisticsConfirmedNote";
 
 // Re-exported so the mobile case page takes the whole Pickup / Return set from one import (it is at its size ceiling).
-export { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../../vendor/scm/lib/assr-pickup-tracking";
+export { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../../vendor/scm/lib/assr-pickup-tracking";
 
-import { LogisticsConfirmedNote } from "./LogisticsConfirmedNote";
-type Row = {
+export interface PickupTrackingRow {
   pickup_status?: string | null;
   customer_pickup_at?: string | null;
   actual_pickup_at?: string | null;
@@ -24,83 +22,84 @@ type Row = {
   sched_pickup_date?: string | null;
   pickup_pic?: string | null;
   item_location?: string | null;
-  creditor_name?: string | null;
-  supplier?: string | null;
-};
-
-/** Active Fleet drivers' names, for the Pickup PIC dropdown (HC-0129). */
-export function usePickupPicDrivers(): string[] {
-  const { data } = useQuery({
-    queryKey: ["assr-pickup-pic-drivers"],
-    queryFn: () => api.get<{ data?: { name: string }[] }>("/api/assr/pickup-pic-drivers"),
-    staleTime: 5 * 60_000,
-  });
-  return (data?.data ?? []).map((d) => d.name);
 }
 
-/** The case's supplier first, then the drivers. A PIC typed before the
- *  dropdown is not in here; the callers keep showing it. */
-export function pickupPicChoices(drivers: string[], supplier: string | null): string[] {
-  return [...new Set([...(supplier ? [supplier] : []), ...drivers])];
+export interface PickupTrackingFieldsProps {
+  c: PickupTrackingRow;
+  patch: (body: Record<string, string | null>) => Promise<void>;
 }
 
-export const pickupPicLabel = (supplier: string | null) => (v: string): string =>
-  v === supplier ? `${v} (Supplier)` : v;
+// Own team pickup (stored 'customer') = our logistics goes to the customer's
+// house, which syncs the PICKUP leg to the HC Delivery sheet; Supplier direct =
+// the supplier collects it themselves and it never reaches the sheet.
+export const PICKUP_BY_OPTIONS = [
+  { value: "customer", label: "Own team pickup" },
+  { value: "supplier", label: "Supplier direct" },
+] as const;
 
-/** Mobile <select> options: same list as desktop; a PIC typed before the
- *  dropdown stays selectable. */
-export function pickupPicSelectOptions(drivers: string[], supplierRaw: unknown, currentRaw: unknown): { value: string; label: string }[] {
-  const supplier = supplierRaw ? String(supplierRaw) : null;
-  const current = currentRaw ? String(currentRaw) : "";
-  const choices = pickupPicChoices(drivers, supplier);
-  if (current && !choices.includes(current)) choices.unshift(current);
-  const label = pickupPicLabel(supplier);
-  return [{ value: "", label: "—" }, ...choices.map((v) => ({ value: v, label: label(v) }))];
-}
-
-export function PickupTrackingFields({ c, patch }: { c: Row; patch: (body: Record<string, string | null>) => Promise<void> }) {
-  const drivers = usePickupPicDrivers();
-  const supplier = c.creditor_name || c.supplier || null;
+export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): ReactElement {
   return (
     <>
-      <InlineEdit
-        label="Pickup Status"
-        value={c.pickup_status}
-        options={PICKUP_STATUS_OPTIONS}
-        optionLabel={pickupTrackingLabel}
-        onSave={(v) => patch({ pickup_status: v })}
-      />
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+      <CaseSection title="1. Pickup Details" badge={null} icon={null} action={null} isCollapsible={false}>
+        <div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Pickup By</div>
+          <div className="flex flex-wrap gap-1.5">
+            {PICKUP_BY_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => patch({ pickup_by: c.pickup_by === option.value ? null : option.value })}
+                className={cn(
+                  "min-h-[36px] rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                  c.pickup_by === option.value
+                    ? "border-primary bg-primary-soft text-primary"
+                    : "border-border bg-surface text-ink-secondary hover:border-primary/40",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <InlineEdit
+            label="Pickup Status"
+            value={c.pickup_status}
+            options={PICKUP_STATUS_OPTIONS}
+            optionLabel={pickupTrackingLabel}
+            onSave={(value) => patch({ pickup_status: value })}
+          />
+          <InlineEdit
+            label="Pickup PIC"
+            value={c.pickup_pic}
+            placeholder="Who collects it, e.g. Zamree (HOK)"
+            onSave={(value) => patch({ pickup_pic: value?.trim() || null })}
+          />
+          <InlineEdit
+            label="Scheduled Pickup (ETA)"
+            type="date"
+            value={c.customer_pickup_at}
+            onSave={(value) => patch({ customer_pickup_at: value })}
+          />
+          <InlineEdit
+            label="Actual Pickup"
+            type="date"
+            value={c.actual_pickup_at}
+            onSave={(value) => patch({ actual_pickup_at: value })}
+          />
+        </div>
+        {c.pickup_by === "customer" && !c.actual_pickup_at && (
+          <LogisticsConfirmedNote requested={c.customer_pickup_at} confirmed={c.sched_pickup_date} />
+        )}
+      </CaseSection>
+      <CaseSection title="2. Item Tracking" badge={null} icon={null} action={null} isCollapsible={false}>
         <InlineEdit
-          label="Scheduled Pickup Date (ETA)"
-          type="date"
-          value={c.customer_pickup_at}
-          onSave={(v) => patch({ customer_pickup_at: v })}
+          label="Current Item Location"
+          value={c.item_location ? pickupTrackingLabel(c.item_location) : null}
+          placeholder="Where the item is now, e.g. Warehouse - Balakong"
+          onSave={(value) => patch({ item_location: value?.trim() || null })}
         />
-        <InlineEdit
-          label="Actual Pickup Date"
-          type="date"
-          value={c.actual_pickup_at}
-          onSave={(v) => patch({ actual_pickup_at: v })}
-        />
-      </div>
-      {c.pickup_by === "customer" && !c.actual_pickup_at && (
-        <LogisticsConfirmedNote requested={c.customer_pickup_at} confirmed={c.sched_pickup_date} />
-      )}
-      <InlineEdit
-        label="Pickup PIC"
-        value={c.pickup_pic}
-        options={pickupPicChoices(drivers, supplier)}
-        optionLabel={pickupPicLabel(supplier)}
-        onSave={(v) => patch({ pickup_pic: v })}
-      />
-      <InlineEdit
-        label="Current Item Location"
-        value={c.item_location}
-        options={ITEM_LOCATION_OPTIONS}
-        optionLabel={pickupTrackingLabel}
-        onSave={(v) => patch({ item_location: v })}
-      />
+      </CaseSection>
     </>
   );
 }
