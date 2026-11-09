@@ -214,6 +214,25 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   }
 }
 
+/* The purchase orders an invoice bills, read off its LINES (owner 2026-11-10:
+   an invoice billing several POs lists them all). `purchase_invoices.
+   purchase_order_id` is one FK holding the first receipt's PO, so it cannot
+   answer this; each line's `source_po_number` from attachGrnLineFacts can. */
+export const piPoNumbersByInvoice = (
+  lines: ReadonlyArray<{ purchase_invoice_id: string; source_po_number?: unknown }>,
+): Map<string, string[]> => {
+  const sets = new Map<string, Set<string>>();
+  for (const l of lines) {
+    const set = sets.get(l.purchase_invoice_id) ?? new Set<string>();
+    const n = typeof l.source_po_number === 'string' ? l.source_po_number.trim() : '';
+    if (n) set.add(n);
+    sets.set(l.purchase_invoice_id, set);
+  }
+  const out = new Map<string, string[]>();
+  for (const [id, set] of sets) out.set(id, [...set].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })));
+  return out;
+};
+
 /* ── The list marker ──────────────────────────────────────────────────────
    Per invoice: how many lines were billed at a price other than the one their
    purchase order named, the net per-unit x qty difference, and how many lines
