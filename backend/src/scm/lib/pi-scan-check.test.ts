@@ -1,6 +1,6 @@
 /* Scan, check, then create, for supplier invoices (owner 2026-11-04): the working copy an invoice scan keeps. */
 import { describe, expect, test } from 'vitest';
-import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, NO_CODES, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
+import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, extractOfReview, repeatedPis, setPieces, suggestBills, NO_CODES, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
 import { familiesByModelWord } from './scan-word-match';
 import type { PiLineMatchResult } from './pi-scan-match';
@@ -170,5 +170,27 @@ describe('NB prints its own code and the size in words (NBF2610-1322)', () => {
     const lines = [row('SB12-KHB(C)-NH79(A)(MH-12")', '6 FTS')];
     suggestBills(lines, receipt, [], families, new Map());
     expect(lines[0]!.grnItemId).toBeNull();
+  });
+});
+
+describe('a waiting copy with no stored read rebuilds from its own rows', () => {
+  const row = (itemCode: string, qty: number, readQty: number, unitPrice: number) => ({
+    key: itemCode + qty, grnItemId: null, grnNumber: null, qty, suggested: false, ai: false,
+    read: { itemCode, description: `${itemCode} desc`, qty: readQty, unitPrice, lineTotal: unitPrice * readQty },
+  });
+  const review = {
+    v: 4, supplierId: null, supplierRead: 'HOOKKA INDUSTRIES SDN BHD', invoiceNumber: 'INV-2610-097', invoiceDate: '2026-10-22',
+    doNo: 'DO-2610-090', poNo: null, notes: null, taxNote: null,
+    lines: [row('1007-(Q)', 1, 1, 425), row('1007-(Q)', 1, 1, 425), row('1013-(Q)', 2, 3, 305), row('1013-(Q)', 1, 3, 305)],
+  };
+  test('keeps the supplier name, D.O. and every printed row with its own pieces', () => {
+    const x = extractOfReview(review)!;
+    expect(x).toMatchObject({ supplierName: 'HOOKKA INDUSTRIES SDN BHD', doNo: 'DO-2610-090', invoiceNumber: 'INV-2610-097' });
+    expect(x.lines.map((l) => [l.itemCode, l.qty, l.lineTotal])).toEqual([
+      ['1007-(Q)', 1, 425], ['1007-(Q)', 1, 425], ['1013-(Q)', 2, 610], ['1013-(Q)', 1, 305],
+    ]);
+  });
+  test('a copy with no printed rows has nothing to rebuild', () => {
+    expect(extractOfReview({ ...review, lines: [] })).toBeNull();
   });
 });
