@@ -336,6 +336,71 @@
       "file": "backend/src/scm/lib/my-time.test.ts",
       "text": "expect(new Date().toISOString().slice(0, 10)).toBe(\"2026-07-17\");",
       "why": "my-time.test.ts pins the UTC clock on purpose: it fakes the time and shows the raw UTC date is the day before Malaysia's, which is the bug todayMyt() exists for."
+    },
+    {
+      "file": "frontend/src/hooks/pendingDigest.ts",
+      "text": "return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it keys the once-a-day pending reminder and decides which events read as past. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/hooks/usePendingReminder.test.tsx",
+      "text": "`pending-reminder:u7:c1:${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}`,",
+      "why": "A TEST mirroring localToday() in pendingDigest.ts to build the same storage key; it must change together with that function."
+    },
+    {
+      "file": "frontend/src/lib/tableHighlight.ts",
+      "text": "return `${now.getFullYear()}-${m}-${d}`;",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it colours overdue cells red, it does not decide which rows are listed. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "patch({ cmonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}` });",
+      "why": "Calendar month NAVIGATION: d is a Date the calendar built locally from the month already in the URL (prev/next), so the local fields are the month being shown, not a reading of today."
+    },
+    {
+      "file": "frontend/src/pages/ShareCalendar.test.tsx",
+      "text": "return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}-${String(d.getDate()).padStart(2, \"0\")}`;",
+      "why": "A TEST computing the same local today the share calendar uses, to assert the highlighted day."
+    },
+    {
+      "file": "frontend/src/pages/ShareCalendar.test.tsx",
+      "text": "const thisMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}`;",
+      "why": "A TEST computing the same local month the share calendar opens on."
+    },
+    {
+      "file": "frontend/src/pages/announcements/RegisterView.tsx",
+      "text": "return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it is the default value of a date field on the announcement register form. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/pages/projects/ProjectsListParts.tsx",
+      "text": "const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, \"0\")}-${String(",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it labels a task pill OVERDUE / PENDING, it does not decide which projects are listed. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DailyBank.tsx",
+      "text": "return `${d.getFullYear()}-${m}-${day}`;",
+      "why": "shiftDate(): day arithmetic on a date the operator already chose, parsed at LOCAL noon and read back locally, so the zone cancels out. It never reads today (that is todayMyt() since 2026-11-09)."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/StockTakeNew.tsx",
+      "text": "return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it is the default stock-take date on a new form, which the operator sees and can change. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/StockTransferNew.tsx",
+      "text": "return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;",
+      "why": "Reads the DEVICE clock for today, so it is only right on a machine set to Malaysia time. Kept by the 2026-11-09 date-filter sweep because it is not a filter: it is the default transfer date on a new form, which the operator sees and can change. Follow-up: todayMyt()."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/po-line-import.ts",
+      "text": "const localDay = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;",
+      "why": "A spreadsheet CELL the xlsx reader already turned into a local Date: reading its local fields returns the calendar day the cell shows. It never reads today."
+    },
+    {
+      "file": "backend/src/scm/lib/po-line-import.ts",
+      "text": "const localDay = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;",
+      "why": "Backend mirror of frontend vendor/scm/lib/po-line-import.ts: a spreadsheet cell already parsed into a Date, read back as the day it shows. It never reads today."
     }
   ]
 }

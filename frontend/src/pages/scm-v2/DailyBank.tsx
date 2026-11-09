@@ -31,16 +31,10 @@ import { DailyBankAccounts } from './DailyBankAccounts';
 import { DailyBankClose } from './DailyBankClose';
 import { DailyBankImageModal, DailyBankPrintModal } from './DailyBankPrint';
 import css from './DailyBank.module.css';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-const todayLocal = (): string => {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-};
 
 const shiftDate = (date: string, days: number): string => {
   const d = new Date(`${date}T12:00:00`);
@@ -73,7 +67,7 @@ export const DailyBank = () => {
   const rawView = params.get('view');
   const view: DailyBankView = rawView === 'accounts' || rawView === 'close' ? rawView : 'board';
   const dayParam = params.get('date');
-  const date = isDay(dayParam) ? dayParam : todayLocal();
+  const date = isDay(dayParam) ? dayParam : todayMyt();
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
@@ -84,7 +78,7 @@ export const DailyBank = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a missing or unknown view is rewritten
   }, [rawView]);
   const setView = (v: DailyBankView) => setParam({ view: v });
-  const setDate = (d: string) => setParam({ date: d === todayLocal() ? null : d });
+  const setDate = (d: string) => setParam({ date: d === todayMyt() ? null : d });
   const [focus, setFocus] = useState<string | null>(null);
 
   const q = useDailyBank(date);
@@ -92,7 +86,7 @@ export const DailyBank = () => {
   /* Print opens the day's sheet (or the count sheet); Export image its picture. */
   const [printing, setPrinting] = useState(false);
   const [imaging, setImaging] = useState(false);
-  const future = date > todayLocal();
+  const future = date > todayMyt();
 
   return (
     <div className={css.page}>
@@ -108,7 +102,7 @@ export const DailyBank = () => {
           <button type="button" className={css.navButton} onClick={() => setDate(shiftDate(date, -1))} aria-label="Previous day"><ChevronLeft {...ICON} /></button>
           <DateField value={date} onChange={(iso) => { if (iso) setDate(iso); }} aria-label="Day" />
           <button type="button" className={css.navButton} onClick={() => setDate(shiftDate(date, 1))} aria-label="Next day"><ChevronRight {...ICON} /></button>
-          <button type="button" className={css.navButton} onClick={() => setDate(todayLocal())}><Calendar {...ICON} /> Today</button>
+          <button type="button" className={css.navButton} onClick={() => setDate(todayMyt())}><Calendar {...ICON} /> Today</button>
         </span>
         <span className={css.grow} />
         <button type="button" className={css.navButton} onClick={() => setPrinting(true)} disabled={view !== 'close' && !board}
@@ -119,7 +113,7 @@ export const DailyBank = () => {
         )}
       </div>
 
-      {view === 'close' && <DailyBankClose date={date} today={todayLocal()} />}
+      {view === 'close' && <DailyBankClose date={date} today={todayMyt()} />}
 
       {view !== 'close' && q.isLoading && <div className={css.muted}>Loading the board…</div>}
       {view !== 'close' && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
@@ -130,7 +124,7 @@ export const DailyBank = () => {
 
       {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={future} />}
 
-      {printing && <DailyBankPrintModal kind={view === 'close' ? 'close' : 'bank'} board={board} date={date} today={todayLocal()} onClose={() => setPrinting(false)} />}
+      {printing && <DailyBankPrintModal kind={view === 'close' ? 'close' : 'bank'} board={board} date={date} today={todayMyt()} onClose={() => setPrinting(false)} />}
       {imaging && board && <DailyBankImageModal board={board} onClose={() => setImaging(false)} />}
     </div>
   );

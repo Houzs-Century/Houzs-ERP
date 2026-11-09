@@ -81,3 +81,18 @@ describe("MobileSalesOrders second-level filters", () => {
     await waitFor(() => expect(listCalls().some((u) => new URLSearchParams(u.split("?")[1]).getAll("f").includes("createdBy:me"))).toBe(true));
   });
 });
+
+describe("MobileSalesOrders date chips count Malaysian days (owner 2026-11-09)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("01:00 on 1 December in Malaysia is still 30 November in UTC, and This month is December", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-11-30T17:00:00Z") });
+    const user = userEvent.setup();
+    renderList("/");
+    await waitFor(() => expect(listCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: "This month" }));
+    await waitFor(() => expect(listCalls().some((u) => new URLSearchParams(u.split("?")[1]).get("from") === "2026-12-01")).toBe(true));
+    const p = new URLSearchParams(listCalls().find((u) => u.includes("from="))!.split("?")[1]);
+    expect(p.get("to")).toBe("2026-12-31");
+  });
+});
