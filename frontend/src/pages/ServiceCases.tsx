@@ -80,6 +80,7 @@ import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
 import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
 import { InspectByToggle } from "../components/assr/InspectByToggle";
+import { VerificationOutcomeChips } from "../components/assr/VerificationOutcomeChips";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -5151,11 +5152,6 @@ function useStageAutoAdvance({
 // `verified_at` / `verified_by` are server-stamped on PATCH, so the
 // timestamp can't drift from the actor.
 
-const VERIFICATION_OPTIONS = [
-  { value: "accepted", label: "Accepted", tone: "ok" as const },
-  { value: "needs_more_info", label: "Needs more info", tone: "warn" as const },
-  { value: "rejected", label: "Rejected", tone: "err" as const },
-];
 
 // ── Detail top-of-page redesign (PR 1) ─────────────────────────
 // Two card components lifted from `Service Case Detail — Redesign.dc.html`:
@@ -5753,53 +5749,27 @@ function VerificationCard({
           </div>
         </>
       )}
-      <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-      <InlineEdit
-        label="QC Issue Inspection Date"
-        type="date"
-        value={c.qc_receipt_date}
-        onSave={(v) => patch({ qc_receipt_date: v || null })}
-      />
-      {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
-          2026-07-14: the on-receipt check only needs the date + photos;
-          the pass/fail verdict lives in Outcome below. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Outcome
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">QC Issue Inspection Date</span>
+          <div className="min-w-[190px]">
+            <InlineEdit
+              label="QC Issue Inspection Date"
+              isLabelHidden
+              type="date"
+              value={c.qc_receipt_date}
+              onSave={(v) => patch({ qc_receipt_date: v || null })}
+            />
+          </div>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {VERIFICATION_OPTIONS.map((opt) => {
-            const active = outcome === opt.value;
-            const toneClass =
-              opt.tone === "ok"
-                ? active
-                  ? "border-ok bg-ok/15 text-ok"
-                  : "border-border text-ink-secondary hover:border-ok/40"
-                : opt.tone === "warn"
-                ? active
-                  ? "border-warn bg-warn/15 text-warn"
-                  : "border-border text-ink-secondary hover:border-warn/40"
-                : active
-                ? "border-err bg-err/15 text-err"
-                : "border-border text-ink-secondary hover:border-err/40";
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                disabled={saving}
-                onClick={() => setOutcome(active ? null : opt.value)}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-50",
-                  toneClass
-                )}
-              >
-                {active && <Check size={13} />}
-                {opt.label}
-              </button>
-            );
-          })}
+        <div className="hidden h-8 w-px bg-border sm:block" />
+        {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
+            2026-07-14: the on-receipt check only needs the date + photos;
+            the pass/fail verdict lives in Outcome. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">Outcome</span>
+          <VerificationOutcomeChips outcome={outcome} isDisabled={saving} onPick={setOutcome} />
         </div>
-      </div>
       </div>
 
       <CaseSection title="Root Cause" badge={null} icon={<Target size={16} />} action={null} isCollapsible={false}>

@@ -20,7 +20,7 @@ const OPTIONS = [
 export function InspectByToggle({ value, isDisabled, onPick }: InspectByToggleProps): ReactElement {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Inspect by</div>
+      <span className="text-[13px] font-semibold text-ink">Inspect by</span>
       <div className="flex gap-1.5">
         {OPTIONS.map((option) => (
           <button
