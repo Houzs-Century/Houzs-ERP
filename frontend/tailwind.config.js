@@ -87,7 +87,7 @@ export default {
         // 一字体". So the whole surface is one face again, and the 7-24 note is
         // kept rather than deleted because it explains what this replaced.
         //
-        // font-extrabold (800) is covered: public/fonts/fonts-v2.css declares
+        // font-extrabold (800) is covered: public/fonts/fonts-v3.css (was -v2) declares
         // an 800 face over the same 400-700 variable file, so 88 heading sites
         // clamp to real 700 outlines instead of synthesising. The -v2 name is
         // load-bearing — /fonts/* is immutable-cached for a year, so the sheet
