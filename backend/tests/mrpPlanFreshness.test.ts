@@ -76,4 +76,10 @@ describe('POST /from-sos wiring', () => {
     expect(src).toContain("error: 'mrp_plan_stale'");
     expect(src).toContain("deferMrpSnapshotRefresh(c, c.get('supabase'), coId, 'po-from-sos')");
   });
+
+  it('releases the idempotency claim on a stale-plan refusal, so Proceed on the recalculated plan is not refused as a reused key', () => {
+    const route = src.slice(src.indexOf("mfgPurchaseOrders.post('/from-sos'"));
+    const handler = route.slice(0, route.indexOf('\n});') + 4);
+    expect(handler).toMatch(/out\.body\.error === 'mrp_plan_stale'[\s\S]*markIdempotencyNoWrite\(c\)/);
+  });
 });

@@ -304,6 +304,14 @@ export const Mrp = () => {
      this came from the saved snapshot (the default view opens instantly from it);
      `regenerate` recomputes it server-side. See mrp-snapshot.ts. */
   const regenerate = useRegenerateMrp();
+  /* After a PO create or a stale refusal the plan on screen is out of date. A
+     stored plan must be recomputed (a refetch re-reads the same snapshot); a live
+     one only needs re-reading, and regenerating there would write a first
+     snapshot for a company the scheduled refresh does not keep fresh. */
+  const recalculatePlan = () => {
+    if (data?.stored) regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
+    else void q.refetch();
+  };
   /* `data.undated` (the tab-appropriate count of withheld demand) is no longer
      read here — the banner that displayed it was removed on the owner's
      instruction, 2026-08-20. The response still carries it and the backend still
@@ -470,7 +478,7 @@ export const Mrp = () => {
         setSelected(new Set());
         /* The page reads a stored plan: recompute it, or the lines just ordered
            stay short on screen and can be ordered again. */
-        regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
+        recalculatePlan();
         setDialog({
           kind: 'created',
           title: `Successfully created ${res.total} PO${res.total === 1 ? '' : 's'}`,
@@ -497,7 +505,7 @@ export const Mrp = () => {
         // ordered line drops off, and tell the operator plainly instead of
         // showing the raw error (Commander 2026-05-29).
         if (errCode === 'qty_exceeds_remaining' || errCode === 'mrp_plan_stale') {
-          regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
+          recalculatePlan();
           setDialog({
             kind: 'info',
             title: 'Already ordered',

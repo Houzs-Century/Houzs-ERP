@@ -2427,6 +2427,12 @@ mfgPurchaseOrders.post('/from-sos', async (c) => {
   if (out.status === 201 && createdCount > 0 && coId !== null) {
     deferMrpSnapshotRefresh(c, c.get('supabase'), coId, 'po-from-sos');
   }
+  /* Both are refused before any write. Without releasing the claim the stored
+     409 is replayed for this key, and the page keeps its key on an error, so the
+     next Proceed on the recalculated plan would be refused as a reused key. */
+  if (out.body.error === 'mrp_plan_stale' || out.body.error === 'mrp_plan_check_failed') {
+    markIdempotencyNoWrite(c);
+  }
   return c.json(out.body, out.status as 201);
 });
 
