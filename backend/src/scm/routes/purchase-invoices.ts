@@ -1,5 +1,6 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
 import { PI_HEADER_COLS, PI_LIST_SELECT, piListSelect, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
@@ -87,8 +88,7 @@ const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${p}${prefix}-${yymm}`);
 };

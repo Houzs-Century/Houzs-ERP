@@ -30,6 +30,7 @@
 //   DELETE /stock-transfers/:id           — disabled (only CANCELLED allowed)
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { stockTransferDeliveryPodHandler, stockTransferDeliveryPhotoHandler } from './delivery-job-progress';
 import { supabaseAuth } from '../middleware/auth';
@@ -63,8 +64,7 @@ const LINE =
 const VALID_STATUS = new Set(['POSTED', 'CANCELLED']);
 
 const nextTransferNo = async (sb: ScmClient, c: CompanyScopeCtx): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'stock_transfers', 'transfer_no', `${p}ST-${yymm}`);
 };

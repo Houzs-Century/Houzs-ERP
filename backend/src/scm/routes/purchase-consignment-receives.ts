@@ -22,6 +22,7 @@
 //   pc_order_no; receive_items→pc_order_item_id.
 // Numbering: PCR-YYMM-NNN.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -302,8 +303,7 @@ const ITEM =
 const nextNumber = async (sb: any, prefix: string, table: string, col: string, c: any): Promise<string> => {
   // <PREFIX>-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a deleted mid-month row
   // can't make the counter re-mint a surviving number forever — see doc-no.ts.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, table, col, `${p}${prefix}-${yymm}`);
 };
