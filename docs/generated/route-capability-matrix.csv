@@ -232,6 +232,7 @@ GET,/api/fleet-maintenance/compliance-attachments/:key{.+},AUTHENTICATED_MIDDLEW
 PATCH,/api/fleet-maintenance/components/:componentId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/components/:componentId/events,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 GET,/api/fleet-maintenance/dashboard,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+PATCH,/api/fleet-maintenance/off-road/:windowId/end,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-off-road.ts
 PATCH,/api/fleet-maintenance/plans/:planId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/plans/:planId/service,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-plan-service.ts
 GET,/api/fleet-maintenance/reminders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
@@ -241,6 +242,8 @@ POST,/api/fleet-maintenance/vehicles/:id/compliance,AUTHENTICATED_MIDDLEWARE,COM
 PUT,/api/fleet-maintenance/vehicles/:id/compliance/:docId/attachments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/vehicles/:id/components,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/vehicles/:id/mileage,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+GET,/api/fleet-maintenance/vehicles/:id/off-road,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-off-road.ts
+POST,/api/fleet-maintenance/vehicles/:id/off-road,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-off-road.ts
 POST,/api/fleet-maintenance/vehicles/:id/plans,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/vehicles/:id/work-orders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 PATCH,/api/fleet-maintenance/work-orders/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts

@@ -84,6 +84,7 @@ import fleet from "./routes/fleet";
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
+import { fleetOffRoad } from "./scm/routes/fleet-off-road";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
 import fleetBreakdownFiles from "./scm/routes/fleet-breakdown-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
@@ -575,6 +576,7 @@ app.route("/api/fleet", fleet);
 app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 // Mounted first: its auth is per-route, and fleet-maintenance.ts is at its file-size ceiling.
 app.route("/api/fleet-maintenance", fleetPlanService);
+app.route("/api/fleet-maintenance", fleetOffRoad);
 app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/fleet-work-order-files", fleetWorkOrderFiles);
 app.route("/api/fleet-breakdown-files", fleetBreakdownFiles);
