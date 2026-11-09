@@ -1,4 +1,4 @@
--- 20261109T1000_email_outbox_claim.sql
+-- 20261110T0100_email_outbox_claim.sql
 -- WHO IS SENDING THIS EMAIL RIGHT NOW (same shape as 0315 for the AutoCount outbox).
 --
 -- THE HOLE. sendEmail() writes the email_outbox row as 'pending' BEFORE it calls
