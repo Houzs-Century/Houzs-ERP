@@ -27,7 +27,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen } from '@2990s/shared';
 import {
-  useConsignmentReturnsPaged, useUpdateConsignmentReturnStatus, useConsignmentReturnDetail,
+  useConsignmentReturnsPaged, fetchConsignmentReturnsExportRows, useUpdateConsignmentReturnStatus, useConsignmentReturnDetail,
 } from '../../vendor/scm/lib/consignment-return-queries';
 import { SearchProgress } from '../../components/SearchProgress';
 import { ListPager } from '../../components/ListPager';
@@ -574,6 +574,17 @@ export const ConsignmentReturns = () => {
      the DataGrid's own per-column funnel filters + grouping now operate on the
      LOADED PAGE only (documented reduction). The KPI tiles below stay FULL-SET
      via `aggregates`, so page-scoped funnels never distort the headline money. */
+  const exportLines = {
+    fetchRows: () => fetchConsignmentReturnsExportRows<CrnRow>({
+      status: statusChip === 'all' ? undefined : statusChip,
+      q: debouncedSearch.trim() || undefined,
+    }),
+    linesOf: () => [],
+    sheetName: 'Consignment Returns',
+    onError: (e: Error) => {
+      void notify({ title: 'Export failed', body: e.message || 'The export could not be completed.', tone: 'error' });
+    },
+  };
   const rows = useMemo<CrnRow[]>(() => (data?.deliveryReturns ?? []) as CrnRow[], [data]);
   const total = data?.total ?? 0;
 
@@ -731,6 +742,7 @@ export const ConsignmentReturns = () => {
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Returns"
+        exportLines={exportLines}
         searchPlaceholder="Search return no, customer, reference…"
         rowKey={(r) => r.id}
         getRowClassName={(r) => cancelledRowClass(r.status)}
