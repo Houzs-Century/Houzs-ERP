@@ -149,11 +149,20 @@ Modular -> "Merge models": pick the kept Model, add the others, Check, then Merg
 `POST /api/scm/mfg-products/merge/models/plan|apply` runs the planner and writer of
 `backend/scripts/merge-duplicate-models.mjs` (`scripts/lib/duplicate-model-merge-plan.mjs`, `-run.mjs`).
 Each ACTIVE SKU moves under the kept Model; two codes of one size go through the code merge below.
-INACTIVE SKUs stay where they are, folded Models switch off, a kept Model that was off switches on.
+A folded Model's INACTIVE SKUs move under the kept Model too (`inactiveMoves`: model_id + base_model),
+so a folded Model ends with no SKU and switched off; the kept Model's own INACTIVE SKUs stay.
+A kept Model that was off switches on.
 Refused whole: Models whose ACTIVE SKUs are bound to more than one main supplier, of any size (owner
 2026-11-10: Models of different suppliers are never merged; a SKU with no main supplier does not count),
-a SKU with no size, a folded Model with sofa rows. Only a script book group marked `ruledOneProduct` passes
-the supplier rule; the Modular screen never can.
+a folded Model whose INACTIVE (merged-away) codes carry a main supplier the kept Model does not have
+(`different supplier: ...`, because the fold moves them), a SKU with no size, a folded Model with sofa
+rows. Only a script book group marked `ruledOneProduct` passes the supplier rules; the Modular screen,
+the SKU-merge fold and the orphan repair never can.
+
+**Modular list** (`GET /api/scm/product-models`) returns `sku_count` and `active_sku_count`. The page
+hides a Model whose codes are all off (a merge leftover) unless "Show inactive" is ticked
+(`?showInactive=1`); a switched-on Model with no code yet stays visible (the "0 SKUs" orphan flag).
+The count reads "2 of 5 on" when some codes are off (`frontend/src/pages/scm-v2/products/modelVisibility.tsx`).
 
 ## 5b. Merge codes (many into one)
 
@@ -171,6 +180,18 @@ as `backend/scripts/merge-duplicate-skus.mjs` (`scripts/lib/duplicate-sku-merge-
 - Each old code commits in its own transaction together with its undo list in `audit_events`
   (action `scm.sku.merge`).
 - After a merge, SO stock allocation is queued for recompute (docs/bugs/0675).
+- **The emptied Model folds (owner 2026-11-10, option C, automatic).** After the codes commit, a dropped
+  code's Model that now has no ACTIVE code and differs from the kept code's Model is folded into the
+  kept code's Model in the same request, with the Model merge's writer and an `scm.model.merge` audit
+  row (`backend/src/scm/lib/sku-merge-model-fold.ts`). Only a pure fold runs: the planner's refusals
+  apply, and a fold that would also merge, move or fill an ACTIVE code, or a kept Model that is off,
+  is refused. A refused or failed fold never undoes the SKU merge; `/apply` returns `modelFolds`
+  (`fold`, `codes`, `reason`) and the dialog prints "Model X was not merged: <reason>". `/plan`
+  returns the same `modelFolds` as a preview, planning the merged codes as already off.
+- **Leftovers from before 2026-11-10:** `backend/scripts/merge-orphan-models.mjs` (Actions: "Merge
+  orphan Product Models", plan by default) folds each Model with no ACTIVE code into the one Model its
+  merged codes went to, read from `scm.sku.merge` audit rows and the two `data/duplicate-*-merges.json`
+  rulings; a Model with no record, or two targets, is listed and left alone.
 - AutoCount is not merged: staff merge the listed AutoCount items by hand (Change Item Code,
   "Perform Merge"). The ERP holds no live AutoCount item list to check against.
 
