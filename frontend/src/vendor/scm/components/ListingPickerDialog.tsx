@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import { ListChecks, ChevronDown, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import styles from './ListingPickerDialog.module.css';
+import { useEscapeLayer } from '../../../lib/escapeStack';
 
 export type ListingChoice =
   | 'listing'
@@ -95,12 +96,7 @@ export const ListingPickerDialog = ({
   useEffect(() => { if (open) setPicked(initial); }, [open, initial]);
 
   // Escape to close.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  useEscapeLayer(onClose, open);
 
   if (!open) return null;
 
