@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { propagateDoCrewToTrip } from '../lib/trip-crew-sync';
 import type { Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
+import { lineDiscountShare } from '../shared/line-discount-share';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
@@ -3746,7 +3747,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   const doRows = sortedPicks.map((line, lineNo) => {
     const qty = pickQtyById.get(line.soItemId)!;
     const unit = line.unitPriceSen;
-    const discount = line.discountSen;
+    /* A partial delivery carries ITS share of the SO line's discount, not the
+       whole discount on every DO (shared/line-discount-share.ts). `qty - remaining`
+       is what earlier DOs already took (net of returns). */
+    const discount = lineDiscountShare(line.discountSen, line.qty, line.qty - line.remaining, qty);
     const unitCost = line.unitCostSen;
     // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
     const lineTotal = Math.max(0, (qty * unit) - discount);
