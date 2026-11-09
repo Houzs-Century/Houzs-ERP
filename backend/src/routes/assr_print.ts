@@ -1000,7 +1000,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .doc-title h1 { font-size: 20pt; max-width: none; }
     body.sup .doc-title .ref { margin-top: 3mm; }
     body.sup .bar { font-size: 10.5pt; padding: 1.3mm 3mm; margin-top: 3.5mm; }
-    body.sup .mgrid .lc { padding: 1.5mm 2.4mm; font-size: 8.2pt; }
+    body.sup .mgrid .lc { padding: 1.5mm 2.4mm; font-size: 8.2pt; display: flex; align-items: center; }
     body.sup .mgrid .vc { padding: 1.5mm 2.4mm; font-size: 9.8pt; line-height: 1.35; }
     body.sup .mgrid.cols-4 { grid-template-columns: 30mm 1fr 30mm 1fr; }
     body.sup .mgrid.cols-2 { grid-template-columns: 30mm 1fr; }
@@ -1020,11 +1020,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .page-two { break-before: page; page-break-before: always; }
     body.sup .pgrid { padding: 2.4mm; gap: 2.4mm; break-inside: auto; }
     body.sup .pgrid .ph { break-inside: avoid; }
-    body.sup .signoff .panel { padding: 3.5mm 4.5mm 4mm; }
+    body.sup .signoff .panel { padding: 3.5mm 4.5mm 4mm; display: flex; flex-direction: column; min-height: 72mm; }
     body.sup .signoff .panel h3 { font-size: 12pt; margin: 0 0 2.5mm 0; }
     body.sup .signoff .check { font-size: 9.6pt; margin-bottom: 2mm; gap: 3mm; }
     body.sup .signoff .check .box { width: 4mm; height: 4mm; }
-    body.sup .signoff .sig-rule { margin-top: 14mm; }
+    body.sup .signoff .sig-rule { margin-top: auto; }
     body.sup .signoff .name-date { margin-top: 7mm; }
     body.sup .signoff .sig-rule .cap,
     body.sup .signoff .name-date .cell .cap { font-size: 8pt; }
