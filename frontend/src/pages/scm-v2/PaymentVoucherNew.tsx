@@ -896,7 +896,7 @@ export const PaymentVoucherNew = () => {
             ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Pay to *</span>
-              <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
+              <input data-upper type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
                 placeholder="Payee, e.g. TENAGA NASIONAL BERHAD" className={styles.fieldInput} required />
             </label>
             )}
@@ -947,7 +947,7 @@ export const PaymentVoucherNew = () => {
             <label className={styles.field}>
               {/* The Remark (owner 2026-11-09): the Description is what the lines say is paid for. */}
               <span className={styles.fieldLabel}>Remark</span>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="A note beside this payment (optional)" aria-label="Voucher remark"
+              <textarea data-upper value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="A note beside this payment (optional)" aria-label="Voucher remark"
                 className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
             {!transferMode && <PvPayToFields value={payTo} onChange={setPayTo} />}
@@ -973,7 +973,7 @@ export const PaymentVoucherNew = () => {
             {showBill && officialOwed && (
               <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
                 <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
-                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                <input data-upper className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
                   aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
               </label>
             )}
@@ -1213,7 +1213,7 @@ export const PaymentVoucherNew = () => {
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Description</span>
-                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
+                  <input data-upper type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
                     placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
                 </label>
               </div>

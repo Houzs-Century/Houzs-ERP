@@ -34,6 +34,7 @@ import { customerPartyCode } from './payments';
 import { loadControlLines, type ControlLine } from './party-ledger';
 import { splitLine, type AgingEntry, type AgingParty } from './aging';
 import { depositPapers } from './credit-note-si';
+import { partyNameKey } from './typed-text';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped in this family */
 type Db = any;
@@ -68,8 +69,9 @@ function controlsOf(lines: readonly ControlLine[], codes: readonly string[], sid
   return codes.map((code) => ({ code, balanceSen: lines.filter((l) => l.account_code === code).reduce((n, l) => n + sideOf(l), 0) }));
 }
 
-const lineParty = (l: ControlLine): AgingParty => ({
-  key: l.party_code ?? `name:${l.party_name ?? '—'}`,
+/* A name keys the party case-blind: Finance's words are upper case from 2026-11-09, older lines are not. */
+export const lineParty = (l: ControlLine): AgingParty => ({
+  key: l.party_code ?? `name:${partyNameKey(l.party_name) ?? '—'}`,
   code: l.party_code,
   name: l.party_name ?? l.party_code ?? '(no party)',
 });
