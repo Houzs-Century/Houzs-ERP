@@ -108,11 +108,11 @@ export const PURCHASE_RETURN_FILES: DocFilesSpec = {
 
 /* Spelled out per router, not built in a loop: the route capability matrix
    (scripts/generate-route-capability-matrix.mjs) reads each route from its
-   literal registration. supabaseAuth only on its own paths: mounted on the
-   document's prefix ahead of the document's router, a '*' would run on every
-   request to that prefix. */
+   literal registration. The '*' bridge runs on every request to the
+   document's prefix, ahead of the document's own router; it is idempotent
+   (middleware/auth.ts), the same as grns-list-enrichment's on /grns. */
 type R = Hono<{ Bindings: Env; Variables: Variables }>;
-const withAuth = (r: R): R => { r.use('/:id/files', supabaseAuth); r.use('/:id/files/*', supabaseAuth); return r; };
+const withAuth = (r: R): R => { r.use('*', supabaseAuth); return r; };
 
 const grnFilesH = makeDocFileHandlers(GRN_FILES);
 export const grnFiles: R = withAuth(new Hono());
