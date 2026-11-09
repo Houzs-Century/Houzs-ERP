@@ -7,7 +7,7 @@ Manual stock correction (found stock, recount, damage, write-off) as a numbered 
 - `POST /inventory/adjustments` `{ warehouseId, notes?, lines: [...] }` mints the number, inserts header + lines, and writes one signed `ADJUSTMENT` movement per line in ONE insert statement, so a failure moves nothing (the header and lines are then deleted). Found stock (+) is inserted before write-offs (-).
 - The pre-document single-row body (`{ itemCode, qtyDelta, ... }`) is still accepted as a one-line document.
 - `PATCH /inventory/adjustments/:id` `{ notes?, lines? }`. `lines` is a FULL replace. Per (item, variant_key, batch_no) bucket the route compares the new net with what the document's movements already moved, and writes ONE signed `ADJUSTMENT` for each bucket whose net changed. A bucket that is unchanged gets no movement, so a reason or notes fix moves no stock.
-- `GET /inventory/adjustments` (list with lines) and `GET /inventory/adjustments/:id`.
+- `GET /inventory/adjustments` (list with lines) and `GET /inventory/adjustments/:id`. The list's `dateFrom` / `dateTo` are Malaysian calendar days over `created_at` (from 00:00 MYT on `dateFrom` to before 00:00 MYT the day after `dateTo`, 2026-11-10); a date that is not `YYYY-MM-DD` is 400 `invalid_date`.
 - Pages: `/scm/stock-adjustments` (one row per document), `/:id` (detail, History, Edit), `/:id/edit` (the New form seeded from the saved lines), `/new`.
 
 ## Permissions

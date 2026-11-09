@@ -133,3 +133,20 @@ export function rangeBoundsMy(
     label,
   };
 }
+
+/**
+ * A from–to filter (MY calendar days, `to` inclusive) for a TIMESTAMPTZ column:
+ * `>= startUtc` and `< endUtc`. Comparing such a column with a bare
+ * `YYYY-MM-DD`, or with `…T23:59:59Z`, cuts the window on the UTC day — eight
+ * hours off Malaysia's, so a row made between 00:00 and 08:00 MYT lands on the
+ * day before. null when a bound that was given is not `YYYY-MM-DD`, so the
+ * caller refuses it instead of silently dropping the filter.
+ */
+export function mytDayWindow(
+  fromYmd: string | null | undefined,
+  toYmd: string | null | undefined,
+): { startUtc: string | null; endUtc: string | null } | null {
+  if ((fromYmd && !parseYmd(fromYmd)) || (toYmd && !parseYmd(toYmd))) return null;
+  const { startUtc, endUtc } = rangeBoundsMy(fromYmd, toYmd);
+  return { startUtc, endUtc };
+}
