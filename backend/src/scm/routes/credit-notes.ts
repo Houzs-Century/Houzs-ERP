@@ -58,6 +58,7 @@ import { depositPapers } from '../../acc/credit-note-si';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
 import { fmtSen } from '../shared/format';
 import { openingDocumentRefusal } from '../../acc/books-opening';
+import { checkReturnLines, loadReturnCredit, type ReturnCredit } from '../lib/cn-from-return';
 
 type Row = Record<string, any>;
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
@@ -68,7 +69,7 @@ const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what
    party lookup, the leaf check on a typed account, the draft edit. */
 
 /** projectId: the event the line's money is for (owner 2026-10-22) — null = none. */
-type CleanLine = { description: string | null; code: string | null; amountSen: number; projectId: number | null };
+type CleanLine = { description: string | null; code: string | null; amountSen: number; projectId: number | null; returnItemId: string | null; qty: number | null };
 
 function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { error: string; message: string } {
   const arr = Array.isArray(raw) ? raw : [];
@@ -82,12 +83,35 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
     }
     const projectId = parseEventId(l?.projectId);
     if (projectId === 'invalid') return { error: 'bad_line', message: `Line ${i + 1}: projectId must be an event id (got ${String(l?.projectId)}).` };
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount, projectId });
+    const returnItemId = String(l?.deliveryReturnItemId ?? '').trim() || null;
+    const qty = returnItemId ? Number(l?.qty) : null;
+    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount, projectId, returnItemId, qty });
   }
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
 
 const who = (c: any): string => String(c.get('houzsUser')?.name ?? c.get('user')?.id ?? '');
+
+/* A note raised from a delivery return (backlog A1): every line names one of
+   the return's lines and its units, held against what came back, what other
+   live notes already credit, and the invoice's price (lib/cn-from-return.ts). */
+async function checkedReturn(c: any, companyId: number, returnId: string, lines: CleanLine[], excludeNoteId: string | null): Promise<{ value: ReturnCredit } | { resp: Response }> {
+  const loaded = await loadReturnCredit(c.get('supabase'), companyId, returnId, excludeNoteId);
+  if (!loaded.ok) {
+    return { resp: loaded.status === 404 ? c.json({ error: 'return_unknown', message: loaded.reason }, 400) : c.json({ error: 'load_failed', reason: loaded.reason }, 500) };
+  }
+  const r = loaded.value;
+  if (String(r.ret.status).toUpperCase() === 'CANCELLED') {
+    return { resp: c.json({ error: 'return_cancelled', message: `${r.ret.return_number} is cancelled — nothing came back to credit.` }, 409) };
+  }
+  const unlinked = lines.findIndex((l) => !l.returnItemId);
+  if (unlinked >= 0) return { resp: c.json({ error: 'return_line_required', message: `Line ${unlinked + 1} names no line of ${r.ret.return_number} — a note from a return credits its returned lines only.` }, 400) };
+  const refusal = checkReturnLines(r.lines, lines.map((l) => ({ returnItemId: String(l.returnItemId), qty: Number(l.qty), amountSen: l.amountSen })));
+  return refusal ? { resp: c.json(refusal, 409) } : { value: r };
+}
+
+/* The database's own cap (migration 20261109T2300) refused a line another save took first. */
+const overReturnFromDb = (reason: string): boolean => /over_return_credit/.test(reason);
 
 async function loadNote(c: any, id: string): Promise<{ note: Row } | { resp: Response }> {
   const sb = c.get('supabase');
@@ -295,6 +319,22 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const roles = await resolveRoles(sb, co.companyId);
 
+  /* From a delivery return (backlog A1): a customer's note, its customer and
+     invoice the return's own, each line one of the return's lines. */
+  const deliveryReturnId = String(body.deliveryReturnId ?? '').trim() || null;
+  let fromReturn: ReturnCredit | null = null;
+  if (deliveryReturnId) {
+    if (kind !== 'CN') return c.json({ error: 'return_not_this_kind', message: 'Only a customer credit note answers a delivery return.' }, 400);
+    const checked = await checkedReturn(c, co.companyId, deliveryReturnId, built.lines, null);
+    if ('resp' in checked) return checked.resp;
+    fromReturn = checked.value;
+    body.soDocNo = fromReturn.soDocNo ?? '';
+    body.salesInvoiceId = fromReturn.invoice?.id ?? '';
+    if (!String(body.sourceDocNo ?? '').trim()) body.sourceDocNo = fromReturn.ret.return_number;
+  } else if (built.lines.some((l) => l.returnItemId)) {
+    return c.json({ error: 'return_required', message: 'A line names a delivery-return line, but the note names no delivery return.' }, 400);
+  }
+
   /* The party, by kind. */
   let party: NoteParty;
   let supplierId: string | null = null;
@@ -410,15 +450,19 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     salesInvoiceId,
     apInvoiceId,
     purchaseInvoiceId,
+    deliveryReturnId: fromReturn ? fromReturn.ret.id : null,
     sourceDocNo: String(body.sourceDocNo ?? '').trim() || null,
     noteDate,
     reason: String(body.reason ?? '').trim() || null,
     notes: String(body.notes ?? '').trim() || null,
-    lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen, projectId: l.projectId })),
+    lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen, projectId: l.projectId, returnItemId: l.returnItemId, qty: l.qty })),
     knockOffApInvoiceIds: plan.filter((t) => t.kind === 'API').map((t) => t.id),
     createdBy: who(c),
   });
-  if (!raised.ok) return c.json({ error: 'save_failed', reason: raised.reason }, 500);
+  if (!raised.ok) {
+    if (overReturnFromDb(raised.reason)) return c.json({ error: 'over_return_credit', message: 'Another credit note took these returned units first — open the return again to see what is left.' }, 409);
+    return c.json({ error: 'save_failed', reason: raised.reason }, 500);
+  }
   if (plan.length > 0) {
     /* The note stands either way — a second Save would raise it twice. */
     const written = await writePlan(sb, { companyId: co.companyId, noteId: String(raised.note.id), targets: plan, actor: who(c) });
@@ -483,6 +527,12 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
   if (body.reason !== undefined) patch.reason = String(body.reason ?? '').trim() || null;
   if (body.notes !== undefined) patch.notes = String(body.notes ?? '').trim() || null;
   if (body.sourceDocNo !== undefined) patch.source_doc_no = String(body.sourceDocNo ?? '').trim() || null;
+  if (built && note.delivery_return_id) {
+    const checked = await checkedReturn(c, co.companyId, String(note.delivery_return_id), built.lines, String(note.id));
+    if ('resp' in checked) return checked.resp;
+  } else if (built && built.lines.some((l) => l.returnItemId)) {
+    return c.json({ error: 'return_required', message: `${note.note_number} answers no delivery return — its lines cannot name return lines.` }, 400);
+  }
   if (built) {
     if (note.kind === 'OCN' && built.lines.some((l) => !l.code)) {
       return c.json({ error: 'account_required', message: 'Each line of an other-debtor credit note names its account (e.g. 520-0000 DISCOUNT ALLOWED).' }, 400);
@@ -512,9 +562,12 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
     if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
     const { error: insErr } = await sb.from('acc_credit_note_lines').insert(lines.map((l, i) => ({
       company_id: co.companyId, note_id: note.id, line_no: i + 1, description: l.description, account_code: l.code, amount_sen: l.amountSen,
-      project_id: l.projectId,
+      project_id: l.projectId, delivery_return_item_id: l.returnItemId, qty: l.returnItemId ? l.qty : null,
     })));
-    if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+    if (insErr) {
+      if (overReturnFromDb(insErr.message)) return c.json({ error: 'over_return_credit', message: 'Another credit note took these returned units first — open the return again to see what is left.' }, 409);
+      return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+    }
     patch.total_sen = built.total;
   }
   const { data: saved, error: upErr } = await sb.from('acc_credit_notes').update(patch).eq('company_id', co.companyId).eq('id', note.id).select(HEADER).single();
@@ -695,6 +748,26 @@ export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
+/** GET /from-return/:returnId — a new customer note's starting point from a
+    delivery return (backlog A1): the customer's order, the invoice that billed
+    most of the lines, each returned line priced off that billing with the
+    units still uncredited, and the notes already raised from it. */
+export const creditNoteFromReturnHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const loaded = await loadReturnCredit(c.get('supabase'), co.companyId, c.req.param('returnId'), null);
+  if (!loaded.ok) return loaded.status === 404 ? c.json({ error: 'not_found', message: loaded.reason }, 404) : c.json({ error: 'load_failed', reason: loaded.reason }, 500);
+  const r = loaded.value;
+  return c.json({
+    deliveryReturn: { id: r.ret.id, returnNumber: r.ret.return_number, status: r.ret.status, doDocNo: r.ret.do_doc_no, customer: r.ret.debtor_name },
+    soDocNo: r.soDocNo,
+    invoice: r.invoice ? { id: r.invoice.id, number: r.invoice.invoice_number } : null,
+    lines: r.lines.map((l) => ({ ...l, capSen: l.unitSen === null ? null : Math.round(l.unitSen * l.remainingQty) })),
+    notes: r.notes.map((n) => ({ id: n.id, number: n.note_number, status: n.status, totalSen: n.total_sen })),
+    state: r.state,
+  });
+};
+
 export const creditNotes = new Hono();
 /* EVERY SCM router carries the bridge (docs/bugs/0648): it turns the JWT into
    the real caller as houzsUser — what hasHouzsPerm reads — and hands out the
@@ -705,6 +778,7 @@ creditNotes.post('/', createCreditNoteHandler);
 creditNotes.post('/scan', scanSupplierCreditNoteHandler);
 /* Before /:id, or 'knock-off' would be read as a note id. */
 creditNotes.get('/knock-off', supplierKnockOffHandler);
+creditNotes.get('/from-return/:returnId', creditNoteFromReturnHandler);
 creditNotes.get('/:id', creditNoteDetailHandler);
 creditNotes.patch('/:id', updateCreditNoteHandler);
 creditNotes.post('/:id/post', postCreditNoteHandler);

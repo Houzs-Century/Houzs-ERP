@@ -34,13 +34,17 @@ export const NOTE_KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN:
 /** Who a note's party is, by kind — a customer, a supplier, or a debtor of the Other Debtors registry. */
 export const NOTE_PARTY_TYPE: Record<NoteKind, 'CUSTOMER' | 'SUPPLIER' | 'ODEBTOR'> = { CN: 'CUSTOMER', DN: 'CUSTOMER', SCN: 'SUPPLIER', OCN: 'ODEBTOR' };
 
-export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, debtor_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id, opening';
-export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_sen, project_id';
+export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, debtor_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id, opening, delivery_return_id';
+export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_sen, project_id, delivery_return_item_id, qty';
 
 /** projectId: the event the line's money is for (owner 2026-10-22: 「这个rental如果是
     有cn, 显示的是扣了cn的？」) — posted, the line's leg carries it and the
     event page nets it off that row. */
-export type CreditNoteLineInput = { description: string | null; code: string; amountSen: number; projectId?: number | null };
+export type CreditNoteLineInput = {
+  description: string | null; code: string; amountSen: number; projectId?: number | null;
+  /** The delivery-return line this credits and its units (backlog A1) — both or neither. */
+  returnItemId?: string | null; qty?: number | null;
+};
 
 /**
  * A supplier note that credits an AP invoice takes that invoice's events for
@@ -104,6 +108,8 @@ export type InsertCreditNoteInput = {
   /** The converted payment row whose move this note took off a deposit
       invoice (docs/bugs/0927) — the other partial taker beside a refund. */
   convertedPaymentId?: string | null;
+  /** The delivery return a customer note answers (backlog A1); its lines carry the return lines. */
+  deliveryReturnId?: string | null;
   noteDate: string;
   reason?: string | null;
   notes?: string | null;
@@ -143,6 +149,7 @@ export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promis
     source_doc_no: p.sourceDocNo ?? null,
     refund_pv_id: p.refundPvId ?? null,
     converted_payment_id: p.convertedPaymentId ?? null,
+    delivery_return_id: p.deliveryReturnId ?? null,
     note_date: p.noteDate,
     total_sen: total,
     reason: p.reason ?? null,
@@ -155,6 +162,7 @@ export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promis
   const { error: lineErr } = await sb.from('acc_credit_note_lines').insert(lines.map((l, i) => ({
     company_id: p.companyId, note_id: (note as Row).id, line_no: i + 1, description: l.description, account_code: l.code, amount_sen: l.amountSen,
     project_id: l.projectId ?? null,
+    delivery_return_item_id: l.returnItemId ?? null, qty: l.returnItemId ? l.qty ?? null : null,
   })));
   if (lineErr) {
     await sb.from('acc_credit_notes').delete().eq('company_id', p.companyId).eq('id', (note as Row).id);
