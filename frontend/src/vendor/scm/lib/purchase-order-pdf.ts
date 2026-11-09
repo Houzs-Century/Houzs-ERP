@@ -62,6 +62,8 @@ import { splitBackendSofa } from './sofa-walk-order';
 import { DRAWER_DIAGRAM_H, drawDrawerDiagram, drawerSidesOf, frontDrawerCountOf } from './po-drawer-diagram';
 import {
   blobToSquarePdfImage,
+  PDF_EMAIL_PHOTO_PX,
+  pdfImageAt,
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
@@ -73,6 +75,7 @@ import {
   type PhotoRegion,
 } from './pdf-item-photos';
 import { fetchPoItemPhotoBlob } from './sales-order-queries';
+import type { PoEmailPhotos } from './po-email-photos';
 
 type PoHeader = {
   po_number:     string;
@@ -316,7 +319,7 @@ async function renderPurchaseOrderInto(
   autoTable: AutoTableFn,
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null; photoMaxPx?: number },
 ): Promise<{ supplierName: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
@@ -378,7 +381,7 @@ async function renderPurchaseOrderInto(
           if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
           return fetchLinePhotoForPdf((k) => fetchPoItemPhotoBlob(poId, ownerId, k), key);
         },
-        blobToSquarePdfImage,
+        opts?.photoMaxPx != null ? pdfImageAt(opts.photoMaxPx) : blobToSquarePdfImage,
       )
     : new Map<string, PdfPhotoImage>();
 
@@ -991,7 +994,7 @@ export async function generatePurchaseOrderPdf(
 export async function purchaseOrderPdfBase64(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; photoMaxPx?: number },
 ): Promise<string> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -1001,6 +1004,31 @@ export async function purchaseOrderPdfBase64(
   // 'datauristring' → "data:application/pdf;base64,XXXX"; keep the base64 tail.
   const uri = doc.output('datauristring');
   return uri.slice(uri.indexOf(',') + 1);
+}
+
+/* Mirrors PO_ATTACHMENT_CAP_BYTES in backend/src/scm/lib/po-email.ts — the send
+   route refuses a larger PDF outright. */
+export const PO_EMAIL_PDF_CAP_BYTES = 5 * 1024 * 1024;
+
+export function base64Bytes(b64: string): number {
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
+/* The PDF attached to the supplier email. The PDF grows by the size of each
+   embedded photo, so a PO with many detailed photos passed the 5 MB cap and
+   the whole send was refused. Smaller photos first; if even that is too big,
+   the PO goes without its photos and the caller tells the operator. */
+export async function purchaseOrderPdfForEmail(
+  header: PoHeader,
+  items: PoItem[],
+): Promise<{ pdfBase64: string; photos: PoEmailPhotos }> {
+  const full = await purchaseOrderPdfBase64(header, items);
+  if (base64Bytes(full) <= PO_EMAIL_PDF_CAP_BYTES) return { pdfBase64: full, photos: 'full' };
+  const reduced = await purchaseOrderPdfBase64(header, items, { photoMaxPx: PDF_EMAIL_PHOTO_PX });
+  if (base64Bytes(reduced) <= PO_EMAIL_PDF_CAP_BYTES) return { pdfBase64: reduced, photos: 'reduced' };
+  const bare = await purchaseOrderPdfBase64(header, items.map((it) => ({ ...it, photo_urls: [] })));
+  return { pdfBase64: bare, photos: 'omitted' };
 }
 
 /* Several POs → ONE combined file, each PO starting on a new page. For the

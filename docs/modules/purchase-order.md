@@ -27,6 +27,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 - PO amendments: `scm.po_amendment.create` (raise), `scm.po_amendment.approve` (approve, reject; withdraw = requester or approver).
 - Line import preview AND apply are POSTs, so both need `edit`.
 - `POST /:id/send-to-supplier` also requires the `purchase_order` email channel enabled (fails closed).
+- The attached PDF is rendered in the browser and refused above 5 MB. `purchaseOrderPdfForEmail` (`frontend/src/vendor/scm/lib/purchase-order-pdf.ts`) re-renders a PDF that is too big with 800 px photos, then with no photos, and the "Sent to supplier" notice says which (`po-email-photos.ts`).
 - PO chasing list `GET /api/scm/outstanding/po-lines` is behind `scm.finance.outstanding` and is cross-company (`scopeToAllowedCompanies`).
 
 ## Rules that must not break
@@ -36,9 +37,11 @@ Locks and required fields
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
+- New PO (desktop, PC Order, phone): picking a SKU while Supplier is empty adopts its only supplier, else its one ACTIVE main supplier (`default-supplier-binding.ts`); several or no main suppliers leaves the choice to the buyer, and a chosen supplier is never replaced.
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
 - Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
+- Send-to-supplier sets Reply-To to the user who pressed Send (`poReplyTo` in `scm/lib/po-email.ts`), so a supplier's reply goes to that purchaser, not the shared no-reply sender. No valid address on the user: the default Reply-To (`EMAIL_REPLY_TO`) applies. The PO stores no purchaser of its own.
 - A GRN may not receive against a held PO: receive gates read the ROW via `isReceivablePo` (status + `on_hold`), never status alone.
 
 Linking PO lines to SO lines
@@ -57,6 +60,7 @@ Line identity, variants, order
 - `variants` jsonb has several writers: always MERGE owned keys, never rebuild the object.
 - `line_no` is 1-based dense and MIRRORS the SO line order; set at write time on all six write paths via `lib/po-line-order.ts` (pinned by `backend/tests/poLineOrderWiring.test.ts`); reads order `line_no NULLS FIRST, created_at, id`; display never re-derives it; the PDF sorts table and photo block from the same stored order.
 - `POST /from-sos` buckets per `po-grouping.ts` `groupKeyFor`, key always starts (warehouse, supplier). PER-SO: each (SO, category) own PO. COMBINE: sofa per SO with that SO's accessories riding on it (`sofaSoDocNos`); bedframe per SO either way; mattress per supplier within a Monday-anchored 7-day delivery window; standalone accessory merges across SOs; `fabric_accessory` keyed as sofa.
+- `POST /from-sos` with `fromMrp` skips the per-line qty cap on a pooled line, so the duplicate guard is plan freshness instead: `planAsOf` older than a live PO line on a picked SO line -> 409 `mrp_plan_stale` (see `docs/modules/mrp.md`). A 201 that created POs defers an MRP snapshot refresh (`deferMrpSnapshotRefresh`, as cancel and reopen do).
 
 Allocations (`scm.purchase_order_item_allocations`)
 - Slices `(seq, qty, so_item_id | NULL=stock)`; positive integer qty, SUM <= line qty (409 `allocation_exceeds_line_qty`, DB triggers are the concurrency backstop); line qty cannot shrink below allocated (409 `line_qty_below_allocated`); seq resequenced dense on delete.
@@ -92,7 +96,7 @@ Desktop / mobile parity (change both)
 - Create: `PurchaseOrderNew.tsx` <-> `MobilePurchaseDocNew.tsx` (`kind = "po"`, same `useCreatePurchaseOrder`); SO -> PO: `PurchaseOrderFromSo.tsx` <-> `MobileConvertWizard.tsx` (`target = "po"`).
 - Add line: editor add row <-> `MobileAddLine.tsx`, same hook and body.
 - Cache: mutation hooks in `suppliers-queries.ts` <-> `mobile/sharedInvalidate.ts` (maps to `mfg-purchase-orders`, `-paged`, `mfg-purchase-order-detail`).
-- Phone gaps (known, not parity): no option editor, no supplier price auto-fill, MYR only, sofa/bedframe lines save as DRAFT only; no per-line editor, SO-link picker or allocation editor (chips display-only); no photos, import, export or chasing list.
+- Phone gaps (known, not parity): no option editor, no supplier price auto-fill (the supplier itself is filled), MYR only, sofa/bedframe lines save as DRAFT only; no per-line editor, SO-link picker or allocation editor (chips display-only); no photos, import, export or chasing list.
 
 Line import (`/line-import/preview`, `/line-import/apply`)
 - Editable fields only: Delivery Date (line), Estimate Delivery Date 1/2/3 (PO-level -> `supplier_delivery_date_2/3/4` + every line), Item Description 2, Remarks (`notes`). Qty, price, item never change by import.

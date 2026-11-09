@@ -78,7 +78,7 @@ import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 import {
-  buildPurchaseOrderEmail,
+  buildPurchaseOrderEmail, poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
   PO_RESEND_WINDOW_MS,
@@ -103,6 +103,7 @@ import { withPoSearchIds } from '../lib/po-item-code-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
 import { yymmFor } from '../../services/documentRefs';
+import { mrpPlanStaleRefusal, settleFromSosForMrp } from '../lib/mrp-plan-freshness';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1430,17 +1431,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        whose supplier matches the PO's supplier), keeping each line's so_item_id
        so a later delete releases the SO quota. */
     targetPoId?: string;
-    /* Commander 2026-05-31 — when the convert is raised from the MRP page the PO
-       line is REFERENCE-ONLY: it does NOT lock the source SO line via
-       po_qty_picked. MRP pools all open PO as supply regardless of SO↔PO linkage,
-       so the same SO line is infinitely convertible from MRP. This flag (a)
-       bypasses the qty_exceeds_remaining cap and (b) tags the PO line from_mrp so
-       the po_qty_picked recount excludes it. The "an MRP-ordered SO disappears
-       from Convert-from-SO" expectation is met by the picker now hiding lines
-       with no pooled shortage (stock+open-PO fully covers) — the from_mrp PO is
-       part of that supply pool — NOT by per-line locking. The ordinary From-SO
-       picker leaves this false → keeps its cap. */
+    /* Commander 2026-05-31 — an MRP convert is REFERENCE-ONLY: MRP pools every open
+       PO as supply whatever its SO link, so this flag (a) bypasses the
+       qty_exceeds_remaining cap and (b) tags the line from_mrp so the po_qty_picked
+       recount excludes it. The duplicate guard on this path is plan freshness
+       (planAsOf). The ordinary From-SO picker leaves this false and keeps its cap. */
     fromMrp?: boolean;
+    planAsOf?: string | null; // MRP plan computedAt (lib/mrp-plan-freshness.ts); absent = unchecked
     /* Land the created POs as DRAFT instead of SUBMITTED (owner 2026-07-17 —
        the Procurement Agent's Stage 1: propose, then approve).
 
@@ -1636,6 +1633,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
         return c.json({ error: 'qty_exceeds_remaining', soItemId: p.soItemId, requested: p.qty, remaining }, 409);
       pickedItems.push({ row, qty: p.qty, pickSupplierId: p.supplierId ?? null });
     }
+    const stale = await mrpPlanStaleRefusal(supabase, activeCompanyId(c) ?? null, ids, fromMrp ? body.planAsOf : null);
+    if (stale) return c.json(stale.body, stale.status);
   } else {
     // Legacy soItems path — kept so old callers don't break.
     const soItems = body.soItems ?? [];
@@ -2394,6 +2393,7 @@ mfgPurchaseOrders.post('/from-sos', async (c) => {
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
+  settleFromSosForMrp(c, activeCompanyId(c) ?? null, out);
   return c.json(out.body, out.status as 201);
 });
 
@@ -4125,11 +4125,8 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   }
 
   const branding = await getBrandingForCompany(c.env, row.company_id ?? null);
-  const msg = buildPurchaseOrderEmail(
-    row,
-    branding.companyName,
-    typeof body.message === 'string' ? body.message : null,
-  );
+  const note = typeof body.message === 'string' ? body.message : null;
+  const msg = buildPurchaseOrderEmail(row, branding.companyName, note);
   /* Unreachable given the recipient check above — buildPurchaseOrderEmail's only
      null is a bad address. Handled rather than asserted: the two checks are in
      different files and a future edit could separate them. */
@@ -4175,6 +4172,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
     cc: msg.cc.length ? msg.cc : null,
     subject: msg.subject,
     html: msg.html,
+    replyTo: poReplyTo(c.get('houzsUser')),
     purpose: 'purchase_order',
     refType: 'purchase_order',
     // po id is a uuid; email_log.ref_id is INTEGER, so identity lives in the subject.
