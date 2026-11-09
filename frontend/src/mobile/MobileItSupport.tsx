@@ -10,6 +10,7 @@ import {
   itStatusText, itStatusTone, itStepLine, itUrgencyText, itUrgencyTone,
   type ItDetail, type ItFileRef, type ItRequestRow, type ItTab, type ItTone,
 } from "../lib/itSupport";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 /**
  * IT Support on a phone: the same requests, states and rules as the desktop
@@ -248,9 +249,7 @@ function OneRequest({ code }: { code: string }) {
     setError(null);
     setBusy("file");
     try {
-      const url = await api.fetchBlobUrl(`/api/it-support/attachments/${a.id}`, a.mime);
-      window.open(url, "_blank", "noopener");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openLoadedTab(() => api.fetchBlobUrl(`/api/it-support/attachments/${a.id}`, a.mime), 60_000);
     } catch (err) {
       setError(itMessage(err, "That file could not be opened."));
     } finally {

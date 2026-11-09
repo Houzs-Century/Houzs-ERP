@@ -16,6 +16,7 @@ import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } fr
 import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
+import { openLoadedTab } from '../../../lib/openLoadedTab';
 
 type Props = Omit<CardProps<PiReview, PiCheckDoc>, 'onOpenDoc'> & { suppliers: CheckSupplier[]; billLines: BillLine[]; onOpenPi: (id: string) => void };
 
@@ -55,9 +56,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
   const setLine = (key: string, patch: Partial<PiReviewLine>) => set({ lines: review.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
   const viewFile = async () => {
     try {
-      const { url } = await fetchDocFileBlobUrl(`/scan-pi/check/${doc.id}/file`);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openLoadedTab(async () => (await fetchDocFileBlobUrl(`/scan-pi/check/${doc.id}/file`)).url, 60_000);
     } catch (e) { writeFailedAs('Could not open the file')(e); }
   };
   const pickGrn = (key: string, v: string) => {

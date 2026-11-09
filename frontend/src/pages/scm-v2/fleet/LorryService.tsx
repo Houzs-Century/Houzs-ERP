@@ -12,6 +12,7 @@ import {
   useUpdateLorryServiceRecord, useUploadServiceInvoice, type LorryServiceRecord,
 } from "../../../vendor/scm/lib/lorries-queries";
 import { Card, inputCls } from "./ui";
+import { openLoadedTab } from "../../../lib/openLoadedTab";
 
 const LinkBtn = ({ onClick, children }: { onClick: () => void; children: ReactNode }) => (
   <button type="button" onClick={onClick} className="text-[12.5px] font-semibold text-primary hover:underline">{children}</button>
@@ -75,7 +76,7 @@ export function ServiceRecords({ lorryId }: { lorryId: string }) {
   const add = (f: ServiceForm) => create.mutate(serviceBody(f), { onSuccess: () => setAdding(false), onError: writeFailedAs("The service record was not saved") });
   const save = (id: string, f: ServiceForm) => update.mutate({ id, ...serviceBody(f) }, { onSuccess: () => setEditId(null), onError: writeFailedAs("The service record was not saved") });
   const attach = (id: string, file: File | undefined) => { if (file) upload.mutate({ id, file }, { onError: writeFailedAs("The invoice was not uploaded") }); };
-  const view = (id: string) => { void fetchServiceInvoiceUrl(id).then(({ url }) => { window.open(url, "_blank", "noopener"); }).catch(writeFailedAs("The invoice could not be opened")); };
+  const view = (id: string) => { void openLoadedTab(async () => (await fetchServiceInvoiceUrl(id)).url, null).catch(writeFailedAs("The invoice could not be opened")); };
   const remove = (r: LorryServiceRecord) => {
     void confirm({ title: "Delete this service record?", body: `${fmtDate(r.service_date)} · ${r.description}`, confirmLabel: "Delete", danger: true })
       .then((ok) => { if (ok) del.mutate(r.id, { onError: writeFailedAs("The record was not deleted") }); });

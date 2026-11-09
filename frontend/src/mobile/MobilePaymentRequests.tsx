@@ -46,6 +46,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 const EVENTS_PATH = "/payment-requests/event-options" as const;
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: PaymentRequest } | { t: "detail"; id: string } | { t: "balance"; req: PaymentRequest };
@@ -202,9 +203,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   };
   const view = async (fileId: string) => {
     try {
-      const { url } = await fetchPaymentRequestFileBlobUrl(r.id, fileId);
-      window.open(url, "_blank", "noopener");
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+      await openLoadedTab(async () => (await fetchPaymentRequestFileBlobUrl(r.id, fileId)).url, 60_000);
     } catch (e) {
       setFileError(e instanceof Error ? e.message : "The file could not be opened.");
     }

@@ -8,6 +8,7 @@ import { formatDate, formatCurrency, cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
 import type { FinanceBooks, FinanceLine } from "./types";
 import { viewableMime } from "./projectHelpers";
+import { openLoadedTab } from "../../lib/openLoadedTab";
 
 // Single Cost Lines section at the bottom of the Financial Snapshot.
 // Lists every non-auto, manually-entered cost line (with or without a
@@ -165,9 +166,7 @@ function CategoryDetailLines({
   async function openFile(line: FinanceLine) {
     if (!line.r2_key) return;
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key));
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      await openLoadedTab(() => api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key)), 30_000);
     } catch (e) {
       toast.error((e as { message?: string } | null)?.message || "Something went wrong. Please try again.");
     }
