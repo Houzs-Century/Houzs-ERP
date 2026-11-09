@@ -809,3 +809,49 @@ describe('a row whose decision changes under it', () => {
     });
   });
 });
+
+/* The bank's DuitNow QR credit (owner 2026-11-09: 0000PP 是 qr direct 去 bank 的，
+   不算卡机的 → 「A 照传，做」). Hong Leong pays a day's QR money as one credit; the
+   money is already in the books through the QR sales, so the row names those
+   sales and matches the credit to their entries in one press — and never offers
+   to book it again as a card payout. */
+describe('a DuitNow QR credit', () => {
+  const QR: BankLine = {
+    ...LINE, id: 21, line_no: 42, booked_on: '2026-11-02', description: 'CA Credit Advice', reference: '00005992284 MERCHAN T 20261031',
+    amount_sen: 550000, charge_sen: 0, kind: 'QR', acquirer_code: 'HLB', trading_date: '2026-10-31', merchant_no: '00005992284',
+    matched_batch_id: null, candidates: [], entryCandidates: [],
+    note: 'DuitNow QR money for 2026-10-31 — 00005992284_20261031.CSV: 2990-SO-2611-077 RM 3,500.00 + 2990-SO-2611-019 RM 2,000.00, already in the books on this account. These are those entries.',
+    qr_sales: {
+      batchId: 384, fileName: '00005992284_20261031.CSV', tradingDate: '2026-10-31',
+      sales: [
+        { docNo: '2990-SO-2611-077', amountSen: 350000, jeNo: '2990-JE-2611-0500' },
+        { docNo: '2990-SO-2611-019', amountSen: 200000, jeNo: '2990-JE-2610-0448' },
+      ],
+      waiting: [], jeNos: ['2990-JE-2611-0500', '2990-JE-2610-0448'], ready: true,
+      clue: 'DuitNow QR money for 2026-10-31 — 00005992284_20261031.CSV: … These are those entries.',
+    },
+  };
+
+  test('it reads as QR money, names its sales, and one press matches it to their entries', () => {
+    lines = [QR];
+    openStatement();
+    expect(screen.getByText('DuitNow QR money')).toBeTruthy();
+    expect(screen.getByText('2990-SO-2611-019')).toBeTruthy();
+    expect(screen.queryByText('Money received')).toBeNull();
+    fireEvent.click(screen.getByText('These are the QR sales'));
+    expect(groupMutate).toHaveBeenCalledWith({ lineIds: [21], jeNos: ['2990-JE-2611-0500', '2990-JE-2610-0448'] });
+  });
+
+  test('while a QR line has no sale linked it says so, and offers no press', () => {
+    lines = [{
+      ...QR,
+      note: 'DuitNow QR money for 2026-10-31 — 00005992284_20261031.CSV: link the sale for line 17 (RM 3,500.00) on Merchant Recon first.',
+      qr_sales: { ...QR.qr_sales!, ready: false, jeNos: [], waiting: [{ lineNo: 17, txnDate: '2026-10-31', grossSen: 350000 }],
+        clue: 'DuitNow QR money for 2026-10-31 — 00005992284_20261031.CSV: link the sale for line 17 (RM 3,500.00) on Merchant Recon first.' },
+    }];
+    openStatement();
+    expect(screen.getAllByText(/link the sale for line 17/)).toHaveLength(1);
+    expect(screen.getByText(/line 17 · RM 3,500.00 — no sale linked yet/)).toBeTruthy();
+    expect(screen.queryByText('These are the QR sales')).toBeNull();
+  });
+});

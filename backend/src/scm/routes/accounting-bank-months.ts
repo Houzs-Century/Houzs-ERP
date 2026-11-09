@@ -35,9 +35,10 @@ import { lineForRepeats, repeatsAmong } from '../../acc/bank-repeats';
 import { withJournalRefs } from '../../acc/journal-refs';
 import {
   loadPayableBatches, loadAccountLedger, loadLiveMonthLock, loadBankConfig, claimedSetFor, jeNosOf,
-  loadRecognitionRules, loadPayoutAdvices,
+  loadRecognitionRules, loadPayoutAdvices, loadStatementLines, loadCompanyMatches, loadQrReports,
 } from '../../acc/bank';
-import { bankGuard, freshDecisions } from './accounting-bank';
+import { paginateAll } from '../lib/paginate-all';
+import { bankGuard, freshDecisions, withQrSales } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -200,15 +201,15 @@ export const bankMonths = bankGuard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  const stmtRes = await sb.from('acc_bank_statements')
-    .select(STATEMENT_FIELDS).eq('company_id', co.companyId);
+  const stmtRes = await paginateAll<Row>((lo, hi) => (sb as Db).from('acc_bank_statements')
+    .select(STATEMENT_FIELDS).eq('company_id', co.companyId).order('id').range(lo, hi));
   if (stmtRes.error) return c.json({ error: 'load_failed', reason: stmtRes.error.message }, 500);
   const statements = rowsOf(stmtRes.data);
   if (statements.length === 0) return c.json({ months: [] });
 
-  const lineRes = await sb.from('acc_bank_statement_lines')
+  const lineRes = await paginateAll<Row>((lo, hi) => (sb as Db).from('acc_bank_statement_lines')
     .select('id, statement_id, booked_on, amount_sen, state, kind')
-    .eq('company_id', co.companyId);
+    .eq('company_id', co.companyId).order('id').range(lo, hi));
   if (lineRes.error) return c.json({ error: 'load_failed', reason: lineRes.error.message }, 500);
 
   /* Which months are already closed. One read for the whole list rather than
@@ -371,17 +372,13 @@ export async function loadMonthForLock(
   const window = monthWindow(month);
   if (!window) return { ok: false, reason: `${month} is not a month` };
 
-  const stmtRes = await sb.from('acc_bank_statements')
-    .select(STATEMENT_FIELDS).eq('company_id', companyId).eq('account_code', accountCode);
+  const stmtRes = await paginateAll<Row>((lo, hi) => sb.from('acc_bank_statements')
+    .select(STATEMENT_FIELDS).eq('company_id', companyId).eq('account_code', accountCode).order('id').range(lo, hi));
   if (stmtRes.error) return { ok: false, reason: stmtRes.error.message };
   const allStatements = rowsOf(stmtRes.data);
   const ids = allStatements.map((s) => Number(s.id));
 
-  const linesRes = ids.length === 0
-    ? { data: [] as Row[], error: null }
-    : await sb.from('acc_bank_statement_lines')
-      .select(LINE_FIELDS).eq('company_id', companyId).in('statement_id', ids)
-      .order('booked_on').order('line_no');
+  const linesRes = await loadStatementLines(sb, companyId, ids, LINE_FIELDS);
   if (linesRes.error) return { ok: false, reason: linesRes.error.message };
 
   const everyLine = rowsOf(linesRes.data);
@@ -389,8 +386,7 @@ export async function loadMonthForLock(
     const on = dayOf(l.booked_on);
     return on !== null && on >= window.from && on <= window.to;
   });
-  const matchRes = await sb.from('acc_bank_statement_matches')
-    .select('bank_line_id, je_no').eq('company_id', companyId);
+  const matchRes = await loadCompanyMatches(sb, companyId, 'id, bank_line_id, je_no');
   if (matchRes.error) return { ok: false, reason: matchRes.error.message };
   const matchRows = rowsOf(matchRes.data);
   const matchesByLine = matchesByLineOf(matchRows);
@@ -454,10 +450,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
   }
   const sb = c.get('supabase');
 
-  const stmtRes = await sb.from('acc_bank_statements')
+  const stmtRes = await paginateAll<Row>((lo, hi) => (sb as Db).from('acc_bank_statements')
     .select(STATEMENT_FIELDS)
     .eq('company_id', co.companyId)
-    .eq('account_code', accountCode);
+    .eq('account_code', accountCode)
+    .order('id').range(lo, hi));
   if (stmtRes.error) return c.json({ error: 'load_failed', reason: stmtRes.error.message }, 500);
   const allStatements = rowsOf(stmtRes.data);
   const ids = allStatements.map((s) => Number(s.id));
@@ -465,22 +462,17 @@ export const bankMonthDetail = bankGuard(async (c) => {
   /* An account with no statements still gets a reconciliation: the books may
      hold entries the bank has never been asked about, and saying so is the
      point. So this is an empty read, not an early return. */
-  const linesP = ids.length === 0
-    ? Promise.resolve({ data: [], error: null })
-    : sb.from('acc_bank_statement_lines')
-      .select(LINE_FIELDS)
-      .eq('company_id', co.companyId)
-      .in('statement_id', ids)
-      /* By the day, then by where it sat in its file: the reader is holding a
-         month and reads it downwards. */
-      .order('booked_on').order('line_no');
+  /* By the day, then by where it sat in its file: the reader is holding a
+     month and reads it downwards. Paged, as is every read below (Conts #334). */
+  const linesP = loadStatementLines(sb, co.companyId, ids, LINE_FIELDS);
 
-  const matchP = sb.from('acc_bank_statement_matches')
-    .select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId);
+  const matchP = loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason');
 
-  const [linesRes, matchRes, batches, rules, payouts, typedRes] = await Promise.all([
+  const [linesRes, matchRes, batches, rules, payouts, typedRes, qrReports] = await Promise.all([
     linesP, matchP, loadPayableBatches(sb, co.companyId), loadRecognitionRules(sb), loadPayoutAdvices(sb, co.companyId),
     loadTypedBalances(sb, co.companyId, accountCode),
+    /* The QR reports, so the day's QR credit is matched to its sales (owner 2026-11-09). */
+    loadQrReports(sb, co.companyId),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
@@ -488,6 +480,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
   if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
+  if (!qrReports.ok) return c.json({ error: 'load_failed', reason: qrReports.reason }, 500);
   const balances = balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month);
 
   const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
@@ -576,6 +569,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const repeated = repeatsAmong(everyLine.map((l) => lineForRepeats(l, '')));
   const repeatLines = lines.filter((l) => repeated.has(Number(l.id)));
   const repeats = { count: repeatLines.length, statementIds: [...new Set(repeatLines.map((l) => Number(l.statement_id)))] };
+  /* The day's QR money is matched to its sales, not booked as a payout. Only a
+     real claim — a POSTED line of the account holding the entry — stands in
+     its way; the books-start rule above is the reconciliation's, not a match. */
+  const decided = withQrSales(lines, rules.rules, qrReports.reports,
+    claimedOutside(everyLine, new Set<number>(), matchesByLine, '9999-12-31'), accountCode);
 
   return c.json({
     accountCode,
@@ -595,7 +593,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
     statements: [...fed]
       .sort((a, b) => String(a.period_from).localeCompare(String(b.period_from)))
       .map((s) => ({ ...s, spanning: assembly.spanningIds.includes(Number(s.id)) })),
-    lines: lines.map((l) => {
+    lines: decided.map((l) => {
       const acquirer = textOf(l.acquirer_code);
       return {
         ...l,

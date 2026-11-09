@@ -18,6 +18,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
 import { BTN_GHOST, BTN_PRI, BTN_SEC, EMPTY, LABEL, PlateBadge, orNotSet } from "./fleet/FleetUi";
 import { uploadEach } from "./fleet/fleetHealthModel";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 // ---------------------------------------------------------------------------
 // Fleet Health — the shared types, the quick-look drawer and every section of a
@@ -1686,8 +1687,7 @@ export function AttachmentStrip({ docId, files, onChanged }: {
 
   const open = async (f: ComplianceFile) => {
     try {
-      const url = await api.fetchBlobUrl(`/api/fleet-maintenance/compliance-attachments/${f.r2Key}`);
-      window.open(url, "_blank", "noopener");
+      await openLoadedTab(() => api.fetchBlobUrl(`/api/fleet-maintenance/compliance-attachments/${f.r2Key}`), 60_000);
     } catch (e) {
       void serviceNotify({ title: "Could not open the document", body: apiErrText(e), tone: "error" });
     }

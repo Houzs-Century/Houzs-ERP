@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  coerceBillJson, parseModelJson, extractOneBill, matchSupplier,
+  coerceBillJson, parseModelJson, extractOneBill, matchSupplier, normalizeVendor,
 } from './bill-extract';
 
 describe('coerceBillJson', () => {
@@ -160,6 +160,22 @@ describe('matchSupplier', () => {
   it('a printed longer form still finds its supplier by containment', () => {
     const m = matchSupplier('NANTONG YOURUI TEXTILE', SUPPLIERS);
     expect(m?.supplier.id).toBe('s3');
+  });
+
+  it('INV-2610-097: HOOKKA INDUSTRIES SDN BHD on the paper is HOOKKA INDUSTRIES SDN. BHD.', () => {
+    expect(normalizeVendor('HOOKKA INDUSTRIES SDN BHD')).toBe('HOOKKA INDUSTRIES');
+    expect(normalizeVendor('HOOKKA INDUSTRIES SDN. BHD.')).toBe('HOOKKA INDUSTRIES');
+    expect(normalizeVendor('Hookka Industries S/B')).toBe('HOOKKA INDUSTRIES');
+    // A stored key (acc_vendor_memory.vendor_key): BERHAD and LTD stay as they always did.
+    expect(normalizeVendor('Tenaga Nasional Berhad')).toBe('TENAGA NASIONAL BERHAD');
+    expect(matchSupplier('HOOKKA INDUSTRIES SDN BHD', SUPPLIERS)).toMatchObject({ supplier: { id: 's1' }, confidence: 'exact' });
+  });
+
+  it('two suppliers fitting equally: nothing pre-selected', () => {
+    const twins = [...SUPPLIERS, { id: 's4', code: '400-H005', name: 'Hookka Industries Sdn Bhd' }];
+    expect(matchSupplier('HOOKKA INDUSTRIES SDN BHD', twins)).toBeNull();
+    const two = [{ id: 'a', code: null, name: 'ARMANI SOFA (JB) SDN BHD' }, { id: 'b', code: null, name: 'ARMANI SOFA (KL) SDN BHD' }];
+    expect(matchSupplier('ARMANI SOFA', two)).toBeNull();
   });
 
   it('below the rungs: nothing — a wrong supplier pre-selected is worse than none', () => {

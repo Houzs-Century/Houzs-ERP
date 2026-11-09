@@ -32,7 +32,7 @@ export const PR_HEADER_COLS =
 /* The GRN embed carries the receipt's currency and warehouse: a return has
    neither of its own, and AutoCount's Curr. Code / Location read them. */
 export const PR_LIST_SELECT =
-  `${PR_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), ` +
+  `${PR_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), ` +
   'purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, currency, warehouse_id)';
 
 export const PR_LINE_READ_COLS =

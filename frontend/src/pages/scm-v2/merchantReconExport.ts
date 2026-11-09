@@ -57,6 +57,24 @@ export const LINE_STATUS_WORDS: Record<LineStatus, string> = {
   choose: 'you choose',
 };
 
+/** A DuitNow QR line (owner 2026-11-09: 0000PP 是 qr direct 去 bank 的，不算卡机的). */
+export const isQrLine = (r: Pick<SettlementRow, 'channel'>): boolean => r.channel === 'QR';
+
+/** What a QR line's Reference column says: HLB prints a placeholder there, never a reference. */
+export const QR_REF_WORDS = 'DuitNow QR';
+
+/* A QR line's sale is the Online payment keyed for it, so its words say so. */
+const QR_STATUS_WORDS: Record<LineStatus, string> = {
+  done: 'done',
+  matched: 'linked to its Online sale',
+  guess: 'the Online sale — check it',
+  none: 'no Online sale keyed',
+  choose: 'QR — you choose',
+};
+
+/** The status words for this line — a QR line's are its own. */
+export const statusWordsOf = (r: SettlementRow): string => (isQrLine(r) ? QR_STATUS_WORDS : LINE_STATUS_WORDS)[lineStatus(r)];
+
 /** A line still to do: one already decided is not work. */
 export const isOpenLine = (r: SettlementRow): boolean => !r.confirmed_at && r.bucket !== 'IGNORED';
 
@@ -66,7 +84,7 @@ const printedLine = (r: SettlementRow): PrintedLine => {
   return {
     date: r.txn_date,
     lineNo: r.line_no,
-    ref: r.ref,
+    ref: isQrLine(r) ? QR_REF_WORDS : r.ref,
     grossSen: Number(r.gross_sen),
     feeSen: Number(r.fee_sen),
     netSen: Number(r.net_sen),
@@ -75,7 +93,7 @@ const printedLine = (r: SettlementRow): PrintedLine => {
       docNo: o.docNo, customer: o.customer, sales: o.sales, sheet: o.sheet, paidOn: o.paidOn, code: o.code,
       amountSen: Number(o.amountSen),
     })),
-    status: LINE_STATUS_WORDS[status],
+    status: statusWordsOf(r),
     tone: status === 'matched' ? 'good' : status === 'none' ? 'bad' : null,
   };
 };

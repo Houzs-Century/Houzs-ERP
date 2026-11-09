@@ -43,6 +43,7 @@ import { MobileVisibility } from "./MobileMailPersonal";
 import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
 // desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-
@@ -1164,8 +1165,7 @@ function AttachmentChip({ a }: { a: Attachment }) {
   const open = async () => {
     try {
       // Attachments are served through an authed stream route, not a public URL.
-      const url = await api.fetchBlobUrl(a.url);
-      window.open(url, "_blank", "noopener,noreferrer");
+      await openLoadedTab(() => api.fetchBlobUrl(a.url), 60_000);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't open attachment.");
     }

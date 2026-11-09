@@ -93,7 +93,11 @@ export type SlipInitRequest = {
   fileSize: number;
   contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
   contentHash: string;
+  /* 'field_photo': the backend holds the session a day instead of an hour, so a
+     POD / job-stop photo uploaded on pick survives until the job is completed. */
+  purpose?: SlipPurpose;
 };
+export type SlipPurpose = 'field_photo';
 /* Proxy-upload deviation: init returns NO putUrl — the bytes go to
    POST /slips/:id/upload instead of a presigned R2 PUT. */
 export type SlipInitResponse = { uploadSessionId: string; r2Key: string };
@@ -218,12 +222,13 @@ export async function sha256Hex(file: File | Blob): Promise<string> {
     .join('');
 }
 
-async function initSlipUpload(file: File): Promise<SlipInitResponse> {
+async function initSlipUpload(file: File, purpose: SlipPurpose | null): Promise<SlipInitResponse> {
   const hash = await sha256Hex(file);
   const body: SlipInitRequest = {
     fileSize: file.size,
     contentType: file.type as SlipInitRequest['contentType'],
     contentHash: hash,
+    ...(purpose ? { purpose } : {}),
   };
   const res = await slipFetch(`${API_URL}/slips/init`, {
     method: 'POST',
@@ -287,6 +292,17 @@ export interface UploadSlipResult {
 }
 
 export async function uploadSlipFull(opts: UploadSlipOptions): Promise<UploadSlipResult> {
+  return uploadSlipAs(opts, null);
+}
+
+/** A POD / job-stop photo, uploaded the moment it is taken (FieldPhotos). Same
+ *  pipeline and compression as uploadSlipFull; the session is held a day so the
+ *  photo is still there when the crew taps Complete. */
+export async function uploadFieldPhoto(opts: UploadSlipOptions): Promise<UploadSlipResult> {
+  return uploadSlipAs(opts, 'field_photo');
+}
+
+async function uploadSlipAs(opts: UploadSlipOptions, purpose: SlipPurpose | null): Promise<UploadSlipResult> {
   /* WO-7 — compress photos BEFORE the init leg so the session's declared
      size/hash match the bytes actually posted. Phone photos (3-8 MB JPEG)
      come out around 300-800 KB; PDFs and non-images pass through untouched.
@@ -304,7 +320,7 @@ export async function uploadSlipFull(opts: UploadSlipOptions): Promise<UploadSli
   }
 
   opts.onProgress?.('init');
-  const init = await initSlipUpload(file);
+  const init = await initSlipUpload(file, purpose);
 
   opts.onProgress?.('put');
   let putErr: unknown;

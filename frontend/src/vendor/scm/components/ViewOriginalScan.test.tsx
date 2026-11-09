@@ -31,19 +31,25 @@ describe('ViewOriginalScan', () => {
   test('opens the scan through the recording endpoint', async () => {
     listFetch.mockResolvedValue({ files: [{ id: 'F1', mime: 'image/jpeg' }] });
     blobFetch.mockResolvedValue({ url: 'blob:x', contentType: 'image/jpeg' });
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const tab = { opener: {}, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'View original scan' }));
+    expect(open).toHaveBeenCalledWith('', '_blank');
     await waitFor(() => expect(blobFetch).toHaveBeenCalledWith('/scan-files/so/F1/content'));
-    await waitFor(() => expect(open).toHaveBeenCalledWith('blob:x', '_blank', 'noopener'));
+    await waitFor(() => expect(tab.location.href).toBe('blob:x'));
     open.mockRestore();
   });
 
   test('a failed open is shown, not swallowed', async () => {
     listFetch.mockResolvedValue({ files: [{ id: 'F1', mime: 'image/jpeg' }, { id: 'F2', mime: 'application/pdf' }] });
     blobFetch.mockRejectedValue(new Error('The scan is indexed but its file is gone.'));
+    const tab = { opener: {}, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'View original scan 2' }));
     expect((await screen.findByRole('alert')).textContent).toContain('its file is gone');
+    expect(tab.close).toHaveBeenCalled();
+    open.mockRestore();
   });
 });

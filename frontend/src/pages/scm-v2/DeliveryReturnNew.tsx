@@ -48,6 +48,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
+import { parseReturnLineQty, returnLineQtyMessage } from '../../vendor/shared/return-line-qty';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -242,7 +243,14 @@ export const DeliveryReturnNew = () => {
   const onSave = () => {
     if (loadingPrefill) { notify({ title: 'Still loading the Delivery Order', body: 'please wait a moment.' }); return; }
     if (!canSave) { notify({ title: 'Customer name is required.', tone: 'error' }); return; }
-    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    /* A picked line with a blank, 0 or negative quantity is refused with the line
+       named, not silently dropped: the server refuses it too (400 invalid_qty). */
+    const badQty = lines.find((l) => l.itemCode.trim() && parseReturnLineQty(l.qty) === null);
+    if (badQty) {
+      void notify({ title: returnLineQtyMessage(badQty.itemCode, Number.isFinite(badQty.qty) ? badQty.qty : null), tone: 'error' });
+      return;
+    }
+    const validLines = lines.filter((l) => l.itemCode.trim());
     if (validLines.length === 0) {
       notify({ title: 'Pick the returned items from a delivered Delivery Order.', tone: 'error' });
       return;

@@ -21,8 +21,9 @@ import {
 import { fmtSenPlain } from '../../shared/format';
 import { sheetText, sheetWithTotalsBelow, type ReportSheet, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
 
-/** A printed column: which sheet columns it carries (an amount and the % beside it), and whether a rule follows it. */
-export type PrintedColumn = { label: string; cols: number[]; edge: boolean };
+/** A printed column: which sheet columns it carries (an amount and the % beside it), whether
+    a rule follows it, and the heading it shares with the columns beside it. */
+export type PrintedColumn = { label: string; cols: number[]; edge: boolean; group?: string };
 
 /** The columns as printed: a % that rides beside an amount merges into its cell. */
 export const printedColumns = (t: SheetTable): PrintedColumn[] => {
@@ -34,21 +35,63 @@ export const printedColumns = (t: SheetTable): PrintedColumn[] => {
       if (c.edge) last.edge = true;
       return;
     }
-    out.push({ label: c.label, cols: [i], edge: Boolean(c.edge) });
+    out.push({ label: c.label, cols: [i], edge: Boolean(c.edge), ...(c.group ? { group: c.group } : {}) });
   });
   return out;
 };
 
+/** A cell as autoTable takes it: its text, or its text running across columns or rows. */
+export type PrintedCell = string | { content: string; colSpan?: number; rowSpan?: number; styles?: { halign: 'center' } };
+
 /** The table exactly as printed — pure, so a test reads it without a PDF.
-    `body` is each cell's text (an amount alone where a % rides beside it);
-    `beside` is that %, drawn small and grey to the amount's right, or null. */
-export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSenPlain): { head: string[]; body: string[][]; beside: Array<Array<string | null>>; printed: PrintedColumn[] } {
+    `head` is the columns' names; `headRows` the header as printed — that one row, or,
+    where columns share a heading (the Cash Flow's month over Settlement | Deposit), the
+    headings over their columns and the names under them. `body` is each cell's text (an
+    amount alone where a % rides beside it; a figure running across columns, centred, as
+    one cell); `beside` is that %, drawn small and grey to the amount's right, or null. */
+export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSenPlain): {
+  head: string[]; headRows: PrintedCell[][]; body: PrintedCell[][]; beside: Array<Array<string | null>>; printed: PrintedColumn[];
+} {
   const printed = printedColumns(t);
   const head = ['', ...printed.map((p) => p.label)];
   const cellText = (r: SheetRow, ci: number): string => sheetText(t.columns[ci]!, r.cells[ci] ?? null, fmt);
-  const body = t.rows.map((r) => [r.label, ...printed.map((p) => (r.cells.length === 0 ? '' : cellText(r, p.cols[0]!)))]);
+  /* A sheet column's printed column — a run of sheet cells becomes a run of printed ones. */
+  const printedAt = new Map<number, number>();
+  printed.forEach((p, pi) => p.cols.forEach((ci) => printedAt.set(ci, pi)));
+  const body = t.rows.map((r): PrintedCell[] => {
+    if (r.cells.length === 0) return [r.label, ...printed.map(() => '')];
+    const runs = new Map<number, number>();
+    for (const [at, n] of Object.entries(r.spans ?? {})) {
+      const from = printedAt.get(Number(at));
+      const to = printedAt.get(Number(at) + (n ?? 1) - 1);
+      if (from !== undefined && to !== undefined && to > from) runs.set(from, to - from + 1);
+    }
+    const out: PrintedCell[] = [r.label];
+    for (let pi = 0; pi < printed.length; pi += 1) {
+      const text = cellText(r, printed[pi]!.cols[0]!);
+      const n = runs.get(pi);
+      if (n) { out.push({ content: text, colSpan: n, styles: { halign: 'center' } }); pi += n - 1; } else out.push(text);
+    }
+    return out;
+  });
   const beside = t.rows.map((r) => [null, ...printed.map((p) => (r.cells.length === 0 || p.cols.length < 2 ? null : cellText(r, p.cols[1]!)))]);
-  return { head, body, beside, printed };
+  return { head, headRows: printed.some((p) => p.group) ? groupedHead(printed) : [head], body, beside, printed };
+}
+
+/** The two header rows of columns under shared headings: the name column and a column
+    without a heading stand two rows tall; a heading spans its columns, their names below. */
+function groupedHead(printed: PrintedColumn[]): PrintedCell[][] {
+  const top: PrintedCell[] = [{ content: '', rowSpan: 2 }];
+  const under: PrintedCell[] = [];
+  printed.forEach((p, i) => {
+    if (!p.group) { top.push({ content: p.label, rowSpan: 2 }); return; }
+    under.push(p.label);
+    if (printed[i - 1]?.group === p.group) return;
+    let n = 1;
+    while (printed[i + n]?.group === p.group) n += 1;
+    top.push({ content: p.group, colSpan: n, styles: { halign: 'center' } });
+  });
+  return [top, under];
 }
 
 export type PrintedStyle = { bold: boolean; italic: boolean; soft: boolean; fill: [number, number, number] | null; rule: number };
@@ -113,7 +156,7 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
     const figureW = page.orientation === 'landscape' && n > 0 ? (avail - page.labelW) / n : undefined;
     autoTable(doc, {
       startY: y,
-      head: [p.head],
+      head: p.headRows,
       body: p.body,
       theme: 'plain',
       rowPageBreak: 'avoid',
@@ -137,8 +180,10 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
         if (s.italic) data.cell.styles.fontStyle = 'italic';
         if (s.soft) data.cell.styles.textColor = 120;
         if (s.fill) data.cell.styles.fillColor = s.fill;
-        const edge = pc?.edge ? { right: 0.4 } : {};
-        if (s.rule > 0 || pc?.edge) data.cell.styles.lineWidth = lines({ top: s.rule, ...edge });
+        /* A cell running across columns takes the rule of the last one it covers. */
+        const lastPc = pc && data.cell.colSpan > 1 ? p.printed[data.column.index - 2 + data.cell.colSpan] : pc;
+        const edge = lastPc?.edge ? { right: 0.4 } : {};
+        if (s.rule > 0 || lastPc?.edge) data.cell.styles.lineWidth = lines({ top: s.rule, ...edge });
         if (data.column.index === 0) {
           data.cell.styles.cellPadding = { top: row.kind === 'block' ? 3.5 : 1.2, bottom: 1.2, left: 1.5 + 3 * row.depth, right: 1.5 };
         } else if (pc && pc.cols.length > 1) {

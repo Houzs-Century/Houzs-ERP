@@ -971,3 +971,85 @@ describe('exporting the two lists', () => {
     expect(screen.getByRole('columnheader', { name: 'Reference' }).closest('thead')?.getAttribute('title')).toBe('Right-click to export to Excel or PDF');
   });
 });
+
+/* A DuitNow QR line (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct 去bank
+   的，不算卡机的 → 「A 照传，做」). Its sale is keyed Online and already in the
+   bank, so the screen calls it QR money, offers that sale, and LINKS it — no fee,
+   nothing posted, no "Confirm and post". */
+describe('a DuitNow QR line', () => {
+  const JENNY = {
+    source: 'SOPAY' as const, id: 'jenny', docNo: '2990-SO-2611-041', paidOn: '2026-11-07', amountSen: 324000,
+    approvalCode: '20261031HLBBMYKLA30OQR77370349', accountSheet: 'Bank transfer', customerName: 'Jenny',
+    /* An Online payment carries no bank: that is not "keyed without a bank". */
+    merchantProvider: null,
+  };
+  const QR_ROW: SettlementRow = {
+    id: 857, line_no: 23, txn_date: '2026-10-31', ref: null, channel: 'QR',
+    gross_sen: 324000, fee_sen: 0, net_sen: 324000, bucket: 'NEEDS_CONFIRM', match_reason: 'amount+date',
+    confirmed_at: null, posted_je_no: null, notes: null, linked: [], comboHints: [],
+    candidates: [JENNY], suggested: [JENNY],
+    clue: 'DuitNow QR — the money went straight to the bank. 2990-SO-2611-041 is the only Online payment of this amount within 7 day(s). Check it and link it.',
+  };
+  const QR_LONELY: SettlementRow = {
+    ...QR_ROW, id: 856, line_no: 18, txn_date: '2026-11-01', gross_sen: 10000, net_sen: 10000,
+    bucket: 'UNMATCHED', match_reason: null, candidates: [], suggested: [],
+    clue: "DuitNow QR — no Online payment of RM 100.00 near 2026-11-01. Key the sale as Online, with the QR's code.",
+  };
+  const QR_BATCH = {
+    ...BATCH, acquirer_code: 'HLB', file_name: '00005992284_20261101.CSV', gross_sen: 0, fee_sen: 0, net_sen: 0,
+    outstanding_sen: 0, qr_count: 2, qr_gross_sen: 334000,
+    to_confirm_count: 0, to_choose_count: 1, no_record_count: 1, open_count: 2, confirmed_count: 0,
+  };
+  const withQr = (run: () => void) => {
+    setBatchList([QR_BATCH]);
+    reportRows = [QR_ROW, QR_LONELY];
+    openedBatch = { acquirer_code: 'HLB', net_sen: 0, received_sen: 0, outstanding_sen: 0, qr_count: 2, qr_gross_sen: 334000 };
+    try { run(); } finally { setBatchList([BATCH]); reportRows = REPORT_ROWS; openedBatch = {}; }
+  };
+
+  test('on the work list it reads DuitNow QR, in QR words, and its report names the QR money', () => withQr(() => {
+    draw();
+    expect(screen.getAllByText('DuitNow QR')).toHaveLength(2);
+    expect(screen.getByText('the Online sale — check it')).toBeTruthy();
+    expect(screen.getByText('no Online sale keyed')).toBeTruthy();
+    expect(screen.queryByText('the system’s guess — check it')).toBeNull();
+    expect(screen.getByText(/QR RM 3,340\.00 · straight to the bank/)).toBeTruthy();
+  }));
+
+  test('inside the report it links the Online sale, ticked — nothing is posted', () => withQr(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
+    const box = screen.getByLabelText('Select 2990-SO-2611-041') as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    const line = box.closest('section') as HTMLElement;
+    expect(within(line).queryByText('Confirm and post')).toBeNull();
+    expect(within(line).getByText('DuitNow QR')).toBeTruthy();
+    fireEvent.click(within(line).getByText('Link the sale'));
+    expect(confirmMutate).toHaveBeenCalledWith(expect.objectContaining({
+      rowId: 857, payments: [expect.objectContaining({ id: 'jenny', amountSen: 324000 })],
+    }));
+  }));
+
+  /* Owner 2026-11-09 (「为什么我按find the sales 还有这么多？」 → 做): 未标 merchant
+     means a CARD payment keyed without its bank. An Online payment has no bank
+     to key, so a QR line never says it — not on its sale, not in Find the sale. */
+  test('a QR line never marks its Online payments 未标 merchant', () => withQr(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
+    const line = screen.getByLabelText('Select 2990-SO-2611-041').closest('section') as HTMLElement;
+    expect(within(line).queryByText('未标 merchant')).toBeNull();
+    fireEvent.click(within(line).getByText('Find the sale'));
+    expect(within(line).getByText(/Any Online payment of this company not yet on the bank statement/)).toBeTruthy();
+    expect(within(line).getAllByLabelText(/^Select /).length).toBeGreaterThan(1);
+    expect(within(line).queryByText('未标 merchant')).toBeNull();
+  }));
+
+  test('with no Online sale keyed it says to key the sale as Online', () => withQr(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    openTab('No sale');
+    expect(screen.getByText(/No Online payment explains this QR money/)).toBeTruthy();
+  }));
+});

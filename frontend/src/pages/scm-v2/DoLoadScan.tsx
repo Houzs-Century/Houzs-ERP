@@ -54,6 +54,7 @@ import {
   useUpdateMfgDeliveryOrderStatus,
 } from '../../vendor/scm/lib/delivery-order-queries';
 import { PageHeader } from '../../components/Layout';
+import { classifyLoadFailure } from '../../lib/loadFailure';
 import {
   doScanStep,
   doScanBlockReason,
@@ -93,14 +94,22 @@ export const DoLoadScan = () => {
   const verdict = useMemo(() => {
     if (!id) return { tone: 'warn' as const, title: 'No delivery order in this link', body: 'The QR did not carry a delivery order. Re-print the DO and scan the code on the new copy.' };
     if (detailQ.isLoading) return null;
-    if (detailQ.isError || !doRow) return { tone: 'warn' as const, title: 'Delivery order not found', body: 'This link does not match a delivery order in the company you are signed into. Check the company switcher, or re-print the DO.' };
+    if (detailQ.isError || !doRow) {
+      /* Only a real 404 (or an empty answer) means the paper points nowhere.
+         A timeout on a weak dock signal used to say "re-print the DO" too. */
+      const f = classifyLoadFailure(detailQ.isError ? detailQ.error : null);
+      if (f.kind === 'load-failed') {
+        return { tone: 'warn' as const, retry: true, title: 'Could not load the delivery order', body: `${f.reason} This is a connection problem, not a problem with the paper, so do not re-print the DO. Check the signal and press Retry.` };
+      }
+      return { tone: 'warn' as const, title: 'Delivery order not found', body: 'This link does not match a delivery order in the company you are signed into. Check the company switcher, or re-print the DO.' };
+    }
     if (written) return { tone: 'ok' as const, title: `${doRow.do_number} updated`, body: doScanConfirmation(written) };
     if (blockReason) {
       const tone = onHold === true ? ('hold' as const) : ('warn' as const);
       return { tone, title: `${doRow.do_number}`, body: blockReason };
     }
     return null; // a rung is available — show the action
-  }, [id, detailQ.isLoading, detailQ.isError, doRow, written, blockReason, onHold]);
+  }, [id, detailQ.isLoading, detailQ.isError, detailQ.error, doRow, written, blockReason, onHold]);
 
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4">
@@ -135,6 +144,11 @@ export const DoLoadScan = () => {
           <div>
             <div className="font-semibold">{verdict.title}</div>
             <div>{verdict.body}</div>
+            {'retry' in verdict && verdict.retry && (
+              <Button variant="secondary" className="mt-3" disabled={detailQ.isFetching} onClick={() => void detailQ.refetch()}>
+                {detailQ.isFetching ? 'Retrying…' : 'Retry'}
+              </Button>
+            )}
           </div>
         </div>
       )}

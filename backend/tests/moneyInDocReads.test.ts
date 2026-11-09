@@ -20,7 +20,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
-import { receiptDetail } from '../src/scm/routes/accounting-receipts';
+import { receiptDetail, receiptsList } from '../src/scm/routes/accounting-receipts';
 import { otherDebtors } from '../src/scm/routes/other-debtors';
 import { arInvoices } from '../src/scm/routes/ar-invoices';
 
@@ -36,6 +36,8 @@ const world = (): Record<string, Row[]> => ({
     { id: 9, company_id: CO, or_number: '2990-COR-2610-002', status: 'FORMAL', payment_source: 'SIPAY', payment_id: 'sp-1', doc_no: 'si-1', customer_name: 'Tan', method: 'cash', amount_sen: 20_000, paid_at: '2026-10-02', channel_account_code: '300-1000', issued_at: '2026-10-02T03:00:00Z', issued_by: 'Ivy', created_at: '2026-10-02T03:00:00Z', created_by: 'Ivy', cancelled_at: null, cancelled_by: null, cancel_reason: null, replaced_by_id: null },
     /* Its payment was deleted. */
     { id: 10, company_id: CO, or_number: '2990-DraftOR-2610-040', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p-gone', doc_no: '2990-SO-2610-020', customer_name: 'Ong', method: 'transfer', amount_sen: 9_000, paid_at: '2026-10-20', channel_account_code: null, issued_at: null, issued_by: null, created_at: '2026-10-20T03:00:00Z', created_by: 'Ivy', cancelled_at: null, cancelled_by: null, cancel_reason: null, replaced_by_id: null },
+    /* Born before the receipt kept its customer's name (owner 2026-11-09: 为甚没有name 这些). */
+    { id: 11, company_id: CO, or_number: '2990-HOR-2610-009', status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p-1', doc_no: '2990-SO-2610-011', customer_name: null, method: 'transfer', amount_sen: 55_800, paid_at: '2026-10-13', channel_account_code: '310-0020', issued_at: '2026-11-09T09:00:00Z', issued_by: 'Chew', created_at: '2026-10-13T03:00:00Z', created_by: 'Ivy', cancelled_at: null, cancelled_by: null, cancel_reason: null, replaced_by_id: null },
     { id: 70, company_id: OTHER, or_number: 'HC-COR-2610-001', status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'x-1', doc_no: 'HC-SO-2610-001', customer_name: 'Elsewhere', method: 'cash', amount_sen: 1_000, paid_at: '2026-10-01', replaced_by_id: null },
   ],
   journal_entries: [
@@ -54,8 +56,11 @@ const world = (): Record<string, Row[]> => ({
   ],
   sales_invoices: [{ id: 'si-1', company_id: CO, invoice_number: '2990-SI-2610-005', so_doc_no: '2990-SO-2609-090' }],
   mfg_sales_orders: [
-    { doc_no: '2990-SO-2610-011', company_id: CO, salesperson_id: 'staff-mei' },
-    { doc_no: '2990-SO-2609-090', company_id: CO, salesperson_id: 'staff-ah' },
+    {
+      doc_no: '2990-SO-2610-011', company_id: CO, salesperson_id: 'staff-mei', debtor_name: 'Larding Chen', phone: '012-3456789',
+      address1: 'No. 5, Jalan Puchong', address2: 'Taman Puchong', city: 'Puchong', postcode: '47100', customer_state: 'Selangor',
+    },
+    { doc_no: '2990-SO-2609-090', company_id: CO, salesperson_id: 'staff-ah', debtor_name: 'Tan Ah Kow', phone: '019-8765432', address1: 'Lot 9', address2: null, city: null, postcode: null, customer_state: 'Johor' },
   ],
   staff: [{ id: 'staff-mei', name: 'Mei Ling' }, { id: 'staff-ah', name: 'Ah Seng' }],
   acc_debtors: [
@@ -99,6 +104,7 @@ const harness = (tables = world(), perms: string[] = ['*']) => {
     c.set('allowedCompanyIds' as never, [CO] as never);
     await next();
   });
+  app.get('/accounting/receipts', receiptsList as never);
   app.get('/accounting/receipts/:id', receiptDetail as never);
   app.route('/other-debtors', otherDebtors);
   app.route('/ar-invoices', arInvoices);
@@ -136,6 +142,29 @@ describe('c7 — GET /accounting/receipts/:id', () => {
     expect(body.salesOrder).toBe('2990-SO-2609-090');
     expect(body.salesperson).toBe('Ah Seng');
     expect(body.paymentJournal).toMatchObject({ jeNo: '2990-JE-2610-0007' });
+  });
+
+  /* Owner 2026-11-09 (为甚没有name 这些): RECEIVED FROM prints the customer's name, phone
+     and address — the order's, read when the receipt is handed out to print. */
+  test('the receipt carries its order\'s phone and address to print, and the order\'s name when it has none', async () => {
+    const { body } = await get(harness(), '/accounting/receipts/11');
+    expect(body.receipt).toMatchObject({
+      customer_name: 'Larding Chen', phone: '012-3456789',
+      address_lines: ['No. 5, Jalan Puchong', 'Taman Puchong', '47100 Puchong', 'Selangor'],
+    });
+    /* A name the receipt keeps is its own; an invoice's receipt reads the invoice's order. */
+    expect((await get(harness(), '/accounting/receipts/8')).body.receipt).toMatchObject({ customer_name: 'Larding Chen', phone: '012-3456789' });
+    expect((await get(harness(), '/accounting/receipts/9')).body.receipt).toMatchObject({ customer_name: 'Tan', phone: '019-8765432', address_lines: ['Lot 9', 'Johor'] });
+    /* No order to read: nothing invented. */
+    expect((await get(harness(), '/accounting/receipts/10')).body.receipt).toMatchObject({ customer_name: 'Ong', phone: null, address_lines: [] });
+  });
+
+  test('the list carries them too, for the batch print', async () => {
+    const { status, body } = await get(harness(), '/accounting/receipts?all=1');
+    expect(status).toBe(200);
+    const byId = Object.fromEntries((body.receipts as any[]).map((r) => [r.id, r]));
+    expect(byId[11]).toMatchObject({ customer_name: 'Larding Chen', phone: '012-3456789', address_lines: ['No. 5, Jalan Puchong', 'Taman Puchong', '47100 Puchong', 'Selangor'] });
+    expect(byId[9]).toMatchObject({ customer_name: 'Tan', phone: '019-8765432' });
   });
 
   test('a deleted payment reads as gone, never as a zero', async () => {

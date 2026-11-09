@@ -222,12 +222,12 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       <FormSection n={stepNo('payee')} title="付给谁 · Pay to" first={!!initial}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Pay to *</span>
-          <input className={styles.fieldInput} value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} aria-label="Pay to" placeholder="e.g. MLE EVENTS SDN BHD" />
+          <input data-upper className={styles.fieldInput} value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} aria-label="Pay to" placeholder="e.g. MLE EVENTS SDN BHD" />
         </label>
         <div style={grid(180)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Payee's bank</span>
-            <input className={styles.fieldInput} value={v.bankName ?? ''} onChange={(e) => set({ bankName: e.target.value || null })} aria-label="Payee's bank" placeholder="e.g. Maybank" />
+            <input data-upper className={styles.fieldInput} value={v.bankName ?? ''} onChange={(e) => set({ bankName: e.target.value || null })} aria-label="Payee's bank" placeholder="e.g. Maybank" />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Account no.</span>
@@ -235,7 +235,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Account name</span>
-            <input className={styles.fieldInput} value={v.bankAccountName ?? ''} onChange={(e) => set({ bankAccountName: e.target.value || null })} aria-label="Account name" />
+            <input data-upper className={styles.fieldInput} value={v.bankAccountName ?? ''} onChange={(e) => set({ bankAccountName: e.target.value || null })} aria-label="Account name" />
           </label>
         </div>
       </FormSection>
@@ -271,7 +271,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       <FormSection n={stepNo('purpose')} title="用途 · What for">
         <label className={styles.field}>
           <span className={styles.fieldLabel}>What is it for *</span>
-          <textarea className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
+          <textarea data-upper className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
             placeholder="e.g. Booth F1 rental, balance 50%" />
         </label>
         {fromRow ? (
@@ -296,7 +296,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
               I cannot find this event · 找不到这场活动
             </label>
             {noEvent && (
-              <input className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
+              <input data-upper className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
                 placeholder="Say why in a line — Finance reads it (e.g. the fair is not in PMS yet)" />
             )}
           </div>
@@ -307,7 +307,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       <FormSection n={stepNo('note')} title="备注 · Note">
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Note to Finance (optional)</span>
-          <textarea className={styles.fieldInput} rows={3} value={v.note ?? ''} onChange={(e) => set({ note: e.target.value })} aria-label="Note"
+          <textarea data-upper className={styles.fieldInput} rows={3} value={v.note ?? ''} onChange={(e) => set({ note: e.target.value })} aria-label="Note"
             maxLength={2000} placeholder="e.g. Please pay before the fair starts · 已跟对方讲好分两期付" />
         </label>
       </FormSection>

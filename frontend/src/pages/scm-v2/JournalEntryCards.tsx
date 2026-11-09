@@ -534,7 +534,7 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
           </label>
           <label className={s.field}>
             <span className={s.fieldLabel}>Narration</span>
-            <input className={s.input} placeholder="What is this entry?" aria-label="Narration"
+            <input data-upper className={s.input} placeholder="What is this entry?" aria-label="Narration"
               value={narration} onChange={(e) => setNarration(e.target.value)} />
           </label>
         </div>
@@ -568,7 +568,7 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
                   value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} />
                 <input className={`${s.input} ${s.amount} ${crBad ? s.inputBad : ''}`} placeholder="0.00" inputMode="decimal" aria-label={`Line ${i + 1} credit`}
                   value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} />
-                <input className={s.input} placeholder="Optional" aria-label={`Line ${i + 1} note`}
+                <input data-upper className={s.input} placeholder="Optional" aria-label={`Line ${i + 1} note`}
                   value={l.notes} onChange={(e) => setLine(i, { notes: e.target.value })} />
                 <button type="button" className={s.remove} title="Remove line" aria-label={`Remove line ${i + 1}`} disabled={lines.length <= (record ? 1 : 2)}
                   onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>

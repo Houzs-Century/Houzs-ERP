@@ -105,7 +105,9 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
     return (
       <label key={key} className={`${ui.formField} ${(opts.full ?? f?.wide) ? ui.formFull : ''}`}>
         <span className={ui.formLabel}>{label}</span>
+        {/* The debtor's name is kept in upper case (owner 2026-11-09; the database upper-cases it too). */}
         <input className={ui.formInput} value={v[key]} placeholder={opts.placeholder} aria-label={label}
+          data-upper={key === 'name' ? '' : undefined}
           autoFocus={key === 'name' && !debtor} onChange={(e) => set(key, e.target.value)} />
       </label>
     );

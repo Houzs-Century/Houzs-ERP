@@ -46,27 +46,27 @@ const TYPE_META: Record<
   FlowNodeType,
   { col: number; band: 'top' | 'bottom' | 'mid'; title: string; route: ((id: string) => string) | null; bg: string; accent: string }
 > = {
-  so:      { col: 0, band: 'mid',    title: 'Sales Order',      route: (id) => `/mfg-sales-orders/${id}`,   bg: '#eef2ff', accent: '#4f46e5' },
-  do:      { col: 1, band: 'top',    title: 'Delivery Order',   route: (id) => `/mfg-delivery-orders/${id}`, bg: '#ecfeff', accent: '#0891b2' },
-  si:      { col: 2, band: 'top',    title: 'Invoice',          route: (id) => `/sales-invoices/${id}`,      bg: '#fff7ed', accent: '#ea580c' },
+  so:      { col: 0, band: 'mid',    title: 'Sales Order',      route: (id) => `/scm/sales-orders/${encodeURIComponent(id)}`,   bg: '#eef2ff', accent: '#4f46e5' },
+  do:      { col: 1, band: 'top',    title: 'Delivery Order',   route: (id) => `/scm/delivery-orders/${id}`, bg: '#ecfeff', accent: '#0891b2' },
+  si:      { col: 2, band: 'top',    title: 'Invoice',          route: (id) => `/scm/sales-invoices/${id}`,      bg: '#fff7ed', accent: '#ea580c' },
   payment: { col: 3, band: 'top',    title: 'AR Payment',       route: null,                                  bg: '#f0fdf4', accent: '#16a34a' },
   po:      { col: 1, band: 'bottom', title: 'Purchase Order',   route: (id) => `/scm/purchase-orders/${id}`, bg: '#faf5ff', accent: '#9333ea' },
-  grn:     { col: 2, band: 'bottom', title: 'Goods Receive',    route: (id) => `/grns/${id}`,                bg: '#f0f9ff', accent: '#0284c7' },
-  pi:      { col: 3, band: 'bottom', title: 'Purchase Invoice', route: (id) => `/purchase-invoices/${id}`,   bg: '#fefce8', accent: '#ca8a04' },
+  grn:     { col: 2, band: 'bottom', title: 'Goods Receive',    route: (id) => `/scm/grns/${id}`,                bg: '#f0f9ff', accent: '#0284c7' },
+  pi:      { col: 3, band: 'bottom', title: 'Purchase Invoice', route: (id) => `/scm/purchase-invoices/${id}`,   bg: '#fefce8', accent: '#ca8a04' },
   // Returns reverse goods. A Delivery Return hangs off its DO (sales/top band),
   // a Purchase Return off its GRN (purchase/bottom band). Both sit one column
   // right of their parent and share a warm red accent to read as "sent back".
-  dr:      { col: 2, band: 'top',    title: 'Delivery Return',  route: (id) => `/delivery-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
-  pr:      { col: 3, band: 'bottom', title: 'Purchase Return',  route: (id) => `/purchase-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
+  dr:      { col: 2, band: 'top',    title: 'Delivery Return',  route: (id) => `/scm/delivery-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
+  pr:      { col: 3, band: 'bottom', title: 'Purchase Return',  route: (id) => `/scm/purchase-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
   // Consignment family — its own self-contained map (sales OR purchase chain,
   // never both at once). cso/pco are the roots (mid), notes/receipts and their
   // returns fan out to the right exactly like the SO→DO→DR / PO→GRN→PR layout.
-  cso:     { col: 0, band: 'mid',    title: 'Consignment Order',  route: (id) => `/consignment/${id}`,                  bg: '#eef2ff', accent: '#4f46e5' },
-  cdo:     { col: 1, band: 'top',    title: 'Consignment Note',   route: (id) => `/consignment-note/${id}`,             bg: '#ecfeff', accent: '#0891b2' },
-  cdr:     { col: 2, band: 'top',    title: 'Consignment Return', route: (id) => `/consignment-return/${id}`,           bg: '#fef2f2', accent: '#b91c1c' },
-  pco:     { col: 0, band: 'mid',    title: 'PC Order',           route: (id) => `/purchase-consignment/${id}`,         bg: '#faf5ff', accent: '#9333ea' },
-  pcr:     { col: 1, band: 'bottom', title: 'PC Receive',         route: (id) => `/purchase-consignment-receive/${id}`, bg: '#f0f9ff', accent: '#0284c7' },
-  pcrn:    { col: 2, band: 'bottom', title: 'PC Return',          route: (id) => `/purchase-consignment-return/${id}`,  bg: '#fef2f2', accent: '#b91c1c' },
+  cso:     { col: 0, band: 'mid',    title: 'Consignment Order',  route: (id) => `/scm/consignment-orders/${encodeURIComponent(id)}`,                  bg: '#eef2ff', accent: '#4f46e5' },
+  cdo:     { col: 1, band: 'top',    title: 'Consignment Note',   route: (id) => `/scm/consignment-notes/${id}`,             bg: '#ecfeff', accent: '#0891b2' },
+  cdr:     { col: 2, band: 'top',    title: 'Consignment Return', route: (id) => `/scm/consignment-returns/${id}`,           bg: '#fef2f2', accent: '#b91c1c' },
+  pco:     { col: 0, band: 'mid',    title: 'PC Order',           route: (id) => `/scm/purchase-consignment-orders/${id}`,         bg: '#faf5ff', accent: '#9333ea' },
+  pcr:     { col: 1, band: 'bottom', title: 'PC Receive',         route: (id) => `/scm/purchase-consignment-receives/${id}`, bg: '#f0f9ff', accent: '#0284c7' },
+  pcrn:    { col: 2, band: 'bottom', title: 'PC Return',          route: (id) => `/scm/purchase-consignment-returns/${id}`,  bg: '#fef2f2', accent: '#b91c1c' },
 };
 
 const EDGE_COLOR: Record<FlowEdgeKind, string> = {
