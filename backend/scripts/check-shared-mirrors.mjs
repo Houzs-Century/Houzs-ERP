@@ -44,6 +44,7 @@
 //
 // NO DEPENDENCIES, so it runs in a worktree with no node_modules.
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

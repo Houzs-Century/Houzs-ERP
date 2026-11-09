@@ -46,6 +46,7 @@
 //
 // Mirrors backend/scripts/check-costless-stock.mjs (the repo's read-only
 // diagnostic shape) and its workflow .github/workflows/truth-scope-check.yml.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -196,7 +197,7 @@ async function main() {
     gl++;
     if (r.linked_ac_dtlkey != null) glKeyed++;
     if (Number(r.unit_price_sen) === 0) glZero++;
-    row(`GRNLINE\t${r.grn_number}\t${r.item_code}\t${r.qty_received}\t${r.unit_price_sen}\t${r.linked_ac_dtlkey ?? ""}`);
+    row(`GRNLINE\t${r.grn_number}\t${r.item_code}\t${r.qty_received}\tunit_price_sen=${r.unit_price_sen}\t${r.linked_ac_dtlkey ?? ""}`);
   }
   notice(`migrated GRN lines: ${gl}; with an exact AutoCount PO line key: ${glKeyed}; currently ZERO cost: ${glZero}`);
 
@@ -307,7 +308,7 @@ async function main() {
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
     ORDER BY p.linked_ac_docno, i.item_code`);
   for (const r of poLines) {
-    row(`POLINE\t${r.ac_po_no}\t${r.item_code}\t${r.unit_price_sen}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
+    row(`POLINE\t${r.ac_po_no}\t${r.item_code}\tunit_price_sen=${r.unit_price_sen}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
   }
   const pricedN = poLines.filter((r) => Number(r.unit_price_sen) > 0).length;
   notice(`our PO lines on cutover POs: ${poLines.length}; of those with a non-zero cost: ${pricedN}`);

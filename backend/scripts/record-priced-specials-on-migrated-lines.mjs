@@ -112,6 +112,7 @@
 //
 // MODE=plan is the default and writes nothing. MODE=apply additionally requires
 // CONFIRM=RECORD-NOT-CHARGE.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 import {
   K, asArray, loadPhraseMap, buildLiveIndex, classifyLine, variantsShape,
@@ -243,7 +244,7 @@ async function main() {
   const { liveByCat, priceOf, isPriced } = buildLiveIndex(addons);
   const priced = addons.filter((r) => isPriced(r.code));
   log(`scm.special_addons rows: ${addons.length} — ${addons.length - priced.length} zero-priced, ${priced.length} priced`);
-  for (const r of priced) log(`   PRICED  sell=${r.selling_price_sen} cost=${r.cost_price_sen}  [${r.code}]`);
+  for (const r of priced) log(`   PRICED  sell_sen=${r.selling_price_sen} cost_sen=${r.cost_price_sen}  [${r.code}]`);
 
   // ── the migrated lines (verbatim the backfill's two queries) ────────────────
   const soLines = await sql`SELECT i.id, i.doc_no AS doc, i.item_code AS code, i.item_group AS grp,

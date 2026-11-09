@@ -36,6 +36,7 @@
  * RE-RUN: identical output for an identical database and snapshot. It writes
  * nothing, so a second run costs one connection and changes no row.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

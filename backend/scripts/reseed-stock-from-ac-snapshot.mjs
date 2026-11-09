@@ -71,6 +71,7 @@
    RE-RUN: inert by construction. The delta is AutoCount MINUS the ERP's on-hand
    read at run time, so once the two agree every delta is zero and no movement is
    written. A second APPLY on an unchanged book is a no-op that reports 0 cells. */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

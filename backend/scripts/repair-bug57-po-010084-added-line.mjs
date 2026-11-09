@@ -34,6 +34,7 @@
 // RE-RUN: inert. Step 1 finds a PO line already linked to the added SO line and
 // exits without writing, so a second apply changes nothing.
 // ---------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { reviseBoundPo } from "../src/scm/lib/so-revision.ts";

@@ -18,6 +18,7 @@
 // this reports it as such rather than scoring it.
 //
 // Read-only.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

@@ -101,6 +101,7 @@
  * AcSyncService addresses a detail row by (mig 0280), and the marker survives a
  * tool that later rewrites keys.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

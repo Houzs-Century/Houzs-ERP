@@ -61,6 +61,7 @@
  * RE-RUN: freely.  It reads.  The answer moves only when production or the
  * committed snapshots move.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

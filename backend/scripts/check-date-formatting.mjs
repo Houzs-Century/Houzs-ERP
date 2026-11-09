@@ -67,6 +67,7 @@
 //
 // NO DEPENDENCIES (node:fs / node:path only) so it runs before any npm install.
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

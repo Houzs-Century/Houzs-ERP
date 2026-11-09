@@ -18,6 +18,7 @@
 // Strictly SELECTs. No DDL, no writes, no transaction. Exits 0 for every
 // legitimate answer — the answer IS the output; only an unreachable database
 // or a query error exits non-zero.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

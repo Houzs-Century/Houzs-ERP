@@ -20,6 +20,7 @@
 // for every legitimate answer — including "nothing to repair" and "everything
 // refused" — because a red job reads as "the check broke" and the ANSWER is the
 // output. Only an unreachable database or a query error exits non-zero.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { planDoLegDefaultRepair, LEG_DEFAULT_FRAGMENT } from "./lib/do-leg-default-repair-plan.mjs";

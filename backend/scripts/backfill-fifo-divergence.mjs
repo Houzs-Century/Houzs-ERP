@@ -106,6 +106,7 @@
 // Mirrors the read-only shape of check-inventory-integrity.mjs; this one WRITES
 // only under APPLY=true.
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import {
@@ -1049,7 +1050,7 @@ async function runReconstruct() {
       } else {
         notice(`  DEFICIT side PLAN — ${plan.pairs.length} consumption row(s) to reconstruct:`);
         for (const pr of plan.pairs) notice(`    movement ${pr.movementId} <- lot ${pr.lotId}: qty=${pr.qty} @ ${pr.unitCostSen} sen = ${rm(pr.qty * pr.unitCostSen)}`);
-        for (const st of plan.stamps) notice(`    movement ${st.movementId} cost stamps to ${st.newTotalCostSen} (was covering only its existing rows)`);
+        for (const st of plan.stamps) notice(`    movement ${st.movementId} cost stamps to total_cost_sen=${st.newTotalCostSen} (was covering only its existing rows)`);
       }
     }
 
@@ -1804,9 +1805,9 @@ async function runDocRelabel() {
         notice(`    consumer ${mi.movementId} |qty|=${mi.absQty} ${mi.docNo ? `DO ${mi.docNo} documented-net=${mi.docNetQty} ledger-shipped=${mi.ledgerShippedQty}` : "(no DO document)"}`);
       }
       if (plan.verdict === "repoint") {
-        for (const mv of plan.moves) notice(`    MOVE consumption ${mv.consumptionId} (movement ${mv.movementId}): ${mv.qty} unit(s) ${mv.fromLotId} -> ${mv.toLotId} @ ${mv.newUnitCostSen} sen (was ${mv.oldUnitCostSen})`);
+        for (const mv of plan.moves) notice(`    MOVE consumption ${mv.consumptionId} (movement ${mv.movementId}): ${mv.qty} unit(s) ${mv.fromLotId} -> ${mv.toLotId} @ ${mv.newUnitCostSen} sen (was ${mv.oldUnitCostSen} sen)`);
         for (const dt of plan.donorTakes) notice(`    DONOR lot ${dt.lotId}: qty_remaining -${dt.qty} (its units are what the DO really shipped)`);
-        for (const st of plan.stamps) notice(`    STAMP movement ${st.movementId}: total_cost_sen -> ${st.newTotalCostSen} (delta ${st.deltaSen} sen, reported)`);
+        for (const st of plan.stamps) notice(`    STAMP movement ${st.movementId}: total_cost_sen=${st.newTotalCostSen} (delta ${st.deltaSen} sen, reported)`);
         repointPlans.push({ l, plan, consRows });
       } else if (plan.verdict !== "conserves") {
         refusals.push({ kind: "over-consumed", id: l.id, verdict: plan.verdict, detail: JSON.stringify({ excess: plan.excess, overships: plan.overships, donorCapacity: plan.donorCapacity, shortfall: plan.shortfall, conflicts: plan.conflicts }) });
