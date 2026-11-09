@@ -102,7 +102,7 @@ describe('return DO routes', () => {
     const caseId = await createCaseWithTrip();
     const res = await mount().request(`/${caseId}`, json('PATCH', { qc_inspected_at: '2026-10-25', qc_by: 'Farra', qc_findings: 'Zipper smooth' }), env);
     expect(res.status).toBe(200);
-    const row = await env.DB.prepare(`SELECT qc_inspected_at, qc_by, qc_findings FROM assr_cases WHERE id = ?`).bind(caseId).first();
+    const row = await env.DB.prepare(`SELECT qc_inspected_at, qc_by, qc_findings FROM assr_case_qc_notes WHERE assr_id = ?`).bind(caseId).first();
     expect(row).toEqual({ qc_inspected_at: '2026-10-25', qc_by: 'Farra', qc_findings: 'Zipper smooth' });
   });
 });

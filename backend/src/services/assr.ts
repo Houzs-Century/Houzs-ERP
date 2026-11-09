@@ -82,7 +82,6 @@ export type Stage =
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-
 // Maps stage → user-facing status (backward compat for legacy list
 // renderers that still read `status`).
 function statusForStage(stage: Stage): string {
@@ -844,7 +843,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // Factory/supplier returns — one row per trip (round_no 1..N). The three
   // summary columns on the case mirror the CURRENT (highest) round; this list
   // is the full history so a case sent back twice keeps both trips' dates.
-  const supplierReturns = await listSupplierReturns(env, id);
+  const [supplierReturns, returnDos] = await Promise.all([listSupplierReturns(env, id), listReturnDos(env, id)]);
 
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered
@@ -892,8 +891,7 @@ export async function getAssrDetail(env: Env, id: number) {
     attachments: attachments.results ?? [],
     activity: activity.results ?? [],
     logistics: logistics.results ?? [],
-    supplier_returns: supplierReturns,
-    return_dos: await listReturnDos(env, id),
+    supplier_returns: supplierReturns, return_dos: returnDos,
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
@@ -1071,8 +1069,6 @@ const PATCH_FIELDS = [
   "customer_pickup_at", "pickup_status", "actual_pickup_at", "pickup_pic", "item_location", // HC-0129, values checked in the route
   // Mig 127 — own-team inspection visit date (not customer_pickup_at); drives the INSPECTION leg on Delivery Planning.
   "inspection_visit_at",
-  // Pending Item Ready QC details (Operation Dept 2026-11-09), values checked in the route
-  "qc_inspected_at", "qc_by", "qc_findings",
   // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
   // Mig 081 — verification card (Under Verification → Pending Solution gate)
@@ -1124,7 +1120,6 @@ const FIELD_LABELS: Record<string, string> = {
   supplier_pickup_at: "Supplier Pickup Date", items_ready_at: "Supplier Return / Item Ready Date",
   customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
   pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
-  qc_inspected_at: "QC Inspection Date", qc_by: "QC By", qc_findings: "QC Findings",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",

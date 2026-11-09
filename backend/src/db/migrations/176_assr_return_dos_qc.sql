@@ -1,4 +1,4 @@
--- D1 test mirror of migrations-pg/20261109T1300_assr_return_dos_qc.sql.
+-- D1 test mirror of migrations-pg/20261109T1700_assr_return_dos_and_qc_notes.sql.
 CREATE TABLE IF NOT EXISTS assr_return_dos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   assr_id INTEGER NOT NULL,
@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS assr_return_dos (
   archived_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_assr_return_dos_case ON assr_return_dos (assr_id);
-ALTER TABLE assr_cases ADD COLUMN qc_inspected_at TEXT;
-ALTER TABLE assr_cases ADD COLUMN qc_by TEXT;
-ALTER TABLE assr_cases ADD COLUMN qc_findings TEXT;
+CREATE TABLE IF NOT EXISTS assr_case_qc_notes (
+  assr_id         INTEGER PRIMARY KEY REFERENCES assr_cases(id) ON DELETE CASCADE,
+  qc_inspected_at TEXT,
+  qc_by           TEXT,
+  qc_findings     TEXT,
+  updated_by      INTEGER,
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);

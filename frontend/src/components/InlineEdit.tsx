@@ -100,12 +100,12 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
         />
       ) : (
         type === "date" ? (
-          // Dates carry an explicit Save button (Nico 2026-08-20): blur/picker
-          // auto-commit stays, but the button makes saving visible — and is the
-          // retry handle when a commit fails. Shown only while draft ≠ saved.
+          // Dates save on a calendar pick or on blur. The Save button (Nico
+          // 2026-08-20) is the retry handle, so it shows only after a failed save:
+          // shown on every unsaved edit it popped up beside a date already saved.
           <div className="flex items-center gap-2">
             <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
-            {draft !== (value == null ? "" : String(value)) && status !== "saving" && (
+            {status === "error" && draft !== (value == null ? "" : String(value)) && (
               <button
                 type="button"
                 onClick={() => commit()}

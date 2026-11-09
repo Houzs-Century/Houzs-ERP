@@ -1,11 +1,9 @@
--- 20261109T1300_assr_return_dos_qc.sql
+-- 20261109T1700_assr_return_dos_and_qc_notes.sql
 -- REVERSAL:
+--   DROP TABLE IF EXISTS public.assr_case_qc_notes;
 --   DROP TABLE IF EXISTS public.assr_return_dos;
---   ALTER TABLE public.assr_cases DROP COLUMN IF EXISTS qc_inspected_at;
---   ALTER TABLE public.assr_cases DROP COLUMN IF EXISTS qc_by;
---   ALTER TABLE public.assr_cases DROP COLUMN IF EXISTS qc_findings;
---   All new and nullable; dropping them loses only the supplier DOs and QC
---   details typed on the Pending Item Ready step. GRANTS: the two below.
+--   Both new; dropping them loses only the supplier DOs and QC details typed on
+--   the Pending Item Ready step. GRANTS: the ones below.
 --
 -- WHY (Operation Dept, 2026-11-09). Pending Item Ready gets one place to track
 -- the repaired item coming back: the supplier's delivery orders (more than one
@@ -14,6 +12,13 @@
 -- supplier return trip (assr_supplier_returns.qc_result) and the route stays
 -- assr_cases.inspection_result, so nothing is typed twice. Dates are
 -- YYYY-MM-DD text, checked at the API, like the other ASSR dates.
+--
+-- WHY THE QC FIELDS ARE NOT COLUMNS ON assr_cases: the case list and detail
+-- read c.* plus joined columns, and the D1 test mirror caps a result set at 100
+-- columns. Three more columns broke every list / detail test. Same fix as
+-- assr_case_verification_notes (20261021T1000): a 1:1 table, read only by the
+-- detail. Replaces the unmerged 20261109T1300_assr_return_dos_qc.sql, which ran
+-- on staging only.
 SET search_path = public;
 
 CREATE TABLE IF NOT EXISTS public.assr_return_dos (
@@ -38,6 +43,16 @@ ALTER TABLE public.assr_return_dos ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.assr_return_dos TO service_role;
 GRANT USAGE, SELECT ON SEQUENCE public.assr_return_dos_id_seq TO service_role;
 
-ALTER TABLE public.assr_cases ADD COLUMN IF NOT EXISTS qc_inspected_at text;
-ALTER TABLE public.assr_cases ADD COLUMN IF NOT EXISTS qc_by text;
-ALTER TABLE public.assr_cases ADD COLUMN IF NOT EXISTS qc_findings text;
+CREATE TABLE IF NOT EXISTS public.assr_case_qc_notes (
+  assr_id          bigint      PRIMARY KEY,
+  qc_inspected_at  text,
+  qc_by            text,
+  qc_findings      text,
+  updated_by       bigint,
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='assr_case_qc_notes_assr_id_fkey') THEN ALTER TABLE public.assr_case_qc_notes ADD CONSTRAINT assr_case_qc_notes_assr_id_fkey FOREIGN KEY (assr_id) REFERENCES public.assr_cases(id) ON DELETE CASCADE; END IF; END $$;
+
+ALTER TABLE public.assr_case_qc_notes ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.assr_case_qc_notes TO service_role;
