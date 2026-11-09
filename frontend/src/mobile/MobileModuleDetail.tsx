@@ -519,9 +519,11 @@ const DOC_MODULES: Record<string, DocMap> = {
        the warning, the sync/re-send workflow stays on desktop. */
     notice: (h, items) => {
       const st = s(h?.status);
-      if (st !== "SUBMITTED" && st !== "PARTIALLY_RECEIVED") return null;
+      const mode = poDriftMode(st);
+      if (!mode) return null;
       const n = (items ?? []).filter((it) => it?.so_drift).length;
       if (n === 0) return null;
+      if (mode === "received") return `⚠ ${n} line${n === 1 ? "'s" : "s'"} source SO changed after this PO was raised, and the goods were received to this PO's spec. Check them against the SO before delivery.`;
       return `⚠ ${n} line${n === 1 ? "'s" : "s'"} source SO changed after this PO was raised — sync the specs and re-send to the supplier from desktop, otherwise the factory keeps building to the old spec.`;
     },
   },
@@ -1894,3 +1896,4 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
 
 import { DateField } from "../vendor/scm/components/DateField";
 import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";
+import { poDriftMode } from "../vendor/scm/lib/po-drift";
