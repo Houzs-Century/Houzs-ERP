@@ -8,6 +8,7 @@ import { clearAll } from "./cache";
 import { api } from "./client";
 
 let photos = 0;
+let fetchMock: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   localStorage.clear();
@@ -16,7 +17,7 @@ beforeEach(() => {
   setActiveCompanyId(null);
   clearAll();
   photos = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+  fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
     const method = (init?.method ?? "GET").toUpperCase();
     if (method !== "GET") photos += 1;
     return new Response(JSON.stringify({ photos }), {
@@ -50,10 +51,10 @@ describe("an upload clears the cached read of its resource", () => {
 
   test("a failed upload leaves the cache alone, like a failed JSON write", async () => {
     await api.get("/api/delivery-orders/7");
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
     await expect(api.putBinary("/api/delivery-orders/7/pod-photo", blob(), "image/png")).rejects.toThrow();
-    const calls = vi.mocked(globalThis.fetch).mock.calls.length;
+    const calls = fetchMock.mock.calls.length;
     await api.get("/api/delivery-orders/7");
-    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(calls);
+    expect(fetchMock.mock.calls.length).toBe(calls);
   });
 });
