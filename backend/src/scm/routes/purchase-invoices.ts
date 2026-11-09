@@ -445,7 +445,7 @@ purchaseInvoices.get('/:id', async (c) => {
        doc no + the supplier's delivery-note ref surface on the PI detail. */
     /* Company-scoped: unscoped, a uuid opened the other company's purchase
        invoice — supplier, amounts and the source GRN with it. */
-    scopeToCompany(sb.from('purchase_invoices').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), grn:grns(id, grn_number, delivery_note_ref)`).eq('id', id), c).maybeSingle(),
+    scopeToCompany(sb.from('purchase_invoices').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), grn:grns(id, grn_number, delivery_note_ref)`).eq('id', id), c).maybeSingle(),
     sb.from('purchase_invoice_items').select(ITEM).eq('purchase_invoice_id', id).order('created_at'),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
