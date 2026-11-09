@@ -41,6 +41,7 @@ import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
 import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
+import { MobileProjectChat } from "./MobileProjectChat";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { saleAmountRm, validateSaleAmount } from "./saleAmount";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
@@ -1637,6 +1638,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 reload={reload}
               />
             )}
+
+            {/* Chat — the project's message thread. Owner 2026-11-09 asked for
+                this box on mobile so the sales floor can paste the evening
+                report without opening the web browser. Read for anyone who can
+                see the project; posting gated the same way the server gates
+                POST /api/projects/:id/notes (projects.write OR projects.chat).
+                Server-side parser (routes/lib/sales-report-bills.ts) picks up
+                any bill lines without any extra UI on this phone. */}
+            <MobileProjectChat projectId={id} onPosted={reload} />
           </>
         )}
       </div>
