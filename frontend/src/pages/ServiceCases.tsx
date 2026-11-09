@@ -79,7 +79,6 @@ import { QcStageChipView } from "../components/assr/QcStageChipView";
 import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
 import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
-import { CaseSection } from "../components/assr/CaseSection";
 import { InspectByToggle } from "../components/assr/InspectByToggle";
 import { VerificationOutcomeChips } from "../components/assr/VerificationOutcomeChips";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
