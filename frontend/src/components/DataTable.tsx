@@ -106,7 +106,6 @@ import { buildSearchBlob, conditionToken, isConditionToken, looksLikeDateColumn,
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
-
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
 import { DataRowCells } from "./DataTableRowCells";
 import {

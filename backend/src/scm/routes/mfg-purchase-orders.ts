@@ -1111,9 +1111,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     }
   }
 
-  /* The Malaysian month: the Worker clock is UTC, so getMonth() put a PO cut
-     before 08:00 on the 1st under the previous month's number. */
-  const yymm = yymmFor();
+  const yymm = yymmFor(); // Malaysian month: UTC getMonth() numbered a PO cut before 08:00 on the 1st under last month
 
   // PO# generation: max(suffix)+1 over the month's POs (see lib/doc-no.ts).
   // NOT count+1 — count+1 is non-self-healing (a mid-month delete leaves a gap
@@ -1227,8 +1225,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
        PR #157 — now required (see validation above). */
     purchase_location_id: purchaseLocationId,
   };
-  /* Optional poDate — if absent, today in Malaysia. The column default (now())
-     is the UTC date, a day early for a PO made before 08:00. */
+  // Optional poDate, else today in Malaysia (the column's UTC now() default is a day early before 08:00).
   headerInsert.po_date = body.poDate || todayMyt();
 
   /* Doc-no collision retry (2026-07-14): two buyers cutting a PO in the same
