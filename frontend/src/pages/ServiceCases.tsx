@@ -4531,87 +4531,10 @@ function DetailContent({
 
           </div>
 
-          <CaseTimeline
-            activity={activity}
-            salesAgent={c.sales_agent || null}
-            userNames={new Map(userOptions.map((option) => [String(option.id), option.name]))}
-            canEdit={!c.archived_at}
-            onAddUpdate={() => setNoteFormOpen((isOpen) => !isOpen)}
-            onArchive={async (activityId) => {
-              if (!(await dialog.confirm("Archive this entry?"))) return;
-              try {
-                await api.post(`/api/assr/activity/${activityId}/archive`);
-                toast.success("Archived");
-                detail.reload();
-              } catch (e: any) {
-                toast.error(e?.message || "Something went wrong. Please try again.");
-              }
-            }}
-            composer={
-              noteFormOpen && !c.archived_at && (
-                <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
-                  <div className="mb-2 flex items-center gap-2">
-                    <select
-                      value={noteCategory}
-                      onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
-                      className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
-                      title="Where this note is visible"
-                    >
-                      {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
-                          two lists had already drifted on the one label that
-                          matters: this side promised "Customer-visible", the phone
-                          said only "Customer". */}
-                      {ASSR_NOTE_AUDIENCES.map((a) => (
-                        <option key={a.value} value={a.value}>{a.label}</option>
-                      ))}
-                    </select>
-                    <span className="text-[10px] text-ink-muted">
-                      {assrNoteIsCustomerVisible(noteCategory)
-                        ? "The customer will see this note on the portal."
-                        : "Internal only — hidden from the customer."}
-                    </span>
-                  </div>
-                  <textarea
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
-                    }}
-                    placeholder={
-                      assrNoteIsCustomerVisible(noteCategory)
-                        ? "Write a note for the customer…"
-                        : "Internal note…"
-                    }
-                    rows={2}
-                    className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
-                  />
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setNote("");
-                        setNoteFormOpen(false);
-                      }}
-                      className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={addNote}
-                      disabled={!note.trim() || isPostingNote}
-                      className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
-                    >
-                      {isPostingNote ? "Posting…" : "Post note"}
-                    </button>
-                  </div>
-                </div>
-              )
-            }
-          />
-
             </DetailMain>
 
             <DetailAside>
-          {/* Right rail per design: Customer · Assigned to · SLA. The Timeline sits at the foot of the main column. */}
+          {/* Right rail per design: Customer · Assigned to · SLA · Timeline. */}
           <PanelSection
             title="Customer"
             icon={<User size={13} />}
@@ -4920,6 +4843,83 @@ function DetailContent({
               </div>
             );
           })()}
+
+          <CaseTimeline
+            activity={activity}
+            salesAgent={c.sales_agent || null}
+            userNames={new Map(userOptions.map((option) => [String(option.id), option.name]))}
+            canEdit={!c.archived_at}
+            onAddUpdate={() => setNoteFormOpen((isOpen) => !isOpen)}
+            onArchive={async (activityId) => {
+              if (!(await dialog.confirm("Archive this entry?"))) return;
+              try {
+                await api.post(`/api/assr/activity/${activityId}/archive`);
+                toast.success("Archived");
+                detail.reload();
+              } catch (e: any) {
+                toast.error(e?.message || "Something went wrong. Please try again.");
+              }
+            }}
+            composer={
+              noteFormOpen && !c.archived_at && (
+                <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
+                  <div className="mb-2 flex items-center gap-2">
+                    <select
+                      value={noteCategory}
+                      onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
+                      className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
+                      title="Where this note is visible"
+                    >
+                      {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
+                          two lists had already drifted on the one label that
+                          matters: this side promised "Customer-visible", the phone
+                          said only "Customer". */}
+                      {ASSR_NOTE_AUDIENCES.map((a) => (
+                        <option key={a.value} value={a.value}>{a.label}</option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-ink-muted">
+                      {assrNoteIsCustomerVisible(noteCategory)
+                        ? "The customer will see this note on the portal."
+                        : "Internal only — hidden from the customer."}
+                    </span>
+                  </div>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
+                    }}
+                    placeholder={
+                      assrNoteIsCustomerVisible(noteCategory)
+                        ? "Write a note for the customer…"
+                        : "Internal note…"
+                    }
+                    rows={2}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
+                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setNote("");
+                        setNoteFormOpen(false);
+                      }}
+                      className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={addNote}
+                      disabled={!note.trim() || isPostingNote}
+                      className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
+                    >
+                      {isPostingNote ? "Posting…" : "Post note"}
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+          />
 
           {/* Cost / Quality / CSAT — folded by default (v2); relevant
               mostly at sign-off / close. */}
