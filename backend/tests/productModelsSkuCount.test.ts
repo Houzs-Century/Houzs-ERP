@@ -48,4 +48,22 @@ describe('GET /product-models — sku_count', () => {
     expect(out.find((m) => m.id === 'big')!.sku_count).toBe(1500);
     expect(out.find((m) => m.id === 'tannah')!.sku_count).toBe(3);
   });
+
+  test('active_sku_count counts only ACTIVE codes, and another company\'s codes count for nothing', async () => {
+    const models: Row[] = [{ id: 'amira-old', company_id: 1, model_code: 'AMIRA PREMUIM', name: 'AMIRA PREMUIM', category: 'MATTRESS', active: false }];
+    const skus: Row[] = [
+      ...['K', 'Q', 'S', 'SS'].map((z) => ({ model_id: 'amira-old', company_id: 1, status: 'INACTIVE', code: z })),
+      { model_id: 'amira-old', company_id: 2, status: 'ACTIVE', code: 'OTHER BOOKS' },
+    ];
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('supabase' as never, { from: (t: string) => new Q(t === 'product_models' ? models : skus) } as never);
+      c.set('companyId' as never, 1 as never);
+      c.set('allowedCompanyIds' as never, [1] as never);
+      await next();
+    });
+    app.get('/product-models', listProductModelsHandler as never);
+    const out = ((await (await app.request('/product-models')).json()) as { models: Array<{ sku_count: number; active_sku_count: number }> }).models;
+    expect(out[0]).toMatchObject({ sku_count: 4, active_sku_count: 0 });
+  });
 });

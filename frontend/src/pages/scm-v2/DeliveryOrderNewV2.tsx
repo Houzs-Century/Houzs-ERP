@@ -96,6 +96,7 @@ import {
   seedFollowerVariants,
   seedableMasterVariants,
 } from "../../vendor/scm/lib/so-variant-cascade";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,14 +106,6 @@ import {
 type DoDraftLine = SoLineDraft & { rid: string; itemId?: string; soItemId?: string | null };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const todayIso = (): string => {
-  const d = new Date();
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-};
 
 const isoToDmy = fmtDate;
 
@@ -599,7 +592,7 @@ export function DeliveryOrderNewV2() {
   const [ecName, setEcName] = useState("");
   const [ecRelationship, setEcRelationship] = useState("");
   const [ecPhone, setEcPhone] = useState("");
-  const [doDate, setDoDate] = useState(todayIso());
+  const [doDate, setDoDate] = useState(todayMyt());
   const [driver, setDriver] = useState("");
   const [vehicle, setVehicle] = useState("");
   const [buildingType, setBuildingType] = useState("");
@@ -877,7 +870,7 @@ export function DeliveryOrderNewV2() {
     if (!doo) return;
     setEditSeeded(true);
     /* The seed is the shared layer's (do-header-form.ts), the one the phone's edit sheet uses. */
-    const f = seedDoHeaderForm(doo, todayIso());
+    const f = seedDoHeaderForm(doo, todayMyt());
     setCustomerName(f.customerName); setDebtorCode(f.debtorCode); setCustomerSoRef(f.customerSoRef);
     setPhone(f.phone); setEmail(f.email); setCustomerType(f.customerType); setSalespersonId(f.salespersonId);
     setAddr1(f.address1); setAddr2(f.address2); setState(f.state); setCity(f.city); setPostcode(f.postcode);

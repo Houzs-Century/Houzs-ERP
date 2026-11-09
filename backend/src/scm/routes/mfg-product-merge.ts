@@ -7,6 +7,10 @@
  *   POST /api/scm/mfg-products/merge/plan   { keep, drops }           -> plan, writes nothing
  *   POST /api/scm/mfg-products/merge/apply  { keep, drops, confirm }  -> writes
  *
+ * A dropped code's Model that the merge leaves with no ACTIVE code folds into the
+ * kept code's Model in the same request (lib/sku-merge-model-fold.ts); /plan
+ * shows which, /apply reports each fold or the reason it was not made.
+ *
  * `confirm` is the phrase /plan returned. It carries the counts that plan
  * measured, so an apply over a world that changed since is refused.
  *
@@ -25,8 +29,10 @@ import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { enqueueStockAllocationRecompute } from '../lib/stock-allocation-queue';
 import { planDuplicateSkuMerge, confirmPhrase } from '../../../scripts/lib/duplicate-sku-merge-plan.mjs';
 import { readMergeColumns, readMergeWorld, applyMerge, recordModelMergeAudit, verifyMerge } from '../../../scripts/lib/duplicate-sku-merge-run.mjs';
-import { planModelGroup, confirmPhrase as modelConfirmPhrase } from '../../../scripts/lib/duplicate-model-merge-plan.mjs';
-import { readModelWorld, verifyModelGroup, writeModelGroup } from '../../../scripts/lib/duplicate-model-merge-run.mjs';
+import { confirmPhrase as modelConfirmPhrase } from '../../../scripts/lib/duplicate-model-merge-plan.mjs';
+import { planModelFold, verifyModelGroup, writeModelGroup, type ModelWorld } from '../../../scripts/lib/duplicate-model-merge-run.mjs';
+import { previewModelFolds, foldModelsAfterSkuMerge, type FoldIo } from '../lib/sku-merge-model-fold';
+import { readFoldInputs } from '../../../scripts/lib/duplicate-model-merge-run.mjs';
 
 export const MERGE_PERMISSION = 'scm.products.merge';
 const MAX_DROPS = 20;
@@ -62,6 +68,22 @@ async function planFor(sql: any, co: number, pairs: Array<{ drop: string; keep: 
   return { world, plan };
 }
 
+/** The Model fold's reads and writes on this request's connection; the re-read gets a fresh one. */
+function foldIo(sql: ReturnType<typeof getSql>, fresh: () => ReturnType<typeof getSql>, audit: { actorId: number | null; actorEmail: string | null; requestId: string | null }): FoldIo {
+  return {
+    readFoldInputs: (w) => readFoldInputs(sql, w),
+    planModelFold: (w) => planModelFold(sql, w),
+    applyFold: async ({ co, plan, world, summary }) => {
+      await recordModelMergeAudit(sql, {
+        audit, modelId: plan.keptModelId, summary,
+        undo: { company_id: co, moves: [], inactiveMoves: plan.inactiveMoves, folded: plan.foldModels, addSizes: [], activateKept: false, fills: [] },
+      });
+      const modelId = await writeModelGroup(sql, { co, plan, world: world as ModelWorld, log: console.log });
+      return verifyModelGroup(fresh(), { co, plan, modelId });
+    },
+  };
+}
+
 function view(world: any, plan: any) {
   const stockOf = (code: string) => world.stock.filter((s: any) => s.code === code)
     .map((s: any) => ({ warehouse: s.warehouseCode, qty: s.ledgerQty }));
@@ -88,7 +110,11 @@ mfgProductMerge.post('/plan', async (c) => {
   const co = scope.companyId;
   const sql = getSql(resolveDatabaseUrl(c.env));
   const { world, plan } = await planFor(sql, co, parsed.pairs);
-  return c.json(view(world, plan));
+  const acting = plan.pairs.filter((p) => p.refusals.length === 0);
+  const retiring = new Set<string>(acting.filter((p) => p.retire).map((p) => p.drop));
+  const noAudit = { actorId: null, actorEmail: null, requestId: null };
+  const modelFolds = await previewModelFolds(foldIo(sql, () => sql, noAudit), co, acting.map((p) => ({ drop: p.drop, keep: p.keep })), retiring);
+  return c.json({ ...view(world, plan), modelFolds });
 });
 
 mfgProductMerge.post('/apply', async (c) => {
@@ -108,39 +134,28 @@ mfgProductMerge.post('/apply', async (c) => {
     return c.json({ error: 'Some codes are refused. Fix them or remove them from the list first.', code: 'refused' }, 409);
   }
   const houzsUser = c.get('houzsUser');
-  const { committed, problems, rekeyed } = await applyMerge(sql, {
-    co, plan, world, cascade: PRODUCT_CODE_CASCADE,
-    audit: { actorId: houzsUser?.id ?? null, actorEmail: houzsUser?.email ?? null, requestId: null },
-  });
+  const audit = { actorId: houzsUser?.id ?? null, actorEmail: houzsUser?.email ?? null, requestId: null };
+  const { committed, problems, rekeyed } = await applyMerge(sql, { co, plan, world, cascade: PRODUCT_CODE_CASCADE, audit });
   /* A fresh client: the writes' connection is not the one that re-reads. */
   problems.push(...await verifyMerge(getSql(resolveDatabaseUrl(c.env)), { co, committed, world }));
   /* SO allocation is a projection keyed on the code; re-keyed lines and stock
      need it recomputed (docs/bugs/0675). The cron drains this within minutes. */
   if (committed.length > 0) await enqueueStockAllocationRecompute(c.get('supabase'), 'scm.sku.merge');
+  /* The SKU merge above has committed and stands whatever the folds do. */
+  const fresh = () => getSql(resolveDatabaseUrl(c.env));
+  const { folds: modelFolds, problems: foldProblems } = await foldModelsAfterSkuMerge(foldIo(sql, fresh, audit), co, committed.map((p) => ({ drop: p.drop, keep: p.keep })));
+  problems.push(...foldProblems);
   return c.json({
     merged: committed.map((p: any) => p.drop),
     rekeyed,
+    modelFolds,
     problems,
   }, problems.length > 0 ? 500 : 200);
 });
 
-/* Sofa keys hang on the Model code (combo prices, quick picks). Moving them is a
-   ruling of its own, so a Model that still carries one is refused. */
-const SOFA_KEYED = ['sofa_combo_pricing', 'sofa_quick_picks', 'personal_quick_picks', 'pos_sofa_combos'];
-
 async function planModels(sql: any, co: number, keep: string, drops: string[]) {
-  const rows = await sql`SELECT DISTINCT category::text AS category FROM scm.product_models WHERE company_id = ${co} AND model_code = ${keep}`;
-  const group = { category: String(rows[0]?.category ?? ''), keep, drops };
-  const world = await readModelWorld(sql, { co, groups: [group], idle: [] });
-  let plan: any = planModelGroup({ group, models: world.models, skus: world.skus });
-  const refuse = (refusals: string[]) => ({ ...plan, refusals, pairs: [], moves: [], fills: [], addSizes: [], foldModels: [], createModel: null, activateKept: false });
-  if (rows.length !== 1) plan = refuse([`Model "${keep}" is ${rows.length === 0 ? 'not in this company' : 'in more than one category'}`]);
-  const keyed: string[] = [];
-  for (const table of SOFA_KEYED) {
-    const [n] = await sql`SELECT COUNT(*)::int AS n FROM ${sql(`scm.${table}`)} WHERE company_id = ${co} AND base_model = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(drops)}::text::jsonb)))`;
-    if (n.n > 0) keyed.push(`${table} ${n.n}`);
-  }
-  if (keyed.length > 0) plan = refuse([`a folded Model still carries sofa rows (${keyed.join(', ')})`]);
+  const { world, plan: planned, refuse } = await planModelFold(sql, { co, keep, drops, retiring: null });
+  let plan: any = planned;
   const pairs = plan.pairs.map(({ drop, keep: k }: any) => ({ drop, keep: k }));
   const cols = await readMergeColumns(sql, PRODUCT_CODE_CASCADE);
   const skuWorld = await readMergeWorld(sql, { co, pairs, cascade: PRODUCT_CODE_CASCADE, cols });
@@ -171,6 +186,7 @@ mfgProductMerge.post('/models/plan', async (c) => {
     foldModels: plan.foldModels.map((f: any) => f.code),
     keptOff: plan.activateKept,
     leftInactive: plan.leftInactive.length,
+    inactiveMoved: plan.inactiveMoves.length,
     totals,
     confirm,
   });
@@ -197,7 +213,7 @@ mfgProductMerge.post('/models/apply', async (c) => {
   /* The undo of the Model writes, on record before they run. */
   await recordModelMergeAudit(sql, {
     audit, modelId: plan.keptModelId, summary: `Merging Models ${parsed.pairs.map((p) => `"${p.drop}"`).join(', ')} into "${plan.label}"`,
-    undo: { company_id: co, moves: plan.moves, folded: plan.foldModels, addSizes: plan.addSizes, activateKept: plan.activateKept, fills: plan.fills.map((f: any) => ({ code: f.code, field: f.field, from: f.from })) },
+    undo: { company_id: co, moves: plan.moves, inactiveMoves: plan.inactiveMoves, folded: plan.foldModels, addSizes: plan.addSizes, activateKept: plan.activateKept, fills: plan.fills.map((f: any) => ({ code: f.code, field: f.field, from: f.from })) },
   });
   const modelId = await writeModelGroup(sql, { co, plan, world, log: console.log });
   const check = getSql(resolveDatabaseUrl(c.env));

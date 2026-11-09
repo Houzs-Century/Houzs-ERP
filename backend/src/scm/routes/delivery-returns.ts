@@ -46,6 +46,7 @@ import { sourceUnitCostByItemId } from '../lib/source-cost';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
+import { creditNoteHold, loadReturnCredit } from '../lib/cn-from-return';
 import {
   DR_FINANCE_KEYS,
   DR_HEADER_COLS,
@@ -885,7 +886,14 @@ deliveryReturns.get('/:id', async (c) => {
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
   // (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ deliveryReturn: h.data, items });
+  /* The money side (backlog A1): where the credit note stands, from the notes
+     actually linked. A failed read says so instead of "awaiting". */
+  const co = requireActiveCompanyId(c);
+  const credit = co.ok ? await loadReturnCredit(sb, co.companyId, id, null) : null;
+  const creditNote = credit?.ok
+    ? { state: credit.value.state, notes: credit.value.notes.map((n) => ({ id: n.id, number: n.note_number, status: n.status })) }
+    : { state: 'UNKNOWN', notes: [] };
+  return c.json({ deliveryReturn: { ...(h.data as unknown as Record<string, unknown>), credit_note_state: creditNote.state }, items, creditNote });
 });
 
 /* Insert the DR header from a client body. Shared by POST / and the
@@ -1662,6 +1670,10 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     if (q === null) return c.json({ error: 'invalid_qty', message: returnLineQtyMessage((it.itemCode ?? prev.item_code) as string, it.qtyReturned ?? it.qty) }, 400);
     qty = q;
   }
+  if (qty < Number(prev.qty_returned ?? 0)) {
+    const held = await creditNoteHold(sb, co.companyId, [{ itemId, qty }]);
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
+  }
 
   /* Over-return cap (parity with create + add-line; was the one DR back door).
      An edited qty must not push the DO line past its remaining (delivered −
@@ -1753,6 +1765,10 @@ deliveryReturns.delete('/:id/items/:itemId', async (c) => {
       .select('id').eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
     if (!line) return c.json(NOT_THIS_COMPANY, 404);
   }
+  {
+    const held = await creditNoteHold(sb, co.companyId, [{ itemId, qty: 0 }]);
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
+  }
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
@@ -1828,6 +1844,13 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
       error: 'dr_cancelled_final',
       reason: 'A cancelled Delivery Return cannot be reactivated — its stock entry was already drained. Create a new return instead.',
     }, 409);
+  }
+
+  if (toStatus === 'CANCELLED') {
+    const { data: lines, error: lErr } = await scopeToCompanyId(sb.from('delivery_return_items').select('id').eq('delivery_return_id', id), co.companyId);
+    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+    const held = await creditNoteHold(sb, co.companyId, ((lines ?? []) as Array<{ id: string }>).map((l) => ({ itemId: l.id, qty: 0 })));
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
   }
 
   const now = new Date().toISOString();

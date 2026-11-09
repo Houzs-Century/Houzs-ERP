@@ -1,7 +1,7 @@
 // One binding per supplier per item (B28, sister Houzs-IT/Conts-ERP#689). MRP
 // lists every binding row, so a supplier bound to the same SKU twice showed
-// twice for that item. There is no unique index in production (prod schema
-// dump, run 42635335025), so the route is the guard. Same bare-Hono harness as
+// twice for that item. The route pre-check is the readable refusal; the unique
+// index from 20261110T0400 backs it. Same bare-Hono harness as
 // supplierBindingAcItemCode.test.ts.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -24,7 +24,7 @@ class FakeQuery {
   private op: 'select' | 'update' | 'delete' | 'insert' = 'select';
   private patch: Row = {};
   private inserted: Row[] = [];
-  constructor(private rows: Row[], private seq: { n: number }) {}
+  constructor(private rows: Row[], private seq: { n: number }, private writeErr: Row | null = null) {}
   select() { return this; }
   order() { return this; }
   limit() { return this; }
@@ -62,22 +62,25 @@ class FakeQuery {
     if (this.op === 'update') { for (const r of hit) Object.assign(r, this.patch); }
     return hit;
   }
-  maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
+  private failed() { return this.writeErr && this.op !== 'select' ? { data: null, error: this.writeErr } : null; }
+  maybeSingle() { const f = this.failed(); if (f) return Promise.resolve(f); const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
   single() {
+    const f = this.failed(); if (f) return Promise.resolve(f);
     const h = this.run();
     return Promise.resolve({ data: h[0] ?? null, error: h.length ? null : { message: 'no rows' } });
   }
   then(res: (v: any) => any, rej?: (e: any) => any) {
+    const f = this.failed(); if (f) return Promise.resolve(f).then(res, rej);
     return Promise.resolve({ data: this.run(), error: null }).then(res, rej);
   }
 }
 
-function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
+function harness(tables: Record<string, Row[]>, companyId: number | undefined, bindingWriteErr: Row | null = null) {
   const seq = { n: 0 };
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
-      from: (t: string) => new FakeQuery((tables[t] ||= []), seq),
+      from: (t: string) => new FakeQuery((tables[t] ||= []), seq, t === 'supplier_material_bindings' ? bindingWriteErr : null),
       rpc: async () => ({ data: true, error: null }),
     } as never);
     c.set('companyId' as never, companyId as never);
@@ -176,5 +179,30 @@ describe('supplier binding duplicates — batch', () => {
     expect(j.inserted).toBe(1);
     expect(j.skipped).toBe(2);
     expect(t.supplier_material_bindings.filter((r) => r.supplier_id === 'sup-a' && r.item_code === '1004-(Q)')).toHaveLength(1);
+  });
+});
+
+/* The unique index (20261110T0400) catches a duplicate the pre-check could not
+   see, e.g. two creates racing. Postgres answers 23505; the operator must get the
+   same 409 as the pre-check gives, not a 500. */
+describe('supplier binding duplicates — the database refuses', () => {
+  const UNIQUE = { code: '23505', message: 'duplicate key value violates unique constraint "supplier_material_bindings_one_per_item_uq"' };
+  test('create: 23505 answers 409 duplicate_binding', async () => {
+    const res = await post(harness(tables([]), CO_A, UNIQUE).app, 'sup-a', BODY);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('duplicate_binding');
+  });
+  test('patch: 23505 answers 409 duplicate_binding', async () => {
+    const t = tables([bound()]);
+    const res = await patch(harness(t, CO_A, UNIQUE).app, 'sup-a', 'b-1', { unitPriceSen: 6000 });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('duplicate_binding');
+  });
+  test('batch: 23505 answers 409 duplicate_binding', async () => {
+    const res = await harness(tables([]), CO_A, UNIQUE).app.request('/suppliers/sup-a/bindings/batch', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bindings: [BODY] }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('duplicate_binding');
   });
 });
