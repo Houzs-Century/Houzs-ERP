@@ -40,9 +40,10 @@ export type Account = {
 };
 
 /* The CONTROL specials — AR (SDC), AP + customer deposits (SCC), stock (SBS).
-   ONE frontend home on purpose; the server's requireLeafAccount holds the
-   enforcing copy (a browser cannot import the Worker's), and this one only
-   decides what the pickers and the Chart page SHOW. */
+   ONE frontend home on purpose; the server's whyNotPostable in
+   backend/src/scm/routes/accounting-chart.ts is the enforcing rule (a browser
+   cannot import the Worker's), and this one only decides what the pickers and
+   the Chart page SHOW. */
 export const isControlSpecial = (special: string | null | undefined): boolean =>
   special === 'SDC' || special === 'SCC' || special === 'SBS';
 /* 父户不记账, one home for the screens (docs/bugs/0693). A header is any
@@ -57,7 +58,9 @@ export const leafAccounts = (all: Account[]): Account[] => {
   return all.filter((a) => a.is_active && !parents.has(a.account_code));
 };
 /** What a hand-picked line may debit or credit: a leaf that is not a CONTROL
-    account (AR / AP + deposits / stock post through their modules — 由模块过账). */
+    account (AR / AP + deposits / stock post through their modules — 由模块过账).
+    Display mirror of the server's whyNotPostable; a control ROLE held by a
+    non-special account is refused there, not hidden here. */
 export const postableAccounts = (all: Account[]): Account[] =>
   leafAccounts(all).filter((a) => !isControlSpecial(a.special_type));
 /* The section vocabulary in render order — served by the API (its one home

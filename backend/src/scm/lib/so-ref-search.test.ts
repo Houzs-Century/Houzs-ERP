@@ -51,7 +51,7 @@ describe('list searches match the SO link resolved from the SO reference', () =>
     const { self, calls } = recorder();
     const f: PoListFilters = {
       status: null, supplierId: null, q: 'PO-778', from: null, to: null, sort: null,
-      creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: ['po-1'],
+      creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: ['po-1'], itemCodePoIds: [],
     };
     filterPoList(self, f, ctx, new Set());
     expect(orString(calls)).toBe('po_number.ilike.%PO-778%,notes.ilike.%PO-778%,id.in.("po-1")');
@@ -60,7 +60,7 @@ describe('list searches match the SO link resolved from the SO reference', () =>
     const { self, calls } = recorder();
     const f: PoListFilters = {
       status: null, supplierId: null, q: 'x1', from: null, to: null, sort: null,
-      creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: [],
+      creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: [], itemCodePoIds: [],
     };
     filterPoList(self, f, ctx, new Set());
     expect(orString(calls)).toBe('po_number.ilike.%x1%,notes.ilike.%x1%');
