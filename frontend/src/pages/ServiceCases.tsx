@@ -4611,7 +4611,7 @@ function DetailContent({
             </DetailMain>
 
             <DetailAside>
-          {/* Right rail per design: Customer · Assigned to · SLA · Timeline. */}
+          {/* Right rail per design: Customer · Assigned to · SLA. The Timeline sits at the foot of the main column. */}
           <PanelSection
             title="Customer"
             icon={<User size={13} />}

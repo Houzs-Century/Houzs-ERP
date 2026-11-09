@@ -78,7 +78,7 @@ describe("buildCaseTimeline", () => {
   test("starts a new upload row when the uploader changes", () => {
     const entries = [
       activity("attachment_added", "2026-10-22T03:00:00Z", { to_value: "a.jpg" }),
-      activity("customer_upload", "2026-10-22T03:05:00Z", { to_value: "b.jpg", source: "customer", user_name: null }),
+      activity("customer_upload", "2026-10-22T03:05:00Z", { to_value: "42", note: "b.jpg", source: "customer", user_name: null }),
     ];
 
     const { rows } = buildCaseTimeline(entries, keyUpdates);
@@ -87,6 +87,28 @@ describe("buildCaseTimeline", () => {
       ["Farra", "1 photo uploaded"],
       ["Customer", "1 photo uploaded"],
     ]);
+  });
+
+  test("reads the file name from the note when the portal stores the attachment id", () => {
+    const entries = [
+      activity("supplier_upload", "2026-10-22T03:00:00Z", { to_value: "7", note: "crack.webp", source_channel: "supplier_portal", user_name: null }),
+      activity("supplier_upload", "2026-10-22T03:01:00Z", { to_value: "8", note: "crack.mov", source_channel: "supplier_portal", user_name: null }),
+    ];
+
+    const { rows } = buildCaseTimeline(entries, keyUpdates);
+
+    expect(rows).toEqual([expect.objectContaining({ by: "Supplier", remarks: "1 photo, 1 video uploaded" })]);
+  });
+
+  test("keeps staff documents of different types in separate rows", () => {
+    const entries = [
+      activity("attachment_added", "2026-10-25T02:00:00Z", { to_value: "a.jpg", note: "Added evidence attachment (a.jpg)" }),
+      activity("attachment_added", "2026-10-25T02:01:00Z", { to_value: "pod.pdf", note: "Added delivery_pod attachment (pod.pdf)" }),
+    ];
+
+    const { rows } = buildCaseTimeline(entries, keyUpdates);
+
+    expect(rows.map((row) => row.remarks)).toEqual(["1 photo uploaded (evidence)", "1 file uploaded (delivery pod)"]);
   });
 
   test("folds Google Form photo imports into the upload row", () => {

@@ -27,6 +27,12 @@ export interface TimelineUploadCount {
   photos: number;
   videos: number;
   files: number;
+  documentType: string | null;
+}
+
+interface UploadedFile {
+  fileName: string;
+  documentType: string | null;
 }
 
 export interface TimelineRow {
@@ -69,6 +75,8 @@ const PROGRESS_ACTIONS: readonly string[] = [
 const VIDEO_EXTENSIONS: readonly string[] = ["mov", "mp4", "webm", "m4v", "avi"];
 const PHOTO_EXTENSIONS: readonly string[] = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
 const STORAGE_KEY_PATTERN = /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi;
+const FILE_EXTENSION_PATTERN = /\.[a-z0-9]+\)?\s*$/i;
+const STAFF_ATTACHMENT_NOTE_PATTERN = /^Added (\w+) attachment/;
 const GOOGLE_FORM_PHOTO_PATTERN = /^Photo migrated from Google Form history(?::\s*(.*?))?\s*\[gdrive:[^\]]+\]$/;
 
 const STAGE_TONES: Record<string, TimelineTone> = {
@@ -87,7 +95,7 @@ const COMMENT_STATUS_BY_ROLE: Record<TimelineRole, string> = {
   system: "Note",
 };
 
-function kindOfFile(fileName: string): keyof TimelineUploadCount {
+function kindOfFile(fileName: string): "photos" | "videos" | "files" {
   const extension = /\.([a-z0-9]+)\)?\s*$/i.exec(fileName)?.[1]?.toLowerCase() ?? "";
   if (VIDEO_EXTENSIONS.includes(extension)) return "videos";
   if (PHOTO_EXTENSIONS.includes(extension)) return "photos";
@@ -127,14 +135,19 @@ function authorOf(activity: TimelineActivity, salesAgent: string | null): string
   return "System";
 }
 
-function uploadedFileName(activity: TimelineActivity): string | null {
-  if (UPLOAD_ACTIONS.includes(activity.action)) return activity.to_value ?? activity.note ?? "";
+function uploadedFile(activity: TimelineActivity): UploadedFile | null {
+  if (UPLOAD_ACTIONS.includes(activity.action)) {
+    const candidates = [activity.to_value, activity.note];
+    const fileName = candidates.find((value) => value && FILE_EXTENSION_PATTERN.test(value)) ?? activity.to_value ?? activity.note ?? "";
+    const documentType = STAFF_ATTACHMENT_NOTE_PATTERN.exec(activity.note ?? "")?.[1]?.replace(/_/g, " ") ?? null;
+    return { fileName, documentType };
+  }
   const googleFormMatch = GOOGLE_FORM_PHOTO_PATTERN.exec(String(activity.note ?? "").trim());
-  return googleFormMatch ? `${googleFormMatch[1] || "photo"}.jpg` : null;
+  return googleFormMatch ? { fileName: `${googleFormMatch[1] || "photo"}.jpg`, documentType: null } : null;
 }
 
 function isDetailActivity(activity: TimelineActivity): boolean {
-  return !PROGRESS_ACTIONS.includes(activity.action) && !COMMENT_ACTIONS.includes(activity.action) && uploadedFileName(activity) === null;
+  return !PROGRESS_ACTIONS.includes(activity.action) && !COMMENT_ACTIONS.includes(activity.action) && uploadedFile(activity) === null;
 }
 
 function userName(userNames: ReadonlyMap<string, string>, userId: string | null | undefined): string {
@@ -175,19 +188,20 @@ function describeActivity(activity: TimelineActivity, role: TimelineRole, userNa
   }
 }
 
-function emptyUploadCount(): TimelineUploadCount {
-  return { photos: 0, videos: 0, files: 0 };
+function emptyUploadCount(documentType: string | null): TimelineUploadCount {
+  return { photos: 0, videos: 0, files: 0, documentType };
 }
 
-export function describeUploadCount({ photos, videos, files }: TimelineUploadCount): string {
+export function describeUploadCount({ photos, videos, files, documentType }: TimelineUploadCount): string {
   const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
-  return [
+  const counts = [
     photos > 0 ? plural(photos, "photo") : null,
     videos > 0 ? plural(videos, "video") : null,
     files > 0 ? plural(files, "file") : null,
   ]
     .filter(Boolean)
     .join(", ");
+  return documentType ? `${counts} uploaded (${documentType})` : `${counts} uploaded`;
 }
 
 function uploadStatus({ photos, videos, files }: TimelineUploadCount): TimelineStatus {
@@ -212,19 +226,25 @@ export function buildCaseTimeline(activity: readonly TimelineActivity[], options
   for (const entry of [...visible].sort(compareOldestFirst)) {
     const role = roleOfActivity(entry);
     const by = authorOf(entry, salesAgent);
-    const fileName = uploadedFileName(entry);
-    if (fileName !== null) {
+    const file = uploadedFile(entry);
+    if (file !== null) {
       const previous = rows.at(-1);
-      const target = previous?.upload && previous.by === by && isSameLocalDay(previous.at, entry.created_at) ? previous : null;
-      const upload = target?.upload ?? emptyUploadCount();
-      upload[kindOfFile(fileName)] += 1;
+      const target =
+        previous?.upload &&
+        previous.upload.documentType === file.documentType &&
+        previous.by === by &&
+        isSameLocalDay(previous.at, entry.created_at)
+          ? previous
+          : null;
+      const upload = target?.upload ?? emptyUploadCount(file.documentType);
+      upload[kindOfFile(file.fileName)] += 1;
       const groupedRow: TimelineRow = {
         id: target?.id ?? entry.id,
         at: target?.at ?? entry.created_at,
         by,
         role,
         status: uploadStatus(upload),
-        remarks: `${describeUploadCount(upload)} uploaded`,
+        remarks: describeUploadCount(upload),
         upload,
         isArchivable: false,
         isEscalation: false,
