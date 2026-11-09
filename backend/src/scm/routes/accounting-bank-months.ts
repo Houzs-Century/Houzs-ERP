@@ -35,10 +35,10 @@ import { lineForRepeats, repeatsAmong } from '../../acc/bank-repeats';
 import { withJournalRefs } from '../../acc/journal-refs';
 import {
   loadPayableBatches, loadAccountLedger, loadLiveMonthLock, loadBankConfig, claimedSetFor, jeNosOf,
-  loadRecognitionRules, loadPayoutAdvices, loadStatementLines, loadCompanyMatches,
+  loadRecognitionRules, loadPayoutAdvices, loadStatementLines, loadCompanyMatches, loadQrReports,
 } from '../../acc/bank';
 import { paginateAll } from '../lib/paginate-all';
-import { bankGuard, freshDecisions } from './accounting-bank';
+import { bankGuard, freshDecisions, withQrSales } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -468,9 +468,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   const matchP = loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason');
 
-  const [linesRes, matchRes, batches, rules, payouts, typedRes] = await Promise.all([
+  const [linesRes, matchRes, batches, rules, payouts, typedRes, qrReports] = await Promise.all([
     linesP, matchP, loadPayableBatches(sb, co.companyId), loadRecognitionRules(sb), loadPayoutAdvices(sb, co.companyId),
     loadTypedBalances(sb, co.companyId, accountCode),
+    /* The QR reports, so the day's QR credit is matched to its sales (owner 2026-11-09). */
+    loadQrReports(sb, co.companyId),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
@@ -478,6 +480,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
   if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
+  if (!qrReports.ok) return c.json({ error: 'load_failed', reason: qrReports.reason }, 500);
   const balances = balancesFor(typedRes.byKey, allStatements.map(asMonthStatement), accountCode, month);
 
   const matchesByLine = matchesByLineOf(rowsOf(matchRes.data));
@@ -566,6 +569,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const repeated = repeatsAmong(everyLine.map((l) => lineForRepeats(l, '')));
   const repeatLines = lines.filter((l) => repeated.has(Number(l.id)));
   const repeats = { count: repeatLines.length, statementIds: [...new Set(repeatLines.map((l) => Number(l.statement_id)))] };
+  /* The day's QR money is matched to its sales, not booked as a payout. Only a
+     real claim — a POSTED line of the account holding the entry — stands in
+     its way; the books-start rule above is the reconciliation's, not a match. */
+  const decided = withQrSales(lines, rules.rules, qrReports.reports,
+    claimedOutside(everyLine, new Set<number>(), matchesByLine, '9999-12-31'), accountCode);
 
   return c.json({
     accountCode,
@@ -585,7 +593,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
     statements: [...fed]
       .sort((a, b) => String(a.period_from).localeCompare(String(b.period_from)))
       .map((s) => ({ ...s, spanning: assembly.spanningIds.includes(Number(s.id)) })),
-    lines: lines.map((l) => {
+    lines: decided.map((l) => {
       const acquirer = textOf(l.acquirer_code);
       return {
         ...l,

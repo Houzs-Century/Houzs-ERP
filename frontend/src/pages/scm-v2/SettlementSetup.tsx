@@ -883,6 +883,12 @@ const HEADING_FIELDS = [
   { key: 'gross', label: 'Amount heading', hint: 'e.g. Gross' },
   { key: 'fee', label: 'Fee heading', hint: 'e.g. MDR' },
   { key: 'net', label: 'Net heading', hint: 'e.g. Net Credited' },
+  /* Owner 2026-11-09 (0000PP 是 qr direct 去 bank 的，不算卡机的): a file that
+     prints DuitNow QR payments in the card layout marks them in one column —
+     Hong Leong's TENURE/CASHOUT*, DN for DuitNow QR. Those lines are matched to
+     the Online sale and post nothing. Blank for a card-only file. */
+  { key: 'qr', label: 'QR column heading', hint: 'only if the file mixes in QR, e.g. TENURE/CASHOUT*' },
+  { key: 'qr_values', label: 'QR codes in it', hint: 'e.g. DN, WC, WL' },
 ] as const;
 
 /** "Pinelabs, pine labs ,," → ["Pinelabs", "pine labs"] — the names as typed,
