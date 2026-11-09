@@ -36,6 +36,7 @@ import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
 import { isSetupDismantleJob } from "./setupDismantleJob";
 import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
+import { mytDayOfValue, todayMyt } from "../vendor/scm/lib/dates";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -170,16 +171,9 @@ const DAY_TABS: { key: Day; label: string }[] = [
 // unparseable), so date-only strings render in Asia/Kuala_Lumpur without an
 // off-by-one on an off-zone device.
 const dm = (d: string | null | undefined) => formatDate(d);
-// Local YYYY-MM-DD key for a date-ish string.
-const dayKey = (d: string | null | undefined): string => {
-  if (!d) return "";
-  const dt = new Date(d);
-  if (isNaN(+dt)) return "";
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const day = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
+// The Malaysian day a date-ish string falls on, not the phone's own zone
+// (owner 2026-11-09: every date filter judges by the Malaysian day).
+const dayKey = (d: string | null | undefined): string => mytDayOfValue(d) ?? "";
 
 /* The effective delivery date the run-sheet buckets on.
    `job_date` sits beside internal_expected_dd rather than replacing it: a
@@ -341,17 +335,8 @@ export function MobileDeliveryPlanning({
     [allOrders, driverFilter],
   );
 
-  // today / tomorrow local day keys.
-  const { todayKey, tomorrowKey } = useMemo(() => {
-    const now = new Date();
-    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tm = new Date(t);
-    tm.setDate(tm.getDate() + 1);
-    return {
-      todayKey: dayKey(t.toISOString()),
-      tomorrowKey: dayKey(tm.toISOString()),
-    };
-  }, []);
+  // today / tomorrow as Malaysian days.
+  const { todayKey, tomorrowKey } = useMemo(() => ({ todayKey: todayMyt(), tomorrowKey: todayMyt(1) }), []);
 
   // Split into the three day-buckets, each ordered by effective date then doc.
   const buckets = useMemo(() => {
@@ -359,11 +344,7 @@ export function MobileDeliveryPlanning({
     const tomorrow: BoardRow[] = [];
     const history: BoardRow[] = [];
     // History = the CURRENT month only (owner 2026-10-21): floor at the 1st.
-    const monthFloor = (() => {
-      const d = new Date(todayKey + "T00:00:00");
-      d.setDate(1);
-      return dayKey(d.toISOString());
-    })();
+    const monthFloor = `${todayKey.slice(0, 8)}01`;
     for (const o of shownOrders) {
       // Only stops actually on a run — a cut DO or an assigned driver. An order
       // that merely carries today's customer date (no DO, no driver) is not yet

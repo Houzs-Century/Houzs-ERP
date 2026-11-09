@@ -29,6 +29,29 @@ export const mytDayOf = (instant: string | null | undefined): string | null => {
   return new Date(t + 8 * 3600 * 1000).toISOString().slice(0, 10);
 };
 
+const VALUE_DAY = /^(\d{4})[-/](\d{2})[-/](\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|[+-]\d{2}(?::?\d{2})?)?)?/i;
+
+/** The Malaysian calendar day a stored value stands for, as `YYYY-MM-DD` —
+ *  what every date filter judges a row by (owner 2026-11-09).
+ *
+ *  A plain DATE (`2026-11-10`, `2026/11/10`) is already a calendar day and is
+ *  returned as written. A timestamp carrying an offset (`2026-11-09T17:30:00Z`,
+ *  `…+00:00`, Postgres' `… 17:30:00+00`) is an instant, and its first ten
+ *  characters are the UTC day: 01:30 in Malaysia on the 10th read as the 9th,
+ *  so it goes through `mytDayOf`. A timestamp with no offset says nothing about
+ *  its zone, so it is read as the wall clock it shows. null when the value does
+ *  not start with a date. */
+export const mytDayOfValue = (value: string | number | null | undefined): string | null => {
+  if (value == null) return null;
+  const m = VALUE_DAY.exec(String(value).trim());
+  if (!m) return null;
+  const day = `${m[1]}-${m[2]}-${m[3]}`;
+  const [, , , , time, zone] = m;
+  if (!time || !zone) return day;
+  const offset = /^z$/i.test(zone) ? 'Z' : zone.length === 3 ? `${zone}:00` : zone.includes(':') ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  return mytDayOf(`${day}T${time}${offset}`) ?? day;
+};
+
 /** True when the given instant (UTC ISO string) falls on the current Malaysian
  *  calendar day — drives the same-day payment EDIT affordance. Uses the same
  *  +8h shift as `todayMyt()` so both sides agree regardless of the browser zone. */
