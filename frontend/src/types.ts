@@ -231,7 +231,7 @@ export interface AssrCase {
   // on customer.
   verification_outcome?: "accepted" | "rejected" | "needs_more_info" | null;
   verified_root_cause?: string | null;
-  // HC-0133 — Verification findings; pending_with values in vendor/scm/lib/assr-verification-fields.ts.
+  // HC-0133 — Verification findings, all free text (vendor/scm/lib/assr-verification-fields.ts).
   inspection_findings?: string | null;
   next_action?: string | null;
   pending_with?: string | null;
