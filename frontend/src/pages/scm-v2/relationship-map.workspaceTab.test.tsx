@@ -96,7 +96,7 @@ describe("relationship maps open documents in the in-app tab strip", () => {
     render(<MemoryRouter><DocumentFlowModal type="po" id="po-1" open onClose={onClose} /></MemoryRouter>);
     fireEvent.click(screen.getByText("DO-2609-001"));
     // This map's own (legacy) DO route; the router's alias sends it to the detail page.
-    openedInStripTab("/mfg-delivery-orders/do-1");
+    openedInStripTab("/scm/delivery-orders/do-1");
     expect(onClose).toHaveBeenCalled();
   });
 });
