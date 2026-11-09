@@ -71,10 +71,9 @@ export async function buildPodPhotosPdf(o: {
     doc.setLineWidth(0.3);
     doc.line(M, M + 15, PAGE_W - M, M + 15);
 
-    for (let k = 0; k < PHOTOS_PER_PAGE; k++) {
+    for (let k = 0; k < PHOTOS_PER_PAGE && p * PHOTOS_PER_PAGE + k < total; k++) {
       const i = p * PHOTOS_PER_PAGE + k;
       const photo = o.photos[i];
-      if (!photo) break;
       const top = M + HEAD_H + k * (SLOT_H + CAPTION_H + GAP);
       const fit = fitInSlot(photo.image.w, photo.image.h);
       doc.addImage(photo.image.dataUrl, photo.image.format, M + (SLOT_W - fit.w) / 2, top + (SLOT_H - fit.h) / 2, fit.w, fit.h);
