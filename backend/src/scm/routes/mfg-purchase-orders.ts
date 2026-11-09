@@ -43,7 +43,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -2498,6 +2498,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
   if (sdGate.refusal) return c.json(sdGate.refusal, 409);
+  { const m = await movePoLinesToNewWarehouse(sb, id, co.companyId, before, updates); if (m) return c.json(m.body, m.status); } // lib/po-warehouse-move.ts
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
