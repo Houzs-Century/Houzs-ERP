@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-333 route modules (105 in `backend/src/routes`, 228 in `backend/src/scm/routes`), 1765 endpoint registrations.
+333 route modules (105 in `backend/src/routes`, 228 in `backend/src/scm/routes`), 1767 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -183,7 +183,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1248 |
 | `backend/src/scm/routes/credit-note-files.ts` | 0 | 47 |
 | `backend/src/scm/routes/credit-note-scan.ts` | 0 | 163 |
-| `backend/src/scm/routes/credit-notes.ts` | 17 | 720 |
+| `backend/src/scm/routes/credit-notes.ts` | 18 | 794 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 237 |
@@ -206,7 +206,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-remarks.ts` | 3 | 81 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 42 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1896 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1919 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 816 |
 | `backend/src/scm/routes/deposit-invoices.ts` | 9 | 283 |
 | `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 776 |
@@ -233,13 +233,13 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/grns.ts` | 16 | 3452 |
 | `backend/src/scm/routes/helpers.ts` | 3 | 197 |
 | `backend/src/scm/routes/hr.ts` | 20 | 1611 |
-| `backend/src/scm/routes/inventory-adjustments.ts` | 4 | 496 |
+| `backend/src/scm/routes/inventory-adjustments.ts` | 4 | 499 |
 | `backend/src/scm/routes/inventory-valuation.ts` | 0 | 71 |
-| `backend/src/scm/routes/inventory.ts` | 17 | 1788 |
+| `backend/src/scm/routes/inventory.ts` | 17 | 1793 |
 | `backend/src/scm/routes/loading-list.ts` | 1 | 186 |
 | `backend/src/scm/routes/localities.ts` | 4 | 273 |
 | `backend/src/scm/routes/logistic-overview.ts` | 2 | 263 |
-| `backend/src/scm/routes/lorries.ts` | 7 | 464 |
+| `backend/src/scm/routes/lorries.ts` | 8 | 506 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 640 |
 | `backend/src/scm/routes/lorry-routes.ts` | 3 | 71 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
@@ -340,7 +340,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/stock-takes.ts` | 14 | 1521 |
 | `backend/src/scm/routes/stock-transfers.ts` | 8 | 819 |
 | `backend/src/scm/routes/supplier-maintenance.ts` | 2 | 257 |
-| `backend/src/scm/routes/suppliers.ts` | 15 | 1562 |
+| `backend/src/scm/routes/suppliers.ts` | 15 | 1566 |
 | `backend/src/scm/routes/threepl-companies.ts` | 5 | 329 |
 | `backend/src/scm/routes/threepl-do-charges.ts` | 8 | 196 |
 | `backend/src/scm/routes/threepl-from-ap.ts` | 0 | 325 |
@@ -350,7 +350,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/venture-portal-feed.ts` | 11 | 631 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
-| `backend/src/scm/routes/warehouse.ts` | 9 | 737 |
+| `backend/src/scm/routes/warehouse.ts` | 9 | 739 |
 | `backend/src/scm/routes/write-freeze-status.ts` | 1 | 122 |
 
 ## 2. Migration trees
@@ -362,13 +362,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 175 | `175_email_outbox_claim.sql` (175) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 634 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 636 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4434 files, 1080951 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (4444 files, 1082079 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -613,7 +613,7 @@ Page files by directory:
 | `frontend/src/pages/pos-admin` | 11 |
 | `frontend/src/pages/projects` | 25 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 275 |
+| `frontend/src/pages/scm-v2` | 276 |
 | `frontend/src/pages/scm-v2/books` | 3 |
 | `frontend/src/pages/scm-v2/carriers` | 2 |
 | `frontend/src/pages/scm-v2/delivery-zones` | 3 |
@@ -673,7 +673,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1850 |
 | `frontend/src/mobile/MobileMailPersonal.tsx` | 87 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 421 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1913 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1915 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 396 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2101 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 330 |
