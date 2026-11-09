@@ -45,6 +45,7 @@ import { MoneyInput } from "../vendor/scm/components/MoneyInput";
 import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
+import { classifyLoadFailure } from "../lib/loadFailure";
 import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
 
 const EVENTS_PATH = "/payment-requests/event-options" as const;
@@ -167,7 +168,22 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   const [fileError, setFileError] = useState<string | null>(null);
 
   if (q.isLoading) return <Shell eyebrow="Payment request" title="…" onBack={onBack}><Note>Loading…</Note></Shell>;
-  if (!r) return <Shell eyebrow="Payment request" title="Not found" onBack={onBack}><Note>This request could not be opened.</Note></Shell>;
+  if (!r) {
+    const f = classifyLoadFailure(q.isError ? q.error : null);
+    if (f.kind === "load-failed") {
+      return (
+        <Shell eyebrow="Payment request" title="Could not load" onBack={onBack}>
+          <Note>
+            {f.reason} This does not mean the request was deleted.
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn-ghost" disabled={q.isFetching} onClick={() => void q.refetch()}>{q.isFetching ? "Retrying…" : "Retry"}</button>
+            </div>
+          </Note>
+        </Shell>
+      );
+    }
+    return <Shell eyebrow="Payment request" title="Not found" onBack={onBack}><Note>This request could not be opened.</Note></Shell>;
+  }
 
   const mine = Number(r.requested_by) === Number(user?.id);
   const refund = isRefundRequest(r);
