@@ -237,13 +237,24 @@ export function matchStatement(
           : `DuitNow QR — ${same.length} Online payments of this amount within ${tolerance} day(s). Pick the one this QR paid.`,
       };
     }
-    /* One QR for two orders is one payment like any other. */
+    /* One QR for two orders is one payment like any other — of ONE payer. The
+       Online pool is every bank transfer of the window, so a set across
+       customers is arithmetic, not a payment: on production 2990's 31/10
+       RM 3,500 QR line was pre-ticked with four orders of four customers that
+       happened to add up. A set counts only when every order in it is the same
+       named customer. */
+    const payerOf = (p: PaymentCandidate) => String(p.customerName ?? '').trim().toUpperCase();
     const smaller = pool.filter((p) => Math.abs(p.amountSen) <= Math.abs(row.grossSen)).sort((a, b) => b.amountSen - a.amountSen);
-    const hints = exactPairs(smaller, row.grossSen);
+    const byId = new Map(smaller.map((p) => [p.id, p]));
+    const hints = exactPairs(smaller, row.grossSen).filter((set) => {
+      const payers = new Set(set.map((id) => payerOf(byId.get(id)!)));
+      return payers.size === 1 && !payers.has('');
+    });
     if (hints.length > 0) {
+      const inSets = smaller.filter((p) => hints.some((set) => set.includes(p.id)));
       const onlySet = hints.length === 1 ? smaller.filter((p) => hints[0]!.includes(p.id)) : [];
       return {
-        row, bucket: 'NEEDS_CONFIRM', matchReason: 'amount+date', matched: [], candidates: smaller, comboHints: hints, suggested: onlySet,
+        row, bucket: 'NEEDS_CONFIRM', matchReason: 'amount+date', matched: [], candidates: inSets, comboHints: hints, suggested: onlySet,
         clue: onlySet.length > 0
           ? `DuitNow QR — ${onlySet.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and link them.`
           : `DuitNow QR — ${hints.length} set(s) of Online payments add up to this amount. Pick the right one.`,

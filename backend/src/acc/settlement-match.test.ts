@@ -542,13 +542,38 @@ describe('a QR line is matched to the Online sale, never to card money', () => {
     expect(d!.bucket).toBe('UNMATCHED');
   });
 
-  it('one QR payment for two orders: the one set of Online payments that makes it is ticked', () => {
+  it('one QR payment for two orders of ONE customer: that set is ticked', () => {
     const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
-      pay({ id: 'a', docNo: 'SO-A', paidOn: '2026-10-31', amountSen: 200000 }),
-      pay({ id: 'b', docNo: 'SO-B', paidOn: '2026-10-31', amountSen: 150000 }),
+      pay({ id: 'a', docNo: 'SO-A', paidOn: '2026-10-31', amountSen: 200000, customerName: 'Tan Ah Kow' }),
+      pay({ id: 'b', docNo: 'SO-B', paidOn: '2026-10-31', amountSen: 150000, customerName: ' tan ah kow ' }),
     ]);
     expect(d!.bucket).toBe('NEEDS_CONFIRM');
     expect(d!.suggested.map((p) => p.id).sort()).toEqual(['a', 'b']);
+  });
+
+  /* 2990's 31/10 RM 3,500 QR line, on production after #5449: four Online
+     payments of four different orders and customers in the window happened to
+     add up to it, and were pre-ticked. One QR scan is ONE payer — a set across
+     customers is arithmetic, not a payment. */
+  it('Online payments of different customers that happen to add up are not offered', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
+      pay({ id: 'w', docNo: '2990-SO-2608-040', paidOn: '2026-10-29', amountSen: 100000, customerName: 'Wong' }),
+      pay({ id: 'x', docNo: '2990-SO-2608-010', paidOn: '2026-10-30', amountSen: 100000, customerName: 'Lim' }),
+      pay({ id: 'y', docNo: '2990-SO-2611-035', paidOn: '2026-11-01', amountSen: 90000, customerName: 'Ng' }),
+      pay({ id: 'z', docNo: '2990-SO-2610-060', paidOn: '2026-11-02', amountSen: 60000, customerName: 'Tan' }),
+    ]);
+    expect(d!.bucket).toBe('UNMATCHED');
+    expect(d!.candidates).toEqual([]);
+    expect(d!.suggested).toEqual([]);
+    expect(d!.clue).toMatch(/no Online payment of RM 3,500\.00/);
+  });
+
+  it('a set with an order whose customer is unknown is not offered either', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
+      pay({ id: 'a', docNo: 'SO-A', paidOn: '2026-10-31', amountSen: 200000, customerName: 'Tan Ah Kow' }),
+      pay({ id: 'b', docNo: 'SO-B', paidOn: '2026-10-31', amountSen: 150000, customerName: null }),
+    ]);
+    expect(d!.bucket).toBe('UNMATCHED');
   });
 
   it('a card line beside it never takes the Online payment', () => {
