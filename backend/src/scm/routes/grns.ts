@@ -1257,7 +1257,7 @@ grns.get('/:id', async (c) => {
   const [h, i] = await Promise.all([
     // Company-scoped (owner 2026-08-10 audit): a bare uuid must not read
     // another company's GRN. Siblings (delivery-returns, suppliers) do this.
-    scopeToCompany(sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name)`), c).eq('id', id).maybeSingle(),
+    scopeToCompany(sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name)`), c).eq('id', id).maybeSingle(),
     sb.from('grn_items').select(ITEM).eq('grn_id', id).order('created_at'),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);

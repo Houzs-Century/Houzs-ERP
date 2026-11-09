@@ -62,7 +62,8 @@ const payToRows = (h: PvPdfHeader): Array<[string, string | null]> => [
   ['Bank', h.pay_bank ?? null],
   ['Account no.', h.pay_account_no ?? null],
   ['Acc. name', h.pay_account_name ?? null],
-  ['Description', h.notes ?? null],
+  /* The typed remark (owner 2026-11-09: the Description is what the lines say). */
+  ['Remark', h.notes ?? null],
 ];
 
 /* The four-layer strip: one dashed box per layer, the recorded name + date

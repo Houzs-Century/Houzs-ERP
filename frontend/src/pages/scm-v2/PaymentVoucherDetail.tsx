@@ -704,9 +704,10 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
               <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
-              <InfoCell label="Description" value={pv.notes ?? null} />
-              {/* What it is for in the listing's words, and the bank it pays into (owner 2026-11-08). */}
-              <InfoCell label="Purpose" value={(pv.purpose_text as string | undefined) || null} />
+              {/* What is paid for, as the bills say it — never the bill number (owner 2026-11-09:
+                  description 就是 purpose; 只显示单上的费用) — and what Finance typed beside it. */}
+              <InfoCell label="Description" value={(pv.description_text as string | undefined) || null} />
+              <InfoCell label="Remark" value={pv.notes ?? null} />
               {isBlankPayTo(payToOfVoucher(pv))
                 ? <InfoCell label="Bank" value={null} />
                 : <>
@@ -802,8 +803,8 @@ export const PaymentVoucherDetail = () => {
                   inputClassName={styles.fieldInput} selectOnFocus />
               </label>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Description</span>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher description" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+                <span className={styles.fieldLabel}>Remark</span>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher remark" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
               </label>
               <PvPayToFields value={payTo} onChange={setPayTo} />
             </div>

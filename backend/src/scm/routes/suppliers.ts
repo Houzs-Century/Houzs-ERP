@@ -39,6 +39,7 @@ import type { Context } from 'hono';
 import { pgrestIn, pgrestInList } from '../lib/pgrest-in-list';
 import { isSupplierFinanceCaller, supplierCodeChangeRefusal } from '../lib/supplier-finance';
 import { withoutSupplierFinance, withoutSupplierFinanceKeys } from '../shared/supplier-finance-fields';
+import { checkSupplierEmail } from '../shared/supplier-emails';
 
 type SupplierCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -92,10 +93,39 @@ const SUPPLIER_STRUCTURED_ADDRESS_COLS = 'address1, address2, address3, address4
    list view froze its columns before them, like the structured address. */
 const SUPPLIER_MAINTENANCE_COLS = 'for_purchasing, bank_name, bank_account_no, bank_account_name';
 
+/* Email 2 and Email 3 (owner 2026-11-09). Base table only, like the two sets
+   above: the list view froze its columns long before. */
+const SUPPLIER_EXTRA_EMAIL_COLS = 'email2, email3';
+
+/* The three email fields a save may carry: body key = column, and the label a
+   refusal names. */
+const SUPPLIER_EMAIL_FIELDS = [['email', 'Email'], ['email2', 'Email 2'], ['email3', 'Email 3']] as const;
+
+/** The email fields this save writes, each trimmed, blank = null, otherwise
+ *  one valid address. `onFile` is what the row holds now (null on create): a
+ *  value sent back unchanged is left alone even if it is not valid, so a
+ *  supplier carrying an old free-text email can still be edited for anything
+ *  else. */
+export function supplierEmailWrites(
+  body: Record<string, unknown>,
+  onFile: Record<string, unknown> | null,
+): { ok: true; writes: Record<string, string | null> } | { ok: false; message: string } {
+  const writes: Record<string, string | null> = {};
+  for (const [key, label] of SUPPLIER_EMAIL_FIELDS) {
+    if (body[key] === undefined) continue;
+    const sent = body[key] === null ? '' : String(body[key]).trim();
+    if (onFile && sent === String(onFile[key] ?? '').trim()) continue;
+    const check = checkSupplierEmail(sent, label);
+    if (!check.ok) return { ok: false, message: check.message };
+    writes[key] = check.value;
+  }
+  return { ok: true, writes };
+}
+
 /* Base-table column set — used by the DETAIL / create / patch reads, which hit
    `scm.suppliers` directly (not the view) and so can see the structured address. */
 export const SUPPLIER_COLS =
-  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, ${SUPPLIER_MAINTENANCE_COLS}, created_at, updated_at`;
+  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, ${SUPPLIER_MAINTENANCE_COLS}, ${SUPPLIER_EXTRA_EMAIL_COLS}, created_at, updated_at`;
 
 /* A supplier Finance keeps to itself (for_purchasing false — owner 2026-10-02,
    A2a: 「Finance 开的 supplier 只有 Finance 看得到，采购看不到」) is not shown to a
@@ -504,13 +534,17 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
   const name = (body.name as string | undefined)?.trim();
   if (!code) return c.json({ error: 'code_required' }, 400);
   if (!name) return c.json({ error: 'name_required' }, 400);
+  const emails = supplierEmailWrites(body, null);
+  if (!emails.ok) return c.json({ error: 'invalid_email', message: emails.message }, 400);
 
   const row = {
     code,
     name,
     /* Task #91 — normalize phone-like fields to E.164 on the server too. */
     whatsapp_number: normPhone(body.whatsappNumber),
-    email: (body.email as string) ?? null,
+    email: emails.writes.email ?? null,
+    email2: emails.writes.email2 ?? null,
+    email3: emails.writes.email3 ?? null,
     contact_person: (body.contactPerson as string) ?? null,
     phone: normPhone(body.phone),
     address: (body.address as string) ?? null,
@@ -623,10 +657,21 @@ export const patchSupplierHandler = async (c: any) => {
     }
   }
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  /* Email, Email 2, Email 3 — checked against what is on file (supplierEmailWrites). */
+  let emailWrites: Record<string, string | null> = {};
+  if (SUPPLIER_EMAIL_FIELDS.some(([k]) => body[k] !== undefined)) {
+    const { data: cur, error: curErr } = await scopeToCompanyId(supabase.from('suppliers').select('id, email, email2, email3').eq('id', id), co.companyId).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+    if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    const emails = supplierEmailWrites(body, cur as Record<string, unknown>);
+    if (!emails.ok) return c.json({ error: 'invalid_email', message: emails.message }, 400);
+    emailWrites = emails.writes;
+  }
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), ...emailWrites };
   const map: Array<[keyof typeof body, string]> = [
     ['code', 'code'], ['name', 'name'], ['whatsappNumber', 'whatsapp_number'],
-    ['email', 'email'], ['contactPerson', 'contact_person'], ['phone', 'phone'],
+    ['contactPerson', 'contact_person'], ['phone', 'phone'],
     ['address', 'address'], ['state', 'state'], ['paymentTerms', 'payment_terms'],
     ['rating', 'rating'], ['notes', 'notes'],
     /* PR #40 — full master record */
