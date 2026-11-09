@@ -850,7 +850,8 @@ describe('a DuitNow QR credit', () => {
         clue: 'DuitNow QR money for 2026-10-31 — 00005992284_20261031.CSV: link the sale for line 17 (RM 3,500.00) on Merchant Recon first.' },
     }];
     openStatement();
-    expect(screen.getAllByText(/link the sale for line 17/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/link the sale for line 17/)).toHaveLength(1);
+    expect(screen.getByText(/line 17 · RM 3,500.00 — no sale linked yet/)).toBeTruthy();
     expect(screen.queryByText('These are the QR sales')).toBeNull();
   });
 });

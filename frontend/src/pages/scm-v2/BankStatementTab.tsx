@@ -583,14 +583,13 @@ const QrSalesBlock = ({ line, qr }: { line: BankLine; qr: BankQrSales }) => {
       {qr.waiting.map((w) => (
         <div key={`waiting-${w.lineNo}`} className={grid.sub}>line {w.lineNo} · {fmt(w.grossSen)} — no sale linked yet</div>
       ))}
-      {qr.ready
-        ? (
-          <button type="button" style={{ ...btn(true, group.isPending), justifySelf: 'start' }} disabled={group.isPending}
-            onClick={() => group.mutate({ lineIds: [line.id], jeNos: qr.jeNos })}>
-            <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are the QR sales'}
-          </button>
-        )
-        : <span className={grid.sub}>{qr.clue}</span>}
+      {/* Not ready: the row's own note (the server's clue) already says what is missing — said once. */}
+      {qr.ready && (
+        <button type="button" style={{ ...btn(true, group.isPending), justifySelf: 'start' }} disabled={group.isPending}
+          onClick={() => group.mutate({ lineIds: [line.id], jeNos: qr.jeNos })}>
+          <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are the QR sales'}
+        </button>
+      )}
       {group.isError && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>{refusalText(group.error, 'Not matched.')}</span>}
     </div>
   );
