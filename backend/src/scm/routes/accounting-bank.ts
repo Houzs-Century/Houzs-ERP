@@ -33,7 +33,8 @@ import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-r
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats } from '../../acc/bank';
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadCompanyMatches } from '../../acc/bank';
+import { paginateAll } from '../lib/paginate-all';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
@@ -735,8 +736,9 @@ export const bankStatementDetail = guard(async (c) => {
   const statement = stmt as Record<string, any>;
 
   const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts] = await Promise.all([
-    sb.from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId).order('line_no'),
-    sb.from('acc_bank_statement_matches').select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId),
+    paginateAll<Record<string, any>>((lo, hi) => (sb as Parameters<typeof loadAccountLedger>[0]).from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId)
+      .order('line_no').order('id').range(lo, hi)),
+    loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason'),
     loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
     loadPayableBatches(sb, co.companyId),
     /* Only what was claimed by the statement's own last day: a later payment of an earlier entry leaves it waiting here. */
