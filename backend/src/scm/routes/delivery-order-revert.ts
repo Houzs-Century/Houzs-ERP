@@ -155,7 +155,7 @@ export const revertDeliveryOrderHandler = async (
     );
     // Fail closed: an unreadable issue list cannot prove there is none.
     if (issueErr) return c.json({ error: 'check_failed', reason: `Could not check delivery issues: ${issueErr.message}` }, 503);
-    const reported = (issues ?? []) as Array<{ assr_no?: string | null }>;
+    const reported = (issues as Array<{ assr_no?: string | null }> | null) ?? [];
     if (reported.length > 0) {
       const cases = reported.map((r) => r.assr_no).filter(Boolean).join(', ');
       return c.json(

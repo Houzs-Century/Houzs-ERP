@@ -394,7 +394,7 @@ export const useCancelMfgDeliveryOrder = () => {
 export const useRevertMfgDeliveryOrder = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, toStatus, reason }: { id: string; toStatus: 'LOADED' | 'DRAFT'; reason: string }) =>
+    mutationFn: ({ id, toStatus, reason }: { id: string; toStatus: 'DISPATCHED' | 'LOADED' | 'DRAFT'; reason: string }) =>
       authedFetch(`/delivery-orders-mfg/${id}/revert`, {
         method: 'POST', body: JSON.stringify({ toStatus, reason }),
       }),
