@@ -169,14 +169,14 @@ jobs:
         run: |
           if [ "$SKIP_MIGRATE" = "true" ]; then
             echo "Migration application skipped by operator; running mandatory read-only verification"
-            node scripts/pg-migrate.mjs --verify-only
+            node scripts/pg-migrate.mjs --verify-only --tolerate-preview-leftovers
             exit 0
           fi
 
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
             echo "Migration attempt ${attempt}/${max_attempts}"
-            if node scripts/pg-migrate.mjs; then
+            if node scripts/pg-migrate.mjs --tolerate-preview-leftovers; then
               exit 0
             else
               status=$?

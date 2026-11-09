@@ -129,7 +129,11 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # main's migration tree, whatever branch this was dispatched from: a
+      # branch's own migrations must not ride in on a data refresh.
       - uses: actions/checkout@v7
+        with:
+          ref: main
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -165,6 +169,15 @@ jobs:
         with:
           name: prod-data
           path: backend/
+
+      # Production applies main's migrations on every deploy, so its dump can
+      # carry a column staging has not got yet (run 42570685989:
+      # suppliers.email2). Bring staging's schema up to main before loading.
+      - name: Apply main's migrations to staging
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/pg-migrate.mjs --tolerate-preview-leftovers
 
       - name: Row counts BEFORE (staging)
         env:
