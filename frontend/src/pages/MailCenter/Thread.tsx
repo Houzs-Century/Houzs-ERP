@@ -55,6 +55,7 @@ import {
   chipStyle,
 } from "./mail-labels";
 import { ComposeDialog } from "./Compose";
+import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "./mail-email-frame";
 import {
   ArrowLeft,
   ArrowDownLeft,
@@ -715,8 +716,8 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                       {rawHtml ? (
                         <iframe
                           title="Email"
-                          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                          srcDoc={emailSrcDoc(rawHtml)}
+                          sandbox={EMAIL_FRAME_SANDBOX_MEASURABLE}
+                          srcDoc={emailSrcDoc(rawHtml, THREAD_EMAIL_HEAD)}
                           className="mt-2 w-full border-t border-border/60 bg-white"
                           style={{ minHeight: 80 }}
                           onLoad={(e) => {
@@ -1061,14 +1062,7 @@ function looksLikeHtml(s: string | undefined): boolean {
   );
 }
 
-function emailSrcDoc(rawHtml: string): string {
-  const inject = `<base target="_blank"><meta charset="utf-8"><style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#1f1d1b;word-break:break-word;overflow-x:hidden}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
-  if (/<head[^>]*>/i.test(rawHtml))
-    return rawHtml.replace(/<head([^>]*)>/i, `<head$1>${inject}`);
-  if (/<html[^>]*>/i.test(rawHtml))
-    return rawHtml.replace(/<html([^>]*)>/i, `<html$1><head>${inject}</head>`);
-  return `<!doctype html><html><head>${inject}</head><body>${rawHtml}</body></html>`;
-}
+const THREAD_EMAIL_HEAD = `<style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#1f1d1b;word-break:break-word;overflow-x:hidden}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
 
 // Build a quoted forward body from the conversation's messages (newest first),
 // each prefixed with a small header line. Plain text only — never raw HTML.

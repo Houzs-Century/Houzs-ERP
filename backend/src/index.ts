@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
+import { pollEtag, POLLED_LIST_PATHS } from "./middleware/pollEtag";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
@@ -447,6 +448,12 @@ app.use("/api/*", companyContext);
 // can never replay another user's or another company's response. Bookkeeping
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
+
+// ETag + 304 on the GET lists the frontend polls (pollEtag.ts lists them), so an
+// unchanged poll costs headers instead of the whole list. Inside auth and
+// companyContext so the tag carries the user and company it was computed for;
+// above every router so it wraps the handler.
+for (const path of POLLED_LIST_PATHS) app.use(path, pollEtag);
 
 // HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
 // payment onto its Sales Order through the one Payments writer. Mounted BELOW the
