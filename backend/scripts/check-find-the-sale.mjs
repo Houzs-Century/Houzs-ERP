@@ -62,7 +62,7 @@ try {
           FROM scm.mfg_sales_order_payments p
           LEFT JOIN scm.mfg_sales_orders o ON o.doc_no = p.so_doc_no AND o.company_id = p.company_id
          WHERE p.company_id = ${CO} AND p.method IN ${tx(kind.methods)}
-           AND coalesce(upper(o.status), '') <> 'CANCELLED'
+           AND coalesce(upper(o.status::text), '') <> 'CANCELLED'
            AND NOT EXISTS (SELECT 1 FROM scm.acc_settlement_matches m WHERE m.payment_id = p.id::text)`;
       const e = await enrich(pays);
       const byMonth = new Map();
