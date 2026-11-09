@@ -48,6 +48,17 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 - No status whitelist is enforced beyond the DB enum, and there is no line-level status lock — a CANCELLED or REFUNDED return's lines are still editable through the item endpoints; don't assume the status protects them.
 - The cancel-final refusal puts its message in `reason`, while DO/CN/PC siblings use `message` — a generic error-body reader will show blank for one of them.
 
+## Files and photos (`/delivery-returns/:id/files`)
+
+Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a delivery return keeps attached files: the supplier's paperwork, an invoice scan, photos of the goods. Images (JPEG / PNG / WebP) and PDFs, 20 MB each, many per document.
+
+- `POST /:id/files` `{fileName, mime, dataBase64}`, `GET /:id/files` (rows + `locked`), `GET /:id/files/:fileId` (streams), `DELETE /:id/files/:fileId`.
+- Write = `edit` on `scm.sales.returns`, the same `scmAreaGuard` that gates every other write here; the router passes `mayWrite` because this document has no flat permission key.
+- `CANCELLED` takes no more files. A file stops being removable once the document is finished: `REFUNDED`, `CREDIT_NOTED` or `REJECTED`. The load applies the same own/downline sales scope as `GET /:id`, so a scoped seller cannot reach another salesperson's return through its files. Not at posting, on purpose.
+- Index `scm.delivery_return_files` (mig `20261110T0300_scm_flow_doc_files.sql`), bytes in the SLIPS R2 bucket under `delivery-return-files/<company>/<doc>/<uuid>.<ext>`. Company-scoped on every read and write.
+- UI: the Files card (`FlowDocFilesCard`) on the desktop detail page and on the phone's generic detail screen (`MobileModuleDetail`), both through `vendor/scm/lib/flow-doc-files.ts`.
+- Code: `backend/src/scm/routes/flow-doc-files.ts` (one spec per document over `lib/doc-files.ts`). Tests: `backend/tests/flowDocFiles.test.ts`, `frontend/src/vendor/scm/components/FlowDocFilesCard.test.tsx`.
+
 ## Where the code is
 
 - `backend/src/scm/routes/delivery-returns.ts` — main API surface.

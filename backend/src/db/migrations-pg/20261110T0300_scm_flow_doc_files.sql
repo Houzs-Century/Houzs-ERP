@@ -1,4 +1,4 @@
--- 20261110T0100_scm_flow_doc_files.sql
+-- 20261110T0300_scm_flow_doc_files.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.grn_files, scm.purchase_invoice_files, scm.delivery_return_files, scm.purchase_return_files; — the bytes they indexed, under grn-files/ purchase-invoice-files/ delivery-return-files/ purchase-return-files/ <company>/<doc>/ in the SLIPS R2 bucket, are not SQL's to remove: list them with `wrangler r2 object list` and delete by key, or leave them orphaned (nothing reads a key without its index row).
 --   GRANTS: none to re-apply — like scm.acc_credit_note_files (20261001T2355), these tables ride the scm schema's default privileges (service_role); this file grants nothing, so the reverse re-grants nothing.
 -- Verified against: NOT YET APPLIED anywhere. Apply to staging first and read the four tables back; the PR stays open until then.

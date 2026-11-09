@@ -14,7 +14,7 @@
 //
 // Keys: <keyPrefix>/<company>/<doc>/<uuid>.<ext> in the SLIPS bucket. Index
 // tables scm.grn_files / purchase_invoice_files / delivery_return_files /
-// purchase_return_files (20261110T0100).
+// purchase_return_files (20261110T0300).
 //
 // Who may write: these four documents carry no flat permission key — their
 // own edits are gated by scmAreaGuard (`edit` on the area for any write) in
@@ -106,21 +106,38 @@ export const PURCHASE_RETURN_FILES: DocFilesSpec = {
   lockedRefusal: { error: 'evidence_locked', message: 'The return is completed — its files stay.' },
 };
 
-const filesRouter = (spec: DocFilesSpec) => {
-  const h = makeDocFileHandlers(spec);
-  const r = new Hono<{ Bindings: Env; Variables: Variables }>();
-  /* Only on its own paths: mounted on the document's prefix ahead of the
-     document's router, a '*' would run on every request to that prefix. */
-  r.use('/:id/files', supabaseAuth);
-  r.use('/:id/files/*', supabaseAuth);
-  r.post('/:id/files', h.upload);
-  r.get('/:id/files', h.list);
-  r.get('/:id/files/:fileId', h.stream);
-  r.delete('/:id/files/:fileId', h.remove);
-  return r;
-};
+/* Spelled out per router, not built in a loop: the route capability matrix
+   (scripts/generate-route-capability-matrix.mjs) reads each route from its
+   literal registration. supabaseAuth only on its own paths: mounted on the
+   document's prefix ahead of the document's router, a '*' would run on every
+   request to that prefix. */
+type R = Hono<{ Bindings: Env; Variables: Variables }>;
+const withAuth = (r: R): R => { r.use('/:id/files', supabaseAuth); r.use('/:id/files/*', supabaseAuth); return r; };
 
-export const grnFiles = filesRouter(GRN_FILES);
-export const purchaseInvoiceFiles = filesRouter(PURCHASE_INVOICE_FILES);
-export const deliveryReturnFiles = filesRouter(DELIVERY_RETURN_FILES);
-export const purchaseReturnFiles = filesRouter(PURCHASE_RETURN_FILES);
+const grnFilesH = makeDocFileHandlers(GRN_FILES);
+export const grnFiles: R = withAuth(new Hono());
+grnFiles.post('/:id/files', grnFilesH.upload);
+grnFiles.get('/:id/files', grnFilesH.list);
+grnFiles.get('/:id/files/:fileId', grnFilesH.stream);
+grnFiles.delete('/:id/files/:fileId', grnFilesH.remove);
+
+const purchaseInvoiceFilesH = makeDocFileHandlers(PURCHASE_INVOICE_FILES);
+export const purchaseInvoiceFiles: R = withAuth(new Hono());
+purchaseInvoiceFiles.post('/:id/files', purchaseInvoiceFilesH.upload);
+purchaseInvoiceFiles.get('/:id/files', purchaseInvoiceFilesH.list);
+purchaseInvoiceFiles.get('/:id/files/:fileId', purchaseInvoiceFilesH.stream);
+purchaseInvoiceFiles.delete('/:id/files/:fileId', purchaseInvoiceFilesH.remove);
+
+const deliveryReturnFilesH = makeDocFileHandlers(DELIVERY_RETURN_FILES);
+export const deliveryReturnFiles: R = withAuth(new Hono());
+deliveryReturnFiles.post('/:id/files', deliveryReturnFilesH.upload);
+deliveryReturnFiles.get('/:id/files', deliveryReturnFilesH.list);
+deliveryReturnFiles.get('/:id/files/:fileId', deliveryReturnFilesH.stream);
+deliveryReturnFiles.delete('/:id/files/:fileId', deliveryReturnFilesH.remove);
+
+const purchaseReturnFilesH = makeDocFileHandlers(PURCHASE_RETURN_FILES);
+export const purchaseReturnFiles: R = withAuth(new Hono());
+purchaseReturnFiles.post('/:id/files', purchaseReturnFilesH.upload);
+purchaseReturnFiles.get('/:id/files', purchaseReturnFilesH.list);
+purchaseReturnFiles.get('/:id/files/:fileId', purchaseReturnFilesH.stream);
+purchaseReturnFiles.delete('/:id/files/:fileId', purchaseReturnFilesH.remove);
