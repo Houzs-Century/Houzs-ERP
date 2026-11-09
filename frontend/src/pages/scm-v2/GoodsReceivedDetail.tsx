@@ -78,6 +78,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { DetailLoadFailure } from './DetailLoadFailure';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
@@ -374,10 +375,7 @@ export const GoodsReceivedDetail = () => {
           <ArrowLeft {...ICON} />
           <span>Back</span>
         </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Goods received note not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
+        <DetailLoadFailure noun="Goods received note" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
       </div>
     );
   }

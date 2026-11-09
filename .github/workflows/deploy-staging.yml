@@ -85,7 +85,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skip the backend when backend/ is unchanged since the commit live on staging
+  # (its /health sha). Compared against what is live, not the previous push: a
+  # queued run here is REPLACED by a newer one, so the previous push may never
+  # have shipped. Unknown live sha, a non-push trigger or a diverged branch all
+  # deploy.
+  backend-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.compare.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: compare
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          STAGING_API: ${{ vars.STAGING_SMOKE_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}
+        run: |
+          set -uo pipefail
+          live=$(curl -fsS --max-time 15 "$STAGING_API/health" | jq -r '.sha // empty' || true)
+          deploy=true
+          if [ "$EVENT_NAME" = push ] && [ -n "$live" ] && git merge-base --is-ancestor "$live" HEAD 2>/dev/null \
+             && git diff-tree --quiet -r "$live" HEAD -- backend; then
+            deploy=false
+          fi
+          echo "live on staging: ${live:-unknown}; deploy backend: $deploy"
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
   backend:
+    needs: backend-changed
+    if: needs.backend-changed.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     # GitHub Environment "Staging" — lets the repo owner add protection rules
     # later (required reviewers, wait timer, secret scoping) without
@@ -112,8 +144,8 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
-      - run: npm run typecheck
-      - run: npm test
+      # No typecheck or test here: every commit on main already passed them in
+      # PR CI and the merge queue, and they were 12 of the 13 minutes.
       # Apply pending Postgres migrations against the STAGING Supabase before
       # the Worker swap. STAGING_DATABASE_URL is the staging-only direct
       # connection string — separate secret from prod's DATABASE_URL so a
@@ -214,7 +246,8 @@ jobs:
   # replacing the screens under review with ones the staging Worker does not
   # match (HC-0125, 2026-10-23). A failed backend now leaves staging as it was.
   frontend:
-    needs: backend
+    needs: [backend-changed, backend]
+    if: ${{ !cancelled() && needs.backend-changed.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.backend.result) }}
     runs-on: ubuntu-latest
     environment: Staging
     defaults:
@@ -228,9 +261,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      # vite build only: tsc and the tests already passed in PR CI (11 of 13 minutes).
+      - run: npx vite build
         env:
           VITE_API_URL: https://autocount-sync-api-staging.houzs-erp.workers.dev
       # See deploy.yml: the bundle gate needs a merge base and has none here.
