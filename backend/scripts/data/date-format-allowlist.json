@@ -58,11 +58,6 @@
       "why": "The Seampify WhatsApp payload. DEFERRED: the downstream template lives OUTSIDE this repo and expects YYYY/MM/DD, so changing it here could break a customer message. Needs whoever owns that template — flagged in the PR body."
     },
     {
-      "file": "backend/src/scm/shared/customer-demographics.ts",
-      "text": "return new Date().toLocaleDateString('en-CA');",
-      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
-    },
-    {
       "file": "frontend/src/lib/processingDate.ts",
       "text": "const lead = d.toLocaleDateString('en-CA');",
       "why": "Not a clock read: d is LOCAL midnight of a date the user already picked, shifted by whole days and read back in the same local zone, so the day is the same on any device. en-CA renders the YYYY-MM-DD the input and payload want."
@@ -336,6 +331,21 @@
       "file": "backend/src/scm/lib/po-line-import.ts",
       "text": "const localDay = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;",
       "why": "Backend mirror of frontend vendor/scm/lib/po-line-import.ts: a spreadsheet cell already parsed into a Date, read back as the day it shows. It never reads today."
+    },
+    {
+      "file": "backend/src/scm/lib/r2.ts",
+      "text": "const yyyy = now.getUTCFullYear();",
+      "why": "R2 STORAGE KEY partition (slips/YYYY/MM/...), never shown or compared as a business date; existing keys already use the UTC month and a key is found by its full path, so moving it would only split a folder."
+    },
+    {
+      "file": "backend/src/scm/lib/r2.ts",
+      "text": "const mm = String(now.getUTCMonth() + 1).padStart(2, '0');",
+      "why": "R2 STORAGE KEY partition (slips/YYYY/MM/...), never shown or compared as a business date; existing keys already use the UTC month and a key is found by its full path, so moving it would only split a folder."
+    },
+    {
+      "file": "backend/src/routes/clientErrors.ts",
+      "text": "const day = nowIso.slice(0, 10);",
+      "why": "Telemetry STORM-COLLAPSE bucket for client error reports (unique key dedup_hash, day, user_id), never shown as a business date; switching it to the Malaysian day would split the current day's counters at deploy for no reader's benefit."
     }
   ]
 }

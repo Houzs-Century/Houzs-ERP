@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { activeCompanyId } from "../scm/lib/companyScope";
+import { todayMyt } from "../scm/lib/my-time";
 import { financeHiddenForUser } from "../services/pmsAccess";
 
 /**
@@ -286,7 +287,7 @@ async function rawPoCost(env: Env, start: string, end: string, companyId?: numbe
 // ── GET /api/finance/pnl ──
 //
 // Query params:
-//   • year=YYYY                — anchor year (default: current UTC year)
+//   • year=YYYY                — anchor year (default: current Malaysian year)
 //   • scope=all|sales|projects|service|po (default: all)
 //   • granularity=yearly|monthly|weekly (default: monthly)
 
@@ -301,7 +302,7 @@ app.get("/pnl", requirePermission("projects.read"), async (c) => {
     return c.json({ error: "invalid granularity" }, 400);
   }
   const yearParam = c.req.query("year");
-  const anchorYear = yearParam ? parseInt(yearParam, 10) : new Date().getUTCFullYear();
+  const anchorYear = yearParam ? parseInt(yearParam, 10) : Number(todayMyt().slice(0, 4));
   if (!Number.isInteger(anchorYear) || anchorYear < 2000 || anchorYear > 2100) {
     return c.json({ error: "invalid year" }, 400);
   }

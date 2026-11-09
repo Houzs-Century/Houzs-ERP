@@ -118,6 +118,41 @@ process.on("exit", () => {
      · `padStart(2, '0')` on its own — document numbers (`HC-SO-2608-001`) are
        built that way and must never change. */
 const SHAPES = [
+  /* The three CLOCK shapes come first: `SHAPES.find` reports the first match,
+     and `new Date().toLocaleDateString('en-CA')` is a clock read before it is
+     a formatting choice — reported under the formatter's name it was
+     allowlisted as an "ISO value producer" and the wrong day went unseen. */
+  {
+    id: "utc-today",
+    /* "Today" (or "N days ago") read off the UTC clock: `new Date()` turned
+       into an ISO string and cut to the date. Malaysia is UTC+8, so before
+       08:00 this is YESTERDAY: a service-case delivery, a lorry part change or
+       a PO made in the morning was dated the day before, and on the 1st a
+       "this month" view showed last month. todayMyt() (backend
+       scm/lib/my-time.ts, frontend vendor/scm/lib/dates.ts) is the fix.
+       A `+ 8 * 3600…` shift is the Malaysian idiom and stays silent. A `now`
+       held in a variable and cut later is INVISIBLE here, stated not claimed. */
+    re: /new\s+Date\s*\(\s*(?:Date\.now\(\)\s*(?:-|\+(?!\s*8\s*\*))[^)]*)?\)\s*\.toISOString\(\)\s*\.\s*(?:(?:slice|substring|substr)\(\s*0\s*,\s*(?:10|7)\s*\)|split\(\s*["']T["']\s*\)\s*\[\s*0\s*\])/,
+  },
+  {
+    id: "local-clock-day",
+    /* A calendar day read off the BROWSER's clock and zone:
+       `${d.getFullYear()}-${…getMonth()…}`. Correct only on a machine set to
+       Malaysia time; a laptop abroad or a phone on another zone moved every
+       "today" / "this month" window with it (owner 2026-11-09: every date
+       filter judges by the Malaysian day). todayMyt() / mytDayOfValue()
+       (frontend vendor/scm/lib/dates.ts) are the fix. A value already parsed
+       from a typed date and shifted locally is a legitimate use — that is what
+       the allowlist records. */
+    re: /\$\{\s*\w+\.getFullYear\(\)\s*\}\s*[-/]\s*\$\{|new\s+Date\s*\(\s*\)\s*\.\s*(?:get(?:FullYear|Month|Date|Day|Hours)\(\)|setHours\(\s*0\b|toLocaleDateString\(|toDateString\(\))/,
+  },
+  {
+    id: "utc-clock-field",
+    /* The same clock read through the UTC getters: `new Date().getUTCFullYear()`.
+       Before 08:00 Malaysia time that is yesterday (and on 1 Jan, last year).
+       Listed AFTER local-clock-day only because neither line can match both. */
+    re: /new\s+Date\s*\(\s*\)\s*\.\s*(?:getUTC(?:FullYear|Month|Date|Day|Hours)\(\)|setUTCHours\(\s*0\b)/,
+  },
   {
     id: "toLocaleDateString",
     // The OS-locale renderer. This is the literal "有时候 MMDDYYYY" bug: the
@@ -245,36 +280,83 @@ const SHAPES = [
     re: /\$\{\s*(?:y{2,4}|year)\w*\s*\}\s*[-/]\s*\$\{\s*(?:mm?|mon|month)\w*\s*\}\s*[-/]\s*\$\{\s*(?:dd?|day)\w*\s*\}/i,
   },
   {
-    id: "utc-today",
-    /* "Today" (or "N days ago") read off the UTC clock: `new Date()` turned
-       into an ISO string and cut to the date. Malaysia is UTC+8, so before
-       08:00 this is YESTERDAY: a service-case delivery, a lorry part change or
-       a PO made in the morning was dated the day before, and on the 1st a
-       "this month" view showed last month. todayMyt() (backend
-       scm/lib/my-time.ts, frontend vendor/scm/lib/dates.ts) is the fix.
-       A `+ 8 * 3600…` shift is the Malaysian idiom and stays silent. A `now`
-       held in a variable and cut later is INVISIBLE here, stated not claimed. */
-    re: /new\s+Date\s*\(\s*(?:Date\.now\(\)\s*(?:-|\+(?!\s*8\s*\*))[^)]*)?\)\s*\.toISOString\(\)\s*\.\s*(?:(?:slice|substring|substr)\(\s*0\s*,\s*(?:10|7)\s*\)|split\(\s*["']T["']\s*\)\s*\[\s*0\s*\])/,
-  },
-  {
-    id: "local-clock-day",
-    /* A calendar day read off the BROWSER's clock and zone:
-       `${d.getFullYear()}-${…getMonth()…}`. Correct only on a machine set to
-       Malaysia time; a laptop abroad or a phone on another zone moved every
-       "today" / "this month" window with it (owner 2026-11-09: every date
-       filter judges by the Malaysian day). todayMyt() / mytDayOfValue()
-       (frontend vendor/scm/lib/dates.ts) are the fix. A value already parsed
-       from a typed date and shifted locally is a legitimate use — that is what
-       the allowlist records. */
-    re: /\$\{\s*\w+\.getFullYear\(\)\s*\}\s*[-/]\s*\$\{/,
-  },
-  {
     id: "intl-datetimeformat",
     // `new Intl.DateTimeFormat(...)` — the memoised formatters in lib/utils.ts
     // and the en-MY ones in my-time.ts were all this shape.
     re: /new\s+Intl\.DateTimeFormat\s*\(/,
   },
 ];
+
+/* ── The clock HELD IN A VARIABLE ────────────────────────────────────────────
+   Every shape above reads one line. The device-clock "today" that #5508 left
+   behind was almost never on one line: `const today = new Date();` and, ten
+   lines later, `today.getMonth()` — or a default parameter `(now = new Date())`,
+   or a copy `const t = new Date(now); t.setDate(t.getDate() + 1)`. Mobile and
+   desktop Projects calendars, mobile Delivery Planning, Payment Corrections,
+   lorry document expiry and the scan-jobs "is today" check were all this shape,
+   and the per-line gate reported them clean.
+
+   So this pass tracks, per file, identifiers bound to the CLOCK — `new Date()`,
+   `new Date(Date.now())`, `new Date(Date.now() - n)` (the +8h Malaysian shift is
+   NOT the clock and stays silent) and copies of one — and reports a DAY read on
+   one: a local or UTC calendar getter, `getHours`, `setHours(0…)`,
+   `toLocaleDateString`, `toDateString`, or the ISO cut to a date. A string
+   bound to `new Date().toISOString()` is tracked the same way for the cut.
+
+   Its honest limits, stated rather than claimed: a binding stays live for
+   CLOCK_WINDOW lines or until the name is rebound to something else, and scope
+   is ignored — a same-named variable in a nearby function can false-positive
+   (that costs an allowlist entry), and a clock passed through a function
+   argument under another name is invisible. */
+const CLOCK_WINDOW = 40;
+const CLOCK_INIT = String.raw`new\s+Date\s*\(\s*(?:Date\.now\(\)\s*(?:-[^)]*)?)?\)`;
+const BIND_HEAD = String.raw`(?:^|[^\w.$])([A-Za-z_$][\w$]*)\s*(?::\s*Date\s*)?(?<![=!<>+\-*/%&|^?])=(?![=>])\s*`;
+const END = String.raw`(?=\s*(?:[;,)]|$))`;
+const CLOCK_BIND = new RegExp(BIND_HEAD + CLOCK_INIT + END, "g");
+const ISO_BIND = new RegExp(BIND_HEAD + CLOCK_INIT + String.raw`\s*\.\s*toISOString\(\)` + END, "g");
+const ANY_BIND = new RegExp(BIND_HEAD, "g");
+const COPY_BIND = new RegExp(BIND_HEAD + String.raw`new\s+Date\s*\(\s*([A-Za-z_$][\w$]*)(?:\.getTime\(\))?\s*\)` + END, "g");
+const ISO_CUT = String.raw`(?:slice|substring|substr)\(\s*0\s*,\s*(?:10|7)\s*\)|split\(\s*["']T["']\s*\)`;
+const LOCAL_READ = String.raw`\.\s*(?:get(?:FullYear|Month|Date|Day|Hours)\(\)|setHours\(\s*0\b|toLocaleDateString\(|toDateString\(\))`;
+const UTC_READ = String.raw`\.\s*(?:getUTC(?:FullYear|Month|Date|Day|Hours)\(\)|setUTCHours\(\s*0\b|toISOString\(\)\s*\.\s*(?:${ISO_CUT}))`;
+const esc = (v) => v.replace(/\$/g, "\\$");
+
+/** Line index -> shape id, for day reads on a clock held in a variable. */
+function clockVariableHits(lines) {
+  const live = new Map(); // name -> { kind: "date" | "iso", line }
+  const out = new Map();
+  const readOn = (name, kind, text) => {
+    const v = esc(name);
+    if (kind === "date") {
+      if (new RegExp(String.raw`(?<![\w.$])${v}\s*${LOCAL_READ}`).test(text)) return "local-clock-day";
+      if (new RegExp(String.raw`(?<![\w.$])${v}\s*${UTC_READ}`).test(text)) return "utc-today";
+      return null;
+    }
+    return new RegExp(String.raw`(?<![\w.$])${v}\s*\.\s*(?:${ISO_CUT})`).test(text) ? "utc-today" : null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const [name, b] of live) {
+      if (i - b.line > CLOCK_WINDOW) { live.delete(name); continue; }
+      const id = readOn(name, b.kind, line);
+      if (id) out.set(i, id);
+    }
+    // A binding and its read on ONE line: `(now = new Date()) => now.getFullYear()`.
+    const bound = new Map(); // name -> { kind, end }
+    for (const m of line.matchAll(CLOCK_BIND)) bound.set(m[1], { kind: "date", end: m.index + m[0].length });
+    for (const m of line.matchAll(ISO_BIND)) bound.set(m[1], { kind: "iso", end: m.index + m[0].length });
+    for (const m of line.matchAll(COPY_BIND)) {
+      if (live.get(m[2])?.kind === "date") bound.set(m[1], { kind: "date", end: m.index + m[0].length });
+    }
+    for (const m of line.matchAll(ANY_BIND)) if (!bound.has(m[1])) live.delete(m[1]);
+    for (const [name, b] of bound) {
+      live.set(name, { kind: b.kind, line: i });
+      const id = readOn(name, b.kind, line.slice(b.end));
+      if (id) out.set(i, id);
+    }
+  }
+  return out;
+}
 
 /* ── Where dates are formatted ───────────────────────────────────────────────
    Both trees, both extensions, INCLUDING tests — a test is exactly where the
@@ -383,6 +465,11 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     ["const m = new Date().toISOString().split('T')[0];", "utc-today"],
     ["return `${d.getFullYear()}-${m}-${day}`;", "local-clock-day"],
     ['patch({ cmonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` });', "local-clock-day"],
+    ["const year = new Date().getFullYear();", "local-clock-day"],
+    ["const start = new Date().setHours(0, 0, 0, 0);", "local-clock-day"],
+    ["const today = new Date().toLocaleDateString('en-CA');", "local-clock-day"],
+    ["if (d.toDateString() === new Date().toDateString()) return 'Today';", "local-clock-day"],
+    ["const y = new Date().getUTCFullYear();", "utc-clock-field"],
   ];
   for (const probe of mustHit) {
     const [text, id] = Array.isArray(probe) ? probe : [probe, null];
@@ -431,6 +518,38 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     "<DateTimeField value={form.arrivalAt} onChange={(v) => set('arrivalAt', v)} />",
     "<DateField value={form.shipoutDate} onChange={(iso) => set('shipoutDate', iso)} />",
   ];
+  /* The variable pass, on multi-line snippets: [source, the 1-based lines it
+     must report]. Every spelling #5510 listed is here, and so are the honest
+     neighbours it must leave alone. */
+  const clockProbes = [
+    ["const today = new Date();\nconst x = 1;\nconst [y] = useState(today.getFullYear());", [3]],
+    ["export const recentMonths = (today: Date = new Date(), count = 12) => {\n  let m = today.getMonth() + 1;", [2]],
+    ["export function todayIso(now: Date = new Date()): string {\n  const y = now.getFullYear();", [2]],
+    ["export const g = (now: Date = new Date()) => now.getFullYear();", [1]],
+    ["const n = new Date();\nreturn d.getFullYear() === n.getFullYear();", [2]],
+    ["const now = new Date();\nconst t = new Date(now);\nt.setDate(t.getDate() + 1);", [3]],
+    ["const today = new Date();\ntoday.setHours(0, 0, 0, 0);", [2]],
+    ["const d = new Date();\nd.setUTCHours(0, 0, 0, 0);", [2]],
+    ["const now = new Date();\nreturn now.getHours() * 60 + now.getMinutes() > em;", [2]],
+    ["const now = new Date();\nconst same = d.toDateString() === now.toDateString();", [2]],
+    ["const now = new Date();\nconst k = now.toISOString().slice(0, 10);", [2]],
+    ["const stamp = new Date().toISOString();\nconst day = stamp.slice(0, 10);", [2]],
+    ["const since = new Date(Date.now() - 7 * 86400000);\nconst y = since.getUTCDate();", [2]],
+    // Honest code: the Malaysian shift, a value parsed from a date, a full
+    // timestamp, a rebinding, and a binding long out of reach.
+    ["const now = new Date(Date.now() + 8 * 3600 * 1000);\nconst y = now.getUTCFullYear();", []],
+    ["const d = new Date(anchor);\nd.setMonth(d.getMonth() + 1);", []],
+    ["const now = new Date();\nconst s = now.toISOString();\nconst t = now.getTime();", []],
+    ["let d = new Date();\nd = new Date(iso);\nconst m = d.getMonth();", []],
+    ["const now = new Date();\n" + "x();\n".repeat(CLOCK_WINDOW + 1) + "const m = now.getMonth();", []],
+    ["const now = new Date();\nconst ok = now === other;\nconst e = now.getTime() > end;", []],
+  ];
+  for (const [src, want] of clockProbes) {
+    const got = [...clockVariableHits(stripComments(src).split("\n").map(norm)).keys()].map((i) => i + 1).sort((a, b) => a - b);
+    if (got.join(",") !== want.join(",")) {
+      failures.push(`clock-variable pass reported lines [${got}] instead of [${want}] on: ${src.replace(/\n/g, " | ").slice(0, 160)}`);
+    }
+  }
   for (const probe of mustMiss) {
     const line = stripComments(probe);
     const hit = SHAPES.find((c) => c.re.test(line));
@@ -499,12 +618,13 @@ for (const abs of files) {
   if (RULE_FILES.has(rel)) continue;
   const stripped = stripComments(fs.readFileSync(abs, "utf8"));
   const lines = stripped.split("\n");
+  const clockHits = clockVariableHits(lines);
   for (let i = 0; i < lines.length; i++) {
     const text = norm(lines[i]);
     if (!text) continue;
-    const shape = SHAPES.find((c) => c.re.test(text));
-    if (!shape) continue;
-    hits.push({ file: rel, line: i + 1, shape: shape.id, text });
+    const shapeId = SHAPES.find((c) => c.re.test(text))?.id ?? clockHits.get(i);
+    if (!shapeId) continue;
+    hits.push({ file: rel, line: i + 1, shape: shapeId, text });
   }
 }
 
