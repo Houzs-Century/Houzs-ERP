@@ -42,7 +42,7 @@ describe("the font sheets on disk", () => {
 
   it("index.html blocks render on the Latin sheet only", () => {
     expect(blocking).toBe("/fonts/fonts-v3.css");
-    expect(html).not.toContain(CJK_FONT_STYLESHEET);
+    expect(html).not.toMatch(/<link[^>]+fonts-cjk/);
     const latin = read(`public${blocking}`);
     expect(latin).not.toMatch(/font-family: 'Noto/);
     expect(latin.length).toBeLessThan(64 * 1024);
