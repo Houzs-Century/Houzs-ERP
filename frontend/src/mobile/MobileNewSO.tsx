@@ -860,9 +860,7 @@ export function MobileNewSO({
      CHANGED (an unchanged past date must not block the save), and the amendment
      needs a before-value for the frozen-field diff. */
   const [origDelivDate, setOrigDelivDate] = useState<string>("");
-  /* The PERSISTED phone ('' when the order has none, e.g. an import): the submit
-     check asks for a phone only when this edit would blank a stored one. */
-  const [origPhone, setOrigPhone] = useState<string>("");
+  const [origPhone, setOrigPhone] = useState<string>(""); // persisted phone ('' for an import): submit asks for one only if an edit blanks it
   /* PERSISTED State / Postcode / City — the other columns the processing lock
      freezes. Needed to diff what an amendment is actually requesting.
      City joined 2026-07-17: this screen already DISABLED City under the lock
