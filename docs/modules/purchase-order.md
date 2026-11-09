@@ -71,7 +71,7 @@ Money
 - Currency `MYR | RMB | CNY | USD | SGD`; the PO has no exchange rate — FX to MYR happens at the GRN.
 - Line PATCH stores prices as sent; spec-edit re-pricing (`computeMfgPoUnitCost`) runs in the browser (`PurchaseOrderDetail.tsx`).
 - A PO prices from the flat `supplier_material_bindings` cost. A scheduled supplier price (`supplier_binding_price_history`, `applied_at IS NULL`) is copied onto it on its date by `applyDueSupplierPrices` (00:05 MYT cron, or at once when dated today or earlier), which then re-derives the product cost when auto-derive is on.
-- One binding per supplier per item, per company: `POST /suppliers/:id/bindings` and a PATCH that moves a binding onto another item answer 409 `duplicate_binding` (with the existing `bindingId`); the batch create skips it. No unique index yet; `supplier-binding-duplicates-check.yml` (read-only) reports whether production is clean enough to add one.
+- One binding per supplier per item, per company: `POST /suppliers/:id/bindings` and a PATCH that moves a binding onto another item answer 409 `duplicate_binding` (with the existing `bindingId`); the batch create skips it. Since `20261110T0400_scm_supplier_binding_one_per_item.sql` the database refuses it too (unique index `supplier_material_bindings_one_per_item_uq` on company, supplier, material kind, item code); `supplier-binding-duplicates-check.yml` (read-only) counts duplicate groups and `repair-supplier-binding-duplicates.mjs` (plan/apply via `run-script.yml`) removed the one production pair on 2026-11-09.
 - Supplier cost never leaks to sales: `loadSupplierSofaCombos` excludes `supplier_id IS NULL` rows; `/sofa-combos` is not openRead.
 
 Company scope
