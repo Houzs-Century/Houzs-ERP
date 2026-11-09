@@ -15,6 +15,15 @@ name: Staging Refresh Data (prod -> staging, masked)
 # the E2E account still works). Even if a messaging secret is ever set on the
 # staging Worker, no real customer is reachable from staging data.
 #
+# CREDENTIALS NEVER CROSS (always on, no input turns it off): sessions, reset /
+# invite / share tokens, push device tokens, queued email, every password hash,
+# TOTP secrets and POS PIN / terminal hashes are destroyed on staging, and IC /
+# passport / bank / salary figures in HR + payroll are masked. A production
+# password or session therefore opens nothing on staging. Testers sign in with
+# the seeded staging account (staging-seed-account.mjs) and use Team -> "Login
+# as member" (IMPERSONATION_ENABLED on staging) to act as anyone else. The last
+# step FAILS the run if any production credential shape survives.
+#
 # Manual trigger only. Own concurrency group — never queues behind a deploy.
 # RE-RUN: idempotent — every run truncates staging and reloads from the dump.
 
@@ -178,6 +187,11 @@ jobs:
         run: |
           set -euo pipefail
           /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          -- Business guards (e.g. scm.pos_sofa_combos_guard: "2990 POS combos are never
+          -- deleted") forbid TRUNCATE on purpose in production. Emptying staging before a
+          -- reload is not that act, so this session runs as a replica: no user trigger
+          -- fires. The restore step already does the same.
+          set session_replication_role = replica;
           do $$
           declare stmt text;
           begin
@@ -318,11 +332,224 @@ jobs:
           end $$;
           SQL
 
+      # Not behind `mask_pii`: a production credential on staging is never an
+      # acceptable rehearsal input. Rows are DELETEd, not TRUNCATEd ... CASCADE,
+      # so an unexpected foreign key fails loudly instead of emptying a
+      # document table nobody meant to touch.
+      - name: Scrub credentials, sessions and payroll identifiers
+        id: scrub
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # Everything a check below sees with created_at before this instant
+          # came from the production copy.
+          echo "started=$(date -u '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_OUTPUT"
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          -- Session-only helper (pg_temp: gone when psql exits, nothing left on
+          -- staging). One made-up factor per employee id, 0.60-0.99 or
+          -- 1.01-1.40: never exactly 1, so no salary comes through unchanged.
+          create or replace function pg_temp.stg_pay_factor(emp bigint) returns numeric
+            language sql immutable as $f$
+              select case when m < 40 then 0.60 + m / 100.0 else 1.01 + (m - 40) / 100.0 end
+                from (select abs(hashtext('emp:' || emp)) % 80 as m) x
+            $f$;
+          do $$
+          declare
+            t text; n bigint; cols text;
+          begin
+            -- 1. Live credentials and anything that could reach a real person:
+            --    deleted outright. A rewritten token is still a row something
+            --    may try to use; a deleted one is not.
+            foreach t in array array[
+              'public.sessions',                -- bearer tokens
+              'public.password_resets',         -- reset links
+              'public.invitations',             -- invite links
+              'public.push_devices',            -- iOS push tokens of real phones
+              'public.share_export_log',        -- log keyed by share token
+              'public.contractor_share_tokens', -- public calendar links
+              'public.brand_share_tokens',      -- public calendar links
+              'public.email_outbox'             -- real customer mail, queued or sent
+            ] loop
+              if to_regclass(t) is null then raise notice 'absent %', t; continue; end if;
+              execute format('delete from %s', t);
+              get diagnostics n = row_count;
+              raise notice 'deleted %: % rows', t, n;
+            end loop;
+
+            -- 2. Passwords + two-step. A stored value with no '$' can never
+            --    verify (services/auth.ts verifyPassword), so no production
+            --    password matches any staging user. NULL stays NULL: that is
+            --    the "invited, no password yet" state. The seed step below
+            --    gives the staging test account its known password again.
+            update public.users set password_hash = 'staging-scrubbed'
+             where password_hash is not null and password_hash <> 'staging-scrubbed';
+            get diagnostics n = row_count; raise notice 'password hashes scrubbed: %', n;
+            if exists (select 1 from information_schema.columns
+                        where table_schema = 'public' and table_name = 'users' and column_name = 'totp_secret') then
+              update public.users
+                 set totp_secret = null, totp_enabled = 0, totp_enrolled_at = null, totp_backup_codes = null
+               where totp_secret is not null or totp_enabled <> 0 or totp_backup_codes is not null;
+              get diagnostics n = row_count; raise notice 'TOTP cleared: % users', n;
+            end if;
+
+            -- 3. POS PINs and terminal tokens (same hash format as passwords).
+            if to_regclass('public.pos_cashiers') is not null then
+              update public.pos_cashiers set pin_hash = 'staging-scrubbed' where pin_hash <> 'staging-scrubbed';
+              get diagnostics n = row_count; raise notice 'pos_cashiers PINs scrubbed: %', n;
+            end if;
+            if to_regclass('scm.pos_pins') is not null then
+              update scm.pos_pins set pin_hash = 'staging-scrubbed' where pin_hash <> 'staging-scrubbed';
+              get diagnostics n = row_count; raise notice 'scm.pos_pins PINs scrubbed: %', n;
+            end if;
+            if to_regclass('public.pos_terminals') is not null then
+              update public.pos_terminals set token_hash = null, pairing_code_hash = null, pairing_expires_at = null
+               where token_hash is not null or pairing_code_hash is not null;
+              get diagnostics n = row_count; raise notice 'pos_terminals unpaired: %', n;
+            end if;
+
+            -- 4. HR + payroll. Identifiers become 'STG-' + 8 hex (stable per
+            --    value, so duplicates still look like duplicates). Every money
+            --    figure of one employee is multiplied by the same made-up
+            --    factor (pg_temp.stg_pay_factor above), so payroll screens
+            --    stay internally proportional but no real salary is left.
+            --    Sums can differ from their parts by a few sen of rounding.
+            if to_regclass('public.hr_employees') is not null then
+              update public.hr_employees set
+                ic_number       = case when ic_number       is null or ic_number = '' or ic_number       like 'STG-%' then ic_number       else 'STG-' || upper(left(md5(ic_number), 8)) end,
+                passport_number = case when passport_number is null or passport_number = '' or passport_number like 'STG-%' then passport_number else 'STG-' || upper(left(md5(passport_number), 8)) end,
+                bank_account    = case when bank_account    is null or bank_account = '' or bank_account    like 'STG-%' then bank_account    else 'STG-' || upper(left(md5(bank_account), 8)) end,
+                basic_salary_sen     = round(basic_salary_sen * pg_temp.stg_pay_factor(id)),
+                daily_rate_sen       = round(daily_rate_sen   * pg_temp.stg_pay_factor(id)),
+                tax_child_relief_sen = round(tax_child_relief_sen * pg_temp.stg_pay_factor(id));
+              get diagnostics n = row_count; raise notice 'hr_employees masked: %', n;
+            end if;
+            if to_regclass('public.hr_employee_salary_history') is not null then
+              update public.hr_employee_salary_history
+                 set basic_salary_sen = round(basic_salary_sen * pg_temp.stg_pay_factor(employee_id));
+              get diagnostics n = row_count; raise notice 'hr_employee_salary_history masked: %', n;
+            end if;
+            if to_regclass('public.hr_payslips') is not null then
+              select string_agg(format('%1$I = round(%1$I * pg_temp.stg_pay_factor(employee_id))', column_name), ', ')
+                into cols
+                from information_schema.columns
+               where table_schema = 'public' and table_name = 'hr_payslips'
+                 and column_name like '%\_sen' and data_type in ('bigint','integer','numeric');
+              execute format(
+                'update public.hr_payslips set %s, '
+                || 'bank_account = case when bank_account is null or bank_account = '''' or bank_account like ''STG-%%'' then bank_account else ''STG-'' || upper(left(md5(bank_account), 8)) end, '
+                || 'detail = coalesce(detail, ''{}''::jsonb) - ''allowances'' - ''trip''', cols);
+              get diagnostics n = row_count; raise notice 'hr_payslips masked: %', n;
+            end if;
+            if to_regclass('public.sales_reps') is not null then
+              update public.sales_reps set nric = 'STG-' || upper(left(md5(nric), 8))
+               where nric is not null and nric <> '' and nric not like 'STG-%';
+              get diagnostics n = row_count; raise notice 'sales_reps.nric masked: %', n;
+            end if;
+            if to_regclass('scm.helpers') is not null then
+              update scm.helpers set ic_number = 'STG-' || upper(left(md5(ic_number), 8))
+               where ic_number is not null and ic_number <> '' and ic_number not like 'STG-%';
+              get diagnostics n = row_count; raise notice 'scm.helpers.ic_number masked: %', n;
+            end if;
+          end $$;
+          SQL
+
       - name: Re-seed the staging login + showroom
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
         run: node scripts/staging-seed-account.mjs
+
+      # The UPDATEs above succeeding is not evidence; finding nothing is. Each
+      # check is on the SHAPE of what is left (a verifiable hash, a session
+      # minted before the scrub, an unmasked IC), never on a row count, so a
+      # re-run or a tester signing in mid-run cannot fake a pass or a failure.
+      - name: Verify no production credential survived (fails the run)
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          SCRUB_STARTED: ${{ steps.scrub.outputs.started }}
+        run: |
+          set -euo pipefail
+          test -n "$SCRUB_STARTED"
+          /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At \
+            -v started="$SCRUB_STARTED" <<'SQL'
+          set timezone = 'UTC';
+          select set_config('scrub.started', :'started', false);
+          do $$
+          declare
+            started text := current_setting('scrub.started');
+            bad text[] := '{}'; t text; n bigint; has_created boolean;
+          begin
+            -- A password hash that can verify ('salt$hash') may exist only on
+            -- the seeded staging account, and that one MUST exist.
+            select count(*) into n from public.users
+             where password_hash like '%$%' and lower(email) <> 'hello@houzscentury.com';
+            if n > 0 then bad := bad || format('%s users still hold a verifiable password hash', n); end if;
+            if not exists (select 1 from public.users
+                            where lower(email) = 'hello@houzscentury.com' and password_hash like '%$%') then
+              bad := bad || 'the staging test account has no usable password (seed step did not land)'::text;
+            end if;
+            if exists (select 1 from information_schema.columns
+                        where table_schema = 'public' and table_name = 'users' and column_name = 'totp_secret') then
+              select count(*) into n from public.users where totp_secret is not null or totp_backup_codes is not null;
+              if n > 0 then bad := bad || format('%s users still hold a TOTP secret', n); end if;
+            end if;
+
+            -- Token tables: a row is fine only if staging minted it after the scrub.
+            foreach t in array array['public.sessions','public.password_resets','public.invitations',
+                                     'public.push_devices','public.share_export_log',
+                                     'public.contractor_share_tokens','public.brand_share_tokens',
+                                     'public.email_outbox'] loop
+              continue when to_regclass(t) is null;
+              select exists (select 1 from information_schema.columns
+                              where table_schema || '.' || table_name = t and column_name = 'created_at')
+                into has_created;
+              if has_created then
+                execute format('select count(*) from %s where created_at is null or replace(created_at::text, ''T'', '' '') < %L', t, started) into n;
+              else
+                execute format('select count(*) from %s', t) into n;
+              end if;
+              if n > 0 then bad := bad || format('%s: %s rows from production', t, n); end if;
+            end loop;
+
+            if to_regclass('public.pos_cashiers') is not null then
+              select count(*) into n from public.pos_cashiers where pin_hash like '%$%' and updated_at::text < started;
+              if n > 0 then bad := bad || format('pos_cashiers: %s production PIN hashes', n); end if;
+            end if;
+            if to_regclass('scm.pos_pins') is not null then
+              select count(*) into n from scm.pos_pins where pin_hash like '%$%';
+              if n > 0 then bad := bad || format('scm.pos_pins: %s production PIN hashes', n); end if;
+            end if;
+
+            if to_regclass('public.hr_employees') is not null then
+              select count(*) into n from public.hr_employees
+               where (ic_number is not null and ic_number <> '' and ic_number not like 'STG-%')
+                  or (passport_number is not null and passport_number <> '' and passport_number not like 'STG-%')
+                  or (bank_account is not null and bank_account <> '' and bank_account not like 'STG-%');
+              if n > 0 then bad := bad || format('hr_employees: %s rows with a real IC / passport / bank account', n); end if;
+            end if;
+            if to_regclass('public.hr_payslips') is not null then
+              select count(*) into n from public.hr_payslips
+               where (bank_account is not null and bank_account <> '' and bank_account not like 'STG-%')
+                  or detail ? 'allowances' or detail ? 'trip';
+              if n > 0 then bad := bad || format('hr_payslips: %s rows with a real bank account or pay breakdown', n); end if;
+            end if;
+            if to_regclass('public.sales_reps') is not null then
+              select count(*) into n from public.sales_reps where nric is not null and nric <> '' and nric not like 'STG-%';
+              if n > 0 then bad := bad || format('sales_reps: %s real NRICs', n); end if;
+            end if;
+            if to_regclass('scm.helpers') is not null then
+              select count(*) into n from scm.helpers where ic_number is not null and ic_number <> '' and ic_number not like 'STG-%';
+              if n > 0 then bad := bad || format('scm.helpers: %s real IC numbers', n); end if;
+            end if;
+
+            if cardinality(bad) > 0 then
+              raise exception 'PRODUCTION DATA SURVIVED THE SCRUB: %', array_to_string(bad, '; ');
+            end if;
+            raise notice 'scrub verified: no production password, session, token, PIN or HR identifier left';
+          end $$;
+          SQL
+          echo "credential scrub verified (sessions, tokens, password hashes, TOTP, POS PINs, HR identifiers)" >> "$GITHUB_STEP_SUMMARY"
 
       # Make staging answer "can staff save this?" the way production does
       # (docs/bugs/0840). The switches are applied EXPLICITLY rather than left to

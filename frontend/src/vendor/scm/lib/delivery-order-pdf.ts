@@ -558,6 +558,13 @@ const SIG_TITLE_TOP = FOOTER_RULE_Y - 6 - SIG_FIELD_ROW * 2 - 2 - pt(S.sigTitle)
 const SIG_BOX_TOP = SIG_TITLE_TOP - SIG_BOX_H;
 /** Content must end above this or the closing block takes a fresh page. */
 const CLOSING_TOP = SIG_BOX_TOP - 4;
+/* The item photos stop above the closing, so the last photos and the signature
+   share a page: photos allowed down to the footer rule left a page holding only
+   the signature. */
+export const DO_PHOTOS_PAGE_BOTTOM = CLOSING_TOP;
+export function doClosingNeedsNewPage(contentEndY: number): boolean {
+  return contentEndY > CLOSING_TOP;
+}
 
 /** Signature blocks + footer, pinned to the bottom of the page they close. */
 function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
@@ -813,7 +820,7 @@ export async function renderDeliveryOrderInto(
       margin: M,
       contentW: CONTENT_W,
       startY: finalY + 6,
-      pageBottom: FOOTER_RULE_Y - 6, // the items table's own bottom rail
+      pageBottom: DO_PHOTOS_PAGE_BOTTOM,
       pageTop: M,
       side: null,
       onNewPage: null,
@@ -822,7 +829,7 @@ export async function renderDeliveryOrderInto(
   }
 
   // ── Closing: signature + footer, pinned to the bottom ──────────────
-  if (finalY > CLOSING_TOP) doc.addPage();
+  if (doClosingNeedsNewPage(finalY)) doc.addPage();
 
   const pageCount = doc.getNumberOfPages();
   const total = pageCount - startPage + 1;

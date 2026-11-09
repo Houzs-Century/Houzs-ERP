@@ -17,6 +17,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { serveSwr, type SwrBuild } from '../lib/kv-swr';
+import { buildOnTime } from '../lib/on-time-load';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
 import { downDates, loadDownWindows } from '../lib/lorry-down-days';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
@@ -56,6 +57,11 @@ export function mondayOf(day: string): string {
    (lib/kv-swr.ts), keyed by company, day and the query. Up to 5 minutes old. */
 logisticOverview.get('/', (c) =>
   serveSwr(c, { family: 'logov', parts: [todayMyt(), c.req.query('warehouse') ?? '', c.req.query('from') ?? '', c.req.query('to') ?? ''], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildLogisticOverview(c) }));
+
+/* On-time delivery for the period (lib/on-time-delivery.ts): the rate, per lorry, driver
+   and region, and the late / early / on-time orders behind them. */
+logisticOverview.get('/on-time', (c) =>
+  serveSwr(c, { family: 'logov-ontime', parts: [todayMyt(), c.req.query('warehouse') ?? '', c.req.query('from') ?? '', c.req.query('to') ?? ''], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildOnTime(c) }));
 
 async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SwrBuild> {
   const sb = c.get('supabase');

@@ -71,7 +71,9 @@ import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWi
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler, splitPdfHandler } from './pv-extract';
-import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { HEADER, SUPPLIER_EMBED, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { describeVouchers, payToFields, payToUpdates, PAY_TO_AUDIT_FIELDS } from './payment-vouchers-describe';
+import { paymentListingHandler } from './payment-vouchers-listing';
 import { remindApproverHandler } from './payment-vouchers-remind';
 import { updatePaymentVoucherTextHandler } from './payment-vouchers-text';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
@@ -104,6 +106,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['billRef', 'bill_ref'],
   ['billDate', 'bill_date'],
   ['bankChargeSen', 'bank_charge_sen'],
+  ...PAY_TO_AUDIT_FIELDS,
 ];
 
 /* The header's columns live with the list (payment-vouchers-list.ts). */
@@ -396,6 +399,7 @@ paymentVouchers.get('/', listPaymentVouchersHandler);
    GET /:id so /:id/files never falls into the detail matcher. */
 /* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
+paymentVouchers.get('/listing', paymentListingHandler); // the Payment listing (payment-vouchers-listing.ts)
 paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
 paymentVouchers.post('/remind', remindApproverHandler); // Remind approver: a note in the approver's bell, posts nothing (payment-vouchers-remind.ts)
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
@@ -406,7 +410,7 @@ paymentVouchers.delete('/:id/files/:fileId', deletePvFileHandler);
 paymentVouchers.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i, a] = await Promise.all([
-    scopeToCompany(sb.from('payment_vouchers').select(`${HEADER}, supplier:suppliers(id, code, name)`).eq('id', id), c).maybeSingle(),
+    scopeToCompany(sb.from('payment_vouchers').select(`${HEADER}, ${SUPPLIER_EMBED}`).eq('id', id), c).maybeSingle(),
     scopeToCompany(sb.from('payment_voucher_lines').select(LINE).eq('pv_id', id), c).order('line_no'),
     /* PV→PI settlement (0202) — the PIs this PV applies to, joined for the PI
        number + the live total/paid so the detail page can show "Apply to PI". */
@@ -444,7 +448,9 @@ paymentVouchers.get('/:id', async (c) => {
   /* The journal its approval posted — the page's books line and Journal fact (the redesign). */
   const jn = await journalNumbers(sb, c, [String((h.data as { pv_number: string }).pv_number)]);
   if (!jn.ok) return c.json({ error: 'load_failed', reason: jn.reason }, 500);
-  return c.json({ paymentVoucher: { ...h.data, je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations });
+  const described = await describeVouchers(sb, c, [h.data as Record<string, unknown> & { id: string }]);
+  if (!described.ok) return c.json({ error: 'load_failed', reason: described.reason }, 500);
+  return c.json({ paymentVoucher: { ...h.data, ...described.byId.get(id), je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations });
 });
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -694,6 +700,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       exchange_rate:       exchangeRate,
       purpose,
       notes:               (body.notes as string | undefined) ?? null,
+      ...payToFields(body), // the bank it pays into (owner 2026-11-08)
       total_sen:         built.total,
       bank_charge_sen:     bankChargeSen,
       status:              'DRAFT',
@@ -826,6 +833,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
+  Object.assign(updates, payToUpdates(body));
   if (body.bankChargeSen !== undefined) {
     const v = parseAmountSen(body.bankChargeSen);
     if (v === null) return c.json({ error: 'bank_charge_invalid' }, 400);

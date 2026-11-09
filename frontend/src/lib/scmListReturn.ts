@@ -80,3 +80,35 @@ export function scmListReturnTo(listPath: string): string {
   const stored = readMap()[sectionOf(listPath)];
   return stored && sectionOf(stored) === sectionOf(listPath) ? stored : listPath;
 }
+
+/** The row last opened from a list, so coming back scrolls to it instead of the
+ *  top (Conts-ERP #406). Per tab and per list section, read once. */
+export const SCM_LIST_FOCUS_KEY = "houzs.scmListFocus.v1";
+
+export function rememberScmListFocus(listPath: string, rowKey: string): void {
+  try {
+    const raw = sessionStorage.getItem(SCM_LIST_FOCUS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    const map = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string>) : {};
+    map[sectionOf(listPath)] = rowKey;
+    sessionStorage.setItem(SCM_LIST_FOCUS_KEY, JSON.stringify(map));
+  } catch {
+    // storage disabled: the list simply opens at the top
+  }
+}
+
+export function takeScmListFocus(listPath: string): string | null {
+  try {
+    const raw = sessionStorage.getItem(SCM_LIST_FOCUS_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const map = parsed as Record<string, unknown>;
+    const key = map[sectionOf(listPath)];
+    delete map[sectionOf(listPath)];
+    sessionStorage.setItem(SCM_LIST_FOCUS_KEY, JSON.stringify(map));
+    return typeof key === "string" ? key : null;
+  } catch {
+    return null;
+  }
+}

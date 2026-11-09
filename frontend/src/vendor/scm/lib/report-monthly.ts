@@ -17,6 +17,7 @@
 
 import type { LaidNode } from './report-layout';
 import { flattenLaid } from './report-layout';
+import { guardFormula } from '../../../lib/csv';
 import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpColumn, type RpReport } from './rp-report-queries';
 
 /** One line of a report as one column printed it. */
@@ -245,7 +246,10 @@ export const rpLines = (r: RpLike): FlatLine[] => {
 
 /* ── The CSV ─────────────────────────────────────────────────────────────── */
 
-const csvCell = (s: string): string => (/[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+const csvCell = (raw: string): string => {
+  const s = guardFormula(raw);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
 /** The monthly table as CSV — the same lines and columns the screen shows,
     amounts or %, indented by depth. */
