@@ -31,13 +31,13 @@
  *   - no per-line delivery date, warehouse override, discount or rack.
  * ------------------------------------------------------------------------- */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateMobileLists } from "./sharedInvalidate";
 import { lineIdentity } from "@2990s/shared";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { useWarehouses } from "../vendor/scm/lib/inventory-queries";
-import { useSuppliers, useCreatePurchaseOrder, suppliersForMaterialQuery } from "../vendor/scm/lib/suppliers-queries";
+import { useSuppliers, useCreatePurchaseOrder, useSuppliersForMaterial } from "../vendor/scm/lib/suppliers-queries";
 import { defaultSupplierBinding } from "../vendor/scm/lib/default-supplier-binding";
 import { useCreateGrn, usePostGrn } from "../vendor/scm/lib/grn-queries";
 import { useCreatePurchaseInvoice, usePostPurchaseInvoice } from "../vendor/scm/lib/purchase-invoice-queries";
@@ -201,19 +201,22 @@ export function MobilePurchaseDocNew({
          buyer's keystrokes). */
       { key: newKey(), itemCode: sku.itemCode, name: sku.name, itemGroup: sku.itemGroup, qty: 1, unitPriceSen: null, remark: "" },
     ]);
-    if (kind === "po" && !header.supplierId) void adoptMainSupplier(sku.itemCode);
+    if (kind === "po" && !header.supplierId) setMainSupplierFor(sku.itemCode);
   };
 
-  /* Same rule as desktop PurchaseOrderNew's item-first pick. Re-checks the
-     header inside the setter: the buyer may have picked a supplier while the
-     lookup was in flight, and that choice wins. A failed lookup just leaves the
-     supplier for the buyer to pick. */
-  const adoptMainSupplier = async (itemCode: string) => {
-    const res = await qc.fetchQuery({ ...suppliersForMaterialQuery("mfg_product", itemCode), staleTime: 30_000 }).catch(() => null);
-    const b = defaultSupplierBinding(res?.bindings ?? []);
-    if (!b || !(suppliersQ.data ?? []).some((s) => s.id === b.supplier.id)) return;
-    setHeader((h) => (h.supplierId ? h : { ...h, supplierId: b.supplier.id }));
-  };
+  /* Same rule as desktop PurchaseOrderNew's item-first pick. The setter
+     re-checks the header: a supplier the buyer picked while the lookup was in
+     flight wins. A failed lookup leaves the supplier for the buyer to pick. */
+  const [mainSupplierFor, setMainSupplierFor] = useState<string | null>(null);
+  const itemSuppliersQ = useSuppliersForMaterial(mainSupplierFor ? "mfg_product" : null, mainSupplierFor);
+  useEffect(() => {
+    if (!mainSupplierFor || itemSuppliersQ.isLoading) return;
+    const b = defaultSupplierBinding(itemSuppliersQ.data?.bindings ?? []);
+    if (b && (suppliersQ.data ?? []).some((s) => s.id === b.supplier.id)) {
+      setHeader((h) => (h.supplierId ? h : { ...h, supplierId: b.supplier.id }));
+    }
+    setMainSupplierFor(null);
+  }, [mainSupplierFor, itemSuppliersQ.isLoading, itemSuppliersQ.data, suppliersQ.data]);
 
   const finish = async (created: Created, asDraft: boolean) => {
     /* The vendored hooks refresh the desktop's canonical keys; the phone list
