@@ -108,6 +108,10 @@ export type SettlementRow = {
       Empty unless there is exactly ONE way to make this line amount. */
   suggested?: SettlementCandidate[];
   clue: string | null;
+  /** 'QR' for a DuitNow QR line (owner 2026-11-09: 0000PP 是 qr direct 去 bank
+      的，不算卡机的): its sale is keyed Online and already in the bank, so it is
+      linked, never posted. Null or absent: a card line. */
+  channel?: 'QR' | null;
 };
 
 /** One credit of a payout, as the BANK shows it. */
@@ -158,6 +162,10 @@ export type SettlementBatch = {
   /** Only on the batch DETAIL: which bank account this payout will be booked
       to for THIS company, and whether that was configured or fallen back to. */
   receiving_bank?: { code: string; name: string | null; configured: boolean };
+  /** The DuitNow QR lines the report carries and their money — in the bank by
+      their sales, so no part of gross / fee / net above (owner 2026-11-09). */
+  qr_count?: number;
+  qr_gross_sen?: number;
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -364,6 +372,8 @@ export type UploadResult = {
   statedNetSen: number | null;
   adjustmentSen: number;
   grossSen: number; feeSen: number; netSen: number;
+  /** The file's DuitNow QR lines — matched to Online sales, not owed through the clearing account. */
+  qrLines?: number; qrSen?: number;
   periodFrom: string; periodTo: string;
   buckets: Record<string, number>;
 };

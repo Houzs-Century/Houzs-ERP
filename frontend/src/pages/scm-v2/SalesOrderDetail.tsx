@@ -836,7 +836,7 @@ export const SalesOrderDetail = () => {
     const deliv = header?.customer_delivery_date ? String(header.customer_delivery_date).slice(0, 10) : '';
     return {
       isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...customerCardRef.current?.fairDayKeys(),
-      phone: customerCardRef.current?.getPhone() ?? header?.phone, debtorName: header?.debtor_name,
+      phone: customerCardRef.current?.getPhone() ?? header?.phone, origPhone: header?.phone ?? '', debtorName: header?.debtor_name,
       address1: header?.address1, postcode: header?.postcode, customerState: header?.customer_state,
       items: editedDraftGroups.map((d) => ({ itemCode: d.itemCode, itemGroup: d.itemGroup, variants: d.variants, qty: d.qty })),
       origItemGroups: items.map((it) => it.item_group),
@@ -1183,7 +1183,7 @@ export const SalesOrderDetail = () => {
         method: 'POST',
         body: JSON.stringify({
           isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...handle.fairDayKeys(),
-          processingDate: '', customerDeliveryDate: '', phone: handle.getPhone(), debtorName: header?.debtor_name,
+          processingDate: '', customerDeliveryDate: '', phone: handle.getPhone(), origPhone: header?.phone ?? '', debtorName: header?.debtor_name,
           items: items.map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group, variants: {}, qty: it.qty })),
           origItemGroups: items.map((it) => it.item_group),
         }),

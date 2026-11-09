@@ -484,6 +484,88 @@ export function matchBankMovements(input: {
   });
 }
 
+/* ── The bank's DuitNow QR credit (owner 2026-11-09) ─────────────────────────
+   「这个hlbb merchant 的0000PP 是qr direct 去bank 的，不算卡机的」. Hong Leong
+   pays a day's QR money as one credit that reads exactly like its card payout
+   ("00005992284 MERCHAN T 20261031"), but the money is already in the books:
+   each QR sale was keyed Online and booked straight to the bank. Booked again
+   as a payout it would be in the bank twice. So the credit is matched to those
+   sales' entries — one movement, several entries — and the merchant's QR report
+   says which: the one QR report covering the bank's trading day whose QR lines
+   make the credit to the sen. Offered ready only when every line of it is linked
+   to its sale on Merchant Recon, every sale has its live entry on THIS bank
+   account, and no other bank line holds one; otherwise it says what is missing.
+   Never applied by itself — the person presses. */
+
+export type QrReportForMatch = {
+  batchId: number; fileName: string | null; acquirerCode: string; periodFrom: string; periodTo: string;
+  /** The report's QR lines, and whether a person has linked each to its sale. */
+  lines: Array<{ lineNo: number; txnDate: string; grossSen: number; linked: boolean }>;
+  /** The sales they are linked to: each one's live entry, and the accounts that entry debits. */
+  sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null; accounts: string[] }>;
+};
+
+export type QrSales = {
+  batchId: number; fileName: string | null; tradingDate: string | null;
+  sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null }>;
+  /** QR lines nobody has linked to a sale yet. */
+  waiting: Array<{ lineNo: number; txnDate: string; grossSen: number }>;
+  /** The entries to match the movement to — only when ready. */
+  jeNos: string[];
+  ready: boolean;
+  clue: string;
+};
+
+export function qrSalesFor(
+  movement: { amountSen: number; description: string; reference: string | null },
+  rules: BankRecognitionRule[],
+  reports: QrReportForMatch[],
+  /** Every entry a POSTED bank line already holds. */
+  claimed: ReadonlySet<string>,
+  /** The bank account this movement is on. */
+  accountCode: string,
+): QrSales | null {
+  if (movement.amountSen <= 0) return null;
+  const seen = recogniseAcquirer(rules, movement);
+  if (!seen) return null;
+  const day = seen.tradingDate;
+  const fits = reports.filter((r) => r.acquirerCode === seen.acquirerCode
+    && (day == null || (day >= r.periodFrom && day <= r.periodTo))
+    && r.lines.reduce((s, l) => s + l.grossSen, 0) === movement.amountSen);
+  if (fits.length !== 1) return null;
+  const r = fits[0]!;
+
+  const waiting = r.lines.filter((l) => !l.linked).map(({ lineNo, txnDate, grossSen }) => ({ lineNo, txnDate, grossSen }));
+  const noEntry = r.sales.filter((s) => !s.jeNo);
+  const elsewhere = r.sales.filter((s) => s.jeNo && !s.accounts.includes(accountCode));
+  const held = r.sales.filter((s) => s.jeNo && claimed.has(s.jeNo));
+  const salesSen = r.sales.reduce((s, x) => s + x.amountSen, 0);
+  const ready = waiting.length === 0 && r.sales.length > 0 && noEntry.length === 0
+    && elsewhere.length === 0 && held.length === 0 && salesSen === movement.amountSen;
+
+  const what = `DuitNow QR money${day ? ` for ${day}` : ''} — ${r.fileName ?? `report ${r.batchId}`}`;
+  const docs = (list: QrReportForMatch['sales']) => list.map((s) => s.docNo ?? 'a sale').join(', ');
+  const clue = ready
+    ? `${what}: ${r.sales.map((s) => `${s.docNo ?? 'a sale'} ${rm(s.amountSen)}`).join(' + ')}, already in the books on this account. These are those entries.`
+    : waiting.length > 0
+      ? `${what}: link the sale for ${waiting.map((l) => `line ${l.lineNo} (${rm(l.grossSen)})`).join(', ')} on Merchant Recon first.`
+      : noEntry.length > 0
+        ? `${what}: ${docs(noEntry)} has no entry in the books yet.`
+        : elsewhere.length > 0
+          ? `${what}: ${elsewhere.map((s) => `${s.docNo ?? 'a sale'} is booked to ${s.accounts.join(' / ') || 'no bank'}`).join('; ')}, not ${accountCode}.`
+          : held.length > 0
+            ? `${what}: ${docs(held)} is already matched to another bank line — undo that match first.`
+            : `${what}: the linked sales come to ${rm(salesSen)}, not ${rm(movement.amountSen)}.`;
+  return {
+    batchId: r.batchId, fileName: r.fileName, tradingDate: day,
+    sales: r.sales.map(({ docNo, amountSen, jeNo }) => ({ docNo, amountSen, jeNo })),
+    waiting,
+    jeNos: ready ? r.sales.map((s) => s.jeNo!) : [],
+    ready,
+    clue,
+  };
+}
+
 /* ── WHICH LEDGER ENTRY IS THIS MOVEMENT? ─────────────────────────────────────
    Owner, 2026-09-09, looking at a RM 3,000 transfer on the statement and the
    RM 3,000 receipt sitting in the books beside it, with no button that says
