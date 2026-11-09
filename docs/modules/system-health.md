@@ -33,6 +33,7 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - `/logins` verdict: one email >= 10 failures in 24 h or > 100 total = warning; one email >= 30 = critical. Rate-limited attempts count as failures.
 - `GET /database`: one catalog statement per metric, each in its own transaction with `SET LOCAL statement_timeout = '5s'`. Never plain `SET`: the Hyperdrive pooler is session mode, so it would leak.
 - Without `pg_read_all_stats`, other roles' sessions are hidden: long-transaction counts become a lower bound and `limitedVisibility` is set. Lock waits read `pg_locks` (any role can read it, and it has `waitstart`).
+- Polled GET lists answer an unchanged poll with an empty `304` (`backend/src/middleware/pollEtag.ts`, mounted in `index.ts` from `POLLED_LIST_PATHS`). The tag hashes the body together with the user and company, so after a company switch the browser's old tag gets a full `200` (Chromium sends the other company's tag despite `Vary`). A response carrying `X-Session-Pass` is sent `no-store` and untagged, and a route that sets its own `Cache-Control` or `ETag` is left alone. A new polled list goes in that array; the wiring test checks every entry is a real GET route.
 - Connections are judged against the smaller of `max_connections` and the 60-connection cap noted in `wrangler.toml`.
 
 ## Where the code is
