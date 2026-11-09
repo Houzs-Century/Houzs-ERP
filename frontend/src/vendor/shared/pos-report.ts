@@ -10,6 +10,7 @@
  * (check-shared-mirrors.mjs); the POS app imports the vendored copy.
  */
 import { posReceiptStatusLabel } from "./pos-vocabulary";
+import { guardFormula } from "./csv-guard";
 
 export type ReportSale = {
   uuid: string; type: string; status: string; receipt_no: string; terminal_code: string; sold_at: string;
@@ -82,7 +83,13 @@ export function aggregateSales(sales: readonly ReportSale[]): ReportTotals {
 
 /** A ringgit figure as a bare number for a CSV / spreadsheet cell. */
 export const rmCell = (sen: number): string => (sen / 100).toFixed(2);
-const csvCell = (v: string | number): string => (typeof v === "number" ? String(v) : /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+/* Salesman names, item descriptions and void reasons are typed at the till, so
+   a text cell goes through the formula guard before it reaches a staff PC. */
+const csvCell = (v: string | number): string => {
+  if (typeof v === "number") return String(v);
+  const s = guardFormula(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
 /** The report as rows of cells: one block per table, a blank row between.
  *  The CSV, the device's Excel export and the ERP's Excel export all come

@@ -11,24 +11,18 @@
 // as a row of its own, the first sample left one alone at the foot of a page.
 // ----------------------------------------------------------------------------
 
-import { jsPDF } from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
-import {
-  DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
-  fmtDocDate, fmtDocStamp, type PdfAction,
-} from './pdf-common';
+import { fmtDocDate, type PdfAction } from './pdf-common';
 import { fmtSenPlain, todayMY } from '../../shared/format';
+import {
+  LISTING_CELL as CELL, LISTING_MARGIN as MARGIN, closeListing, listingDress, openListing, screenTable,
+  type FootCell, type Meta, type Rgb, type ScreenTableView,
+} from './listing-pdf';
 
-type Rgb = [number, number, number];
-type Meta = { label: string; value: string };
-type FootCell = string | { content: string; colSpan: number };
 type Options = { merchant?: string | null; action?: PdfAction };
 
-const MARGIN = 14;
-const CELL = { top: 1.2, bottom: 1.2, left: 1.5, right: 1.5 };
 const RED: Rgb = [176, 32, 32];
 const GREEN: Rgb = [24, 110, 60];
-const TOTAL_FILL: Rgb = [236, 238, 234];
 const BAND_FILL: Rgb = [244, 245, 242];
 /** The room a report's name takes above its first line. */
 const BAND_H = 5.6;
@@ -38,38 +32,13 @@ const LATE_DAYS = 14;
 /* ── The card payments list ─────────────────────────────────────────────────── */
 
 /** The cells the table's Excel would hold (DataTable's `onExportPdf`). Money is in ringgit there. */
-export type WaitingCardsView = {
-  keys: string[];
-  matrix: { header: string[]; formats: string[]; body: Array<Array<string | number | null>> };
-};
-
-const cellText = (v: string | number | null | undefined, format: string | undefined): string => {
-  if (v === null || v === undefined || v === '') return '-';
-  if (format === 'money' && typeof v === 'number') return fmtSenPlain(Math.round(v * 100));
-  if (format === 'date') return fmtDocDate(String(v));
-  return String(v);
-};
+export type WaitingCardsView = ScreenTableView;
 
 /** The table exactly as drawn: pure, so a test reads the cells and the total without a PDF. */
-export function waitingCardsTable({ keys, matrix }: WaitingCardsView): {
+export function waitingCardsTable(view: WaitingCardsView): {
   head: string[]; body: string[][]; foot: FootCell[] | null; totalSen: number | null; daysCol: number;
 } {
-  const body = matrix.body.map((row) => row.map((v, c) => cellText(v, matrix.formats[c])));
-  const moneyCol = matrix.formats.indexOf('money');
-  const count = matrix.body.length;
-  const label = `Total (${count} row${count === 1 ? '' : 's'})`;
-  const width = matrix.header.length;
-  let foot: FootCell[] | null = null;
-  let totalSen: number | null = null;
-  if (moneyCol >= 0) {
-    totalSen = matrix.body.reduce((s, row) => s + Math.round(Number(row[moneyCol] ?? 0) * 100), 0);
-    const total = fmtSenPlain(totalSen);
-    const after = width - moneyCol - 1;
-    foot = moneyCol === 0
-      ? [total, { content: label, colSpan: after }]
-      : [{ content: label, colSpan: moneyCol }, total, ...(after > 0 ? [{ content: '', colSpan: after }] : [])];
-  }
-  return { head: matrix.header, body, foot, totalSen, daysCol: keys.indexOf('days') };
+  return { ...screenTable(view), daysCol: view.keys.indexOf('days') };
 }
 
 /** The sentence on top: what the list is, how many have no bank, which merchant it was cut to. */
@@ -154,40 +123,6 @@ export function reportLinesTable(reports: PrintedReport[]): {
 }
 
 /* ── On paper ───────────────────────────────────────────────────────────────── */
-
-async function openListing(title: string, meta: Meta[], subtitle: string, payload: unknown): Promise<{ doc: jsPDF; startY: number }> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
-  /* The sentence on top carries 未标 too: a field missed here would print as mojibake. */
-  await ensurePdfCjkFont(doc, { payload, meta, subtitle });
-  const y = drawHeader(doc, { docTitle: title, rightMeta: [...meta, { label: 'Printed', value: fmtDocStamp() }] });
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90);
-  doc.text(subtitle, MARGIN, y + 2, { maxWidth: doc.internal.pageSize.getWidth() - MARGIN * 2 });
-  doc.setTextColor(0);
-  return { doc, startY: y + 7 };
-}
-
-const listingDress = (fontSize: number) => ({
-  theme: 'plain' as const,
-  rowPageBreak: 'avoid' as const,
-  showFoot: 'lastPage' as const,
-  styles: { ...DOC_TABLE_STYLES, fontSize, cellPadding: CELL },
-  headStyles: DOC_TABLE_HEAD_STYLES,
-  footStyles: { fontStyle: 'bold' as const, fillColor: TOTAL_FILL },
-  margin: { left: MARGIN, right: MARGIN, top: 12, bottom: 12 },
-});
-
-function closeListing(doc: jsPDF, fileName: string, action: PdfAction = 'preview'): void {
-  const pages = doc.getNumberOfPages();
-  const w = doc.internal.pageSize.getWidth();
-  const h = doc.internal.pageSize.getHeight();
-  for (let i = 1; i <= pages; i += 1) {
-    doc.setPage(i);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
-    doc.text(`Page ${i} of ${pages}`, w - MARGIN, h - 7, { align: 'right' });
-  }
-  doc.setTextColor(0);
-  deliverPdf(doc, fileName, action);
-}
 
 export async function generateWaitingCardsPdf(view: WaitingCardsView, opts: Options = {}): Promise<void> {
   const t = waitingCardsTable(view);
