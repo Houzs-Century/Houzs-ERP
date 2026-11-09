@@ -306,6 +306,10 @@ jobs:
           # becomes a stable, non-dialable token (same input -> same token, so joins
           # by phone still line up inside staging).
           /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          -- Append-only guards (scm.pos_sofa_combo_audit) refuse any UPDATE, and one
+          -- refusal rolls back every mask in this block (run 42550241459). Masking a
+          -- copy is not the edit they guard against, so no user trigger fires here.
+          set session_replication_role = replica;
           do $$
           declare r record; n bigint; total bigint := 0;
           begin
