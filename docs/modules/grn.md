@@ -190,6 +190,10 @@ go through `/api/scm/grns`.
   qty off that rack (`addRackShare`). The desktop VIEW page (`GoodsReceivedDetailV2`) has a
   Racks column (`L3.1 ×6, L3.2 ×4`, plus "N not on a rack" for a partly placed
   line), formatted by the shared `lineRackSummary` (owner 2026-10-02).
+- The printed GRN names the receiving warehouse in GRN DETAILS: the detail GET
+  returns `warehouse_name` beside `warehouse_code` (from the company-scoped GRN's
+  own `warehouse_id`); the PDF prints the name, else the code, and omits the row
+  when the GRN recorded none (Conts-ERP #717). `grn-pdf-warehouse.test.ts`.
 
 ## Gotchas
 
