@@ -156,7 +156,17 @@ export const doPodPhotoHandler = async (c: Context<{ Bindings: Env; Variables: V
   if (!key) return c.json({ error: 'not_found', reason: 'This delivery order has no POD photo.' }, 404);
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: 'not_found', reason: 'The POD photo file is missing from storage.' }, 404);
-  return new Response(obj.body, {
-    headers: { 'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg', 'cache-control': 'private, max-age=300' },
-  });
+  return podPhotoResponse(obj);
 };
+
+/* Last-Modified carries when the photo reached storage, so the photos PDF can
+   print each photo's time: no table records a time per photo, and the crew
+   upload each one the moment it is picked. */
+export function podPhotoResponse(obj: R2ObjectBody): Response {
+  const headers: Record<string, string> = {
+    'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg',
+    'cache-control': 'private, max-age=300',
+  };
+  if (obj.uploaded instanceof Date) headers['last-modified'] = obj.uploaded.toUTCString();
+  return new Response(obj.body, { headers });
+}

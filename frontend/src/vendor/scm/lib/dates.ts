@@ -38,3 +38,24 @@ export const isCreatedTodayMyt = (createdAt: string | null | undefined): boolean
   if (Number.isNaN(t)) return false;
   return new Date(t + 8 * 3600 * 1000).toISOString().slice(0, 10) === todayMyt();
 };
+
+/** A stored instant (TIMESTAMPTZ ISO, e.g. a driver's "Arrived" stamp) → the
+ *  Malaysian wall clock `YYYY-MM-DDTHH:mm` that DateTimeField reads. Slicing the
+ *  ISO string instead printed the UTC clock: an 11:00 arrival showed as 03:00.
+ *  '' when missing or unparseable. */
+export const instantToMytLocal = (instant: string | null | undefined): string => {
+  if (!instant) return '';
+  const t = new Date(instant).getTime();
+  if (Number.isNaN(t)) return '';
+  return new Date(t + 8 * 3600 * 1000).toISOString().slice(0, 16);
+};
+
+/** A Malaysian wall clock `YYYY-MM-DDTHH:mm` typed in DateTimeField → the
+ *  instant to store, with its +08:00 offset written out. Sent bare, Postgres
+ *  read it as UTC and the office's 11:00 landed 8 hours from the driver's own
+ *  stamps. null when empty. */
+export const mytLocalToInstant = (local: string | null | undefined): string | null => {
+  const v = (local ?? '').trim();
+  if (!v) return null;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v) ? `${v}:00+08:00` : v;
+};

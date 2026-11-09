@@ -1141,7 +1141,7 @@ export function DeliveryOrderNewV2() {
           stacked sticky boxes would each pin at top:0 and overlap. */}
       {/* top-12 / lg:top-[52px] z-20 is the house offset for a page-level sticky
           (Layout.tsx, DetailLayout, AmendmentDetailV2, PoAmendmentDetailV2): the
-          workspace tab strip in TopNavbar is itself `sticky top-0 z-30 h-[52px]`
+          workspace tab strip in TopNavbar is itself `sticky top-0 z-40 h-[52px]`
           inside this same scroll container. This box was `top-0 z-10`, so it
           parked UNDER that strip and the strip painted over its first 52px —
           exactly the title row and the Cancel / Save as Draft / Create buttons.

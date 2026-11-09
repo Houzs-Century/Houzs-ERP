@@ -26,6 +26,7 @@
 //   return_items→pc_receive_item_id.
 // Numbering: PCT-YYMM-NNN.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -225,8 +226,7 @@ const ITEM =
 const nextNum = async (sb: any, c: any): Promise<string> => {
   // PCT-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a deleted mid-month row can't
   // make the counter re-mint a surviving number forever — see doc-no.ts.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'purchase_consignment_returns', 'return_number', `${p}PCT-${yymm}`);
 };

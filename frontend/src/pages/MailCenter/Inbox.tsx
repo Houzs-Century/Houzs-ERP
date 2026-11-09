@@ -50,6 +50,7 @@ import {
 } from "../../lib/activeCompany";
 import { ComposeDialog } from "./Compose";
 import { MailThread } from "./Thread";
+import { EMAIL_FRAME_SANDBOX, emailSrcDoc } from "./mail-email-frame";
 import { PendingAcks } from "./mail-acks";
 import { FolderItem, MyMailboxNav, VisibilityPanel } from "./mail-sidebar";
 import {
@@ -2041,7 +2042,7 @@ function OutboxPanel({ q }: { q: string }) {
   );
 }
 
-function OutboxReaderModal({
+export function OutboxReaderModal({
   id,
   onClose,
 }: {
@@ -2152,13 +2153,13 @@ function OutboxReaderModal({
             </div>
           ) : data?.bodyHtml ? (
             // Sandboxed iframe — renders the exact email the customer received,
-            // with no script/same-origin access (own templates, but sandbox
-            // keeps it safe regardless).
+            // with no script/same-origin access; its links open in a new tab,
+            // as in the conversation reader (they were dead under sandbox="").
             <iframe
               title="email body"
-              sandbox=""
+              sandbox={EMAIL_FRAME_SANDBOX}
               className="h-[60vh] w-full border-0 bg-white"
-              srcDoc={data.bodyHtml}
+              srcDoc={emailSrcDoc(data.bodyHtml)}
             />
           ) : (
             <pre className="whitespace-pre-wrap px-5 py-4 text-sm text-ink">

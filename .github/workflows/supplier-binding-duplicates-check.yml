@@ -1,0 +1,32 @@
+name: Supplier binding duplicates check (read-only)
+
+# Is any supplier bound to the same item twice? Decides whether a unique index on
+# scm.supplier_material_bindings can be added (only at zero). SELECT only — no
+# writes. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: supplier-binding-duplicates-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-supplier-binding-duplicates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

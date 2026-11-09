@@ -1992,7 +1992,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const binds: any[] = [];
   if (scope === "started") {
     where.push("substr(p.start_date, 1, 10) <= ?");
-    binds.push(new Date().toISOString().slice(0, 10));
+    binds.push(todayMyt());
   } else if (scope === "completed") {
     where.push("p.stage = 'completed'");
   }
@@ -2240,7 +2240,7 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
   const binds: any[] = [];
   if (scope === "started") {
     where.push("substr(p.start_date, 1, 10) <= ?");
-    binds.push(new Date().toISOString().slice(0, 10));
+    binds.push(todayMyt());
   } else if (scope === "completed") {
     where.push("p.stage = 'completed'");
   }

@@ -40,6 +40,7 @@
 // purchase-consignment-order.md, and docs/hard-delete-inventory.md.
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { buildVariantSummary } from '../shared';
 import {
@@ -359,10 +360,7 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const supabase = c.get('supabase');
   const user = c.get('user');
 
-  const yymm = (() => {
-    const d = new Date();
-    return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
+  const yymm = yymmFor();
 
   // Minted inside insertWithDocNoRetry below so a concurrent-create collision
   // (23505 on pc_number) re-derives the next free number instead of 500ing.

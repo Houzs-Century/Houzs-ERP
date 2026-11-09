@@ -10,6 +10,7 @@
 //
 // Mounted at '/delivery-orders-mfg' in apps/api/src/index.ts.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { propagateDoCrewToTrip } from '../lib/trip-crew-sync';
 import type { Context } from 'hono';
@@ -412,8 +413,7 @@ const DO_PRESHIP_STATUSES = new Set<string>(DO_PRESHIP_STATES);
 const DO_STOCK_OUT_STATUSES = new Set<string>(DO_STOCK_OUT_STATES);
 
 const nextNum = async (sb: any, c: any, prefixOverride?: string): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // prefixOverride lets the caller mint under a company OTHER than the active one
   // (Delivery-Planning convert stamps the SOURCE SO's company). Falls back to the
   // active company's prefix for the normal same-company paths.

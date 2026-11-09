@@ -35,6 +35,17 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The list ticks several drafts and Confirm (N) posts them in turn through the same `/:id/post`; a refused one stays a draft and the summary names it. Invoice Amount and PO Amount sit side by side, PO Price and PI Price likewise; PO Amount counts only lines with a PO price and says how many. PO Price and PO Amount are screen-only, so the default export stays AutoCount's.
 - The mobile list has no export and no import — importing is desktop-only by design.
 
+## Files and photos (`/purchase-invoices/:id/files`)
+
+Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a purchase invoice keeps attached files: the supplier's paperwork, an invoice scan, photos of the goods. Images (JPEG / PNG / WebP) and PDFs, 20 MB each, many per document.
+
+- `POST /:id/files` `{fileName, mime, dataBase64}`, `GET /:id/files` (rows + `locked`), `GET /:id/files/:fileId` (streams), `DELETE /:id/files/:fileId`.
+- Write = `edit` on `scm.procurement.pi`, the same `scmAreaGuard` that gates every other write here; the router passes `mayWrite` because this document has no flat permission key.
+- `CANCELLED` takes no more files. A file stops being removable once the document is finished: `PARTIALLY_PAID` or `PAID` (money has gone out against it). Not at posting, on purpose.
+- Index `scm.purchase_invoice_files` (mig `20261110T0300_scm_flow_doc_files.sql`), bytes in the SLIPS R2 bucket under `purchase-invoice-files/<company>/<doc>/<uuid>.<ext>`. Company-scoped on every read and write.
+- UI: the Files card (`FlowDocFilesCard`) on the desktop detail page and on the phone's generic detail screen (`MobileModuleDetail`), both through `vendor/scm/lib/flow-doc-files.ts`.
+- Code: `backend/src/scm/routes/flow-doc-files.ts` (one spec per document over `lib/doc-files.ts`). Tests: `backend/tests/flowDocFiles.test.ts`, `frontend/src/vendor/scm/components/FlowDocFilesCard.test.tsx`.
+
 ## Where the code is
 
 - `backend/src/scm/routes/purchase-invoices.ts` — main API surface, insert paths, PO price snapshot writer. The from-GRN-items convert logic lives in the off-request core `createDraftPisFromGrnItemsCore` (draft-only, never posts, never books AP) so the OCR scan queue raises the same draft via `createDraftPiFromGrnItems`; the HTTP `/from-grn-items` handler calls the core then auto-posts.

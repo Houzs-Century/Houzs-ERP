@@ -1749,6 +1749,11 @@
       "check": "D2",
       "key": "ACCOUNT SHEET,AMOUNT,APPROVAL,CUSTOMER,DATE,DOCUMENT,FEE,GROSS,LINE,MERCHANT,NET,PAID ON,REFERENCE,REPORT,SALES,STATUS ~ ACCOUNT SHEET,AMOUNT,APPROVAL,CUSTOMER,DATE,DOCUMENT,FEE,GROSS,NET,PAID ON,REFERENCE,SALES",
       "why": "THE TWO FILES OF ONE LIST, and they are meant to differ (owner 2026-11-06, Merchant reports still to reconcile). The Excel is one flat heading row that filters and sums, so the merchant, the report, the line and the status are columns of their own; the PDF prints the screen's two bands, with the report in a band above its lines and the line under its date. Both read one PrintedReport (merchantReconExport.ts), so their cells cannot disagree."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED ~ CREDIT_NOTED,REFUNDED,REJECTED",
+      "why": "Two different questions. DeliveryReturnDetail's LOCKED_STATUSES is when the return's LINES stop being editable (cancelled included). flow-doc-files.ts names when an attached FILE stops being removable; a cancelled return is handled there as 'closed' (no new files) by its own rule. Pinned by tests/flowDocFiles.test.ts."
     }
   ]
 }

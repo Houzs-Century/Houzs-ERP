@@ -7,6 +7,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "../api/client";
+import { fmtDateTime } from "../vendor/shared/format";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
 
@@ -111,7 +112,8 @@ export function DefectFileActions({
       setSaving(false);
     }
   };
-  const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
+  // Malaysian clock in the house format; slicing the stored string printed UTC.
+  const ts = (v: string) => fmtDateTime(v);
   // Wide (B2) button styling — big half-width outline buttons under the
   // full-width photo, per the owner's picked mockup.
   const wideBtn: CSSProperties | undefined = wide

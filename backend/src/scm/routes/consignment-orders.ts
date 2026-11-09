@@ -15,6 +15,7 @@
 // The customer auto-resolve (upsert_customer_by_name_phone) is retained — it's
 // a simple, isolated stamp on the header.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
@@ -192,13 +193,10 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
    matches two rows, so `.maybeSingle()` errors (PGRST116) into the discarded
    `error` and the field silently stops deriving at all. */
 
-const nextDocNo = async (sb: any, c: any): Promise<string> => {
+export const nextDocNo = async (sb: any, c: any): Promise<string> => {
   // Format: CS-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a deleted mid-month
   // row can't make the counter re-mint a surviving number forever — see doc-no.ts.
-  const yymm = (() => {
-    const d = new Date();
-    return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'consignment_sales_orders', 'doc_no', `${p}CS-${yymm}`);
 };
