@@ -154,6 +154,9 @@ follows the new SLA at once.
 
 ## Gotchas
 
+- The case Timeline (desktop and phone) shows only the key actions listed in
+  `vendor/scm/lib/assr/timeline.ts`; any other `assr_activity.action` is hidden
+  behind "Show all updates". Add a new progress action to that list.
 - `voided` needs a real label everywhere (`assr-stage-labels.ts`) — pipeline
   ORDER and stage WORDS are two separate tables; a surface that invents its
   own word for a non-step value is how the raw slug `voided` leaked onto the
