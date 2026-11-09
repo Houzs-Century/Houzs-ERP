@@ -34,13 +34,9 @@ const STAGING_REF = 'minnapsemfzjmtvnnvdd';
 const PROD_REF = 'anogrigyjbduyzclzjgn';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 
-/* Checksums as printed by the failing staging run of 2026-10-28. */
+/* The HC-0125 / HC-0157 rows (2026-10-28) were cleared and their files have
+   since merged; only rows still drifting stay here. */
 const ROWS = [
-  ['20261022T0600_hr_working_hours.sql', 'sha256:08f97791d79c221561fa0c0df030fb3aef6a89e6411ea14daf07cf6415cd0b44'],
-  ['20261022T0900_hr_payroll.sql', 'sha256:d8d7ec6fa77c9af9fa016a699aba24ca3c90134d63355b10642c35283d588dfc'],
-  ['20261022T1500_hr_trip_pay.sql', 'sha256:72251d6eab1917b237309fc887b05c4c6d172e049fb94d502dee64226c873e59'],
-  ['20261027T1100_mail_department_link.sql', 'sha256:2ebe01c116f36a71c07aaef9dcbd5a5412c18070a3d24943cc4832b3f06fc165'],
-  ['20261027T1110_mail_requested_department.sql', 'sha256:dc9f9ec13787699fdf6d5e7619ede690a1f83312687d5921595606e2082dc170'],
   /* 2026-11-09: branches staging-preview/supplier-order-two-pages and
      staging-preview/timeline-plus-pickup deployed these to staging. Both files
      are IF NOT EXISTS throughout, so they re-run cleanly when they merge. */
