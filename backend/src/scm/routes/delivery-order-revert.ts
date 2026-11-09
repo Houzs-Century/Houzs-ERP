@@ -18,16 +18,28 @@
 // re-walk), minus the AutoCount cancel, because a revert is not a cancel: the
 // document stays alive and re-workable.
 //
-// WHAT IS REVERTABLE, and why so narrow. Only LOADED (wrong scan) and DISPATCHED
-// (accidental send) — the two the owner named. A delivery already IN_TRANSIT /
-// SIGNED / DELIVERED / INVOICED is on the road or done, and DRAFT / CANCELLED
-// have nothing to undo. Backward only. And a DO with a live Sales Invoice or
+// WHAT IS REVERTABLE, and why so narrow. LOADED (wrong scan) and DISPATCHED
+// (accidental send) — the two the owner named — plus a wrong Delivered (below).
+// IN_TRANSIT moves back through the status PATCH, INVOICED is written by
+// nothing, and DRAFT / CANCELLED have nothing to undo. Backward only. And a DO with a live Sales Invoice or
 // Delivery Return is refused (`doHasDownstream`): un-shipping under a document
 // that references the shipment would desync it — void that first.
 //
 // STOCK MOVES ONLY WHEN CROSSING TO DRAFT. LOADED and DISPATCHED are both
 // stock-out; DRAFT is the only pre-ship target. So DISPATCHED→LOADED (un-send)
 // moves no stock, while anything→DRAFT (un-load / full reset) restores it.
+//
+// UNDO DELIVERED (2026-11-09, sister Hookka #1092). A driver's wrong
+// "Delivered" (SIGNED / DELIVERED) goes back to DISPATCHED — one step, and only
+// that one; undoing the dispatch or the load is the existing revert after it.
+// No stock moves (both sides are stock-out) and nothing reaches AutoCount (a
+// sign-off never did — doSignOffReachesAutoCount.test.ts). Refused while a live
+// Sales Invoice or Delivery Return stands on the DO (a payment or credit note
+// can only reach a delivery through its invoice), or while the crew reported a
+// delivery issue on it (a Service Case was opened for that delivery). The
+// delivered / signed stamps are cleared; the POD signature and photos are KEPT
+// on the row and listed in the audit note, and the sales order steps back from
+// DELIVERED when no other delivery of it is delivered (so-undeliver-sync.ts).
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { reverseInventoryForDo, returnDoRacksOnCancel } from './delivery-orders-mfg';
@@ -36,11 +48,14 @@ import { doHasDownstream } from '../lib/downstream-lock';
 import { recordEntityAudit, compactChanges, fieldChange } from '../lib/entity-audit';
 import { hasPositionCapability } from '../../services/positionCapabilities';
 import { requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stepSoBackFromDelivered, type SoUndeliverOutcome } from '../lib/so-undeliver-sync';
 
 // The only two states a revert may START from, and the lifecycle rank used to
 // prove the target is strictly earlier. DRAFT=0 is the pre-ship floor.
 const REVERTABLE_FROM = new Set(['LOADED', 'DISPATCHED']);
 const RANK: Record<string, number> = { DRAFT: 0, LOADED: 1, DISPATCHED: 2 };
+// INVOICED is not here: nothing writes it, and a billed delivery has an invoice.
+const UNDELIVER_FROM = new Set(['SIGNED', 'DELIVERED']);
 
 export const revertDeliveryOrderHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
@@ -77,9 +92,9 @@ export const revertDeliveryOrderHandler = async (
   }
   const toStatus = String(body.toStatus ?? '').trim().toUpperCase();
   const reason = String(body.reason ?? '').trim();
-  if (toStatus !== 'LOADED' && toStatus !== 'DRAFT') {
+  if (toStatus !== 'LOADED' && toStatus !== 'DRAFT' && toStatus !== 'DISPATCHED') {
     return c.json(
-      { error: 'invalid_target', reason: 'A revert may only move a delivery order back to LOADED or DRAFT.' },
+      { error: 'invalid_target', reason: 'A revert may only move a delivery order back to DISPATCHED, LOADED or DRAFT.' },
       400,
     );
   }
@@ -92,26 +107,39 @@ export const revertDeliveryOrderHandler = async (
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: doRow, error: doErr } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('id, do_number, status, company_id, so_doc_no').eq('id', id),
+    sb.from('delivery_orders')
+      .select('id, do_number, status, company_id, so_doc_no, delivered_at, signed_at, signature_data, pod_r2_key, pod_photo_keys')
+      .eq('id', id),
     co.companyId,
   ).maybeSingle();
   // Surface a read failure as 500 — masking it as 404 (NOT_THIS_COMPANY) would
   // tell the operator the DO does not exist when the database simply hiccuped.
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
   if (!doRow) return c.json(NOT_THIS_COMPANY, 404);
-  const row = doRow as { do_number?: string | null; status?: string | null; company_id?: number | null; so_doc_no?: string | null };
+  const row = doRow as {
+    do_number?: string | null; status?: string | null; company_id?: number | null; so_doc_no?: string | null;
+    delivered_at?: string | null; signed_at?: string | null; signature_data?: string | null;
+    pod_r2_key?: string | null; pod_photo_keys?: unknown;
+  };
   const from = String(row.status ?? '').toUpperCase();
   const doNo = row.do_number ?? id;
   const companyId = row.company_id ?? co.companyId;
 
-  // 4) LEGAL-TRANSITION GUARD — only the two named mistakes, backward only.
-  if (!REVERTABLE_FROM.has(from)) {
+  // 4) LEGAL-TRANSITION GUARD — the named mistakes, backward only.
+  const undeliver = UNDELIVER_FROM.has(from);
+  if (undeliver) {
+    if (toStatus !== 'DISPATCHED') {
+      return c.json(
+        { error: 'not_backward', reason: 'A delivered order goes back one step, to Loaded (DISPATCHED). Undo the dispatch or the load after that.' },
+        409,
+      );
+    }
+  } else if (!REVERTABLE_FROM.has(from)) {
     return c.json(
-      { error: 'not_revertable', reason: `A ${from} delivery order cannot be reverted — only a LOADED or DISPATCHED one can.` },
+      { error: 'not_revertable', reason: `A ${from} delivery order cannot be reverted — only a LOADED, DISPATCHED or DELIVERED one can.` },
       409,
     );
-  }
-  if ((RANK[toStatus] ?? 0) >= (RANK[from] ?? 0)) {
+  } else if (toStatus === 'DISPATCHED' || (RANK[toStatus] ?? 0) >= (RANK[from] ?? 0)) {
     return c.json({ error: 'not_backward', reason: `A revert only moves backward; ${from} cannot revert to ${toStatus}.` }, 409);
   }
 
@@ -120,6 +148,25 @@ export const revertDeliveryOrderHandler = async (
   //    first. (Also catches INVOICED, which necessarily has an SI.)
   const childLock = await doHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
+  if (undeliver) {
+    const { data: issues, error: issueErr } = await scopeToCompanyId(
+      sb.from('delivery_issues').select('id, assr_no').eq('delivery_order_id', id),
+      co.companyId,
+    );
+    // Fail closed: an unreadable issue list cannot prove there is none.
+    if (issueErr) return c.json({ error: 'check_failed', reason: `Could not check delivery issues: ${issueErr.message}` }, 503);
+    const reported = (issues ?? []) as Array<{ assr_no?: string | null }>;
+    if (reported.length > 0) {
+      const cases = reported.map((r) => r.assr_no).filter(Boolean).join(', ');
+      return c.json(
+        {
+          error: 'delivery_issue_reported',
+          reason: `The crew reported a delivery issue on this order${cases ? ` (Service Case ${cases})` : ''}, so it was delivered. Close that out first; it cannot be taken back from Delivered.`,
+        },
+        409,
+      );
+    }
+  }
 
   // 6) FLIP FIRST, guarded on the status we read, so a concurrent move can't be
   //    clobbered — then run the side effects (same order as the CANCELLED
@@ -128,6 +175,10 @@ export const revertDeliveryOrderHandler = async (
   const now = new Date().toISOString();
   const patch: Record<string, string | null> = { status: toStatus, updated_at: now };
   if (from === 'DISPATCHED') patch.dispatched_at = null;
+  if (undeliver) {
+    patch.delivered_at = null;
+    patch.signed_at = null;
+  }
   const { data: updated, error: updErr } = await scopeToCompanyId(
     sb.from('delivery_orders').update(patch).eq('id', id),
     co.companyId,
@@ -180,8 +231,29 @@ export const revertDeliveryOrderHandler = async (
     }
   }
 
+  // The sales order this POD delivered steps back too (best-effort, reported).
+  let salesOrder: SoUndeliverOutcome | undefined;
+  if (undeliver) {
+    try {
+      salesOrder = await stepSoBackFromDelivered(sb, {
+        soDocNo: row.so_doc_no ?? null, companyId, actorId: performedBy, doNumber: doNo,
+      });
+    } catch (e) {
+      salesOrder = 'read_failed';
+      /* eslint-disable-next-line no-console */
+      console.error('[do-revert] so step-back failed:', e);
+    }
+    if (salesOrder === 'read_failed' || salesOrder === 'conflict') {
+      warnings.push(`The sales order ${row.so_doc_no ?? ''} could not be moved back from Delivered (${salesOrder}); check it.`);
+    }
+  }
+
   // 8) AUDIT — REVERSE, carrying the reason and the status change. Best-effort,
   //    after the write, like every other audit in this module.
+  const podPhotos = Array.isArray(row.pod_photo_keys) ? row.pod_photo_keys.length : row.pod_r2_key ? 1 : 0;
+  const podKept = undeliver
+    ? ` POD kept on the order: ${row.signature_data ? 'signature, ' : 'no signature, '}${podPhotos} photo(s).`
+    : '';
   await recordEntityAudit(sb, {
     entityType: 'DELIVERY_ORDER',
     entityId: id,
@@ -190,8 +262,13 @@ export const revertDeliveryOrderHandler = async (
     actor: caller,
     companyId,
     statusSnapshot: toStatus,
-    note: `Reverted ${from} → ${toStatus}${reversesStock ? ' (stock restored)' : ''}: ${reason}`,
-    fieldChanges: compactChanges([fieldChange('status', from, toStatus)]),
+    note: `Reverted ${from} → ${toStatus}${reversesStock ? ' (stock restored)' : ''}: ${reason}${podKept}`,
+    fieldChanges: compactChanges([
+      fieldChange('status', from, toStatus),
+      ...(undeliver
+        ? [fieldChange('delivered_at', row.delivered_at ?? null, null), fieldChange('signed_at', row.signed_at ?? null, null)]
+        : []),
+    ]),
   });
 
   return c.json({
@@ -199,6 +276,7 @@ export const revertDeliveryOrderHandler = async (
     from,
     to: toStatus,
     inventoryReversed: reversesStock,
+    salesOrder,
     warnings: warnings.length ? warnings : undefined,
   });
 };
