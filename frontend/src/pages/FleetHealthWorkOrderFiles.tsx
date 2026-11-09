@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../api/client";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 export type WorkOrderFileKind = "quote" | "invoice" | "photo";
 
@@ -47,7 +48,7 @@ export function WorkOrderFiles({ wo, onChanged }: {
   };
 
   const open = async (key: string) => {
-    try { window.open(await api.fetchBlobUrl(`${base}/file?key=${encodeURIComponent(key)}`), "_blank", "noopener"); }
+    try { await openLoadedTab(() => api.fetchBlobUrl(`${base}/file?key=${encodeURIComponent(key)}`), 60_000); }
     catch (e) { setErr(errText(e)); }
   };
 

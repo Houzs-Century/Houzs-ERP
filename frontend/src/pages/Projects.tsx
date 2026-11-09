@@ -157,6 +157,7 @@ import { EventPnlTable } from "./projects/EventPnlTable";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
 import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -3237,11 +3238,10 @@ function TaskAttachmentRow({
 
   async function viewInTab() {
     try {
-      const url = await api.fetchBlobUrl(
+      await openLoadedTab(() => api.fetchBlobUrl(
         `/api/projects/attachments/${attachment.r2_key}`,
         viewableMime(attachment.file_name),
-      );
-      window.open(url, "_blank", "noopener");
+      ), 60_000);
     } catch (e: any) {
       toast?.error(e?.message || "Failed to open");
     }
@@ -5081,12 +5081,10 @@ function ChecklistRow({
    *  Deposit), where every file must be individually clickable. */
   async function openAttachment(a: TaskAttachment) {
     try {
-      const url = await api.fetchBlobUrl(
+      await openLoadedTab(() => api.fetchBlobUrl(
         `/api/projects/attachments/${a.r2_key}`,
         viewableMime(a.r2_key),
-      );
-      window.open(url, "_blank", "noopener");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      ), 30_000);
     } catch (e: any) {
       toast?.error(e?.message || "Failed to open");
     }

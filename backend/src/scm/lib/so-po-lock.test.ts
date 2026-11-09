@@ -4,7 +4,7 @@
 // through a minimal fake PostgREST client — same shape as
 // so-converted-po.test.ts, which walks the same SO→PO chain.
 import { describe, expect, test } from 'vitest';
-import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from './so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked, soPoLockedMany } from './so-po-lock';
 
 type Row = Record<string, unknown>;
 
@@ -37,7 +37,8 @@ function fakeSb(tables: Record<string, Row[]>, failOn?: string) {
 }
 
 const MIRRORED = '2990-SO-2608-017';   // 2990 — in scope
-const HOUZS = 'HC-SO-011196';          // Houzs — deliberately out of scope
+const HOUZS = 'HC-SO-011196';          // Houzs, AutoCount-era number
+const HOUZS_HC = 'HC-SO-2610-075';     // Houzs — the order that changed the scope
 
 const soItem = (id: string, docNo: string): Row => ({ id, doc_no: docNo });
 const poItem = (soItemId: string, poId: string | null): Row => ({ so_item_id: soItemId, purchase_order_id: poId });
@@ -97,16 +98,57 @@ describe('soPoLocked', () => {
     expect(await soPoLocked(sb, MIRRORED)).toBe(true);
   });
 
-  test('SCOPE: a Houzs SO is never PO-locked, even with a live PO', async () => {
-    // Owner 2026-08-12 scoped this rule to 2990. 302 Houzs orders carry a live
-    // PO with no processing date; locking them is a separate decision. If this
-    // test ever needs changing, that decision is what changed.
-    const sb = fakeSb({
-      mfg_sales_order_items: [soItem('si-1', HOUZS)],
-      purchase_order_items: [poItem('si-1', 'po-1')],
-      purchase_orders: [po('po-1', 'SUBMITTED')],
+  describe('SCOPE: every company (owner 2026-11-09, HC-SO-2610-075)', () => {
+    // HC-PO-2610-142 was raised from HC-SO-2610-075 on 2026-10-07; a direct
+    // edit then added "SPECIAL: HB Fully Cover + Divan Top Fully Cover" to the
+    // JAGER-(Q) line and the PO was received without the covers.
+    test('locks an HC- SO whose line is claimed by a live PO', async () => {
+      const sb = fakeSb({
+        mfg_sales_order_items: [soItem('si-1', HOUZS_HC)],
+        purchase_order_items: [poItem('si-1', 'po-1')],
+        purchase_orders: [po('po-1', 'RECEIVED')],
+      });
+      expect(await soPoLocked(sb, HOUZS_HC)).toBe(true);
     });
-    expect(await soPoLocked(sb, HOUZS)).toBe(false);
+
+    test('a DRAFT PO locks a Houzs SO too', async () => {
+      const sb = fakeSb({
+        mfg_sales_order_items: [soItem('si-1', HOUZS)],
+        purchase_order_items: [poItem('si-1', 'po-1')],
+        purchase_orders: [po('po-1', 'DRAFT')],
+      });
+      expect(await soPoLocked(sb, HOUZS)).toBe(true);
+    });
+
+    test('an HC- SO with only a CANCELLED PO is not locked', async () => {
+      const sb = fakeSb({
+        mfg_sales_order_items: [soItem('si-1', HOUZS_HC)],
+        purchase_order_items: [poItem('si-1', 'po-1')],
+        purchase_orders: [po('po-1', 'CANCELLED')],
+      });
+      expect(await soPoLocked(sb, HOUZS_HC)).toBe(false);
+    });
+
+    test('2990 still locks', async () => {
+      const sb = fakeSb({
+        mfg_sales_order_items: [soItem('si-1', MIRRORED)],
+        purchase_order_items: [poItem('si-1', 'po-1')],
+        purchase_orders: [po('po-1', 'SUBMITTED')],
+      });
+      expect(await soPoLocked(sb, MIRRORED)).toBe(true);
+    });
+
+    test('soPoLockedMany marks Houzs and 2990 docs alike, and skips cancelled-only', async () => {
+      const sb = fakeSb({
+        mfg_sales_order_items: [
+          soItem('si-1', HOUZS_HC), soItem('si-2', MIRRORED), soItem('si-3', HOUZS),
+        ],
+        purchase_order_items: [poItem('si-1', 'po-1'), poItem('si-2', 'po-2'), poItem('si-3', 'po-3')],
+        purchase_orders: [po('po-1', 'SUBMITTED'), po('po-2', 'DRAFT'), po('po-3', 'CANCELLED')],
+      });
+      const locked = await soPoLockedMany(sb, [HOUZS_HC, MIRRORED, HOUZS]);
+      expect([...locked].sort()).toEqual([MIRRORED, HOUZS_HC].sort());
+    });
   });
 
   test('an SO with no lines is not locked', async () => {
@@ -153,7 +195,7 @@ describe('soPoLocked', () => {
 });
 
 describe('soHasLivePo (BUG-101: any company)', () => {
-  test('a Houzs SO with a live PO answers true, though soPoLocked stays false', async () => {
+  test('a Houzs SO with a live PO answers true, and so does soPoLocked now', async () => {
     // HC-SO-2609-395 / PO-2610-025: the Processing Date moved after the PO.
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', HOUZS)],
@@ -161,7 +203,7 @@ describe('soHasLivePo (BUG-101: any company)', () => {
       purchase_orders: [po('po-1', 'SUBMITTED')],
     });
     expect(await soHasLivePo(sb, HOUZS)).toBe(true);
-    expect(await soPoLocked(sb, HOUZS)).toBe(false);
+    expect(await soPoLocked(sb, HOUZS)).toBe(true);
   });
 
   test('a cancelled PO does not count', async () => {

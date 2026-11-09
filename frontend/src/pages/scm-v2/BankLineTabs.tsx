@@ -31,6 +31,8 @@ export function bankLineTab(l: BankLine, chooseAnyway: ReadonlySet<number>): Lin
   if (l.state === 'POSTED') return 'matched';
   if (l.state === 'IGNORED') return 'set-aside';
   if (chooseAnyway.has(l.id)) return 'to-choose';
+  /* A day's DuitNow QR money (owner 2026-11-09): ready to match to its sales, or still waiting on a link. */
+  if (l.kind === 'QR') return l.qr_sales?.ready ? 'to-match' : 'to-choose';
   if (certainAllocation(l) != null) return 'to-match';
   if (l.kind === 'OTHER' && l.entryCandidates.length === 1) return 'to-match';
   if ((l.kind === 'OTHER' || l.kind === 'PAYOUT_NO_BATCH') && l.entryCandidates.length === 0 && l.candidates.length === 0) return 'no-entry';

@@ -28,7 +28,11 @@ const PV_ACTIONS: Record<string, string> = {
 const PV_FIELDS: Record<string, string> = {
   status: 'Status', payeeName: 'Payee', creditAccountCode: 'Credit account',
   voucherDate: 'Voucher date', supplierId: 'Supplier', purpose: 'Type',
-  notes: 'Notes', lineDescription: 'Line description', currency: 'Currency', exchangeRate: 'Exchange rate',
+  notes: 'Remark', lineDescription: 'Line description', currency: 'Currency', exchangeRate: 'Exchange rate',
+  /* 2026-11-08/09 — the bank it pays into (its own three fields; Edit text & bank
+     after the check), and a file removed before approval. */
+  payToBankName: 'Bank', payToAccountNo: 'Account no.', payToAccountName: 'Account name',
+  fileRemoved: 'File removed',
   totalSen: 'Total', allocatedSen: 'Allocated to invoices', bankChargeSen: 'Bank charges',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',

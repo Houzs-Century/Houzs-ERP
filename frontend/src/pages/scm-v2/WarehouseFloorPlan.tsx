@@ -28,6 +28,7 @@ import {
 } from '../../vendor/scm/lib/warehouse-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { guardFormula } from '../../lib/csv';
 import {
   buildZones, distinctCustomers, distinctProducts, isFiltering, itemDescription,
   itemMeta, matchSlot, resolvedZoneLabel, statusCounts, toSlot, ZONE_LABELS,
@@ -136,7 +137,10 @@ export function WarehouseFloorPlan({
 
   const exportSelection = () => {
     const head = ['Slot', 'Status', 'Product', 'Customer', 'Qty', 'In date', 'Document'];
-    const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const esc = (raw: string) => {
+      const v = guardFormula(raw);
+      return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    };
     const body = pickedSlots.map((s) =>
       [s.id, s.status, s.productLabel, s.customer, s.itemCount ? String(s.qty) : '', s.inDate, s.doc].map((v) => esc(String(v))).join(','));
     const csv = [head.join(','), ...body].join('\n');

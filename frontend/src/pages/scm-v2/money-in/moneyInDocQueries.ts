@@ -67,6 +67,8 @@ export type OfficialReceiptRow = {
   customer_name: string | null; method: string | null; amount_sen: number; paid_at: string | null; channel_account_code: string | null;
   issued_at: string | null; issued_by: string | null; created_at: string; created_by: string | null;
   cancelled_at: string | null; cancelled_by: string | null; cancel_reason: string | null; replaced_by_id: number | null;
+  /** RECEIVED FROM on the print — the order's phone and address (owner 2026-11-09: 为甚没有name 这些). */
+  phone?: string | null; address_lines?: string[];
 };
 type ReceiptRef = { id: number; orNumber: string; status: string };
 export type OfficialReceiptDetail = {

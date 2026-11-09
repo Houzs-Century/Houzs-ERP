@@ -17,9 +17,12 @@
 
 import { scopeToCompany, type CompanyScopeCtx } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
+import { describeVouchers } from './payment-vouchers-describe';
 
 export const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen, pay_to_bank_name, pay_to_account_no, pay_to_account_name';
+/* The supplier with its bank: a voucher made before its own bank fields reads the supplier's. */
+export const SUPPLIER_EMBED = 'supplier:suppliers(id, code, name, bank_name, bank_account_no, bank_account_name)';
 
 const LIST_CAP = 500;
 const SEARCH_CAP = 200;
@@ -158,12 +161,12 @@ export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
     const found = await searchVoucherIds(sb, c, term);
     if (!found.ok) return c.json({ error: 'load_failed', reason: found.reason }, 500);
     const read = await inBatches(found.ids, (batch) => scopeToCompany(sb.from('payment_vouchers')
-      .select(`${HEADER}, supplier:suppliers(id, code, name)`), c).in('id', batch));
+      .select(`${HEADER}, ${SUPPLIER_EMBED}`), c).in('id', batch));
     if (!read.ok) return c.json({ error: 'load_failed', reason: read.reason }, 500);
     rows = [...(read.rows as Row[])].sort((x, y) => String(y.voucher_date ?? '').localeCompare(String(x.voucher_date ?? ''))).slice(0, SEARCH_CAP);
   } else {
     let q = sb.from('payment_vouchers')
-      .select(`${HEADER}, supplier:suppliers(id, code, name)`)
+      .select(`${HEADER}, ${SUPPLIER_EMBED}`)
       .order('voucher_date', { ascending: false })
       // Bound the result so PostgREST's default 1000-row cap can't silently
       // truncate the list — matches the PI/SI/DO list convention.
@@ -187,10 +190,13 @@ export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
   }
   const journals = await journalNumbers(sb, c, rows.map((r) => r.pv_number));
   if (!journals.ok) return c.json({ error: 'load_failed', reason: journals.reason }, 500);
+  /* What each is for and the bank it pays into (owner 2026-11-08). */
+  const described = await describeVouchers(sb, c, rows);
+  if (!described.ok) return c.json({ error: 'load_failed', reason: described.reason }, 500);
   const counted = c.req.query('counts') === '1' && !term ? await stageCounts(sb, c) : null;
   if (counted && !counted.ok) return c.json({ error: 'load_failed', reason: counted.reason }, 500);
   return c.json({
-    paymentVouchers: rows.map((r) => ({ ...r, advance_remaining_sen: remaining.get(r.id) ?? 0, je_no: journals.byPv.get(r.pv_number) ?? null })),
+    paymentVouchers: rows.map((r) => ({ ...r, ...described.byId.get(r.id), advance_remaining_sen: remaining.get(r.id) ?? 0, je_no: journals.byPv.get(r.pv_number) ?? null })),
     ...(term ? { q: term, capped: rows.length >= SEARCH_CAP } : {}),
     ...(counted?.ok ? { counts: counted.counts } : {}),
   });

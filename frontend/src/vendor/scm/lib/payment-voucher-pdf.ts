@@ -31,6 +31,9 @@ import { fetchPvPrintBundle } from './payment-voucher-queries';
 export type PvPdfHeader = {
   pv_number: string; status: string; voucher_date: string | null;
   payee_name: string; notes?: string | null;
+  /* The bank it pays into (owner 2026-11-08), as the server reads it: the
+     voucher's own, else its request's, else its supplier's. */
+  pay_bank?: string | null; pay_account_no?: string | null; pay_account_name?: string | null;
   currency?: string | null; exchange_rate?: string | number | null;
   credit_account_code: string; total_sen?: number | null;
   supplier?: { code: string; name: string } | null;
@@ -52,6 +55,16 @@ export type PvPdfAllocation = { invoiceNumber: string | null; supplierInvoiceRef
    header); where one string is wanted (Paid From) the generator joins them
    itself. An unknown code still prints as itself — it IS the GL address. */
 export type AccountNamer = (code: string) => string | null;
+
+/* The bank a row each, then what the money is for (owner 2026-11-08: not all on
+   one line). The labels fit the info block's 20 mm label column. */
+const payToRows = (h: PvPdfHeader): Array<[string, string | null]> => [
+  ['Bank', h.pay_bank ?? null],
+  ['Account no.', h.pay_account_no ?? null],
+  ['Acc. name', h.pay_account_name ?? null],
+  /* The typed remark (owner 2026-11-09: the Description is what the lines say). */
+  ['Remark', h.notes ?? null],
+];
 
 /* The four-layer strip: one dashed box per layer, the recorded name + date
    INSIDE the box where a wet signature would go. drawSignatureBoxes is the
@@ -116,7 +129,8 @@ export async function renderPaymentVoucherInto(
      batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
     docTitle: header.purpose === 'CUSTOMER_REFUND' ? 'CUSTOMER REFUND'
-      : String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
+      /* Case-blind: the payee is stored in upper case from 2026-11-09 (INTERNAL TRANSFER TO …). */
+      : /^internal transfer to /i.test(String(header.payee_name)) ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
       { label: 'Date',  value: fmtDocDate(header.voucher_date) },
@@ -130,12 +144,12 @@ export async function renderPaymentVoucherInto(
         ? [
           ['Customer', header.payee_name],
           ['Refunds', header.refund_source_doc_no ? `${header.refund_source_type ?? ''} ${header.refund_source_doc_no}`.trim() : null],
-          ['Note', header.notes ?? null],
+          ...payToRows(header),
         ]
         : [
           ['Payee', header.payee_name],
           ['Supplier', header.supplier ? `${header.supplier.code} · ${header.supplier.name}` : null],
-          ['Note', header.notes ?? null],
+          ...payToRows(header),
         ],
     },
     {

@@ -9,7 +9,7 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { ensureReceiptForPayment, formaliseReceipt } from '../../acc/receipts';
+import { ensureReceiptForPayment, formaliseReceipt, loadReceiptParties, withReceiptParty } from '../../acc/receipts';
 import { resolveRoles } from '../../acc/rules';
 import { companyCodeById } from '../lib/doc-no';
 import { paginateAll } from '../lib/paginate-all';
@@ -39,25 +39,30 @@ export const receiptsList = async (c: any): Promise<Response> => {
 
   const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at, cancelled_at, cancelled_by, cancel_reason';
   const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' || status === 'CANCELLED' ? q.eq('status', status) : q);
+  /* Each row carries its customer's name, phone and address for the batch print (owner 2026-11-09). */
+  const withParties = async (rows: Array<Record<string, unknown>>) => {
+    const parties = await loadReceiptParties(sb, co.companyId, rows);
+    return rows.map((r) => withReceiptParty(r, parties));
+  };
   if (range) {
     const all = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
       .eq('company_id', co.companyId).gte('paid_at', range.from).lte('paid_at', range.to))
       .order('paid_at', { ascending: true }).order('or_number', { ascending: true }).range(from, to));
     if (all.error) return c.json({ error: 'load_failed', reason: all.error.message }, 500);
-    return c.json({ receipts: all.data ?? [] });
+    return c.json({ receipts: await withParties(all.data ?? []) });
   }
   if (String(c.req.query('all') ?? '') === '1') {
     const every = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
       .eq('company_id', co.companyId))
       .order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to));
     if (every.error) return c.json({ error: 'load_failed', reason: every.error.message }, 500);
-    return c.json({ receipts: every.data ?? [] });
+    return c.json({ receipts: await withParties(every.data ?? []) });
   }
   const { data, error } = await scoped(sb.from('acc_official_receipts').select(COLS).eq('company_id', co.companyId))
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ receipts: data ?? [] });
+  return c.json({ receipts: await withParties((data ?? []) as Array<Record<string, unknown>>) });
 };
 
 /* ── GET /accounting/receipts/:id — one official receipt, for its page ──────
@@ -141,7 +146,8 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
 
   const ref = (x: unknown) => { const v = x as { id: number; or_number: string; status: string } | null; return v ? { id: v.id, orNumber: v.or_number, status: v.status } : null; };
   return c.json({
-    receipt: row,
+    /* RECEIVED FROM on the print: the order's phone and address, its name where the receipt has none. */
+    receipt: withReceiptParty(r, await loadReceiptParties(sb, co.companyId, [r])),
     replacedBy: ref(next.data),
     replaces: ref(prev.data),
     paymentJournal: je ? { id: je.id, jeNo: je.je_no, reversed: je.reversed === true } : null,
@@ -172,7 +178,7 @@ export const receiptEnsure = async (c: any): Promise<Response> => {
      amounts, issued-by), not just the number — one round trip, server truth. */
   const { data: row, error: rowErr } = await sb.from('acc_official_receipts').select('*').eq('id', r.id).maybeSingle();
   if (rowErr || !row) return c.json({ error: 'ensure_failed', reason: rowErr?.message ?? 'receipt vanished after ensure' }, 500);
-  return c.json({ receipt: row });
+  return c.json({ receipt: withReceiptParty(row as Rec, await loadReceiptParties(sb, co.companyId, [row as Rec])) });
 };
 
 /* ── POST /accounting/receipts/:id/formalise — {accountCode?} ─────────────
@@ -197,7 +203,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor });
   if (!r.ok) {
-    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' ? 409 : r.status === 'not_found' ? 404 : 500);
+    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' || r.status === 'payment_reconciled' ? 409 : r.status === 'not_found' ? 404 : 500);
   }
   return c.json({ ok: true, orNumber: r.orNumber, already: r.already === true });
 };

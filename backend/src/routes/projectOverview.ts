@@ -131,9 +131,11 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
   const recentIds = new Set(projects.filter((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10) >= recent).map((p) => p.id));
   // company-scope: chat notes of this company's projects (activeCompanySql on p.company_id).
   const noteRows = await c.env.DB.prepare(
-    `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position
+    `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position, r.name AS author_role
        FROM project_activity a JOIN projects p ON p.id = a.project_id
-       LEFT JOIN users u ON u.id = a.user_id LEFT JOIN positions ps ON ps.id = u.position_id
+       LEFT JOIN users u ON u.id = a.user_id
+       LEFT JOIN positions ps ON ps.id = u.position_id
+       LEFT JOIN roles r ON r.id = u.role_id
       WHERE a.action = 'note' AND a.archived_at IS NULL AND substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
   ).bind(recent).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();

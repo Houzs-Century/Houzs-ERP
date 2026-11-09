@@ -1031,7 +1031,7 @@ function MobileAppInner() {
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onEdit={screen.key !== "delivery-orders-mfg"
-        ? () => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })
+        ? (fresh?: Record<string, unknown>) => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: fresh ?? screen.row })
         : canOperateDeliveryOrders(user, can, pageAccess) && screen.row?.id
           ? () => setScreen({ t: "do-edit", key: screen.key, row: screen.row, title: screen.title })
           : undefined}
@@ -1083,7 +1083,17 @@ function MobileAppInner() {
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber, companyCode) => setScreen({ t: "pod", docNo: doNumber, companyCode, from: "delivery-planning" })} />;
   else if (screen.t === "delivery-planning-driver") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber, companyCode) => setScreen({ t: "pod", docNo: doNumber, companyCode, from: "delivery-planning-driver" })} />;
-  else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
+  else if (screen.t === "pms") overlay = (
+    <MobilePMS
+      onBack={back}
+      initialProjectId={screen.projectId}
+      // Owner 2026-11-09 "letak balik button tu": the project-detail + FAB
+      // routes through MobileApp's setScreen the same way the Orders tab + FAB
+      // does, so one create path serves both surfaces.
+      onCreateSO={() => setScreen({ t: "new-so", mode: "new" })}
+      onCreateCase={() => setScreen({ t: "service", startNew: true })}
+    />
+  );
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
   else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;

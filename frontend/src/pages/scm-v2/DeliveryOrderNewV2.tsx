@@ -90,6 +90,7 @@ import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
 import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";
+import { lineDiscountShare } from "../../vendor/shared/line-discount-share";
 import { afterCreatePath, sourceDocPath } from "../../lib/returnToSource";
 import {
   seedFollowerVariants,
@@ -826,7 +827,8 @@ export function DeliveryOrderNewV2() {
     uom: it.uom ?? "UNIT",
     qty: it.remaining,
     unitPriceSen: it.unitPriceSen,
-    discountSen: it.discountSen,
+    // The remainder's share of the SO line discount, not all of it.
+    discountSen: lineDiscountShare(it.discountSen, it.qty, it.qty - it.remaining, it.remaining),
     unitCostSen: it.unitCostSen,
     variants:
       it.variants && typeof it.variants === "object"

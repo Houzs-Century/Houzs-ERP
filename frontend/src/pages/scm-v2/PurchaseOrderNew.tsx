@@ -69,6 +69,7 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 import { useLinkProductRequestPo, useProductRequest } from '../../vendor/scm/lib/product-request-queries';
+import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -1030,7 +1031,7 @@ export const PurchaseOrderNew = () => {
             }}>
               {supplier.contact_person && <span>Contact: <strong>{supplier.contact_person}</strong></span>}
               {supplier.phone          && <span>Phone: <strong>{formatPhone(supplier.phone)}</strong></span>}
-              {supplier.email          && <span>Email: <strong>{supplier.email}</strong></span>}
+              {supplierEmailList(supplier).length > 0          && <span>Email: <strong>{supplierEmailList(supplier).join(", ")}</strong></span>}
               {supplier.payment_terms  && <span>Terms: <strong>{supplier.payment_terms}</strong></span>}
               <span>Currency: <strong>{currency}</strong></span>
             </div>

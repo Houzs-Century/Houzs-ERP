@@ -42,6 +42,11 @@ export const BUILT_IN_RULES = [
 /** One of the four piles ('recon' | 'pay' | 'other' | 'misc'), or a group Finance added (its id). */
 export type TodoGroup = string;
 export const BUILT_IN_GROUPS = ['recon', 'pay', 'other', 'misc'] as const;
+/** Their names, as the page shows them (frontend finance/TaskDrawers.tsx BUILT_IN_GROUPS) — a task's
+    change line names the group it moved between. */
+export const BUILT_IN_GROUP_LABELS: Record<(typeof BUILT_IN_GROUPS)[number], string> = {
+  recon: 'Merchant reports & bank statements', pay: 'Payments', other: 'Receipts & books', misc: 'Others',
+};
 
 /** What a task or routine row carries beyond a rule's job. */
 export type TodoTaskRef = {

@@ -488,3 +488,99 @@ describe('a reference that matches outside the date window', () => {
     expect(ds[1]!.matched.map((p) => p.id)).toEqual(['one']);
   });
 });
+
+/* A DuitNow QR line (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct
+   去bank 的，不算卡机的). Its money went straight to the bank, so the sale behind
+   it was keyed Online, never Merchant. 2990's 31/10 RM 3,240 QR line was
+   "the system's guess" HOW YEE WEN — a card instalment keyed with no bank on
+   07/11 — while the QR sale itself, Jenny's, sat keyed Online with the QR's
+   own code and the matcher never looked at Online money. */
+describe('a QR line is matched to the Online sale, never to card money', () => {
+  const qrLine = (over: Partial<ParsedRow> = {}): ParsedRow =>
+    row({ lineNo: 23, txnDate: '2026-10-31', ref: null, grossSen: 324000, feeSen: 0, netSen: 324000, channel: 'QR', ...over });
+  const howYeeWen = pay({ id: 'how', docNo: '2990-SO-2611-042', paidOn: '2026-11-07', amountSen: 324000, approvalCode: '078120' });
+  const jenny = pay({ id: 'jenny', docNo: '2990-SO-2611-041', paidOn: '2026-11-07', amountSen: 324000, approvalCode: '20261031HLBBMYKLA30OQR77370349' });
+  const hlb = cfg({ code: 'HLB', has_unique_ref: true, date_tolerance_days: 7 });
+
+  it('takes the one Online payment of the amount as its suggestion, and offers no card payment', () => {
+    const [d] = matchStatement(hlb, [qrLine()], [howYeeWen], new Set(), [jenny]);
+    expect(d!.bucket).toBe('NEEDS_CONFIRM');
+    expect(d!.matchReason).toBe('amount+date');
+    expect(d!.matched).toEqual([]);
+    expect(d!.candidates.map((p) => p.id)).toEqual(['jenny']);
+    expect(d!.suggested.map((p) => p.id)).toEqual(['jenny']);
+    expect(d!.clue).toMatch(/QR/);
+    expect(d!.clue).toMatch(/2990-SO-2611-041/);
+    expect(d!.clue).not.toMatch(/2990-SO-2611-042/);
+  });
+
+  it('two Online payments of the amount are offered, neither ticked', () => {
+    const [d] = matchStatement(hlb, [qrLine()], [], new Set(), [jenny, pay({ ...jenny, id: 'other', docNo: '2990-SO-2611-099' })]);
+    expect(d!.bucket).toBe('NEEDS_CONFIRM');
+    expect(d!.candidates.map((p) => p.id)).toEqual(['jenny', 'other']);
+    expect(d!.suggested).toEqual([]);
+  });
+
+  it('with no Online sale it is "no sale", and says a card payment of the amount may be the QR keyed as card', () => {
+    const [d] = matchStatement(hlb, [qrLine()], [howYeeWen], new Set(), []);
+    expect(d!.bucket).toBe('UNMATCHED');
+    expect(d!.candidates).toEqual([]);
+    expect(d!.suggested).toEqual([]);
+    expect(d!.clue).toMatch(/2990-SO-2611-042/);
+    expect(d!.clue).toMatch(/Online/);
+  });
+
+  it('with nothing at all it is simply "no sale"', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), []);
+    expect(d!.bucket).toBe('UNMATCHED');
+    expect(d!.clue).toMatch(/QR/);
+  });
+
+  it('an Online payment outside the window, or already claimed, is not offered', () => {
+    const far = pay({ ...jenny, id: 'far', paidOn: '2026-11-09' });
+    const [d] = matchStatement(hlb, [qrLine()], [], new Set(['SOPAY:jenny']), [jenny, far]);
+    expect(d!.bucket).toBe('UNMATCHED');
+  });
+
+  it('one QR payment for two orders of ONE customer: that set is ticked', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
+      pay({ id: 'a', docNo: 'SO-A', paidOn: '2026-10-31', amountSen: 200000, customerName: 'Tan Ah Kow' }),
+      pay({ id: 'b', docNo: 'SO-B', paidOn: '2026-10-31', amountSen: 150000, customerName: ' tan ah kow ' }),
+    ]);
+    expect(d!.bucket).toBe('NEEDS_CONFIRM');
+    expect(d!.suggested.map((p) => p.id).sort()).toEqual(['a', 'b']);
+  });
+
+  /* 2990's 31/10 RM 3,500 QR line, on production after #5449: four Online
+     payments of four different orders and customers in the window happened to
+     add up to it, and were pre-ticked. One QR scan is ONE payer — a set across
+     customers is arithmetic, not a payment. */
+  it('Online payments of different customers that happen to add up are not offered', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
+      pay({ id: 'w', docNo: '2990-SO-2608-040', paidOn: '2026-10-29', amountSen: 100000, customerName: 'Wong' }),
+      pay({ id: 'x', docNo: '2990-SO-2608-010', paidOn: '2026-10-30', amountSen: 100000, customerName: 'Lim' }),
+      pay({ id: 'y', docNo: '2990-SO-2611-035', paidOn: '2026-11-01', amountSen: 90000, customerName: 'Ng' }),
+      pay({ id: 'z', docNo: '2990-SO-2610-060', paidOn: '2026-11-02', amountSen: 60000, customerName: 'Tan' }),
+    ]);
+    expect(d!.bucket).toBe('UNMATCHED');
+    expect(d!.candidates).toEqual([]);
+    expect(d!.suggested).toEqual([]);
+    expect(d!.clue).toMatch(/no Online payment of RM 3,500\.00/);
+  });
+
+  it('a set with an order whose customer is unknown is not offered either', () => {
+    const [d] = matchStatement(hlb, [qrLine({ grossSen: 350000, netSen: 350000 })], [], new Set(), [
+      pay({ id: 'a', docNo: 'SO-A', paidOn: '2026-10-31', amountSen: 200000, customerName: 'Tan Ah Kow' }),
+      pay({ id: 'b', docNo: 'SO-B', paidOn: '2026-10-31', amountSen: 150000, customerName: null }),
+    ]);
+    expect(d!.bucket).toBe('UNMATCHED');
+  });
+
+  it('a card line beside it never takes the Online payment', () => {
+    const [card, qr] = matchStatement(hlb, [row({ lineNo: 17, txnDate: '2026-10-31', ref: '501995', grossSen: 324000, netSen: 320760, feeSen: 3240 }), qrLine()], [], new Set(), [jenny]);
+    expect(card!.candidates).toEqual([]);
+    expect(card!.suggested).toEqual([]);
+    expect(card!.bucket).toBe('UNMATCHED');
+    expect(qr!.suggested.map((p) => p.id)).toEqual(['jenny']);
+  });
+});

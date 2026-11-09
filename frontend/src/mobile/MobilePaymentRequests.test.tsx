@@ -18,6 +18,9 @@ const base = (over: Req): Req => ({
 });
 let requests: Req[] = [];
 let isFinance = false;
+/* A failed read of one request (the list itself loaded). */
+let detailFail: Error | null = null;
+const detailRefetch = vi.fn();
 const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-new' }) }));
 const updateAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({}) }));
 const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
@@ -43,7 +46,9 @@ vi.mock('../vendor/scm/lib/payment-request-queries', async (importOriginal) => (
   usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents: true }, isLoading: false, isError: false }),
   useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
   useRequestBalance: () => ({ mutateAsync: balanceAsync, isPending: false }),
-  usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
+  usePaymentRequest: (id: string | null) => (detailFail
+    ? { data: undefined, isLoading: false, isError: true, error: detailFail, isFetching: false, refetch: detailRefetch }
+    : { data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
   useWithdrawPaymentRequest: () => ({ mutate: vi.fn(), isPending: false }),
@@ -214,4 +219,28 @@ test('the phone form takes a note to Finance, sent trimmed; the request shows it
   fireEvent.click(screen.getByText('Send to Finance'));
   await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
   expect(createAsync.mock.calls[0]![0]).toMatchObject({ note: 'Pay before Friday' });
+});
+
+/* Regression: a failed read of one request said "Not found", which reads as
+   deleted. Only a 404 says that now; any other failure offers Retry. */
+test('a request that fails to load says so and offers Retry; a 404 still says Not found', () => {
+  requests = [base({})]; isFinance = false;
+  detailFail = Object.assign(new Error('The server took too long to answer.'), { status: 504 });
+  try {
+    const { unmount } = render(<MobilePaymentRequests onBack={() => undefined} />);
+    fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
+    expect(screen.queryByText('Not found')).toBeNull();
+    expect(screen.getByText('Could not load')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(detailRefetch).toHaveBeenCalledTimes(1);
+    unmount();
+
+    detailFail = Object.assign(new Error('gone'), { status: 404 });
+    render(<MobilePaymentRequests onBack={() => undefined} />);
+    fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
+    expect(screen.getByText('Not found')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  } finally {
+    detailFail = null;
+  }
 });

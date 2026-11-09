@@ -12,7 +12,10 @@
 // The Cash Flow (owner 2026-09-18) adds a Direction column: a top category is
 // In or Out, a line is In / Out / Net so one account may sit on both sides, a
 // category names its own subtotal line, a subtotal row sums everything above
-// it, and the spares are offered per side.
+// it, and the spares are offered per side. Its Settlement / Deposit column
+// (owner 2026-11-09) says where a group's money prints on the Settlement /
+// Deposit view: Settlement, Deposit, split in parts (1 : 2 = a third and two
+// thirds), or as the group above.
 //
 // The owner's redesign (batch 6 §5.12, Finance-1a-Reports template 174–195):
 // the editor stands IN PLACE of the report while it is open (InPlaceOfReport —
@@ -27,9 +30,11 @@ import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVerti
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
-  REPORT_TITLES, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
-  setAccountFlow, setCategoryFlow, setCategoryTick, setTotalLabel, unplaceAccount, unplacedAccounts, useReportLayout, useResetReportLayout, useSaveReportLayout,
+  REPORT_TITLES, SPLIT_MAX_PART, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
+  setAccountFlow, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, unplaceAccount, unplacedAccounts,
+  useReportLayout, useResetReportLayout, useSaveReportLayout,
   type DropTarget, type Flow, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutCompany, type LayoutItem, type ReportKey, type Side,
+  type SplitChoice,
 } from '../../vendor/scm/lib/report-layout';
 import { InPlaceOfReport } from './reports/reportParts';
 import tokens from './finance/finance-ui.module.css';
@@ -66,6 +71,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   /* Close with unsaved changes asks first (the design's banner under the head). */
   const [asking, setAsking] = useState(false);
+  /* The groups whose parts are being typed: their two boxes stay while a part passes 0. */
+  const [typingParts, setTypingParts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!parked) return;
@@ -99,9 +106,9 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
 
   const names = useMemo(() => new Map((data?.accounts ?? []).map((a) => [a.code, a])), [data]);
   const companies: LayoutCompany[] = data?.companies ?? [];
-  /* The Cash Flow carries directions — one more column, spares per side. */
+  /* The Cash Flow carries directions and the Settlement / Deposit choice — two more columns, spares per side. */
   const cashFlow = report === 'rp';
-  const span = 4 + companies.length + (cashFlow ? 1 : 0);
+  const span = 4 + companies.length + (cashFlow ? 2 : 0);
   const title = `Layout · ${REPORT_TITLES[report]}`;
 
   const apply = (next: Layout) => {
@@ -241,6 +248,47 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     </span>
   );
 
+  /* A group's Settlement / Deposit choice (owner 2026-11-09): not split (a top group) or as
+     the group above, all Settlement, all Deposit, or split in parts typed as whole numbers. */
+  const splitControl = (it: LayoutCategory, depth: number) => {
+    const choice: SplitChoice = typingParts.has(it.id) && it.split ? 'parts' : splitChoice(it.split);
+    const choose = (next: SplitChoice) => {
+      if (!draft) return;
+      setTypingParts((prev) => {
+        const out = new Set(prev);
+        if (next === 'parts') out.add(it.id); else out.delete(it.id);
+        return out;
+      });
+      apply(setCategorySplit(draft, it.id, splitOfChoice(next)));
+    };
+    const setPart = (part: 'settlement' | 'deposit', typed: string) => {
+      if (!draft || !it.split) return;
+      apply(setCategorySplit(draft, it.id, { ...it.split, [part]: splitPart(typed, it.split[part]) }));
+    };
+    return (
+      <span className={s.split}>
+        <select aria-label={`Settlement / Deposit of ${it.label}`} className={s.select} value={choice}
+          title="Where its money prints on the Settlement / Deposit view" onChange={(e) => choose(e.target.value as SplitChoice)}>
+          <option value="">{depth === 1 ? 'Not split' : 'As above'}</option>
+          <option value="settlement">Settlement</option>
+          <option value="deposit">Deposit</option>
+          <option value="parts">Split in parts</option>
+        </select>
+        {choice === 'parts' && it.split && (
+          <span className={s.parts}>
+            <input type="number" inputMode="numeric" min={0} max={SPLIT_MAX_PART} step={1} className={s.part}
+              aria-label={`Settlement parts of ${it.label}`} title="Settlement parts" value={it.split.settlement}
+              onChange={(e) => setPart('settlement', e.target.value)} />
+            <span aria-hidden>:</span>
+            <input type="number" inputMode="numeric" min={0} max={SPLIT_MAX_PART} step={1} className={s.part}
+              aria-label={`Deposit parts of ${it.label}`} title="Deposit parts" value={it.split.deposit}
+              onChange={(e) => setPart('deposit', e.target.value)} />
+          </span>
+        )}
+      </span>
+    );
+  };
+
   const renderItems = (block: string, items: LayoutItem[], depth: number): React.ReactNode => items.map((it) => {
     const key = itemKey(it);
     if (it.kind === 'account') {
@@ -264,6 +312,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               </select>
             </td>
           )}
+          {/* A line follows its group's Settlement / Deposit choice. */}
+          {cashFlow && <td />}
           {noTicks}
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.code)}</td>
           <td className={`${s.shrink} ${s.right}`}>
@@ -291,7 +341,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               <span className={s.name}><span>{it.label}</span><span className={s.subText}>subtotal of everything above</span></span>
             )}
           </td>
-          {cashFlow && <td />}
+          {cashFlow && <><td /><td /></>}
           {noTicks}
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.label)}</td>
           <td className={`${s.shrink} ${s.right}`}>
@@ -342,6 +392,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               )}
             </td>
           )}
+          {cashFlow && <td>{splitControl(it, depth)}</td>}
           {companies.map((co) => (
             <td key={co.id} className={s.center}>
               <input
@@ -443,6 +494,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                   </td>
                   <td>{a.name}</td>
                   {cashFlow && <td><span className={s.dirText}>{side ? sideWord(side) : ''}</span></td>}
+                  {cashFlow && <td />}
                   {noTicks}
                   <td />
                   <td className={`${s.shrink} ${s.right}`}>
@@ -511,6 +563,9 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                   {' '}On the Cash flow every top category is In or Out — that decides the sign of its lines and which total they
                   feed; a line's own direction (In, Out, or Net = in − out) may differ, so one account can sit on both sides; a
                   side names its own subtotal line (Rename); a subtotal row sums everything above it, In less Out.
+                  {' '}Settlement / Deposit says where a group's money prints on the Settlement / Deposit view: all Settlement,
+                  all Deposit, or split in parts (1 : 2 = a third Settlement, two thirds Deposit); a group left as above follows
+                  the group it sits in. A customer's order payment goes by the payment itself.
                 </>
               )}
             </div>
@@ -528,6 +583,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                     <th>Account No.</th>
                     <th>Name</th>
                     {cashFlow && <th>Direction</th>}
+                    {cashFlow && <th>Settlement / Deposit</th>}
                     {companies.map((co) => <th key={co.id} className={s.center}>{co.code}</th>)}
                     <th className={s.center}>Order</th>
                     <th className={s.right}><span className="sr-only">Actions</span></th>

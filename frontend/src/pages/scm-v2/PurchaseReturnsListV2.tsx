@@ -66,6 +66,7 @@ import {
 import { fetchPurchaseReturnExportRows } from "../../vendor/scm/lib/return-list-export";
 import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
 import { todayMyt } from "../../vendor/scm/lib/dates";
+import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 type PrRow = {
   id: string;
@@ -356,7 +357,7 @@ function DetailDrawer({
                 </div>
                 <RowKV k="Contact" v={row.supplier?.contact_person || "—"} />
                 <RowKV k="Phone" v={formatPhone(row.supplier?.phone) || "—"} />
-                <RowKV k="Email" v={row.supplier?.email || "—"} />
+                <RowKV k="Email" v={supplierEmailList(row.supplier).join(", ") || "—"} />
                 <RowKV k="Address" v={row.supplier?.address || "—"} />
               </div>
 

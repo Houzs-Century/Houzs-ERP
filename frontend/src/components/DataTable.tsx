@@ -3199,7 +3199,7 @@ function DataTableInner<T, L>({
           return createPortal(
             <div
               ref={filterMenuRef}
-              className="fixed z-[120] flex w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
+              className="fixed z-[120] flex w-[236px] flex-col overflow-y-auto overscroll-contain rounded-md border border-border bg-surface shadow-slab"
               style={{ top: filterMenuPos.top, bottom: filterMenuPos.bottom, left: filterMenuPos.left, maxHeight: filterMenuPos.maxHeight }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
@@ -3318,9 +3318,9 @@ function DataTableInner<T, L>({
 
               {/* Value checklist — its own scroller. `overscroll-contain` so a
                   wheel that hits the top/bottom of the list doesn't chain into
-                  a page scroll (which closes the popover); `min-h-0` lets it
-                  shrink when the viewport-capped flex column runs short. */}
-              <div className="max-h-[240px] min-h-0 overflow-y-auto overscroll-contain py-1">
+                  a page scroll (which closes the popover). `shrink-0`: never
+                  squeezed to one row; the whole popover scrolls (2990-0054). */}
+              <div className="max-h-[240px] shrink-0 overflow-y-auto overscroll-contain py-1">
                 {shown.length === 0 && (
                   <div className="px-3 py-2 text-[12px] text-ink-muted">No values</div>
                 )}

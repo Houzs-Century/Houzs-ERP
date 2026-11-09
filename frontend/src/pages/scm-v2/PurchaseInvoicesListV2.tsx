@@ -80,6 +80,7 @@ import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
 import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 import { todayMyt } from "../../vendor/scm/lib/dates";
+import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -413,7 +414,7 @@ function DetailDrawer({
                 </div>
                 <RowKV k="Contact" v={row.supplier?.contact_person || "—"} />
                 <RowKV k="Phone" v={row.supplier?.phone || "—"} />
-                <RowKV k="Email" v={row.supplier?.email || "—"} />
+                <RowKV k="Email" v={supplierEmailList(row.supplier).join(", ") || "—"} />
                 <RowKV k="Address" v={row.supplier?.address || "—"} />
               </div>
 

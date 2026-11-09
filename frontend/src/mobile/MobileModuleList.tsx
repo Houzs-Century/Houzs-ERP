@@ -24,6 +24,7 @@ import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import { mfgCategoryLabel } from "../vendor/shared/product-categories";
+import { supplierEmailList } from "../vendor/shared/supplier-emails";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -873,12 +874,9 @@ const join = (...parts: Array<string | null | undefined>) =>
 // reference a schema directly when wiring onNew/onEdit.
 // ---------------------------------------------------------------------------
 
-/* suppliers — POST /suppliers (code+name required), PATCH /suppliers/:id.
-   Response wraps the record as { supplier: {...} }; id = supplier.id. Rich
-   AutoCount master; the mobile form exposes the everyday subset. credit_limit
-   is stored in SEN (credit_limit_sen) → money scale 100. Bindings (assigned
-   SKUs + per-category price matrix) are a separate endpoint → not in this
-   flat form. */
+/* suppliers — POST /suppliers (code+name required), PATCH /suppliers/:id; reply
+   { supplier }. The everyday subset of the AutoCount master; credit_limit is SEN
+   (money scale 100). Bindings (SKUs + price matrix) are a separate endpoint. */
 export const FORM_SUPPLIERS: FormSchema = {
   title: "Supplier",
   eyebrow: "Procurement",
@@ -895,6 +893,7 @@ export const FORM_SUPPLIERS: FormSchema = {
     { key: "mobile", label: "Mobile", type: "tel" },
     { key: "whatsappNumber", label: "WhatsApp", type: "tel" },
     { key: "email", label: "Email", type: "email", placeholder: "supplier@example.com" },
+    { key: "email2", label: "Email 2", type: "email" }, { key: "email3", label: "Email 3", type: "email" }, // owner 2026-11-09: PO Cc
     { key: "address", label: "Address", type: "textarea" },
     { key: "state", label: "State", type: "text" },
     { key: "postcode", label: "Postcode", type: "text" },
@@ -1104,6 +1103,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       [(r) => pick(r, "code") ?? "—", "Code"],
       [(r) => pick(r, "contactPerson", "contact_person", "attention") ?? "—", "Contact"],
       [(r) => formatPhone(pick(r, "phone", "mobile", "whatsappNumber", "whatsapp_number")) || "—", "Phone"],
+      [(r) => supplierEmailList(r).join(", ") || "—", "Email"],
     ],
     sorts: [{ key: "name", label: "Name", cmp: (a, b) => byStr(a.name, b.name) }],
     form: FORM_SUPPLIERS,

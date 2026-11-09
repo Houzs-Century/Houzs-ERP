@@ -23,6 +23,7 @@ import { composeSupplierSku } from '../../vendor/scm/lib/supplier-sku-helpers';
 import styles from './SupplierDetail.module.css';
 import { readImportGrid, resolveImportHeaders } from '../../lib/import-sheet';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { guardFormula } from '../../lib/csv';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -68,7 +69,7 @@ const SOFA_TIERS_FOR_EXPORT: readonly ('P1' | 'P2' | 'P3' | 'P4')[] = ['P1', 'P2
 /** RFC4180 quote when a cell contains comma / quote / newline. */
 function csvCell(v: unknown): string {
   if (v == null) return '';
-  const s = String(v);
+  const s = guardFormula(String(v));
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

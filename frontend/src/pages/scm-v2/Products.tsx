@@ -128,6 +128,7 @@ import { buildSkuImportRows, gridToSkuRecords, importFailureMessage, priceSheetR
 import { readImportGrid } from '../../lib/import-sheet';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 import { renameCompartmentMeta } from './compartmentRename';
+import { guardFormula } from '../../lib/csv';
 import { downloadSkuImportTemplate, savedSummary } from './products/skuImportTemplate';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
@@ -4562,7 +4563,7 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
   // RFC4180: quote if contains comma, quote, or newline.
   const cell = (v: unknown): string => {
     if (v == null) return '';
-    const s = String(v);
+    const s = guardFormula(String(v));
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
