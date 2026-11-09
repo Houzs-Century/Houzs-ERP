@@ -21,6 +21,10 @@ name: Merge truncated AutoCount codes (PLAN unless applied)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       target:
         description: "Which DB"
         required: true
@@ -60,6 +64,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -72,13 +81,21 @@ jobs:
           COMPANY_ID: ${{ inputs.company_id }}
           OUT_DIR: merge-truncated-ac-codes-out
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: backend/merge-truncated-ac-codes-out
+          name: rows
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: merge-truncated-ac-codes-${{ inputs.mode }}-${{ github.run_id }}
-          path: backend/merge-truncated-ac-codes-out
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
 
   run-staging:
     if: ${{ inputs.target == 'staging' }}
@@ -87,6 +104,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -99,10 +121,18 @@ jobs:
           COMPANY_ID: ${{ inputs.company_id }}
           OUT_DIR: merge-truncated-ac-codes-out
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: backend/merge-truncated-ac-codes-out
+          name: rows
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: merge-truncated-ac-codes-staging-${{ inputs.mode }}-${{ github.run_id }}
-          path: backend/merge-truncated-ac-codes-out
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
