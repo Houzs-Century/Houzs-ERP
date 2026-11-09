@@ -45,12 +45,14 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
-  /** The Description (stored as notes): what the money is for, as Finance typed it
-      (owner 2026-10-14: the list shows it; 2026-11-08: Notes renamed Description). */
+  /** The Remark (stored as notes): what Finance typed beside the voucher (owner
+      2026-10-14: Notes; 2026-11-08: Description; 2026-11-09: Remark — the Description
+      is now what the bills say, description_text). */
   notes?: string | null;
-  /** What it is for in the listing's words: its payment requests by number and
-      purpose, else its lines (server: payment-vouchers-describe.ts). */
-  purpose_text?: string;
+  /** The Description: what is paid for, as the bills say it — an AP payment's invoices'
+      lines, else its own lines, else its requests' purposes, else the remark; never the
+      bill number (owner 2026-11-09; server: payment-vouchers-describe.ts). */
+  description_text?: string;
   /** The bank it pays into: its own fields, else its request's, else its supplier's. */
   pay_bank?: string | null;
   pay_account_no?: string | null;

@@ -15,14 +15,14 @@ type Row = Record<string, unknown> & { id: string; pv_number: string; stage: str
 const { asks, printed, ROWS } = vi.hoisted(() => {
   const at = (id: string, pv_number: string, stage: string, over: Record<string, unknown>): Row => ({
     id, pv_number, stage, status: 'DRAFT', currency: 'MYR', exchange_rate: 1, credit_account_code: '310-0010', supplier: null,
-    notes: null, purpose_text: '', pay_bank: null, pay_account_no: null, pay_account_name: null, ...over,
+    notes: null, description_text: '', pay_bank: null, pay_account_no: null, pay_account_name: null, ...over,
   });
   return {
     asks: [] as Array<{ from: string; to: string; stages: string[] }>,
     printed: [] as Array<{ view: { keys: string[]; matrix: { body: unknown[][] }; rows: readonly Row[] }; opts: { subtitle: string; action?: string } }>,
     ROWS: [
-      at('a', 'HC-Draft-2611-002', 'PREPARED', { voucher_date: '2026-11-02', payee_name: 'MK PROPERTIES', total_sen: 150_000, notes: 'Booth deposit IOI City', purpose_text: 'HC-PRQ-2611-004 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' }),
-      at('b', 'HC-HPV-2611-001', 'CHECKED', { voucher_date: '2026-11-03', payee_name: 'TNB', total_sen: 32_050, notes: 'Electricity October', purpose_text: 'ELECTRICITY', credit_account_code: '310-0020' }),
+      at('a', 'HC-Draft-2611-002', 'PREPARED', { voucher_date: '2026-11-02', payee_name: 'MK PROPERTIES', total_sen: 150_000, notes: 'Booth deposit · BILL 77 · DATED 2026-11-01', description_text: 'BOOTH DEPOSIT IOI CITY', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' }),
+      at('b', 'HC-HPV-2611-001', 'CHECKED', { voucher_date: '2026-11-03', payee_name: 'TNB', total_sen: 32_050, notes: 'Electricity October', description_text: 'ELECTRICITY OCTOBER', credit_account_code: '310-0020' }),
       at('c', 'HC-HPV-2611-002', 'CHECKED', { voucher_date: '2026-11-04', payee_name: 'FOSHAN CHAIRS', total_sen: 100_000, currency: 'RMB', exchange_rate: 0.65, pay_bank: 'BANK OF CHINA', pay_account_no: '6217 0000' }),
       at('d', 'HC-HPV-2610-009', 'POSTED', { status: 'POSTED', voucher_date: '2026-10-05', payee_name: 'OLD CO', total_sen: 5_000 }),
     ],
@@ -55,9 +55,12 @@ describe('the Payment listing', () => {
     for (const no of ['HC-Draft-2611-002', 'HC-HPV-2611-001', 'HC-HPV-2611-002']) expect(screen.getByText(no)).toBeTruthy();
     expect(screen.queryByText('HC-HPV-2610-009')).toBeNull();
     const row = screen.getByText('HC-Draft-2611-002').closest('tr')!;
-    for (const cell of ['MK PROPERTIES', 'Booth deposit IOI City', 'HC-PRQ-2611-004 Booth deposit', 'MAYBANK', '5140 1234 5678', '1,500.00', 'Prepared']) {
+    for (const cell of ['MK PROPERTIES', 'BOOTH DEPOSIT IOI CITY', 'MAYBANK', '5140 1234 5678', '1,500.00', 'Prepared']) {
       expect(within(row).getByText(cell)).toBeTruthy();
     }
+    /* What the bills say, not the remark with its bill number; no Purpose column (owner 2026-11-09). */
+    expect(within(row).queryByText(/BILL 77/)).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /^Purpose/ })).toBeNull();
     /* RMB 1,000 at 0.65 leaves the bank as RM 650; its own amount stands under it. */
     const foreign = screen.getByText('HC-HPV-2611-002').closest('tr')!;
     expect(within(foreign).getByText('650.00')).toBeTruthy();
@@ -95,9 +98,9 @@ describe('the Payment listing', () => {
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
     await vi.waitFor(() => expect(printed).toHaveLength(1));
     const { view, opts } = printed[0]!;
-    expect(view.keys).toEqual(['pv_number', 'voucher_date', 'payee', 'description', 'purpose', 'bank', 'accountNo', 'amount', 'stage']);
+    expect(view.keys).toEqual(['pv_number', 'voucher_date', 'payee', 'description', 'bank', 'accountNo', 'amount', 'stage']);
     expect(view.rows.map((r) => r.pv_number)).toEqual(['HC-Draft-2611-002', 'HC-HPV-2611-002']);
-    expect(view.matrix.body[0]).toEqual(['HC-Draft-2611-002', '2026-11-02', 'MK PROPERTIES', 'Booth deposit IOI City', 'HC-PRQ-2611-004 Booth deposit', 'MAYBANK', '5140 1234 5678', 1500, 'Prepared']);
+    expect(view.matrix.body[0]).toEqual(['HC-Draft-2611-002', '2026-11-02', 'MK PROPERTIES', 'BOOTH DEPOSIT IOI CITY', 'MAYBANK', '5140 1234 5678', 1500, 'Prepared']);
     expect(opts.action).toBe('print');
     expect(opts.subtitle).toContain('at Prepared and Checked.');
     expect(opts.subtitle).toContain('Pay from: 310-0010 · MAYBANK.');

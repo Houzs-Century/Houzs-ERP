@@ -177,7 +177,7 @@ describe('the AP Payment (?type=ap)', () => {
     expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('PUBLIC BANK');
     expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('3188 0000 11');
     expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('FOSHAN CHAIRS SDN BHD');
-    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByLabelText('Voucher remark') as HTMLTextAreaElement).value).toBe('');
     fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '3188 0000 99' } });
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
     expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('3188 0000 99');
@@ -422,8 +422,9 @@ describe('the plain Payment Voucher (/new)', () => {
 
   /* 普通 payment scan bill 可以 default 放今天吗 → 做 (owner 2026-09-08): the
      bill's date no longer overwrites the voucher's — that stays today, the
-     day he records the payment — and rides in the notes instead. */
-  test('a scanned bill leaves the voucher dated TODAY; the bill\'s own date goes to the notes', () => {
+     day he records the payment. Its number and date ride in their own fields, and no
+     longer in the Remark (owner 2026-11-09: 不要像之前一样显示bill no.). */
+  test('a scanned bill leaves the voucher dated TODAY; the bill\'s number and date go to their own fields, not the Remark', () => {
     render(
       <MemoryRouter initialEntries={[{
         pathname: '/scm/payment-vouchers/new',
@@ -441,7 +442,9 @@ describe('the plain Payment Voucher (/new)', () => {
     const date = screen.getByLabelText(/Voucher date/) as HTMLInputElement;
     expect(date.value).toBe(`${y}/${m}/${d}`);
     expect(date.value).not.toBe('2026/08/25');
-    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
+    expect((screen.getByLabelText('Voucher remark') as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByLabelText('Bill no.') as HTMLInputElement).value).toBe('T0012');
+    expect((screen.getByLabelText('Bill date') as HTMLInputElement).value).toBe('2026/08/25');
   });
 
   test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
@@ -667,7 +670,7 @@ describe('answering several payment requests with ONE voucher (?fromRequests=)',
     /* Two account names: no bank is guessed, and the page says so. */
     expect(screen.getByText(/They name different banks: type the bank yourself/)).toBeTruthy();
     expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('');
-    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('lalamove to Armani; meta ads invoice');
+    expect((screen.getByLabelText('Voucher remark') as HTMLTextAreaElement).value).toBe('lalamove to Armani; meta ads invoice');
     fireEvent.change(screen.getByLabelText(/^Pay to/), { target: { value: 'STAFF CLAIMS' } });
     for (const n of [1, 2]) {
       const account = screen.getByLabelText(`line ${n} amount`).closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
@@ -744,7 +747,8 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.paymentRequestId).toBe('prq-1');
-    expect(payload.notes).toBe('Booth F1 rental · BILL MLE-0925 · DATED 2026-09-01');
+    expect(payload.notes).toBe('Booth F1 rental');
+    expect(payload).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01' });
     /* A request with no bank leaves the bank fields empty. */
     expect(payload).toMatchObject({ payToBankName: null, payToAccountNo: null, payToAccountName: null });
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A002', amountSen: 800000, projectId: 348 })]);
