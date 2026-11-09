@@ -4,7 +4,8 @@ import { scopeToCompany } from '../../lib/companyScope';
 import { canViewAllSales } from '../../lib/houzs-perms';
 import { chunkIn } from '../../lib/paginate-all';
 import { monthBoundsMy, rangeBoundsMy, todayMyt } from '../../lib/my-time';
-import { escapeForOr } from '../../lib/postgrest-search';
+import { escapeForOr, phoneSearchOrParts } from '../../lib/postgrest-search';
+import { normalizePhone } from '../../shared/phone';
 import { applySalesPlace, readSalesPlace } from '../../lib/pos-sales-place';
 import { resolveCallerStaffId } from '../../lib/salesScope';
 import { resolveOwnerStaffId } from '../pwp-codes';
@@ -139,8 +140,9 @@ mfgSalesOrders.get('/mine', async (c) => {
   if (q) {
     const safe = escapeForOr(q);
     if (safe) {
+      /* Phones are stored E.164: the shared normaliser lets "012-345 6789" find "+60123456789". */
       query = query.or(
-        `doc_no.ilike.%${safe}%,debtor_name.ilike.%${safe}%,phone.ilike.%${safe}%`,
+        [`doc_no.ilike.%${safe}%`, `debtor_name.ilike.%${safe}%`, ...phoneSearchOrParts(safe, q, normalizePhone)].join(','),
       );
     }
   } else {
