@@ -743,8 +743,7 @@ async function loadAllocationsForItems(
    (one entry per GRN line), carrying the GR number + net qty + status. The PO
    counterpart of soLineDeliveries: lets the PO list show a "Received" column
    identical to the SO "Delivered" column. Cancelled GRNs are excluded so the
-   breakdown never shows a voided receipt. Net qty = grnLineNetReceived;
-   zero/negative nets (fully returned) are dropped. Read-only display aid. */
+   breakdown never shows a voided receipt. Net qty = grnLineNetReceived; zero nets dropped. */
 export type PoLineReceipt = { grnNumber: string; qty: number; status: string };
 async function poLineReceipts(
   sb: any,
