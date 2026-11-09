@@ -454,7 +454,7 @@ async function runProjectChase(env: Env, today: string): Promise<number> {
       await db
         .prepare(
           `INSERT INTO pms_agent_proposals (id, kind, key, status, payload, summary, created_at)
-           VALUES (?, 'PROJECT_CHASE', ?, 'PENDING', ?::jsonb, ?, ?)`,
+           VALUES (?, 'PROJECT_CHASE', ?, 'PENDING', ?::text::jsonb, ?, ?)`,
         )
         .bind(crypto.randomUUID(), key, JSON.stringify(chase), summary, nowIso)
         .run();
@@ -499,7 +499,7 @@ async function buildBrief(env: Env, facts: SoFact[], settings: PmsSettings): Pro
   // Snapshot row — ai_focus stays NULL here; the lead's brain call fills it.
   try {
     await db
-      .prepare('INSERT INTO pms_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::jsonb, NULL, ?)')
+      .prepare('INSERT INTO pms_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)')
       .bind(crypto.randomUUID(), JSON.stringify(brief), generatedAt)
       .run();
   } catch (e) {

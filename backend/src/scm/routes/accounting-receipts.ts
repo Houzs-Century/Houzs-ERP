@@ -203,7 +203,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor });
   if (!r.ok) {
-    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' ? 409 : r.status === 'not_found' ? 404 : 500);
+    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' || r.status === 'payment_reconciled' ? 409 : r.status === 'not_found' ? 404 : 500);
   }
   return c.json({ ok: true, orNumber: r.orNumber, already: r.already === true });
 };
