@@ -5075,7 +5075,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     if (doHasArrived(prevUpper) && !doHasArrived(toStatus) && toStatus !== 'CANCELLED') {
       return c.json({
         error: 'use_revert',
-        reason: 'This Delivery Order is already delivered. To take it back to Loaded, use "Undo delivered" on the Delivery Order and give the reason.',
+        reason: 'This Delivery Order is marked Delivered. To take it back to Loaded, use "Undo delivered" on the Delivery Order and give the reason.',
       }, 409);
     }
   }
