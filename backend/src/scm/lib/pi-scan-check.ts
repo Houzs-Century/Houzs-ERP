@@ -49,6 +49,29 @@ export type PiReview = {
 
 export const PI_REVIEW_VERSION = 5;
 
+/** The invoice as read, rebuilt from a working copy's own rows, for a copy whose
+ *  stored read is not kept (no scan sample): it can still take newer matching.
+ *  Each row keeps its own pieces, so a printed row split across two GRN lines
+ *  adds back to what was printed and two identical printed rows stay two. PURE. */
+export function extractOfReview(r: PiReview): PiScanExtract | null {
+  const lines: PiScanLine[] = r.lines
+    .filter((l) => l.read && l.qty > 0)
+    .map((l) => {
+      const read = l.read!;
+      const whole = read.qty === l.qty;
+      return {
+        itemCode: read.itemCode, articleNo: null, description: read.description, qty: l.qty,
+        unitPrice: read.unitPrice, salesTax: null,
+        lineTotal: whole ? read.lineTotal : read.unitPrice != null ? Math.round(read.unitPrice * l.qty * 100) / 100 : null,
+      };
+    });
+  if (lines.length === 0) return null;
+  return {
+    supplierName: r.supplierRead, supplierCode: null, invoiceNumber: r.invoiceNumber, invoiceDate: r.invoiceDate,
+    poNo: r.poNo, doNo: r.doNo, salesTax: null, totalAmount: null, lines,
+  };
+}
+
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
 const readOf = (l: PiScanLine) => ({ itemCode: l.itemCode ?? l.articleNo, description: l.description, qty: l.qty ?? 0, unitPrice: l.unitPrice, lineTotal: l.lineTotal });
