@@ -40,6 +40,8 @@ import {
   Phone,
   MapPin,
   Play,
+  Target,
+  Image as ImageIcon,
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
@@ -77,6 +79,8 @@ import { QcStageChipView } from "../components/assr/QcStageChipView";
 import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
 import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
+import { CaseSection } from "../components/assr/CaseSection";
+import { InspectByToggle } from "../components/assr/InspectByToggle";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -5711,41 +5715,11 @@ function VerificationCard({
           0105) — who inspects the reported issue. Own team routes the
           visit into Delivery Planning via customer_pickup_at; supplier
           handles it on their side via the supplier portal. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Inspect by
-        </div>
-        <div className="flex gap-1.5">
-          {([
-            { v: "own", label: "Own team" },
-            { v: "supplier", label: "Supplier" },
-          ] as const).map((o) => (
-            <button
-              key={o.v}
-              type="button"
-              onClick={() =>
-                patch({ inspection_by: c.inspection_by === o.v ? null : o.v })
-              }
-              disabled={archived || saving}
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                c.inspection_by === o.v
-                  ? "border-primary bg-primary-soft text-primary"
-                  : "border-border bg-surface text-ink-secondary hover:border-primary/40",
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        {c.inspection_by === "supplier" && (
-          <div className="min-w-[220px] flex-1 rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-            Supplier performs the inspection — progress lands in the
-            supplier portal's service note (see the Supplier Pickup /
-            Item Ready rows).
-          </div>
-        )}
-      </div>
+      <InspectByToggle
+        value={c.inspection_by ?? null}
+        isDisabled={archived || saving}
+        onPick={(next) => patch({ inspection_by: next })}
+      />
       {c.inspection_by === "own" && (
         <>
           <InlineEdit
@@ -5816,10 +5790,11 @@ function VerificationCard({
                 disabled={saving}
                 onClick={() => setOutcome(active ? null : opt.value)}
                 className={cn(
-                  "rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-50",
+                  "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-50",
                   toneClass
                 )}
               >
+                {active && <Check size={13} />}
                 {opt.label}
               </button>
             );
@@ -5828,12 +5803,10 @@ function VerificationCard({
       </div>
       </div>
 
-      <div>
-        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Root cause
-        </label>
+      <CaseSection title="Root Cause" badge={null} icon={<Target size={16} />} action={null} isCollapsible={false}>
         <input
           type="text"
+          aria-label="Root cause"
           value={rootDraft}
           onChange={(e) => setRootDraft(e.target.value)}
           onBlur={saveRootCause}
@@ -5855,7 +5828,7 @@ function VerificationCard({
             Fill the root cause to advance to Pending Solution.
           </div>
         )}
-      </div>
+      </CaseSection>
       <VerificationFindingsFields c={c} patch={patch} />
 
       {c.verified_at && (
@@ -5869,18 +5842,20 @@ function VerificationCard({
           what the item looked like BEFORE it went to the supplier.
           Distinct category from the post-return QC report so both
           checkpoints keep their own paper trail. */}
-      <MilestoneAttachmentSlot
-        caseId={caseId}
-        category="receipt_evidence"
-        label="QC Issue Inspection Photos / Videos"
-        emptyLabel="No inspection photos uploaded yet."
-        uploadLabel="Upload photo / video"
-        attachments={attachments}
-        archived={archived}
-        detail={detail}
-        dialog={dialog}
-        toast={toast}
-      />
+      <CaseSection title="QC Issue Inspection Photos / Videos" badge={null} icon={<ImageIcon size={16} />} action={null} isCollapsible={false}>
+        <MilestoneAttachmentSlot
+          caseId={caseId}
+          category="receipt_evidence"
+          label="QC Issue Inspection Photos / Videos"
+          uploadLabel="Upload photo / video"
+          attachments={attachments}
+          archived={archived}
+          detail={detail}
+          dialog={dialog}
+          toast={toast}
+          compact
+        />
+      </CaseSection>
     </>
   );
   if (hideHeader) {
