@@ -44,15 +44,15 @@ describe("stampLines", () => {
   it("prints the job number and the Malaysia date and time", () => {
     // 22:30 UTC is 06:30 the next morning in Malaysia.
     expect(stampLines("DO-2611-0042", { at: new Date("2026-11-07T22:30:00Z"), source: "server" }))
-      .toEqual(["DO-2611-0042", "08 Nov 2026  06:30"]);
+      .toEqual(["DO-2611-0042", "2026/11/08 06:30"]);
   });
 
   it("marks the phone's own clock", () => {
-    expect(stampLines("SETUP", { at: new Date("2026-11-08T02:05:00Z"), source: "device" })[1]).toBe("08 Nov 2026  10:05 (phone time)");
+    expect(stampLines("SETUP", { at: new Date("2026-11-08T02:05:00Z"), source: "device" })[1]).toBe("2026/11/08 10:05 (phone time)");
   });
 
   it("drops an empty label", () => {
-    expect(stampLines(null, { at: new Date("2026-11-08T02:05:00Z"), source: "server" })).toEqual(["08 Nov 2026  10:05"]);
+    expect(stampLines(null, { at: new Date("2026-11-08T02:05:00Z"), source: "server" })).toEqual(["2026/11/08 10:05"]);
   });
 });
 

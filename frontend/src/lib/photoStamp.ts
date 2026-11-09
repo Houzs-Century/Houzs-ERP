@@ -12,7 +12,7 @@
    The stamped image is what goes into the normal upload pipeline
    (imagePipeline.ts via uploadFieldPhoto), which still does the compression.
    A file the browser cannot draw goes up unstamped rather than not at all. */
-import { APP_TZ } from "./utils";
+import { fmtDateTime } from "@2990s/shared";
 import { correlatedFetch } from "./requestCorrelation";
 
 export type StampClock = { at: Date; source: "server" | "device" };
@@ -59,10 +59,8 @@ export async function stampNow(
 /** The lines burned into the photo: the job label, then the Malaysia date and
  *  time (marked when it is only the phone's clock). */
 export function stampLines(label: string | null, clock: StampClock): string[] {
-  const d = clock.at;
-  const date = new Intl.DateTimeFormat("en-GB", { timeZone: APP_TZ, day: "2-digit", month: "short", year: "numeric" }).format(d);
-  const time = new Intl.DateTimeFormat("en-GB", { timeZone: APP_TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
-  const when = `${date}  ${time}${clock.source === "device" ? " (phone time)" : ""}`;
+  // The house date format (Malaysia time), the same one every screen prints.
+  const when = `${fmtDateTime(clock.at)}${clock.source === "device" ? " (phone time)" : ""}`;
   return [label?.trim() ?? "", when].filter(Boolean);
 }
 
