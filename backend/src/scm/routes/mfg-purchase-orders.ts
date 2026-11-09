@@ -36,6 +36,7 @@ import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from 
 import { poConvertLineRows } from '../lib/po-convert-line';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
+import { resolvePoRecipients } from '../shared/supplier-emails';
 import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED, poInactivePickRefusal } from './po-gates';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
@@ -78,7 +79,6 @@ import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 import {
   buildPurchaseOrderEmail,
-  isSendableEmail,
   poSendRefusalForStatus,
   validatePoAttachment,
   PO_RESEND_WINDOW_MS,
@@ -788,7 +788,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   const [headerRes, itemsRes, childCountRes] = await Promise.all([
     scopeToCompany(supabase
       .from('purchase_orders')
-      .select(`${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address)`)
+      .select(`${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address)`)
       .eq('id', id), c)
       .maybeSingle(),
     inPoLineOrder(supabase.from('purchase_order_items').select(ITEM_COLS).eq('purchase_order_id', id)),
@@ -4087,7 +4087,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
 
   const { data: po, error } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, po_number, status, total_sen, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email)')
+    .select('id, po_number, status, total_sen, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email, email2, email3)')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -4104,18 +4104,18 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   const statusRefusal = poSendRefusalForStatus(row.status);
   if (statusRefusal) return c.json({ error: 'not_sendable', message: statusRefusal }, 409);
 
-  /* Recipient. Checked as a real address, not just "contains @" — this is the
-     last point before an external send. */
-  const supplierEmail = (row.supplier?.email ?? '').trim();
-  if (!supplierEmail) {
+  /* Recipients, checked as real addresses (the last point before an external
+     send): To = Email, Cc = Email 2 / 3 (owner 2026-11-09, shared/supplier-emails.ts). */
+  const recipients = resolvePoRecipients(row.supplier);
+  if (!recipients.ok && recipients.error === 'no_supplier_email') {
     return c.json({ error: 'no_supplier_email', message: 'This supplier has no email address on file.' }, 400);
   }
-  if (!isSendableEmail(supplierEmail)) {
-    return c.json({
-      error: 'bad_supplier_email',
-      message: `The supplier's email address (${supplierEmail}) is not a valid address. Fix it on the supplier record, then send again.`,
-    }, 400);
+  if (!recipients.ok) {
+    return c.json({ error: 'bad_supplier_email',
+      message: `The supplier's email address (${recipients.address}) is not a valid address. Fix it on the supplier record, then send again.` }, 400);
   }
+  // Every address it goes to: po_email_sent_to, the audit row and the reply name all of them.
+  const supplierEmail = [recipients.to, ...recipients.cc].join(', ');
 
   /* Attachment, validated BEFORE anything is claimed or sent: absent is legal
      (summary-only), present-but-wrong is refused with a readable reason. */
@@ -4173,6 +4173,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
 
   const res = await sendEmail(c.env, {
     to: msg.to,
+    cc: msg.cc.length ? msg.cc : null,
     subject: msg.subject,
     html: msg.html,
     purpose: 'purchase_order',

@@ -186,7 +186,7 @@ export function ReceiptForm({
             ) : (
               <label className={ui.formField}>
                 <span className={ui.formLabel}>Received from</span>
-                <input value={v.payerName} onChange={(e) => { const t = e.target.value; setV((p) => ({ ...p, payerName: t })); }}
+                <input data-upper value={v.payerName} onChange={(e) => { const t = e.target.value; setV((p) => ({ ...p, payerName: t })); }}
                   className={ui.formInput} placeholder="Type the payer" aria-label="Received from" />
               </label>
             )}
@@ -206,7 +206,7 @@ export function ReceiptForm({
                   <div key={l.rid} className={ui.lineRow}>
                     <AccountSelect accounts={accounts} value={l.creditAccountCode} placeholder="— Pick an account —" className={ui.formInput}
                       onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} />
-                    <input placeholder="What it is for" value={l.description} className={ui.formInput} aria-label={`line ${l.rid} description`}
+                    <input data-upper placeholder="What it is for" value={l.description} className={ui.formInput} aria-label={`line ${l.rid} description`}
                       onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
                     <MoneyInput bare valueSen={l.amountSen > 0 ? l.amountSen : null} allowBlank placeholder="0.00"
                       aria-label={`line ${l.rid} amount`} inputClassName={ui.formInput}

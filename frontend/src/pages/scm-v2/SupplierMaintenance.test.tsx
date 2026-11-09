@@ -160,6 +160,24 @@ describe('the form', () => {
     expect('code' in body).toBe(false);
   });
 
+  /* Owner 2026-11-09 — Email 2 / Email 3: shown, edited, sent trimmed. */
+  test('the form carries Email, Email 2 and Email 3', async () => {
+    detail = {
+      supplier: { id: 's-bed', code: '400-B001', name: 'BEST BED SDN BHD', status: 'ACTIVE', currency: 'MYR', for_purchasing: true, email: 'a@bed.com', email2: 'b@bed.com', email3: null },
+      finance: true, controlCode: '400-0000', balanceSen: 0, openInvoices: [], advances: [], credits: [], payments: [],
+    };
+    draw();
+    fireEvent.click(screen.getByText('BEST BED SDN BHD'));
+    expect(screen.getByText('b@bed.com')).toBeTruthy();
+    fireEvent.click(screen.getByText('Edit'));
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('a@bed.com');
+    expect((screen.getByLabelText('Email 2') as HTMLInputElement).value).toBe('b@bed.com');
+    fireEvent.change(screen.getByLabelText('Email 3'), { target: { value: ' c@bed.com ' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateSupplier).toHaveBeenCalled());
+    expect(updateSupplier.mock.calls[0]![0]).toMatchObject({ email: 'a@bed.com', email2: 'b@bed.com', email3: 'c@bed.com' });
+  });
+
   test('a code that names neither control is flagged — the bank goes in the bank fields', () => {
     expect(codeNote('23600599248')).toMatch(/neither 400- nor 405-/);
     expect(codeNote('400-B001')).toBe('Trade creditor — posts to 400-0000.');

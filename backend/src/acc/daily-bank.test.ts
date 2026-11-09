@@ -112,6 +112,12 @@ describe('computeDailyBank — by bank', () => {
     { id: 'pv-3', pv_number: 'HPV-040', payee_name: 'PETTY', notes: 'Cash float', purpose: 'OTHER', credit_account_code: '320-0000', voucher_date: DAY, total_sen: 5_000, exchange_rate: 1 },
   ];
 
+  it('a pending voucher reads what it pays for when the route read it, never its bill number (owner 2026-11-09)', () => {
+    const described = PENDING.map((v) => (v.id === 'pv-1' ? { ...v, description_text: '15 FOOTER NON LED TRUCK (1 WEEK)' } : v));
+    const hlbb = computeDailyBank(DAY, BANKS, ACQUIRERS, LEDGER, described).blocks.find((b) => b.accountCode === '310-0020')!;
+    expect(hlbb.pending.map((p) => p.description)).toEqual(['15 FOOTER NON LED TRUCK (1 WEEK)', 'Supplier payment']);
+  });
+
   it("each bank: B/F + received − paid = Bank Balance; its own checked vouchers off it = available; its acquirers' card money added = available + in transit", () => {
     const board = computeDailyBank(DAY, BANKS, ACQUIRERS, LEDGER, PENDING);
     const hlbb = board.blocks.find((b) => b.accountCode === '310-0020')!;
