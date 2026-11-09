@@ -44,7 +44,8 @@ async function hubReport() {
            min(started_at) AS first_48h,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE status = 'ok') AS p50_ms,
            min(duration_ms) FILTER (WHERE status = 'ok') AS min_ms,
-           max(duration_ms) FILTER (WHERE status = 'ok') AS max_ms
+           max(duration_ms) FILTER (WHERE status = 'ok') AS max_ms,
+           count(*) FILTER (WHERE status = 'ok' AND duration_ms < 1000)::int AS fast_ok
       FROM public.job_runs
      WHERE job = 'health-hub' AND started_at > now() - interval '48 hours'`;
   const [all] = await sql`
@@ -64,7 +65,7 @@ async function hubReport() {
   say(`  last FAILED run:                   ${all.last_err?.toISOString?.() ?? "none"}`);
   say(`  last failure kind:                 ${httpClass(all.last_err_text) ?? "n/a"}`);
   say(`  last 48h: ok=${s.ok_48h} error=${s.err_48h} running=${s.running_48h} (a 5-minute job is ~576 in 48h)`);
-  say(`  last 48h ok-run duration ms:       p50=${s.p50_ms ?? "-"} min=${s.min_ms ?? "-"} max=${s.max_ms ?? "-"}`);
+  say(`  last 48h ok-run duration ms:       p50=${s.p50_ms ?? "-"} min=${s.min_ms ?? "-"} max=${s.max_ms ?? "-"}; under 1s=${s.fast_ok}`);
   say(`  keepwarm (SELECT 1) p50 ms, 48h:   ${kw.p50_ms ?? "-"} over ${kw.n} runs  <- floor for a run that does no work`);
   const ok = all.last_ok ? Date.parse(all.last_ok) : null;
   const bad = all.last_err ? Date.parse(all.last_err) : null;
@@ -76,7 +77,7 @@ async function hubReport() {
 
 async function poLock() {
   say("\n================ (b) PO-raised edit lock on Houzs orders (#5444) ================");
-  const companies = await sql`SELECT id, code FROM scm.companies ORDER BY id`;
+  const companies = await sql`SELECT id, code FROM public.companies ORDER BY id`;
   say(`  companies: ${companies.map((c) => `${c.id}=${c.code}`).join(", ")}`);
   const rows = await sql`
     WITH live AS (
@@ -92,7 +93,7 @@ async function poLock() {
                               AND (so.processing_date IS NULL OR so.processing_date::text >= ${TODAY_MY})
                               AND upper(so.status::text) NOT IN ('DRAFT'))::int AS po_lock_only
       FROM live JOIN scm.mfg_sales_orders so ON so.doc_no = live.doc_no
-      LEFT JOIN scm.companies c ON c.id = so.company_id
+      LEFT JOIN public.companies c ON c.id = so.company_id
      GROUP BY c.code ORDER BY c.code`;
   for (const r of rows) {
     say(`  company ${r.code}: SOs with a live PO=${r.live_po_sos}; still open=${r.open_live_po_sos}; ` +

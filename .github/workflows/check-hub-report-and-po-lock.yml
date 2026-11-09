@@ -18,6 +18,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The Cloudflare token lives in the Production environment, not at repo level.
+    environment: Production
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +33,11 @@ jobs:
         # Names, never values: `secret list` cannot return a value. A failed list
         # is reported, not fatal, so the DB half still answers.
         run: |
-          if names=$(npx wrangler secret list --name autocount-sync-api --format json 2>/dev/null | jq -r '.[].name'); then
-            echo "IT_HUB_* secret names on autocount-sync-api:"
-            echo "$names" | grep '^IT_HUB_' || echo "  (none)"
+          set -o pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "no Cloudflare token in this job - configuration UNKNOWN from this step"; exit 0; fi
+          if out=$(npx wrangler secret list --name autocount-sync-api --format json 2>/dev/null) && names=$(jq -er '.[].name' <<<"$out"); then
+            echo "IT_HUB_* secret names on autocount-sync-api ($(wc -l <<<"$names") secrets in total):"
+            grep '^IT_HUB_' <<<"$names" || echo "  (none)"
           else
             echo "secret list failed (token scope?) - configuration UNKNOWN from this step"
           fi
