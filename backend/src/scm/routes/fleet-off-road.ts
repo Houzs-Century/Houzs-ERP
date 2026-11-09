@@ -89,7 +89,7 @@ fleetOffRoad.post("/vehicles/:id/off-road", supabaseAuth, requireHouzsPerm("flee
     unavailable_from: from,
     unavailable_to: expected || OPEN_ENDED_TO,
     reason,
-    created_by: await resolveCallerStaffId(sb, houzsUser?.id ?? null).catch(() => null),
+    created_by: await resolveCallerStaffId(sb, houzsUser?.id ?? null),
   };
   const { error } = await sb.from("lorry_maintenance").insert(row);
   if (error) return c.json({ error: "insert_failed", reason: error.message }, 500);
