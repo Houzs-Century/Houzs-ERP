@@ -129,7 +129,7 @@ async function main() {
       LEFT JOIN public.companies co ON co.id = t.company_id
     UNION ALL
     SELECT 'gap' AS kind, g.company_id, co.code AS company_code, g.invoice_number, g.invoice_date,
-           g.status::text AS status, g.total_sen::bigint AS total_sen, g.currency,
+           g.status::text AS status, g.total_sen::bigint AS total_sen, g.currency::text AS currency,
            g.exchange_rate::text AS exchange_rate, g.migrated, g.has_active,
            (g.grn_id IS NOT NULL AND COALESCE(g.notes, '') LIKE 'From %') AS from_grn_fingerprint,
            CASE
