@@ -28,7 +28,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen } from '@2990s/shared';
 import {
-  useConsignmentNotesPaged, useUpdateConsignmentNoteStatus, useConsignmentNoteDetail,
+  useConsignmentNotesPaged, fetchConsignmentNotesExportRows, useUpdateConsignmentNoteStatus, useConsignmentNoteDetail,
 } from '../../vendor/scm/lib/consignment-note-queries';
 import { SearchProgress } from '../../components/SearchProgress';
 import { ListPager } from '../../components/ListPager';
@@ -577,6 +577,17 @@ export const ConsignmentNotes = () => {
      the DataGrid's own per-column funnel filters + grouping now operate on the
      LOADED PAGE only (documented reduction). The KPI tiles below stay FULL-SET
      via `aggregates`, so page-scoped funnels never distort the headline money. */
+  const exportLines = {
+    fetchRows: () => fetchConsignmentNotesExportRows<CnRow>({
+      status: statusChip === 'all' ? undefined : statusChip,
+      q: debouncedSearch.trim() || undefined,
+    }),
+    linesOf: () => [],
+    sheetName: 'Consignment Notes',
+    onError: (e: Error) => {
+      void notify({ title: 'Export failed', body: e.message || 'The export could not be completed.', tone: 'error' });
+    },
+  };
   const rows = useMemo<CnRow[]>(() => (data?.deliveryOrders ?? []) as CnRow[], [data]);
   const total = data?.total ?? 0;
 
@@ -737,6 +748,7 @@ export const ConsignmentNotes = () => {
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Notes"
+        exportLines={exportLines}
         searchPlaceholder="Search note no, customer, reference…"
         rowKey={(r) => r.id}
         getRowClassName={(r) => cancelledRowClass(r.status)}
