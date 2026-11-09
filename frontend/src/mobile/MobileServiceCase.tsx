@@ -33,6 +33,7 @@ import { MobileFactoryTrips, MobileSectionHead } from "./MobileFactoryTrips";
 import { MobileItemReady } from "./MobileItemReady";
 import { returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../components/assr/PickupTrackingFields";
+import { buildCaseTimeline, roleOfActivity, type TimelineActivity, type TimelineFilter, type TimelineRole, type TimelineTone } from "../vendor/scm/lib/assr/timeline";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
@@ -707,7 +708,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteAudience, setNoteAudience] = useState<NoteAudience>("service");
-  const [tlFilter, setTlFilter] = useState("all");
+  const [tlFilter, setTlFilter] = useState<TimelineFilter>("all");
+  const [shouldShowTimelineDetails, setShouldShowTimelineDetails] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Picker option lists sourced from /api/assr/lookups/* exactly as the
@@ -790,24 +792,24 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
     return m;
   }, [stageHistory]);
 
-  // Timeline audience categories present on activity rows.
-  const timelineCats = useMemo(() => {
-    const set = new Set<string>();
-    for (const a of activity) {
-      const cat = String(get(a, "category") ?? "").toUpperCase();
-      if (cat) set.add(cat);
-    }
-    // Canonical chip order (matches desktop): the four audience
-    // buckets, then SYSTEM; anything unexpected trails.
-    const ORDER = ["SYSTEM", "SERVICE", "CUSTOMER", "SUPPLIER", "SALES"];
-    const known = ORDER.filter((k) => set.has(k));
-    const rest = Array.from(set).filter((k) => !ORDER.includes(k));
-    return ["ALL", ...known, ...rest];
-  }, [activity]);
-  const shownActivity = useMemo(() => {
-    if (tlFilter === "all") return activity;
-    return activity.filter((a) => String(get(a, "category") ?? "").toUpperCase() === tlFilter);
-  }, [activity, tlFilter]);
+  const timelineActivity = useMemo(() => activity.map(toTimelineActivity), [activity]);
+  const timelineRoles = useMemo(() => {
+    const present = new Set(timelineActivity.map(roleOfActivity));
+    return TIMELINE_ROLE_ORDER.filter((role) => present.has(role));
+  }, [timelineActivity]);
+  const timelineUserNames = useMemo(
+    () => new Map(assignableUsers.map((user) => [String(user.id), user.name])),
+    [assignableUsers],
+  );
+  const timeline = useMemo(
+    () => buildCaseTimeline(timelineActivity, {
+      filter: tlFilter,
+      shouldShowDetails: shouldShowTimelineDetails,
+      salesAgent: get(c, "salesAgent", "sales_agent") || null,
+      userNames: timelineUserNames,
+    }),
+    [timelineActivity, tlFilter, shouldShowTimelineDetails, c, timelineUserNames],
+  );
 
   const assignedTo = get(c, "assignedToName", "assigned_to_name");
   const assignedTo2 = get(c, "assignedTo2Name", "assigned_to_2_name");
@@ -1618,16 +1620,13 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   </span>
                 }
               >
-                {timelineCats.length > 1 && (
+                {timelineRoles.length > 1 && (
                   <div className="hz-scroll" style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 6, paddingBottom: 2 }}>
-                    {timelineCats.map((cat) => {
-                      const key = cat === "ALL" ? "all" : cat;
-                      return (
-                        <button key={cat} className={`sochip${tlFilter === key ? " on" : ""}`} onClick={() => setTlFilter(key)}>
-                          {cat === "ALL" ? "All" : cap(cat.toLowerCase())}
-                        </button>
-                      );
-                    })}
+                    {(["all", ...timelineRoles] as const).map((role) => (
+                      <button key={role} className={`sochip${tlFilter === role ? " on" : ""}`} onClick={() => setTlFilter(role)}>
+                        {role === "all" ? "All" : cap(role)}
+                      </button>
+                    ))}
                   </div>
                 )}
                 {/* audience picker (mig 0108). WRAPS 2x2: the labels now say what
@@ -1667,36 +1666,30 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   {noteAudience === "customer" ? "Visible to the customer on the portal." : "Internal only — hidden from the customer."}
                 </div>
                 {addNote.isError && <div style={{ fontSize: 11, color: RED, marginBottom: 8 }}>Couldn't add the note. Try again.</div>}
-                {shownActivity.length ? shownActivity.map((a, i) => {
-                  const cat = String(get(a, "category") ?? "").toUpperCase();
-                  const act = String(get(a, "action") ?? "");
-                  let label = get(a, "note", "toValue", "to_value", "action") ?? "Update";
-                  // Raw enum keys + UUID storage filenames read as garbage
-                  // (Nico 2026-08-01) — prettify both.
-                  if (act === "stage_change") label = `Status changed to ${prettyStage(String(get(a, "toValue", "to_value") ?? ""))}`;
-                  label = String(label).replace(
-                    /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
-                    (_m, ext) => {
-                      const e = String(ext || "").toLowerCase();
-                      if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
-                      if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
-                      return "(file)";
-                    },
-                  );
-                  const who = get(a, "userName", "user_name") ?? "System";
-                  const badge = catBadge(cat);
+                {(timeline.hiddenCount > 0 || shouldShowTimelineDetails) && (
+                  <button
+                    onClick={() => setShouldShowTimelineDetails((isShown) => !isShown)}
+                    style={{ minHeight: 44, padding: 0, border: "none", background: "none", color: TEAL, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {shouldShowTimelineDetails ? "Show key updates only" : `Show all updates (${timeline.hiddenCount} system log hidden)`}
+                  </button>
+                )}
+                {timeline.rows.length ? timeline.rows.map((row) => {
+                  const [toneBackground, toneColor] = TIMELINE_TONE_COLORS[row.status?.tone ?? "grey"];
                   return (
-                    <div key={get(a, "id") ?? i} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: `1px solid #eceee9` }}>
-                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: "2px solid #c2c6bd", marginTop: 3 }} />
+                    <div key={row.id} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: "1px solid #eceee9" }}>
+                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: `2px solid ${row.isEscalation ? RED : TEAL}`, marginTop: 4 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 10, color: GREY }}>{dtm(get(a, "createdAt", "created_at"))}</div>
-                        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, marginTop: 1 }}>{String(label)}</div>
-                        <div style={{ fontSize: 10.5, color: MUTED, marginTop: 2, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 3 }}>
-                          <span>by {String(who)}</span>
-                          {cat && (
-                            <span className="rbadge" style={{ background: badge[0], color: badge[1], marginLeft: 3 }}>{cat}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {row.status && (
+                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: toneBackground, color: toneColor }}>{row.status.label}</span>
                           )}
+                          <span style={{ marginLeft: "auto", fontSize: 10.5, color: GREY, whiteSpace: "nowrap" }}>{dtm(row.at)}</span>
                         </div>
+                        {row.remarks && (
+                          <div style={{ fontSize: 12.5, color: row.isEscalation ? RED : INK, marginTop: 4, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{row.remarks}</div>
+                        )}
+                        <div style={{ fontSize: 10.5, color: MUTED, marginTop: 2 }}>by {row.by}</div>
                       </div>
                     </div>
                   );
@@ -2545,19 +2538,30 @@ function StageSubChip({ c, stage, busy, disabled, patchCase }: {
   );
 }
 
-// timeline audience badge colour (rbadge — 12% tint of the category hue).
-function catBadge(cat: string): [string, string] {
-  switch (cat) {
-    case "SERVICE": return ["#16695f1f", TEAL];
-    case "CUSTOMER": return ["#2f8a5b1f", GREEN];
-    case "SUPPLIER": return ["#a16a2e1f", BROWN];
-    case "SALES": return ["#1f3a8a1f", BLUE];
-    // Legacy rows from before mig 0108 (all migrated, but a cached
-    // payload may still carry it briefly).
-    case "PURCHASING": return ["#16695f1f", TEAL];
-    case "SYSTEM": return ["#5c61661f", GREY];
-    default: return ["#16695f1f", TEAL];
-  }
+const TIMELINE_ROLE_ORDER: readonly TimelineRole[] = ["system", "service", "customer", "supplier", "sales"];
+
+const TIMELINE_TONE_COLORS: Record<TimelineTone, [string, string]> = {
+  blue: ["#e0f2fe", "#075985"],
+  purple: ["#ede9fe", "#5b21b6"],
+  green: [OK_BG, GREEN],
+  amber: [BROWN_SOFT, BROWN_FG],
+  red: ["#fbe9e9", RED],
+  grey: [FIELD_BG, INK_SEC],
+};
+
+function toTimelineActivity(activity: Any): TimelineActivity {
+  return {
+    id: Number(get(activity, "id")),
+    created_at: String(get(activity, "createdAt", "created_at") ?? ""),
+    action: String(get(activity, "action") ?? ""),
+    category: get(activity, "category") ?? null,
+    source: get(activity, "source") ?? null,
+    source_channel: get(activity, "sourceChannel", "source_channel") ?? null,
+    from_value: get(activity, "fromValue", "from_value") ?? null,
+    to_value: get(activity, "toValue", "to_value") ?? null,
+    note: get(activity, "note") ?? null,
+    user_name: get(activity, "userName", "user_name") ?? null,
+  };
 }
 
 // ── Editable accordion (Edit → Save) ──────────────────────────────
