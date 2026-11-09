@@ -125,6 +125,11 @@ jobs:
     needs: dump
     runs-on: ubuntu-latest
     environment: Staging
+    # Same group as staging-migrate.yml and deploy-staging.yml: this job runs
+    # pg-migrate too, and two runners must not write the tracker at once.
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: backend
