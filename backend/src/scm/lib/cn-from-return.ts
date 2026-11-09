@@ -8,7 +8,7 @@
 // The link is stored on the note (acc_credit_notes.delivery_return_id) and on
 // each line (acc_credit_note_lines.delivery_return_item_id + qty). A cancelled
 // note gives its quantity back. The database refuses a line that would credit
-// more than was returned (migration 20261109T2300) — this file says so first,
+// more than was returned (migration 20261110T0200) — this file says so first,
 // in words, and is what the screens read.
 // ----------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
--- 20261109T2300_acc_credit_note_delivery_return.sql
+-- 20261110T0200_acc_credit_note_delivery_return.sql
 --
 -- REVERSAL:
 --   DROP TRIGGER IF EXISTS acc_credit_note_lines_return_cap ON scm.acc_credit_note_lines;

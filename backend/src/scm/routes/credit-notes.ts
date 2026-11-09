@@ -110,7 +110,7 @@ async function checkedReturn(c: any, companyId: number, returnId: string, lines:
   return refusal ? { resp: c.json(refusal, 409) } : { value: r };
 }
 
-/* The database's own cap (migration 20261109T2300) refused a line another save took first. */
+/* The database's own cap (migration 20261110T0200) refused a line another save took first. */
 const overReturnFromDb = (reason: string): boolean => /over_return_credit/.test(reason);
 
 async function loadNote(c: any, id: string): Promise<{ note: Row } | { resp: Response }> {
