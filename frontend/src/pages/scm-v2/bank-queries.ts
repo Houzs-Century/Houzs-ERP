@@ -45,7 +45,24 @@ export type BankStatement = {
 };
 
 /** What the matcher made of one movement. */
-export type BankLineKind = 'PAYOUT' | 'PAYOUT_SPLIT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'DUPLICATE' | 'OTHER';
+/* QR: a day's DuitNow QR money (owner 2026-11-09) — decided on read, never stored. */
+export type BankLineKind = 'PAYOUT' | 'PAYOUT_SPLIT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'DUPLICATE' | 'OTHER' | 'QR';
+
+/** The QR sales a DuitNow QR credit is: the merchant's QR report of the day, its
+    lines' linked Online sales and their entries — ready when every one can be
+    matched (owner 2026-11-09: 0000PP 是 qr direct 去 bank 的，不算卡机的). */
+export type BankQrSales = {
+  batchId: number;
+  fileName: string | null;
+  tradingDate: string | null;
+  sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null }>;
+  /** QR lines nobody has linked to a sale yet. */
+  waiting: Array<{ lineNo: number; txnDate: string; grossSen: number }>;
+  /** What to match the credit to — only when ready. */
+  jeNos: string[];
+  ready: boolean;
+  clue: string;
+};
 
 export type BankCandidate = {
   id: number;
@@ -106,6 +123,8 @@ export type BankLine = {
   matches: Array<{ je_no: string; amount_sen: number; match_reason: string | null }>;
   candidates: BankCandidate[];
   entryCandidates: BankEntryCandidate[];
+  /** On a DuitNow QR credit only (kind QR). */
+  qr_sales?: BankQrSales;
 };
 
 export type Reconciliation = {

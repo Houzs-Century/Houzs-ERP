@@ -27,7 +27,7 @@ import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Plus, Undo2, Upl
 import {
   useBankStatements, useBankStatement,
   useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod, useAutoMatchStatement,
-  type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
+  type BankLine, type BankQrSales, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { useChargeChoices } from './settlement-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
@@ -439,6 +439,7 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
   PAYOUT_NO_BATCH: 'a card payout with no report waiting',
   DUPLICATE: 'already recorded from an earlier upload',
   OTHER: 'not card money',
+  QR: 'DuitNow QR money',
 };
 
 /* ── The movements still to decide, and choosing one entry for several ───────
@@ -563,6 +564,38 @@ export const OpenLines = ({ lines }: { lines: BankLine[] }) => {
 export const decisionKey = (l: BankLine): string =>
   `${l.id}|${l.kind}|${l.matched_batch_id ?? ''}|${(l.split ?? []).map((s) => `${s.batchId}:${s.amountSen}`).join('+')}`;
 
+/* ── The day's DuitNow QR money (owner 2026-11-09) ─────────────────────────────
+   「这个hlbb merchant 的0000PP 是qr direct 去bank 的，不算卡机的」: the credit is
+   the QR sales already in the books, so the row names them and matches the
+   credit to their entries in one press — nothing is booked again. Until every
+   QR line of the report is linked to its sale on Merchant Recon, it says what
+   is missing and offers no press. */
+const QrSalesBlock = ({ line, qr }: { line: BankLine; qr: BankQrSales }) => {
+  const group = useMatchBankGroup();
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      {qr.sales.map((s, i) => (
+        <div key={`${s.docNo ?? 'sale'}-${i}`} style={{ fontSize: 'var(--fs-12)' }}>
+          <b>{s.docNo ?? 'a sale'}</b> · {fmt(s.amountSen)}
+          {s.jeNo && <span className={grid.sub}> · {s.jeNo}</span>}
+        </div>
+      ))}
+      {qr.waiting.map((w) => (
+        <div key={`waiting-${w.lineNo}`} className={grid.sub}>line {w.lineNo} · {fmt(w.grossSen)} — no sale linked yet</div>
+      ))}
+      {qr.ready
+        ? (
+          <button type="button" style={{ ...btn(true, group.isPending), justifySelf: 'start' }} disabled={group.isPending}
+            onClick={() => group.mutate({ lineIds: [line.id], jeNos: qr.jeNos })}>
+            <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are the QR sales'}
+          </button>
+        )
+        : <span className={grid.sub}>{qr.clue}</span>}
+      {group.isError && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>{refusalText(group.error, 'Not matched.')}</span>}
+    </div>
+  );
+};
+
 export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
   line: BankLine; isPicked?: boolean; onPick?: () => void;
   /** No entry found: record the movement as a manual journal (BankRecordJournal). Offered only where the month allows it. */
@@ -658,6 +691,7 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
         {line.note && <div className={grid.sub}>{line.note}</div>}
       </td>
       <td>
+        {line.qr_sales && <QrSalesBlock line={line} qr={line.qr_sales} />}
         {line.amount_sen > 0 && line.candidates.length > 0 && (
           <div style={{ display: 'grid', gap: 4 }}>
             {/* ONLY THE ANSWER, when there is one. The owner, on a month with

@@ -5,7 +5,7 @@
 // the sen, because a rounding leftover would sit in 320-0000 forever.
 
 import { describe, it, expect } from 'vitest';
-import { parseStatement, splitCsvLine, toSen, toIsoDate, type ParseConfig } from './settlement-parse';
+import { cardTotalsOf, parseStatement, splitCsvLine, toSen, toIsoDate, type ParseConfig, type ParsedRow } from './settlement-parse';
 
 const CSV = (...lines: string[]) => lines.join('\n');
 
@@ -491,5 +491,124 @@ describe('parseStatement — a refund line', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.rows[0]).toMatchObject({ grossSen: -50000, feeSen: 750, netSen: -49250 });
+  });
+});
+
+/* Hong Leong's DuitNow QR merchant (owner 2026-11-09: 这个hlbb merchant 的0000PP
+   是qr direct 去bank 的，不算卡机的). The file is the card layout, but every line
+   says DN (DuitNow QR) in TENURE/CASHOUT* and carries 0000PP where a card's
+   approval code sits — a placeholder, the same on every QR line, never a
+   reference. Read off the owner's 00005992284_20261101.CSV, line for line. */
+describe('parseStatement — Hong Leong DuitNow QR lines', () => {
+  const QR_HEADING = 'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR FLAT(RM),INTERCHANGE FEE,TRXN NET';
+  const HLB_QR = [
+    'MERCHANT NO:,00005992284,,,TRADING NAME:,2990                                              ',
+    'SUMMARY',
+    'TRANSACTION TYPE,,,,,TRXN AMOUNT,MDR/INCENTIVE,LATE FEE,,AMOUNT PAYABLE',
+    'SALES & MANUAL POSTINGS,,,,,3340.00,0.00,0.00,,3340.00',
+    'BALANCE FROM PREVIOUS DAY,,,,,0.00,,,,0.00',
+    ',,,,,3340.00,0.00,0.00,,3340.00',
+    ',,,,,,,,TOTAL AMOUNT PAYABLE,3340.00',
+    'SALES & MANUAL POSTINGS / CASH OUT',
+    'TRANSACTION TYPE,,,,ITEMS,TRXN AMOUNT,MDR,LATE FEE,,TRXN NET',
+    'SALES,HLB CARD,Wallet,,1,3240.00,0.000000,0.000000,,3240.000000',
+    'SALES,NON-HLB CARDS,Wallet,,1,100.00,0.000000,0.000000,,100.000000',
+    ',,,Total,2,3340.00,0.000000,0.000000,,3340.000000',
+    ',,,,,,,Total Sales/Manual Posting,,3340.00',
+    ',,,,,,,Total MDR Charged,,0.00',
+    ',,,,,,,,,',
+    'TERMINAL ID:,00033052346',
+    QR_HEADING,
+    '01-Nov,29023,0000PP,2611-01xx-xxxx-2017-26,DN,100.00,0.000000,0.000000,0.00,0,100.000000',
+    ',,,Batch Total,1,100.00,0.000000,0.000000,,,100.000000',
+    ',,,Sub-Total,1,100.00,0.000000,0.000000,,,100.000000',
+    'TERMINAL ID:,00033052347',
+    QR_HEADING,
+    '31-Oct,29023,0000PP,2610-31xx-xxxx-2026-41,DN,3240.00,0.000000,0.000000,0.00,0,3240.000000',
+    ',,,Batch Total,1,3240.00,0.000000,0.000000,,,3240.000000',
+    ',,,Sub-Total,1,3240.00,0.000000,0.000000,,,3240.000000',
+    '',
+    '*Cash Out Description Code:  CP - Cash Out Purchase Amount  CO - Cash Out Withdrawal Amount',
+    '                                                            WC - WeChat China QR                    DN - DuitNow QR',
+    '                                                            WL - WeChat Local QR',
+  ].join('\r\n');
+
+  const HLB_MAP = { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET', qr: 'TENURE/CASHOUT*', qr_values: 'DN,WC,WL' };
+  const hlbCfg = (over: Partial<ParseConfig> = {}): ParseConfig => ({
+    code: 'HLB', statement_format: 'CSV', fee_method: 'stated', column_map: HLB_MAP, statementMonth: '2026-11', ...over,
+  });
+
+  it('marks every DN line as QR money, with no reference', () => {
+    const r = parseStatement(hlbCfg(), HLB_QR);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toEqual([
+      { lineNo: 18, txnDate: '2026-11-01', ref: null, grossSen: 10000, feeSen: 0, netSen: 10000, channel: 'QR' },
+      { lineNo: 23, txnDate: '2026-10-31', ref: null, grossSen: 324000, feeSen: 0, netSen: 324000, channel: 'QR' },
+    ]);
+  });
+
+  it('a card line in the same layout keeps its approval code and is not QR', () => {
+    const r = parseStatement(hlbCfg({ statementMonth: '2026-08' }), CSV(
+      QR_HEADING,
+      '16-Aug,64265,663554,4902-82xx-xxxx-2474,  ,1800.00,16.200000,0.000000,0.90,="0.6%",1783.800000',
+      '22-Aug,28614,0000PP,2608-22xx-xxxx-2015-97,DN,250.00,0.000000,0.000000,0.00,0,250.000000',
+    ));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => [x.ref, x.channel ?? null])).toEqual([['663554', null], [null, 'QR']]);
+  });
+
+  it('a WeChat QR code counts too, written any case', () => {
+    const r = parseStatement(hlbCfg({ statementMonth: '2026-08' }), CSV(
+      QR_HEADING,
+      '22-Aug,28614,0000PP,x,wc,250.00,0.000000,0.000000,0.00,0,250.000000',
+    ));
+    expect(r.ok && r.rows[0]!.channel).toBe('QR');
+  });
+
+  it('a merchant whose layout names no QR column reads exactly as before', () => {
+    const { qr: _qr, qr_values: _values, ...cardOnly } = HLB_MAP;
+    const r = parseStatement(hlbCfg({ column_map: cardOnly }), HLB_QR);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => [x.ref, x.channel ?? null])).toEqual([['0000PP', null], ['0000PP', null]]);
+  });
+
+  it('the QR heading is not required: a file without that column still reads', () => {
+    const r = parseStatement(hlbCfg({ statementMonth: '2026-08' }), CSV(
+      'DATE,INVOICE/AUTHO,TRXN AMOUNT,MDR,TRXN NET',
+      '16-Aug,663554,1800.00,16.200000,1783.800000',
+    ));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows[0]).toMatchObject({ ref: '663554', grossSen: 180000 });
+    expect(r.rows[0]!.channel ?? null).toBeNull();
+  });
+});
+
+/* A report's head is what the acquirer pays THROUGH ITS CLEARING ACCOUNT. QR
+   money is already in the bank by the sale itself, so it never joins that
+   total — not the gross, the fee, the net, nor the net the file states. */
+describe('cardTotalsOf', () => {
+  const ok = (rows: Array<Partial<ParsedRow> & { grossSen: number; netSen: number }>, statedNetSen: number | null = null) => ({
+    ok: true as const,
+    rows: rows.map((x, i) => ({ lineNo: i + 1, txnDate: '2026-11-01', ref: null, feeSen: 0, ...x })),
+    grossSen: rows.reduce((s, x) => s + x.grossSen, 0),
+    feeSen: rows.reduce((s, x) => s + (x.feeSen ?? 0), 0),
+    netSen: rows.reduce((s, x) => s + x.netSen, 0),
+    periodFrom: '2026-11-01', periodTo: '2026-11-01', skippedLines: 0, statedNetSen, adjustmentSen: 0,
+  });
+
+  it('leaves QR lines out of every total', () => {
+    expect(cardTotalsOf(ok([
+      { grossSen: 162000, feeSen: 1620, netSen: 160380 },
+      { grossSen: 324000, netSen: 324000, channel: 'QR' },
+    ]))).toEqual({ grossSen: 162000, feeSen: 1620, netSen: 160380, statedNetSen: null });
+  });
+
+  it('a report of nothing but QR lines owes nothing through the clearing account', () => {
+    expect(cardTotalsOf(ok([{ grossSen: 10000, netSen: 10000, channel: 'QR' }], 10000)))
+      .toEqual({ grossSen: 0, feeSen: 0, netSen: 0, statedNetSen: 0 });
   });
 });
