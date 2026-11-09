@@ -3,7 +3,6 @@
 // in the Verification card. Kept out of ServiceCases.tsx, which is at its size
 // ceiling.
 import { InlineEdit } from "../InlineEdit";
-import { PENDING_WITH_OPTIONS, pendingWithLabel } from "../../vendor/scm/lib/assr-verification-fields";
 
 type Row = {
   inspection_findings?: string | null;
@@ -21,20 +20,21 @@ export function VerificationFindingsFields({ c, patch }: { c: Row; patch: (body:
         placeholder="What did the technician inspect? What was found? What action was taken?"
         onSave={(v) => patch({ inspection_findings: v })}
       />
-      <InlineEdit
-        label="Next Action"
-        textarea
-        value={c.next_action}
-        placeholder="Example: Repair on-site / Pickup for service / Awaiting supplier confirmation"
-        onSave={(v) => patch({ next_action: v })}
-      />
-      <InlineEdit
-        label="Pending With"
-        value={c.pending_with}
-        options={PENDING_WITH_OPTIONS}
-        optionLabel={pendingWithLabel}
-        onSave={(v) => patch({ pending_with: v })}
-      />
+      <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2">
+        <InlineEdit
+          label="Next Action"
+          textarea
+          value={c.next_action}
+          placeholder="Example: Repair on-site / Pickup for service / Awaiting supplier confirmation"
+          onSave={(v) => patch({ next_action: v })}
+        />
+        <InlineEdit
+          label="Pending With"
+          value={c.pending_with}
+          placeholder="Example: Logistic Team / Supplier / Customer"
+          onSave={(v) => patch({ pending_with: v })}
+        />
+      </div>
     </>
   );
 }

@@ -5711,8 +5711,8 @@ function VerificationCard({
           0105) — who inspects the reported issue. Own team routes the
           visit into Delivery Planning via customer_pickup_at; supplier
           handles it on their side via the supplier portal. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           Inspect by
         </div>
         <div className="flex gap-1.5">
@@ -5738,6 +5738,13 @@ function VerificationCard({
             </button>
           ))}
         </div>
+        {c.inspection_by === "supplier" && (
+          <div className="min-w-[220px] flex-1 rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
+            Supplier performs the inspection — progress lands in the
+            supplier portal's service note (see the Supplier Pickup /
+            Item Ready rows).
+          </div>
+        )}
       </div>
       {c.inspection_by === "own" && (
         <>
@@ -5773,13 +5780,7 @@ function VerificationCard({
           </div>
         </>
       )}
-      {c.inspection_by === "supplier" && (
-        <div className="rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-          Supplier performs the inspection — progress lands in the
-          supplier portal's service note (see the Supplier Pickup /
-          Item Ready rows).
-        </div>
-      )}
+      <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <InlineEdit
         label="QC Issue Inspection Date"
         type="date"
@@ -5824,6 +5825,7 @@ function VerificationCard({
             );
           })}
         </div>
+      </div>
       </div>
 
       <div>
