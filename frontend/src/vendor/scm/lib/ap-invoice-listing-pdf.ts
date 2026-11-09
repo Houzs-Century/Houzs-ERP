@@ -14,6 +14,7 @@ import {
   fmtDocDate, fmtDocStamp, fmtRm, type PdfAction,
 } from './pdf-common';
 import type { ApListRow } from './ap-invoice-queries';
+import { todayMyt } from './dates';
 
 /** `showing`: the filter in words, as the page has it ("AP bills · All suppliers · Unpaid"). */
 export type ApListingFilter = { showing: string };
@@ -118,6 +119,6 @@ export async function generateApListingPdf(rows: ApListingRow[], filter: ApListi
       12: { cellWidth: 20 },
     },
   });
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayMyt();
   deliverPdf(doc, `supplier-bills-listing-${stamp}.pdf`, opts?.action ?? 'preview');
 }

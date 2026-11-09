@@ -19,6 +19,7 @@ import { LazySlot } from "./components/LazySlot";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
 import { installChunkFailureWatch } from "./lib/staleBuild";
+import { CJK_FONT_STYLESHEET, loadDeferredFontStylesheet } from "./lib/deferredFonts";
 import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -86,6 +87,7 @@ if (!canonicalTarget) registerPwa();
 // so even a first-render crash is captured. Prod builds only; reporting never
 // changes behaviour (see lib/errorReporter.ts).
 installGlobalErrorReporting();
+loadDeferredFontStylesheet(document, CJK_FONT_STYLESHEET);
 /* The other half of that: a dynamic import() that rejects inside an async event
    handler is CAUGHT by that handler, so it is never an unhandledrejection and
    installGlobalErrorReporting above cannot see it, and no React boundary sees it

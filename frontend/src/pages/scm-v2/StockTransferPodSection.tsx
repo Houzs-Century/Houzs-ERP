@@ -53,6 +53,7 @@ export function StockTransferPodSection({ id }: { id: string }) {
               <PodPhotoAlbum
                 paths={photos.map((_, n) => `/api/scm/stock-transfers/${encodeURIComponent(id)}/delivery-pod/${j.id}/photo/${n}`)}
                 fileStem={`POD-${j.dp_no ?? "transfer"}`}
+                title={j.dp_no ?? "Transfer job"}
                 emptyText="No POD photo yet."
               />
             </div>

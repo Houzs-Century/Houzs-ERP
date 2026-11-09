@@ -18,6 +18,7 @@
    — the CREATE audit row is written there too, AFTER the post clears, so a bucket
    the post rolls back never leaves an orphan CREATE row. Callers of this core
    record their own CREATE at the moment their draft becomes final. */
+import { yymmFor } from '../../services/documentRefs';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Env, Variables } from '../env';
 import { getSupabaseService } from '../../db/supabase';
@@ -167,8 +168,7 @@ export async function createDraftGrnsFromPoItemsCore(
   }
 
   // Generate GRN numbers sequentially within this batch.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
   // delete re-mints a surviving number → UNIQUE collision). Derive the next
   // suffix via mintMonthlyDocNo, then counter starts one below it.

@@ -156,6 +156,7 @@ import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/
 import { EventPnlTable } from "./projects/EventPnlTable";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
 import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
+import { todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
 interface ProjectDetail {
@@ -885,7 +886,7 @@ function ProjectsListView() {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
         return;
       }
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayMyt();
       downloadCSV(`projects-${date}.csv`, toCSV(all, csvCols));
     } catch (e: any) {
       toast.error(e?.message || "Export failed");

@@ -23,6 +23,7 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The line-add lock (`purchaseInvoiceLinesLocked`) is the single shared source for whether the document still accepts new lines — desktop and mobile both call it; don't reimplement it inline.
 - The "which prices differ" comparison (a PO price of 0 never counts as differing) lives in one byte-identical file mirrored to frontend and backend — edit both or neither.
 - Every read behind the "Bill a GRN" picker and the export is company-scoped, and a failed read must answer a server error, never a silently empty list.
+- A picker line's PO (`purchaseOrderId` / `poDocNo` on `GET /outstanding-grn-items`) is the line's OWN, resolved through `grn_items.purchase_order_item_id`; a goods receipt can take lines from several POs, so the receipt header's `purchase_order_id` is used only for a line with no PO link. Staff saw every line of HC-GRN-2611-052 labelled with one PO before this (2026-11-09). The PI-from-GRN note heading lists every PO its lines name (`notePoLabel`). Census: `backend/scripts/census-grn-multi-po.mjs` (read-only).
 - A GRN carried over from AutoCount (`migrated_no_stock`) bills into a purchase invoice by hand like any native one — the ERP is the sole book (`AUTOCOUNT_IS_ACTIVE_BOOK = false`, owner 2026-09-22), so `receiptMustMirrorAutoCount` returns false for all. No double-book: the `gr_to_pi` write-back stays suppressed for a migrated source (nothing reaches AutoCount) and the ordinary remaining-qty check still blocks re-billing a GRN the ERP already invoiced. Flip `AUTOCOUNT_IS_ACTIVE_BOOK` back to true to restore the mirror regime, where the `migrated-receipts-not-invoiced.generated.ts` allow-list governs the exceptions.
 
 ## Gotchas
@@ -34,6 +35,17 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The desktop list's Export writes one row per LINE for every document matching the current tab/search/sort — not just the loaded page — in AutoCount's own column layout by default; a sofa line is one ERP piece per row even though AutoCount holds one set line, so quantities and totals differ from the book by design.
 - The list ticks several drafts and Confirm (N) posts them in turn through the same `/:id/post`; a refused one stays a draft and the summary names it. Invoice Amount and PO Amount sit side by side, PO Price and PI Price likewise; PO Amount counts only lines with a PO price and says how many. PO Price and PO Amount are screen-only, so the default export stays AutoCount's.
 - The mobile list has no export and no import — importing is desktop-only by design.
+
+## Files and photos (`/purchase-invoices/:id/files`)
+
+Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a purchase invoice keeps attached files: the supplier's paperwork, an invoice scan, photos of the goods. Images (JPEG / PNG / WebP) and PDFs, 20 MB each, many per document.
+
+- `POST /:id/files` `{fileName, mime, dataBase64}`, `GET /:id/files` (rows + `locked`), `GET /:id/files/:fileId` (streams), `DELETE /:id/files/:fileId`.
+- Write = `edit` on `scm.procurement.pi`, the same `scmAreaGuard` that gates every other write here; the router passes `mayWrite` because this document has no flat permission key.
+- `CANCELLED` takes no more files. A file stops being removable once the document is finished: `PARTIALLY_PAID` or `PAID` (money has gone out against it). Not at posting, on purpose.
+- Index `scm.purchase_invoice_files` (mig `20261110T0300_scm_flow_doc_files.sql`), bytes in the SLIPS R2 bucket under `purchase-invoice-files/<company>/<doc>/<uuid>.<ext>`. Company-scoped on every read and write.
+- UI: the Files card (`FlowDocFilesCard`) on the desktop detail page and on the phone's generic detail screen (`MobileModuleDetail`), both through `vendor/scm/lib/flow-doc-files.ts`.
+- Code: `backend/src/scm/routes/flow-doc-files.ts` (one spec per document over `lib/doc-files.ts`). Tests: `backend/tests/flowDocFiles.test.ts`, `frontend/src/vendor/scm/components/FlowDocFilesCard.test.tsx`.
 
 ## Where the code is
 

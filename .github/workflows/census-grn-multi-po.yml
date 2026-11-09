@@ -1,0 +1,35 @@
+name: Census — goods receipts from more than one PO (read-only)
+
+# Staff 2026-11-09: "When we want to add missing item, convert GRN list all
+# same PO number". The Bill-a-GRN pickers labelled every line with the receipt
+# header's PO. This counts the receipts whose lines name a different PO, i.e.
+# the ones the old label got wrong. scripts/census-grn-multi-po.mjs says how.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Exit 0 for every
+# legitimate answer. Manual trigger only; never on a schedule.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: census-grn-multi-po
+  cancel-in-progress: true
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/census-grn-multi-po.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

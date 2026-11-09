@@ -22,12 +22,13 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, allowedCompaniesSql, allowedCompanyIds } from '../lib/companyScope';
 import { claimPodPhotos } from '../lib/pod-photo-claim';
-import { ASSR_LEG_BY_STOP } from './delivery-pod-context';
+import { ASSR_LEG_BY_STOP, podPhotoResponse } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
 import { setChecklistStatus, getUserPhasesOnProject } from '../../services/projects';
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
+import { todayMyt } from '../lib/my-time';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
@@ -217,7 +218,7 @@ export async function startTripIfPlanned(sb: any, tripId: string | null): Promis
 deliveryJobProgress.get('/progress', async (c) => {
   const since = c.req.query('since') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) return c.json({ error: 'invalid_since', reason: 'since must be YYYY-MM-DD.' }, 400);
-  const floor = new Date(Date.now() - 62 * 86400_000).toISOString().slice(0, 10);
+  const floor = todayMyt(-62);
   let q = c.get('supabase').from('job_progress')
       .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
       .gte('updated_at', since < floor ? floor : since);
@@ -484,9 +485,7 @@ export async function streamPhoto(c: Ctx, key: string | undefined): Promise<Resp
   if (!key) return c.json({ error: 'not_found', reason: 'No such photo.' }, 404);
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: 'not_found', reason: 'The photo file is missing from storage.' }, 404);
-  return new Response(obj.body, {
-    headers: { 'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg', 'cache-control': 'private, max-age=300' },
-  });
+  return podPhotoResponse(obj);
 }
 
 /* The delivery-run POD of a stock transfer, for the Stock Transfer page (it sits

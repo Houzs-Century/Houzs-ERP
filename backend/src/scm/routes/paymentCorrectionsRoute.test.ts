@@ -53,8 +53,10 @@ const sb = fakeSb({
     row('automation-by-holder', { source: 'automation', action: 'ADD_PAYMENT' }),
     row('header-edit', { action: 'UPDATE_HEADER' }),
     row('other-company', { company_id: 2 }),
-    row('last-month', { created_at: '2026-08-31T23:59:59Z' }),
-    row('next-month', { created_at: '2026-10-01T00:00:00Z' }),
+    /* The month is Malaysian: 23:59:59 MYT on 31 Aug is August, and 01:30 MYT
+       on 1 Oct (still 30 Sep in UTC) is October. */
+    row('last-month', { created_at: '2026-08-31T15:59:59Z' }),
+    row('next-month', { created_at: '2026-09-30T17:30:00Z' }),
     /* The ADD rows the recorder lookups read — these are not in the month. */
     row('add-of-pay-1', { action: 'ADD_PAYMENT', payment_id: 'pay-1', source: 'web', actor_name_snapshot: 'Rachael', note: null, field_changes: [{ field: 'amountSen', from: null, to: 199_000 }], created_at: '2026-08-29T06:00:00Z' }),
     row('add-of-pay-2-scan', { action: 'ADD_PAYMENT', so_doc_no: '2990-SO-2609-002', payment_id: 'pay-2', source: 'automation', actor_name_snapshot: null, note: 'Auto: payment recorded from scanned receipt (background scan job)', field_changes: [{ field: 'amountSen', from: null, to: 50_000 }], created_at: '2026-08-30T06:00:00Z' }),
@@ -198,6 +200,13 @@ describe('GET /accounting/payment-corrections', () => {
       corrections: 5, added: 2, edited: 2, deleted: 1, proof: 0,
       netMovedSen: 20_000 + 150_000 + 100 + 100 - 50_000, addedSen: 170_000, deletedSen: 50_000,
     });
+  });
+
+  it('cuts the month at Malaysian midnight, not UTC midnight', async () => {
+    const aug = await (await get('?month=2026-08')).json() as Report;
+    expect(aug.rows.map((r) => r.id)).toEqual(['last-month']);
+    const oct = await (await get('?month=2026-10')).json() as Report;
+    expect(oct.rows.map((r) => r.id)).toEqual(['next-month']);
   });
 
   it('an empty month is an empty report', async () => {

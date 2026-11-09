@@ -18,6 +18,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import { MobileAddLine } from "./MobileAddLine";
+import { FlowDocFilesCard } from "../vendor/scm/components/FlowDocFilesCard"; import { FLOW_DOC_KIND_BY_MODULE } from "../vendor/scm/lib/flow-doc-files";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
@@ -1413,6 +1414,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
      docs, the SAME usePoSoCoverage key covQ below already fetched. */
   const [mapOpen, setMapOpen] = useState(false);
   const mapAnchor = flowAnchorForModule(moduleKey);
+  const filesKind = FLOW_DOC_KIND_BY_MODULE[moduleKey];
   // Purchase docs only: the real per-SKU origin SO(s) for each line.
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
@@ -1618,6 +1620,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}
           </div>
         )}
+        {!!id && filesKind && <div style={{ marginTop: 13 }}><FlowDocFilesCard kind={filesKind} docId={id} status={s(header?.status) || null} /></div>}
       </div>
       {/* Collected on the ORDER — desktop parity (DeliveryOrderDetailV2's aside
           card). Read-only on both surfaces: the order is the one place a

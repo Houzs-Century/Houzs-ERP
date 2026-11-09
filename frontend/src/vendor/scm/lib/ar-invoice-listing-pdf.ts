@@ -14,6 +14,7 @@ import {
   fmtDocDate, fmtDocStamp, fmtRm, type PdfAction,
 } from './pdf-common';
 import type { ArListKind, ArListRow } from './ar-invoice-queries';
+import { todayMyt } from './dates';
 
 export type ArListingFilter = { kind: ArListKind; partyName?: string | null };
 
@@ -93,6 +94,6 @@ export async function generateArListingPdf(rows: ArListRow[], filter: ArListingF
       10: { cellWidth: 26 },
     },
   });
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayMyt();
   deliverPdf(doc, `customer-invoice-listing-${stamp}.pdf`, opts?.action ?? 'preview');
 }

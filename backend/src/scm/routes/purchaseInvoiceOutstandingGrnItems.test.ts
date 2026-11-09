@@ -38,7 +38,7 @@ const CALLER = {
 
 const { purchaseInvoices } = await import('./purchase-invoices');
 
-type Item = { grnItemId: string; grnId: string; grnDocNo: string; receivedAt: string; remaining: number; supplierCode: string; poDocNo: string | null; currency: string; exchangeRate: number };
+type Item = { grnItemId: string; grnId: string; grnDocNo: string; receivedAt: string; remaining: number; supplierCode: string; purchaseOrderId: string | null; poDocNo: string | null; currency: string; exchangeRate: number };
 
 const HOUZS = { id: 1, code: 'HOUZS' };
 const CO_2990 = { id: 2, code: '2990' };
@@ -186,6 +186,55 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
     expect(body.items!.map((i) => i.grnDocNo)).toEqual(['GRN-00002', 'GRN-00003', 'GRN-00001', 'GRN-00001']);
     const n1 = body.items!.filter((i) => i.grnDocNo === 'GRN-00001').map((i) => i.grnItemId);
     expect(n1).toEqual([uuid(0xb, 11), uuid(0xb, 10)]);
+  });
+
+  /* Staff 2026-11-09, HC-GRN-2611-052: "convert GRN list all same PO number".
+     One receipt took lines from two POs; every line was labelled with the
+     header's PO. Each line must name the PO its own purchase_order_item_id
+     belongs to, and only a line with no PO link borrows the header's. */
+  it('labels each line with its OWN purchase order when one note received from several', async () => {
+    const t = tables([{ n: 52, received: day(1), lines: [{ accepted: 1 }, { accepted: 1 }, { accepted: 1 }, { accepted: 1 }] }]);
+    const [l0, l1, l2, l3] = t.grn_items;
+    l0!.purchase_order_item_id = 'poi-125-a';
+    l1!.purchase_order_item_id = 'poi-202-a';
+    l2!.purchase_order_item_id = 'poi-other-co'; // a link that does not resolve in this company
+    l3!.purchase_order_item_id = null;            // a manual line
+    const sb = fakeSb({
+      ...t,
+      grns: t.grns.map((g) => ({ ...g, purchase_order_id: 'po-125', purchase_order: { po_number: 'HC-PO-2610-125' } })),
+      purchase_order_items: [
+        { id: 'poi-125-a', purchase_order_id: 'po-125', company_id: 1 },
+        { id: 'poi-202-a', purchase_order_id: 'po-202', company_id: 1 },
+        { id: 'poi-other-co', purchase_order_id: 'po-9', company_id: 2 },
+      ],
+      purchase_orders: [
+        { id: 'po-125', po_number: 'HC-PO-2610-125', company_id: 1 },
+        { id: 'po-202', po_number: 'HC-PO-2610-202', company_id: 1 },
+        { id: 'po-9', po_number: 'OTHER-PO-9', company_id: 2 },
+      ],
+    }, {}, [], [], MAX_ROWS);
+
+    const { status, body } = await getPicker(sb);
+    expect(status).toBe(200);
+    const byLine = new Map(body.items!.map((i) => [i.grnItemId, i]));
+    expect(byLine.get(l0!.id as string)).toMatchObject({ purchaseOrderId: 'po-125', poDocNo: 'HC-PO-2610-125' });
+    expect(byLine.get(l1!.id as string)).toMatchObject({ purchaseOrderId: 'po-202', poDocNo: 'HC-PO-2610-202' });
+    expect(byLine.get(l2!.id as string)).toMatchObject({ purchaseOrderId: null, poDocNo: null });
+    expect(byLine.get(l3!.id as string)).toMatchObject({ purchaseOrderId: 'po-125', poDocNo: 'HC-PO-2610-125' });
+    expect(new Set(body.items!.map((i) => i.poDocNo))).toEqual(new Set(['HC-PO-2610-125', 'HC-PO-2610-202', null]));
+  });
+
+  it('answers 500 when the per-line purchase order read fails, never the header PO', async () => {
+    const t = tables([{ n: 1, received: day(1), lines: [{ accepted: 2 }] }]);
+    t.grn_items[0]!.purchase_order_item_id = 'poi-1';
+    const sb = fakeSb({
+      ...t,
+      purchase_order_items: [{ id: 'poi-1', purchase_order_id: 'po-1', company_id: 1 }],
+      purchase_orders: [{ id: 'po-1', po_number: 'PO-1', company_id: 1 }],
+    }, { purchase_order_items: ['purchase_order_id'] }, [], [], MAX_ROWS);
+    const { status, body } = await getPicker(sb);
+    expect(status).toBe(500);
+    expect(body.error).toBe('load_failed');
   });
 
   /* A failed read must never come back as "nothing to bill". Each of the three

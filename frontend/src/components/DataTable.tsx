@@ -106,7 +106,6 @@ import { buildSearchBlob, conditionToken, isConditionToken, looksLikeDateColumn,
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
-
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
 import { DataRowCells } from "./DataTableRowCells";
 import {
@@ -123,6 +122,7 @@ import {
   sanitizeStringList,
   useViewportClampedPos,
 } from "./dataTableHelpers";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 export type { Column, ColumnLayoutPreset, DataTableProps } from "./dataTableTypes";
 
@@ -1624,7 +1624,7 @@ function DataTableInner<T, L>({
       const fetched = await spec.fetchRows({ exportKeys: cols.map((c) => c.key), filterKeys });
       const kept = tickedOrAll(sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort), defaultSort ?? null), selection?.selectedIds, getRowKey).rows;
       const matrix = buildLineExportMatrix(kept, spec.linesOf, cols);
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayMyt();
       await writeLineExportFile(matrix, spec.sheetName, `${exportName || tableId || "export"}-${date}.xlsx`);
     } catch (e) {
       spec.onError(e instanceof Error ? e : new Error(String(e)));
@@ -1641,7 +1641,7 @@ function DataTableInner<T, L>({
     const csvCols = csvColumnsOf(visibleColumns as Column<T, L>[]);
     if (onExport) { onExport(csvCols); return; }
     if (!actionRows || actionRows.rows.length === 0 || csvCols.length === 0) return;
-    const date = new Date().toISOString().slice(0, 10), outRows = actionRows.rows;
+    const date = todayMyt(), outRows = actionRows.rows;
     if (exportXlsx) {
       // No lines: one sheet row per list row, keeping each column's exportFormat.
       const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));

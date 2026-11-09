@@ -155,7 +155,7 @@ describe('GET /delivery-orders-mfg/:id/pod-photo — the POD photo on the DO pag
     a.use('*', async (c, next) => {
       c.set('supabase' as never, { from: (t: string) => new FakeQuery((tables[t] ||= [])) } as never);
       c.set('allowedCompanyIds' as never, [1] as never);
-      (c.env as Row) = { POD_BUCKET: { get: async (k: string) => (stored && k === podKey ? { body: 'JPEG', httpMetadata: { contentType: 'image/jpeg' } } : null) } };
+      (c.env as Row) = { POD_BUCKET: { get: async (k: string) => (stored && k === podKey ? { body: 'JPEG', httpMetadata: { contentType: 'image/jpeg' }, uploaded: new Date('2026-11-09T06:32:00Z') } : null) } };
       await next();
     });
     a.get('/delivery-orders/:id/pod-photo/:n', doPodPhotoHandler as never);
@@ -167,6 +167,11 @@ describe('GET /delivery-orders-mfg/:id/pod-photo — the POD photo on the DO pag
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/jpeg');
     expect(await res.text()).toBe('JPEG');
+  });
+
+  test('says when the photo was stored, so the photos PDF can print its time', async () => {
+    const res = await photoApp('slips/2026/10/a.jpg', true).request('/delivery-orders/do-1/pod-photo/0');
+    expect(res.headers.get('last-modified')).toBe('Mon, 09 Nov 2026 06:32:00 GMT');
   });
 
   test('404 when the DO has no POD, the file is gone, or the DO is another company', async () => {

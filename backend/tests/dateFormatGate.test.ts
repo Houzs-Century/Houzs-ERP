@@ -257,6 +257,31 @@ describe("the one-date-format gate", () => {
     }
   });
 
+  /* "Today" read off the UTC clock is yesterday in Malaysia before 08:00 (a PO,
+     a service-case leg or a lorry part change made in the morning was dated the
+     day before). todayMyt() is the fix; this proves a new UTC "today" fails. */
+  test("FAILS on a planted UTC 'today' and passes with todayMyt()", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-utc-today-"));
+    try {
+      const planted = path.join(dir, "PlantedToday.ts");
+      for (const line of [
+        "export const today = new Date().toISOString().slice(0, 10);",
+        "export const since = new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10);",
+        "export const day = new Date().toISOString().split('T')[0];",
+      ]) {
+        fs.writeFileSync(planted, line + "\n");
+        const bad = run(dir);
+        expect(bad.code, `expected a FAILURE for ${line}, got:\n${bad.out.slice(-3000)}`).toBe(1);
+        expect(bad.out).toContain("utc-today");
+      }
+      fs.writeFileSync(planted, "export const today = todayMyt();\nexport const since = todayMyt(-45);\n");
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   /* The other half of honest. Money is `toLocaleString('en-MY', …)` and row
      counts are `n.toLocaleString()`; there are ~40 of the second kind. If the
      gate fired on those, the next person would delete the gate rather than the
