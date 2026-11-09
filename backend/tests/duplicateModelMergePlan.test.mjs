@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planModelGroup, planIdleModel, sizeOf, confirmPhrase } from '../scripts/lib/duplicate-model-merge-plan.mjs';
+import { planModelGroup, planIdleModel, sizeOf, confirmPhrase, foldOnlyPlan, foldTargets } from '../scripts/lib/duplicate-model-merge-plan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BOOK = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'scripts', 'data', 'duplicate-model-merges.json'), 'utf8'));
@@ -67,7 +67,7 @@ describe('planModelGroup', () => {
       group, models,
       skus: [sku('A (K)', 'm-keep', { main: '400-D001' }), sku('B (K)', 'm-fold', { main: '400-E001' })],
     });
-    expect(p.refusals[0]).toMatch(/different main suppliers/);
+    expect(p.refusals.some((r) => /different main suppliers/.test(r))).toBe(true);
     expect(p.pairs).toEqual([]);
     expect(p.foldModels).toEqual([]);
   });
@@ -83,10 +83,51 @@ describe('planModelGroup', () => {
     expect(p.addSizes).toEqual(['K', 'Q']);
   });
 
-  it('leaves INACTIVE SKUs where they are', () => {
-    const p = planModelGroup({ group, models, skus: [sku('OLD (K)', 'm-fold', { status: 'INACTIVE' })] });
-    expect(p.leftInactive).toEqual(['OLD (K)']);
+  it("moves a folded Model's INACTIVE SKUs under the kept Model too, and leaves the kept Model's own where they are", () => {
+    const p = planModelGroup({ group, models, skus: [sku('OLD (K)', 'm-fold', { status: 'INACTIVE' }), sku('KEPT OLD (Q)', 'm-keep', { status: 'INACTIVE' })] });
+    expect(p.inactiveMoves).toEqual([{ id: 's-OLD (K)', code: 'OLD (K)', fromModelId: 'm-fold' }]);
+    expect(p.leftInactive).toEqual(['KEPT OLD (Q)']);
     expect(p.moves).toEqual([]);
+  });
+
+  it('folds a switched-off Model whose codes were all merged away, so it ends with none', () => {
+    const offModels = [model('m-keep', 'AMIRA PREMIUM'), model('m-fold', 'AMIRA PREMUIM', { active: false })];
+    const p = planModelGroup({
+      group: { category: 'MATTRESS', keep: 'AMIRA PREMIUM', drops: ['AMIRA PREMUIM'] }, models: offModels,
+      skus: [sku('AMIRA PREMIUM (K)', 'm-keep'), ...['K', 'Q', 'S', 'SS'].map((z) => sku(`AMIRA PREMUIM (${z})`, 'm-fold', { status: 'INACTIVE' }))],
+    });
+    expect(p.refusals).toEqual([]);
+    expect(p.inactiveMoves.map((m) => m.code)).toEqual(['AMIRA PREMUIM (K)', 'AMIRA PREMUIM (Q)', 'AMIRA PREMUIM (S)', 'AMIRA PREMUIM (SS)']);
+    expect(p.foldModels).toEqual([]);
+  });
+
+  it('never folds a Model whose merged-away INACTIVE code has a different supplier (owner rule 2026-11-10)', () => {
+    const offModels = [model('m-keep', 'AMIRA PREMIUM'), model('m-fold', 'AMIRA PREMUIM', { active: false })];
+    const p = planModelGroup({
+      group: { category: 'MATTRESS', keep: 'AMIRA PREMIUM', drops: ['AMIRA PREMUIM'] }, models: offModels,
+      skus: [sku('AMIRA PREMIUM (K)', 'm-keep', { main: '400-D001' }), sku('AMIRA PREMUIM (K)', 'm-fold', { status: 'INACTIVE', main: '400-E001' })],
+    });
+    expect(p.refusals).toEqual(['different supplier: Model "AMIRA PREMUIM" is supplied by 400-E001, "AMIRA PREMIUM" by 400-D001']);
+    expect(p.inactiveMoves).toEqual([]);
+    const v = foldOnlyPlan(p, true);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/^different supplier/);
+  });
+
+  it('refuses a fold whose ACTIVE code of a new size has a different supplier too', () => {
+    const p = planModelGroup({ group, models, skus: [sku('A (K)', 'm-keep', { main: 'S1' }), sku('B (SS)', 'm-fold', { main: 'S2' })] });
+    expect(p.refusals[0]).toMatch(/^different supplier/);
+    expect(p.moves).toEqual([]);
+  });
+
+  it('moves no INACTIVE SKU when the group is refused', () => {
+    const p = planModelGroup({
+      group, models,
+      skus: [sku('A (K)', 'm-keep', { main: 'S1' }), sku('B (K)', 'm-fold', { main: 'S2' }), sku('OLD (Q)', 'm-fold', { status: 'INACTIVE' })],
+    });
+    expect(p.refusals.length).toBeGreaterThan(0);
+    expect(p.inactiveMoves).toEqual([]);
+    expect(p.leftInactive).toEqual(['OLD (Q)']);
   });
 });
 
@@ -110,7 +151,7 @@ describe('twins with different main suppliers', () => {
     sku('DUNLOPILLO CS2 VISCO BLISS MATT (K)', 'm-fold', { main: '400-E001' }),
   ];
   it('are refused until the owner rules they are one product', () => {
-    expect(planModelGroup({ group, models, skus: twins }).refusals).toHaveLength(1);
+    expect(planModelGroup({ group, models, skus: twins }).refusals.length).toBeGreaterThan(0);
     const ruled = planModelGroup({ group: { ...group, ruledOneProduct: true }, models, skus: twins });
     expect(ruled.refusals).toEqual([]);
     expect(ruled.pairs).toHaveLength(1);
@@ -141,5 +182,55 @@ describe('HC-0208 KŌRI IYASH -> KŌRI IYASHI', () => {
     expect(p.refusals).toEqual([]);
     expect(p.pairs).toEqual([{ drop: 'AKEMI KŌRI IYASH MATT (K)', keep: 'AKEMI KŌRI IYASHI MATT (K)', size: 'K' }]);
     expect(p.foldModels).toEqual([{ id: 'm-fold', code: 'KŌRI IYASH' }]);
+  });
+});
+
+describe('foldTargets (SKU merge -> Model fold)', () => {
+  const cm = (rows) => new Map(rows.map(([code, model_id, model_code, status = 'ACTIVE']) => [code, { model_id, model_code, status }]));
+  it('folds the dropped code\'s Model when the merge takes its last active code', () => {
+    const t = foldTargets({
+      pairs: [{ drop: 'P (K)', keep: 'M (K)' }],
+      codeModels: cm([['P (K)', 'm-p', 'PREMUIM'], ['M (K)', 'm-m', 'PREMIUM']]),
+      activeByModel: new Map([['m-p', 1], ['m-m', 3]]), retiring: new Set(['P (K)']),
+    });
+    expect(t).toEqual([{ fromModelId: 'm-p', from: 'PREMUIM', intoModelId: 'm-m', into: 'PREMIUM', fold: true, reason: null }]);
+  });
+  it('leaves a Model that still has an active code', () => {
+    const [t] = foldTargets({
+      pairs: [{ drop: 'P (K)', keep: 'M (K)' }],
+      codeModels: cm([['P (K)', 'm-p', 'PREMUIM'], ['M (K)', 'm-m', 'PREMIUM']]),
+      activeByModel: new Map([['m-p', 2]]), retiring: new Set(['P (K)']),
+    });
+    expect(t.fold).toBe(false);
+    expect(t.reason).toBe('it still has 1 active code(s)');
+  });
+  it('after the merge (nothing retiring) reads the live count, and skips a merge inside one Model', () => {
+    const codeModels = cm([['P (K)', 'm-p', 'PREMUIM', 'INACTIVE'], ['M (K)', 'm-m', 'PREMIUM'], ['M (Q)', 'm-m', 'PREMIUM']]);
+    expect(foldTargets({ pairs: [{ drop: 'P (K)', keep: 'M (K)' }], codeModels, activeByModel: new Map(), retiring: new Set() })[0].fold).toBe(true);
+    expect(foldTargets({ pairs: [{ drop: 'M (Q)', keep: 'M (K)' }], codeModels, activeByModel: new Map(), retiring: new Set() })).toEqual([]);
+  });
+  it('refuses a Model whose codes went into two different Models', () => {
+    const [t] = foldTargets({
+      pairs: [{ drop: 'P (K)', keep: 'M (K)' }, { drop: 'P (Q)', keep: 'N (Q)' }],
+      codeModels: cm([['P (K)', 'm-p', 'P'], ['P (Q)', 'm-p', 'P'], ['M (K)', 'm-m', 'M'], ['N (Q)', 'm-n', 'N']]),
+      activeByModel: new Map(), retiring: new Set(),
+    });
+    expect(t.fold).toBe(false);
+    expect(t.reason).toBe('its codes went into more than one Model (M / N)');
+  });
+});
+
+describe('foldOnlyPlan', () => {
+  const base = { label: 'M', refusals: [], pairs: [], moves: [], fills: [], addSizes: ['Q'], activateKept: true, createModel: null, inactiveMoves: [{ id: 'x' }], foldModels: [] };
+  it('passes a pure fold, without touching the kept Model\'s own sizes or switch', () => {
+    const v = foldOnlyPlan(base, true);
+    expect(v.ok).toBe(true);
+    expect(v.plan.addSizes).toEqual([]);
+    expect(v.plan.activateKept).toBe(false);
+  });
+  it('reports the planner\'s refusal and anything that is more than a fold', () => {
+    expect(foldOnlyPlan({ ...base, refusals: ['size K: different main suppliers'] }, true)).toEqual({ ok: false, reason: 'size K: different main suppliers' });
+    expect(foldOnlyPlan({ ...base, pairs: [{ drop: 'A', keep: 'B' }] }, true).reason).toMatch(/two codes of one size \(A \/ B\)/);
+    expect(foldOnlyPlan(base, false)).toEqual({ ok: false, reason: 'Model "M" is switched off' });
   });
 });

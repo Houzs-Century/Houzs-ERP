@@ -1,0 +1,51 @@
+name: Merge orphan Product Models (PLAN unless applied)
+
+# Folds each Product Model that a SKU merge left with no ACTIVE code into the one
+# Model its merged codes went to (backend/scripts/merge-orphan-models.mjs has the
+# rules and the evidence it reads). Owner decision 2026-11-10, option C.
+#
+# PLAN (default) writes nothing and prints, per Model, where it would fold and
+# why - or why it is left alone. APPLY needs the CONFIRM phrase the plan printed;
+# the phrase carries the counts, so a phrase from an older run cannot fire.
+#
+# Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "On apply only: the phrase the plan printed"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-orphan-models
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/merge-orphan-models.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -17,7 +17,10 @@
 //     absorbs (that binding is also what AutoCount calls the item), and blank
 //     prices / cost are filled from it.
 // The kept Model's size pool gains every size that now lives on it; the folded
-// Models switch off (active = false). INACTIVE SKUs are left where they are.
+// Models switch off (active = false). A folded Model's INACTIVE SKUs move under
+// the kept Model too (inactiveMoves), so the folded Model ends with no SKU at all
+// instead of lingering in Modular with codes that were merged away (2026-11-10:
+// "AMIRA PREMUIM" stayed with 4 SKUs after its codes merged into AMIRA PREMIUM).
 //
 // A GROUP IS REFUSED WHOLE when the twins of a size are bound to different main
 // suppliers: that is two products with similar names, not one under two codes,
@@ -90,6 +93,16 @@ export function planModelGroup({ group, models, skus }) {
   const groupModelIds = new Set([keptId, ...folds.map((f) => f.id)].filter(Boolean));
   const mine = skus.filter((s) => groupModelIds.has(s.model_id));
   const active = mine.filter((s) => s.status === "ACTIVE");
+  /* Owner rule 2026-11-10: Models with different suppliers are never merged.
+     Every code counts, a merged-away INACTIVE one too, because a fold moves it. */
+  const mainsOf = (id) => new Set(mine.filter((s) => s.model_id === id && s.main).map((s) => s.main));
+  const keptMains = mainsOf(keptId);
+  if (keptMains.size > 0 && !group.ruledOneProduct) {
+    for (const f of folds) {
+      const other = [...mainsOf(f.id)].filter((m) => !keptMains.has(m));
+      if (other.length > 0) refusals.push(`different supplier: Model "${f.model_code}" is supplied by ${other.join(", ")}, "${label}" by ${[...keptMains].join(", ")}`);
+    }
+  }
 
   const bySize = new Map();
   for (const s of active) {
@@ -138,8 +151,56 @@ export function planModelGroup({ group, models, skus }) {
     fills: refused ? [] : fills,
     addSizes: refused ? [] : addSizes,
     foldModels: refused ? [] : folds.filter((f) => f.active).map((f) => ({ id: f.id, code: f.model_code })),
-    leftInactive: mine.filter((s) => s.status !== "ACTIVE").map((s) => s.code),
+    inactiveMoves: refused ? [] : mine.filter((s) => s.status !== "ACTIVE" && s.model_id !== keptId)
+      .map((s) => ({ id: s.id, code: s.code, fromModelId: s.model_id })),
+    leftInactive: mine.filter((s) => s.status !== "ACTIVE" && (refused || s.model_id === keptId)).map((s) => s.code),
   };
+}
+
+/**
+ * A SKU merge left a Model with no ACTIVE code: the planned fold of it, when that
+ * fold is ONLY a fold. A plan that would also merge, move or fill an ACTIVE code
+ * (two codes of one size on the kept Model) is a Model merge of its own, which a
+ * person decides on the "Merge models" screen; so is waking a switched-off Model.
+ * @returns {{ok: true, plan: object} | {ok: false, reason: string}}
+ */
+export function foldOnlyPlan(plan, keptModelActive) {
+  if (plan.refusals.length > 0) return { ok: false, reason: plan.refusals.join("; ") };
+  if (plan.pairs.length > 0) {
+    return { ok: false, reason: `Model "${plan.label}" holds two codes of one size (${plan.pairs.map((p) => `${p.drop} / ${p.keep}`).join(", ")}); settle them with Merge models` };
+  }
+  if (plan.moves.length > 0 || plan.fills.length > 0) return { ok: false, reason: "it would also move ACTIVE codes; use Merge models" };
+  if (!keptModelActive) return { ok: false, reason: `Model "${plan.label}" is switched off` };
+  return { ok: true, plan: { ...plan, createModel: null, activateKept: false, addSizes: [] } };
+}
+
+/**
+ * Which Models a SKU merge leaves with no ACTIVE code, so they fold into the kept
+ * code's Model. `retiring`: codes still ACTIVE that the merge is about to switch
+ * off (the preview); empty after the merge, when the rows already say it.
+ * @param {{pairs: Array<{drop: string, keep: string}>,
+ *          codeModels: Map<string, {model_id: string|null, model_code: string|null, status: string}>,
+ *          activeByModel: Map<string, number>, retiring: Set<string>}} w
+ */
+export function foldTargets({ pairs, codeModels, activeByModel, retiring }) {
+  const byFrom = new Map();
+  for (const p of pairs) {
+    const d = codeModels.get(p.drop);
+    const k = codeModels.get(p.keep);
+    if (!d?.model_id || !k?.model_id || d.model_id === k.model_id) continue;
+    const t = byFrom.get(d.model_id) ?? { fromModelId: d.model_id, from: d.model_code, into: new Map() };
+    t.into.set(k.model_id, k.model_code);
+    byFrom.set(d.model_id, t);
+  }
+  return [...byFrom.values()].map((t) => {
+    const leaving = [...codeModels.entries()].filter(([code, r]) => retiring.has(code) && r.model_id === t.fromModelId && r.status === "ACTIVE").length;
+    const activeLeft = Math.max(0, (activeByModel.get(t.fromModelId) ?? 0) - leaving);
+    const intos = [...t.into.entries()];
+    const base = { fromModelId: t.fromModelId, from: t.from, intoModelId: intos.length === 1 ? intos[0][0] : null, into: intos.map(([, c]) => c).join(" / ") };
+    if (intos.length > 1) return { ...base, fold: false, reason: `its codes went into more than one Model (${base.into})` };
+    if (activeLeft > 0) return { ...base, fold: false, reason: `it still has ${activeLeft} active code(s)` };
+    return { ...base, fold: true, reason: null };
+  });
 }
 
 /** A Model on the idle list switches off, with its ACTIVE SKUs, only with no stock and no open sales-order line. */
