@@ -7,6 +7,8 @@
 //
 // Vendored verbatim from 2990 packages/shared/src/customer-demographics.ts.
 
+import { todayMyt } from '../lib/my-time';
+
 export const RACE_OPTIONS = ['Malay', 'Chinese', 'Indian', 'Others'] as const;
 export type Race = (typeof RACE_OPTIONS)[number];
 
@@ -26,19 +28,13 @@ export function isValidGender(v: unknown): v is Gender {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Device-local today as ISO YYYY-MM-DD (Malaysia UTC+8 on the tablets). The
- *  age derivations compare device-local on purpose, mirroring the handover
- *  no-past-dates rule. */
-function todayIsoLocal(): string {
-  return new Date().toLocaleDateString('en-CA');
-}
 
 /** Exact integer age from an ISO birthday as of `asOf` (default today). Returns
  *  null for malformed or impossible calendar input. Calendar comparison (no
  *  rounding) — age ticks up only on/after the birthday. */
 export function ageFromBirthday(birthday: string | null | undefined, asOf?: string): number | null {
   if (typeof birthday !== 'string' || !ISO_DATE_RE.test(birthday)) return null;
-  const ref = asOf && ISO_DATE_RE.test(asOf) ? asOf : todayIsoLocal();
+  const ref = asOf && ISO_DATE_RE.test(asOf) ? asOf : todayMyt();
   const [by, bm, bd] = birthday.split('-').map(Number) as [number, number, number];
   const [ry, rm, rd] = ref.split('-').map(Number) as [number, number, number];
   // Reject impossible dates (e.g. 2021-02-29) — Date would silently roll over.

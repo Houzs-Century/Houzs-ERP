@@ -961,7 +961,7 @@ export async function transitionStage(
   }
   if (newStage === "completed") {
     sets.push("completion_date = ?");
-    binds.push(nowIso.slice(0, 10));
+    binds.push(todayMyt());
   }
 
   binds.push(id);
