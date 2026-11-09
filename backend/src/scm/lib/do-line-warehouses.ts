@@ -77,3 +77,26 @@ export async function resolveDoLineWarehouses(
   }
   return out;
 }
+
+/* The ONE warehouse a delivery order ships from, stored on the DO header
+   (delivery_orders.warehouse_id) so the DO page and print can name it. Neither
+   create path stored one (sister fix Conts-ERP #746), so the page showed the SO's
+   sales-location text as "Warehouse" and a free line added later drew from the
+   company default instead of the DO's building.
+
+   The operator's explicit choice wins. Otherwise: the warehouse every line
+   resolves to, when they all resolve to the SAME one. A DO whose lines leave
+   from several warehouses, or one whose line resolves to none, stores null and
+   stays per line. Storing it never moves a line: resolveDoLineWarehouses uses
+   the header only for lines without an SO-line warehouse, and when every line
+   already resolved to this one, those lines resolved to it too. PURE. */
+export function doShipFromWarehouseId(
+  headerWarehouseId: string | null,
+  lineWarehouses: ReadonlyMap<string, string | null>,
+): string | null {
+  if (headerWarehouseId) return headerWarehouseId;
+  const all = [...lineWarehouses.values()];
+  if (all.length === 0 || all.some((w) => !w)) return null;
+  const uniq = new Set(all);
+  return uniq.size === 1 ? (all[0] as string) : null;
+}

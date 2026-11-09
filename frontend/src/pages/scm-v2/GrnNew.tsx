@@ -65,6 +65,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { useAuth } from '../../auth/AuthContext';
 import { canPostGoodsReceipts } from '../../auth/salesAccess';
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
+import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -980,7 +981,7 @@ export const GrnNew = () => {
             }}>
               {supplier.contact_person && <span>Contact: <strong>{supplier.contact_person}</strong></span>}
               {supplier.phone          && <span>Phone: <strong>{formatPhone(supplier.phone)}</strong></span>}
-              {supplier.email          && <span>Email: <strong>{supplier.email}</strong></span>}
+              {supplierEmailList(supplier).length > 0          && <span>Email: <strong>{supplierEmailList(supplier).join(", ")}</strong></span>}
               {supplier.payment_terms  && <span>Terms: <strong>{supplier.payment_terms}</strong></span>}
               <span>Currency: <strong>{supplier.currency ?? currency}</strong></span>
             </div>

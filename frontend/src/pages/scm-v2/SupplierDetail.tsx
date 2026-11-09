@@ -2320,6 +2320,8 @@ const SupplierInfoCard = ({
     contactPerson: supplier.contact_person ?? '',
     attention: supplier.attention ?? '',
     email: supplier.email ?? '',
+    email2: supplier.email2 ?? '',
+    email3: supplier.email3 ?? '',
     phone: supplier.phone ?? '',
     phone2: supplier.phone2 ?? '',
     mobile: supplier.mobile ?? '',
@@ -2414,6 +2416,9 @@ const SupplierInfoCard = ({
             <InfoCell label="Contact Person" value={supplier.contact_person ?? '—'} />
             <InfoCell label="Attention" value={supplier.attention ?? '—'} />
             <InfoCell label="Email" value={supplier.email ?? '—'} />
+            {/* Owner 2026-11-09 — the PO email copies Email 2 / Email 3 (Cc). */}
+            <InfoCell label="Email 2" value={supplier.email2 ?? '—'} />
+            <InfoCell label="Email 3" value={supplier.email3 ?? '—'} />
             {/* Task #91 — formatPhone() displays stored E.164 as the pretty
                 Malaysian convention. Fax intentionally left raw (rarely MY-
                 formatted), as does an empty value which renders as "—". */}
@@ -2475,6 +2480,8 @@ const SupplierInfoCard = ({
             <EditField label="Contact Person" value={form.contactPerson} onChange={(v) => setF('contactPerson', v)} />
             <EditField label="Attention" value={form.attention} onChange={(v) => setF('attention', v)} />
             <EditField label="Email" value={form.email} onChange={(v) => setF('email', v)} />
+            <EditField label="Email 2" value={form.email2} onChange={(v) => setF('email2', v)} />
+            <EditField label="Email 3" value={form.email3} onChange={(v) => setF('email3', v)} />
             {/* Task #91 — phone/mobile/WhatsApp use the unified phone field so
                 they normalize to E.164 on blur. Fax stays plain (non-MY format,
                 edge case). */}
