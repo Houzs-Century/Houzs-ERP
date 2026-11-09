@@ -22,7 +22,8 @@ import { loadSuppliers } from '../lib/grn-scan-load';
 import { createDraftPiFromGrnItems } from '../lib/pi-from-grn-core';
 import { loadBillableLines, reviewOfPiRead } from '../lib/pi-scan-run';
 import type { PiScanExtract } from '../lib/pi-scan-extract';
-import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
+import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, mergeRebuiltLines, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
+import { aiSkuMatcher, type AiSkuMatcher } from '../lib/pi-scan-ai-match';
 import { refVariants } from '../lib/grn-scan-check';
 import { callerId, goldSamples, handleDiscard, handleFile, handleGold, handleRetry, handleUpload, idsOf, jsonBody, ownRows, svcOf, waitingRows, type CheckRow } from './scan-check-shared';
 import { reapStalePiScanJobs, runPiJobFromRow } from './scan-pi';
@@ -37,22 +38,29 @@ scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature
    them, and per invoice whether it repeats one already made. */
 /* A working copy of an older shape: rebuild it from the stored read, once, so a
    waiting invoice takes the newer matching without being uploaded again. The head
-   the operator may have edited and any row they tied stay. */
-async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>): Promise<void> {
-  for (const r of rows) {
-    if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION || !r.sample_id) continue;
-    const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
-    if (error) { console.warn('[scan-pi check] read not loaded, copy left as it is:', r.id, error.message); continue; }
-    const parsed = (data as { extracted: PiScanExtract | null } | null)?.extracted ?? null;
-    if (!parsed || !Array.isArray(parsed.lines)) continue;
-    const { review, note } = await reviewOfPiRead(svc, companyId, parsed);
-    const tied = r.review.lines.filter((l) => l.grnItemId && !l.suggested);
-    const next: PiReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, invoiceNumber: r.review.invoiceNumber ?? review.invoiceNumber, invoiceDate: r.review.invoiceDate ?? review.invoiceDate, lines: tied.length > 0 ? r.review.lines : review.lines };
-    const { error: upErr } = await svc.from('scan_jobs').update({ review: next, error: note }).eq('id', r.id).eq('company_id', companyId).eq('review_state', 'pending');
-    if (upErr) { console.warn('[scan-pi check] copy not upgraded:', r.id, upErr.message); continue; }
-    r.review = next;
-    r.error = note;
-  }
+   the operator may have edited and every row already tied stay; a row still
+   untied takes what the newer matching ties it to. Copies rebuild side by side:
+   each may ask the AI once. */
+async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>, ai: AiSkuMatcher | null): Promise<void> {
+  await Promise.all(rows.map((r) => upgradeCopy(svc, companyId, r, ai)));
+}
+
+async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | null, r: CheckRow<PiReview>, ai: AiSkuMatcher | null): Promise<void> {
+  if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION || !r.sample_id) return;
+  const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
+  if (error) { console.warn('[scan-pi check] read not loaded, copy left as it is:', r.id, error.message); return; }
+  const parsed = (data as { extracted: PiScanExtract | null } | null)?.extracted ?? null;
+  if (!parsed || !Array.isArray(parsed.lines)) return;
+  const { review, note } = await reviewOfPiRead(svc, companyId, parsed, ai);
+  // A supplier the operator chose stands; the rows' ties then follow the copy kept.
+  const keepSupplier = r.review.supplierId != null && r.review.supplierId !== review.supplierId;
+  const lines = keepSupplier ? r.review.lines : mergeRebuiltLines(r.review.lines, review.lines);
+  const next: PiReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, invoiceNumber: r.review.invoiceNumber ?? review.invoiceNumber, invoiceDate: r.review.invoiceDate ?? review.invoiceDate, lines };
+  const stillNote = lines.some((l) => l.grnItemId) ? null : note;
+  const { error: upErr } = await svc.from('scan_jobs').update({ review: next, error: stillNote }).eq('id', r.id).eq('company_id', companyId).eq('review_state', 'pending');
+  if (upErr) { console.warn('[scan-pi check] copy not upgraded:', r.id, upErr.message); return; }
+  r.review = next;
+  r.error = stillNote;
 }
 
 scanPiCheck.get('/pending', async (c) => {
@@ -63,7 +71,7 @@ scanPiCheck.get('/pending', async (c) => {
   const waiting = await waitingRows<PiReview>(svc, c, 'PI');
   if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const { rows } = waiting;
-  await upgradeCopies(svc, companyId, rows);
+  await upgradeCopies(svc, companyId, rows, aiSkuMatcher(c.env, companyId, callerId(c)));
 
   const [suppliers, lines] = await Promise.all([loadSuppliers(svc, companyId), loadBillableLines(svc, companyId)]);
   if (lines === null) return c.json({ error: 'query_failed', reason: 'Could not load what is left to bill. Please try again.' }, 500);
