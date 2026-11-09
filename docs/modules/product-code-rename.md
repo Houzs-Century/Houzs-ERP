@@ -150,7 +150,10 @@ Modular -> "Merge models": pick the kept Model, add the others, Check, then Merg
 `backend/scripts/merge-duplicate-models.mjs` (`scripts/lib/duplicate-model-merge-plan.mjs`, `-run.mjs`).
 Each ACTIVE SKU moves under the kept Model; two codes of one size go through the code merge below.
 INACTIVE SKUs stay where they are, folded Models switch off, a kept Model that was off switches on.
-Refused whole: twins with different main suppliers, a SKU with no size, a folded Model with sofa rows.
+Refused whole: Models whose ACTIVE SKUs are bound to more than one main supplier, of any size (owner
+2026-11-10: Models of different suppliers are never merged; a SKU with no main supplier does not count),
+a SKU with no size, a folded Model with sofa rows. Only a script book group marked `ruledOneProduct` passes
+the supplier rule; the Modular screen never can.
 
 ## 5b. Merge codes (many into one)
 

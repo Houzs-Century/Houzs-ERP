@@ -14,6 +14,7 @@ Money is integer sen; dates are stored UTC and shown DD/MM/YYYY.
 - Nothing writes SIGNED (the scan ladder's type forbids it); there is no Mark signed or Mark Invoiced control.
 - CANCELLED: offered on any status but CANCELLED / INVOICED, needs a reason, reverses the stock, refused while a live SI or DR exists; final — every transition out refuses `do_cancelled_final`; re-deliver with a new DO.
 - The status PATCH refuses stock-out → DRAFT (`illegal_status_transition`); DISPATCHED → LOADED is allowed. Revert (`POST /:id/revert`, reason required) is the only way from LOADED back to DRAFT and returns the stock; refused with a live SI or DR.
+- A delivered DO (SIGNED / DELIVERED / INVOICED, `doHasArrived`) never moves back through the status PATCH (409 `use_revert`), and the list menu offers it no status mark. Undo delivered (`POST /:id/revert` with `toStatus: DISPATCHED`, reason required, SIGNED / DELIVERED only) is the one way back: one step to DISPATCHED, no stock or AutoCount effect, `delivered_at` / `signed_at` cleared, POD signature and photos kept (counted in the audit note), and the SO steps DELIVERED → SHIPPED when no other live DO of it is delivered (`so-undeliver-sync.ts`; the daily sweep may deliver it again by its date rule). Refused with a live SI or DR, or a reported delivery issue (`scm.delivery_issues`; 409 `delivery_issue_reported`, 503 when unreadable).
 - Hold is a marker (`on_hold`, `hold_reason`, `held_at`, `held_by`; `PATCH /:id/hold`), never a status: the DO keeps its stage, shows a Hold chip and appears in the overlapping On Hold tab.
 - Counts as delivered and as invoiceable: every status except DRAFT and CANCELLED (`doCountsAsDelivered`, `DO_NOT_INVOICEABLE_STATES`). Owner rule: never block invoicing a Confirmed (LOADED) delivery.
 - List tabs: one per status from `DO_STATUS_BUCKETS` (`backend/src/scm/lib/do-status-buckets.ts`) plus On Hold. KPI "On the road" = DISPATCHED + IN_TRANSIT; "Delivered" = DELIVERED + INVOICED.
@@ -27,7 +28,7 @@ Money is integer sen; dates are stored UTC and shown DD/MM/YYYY.
 - `canOperateDeliveryOrders` (`frontend/src/auth/salesAccess.ts`) gates operate controls on desktop and phone alike; sales staff get view + Print; controls they cannot use are absent, not disabled.
 - `scm.do.load` (position capability) — reach `PATCH /:id/status` → LOADED without delivery edit.
 - `scm.do.dispatch` — → DISPATCHED and the POD chain (IN_TRANSIT / SIGNED / DELIVERED). A driver let in this way completes only a DO already shipped and assigned to their own crew (`not_your_job`); any other target is 403 `capability_required`.
-- `scm.do.revert` — the revert route; the handler re-checks the capability (`*` passes).
+- `scm.do.revert` — the revert route, Undo delivered included; the handler re-checks the capability (`*` passes). The detail page shows the button (`canRevertDelivery`); the phone has no revert control.
 - Finance visibility (`canViewScmFinance`) — without it `DO_FINANCE_KEYS` (cost, margin, per-category subtotals) are stripped from list and detail; `local_total_sen` stays visible.
 - `scm.warehouse.inventory` — the Loading List (`GET /api/scm/loading-list`), read-only.
 - `/api/public/do-scan/*` has no login: the token printed on the paper is the credential.
