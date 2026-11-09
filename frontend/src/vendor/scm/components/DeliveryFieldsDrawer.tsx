@@ -41,9 +41,6 @@ import { instantToMytLocal, mytLocalToInstant } from "../lib/dates";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A TIMESTAMPTZ ISO string → the Malaysian wall clock YYYY-MM-DDTHH:mm that
-   DateTimeField reads and writes; saved back with +08:00 (lib/dates.ts). */
-const toDtLocal = (iso: string | null): string => instantToMytLocal(iso);
 /* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
@@ -85,8 +82,8 @@ export const DeliveryFieldsDrawer = ({
     // DO-execution
     timeRange: order.time_range ?? '',
     timeConfirmed: order.time_confirmed ?? false,
-    arrivalAt: toDtLocal(order.arrival_at),
-    departureAt: toDtLocal(order.departure_at),
+    arrivalAt: instantToMytLocal(order.arrival_at),
+    departureAt: instantToMytLocal(order.departure_at),
     shipoutDate: toDateInput(order.shipout_date),
     customerDeliveredDate: toDateInput(order.customer_delivered_date),
     etaArrivingPort: order.eta_arriving_port ?? '',

@@ -64,9 +64,6 @@ export function pdRow(label: string, val: ReactNode, strong?: boolean, last?: bo
   );
 }
 
-// A TIMESTAMPTZ ISO → the Malaysian wall clock YYYY-MM-DDTHH:mm DateTimeField
-// reads and writes; saved back with +08:00 (vendor/scm/lib/dates.ts).
-const toDtLocal = (iso: string | null | undefined): string => instantToMytLocal(iso);
 // A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
@@ -218,8 +215,8 @@ export function DeliveryFieldsCard({
       replacementDisposal: order.replacement_disposal ?? "",
       timeRange: order.time_range ?? "",
       timeConfirmed: !!order.time_confirmed,
-      arrivalAt: toDtLocal(order.arrival_at),
-      departureAt: toDtLocal(order.departure_at),
+      arrivalAt: instantToMytLocal(order.arrival_at),
+      departureAt: instantToMytLocal(order.departure_at),
       shipoutDate: toDateInput(order.shipout_date),
       customerDeliveredDate: toDateInput(order.customer_delivered_date),
       etaArrivingPort: order.eta_arriving_port ?? "",

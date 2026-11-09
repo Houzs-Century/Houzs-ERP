@@ -102,9 +102,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { withSoRefPoIds } from '../lib/so-ref-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
-
-/** YYMM of today in Malaysia, for the monthly PO number. */
-const yymmMyt = (): string => { const t = todayMyt(); return `${t.slice(2, 4)}${t.slice(5, 7)}`; };
+import { yymmFor } from '../../services/documentRefs';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1115,7 +1113,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
 
   /* The Malaysian month: the Worker clock is UTC, so getMonth() put a PO cut
      before 08:00 on the 1st under the previous month's number. */
-  const yymm = yymmMyt();
+  const yymm = yymmFor();
 
   // PO# generation: max(suffix)+1 over the month's POs (see lib/doc-no.ts).
   // NOT count+1 — count+1 is non-self-healing (a mid-month delete leaves a gap
@@ -2232,7 +2230,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   }
 
   // Generate PO numbers + create one PO per supplier.
-  const yymm = yymmMyt(); // Malaysian month, not the Worker's UTC one
+  const yymm = yymmFor(); // Malaysian month, not the Worker's UTC one
   // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
   // delete re-mints a surviving number → UNIQUE collision). Derive the next
   // suffix via mintMonthlyDocNo, then counter starts one below it.
