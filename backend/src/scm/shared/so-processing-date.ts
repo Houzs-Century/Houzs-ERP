@@ -671,11 +671,11 @@ export function readSoProcessingDateFromBody(
  *    consignment proceeded_at retirement, and this comment named it for a day; the dead
  *    legacy column that used to squat on this name went in 0189).
  *
- * ── SO purchase-order lock (Owner 2026-08-12, 2990 only) ───────────────────
+ * ── SO purchase-order lock (Owner 2026-08-12; every company 2026-11-09) ────
  *    The SAME soft lock, reached by the other road: a live PO already claims one
  *    of this SO's lines, so the order is with a supplier regardless of what the
  *    processing date says. Rationale, scope and the fail-closed contract live in
- *    lib/so-po-lock.ts — read that before widening this to Houzs.
+ *    lib/so-po-lock.ts.
  * 
  *    A SEPARATE response from the processing-date one on purpose: the two are
  *    fixed by different actions ("wait / talk to production" vs "the PO is out,

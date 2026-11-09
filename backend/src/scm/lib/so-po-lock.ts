@@ -16,21 +16,19 @@
 // hard downstream lock a DO/SI applies: the change is still legitimate, it just
 // has to be approved and re-sent rather than applied behind the purchaser's back.
 //
-// ── SCOPE: 2990 ONLY (owner 2026-08-12) ──────────────────────────────────────
-// Measured before shipping: 304 live SOs carry a live PO while remaining directly
-// editable — and 302 of them are HOUZS orders that simply never had a Processing
-// Date filled in (SO dates back to 2024-01). Locking those in one deploy would
-// flip a two-year backlog of Houzs orders to amendment-only in a single step, so
-// the owner scoped this rule to 2990, where the exposure is 2 orders and the POS
-// create path stamps a processing date anyway. Houzs keeps the date-only rule
-// until it is decided separately.
+// ── SCOPE: EVERY COMPANY (owner 2026-11-09) ──────────────────────────────────
+// Shipped 2026-08-12 for 2990 only: 302 of the 304 SOs then carrying a live PO
+// were Houzs orders with no Processing Date, and locking them in one deploy
+// would have flipped a two-year backlog to amendment-only. Houzs kept the
+// date-only rule "until it is decided separately".
 //
-// The 2990 test is the DOC-NUMBER PREFIX (isMirroredDocNo), not company_id — see
-// the MIRRORED_COMPANY_CODE block in lib/companyScope.ts for why the prefix is
-// the authoritative marker: it needs no companies-master lookup, so this guard
-// behaves identically in a request, in a reconstructed headless context, and in
-// a library called without a Context, where a company_id read would silently
-// no-op and fail OPEN.
+// Decided 2026-11-09, after HC-SO-2610-075: HC-PO-2610-142 was raised from it
+// on 2026-10-07, and its JAGER-(Q) line then gained "SPECIAL: HB Fully Cover +
+// Divan Top Fully Cover" by a direct edit (no revision row, no audit entry).
+// The PO went out and was received without the covers. Exactly the 2990 story,
+// on the side the scope left open. The owner's ruling: apply the lock to Houzs
+// too, identically — a live PO on any line routes every line change through
+// an SO amendment, whatever the company. No doc-number or company test here.
 //
 // Chain (the same link so-converted-po.ts walks):
 //     scm.mfg_sales_order_items.id
@@ -55,7 +53,6 @@
 // feeds a display column, this one is a guard.
 // ----------------------------------------------------------------------------
 
-import { isMirroredDocNo } from './companyScope';
 import { poAwaitingSupplier } from '../shared/so-po-date-rule';
 
 /** PostgREST `.in()` caps out on URL length. An SO's line count is small (the
@@ -71,7 +68,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 /**
  * True when a live (non-CANCELLED) Purchase Order claims any line of this SO,
- * and the SO is 2990's. Houzs orders always answer false — see SCOPE above.
+ * for every company — see SCOPE above.
  *
  * eslint-disable-next-line @typescript-eslint/no-explicit-any — `sb` is the
  * untyped supabase-js client this whole module tree passes around.
@@ -81,16 +78,16 @@ export async function soPoLocked(
   sb: any,
   docNo: string | null | undefined,
 ): Promise<boolean> {
-  if (!docNo || !isMirroredDocNo(docNo)) return false;
+  if (!docNo) return false;
   return soHasLivePo(sb, docNo);
 }
 
 /**
  * True when a live (non-CANCELLED) Purchase Order claims any line of this SO,
- * for ANY company. The whole-SO lock above stays 2990's; this narrower question
- * is what a Houzs order's Processing Date is frozen by (BUG-101, owner
- * 2026-10-12): once the supplier has a PO, the Processing Date cannot move and
- * only the Delivery Date may be amended. Fails closed like soPoLocked.
+ * for ANY company. Since 2026-11-09 soPoLocked asks exactly this; it is also
+ * what a Processing Date is frozen by (BUG-101, owner 2026-10-12): once the
+ * supplier has a PO, the Processing Date cannot move and only the Delivery Date
+ * may be amended. Fails closed.
  */
 export async function soHasLivePo(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -176,7 +173,7 @@ async function soHasPoInStatus(
  * would attempt a direct write, collect the guard's 409, and leave the operator
  * with a change they were told to request and no way to request it.
  *
- * Same rules as soPoLocked (2990 only, CANCELLED dropped, DRAFT counts) — but
+ * Same rules as soPoLocked (every company, CANCELLED dropped, DRAFT counts) — but
  * NOT the same failure mode: a list is a read, and failing an entire board
  * closed because one query hiccupped would freeze every row's drawer. On error
  * this returns what it resolved so far, and the WRITE guards (which do fail
@@ -189,7 +186,7 @@ export async function soPoLockedMany(
   docNos: Array<string | null | undefined>,
 ): Promise<Set<string>> {
   const locked = new Set<string>();
-  const docs = [...new Set(docNos.filter((d): d is string => !!d && isMirroredDocNo(d)))];
+  const docs = [...new Set(docNos.filter((d): d is string => !!d))];
   if (docs.length === 0) return locked;
 
   try {
