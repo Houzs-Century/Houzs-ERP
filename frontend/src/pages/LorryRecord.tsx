@@ -33,7 +33,7 @@ import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend, repairSpendOf } from "./fleet/RepairSpend";
 import { LorryCompliance } from "./fleet/LorryCompliance";
 import { EMPTY, FleetCard, KpiTile, PlateBadge, TONE_DOT } from "./fleet/FleetUi";
-import { OffRoadList } from "./fleet/OffRoadList";
+import { OffRoadPanel } from "./fleet/OffRoadPanel";
 import { lorryBox } from "./fleet/fleetHealthModel";
 import { Lorry3D } from "./scm-v2/fleet/Lorry3D";
 import {
@@ -245,8 +245,8 @@ export function LorryRecord() {
       {tab === "maintenance" && (
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          <Section title="Off the road" sub="Days this lorry was or will be out of service. Set from a lorry service job or Repair Days on Lorry Capacity.">
-            <OffRoadList windows={detail.data?.maintenanceWindows ?? []} today={today} />
+          <Section title="Off the road" sub="Days this lorry was or will be out of service. While it is off the road it cannot be planned for deliveries.">
+            <OffRoadPanel lorryId={v.id} plate={v.plate} onChanged={refresh} />
           </Section>
           <Section title="Mileage" sub={v.mileageFlagged ? "The latest reading is an unusually large jump and is flagged for review." : undefined}><MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} /></Section>
           </div>

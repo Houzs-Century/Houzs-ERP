@@ -25,6 +25,7 @@ import { alsoServes, boxOf, groupWarehouses, lorryHome, type WarehouseLite } fro
 import { Lorry3D } from "./Lorry3D";
 import { ServiceRecords } from "./LorryService";
 import { todayMyt } from "../../../vendor/scm/lib/dates";
+import { OffRoadPanel } from "../../fleet/OffRoadPanel";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
   expired: "bg-[#f6dcdc] text-[#8a2c2c]", critical: "bg-[#f6dcdc] text-[#8a2c2c]",
@@ -106,6 +107,7 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
               <p className="mt-2 text-[12px] text-ink-secondary">{fullWhen(lorry)}</p>
             </Card>
             <Documents lorry={lorry} />
+            {own && <Card title="Off the road"><OffRoadPanel lorryId={lorry.id} plate={lorry.plate} onChanged={null} /></Card>}
             <ServiceRecords lorryId={lorry.id} />
             <LorryEndActions lorry={lorry} onDeleted={onClose} />
           </div>
