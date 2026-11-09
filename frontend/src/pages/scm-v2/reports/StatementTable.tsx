@@ -36,6 +36,16 @@ const ALL = '*';
 export const nameOf = (l: Pick<StatementLine, 'label' | 'code'>): string =>
   l.code && l.label.startsWith(`${l.code} · `) ? l.label.slice(l.code.length + 3) : l.label;
 
+/** The columns a line's running cells cover — every column after a cell's first, by index. */
+export function coveredBy(columns: StatementColumn[], spans: StatementLine['spans']): Set<number> {
+  const out = new Set<number>();
+  if (!spans) return out;
+  columns.forEach((c, ci) => {
+    for (let k = 1; k < (spans[c.key] ?? 1); k += 1) out.add(ci + k);
+  });
+  return out;
+}
+
 /** The accounts a category stands for: every account line under it. */
 export function codesUnder(lines: StatementLine[], i: number): string[] {
   const out: string[] = [];
@@ -80,6 +90,10 @@ export type StatementTableProps = {
   /** What opens under a row instead of an account's ledger lines: the column
    *  pressed (null = the whole span), the close, and the width to span. */
   renderLines?: (line: StatementLine, column: StatementColumn | null, close: () => void, colSpan: number) => ReactNode;
+  /** Whether a figure opens what is behind it (every figure that could, by default) — the
+   *  Cash Flow's Settlement and Deposit figures are a month's shares, so only a figure
+   *  across the month (`across`) opens. */
+  figureOpens?: (line: StatementLine, column: StatementColumn, across: boolean) => boolean;
   /** An account row opens elsewhere (the Trial balance's drawer): its name and a
    *  double-click on the row call this; nothing opens under the row. */
   onOpenRow?: (line: StatementLine) => void;
@@ -91,7 +105,7 @@ export type StatementTableProps = {
 export function StatementTable({
   widthsKey, head, columns, lines, shown, level, tree, showPct, fmt = fmtSenPlain,
   finalId, strongIds, onCategoryFigure, noteAfter, note, drillKey, ariaLabel, drillRows = 'accounts', renderLines,
-  onOpenRow, accountCell = false,
+  figureOpens, onOpenRow, accountCell = false,
 }: StatementTableProps) {
   const w = useStatementWidths(widthsKey);
   /* Which rows have their lines open, and on which column (ALL = the whole span). */
@@ -118,6 +132,21 @@ export function StatementTable({
   const groupOf = (c: StatementColumn): WidthGroup => (c.kind === 'total' ? 'total' : 'period');
   const widthOf = (g: WidthGroup) => (w.widths[g] ? { width: `${w.widths[g]}px` } : undefined);
   const lastPeriod = columns.length - 1;
+  /* Columns under a shared heading (the Cash Flow's Settlement | Deposit under each month):
+     the headings get a row of their own above the columns' names; a rule follows a
+     heading's last column, none runs between its columns. */
+  const grouped = columns.some((c) => c.group);
+  const sameGroup = (a: StatementColumn | undefined, b: StatementColumn | undefined): boolean =>
+    Boolean(a?.group && b?.group && a.group.key === b.group.key);
+  const ruleAfter = (ci: number): boolean => ci < lastPeriod && !sameGroup(columns[ci], columns[ci + 1]);
+  const runOf = (ci: number): number => {
+    let n = 1;
+    while (sameGroup(columns[ci], columns[ci + n])) n += 1;
+    return n;
+  };
+  /* A column's name where a figure says it: "Oct 2026 Settlement", or the month alone across both. */
+  const columnName = (c: StatementColumn, across: boolean): string =>
+    (c.group ? (across ? c.group.label : `${c.group.label} ${c.label}`) : c.label);
 
   const rowClass = (l: StatementLine): string => {
     if (l.id === finalId) return s.rowFinal;
@@ -158,28 +187,59 @@ export function StatementTable({
           </colgroup>
           <thead>
             <tr>
-              <th scope="col" className={s.headName}>
+              <th scope="col" className={s.headName} rowSpan={grouped ? 2 : undefined}>
                 <span className={s.headNameText}>{head}</span>
                 {handle('acc')}
               </th>
-              {columns.map((c, i) => (
-                <th
-                  key={c.key}
-                  scope="col"
-                  data-column={c.key}
-                  className={[s.headCell, c.kind === 'total' ? s.colTotal : '', i < lastPeriod ? s.colRule : ''].join(' ')}
-                >
-                  <span className={s.headInner}>
-                    <span className={s.headLabel}>
-                      {c.label}
-                      <span className={s.headSub}>{c.sub ?? ''}</span>
+              {columns.map((c, i) => {
+                if (c.group) {
+                  if (sameGroup(columns[i - 1], c)) return null;
+                  const n = runOf(i);
+                  return (
+                    <th key={`group:${c.group.key}`} scope="colgroup" colSpan={n} data-group={c.group.key}
+                      className={[s.headCell, s.headGroup, ruleAfter(i + n - 1) ? s.colRule : ''].join(' ')}>
+                      <span className={s.headInner}>
+                        <span className={s.headLabel}>
+                          {c.group.label}
+                          <span className={s.headSub}>{c.group.sub ?? ''}</span>
+                        </span>
+                      </span>
+                    </th>
+                  );
+                }
+                return (
+                  <th
+                    key={c.key}
+                    scope="col"
+                    data-column={c.key}
+                    rowSpan={grouped ? 2 : undefined}
+                    className={[s.headCell, c.kind === 'total' ? s.colTotal : '', ruleAfter(i) ? s.colRule : ''].join(' ')}
+                  >
+                    <span className={s.headInner}>
+                      <span className={s.headLabel}>
+                        {c.label}
+                        <span className={s.headSub}>{c.sub ?? ''}</span>
+                      </span>
+                      {c.pct && showPct && <span className={s.headPct}>%</span>}
                     </span>
-                    {c.pct && showPct && <span className={s.headPct}>%</span>}
-                  </span>
-                  {handle(groupOf(c))}
-                </th>
-              ))}
+                    {handle(groupOf(c))}
+                  </th>
+                );
+              })}
             </tr>
+            {grouped && (
+              <tr>
+                {columns.map((c, i) => c.group && (
+                  <th key={c.key} scope="col" data-column={c.key} className={[s.headCell, s.headPart, ruleAfter(i) ? s.colRule : ''].join(' ')}>
+                    <span className={s.headInner}>
+                      <span className={s.headLabel}>{c.label}</span>
+                      {c.pct && showPct && <span className={s.headPct}>%</span>}
+                    </span>
+                    {handle(groupOf(c))}
+                  </th>
+                ))}
+              </tr>
+            )}
           </thead>
           <tbody>
             {totalsBelow(shown, lines, level, tree.open).map((l) => {
@@ -198,6 +258,10 @@ export function StatementTable({
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
               const name = nameOf(l);
+              /* A cell running across columns covers the ones after it; an open group's bare
+                 title (its figures moved below) and a block title print every column empty. */
+              const spans = l.kind === 'block' || l.bare ? undefined : l.spans;
+              const covered = coveredBy(columns, spans);
               return (
                 <Fragment key={l.id}>
                   <tr data-kind={l.kind} data-depth={l.depth} className={rowClass(l)} onDoubleClick={opensElsewhere ? () => onOpenRow?.(l) : undefined}>
@@ -226,21 +290,24 @@ export function StatementTable({
                       </span>
                     </th>
                     {columns.map((c, ci) => {
-                      const cls = [s.cell, c.kind === 'total' ? s.colTotal : '', ci < lastPeriod ? s.colRule : ''].join(' ');
+                      if (covered.has(ci)) return null;
+                      const across = Math.min(Math.max(1, spans?.[c.key] ?? 1), columns.length - ci);
+                      const cls = [s.cell, c.kind === 'total' ? s.colTotal : '', ruleAfter(ci + across - 1) ? s.colRule : '', across > 1 ? s.cellAcross : ''].join(' ');
                       /* An open group's figures print on its Total line below (totalsBelow). */
                       if (l.kind === 'block' || l.bare) return <td key={c.key} className={cls} />;
                       const cell = l.cells[c.key];
                       const text = cell ? fmt(cell.amountSen) : DASH;
                       const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : DASH) : null;
-                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || ((folder || sub) && onCategoryFigure));
+                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || ((folder || sub) && onCategoryFigure))
+                        && (figureOpens?.(own, c, across > 1) ?? true);
                       return (
-                        <td key={c.key} className={cls}>
+                        <td key={c.key} className={cls} colSpan={across > 1 ? across : undefined}>
                           <span className={s.cellInner}>
                             {opens ? (
                               <button
                                 type="button"
                                 className={s.figure}
-                                aria-label={`${l.label} · ${c.label}`}
+                                aria-label={`${l.label} · ${columnName(c, across > 1)}`}
                                 aria-pressed={drillable ? drilled === c.key : undefined}
                                 onClick={() => (drillable ? toggleDrill(own.id, c.key) : onCategoryFigure?.(codesUnder(lines, i), c))}
                               >

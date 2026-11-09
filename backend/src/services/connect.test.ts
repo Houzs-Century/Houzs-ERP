@@ -1,14 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildDeliveryFollowUp,
-  buildServiceCaseReceived,
   buildServiceCaseStatus,
   buildSyncHeadline,
   isConnectConfigured,
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
-  CONNECT_SERVICE_CASE_AUTOMATION,
   CONNECT_SERVICE_CASE_STATUS_AUTOMATION,
   CONNECT_SYNC_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
@@ -282,29 +280,11 @@ describe('buildDeliveryFollowUp', () => {
   });
 });
 
-describe('buildServiceCaseReceived', () => {
-  it('maps name → full_name, SO → ref_1, case number → its own assr_no field, fires the automation by name', () => {
-    const contact = buildServiceCaseReceived('+60123', 'Wong', 'HC-SO-013133', 'ASSR/2610-038');
-    expect(contact).toEqual({
-      phone: '+60123',
-      name: 'Wong',
-      automation: CONNECT_SERVICE_CASE_AUTOMATION,
-      attributes: { full_name: 'Wong', ref_1: 'HC-SO-013133', assr_no: 'ASSR/2610-038' },
-    });
-  });
-
-  it('the automation name matches the Connect flow, byte-for-byte', () => {
-    // Connect matches the automation BY NAME; a drift here silently stops the
-    // acknowledgement (empty `triggered`), so pin the exact string.
-    expect(CONNECT_SERVICE_CASE_AUTOMATION).toBe('Service Case Received');
-  });
-
-  it('carries no delivery conversation state (button-less template, no callback)', () => {
-    const contact = buildServiceCaseReceived('+60123', 'Wong', 'HC-SO-013133', 'ASSR/2610-038');
-    expect(contact.attributes.callback_url).toBeUndefined();
-    expect(contact.attributes.button_status).toBeUndefined();
-    expect(contact.attributes.order_total).toBeUndefined();
-    expect(Object.keys(contact.attributes).sort()).toEqual(['assr_no', 'full_name', 'ref_1']);
+describe('HC-0222: creating a Service Case sends the customer nothing', () => {
+  it('the ERP has no way to fire the "Service Case Received" customer WhatsApp', async () => {
+    const mod: Record<string, unknown> = await import('./connect');
+    expect(Object.values(mod)).not.toContain('Service Case Received');
+    expect(mod.buildServiceCaseReceived).toBeUndefined();
   });
 });
 

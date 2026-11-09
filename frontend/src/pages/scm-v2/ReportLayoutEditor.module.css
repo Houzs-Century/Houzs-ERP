@@ -102,6 +102,14 @@
   font: 400 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text);
 }
 .dirText { font-size: 12px; font-weight: 400; font-style: normal; color: var(--fin-detail); }
+/* The Cash Flow's Settlement / Deposit column (owner 2026-11-09): the choice, and its two parts when split. */
+.split { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.parts { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--fin-detail); }
+.part {
+  width: 44px; height: 26px; box-sizing: border-box; padding: 0 4px; border: 1px solid var(--fin-input); border-radius: 6px;
+  background: var(--fin-surface); font: 400 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); text-align: right;
+}
+.part:focus { border-color: var(--fin-petrol); outline: none; }
 .tick { width: 16px; height: 16px; margin: 0; accent-color: var(--fin-petrol); cursor: pointer; vertical-align: middle; }
 
 .icons { display: inline-flex; align-items: center; gap: 2px; }

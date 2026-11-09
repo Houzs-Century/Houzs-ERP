@@ -94,12 +94,14 @@ const world = (opts: { openLink?: boolean } = {}) => fakeSb({
   ],
   acc_report_layouts: [],
   acc_acquirers: [{ company_id: CO, code: 'PBB', display_name: 'PBB', transit_account_code: PBB, is_active: true }],
-  /* B and D pay their orders in full (balance); C is the first 400 of a 1,000 order (a deposit). */
+  /* B pays its order in full in one go — a deposit (owner 2026-11-09: 一次性收完的当 deposit);
+     C is the first 400 of a 1,000 order (a deposit); D pays the 200 balance of an order whose
+     100 deposit came in August, so D is the settlement. */
   mfg_sales_orders: [
     { company_id: CO, doc_no: 'SO-A', local_total_sen: 100000 },
     { company_id: CO, doc_no: 'SO-B', local_total_sen: 60000 },
     { company_id: CO, doc_no: 'SO-C', local_total_sen: 100000 },
-    { company_id: CO, doc_no: 'SO-D', local_total_sen: 20000 },
+    { company_id: CO, doc_no: 'SO-D', local_total_sen: 30000 },
     /* E is the first 150 of a 1,000 order (a deposit). */
     { company_id: CO, doc_no: 'SO-E', local_total_sen: 100000 },
   ],
@@ -107,6 +109,7 @@ const world = (opts: { openLink?: boolean } = {}) => fakeSb({
     { company_id: CO, id: 'pay-a', so_doc_no: 'SO-A', amount_sen: 100000, paid_at: '2026-08-20', created_at: null },
     { company_id: CO, id: 'pay-b', so_doc_no: 'SO-B', amount_sen: 60000, paid_at: '2026-09-10', created_at: null },
     { company_id: CO, id: 'pay-c', so_doc_no: 'SO-C', amount_sen: 40000, paid_at: '2026-09-12', created_at: null },
+    { company_id: CO, id: 'pay-d0', so_doc_no: 'SO-D', amount_sen: 10000, paid_at: '2026-08-01', created_at: null },
     { company_id: CO, id: 'pay-d', so_doc_no: 'SO-D', amount_sen: 20000, paid_at: '2026-09-15', created_at: null },
     { company_id: CO, id: 'pay-e', so_doc_no: 'SO-E', amount_sen: 15000, paid_at: '2026-09-18', created_at: null },
   ],
@@ -144,11 +147,12 @@ describe('Cash Flow: card money on the swipe date (owner 2026-11-05)', () => {
   test('September: the month\'s swipes are Cash In, split by whether their payout reached the bank by 30/09', async () => {
     const r = await get('2026-09-01', '2026-09-30');
     expect(r.columns.map((c) => c.code)).toEqual([BANK, CARD_COLUMN]);
-    /* B 600 paid out. C 400 half paid: 200 in the bank, the other 200 matched by its report. D 200 no report claims. */
-    expect(onTree(r, `${AR}:BAL:CARD-BANK`)).toBe(60000);
-    expect(onTree(r, `${AR}:DEP:CARD-BANK`)).toBe(20000);
+    /* B 600 (a deposit) paid out. C 400 half paid: 200 in the bank, the other 200 matched by
+       its report. D 200 (the settlement) no report claims. */
+    expect(onTree(r, `${AR}:DEP:CARD-BANK`)).toBe(60000 + 20000);
     expect(onTree(r, `${AR}:DEP:CARD-MATCHED`)).toBe(20000);
     expect(onTree(r, `${AR}:BAL:CARD-UNMATCHED`)).toBe(20000);
+    expect(onTree(r, `${AR}:BAL:CARD-BANK`)).toBe(0);
     expect(onTree(r, `${AR}:BAL:CARD-MATCHED`)).toBe(0);
     expect(onTree(r, `${AR}:DEP:CARD-UNMATCHED`)).toBe(0);
     expect(leaves(r.layout.tree).find((n) => n.key === `${AR}:DEP:CARD-BANK`)?.label).toBe('Card - in the bank');
@@ -166,7 +170,7 @@ describe('Cash Flow: card money on the swipe date (owner 2026-11-05)', () => {
     const r = await get('2026-09-01', '2026-09-30', { sb: world({ openLink: true }) });
     const deposit = r.layout.tree.flatMap(function walk(n: Laid): Laid[] { return n.label === 'Deposit' ? [n] : n.children.flatMap(walk); })[0]!;
     expect(deposit.children.map((n) => [n.label, n.amountSen])).toEqual([
-      ['Card - in the bank', 20000],
+      ['Card - in the bank', 60000 + 20000],
       ['Card - merchant matched', 20000],
       ['Card - not matched yet', 15000],
     ]);
@@ -205,7 +209,7 @@ describe('Cash Flow: card money on the swipe date (owner 2026-11-05)', () => {
 
   test('September and October together: C\'s second half has reached the bank, so it no longer reads as merely matched', async () => {
     const r = await get('2026-09-01', '2026-10-31');
-    expect(onTree(r, `${AR}:DEP:CARD-BANK`)).toBe(40000);
+    expect(onTree(r, `${AR}:DEP:CARD-BANK`)).toBe(60000 + 40000);
     expect(onTree(r, `${AR}:DEP:CARD-MATCHED`)).toBe(0);
     expect(onTree(r, `${AR}:BAL:CARD-UNMATCHED`)).toBe(20000);
   });

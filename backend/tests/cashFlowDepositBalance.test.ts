@@ -1,11 +1,13 @@
-/* Customer receipts on the Cash Flow: Deposit (订金) and Balance (尾款), the rule
-   the owner agreed on 2026-11-05:
-     • the payment that brings an order's paid total up to its order total is the
-       Balance; every payment before it is a Deposit; an order not yet fully paid
-       has only Deposits;
+/* Customer receipts on the Cash Flow: Deposit (订金) and Settlement (尾款), the rule
+   the owner agreed on 2026-11-05 and refined on 2026-11-09 (一次性收完的我想要把它当
+   deposit; 一次付清 = 同一天付清 → 对):
+     • the payment that brings an order's paid total up to its order total ON A LATER
+       DAY than the order's first payment is the Settlement; every other payment is a
+       Deposit — an order paid in full on its first day (one payment, or card and cash
+       together) is all Deposit; an order not yet fully paid has only Deposits;
      • all of an order's payments count, whatever their month;
      • under CASH IN: Deposit (Transfer / cash, Card - in the bank, Card - merchant
-       matched, Card - not matched yet), the same four under Balance, then (-) Refund,
+       matched, Card - not matched yet), the same four under Settlement, then (-) Refund,
        then Other receipts that are not order payments. */
 
 import { Hono } from 'hono';
@@ -17,8 +19,8 @@ import { paymentKinds } from '../src/acc/order-payment-kind';
 const pay = (id: string, doc: string, sen: number, paidAt: string, createdAt: string | null = null) =>
   ({ id, so_doc_no: doc, amount_sen: sen, paid_at: paidAt, created_at: createdAt });
 
-describe('paymentKinds — Deposit or Balance', () => {
-  test('the payment that completes the order is the Balance, every earlier one a Deposit, across months', () => {
+describe('paymentKinds — Deposit or Settlement', () => {
+  test('the payment that completes the order on a later day is the Settlement, every earlier one a Deposit, across months', () => {
     const k = paymentKinds({
       orders: [{ doc_no: 'SO-1', local_total_sen: 100000 }],
       /* Keyed out of order: the rule reads them in the order they were paid. */
@@ -27,7 +29,7 @@ describe('paymentKinds — Deposit or Balance', () => {
     expect(Object.fromEntries(k)).toEqual({ p1: 'DEP', p2: 'DEP', p3: 'BAL' });
   });
 
-  test('an order not yet fully paid has only Deposits; a payment after it is paid in full is Balance too', () => {
+  test('an order not yet fully paid has only Deposits; paid in full on its first day it is all Deposit; a later top-up is Settlement', () => {
     const k = paymentKinds({
       orders: [{ doc_no: 'SO-1', local_total_sen: 100000 }, { doc_no: 'SO-2', local_total_sen: 50000 }],
       payments: [
@@ -35,10 +37,10 @@ describe('paymentKinds — Deposit or Balance', () => {
         pay('b1', 'SO-2', 50000, '2026-09-05'), pay('b2', 'SO-2', 5000, '2026-09-06'),
       ],
     });
-    expect(Object.fromEntries(k)).toEqual({ a1: 'DEP', a2: 'DEP', b1: 'BAL', b2: 'BAL' });
+    expect(Object.fromEntries(k)).toEqual({ a1: 'DEP', a2: 'DEP', b1: 'DEP', b2: 'BAL' });
   });
 
-  test('the same day: the one keyed first came first; money that left the order counts against it', () => {
+  test('money that left the order counts against it, and is no first payment: paid in full on the first paying day is Deposit', () => {
     const k = paymentKinds({
       orders: [{ doc_no: 'SO-1', local_total_sen: 100000 }],
       payments: [
@@ -48,8 +50,19 @@ describe('paymentKinds — Deposit or Balance', () => {
         pay('m', 'SO-1', -30000, '2026-09-02'),
       ],
     });
-    /* … so 600 + 700 − 300 reaches 1,000 only with x2. */
-    expect(Object.fromEntries(k)).toEqual({ m: 'DEP', x1: 'DEP', x2: 'BAL' });
+    /* … so 600 + 700 − 300 reaches 1,000 only with x2 — on 03/09, the customer's first paying day. */
+    expect(Object.fromEntries(k)).toEqual({ m: 'DEP', x1: 'DEP', x2: 'DEP' });
+  });
+
+  test('一次性收完: one payment, or card and cash the same day, paying the order in full is Deposit', () => {
+    const k = paymentKinds({
+      orders: [{ doc_no: 'SO-1', local_total_sen: 100000 }, { doc_no: 'SO-2', local_total_sen: 100000 }],
+      payments: [
+        pay('one', 'SO-1', 100000, '2026-10-05'),
+        pay('card', 'SO-2', 60000, '2026-10-06', '2026-10-06T03:00:00Z'), pay('cash', 'SO-2', 40000, '2026-10-06', '2026-10-06T03:05:00Z'),
+      ],
+    });
+    expect(Object.fromEntries(k)).toEqual({ one: 'DEP', card: 'DEP', cash: 'DEP' });
   });
 
   test('an order with no total has nothing to complete: Deposits', () => {
@@ -138,7 +151,7 @@ const get = async (qs: string, more: More = {}): Promise<Report> => {
 const shape = (n: Laid): unknown => (n.children.length === 0 ? [n.label, n.amountSen] : [n.label, n.amountSen, n.children.map(shape)]);
 const debtorPlace = (r: Report): Laid => r.layout.tree[0]!.children.find((n) => n.label === 'CURRENT ASSETS')!;
 
-describe('Cash Flow: Deposit and Balance under CASH IN', () => {
+describe('Cash Flow: Deposit and Settlement under CASH IN', () => {
   test('September: only Deposits (SO-1 is not paid in full yet), by how the money came in', async () => {
     const r = await get('from=2026-09-01&to=2026-09-30');
     expect(debtorPlace(r).children.map(shape)).toEqual([
@@ -146,10 +159,11 @@ describe('Cash Flow: Deposit and Balance under CASH IN', () => {
     ]);
   });
 
-  test('October: SO-1\'s last payment and SO-2\'s only one are Balance; then (-) Refund and Other receipts, in that order', async () => {
+  test('October: SO-2 paid in one go is Deposit, SO-1\'s last payment Settlement; then (-) Refund and Other receipts, in that order', async () => {
     const r = await get('from=2026-10-01&to=2026-10-31');
     expect(debtorPlace(r).children.map(shape)).toEqual([
-      ['Balance', 90000, [['Transfer / cash', 50000], ['Card - not matched yet', 40000]]],
+      ['Deposit', 40000, [['Card - not matched yet', 40000]]],
+      ['Settlement', 50000, [['Transfer / cash', 50000]]],
       ['(-) Refund', -9000],
       ['Other receipts (not order payments)', 7000],
     ]);
@@ -162,15 +176,28 @@ describe('Cash Flow: Deposit and Balance under CASH IN', () => {
   test('September and October together: September\'s payments stay Deposits (the rule reads the whole order, not the period)', async () => {
     const r = await get('from=2026-09-01&to=2026-10-31');
     const [dep, bal] = debtorPlace(r).children;
-    expect(shape(dep!)).toEqual(['Deposit', 50000, [['Transfer / cash', 30000], ['Card - not matched yet', 20000]]]);
-    expect(shape(bal!)).toEqual(['Balance', 90000, [['Transfer / cash', 50000], ['Card - not matched yet', 40000]]]);
+    expect(shape(dep!)).toEqual(['Deposit', 90000, [['Transfer / cash', 30000], ['Card - not matched yet', 60000]]]);
+    expect(shape(bal!)).toEqual(['Settlement', 50000, [['Transfer / cash', 50000]]]);
+  });
+
+  test('each customer line says its column: a Deposit to Deposit, a Settlement to Settlement, a refund to Deposit; other receipts follow their category (owner 2026-11-09)', async () => {
+    const r = await get('from=2026-10-01&to=2026-10-31');
+    type WithSd = Laid & { sd?: { settlementSen: number; depositSen: number } };
+    const sd = (n: WithSd) => (n.sd ? [n.sd.settlementSen, n.sd.depositSen] : null);
+    expect((debtorPlace(r).children as WithSd[]).map((n) => [n.label, sd(n)])).toEqual([
+      ['Deposit', [0, 40000]],
+      ['Settlement', [50000, 0]],
+      ['(-) Refund', [0, -9000]],
+      /* The chart's own tree carries no split: a line with no column of its own prints whole. */
+      ['Other receipts (not order payments)', null],
+    ]);
   });
 
   test('by debtor, the rows keep the party and are not split', async () => {
     const r = await get('from=2026-10-01&to=2026-10-31&party=1');
     const labels = JSON.stringify(debtorPlace(r));
     expect(labels).not.toContain('"Deposit"');
-    expect(labels).not.toContain('"Balance"');
+    expect(labels).not.toContain('"Settlement"');
   });
 });
 

@@ -15,7 +15,7 @@
 // left empty where a column never printed the line.
 // ----------------------------------------------------------------------------
 
-import type { LaidNode } from './report-layout';
+import type { LaidNode, SettleDeposit } from './report-layout';
 import { flattenLaid } from './report-layout';
 import { guardFormula } from '../../../lib/csv';
 import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpColumn, type RpReport } from './rp-report-queries';
@@ -36,10 +36,18 @@ export type FlatLine = {
   caption?: string;
   /** A group's own name for its Total line (the layout's totalLabel); else "Total <label>". */
   totalLabel?: string;
+  /** The Cash Flow: the figure split into Settlement and Deposit (absent = not split). */
+  sd?: SettleDeposit;
 };
 
-export type MonthlyCell = { amountSen: number; pct: number | null };
-export type MonthlyLine = Omit<FlatLine, 'amountSen' | 'pct'> & { cells: Partial<Record<string, MonthlyCell>> };
+export type MonthlyCell = { amountSen: number; pct: number | null; sd?: SettleDeposit };
+export type MonthlyLine = Omit<FlatLine, 'amountSen' | 'pct' | 'sd'> & {
+  cells: Partial<Record<string, MonthlyCell>>;
+  /** Cells that run across more than one column, by the column they start in (the Cash
+      Flow's Settlement / Deposit view: a line not split prints one figure across a
+      month's two columns). The columns a cell covers print nothing of their own. */
+  spans?: Partial<Record<string, number>>;
+};
 
 export type MonthColumn = { key: string; label: string; from: string; to: string; cumulative: boolean };
 
@@ -93,6 +101,7 @@ export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
     id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind === 'subtotal' ? 'net' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
     ...(node.code ? { code: node.code } : {}),
     ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}),
+    ...(node.sd ? { sd: node.sd } : {}),
   }));
 
 export const fixedLine = (id: string, label: string, kind: FlatLine['kind'], amountSen: number, pct: number | null): FlatLine =>
@@ -118,7 +127,7 @@ export function mergeColumns(columns: Array<{ key: string; lines: FlatLine[] }>)
         const after = prevId ? out.findIndex((x) => x.id === prevId) : -1;
         out.splice(after + 1, 0, line);
       }
-      line.cells[col.key] = { amountSen: l.amountSen, pct: l.pct };
+      line.cells[col.key] = { amountSen: l.amountSen, pct: l.pct, ...(l.sd ? { sd: l.sd } : {}) };
       prevId = l.id;
     }
   }
@@ -227,11 +236,13 @@ type RpLike = {
 export const rpLines = (r: RpLike): FlatLine[] => {
   const t = r.totals;
   const out: FlatLine[] = [];
+  /* A side's total and a running subtotal carry the Settlement / Deposit pair where the server split it. */
+  const withSd = (l: FlatLine, n: LaidNode): FlatLine => (n.sd ? { ...l, sd: n.sd } : l);
   for (const n of r.layout.tree) {
-    if (n.kind === 'subtotal') { out.push(fixedLine(n.id, n.label, 'net', n.amountSen, null)); continue; }
+    if (n.kind === 'subtotal') { out.push(withSd(fixedLine(n.id, n.label, 'net', n.amountSen, null), n)); continue; }
     out.push(fixedLine(`blk:${n.id}`, n.label, 'block', 0, null));
     out.push(...treeLines(n.children));
-    out.push(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct));
+    out.push(withSd(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct), n));
   }
   out.push(fixedLine('net:surplus', 'Cash surplus / (deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, pctOfBase(t.receiptsTotalSen - t.paymentsTotalSen, t.receiptsTotalSen)));
   /* Each balance in two parts, the banks and the card money not yet in the bank (owner 2026-11-05). */

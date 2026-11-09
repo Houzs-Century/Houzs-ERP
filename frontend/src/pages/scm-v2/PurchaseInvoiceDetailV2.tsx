@@ -56,6 +56,7 @@ import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { PoPriceReference } from "../../vendor/scm/components/PoPriceReference";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiStatus =
@@ -821,8 +822,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 />
                 <Field
                   label="Email"
-                  value={purchaseInvoice.supplier?.email || "Not provided"}
-                  muted={!purchaseInvoice.supplier?.email}
+                  value={supplierEmailList(purchaseInvoice.supplier).join(", ") || "Not provided"}
+                  muted={supplierEmailList(purchaseInvoice.supplier).length === 0}
                 />
                 <Field
                   label="Address"

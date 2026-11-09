@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { escapeForOr, phoneSearchOrParts } from '../src/scm/lib/postgrest-search';
 import { normalizePhone } from '../src/scm/shared/phone';
+import { soPhoneArms } from '../src/routes/search';
+import mineSource from '../src/scm/routes/mfg-sales-orders/mine.ts?raw';
 
 // The PHONE half of the SO / DO / SI list `.or()` free-text filter. Customer
 // phones are stored E.164 ("+60123456789"), so a term with dashes/spaces or a
@@ -36,5 +38,26 @@ describe('phoneSearchOrParts', () => {
     // 3 digits is below the plausible-phone floor → normalizePhone returns null.
     const p = parts('345');
     expect(p).toEqual(['phone.ilike.%345%']);
+  });
+});
+
+// B17 — the top search bar and My Sales Orders used a raw `phone.ilike`, so a
+// phone typed the local way never found the stored +60 number.
+describe('soPhoneArms (top search bar, Sales Order part)', () => {
+  test('a local number also searches its E.164 digits', () => {
+    expect(soPhoneArms('012-345 6789', '%012-345 6789%')).toEqual([
+      'phone.ilike.%012-345 6789%',
+      'phone.ilike.%60123456789%',
+    ]);
+  });
+  test('a one-key prefix search stays one raw arm', () => {
+    expect(soPhoneArms('0', '0%')).toEqual(['phone.ilike.0%']);
+  });
+});
+
+describe('My Sales Orders search', () => {
+  test('uses the shared phone normaliser, not a raw phone.ilike', () => {
+    expect(mineSource).toContain('...phoneSearchOrParts(safe, q, normalizePhone)');
+    expect(mineSource).not.toContain('phone.ilike.%${safe}%');
   });
 });

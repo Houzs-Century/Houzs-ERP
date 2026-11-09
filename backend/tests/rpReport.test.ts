@@ -169,7 +169,8 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
     /* July's swipe, no report claims it: Card - not matched yet, on the debtor's row. */
     expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
-    expect(cell(july.receipts, '300-0000:BAL:CARD-UNMATCHED', 'CARD')).toBe(30000);
+    /* SO-2 paid in full by that one swipe: a Deposit (owner 2026-11-09: 一次性收完 = deposit). */
+    expect(cell(july.receipts, '300-0000:DEP:CARD-UNMATCHED', 'CARD')).toBe(30000);
     expect(cell(july.payments, '900-T009', 'CARD')).toBe(300);
     /* The memo still reads: July's swipe (the fee is the settlement module's own, not a taking)
        and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee = the Card c/f. */
@@ -179,9 +180,24 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(june.card).toEqual({ takingsSen: 5000, transitSen: 5000, codes: ['326-0000', '326-0010'] });
   });
 
+  test('party=1 keeps one row for a party whose name came in two casings (owner 2026-11-09: Finance writes names upper case from now on)', async () => {
+    const sb = world();
+    (sb.tables.v_gl_entries as Row[]).push(
+      gl('JE-U', '2026-07-20', 'SOPAY', 'pay-u', '310-0010', 'CASH AT BANK - MAYBANK', 7000, 0),
+      gl('JE-U', '2026-07-20', 'SOPAY', 'pay-u', '300-0000', 'ACCOUNT RECEIVEABLE', 0, 7000, { party_type: 'CUSTOMER', party_name: 'AH MENG' }),
+    );
+    (sb.tables.mfg_sales_order_payments as Row[]).push({ company_id: CO, id: 'pay-u', so_doc_no: 'SO-3', amount_sen: 7000, paid_at: '2026-07-20', created_at: '2026-07-20T03:00:00Z' });
+    const r = await fetchReport(harness(sb), 'from=2026-07-01&to=2026-07-31&party=1');
+    /* The bank receipts: one row, both casings in it (the card swipe keeps its own row by design). */
+    const bankRows = r.receipts.filter((x) => x.key.startsWith('300-0000:') && !x.key.includes(':CARD'));
+    expect(bankRows.map((x) => x.key)).toEqual(['300-0000:AH MENG']);
+    expect(cell(r.receipts, '300-0000:AH MENG', '310-0010')).toBe(50000 + 7000);
+  });
+
   test('party=1 names the control rows by debtor/creditor and does not split the supplier payment', async () => {
     const r = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31&party=1');
-    expect(r.receipts.find((x) => x.key === '300-0000:Ah Meng')?.name).toBe('Ah Meng · ACCOUNT RECEIVEABLE');
+    /* The name keys a row case-blind (owner 2026-11-09: Finance's words are upper case from now on; older lines are not). */
+    expect(r.receipts.find((x) => x.key === '300-0000:AH MENG')?.name).toBe('Ah Meng · ACCOUNT RECEIVEABLE');
     expect(cell(r.payments, '400-0000:FOSHAN CHAIRS', '310-0010')).toBe(100000);
     expect(r.payments.find((x) => x.key === '601-0003')).toBeUndefined();
     expect(r.totals.payments['310-0010']).toBe(125000); // the same money, differently named
@@ -220,7 +236,8 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(r.layout.inSen - r.layout.outSen).toBe(r.totals.receiptsTotalSen - r.totals.paymentsTotalSen);
     const [receipts, payments] = r.layout.tree as [Laid, Laid];
     expect(receipts.children.map((n) => [n.label, n.amountSen, n.pct, n.children.map((k) => [k.key, k.amountSen, k.pct])])).toEqual([
-      ['CURRENT ASSETS', 80000, 100, [[undefined, 50000, 62.5], [undefined, 30000, 37.5]]],
+      /* Both July payments are Deposits: SO-1 is not paid in full, SO-2 was paid in full on its first day. */
+      ['CURRENT ASSETS', 80000, 100, [[undefined, 80000, 100]]],
     ]);
     const byLabel = (label: string) => payments.children.find((n) => n.label === label)!;
     expect(payments.children.some((n) => n.children.some((k) => String(k.key).startsWith('XFER:')))).toBe(false);

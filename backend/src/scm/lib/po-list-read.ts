@@ -43,7 +43,7 @@ export const PO_HEADER_COLS =
    2026-07-02). Supplier CONTACT fields ride the embed because the quick-view
    drawer renders its SUPPLIER panel straight off the list row (owner
    2026-07-24). supplier_sku rides the items embed (owner 2026-08-05). */
-export const PO_LIST_SELECT = `${PO_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
+export const PO_LIST_SELECT = `${PO_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 
 /** The list's filter contract, as the query string carries it.
  *  `creditorNames`/`creditorCodes`/`currencies` are the SERVER-FILTERABLE column
@@ -116,8 +116,8 @@ export function poListSelect(f: PoListFilters): string {
     (f.creditorNames !== null && f.creditorNames.length > 0) ||
     (f.creditorCodes !== null && f.creditorCodes.length > 0);
   const supplierEmbed = creditorFilter
-    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, address)'
-    : 'supplier:suppliers(id, code, name, contact_person, phone, email, address)';
+    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, email2, email3, address)'
+    : 'supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address)';
   return `${PO_HEADER_COLS}, ${supplierEmbed}, items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 }
 

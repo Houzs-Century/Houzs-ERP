@@ -55,6 +55,9 @@ export type UnmatchedPayment = {
   docNo: string;
   customerName: string | null;
   salespersonName: string | null;
+  /** Who took the money — the payment's own collected_by (owner 2026-11-09: sales person
+      应该不太对，应该是collected by 的人); null when nobody was recorded. */
+  collectedByName: string | null;
   paidOn: string;
   kind: 'card' | 'transfer';
   /** card: the bank the payment was keyed with (null = none, 未标);
@@ -78,6 +81,7 @@ export type PaymentFact = {
   docNo: string;
   customerName: string | null;
   salespersonName: string | null;
+  collectedByName?: string | null;
   paidOn: string;
   method: string;
   merchantProvider: string | null;
@@ -128,6 +132,7 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       docNo: p.docNo,
       customerName: p.customerName,
       salespersonName: p.salespersonName,
+      collectedByName: p.collectedByName ?? null,
       paidOn: p.paidOn,
       amountSen: p.amountSen,
       reference: tagOf(p.approvalCode),
@@ -176,7 +181,7 @@ const isoDay = (v: unknown): string => String(v ?? '').slice(0, 10);
 /** Both payment tables, in the window, the listed methods only — paged, so
     the 1000-row ceiling cannot quietly shorten the list. */
 async function readPayments(sb: any, companyId: number, from: string, to: string): Promise<{ ok: true; so: Rows; si: Rows } | Fail> {
-  const cols = 'id, paid_at, amount_sen, approval_code, method, merchant_provider, online_type';
+  const cols = 'id, paid_at, amount_sen, approval_code, method, merchant_provider, online_type, collected_by';
   const so = await paginateAll<Record<string, any>>((lo, hi) => sb.from('mfg_sales_order_payments')
     .select(`${cols}, so_doc_no`)
     .eq('company_id', companyId)
@@ -195,10 +200,12 @@ async function readPayments(sb: any, companyId: number, from: string, to: string
 }
 
 /** Whose sale each payment is — the order's customer, status and salesperson,
-    the invoice's number and customer, the salesperson's name. */
+    the invoice's number and customer — and the names of the salespeople and of
+    whoever collected each payment (the payment's own collected_by). */
 async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Promise<{
   ok: true; orders: Map<string, { customer: string | null; cancelled: boolean; salesperson: string | null }>;
   invoices: Map<string, { number: string | null; customer: string | null }>;
+  staffName: Map<string, string>;
 } | Fail> {
   const docs = [...new Set(so.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
   const orderRows = await chunkIn<Record<string, any>>(docs, (batch, lo, hi) => sb.from('mfg_sales_orders')
@@ -206,7 +213,10 @@ async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Prom
     .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(lo, hi));
   if (orderRows.error) return { ok: false, reason: `orders: ${orderRows.error.message}` };
 
-  const staffIds = [...new Set(orderRows.data.map((r) => String(r.salesperson_id ?? '')).filter(Boolean))];
+  const staffIds = [...new Set([
+    ...orderRows.data.map((r) => String(r.salesperson_id ?? '')),
+    ...[...so, ...si].map((r) => String(r.collected_by ?? '')),
+  ].filter(Boolean))];
   const staffRows = await chunkIn<Record<string, any>>(staffIds, (batch, lo, hi) => sb.from('staff')
     .select('id, name').in('id', batch).order('id').range(lo, hi));
   if (staffRows.error) return { ok: false, reason: `staff: ${staffRows.error.message}` };
@@ -227,7 +237,7 @@ async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Prom
     .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi));
   if (invoiceRows.error) return { ok: false, reason: `invoices: ${invoiceRows.error.message}` };
   const invoices = new Map(invoiceRows.data.map((r) => [String(r.id), { number: r.invoice_number ?? null, customer: r.debtor_name ?? null }]));
-  return { ok: true, orders, invoices };
+  return { ok: true, orders, invoices, staffName: nameOf };
 }
 
 /** What Merchant Recon has said about the card payments: which line claims
@@ -350,7 +360,8 @@ export async function loadUnmatchedPayments(
     const paidOn = isoDay(r.paid_at);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
     facts.push({
-      source, id: String(r.id), docNo, customerName: customer, salespersonName: salesperson, paidOn,
+      source, id: String(r.id), docNo, customerName: customer, salespersonName: salesperson,
+      collectedByName: parties.staffName.get(String(r.collected_by ?? '')) ?? null, paidOn,
       method: String(r.method ?? ''), merchantProvider: r.merchant_provider ?? null, onlineType: r.online_type ?? null,
       amountSen: Number(r.amount_sen ?? 0), approvalCode: r.approval_code ?? null,
     });

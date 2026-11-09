@@ -27,6 +27,13 @@
 // share its reference and its date. Two credits are never joined, whatever they
 // share. That is exactly the gross-and-fee shape and nothing else.
 //
+// And the credit must be a payout (owner 2026-11-09): Hong Leong prints the other
+// party's name as the reference, so 2990's own transfers — 40,000 in from its
+// Maybank and 33,000 out to its Alliance, both "2990 HOME SDN. BHD. Transfer" on
+// 05/11 — were one credit and one debit sharing a reference, and read as a
+// 7,000 payout less a 33,000 charge. With rules, only a credit a rule recognises
+// takes a charge back, and never more than a tenth of it (MAX_CHARGE_SHARE).
+//
 // Maybank's statement PDF prints NO reference (owner 2026-10-15, 2990's
 // September: 这一笔RM4048.00是要扣RM18.22的 … 转full amount给我们再扣):
 //     2026-09-07  +4,048.00  DR/CARD SALES M/N 2649949 D 9
@@ -85,12 +92,25 @@ function joinKey(l: BankLine, rules: BankRecognitionRule[]): string | null {
 }
 
 /**
+ * The most a bank takes back from a card payout as its fee, as a share of the credit.
+ * Merchant discount runs about 0.5–3 % and an instalment plan's a few per cent more; a
+ * debit bigger than this beside a credit is some other movement. Owner 2026-11-09:
+ * 2990's Hong Leong November statement read "2990 HOME SDN. BHD. Transfer" 40,000 in and
+ * 33,000 out on one day as a payout of 7,000 less a 33,000 charge.
+ */
+export const MAX_CHARGE_SHARE = 0.1;
+
+/**
  * Join a credit with the charge(s) the bank took back against it.
  *
  * Only that shape. See the header: two credits sharing a reference are two
  * payouts, and the real file contains both traps. `rules` lets lines with no
  * reference join on the acquirer and merchant they are recognised as; without
- * rules such lines stand alone.
+ * rules such lines stand alone. With rules, a credit only takes a charge back
+ * when a rule proves it is an acquirer's payout — Hong Leong prints the other
+ * party's name as the reference, and an own-account transfer names the company
+ * itself both ways, so a transfer in and a transfer out share it — and never a
+ * charge above MAX_CHARGE_SHARE of the credit.
  */
 export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule[] = []): BankMovement[] {
   const single = (l: BankLine): BankMovement => ({
@@ -118,8 +138,14 @@ export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule
     const credit = credits[0]!;
     const chargeSen = debits.reduce((s, d) => s + -d.amountSen, 0);
     /* A "charge" bigger than the credit is not a charge; something else is
-       going on and a human should look at it, not this function. */
+       going on and a human should look at it, not this function. Nor is one
+       above a tenth of it — no acquirer keeps that much. */
     if (chargeSen >= credit.amountSen) continue;
+    if (chargeSen > credit.amountSen * MAX_CHARGE_SHARE) continue;
+    /* Only an acquirer's payout has a fee taken back against it. A credit no
+       rule recognises is a transfer, a deposit, a refund: the debits beside it
+       are payments of their own, whatever words they share. */
+    if (rules.length > 0 && !recogniseAcquirer(rules, credit)) continue;
     for (const l of group) joined.add(l);
     out.push({
       lines: [credit, ...debits],
@@ -482,6 +508,88 @@ export function matchBankMovements(input: {
         + `, and no single report of theirs is owed that. ${pool.length} are still waiting — choose, or record it against more than one.`,
     };
   });
+}
+
+/* ── The bank's DuitNow QR credit (owner 2026-11-09) ─────────────────────────
+   「这个hlbb merchant 的0000PP 是qr direct 去bank 的，不算卡机的」. Hong Leong
+   pays a day's QR money as one credit that reads exactly like its card payout
+   ("00005992284 MERCHAN T 20261031"), but the money is already in the books:
+   each QR sale was keyed Online and booked straight to the bank. Booked again
+   as a payout it would be in the bank twice. So the credit is matched to those
+   sales' entries — one movement, several entries — and the merchant's QR report
+   says which: the one QR report covering the bank's trading day whose QR lines
+   make the credit to the sen. Offered ready only when every line of it is linked
+   to its sale on Merchant Recon, every sale has its live entry on THIS bank
+   account, and no other bank line holds one; otherwise it says what is missing.
+   Never applied by itself — the person presses. */
+
+export type QrReportForMatch = {
+  batchId: number; fileName: string | null; acquirerCode: string; periodFrom: string; periodTo: string;
+  /** The report's QR lines, and whether a person has linked each to its sale. */
+  lines: Array<{ lineNo: number; txnDate: string; grossSen: number; linked: boolean }>;
+  /** The sales they are linked to: each one's live entry, and the accounts that entry debits. */
+  sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null; accounts: string[] }>;
+};
+
+export type QrSales = {
+  batchId: number; fileName: string | null; tradingDate: string | null;
+  sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null }>;
+  /** QR lines nobody has linked to a sale yet. */
+  waiting: Array<{ lineNo: number; txnDate: string; grossSen: number }>;
+  /** The entries to match the movement to — only when ready. */
+  jeNos: string[];
+  ready: boolean;
+  clue: string;
+};
+
+export function qrSalesFor(
+  movement: { amountSen: number; description: string; reference: string | null },
+  rules: BankRecognitionRule[],
+  reports: QrReportForMatch[],
+  /** Every entry a POSTED bank line already holds. */
+  claimed: ReadonlySet<string>,
+  /** The bank account this movement is on. */
+  accountCode: string,
+): QrSales | null {
+  if (movement.amountSen <= 0) return null;
+  const seen = recogniseAcquirer(rules, movement);
+  if (!seen) return null;
+  const day = seen.tradingDate;
+  const fits = reports.filter((r) => r.acquirerCode === seen.acquirerCode
+    && (day == null || (day >= r.periodFrom && day <= r.periodTo))
+    && r.lines.reduce((s, l) => s + l.grossSen, 0) === movement.amountSen);
+  if (fits.length !== 1) return null;
+  const r = fits[0]!;
+
+  const waiting = r.lines.filter((l) => !l.linked).map(({ lineNo, txnDate, grossSen }) => ({ lineNo, txnDate, grossSen }));
+  const noEntry = r.sales.filter((s) => !s.jeNo);
+  const elsewhere = r.sales.filter((s) => s.jeNo && !s.accounts.includes(accountCode));
+  const held = r.sales.filter((s) => s.jeNo && claimed.has(s.jeNo));
+  const salesSen = r.sales.reduce((s, x) => s + x.amountSen, 0);
+  const ready = waiting.length === 0 && r.sales.length > 0 && noEntry.length === 0
+    && elsewhere.length === 0 && held.length === 0 && salesSen === movement.amountSen;
+
+  const what = `DuitNow QR money${day ? ` for ${day}` : ''} — ${r.fileName ?? `report ${r.batchId}`}`;
+  const docs = (list: QrReportForMatch['sales']) => list.map((s) => s.docNo ?? 'a sale').join(', ');
+  const clue = ready
+    ? `${what}: ${r.sales.map((s) => `${s.docNo ?? 'a sale'} ${rm(s.amountSen)}`).join(' + ')}, already in the books on this account. These are those entries.`
+    : waiting.length > 0
+      ? `${what}: link the sale for ${waiting.map((l) => `line ${l.lineNo} (${rm(l.grossSen)})`).join(', ')} on Merchant Recon first.`
+      : noEntry.length > 0
+        ? `${what}: ${docs(noEntry)} has no entry in the books yet.`
+        : elsewhere.length > 0
+          ? `${what}: ${elsewhere.map((s) => `${s.docNo ?? 'a sale'} is booked to ${s.accounts.join(' / ') || 'no bank'}`).join('; ')}, not ${accountCode}.`
+          : held.length > 0
+            ? `${what}: ${docs(held)} is already matched to another bank line — undo that match first.`
+            : `${what}: the linked sales come to ${rm(salesSen)}, not ${rm(movement.amountSen)}.`;
+  return {
+    batchId: r.batchId, fileName: r.fileName, tradingDate: day,
+    sales: r.sales.map(({ docNo, amountSen, jeNo }) => ({ docNo, amountSen, jeNo })),
+    waiting,
+    jeNos: ready ? r.sales.map((s) => s.jeNo!) : [],
+    ready,
+    clue,
+  };
 }
 
 /* ── WHICH LEDGER ENTRY IS THIS MOVEMENT? ─────────────────────────────────────

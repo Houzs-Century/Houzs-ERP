@@ -38,6 +38,7 @@ Locks and required fields
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
+- Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
 - A GRN may not receive against a held PO: receive gates read the ROW via `isReceivablePo` (status + `on_hold`), never status alone.
 
 Linking PO lines to SO lines

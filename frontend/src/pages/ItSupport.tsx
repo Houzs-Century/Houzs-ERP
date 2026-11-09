@@ -18,6 +18,7 @@ import {
   itUrgencyText as urgencyText, itUrgencyTone as urgencyTone,
   type ItDetail as Detail, type ItFileRef as FileRef, type ItRequestRow as RequestRow, type ItTab,
 } from "../lib/itSupport";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 /**
  * IT Support — report a problem with the system to IT, follow it, reply, and
@@ -324,9 +325,7 @@ function OneRequest({ code }: { code: string }) {
     setError(null);
     setBusy("file");
     try {
-      const url = await api.fetchBlobUrl(`/api/it-support/attachments/${a.id}`, a.mime);
-      window.open(url, "_blank", "noopener");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openLoadedTab(() => api.fetchBlobUrl(`/api/it-support/attachments/${a.id}`, a.mime), 60_000);
     } catch (err) {
       setError(message(err, "That file could not be opened."));
     } finally {

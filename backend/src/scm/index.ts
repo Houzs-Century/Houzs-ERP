@@ -126,6 +126,7 @@ import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from ".
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryJobProgress } from "./routes/delivery-job-progress";
+import { doDeliveryIssues, soDeliveryIssues, jobDeliveryIssues, lastMileDeliveryIssues } from "./routes/delivery-issues";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
 import { deliveryRemarks } from "./routes/delivery-remarks";
@@ -457,6 +458,8 @@ scm.route("/mfg-sales-orders", mfgSoVpBrand);
 // same ceiling reason; ahead of the main router so `/:docNo/amendments/lane-preview`
 // is matched before its `/:docNo/amendments`. routes/so-amendment-lane-preview.ts.
 scm.route("/mfg-sales-orders", soAmendmentLanePreview);
+// The SO's crew-reported delivery problems (read only). routes/delivery-issues.ts.
+scm.route("/mfg-sales-orders", soDeliveryIssues);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
@@ -522,6 +525,11 @@ scm.use(
       if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
         return hasPositionCapability(u, "scm.do.revert");
       }
+      // Crew "Delivered with issue" — POST .../delivery-issue only; the handler
+      // admits only the DO's own crew (or delivery scope 'all').
+      if (c.req.method === "POST" && c.req.path.endsWith("/delivery-issue")) {
+        return hasPositionCapability(u, "scm.do.dispatch");
+      }
       return false;
     },
   }),
@@ -546,6 +554,8 @@ scm.route("/delivery-orders-mfg", deliveryOrderItemPhotos);
 // The list's line export (every page the filters match) — a static /export/...
 // path, so also BEFORE the main router's `/:id`.
 scm.route("/delivery-orders-mfg", deliveryOrderExports);
+// Crew "Delivered with issue" report + the DO detail read. routes/delivery-issues.ts.
+scm.route("/delivery-orders-mfg", doDeliveryIssues);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
@@ -869,7 +879,12 @@ scm.use(
       ),
   }),
 );
+// "Delivered with issue" (routes/delivery-issues.ts): the job report rides the
+// delivery-jobs guard above (POST writeBypass for scm.do.dispatch; the handler
+// admits only the caller's own job), the Last Mile read the delivery-planning one.
+scm.route("/delivery-jobs", jobDeliveryIssues);
 scm.route("/delivery-jobs", deliveryJobProgress);
+scm.route("/delivery-planning", lastMileDeliveryIssues);
 scm.route("/delivery-planning", deliveryPlanning);
 // openRead (2026-07-19, fix/so-maintenance-403) — this router is pure REFERENCE
 // data: the region master (code / name / sortOrder / active) and the per-state →

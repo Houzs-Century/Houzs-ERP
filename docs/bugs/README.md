@@ -191,3 +191,4 @@ The pitfalls that recurred most, one line each.
 - Slow side work (translation, email) runs after the response; a slow POST gets pressed again and duplicated without an idempotency key.
 - Banners and bells re-read whole tables every minute from every session; cache for longer than the poll interval.
 - Venue, showroom, trip and service-case reads need the company predicate; a null company id in `.eq()` matches nothing and mints duplicates.
+- A `timestamptz` read in `mode: "string"` comes back as `2026-11-09 02:14:45+00`; compared as text with an ISO `now` it is always "expired". Compare moments (`Date.parse`), never strings.
