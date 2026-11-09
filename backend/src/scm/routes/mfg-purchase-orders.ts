@@ -99,7 +99,7 @@ import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
-import { withSoRefPoIds } from '../lib/so-ref-search';
+import { withPoSearchIds } from '../lib/po-item-code-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
 import { mrpPlanStaleRefusal, settleFromSosForMrp } from '../lib/mrp-plan-freshness';
@@ -422,7 +422,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const filters = await withSoRefPoIds(supabase, c, readPoListFilters((k) => c.req.query(k)));
+    const filters = await withPoSearchIds(supabase, c, readPoListFilters((k) => c.req.query(k)));
     const q = filterPoList(
       orderPoList(supabase.from('purchase_orders').select(poListSelect(filters), { count: 'exact' }), filters.sort),
       filters,

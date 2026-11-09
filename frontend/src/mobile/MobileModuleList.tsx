@@ -1261,7 +1261,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "mfg-purchase-orders": {
     title: "Purchase Orders",
     eyebrow: "Procurement",
-    placeholder: "Search PO · supplier",
+    placeholder: "Search PO · supplier · item code",
     endpoint: "/mfg-purchase-orders?limit=500",
     listKey: "purchaseOrders",
     primary: (r) => r.supplier?.name || r.po_number,
