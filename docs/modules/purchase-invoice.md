@@ -50,7 +50,15 @@ The AP (accounts payable) document billing a supplier for goods received — con
 The desktop scan works as for goods receipts (`docs/modules/scan-to-gr.md`; shared handlers in
 `routes/scan-check-shared.ts`, modal in `ScanCheckModal.tsx`): a PDF is split into its invoices, each is
 read in the background, and waits as an editable copy (`lib/pi-scan-check.ts`) until the operator creates
-the drafts or deletes it. Rows bill GRN lines; unplaced rows are tied by name on the anchored GRNs. Create
+the drafts or deletes it. Rows bill GRN lines. The supplier resolves by code, then name, then `matchSupplier`
+(punctuation and SDN BHD tails aside; only a single fit pre-selects). An unplaced row finds its SKU by our code,
+a model prefix taught by any bound size (`1007-(K)` = CODY-(K), so `1007-(Q)` = CODY-(Q); `lib/pi-scan-sku.ts`),
+the model name printed plus the printed size, then name heuristics; then its line on the anchored GRNs, else the
+supplier's GRN holding most rows, then the oldest, never between two equally good. Rows still untied go to ONE
+AI call per invoice (`lib/pi-scan-ai-match.ts`, feature `scan_pi_match`): only high confidence, a listed SKU and
+the same size are kept, shown "AI match, please check". All of these arrive `suggested`. Raising
+`PI_REVIEW_VERSION` re-matches waiting copies on the next load: tied rows stay, untied rows take the new tie.
+PO Amount sums the tied rows ("N lines not matched") and turns red only against the invoice's amount for those rows. Create
 is `createDraftPiFromGrnItems`: DRAFT only, from posted GRN lines, at the supplier's printed price (the receipt's when none was read), never over what
 is left to bill. A printed price that differs is shown on the row. `duplicateOf` = a non-cancelled PI of the
 supplier with that `supplier_invoice_ref`. Codes confirmed are saved in `supplier_scan_codes`, shared with
