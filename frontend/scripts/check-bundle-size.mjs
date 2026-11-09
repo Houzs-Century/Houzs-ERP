@@ -286,7 +286,12 @@ const CEILINGS = {
   // change (PR #5395) adds no eager module (LorryCard / FleetDay are lazy) and
   // crossed it by bytes, the renamed lazy-chunk hashes in the entry's map. Same
   // mechanism as the 176 -> 177 bump: one more KB of headroom.
-  INITIAL_JS_GZIP: 179 * KB,
+  // 179 -> 180 on 2026-11-09: main sat AT 179.0 again (base 179.0 KB) and PR
+  // #5489 (Undo delivered) crossed it by bytes (+0.0 KB printed): one shared
+  // three-value set and a one-line predicate added to the eager
+  // vendor/shared/do-shipped-states module, which the DO list menu and the
+  // Last Mile stop colour now both read. Same mechanism as the bumps above.
+  INITIAL_JS_GZIP: 180 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
