@@ -187,6 +187,11 @@ jobs:
         run: |
           set -euo pipefail
           /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          -- Business guards (e.g. scm.pos_sofa_combos_guard: "2990 POS combos are never
+          -- deleted") forbid TRUNCATE on purpose in production. Emptying staging before a
+          -- reload is not that act, so this session runs as a replica: no user trigger
+          -- fires. The restore step already does the same.
+          set session_replication_role = replica;
           do $$
           declare stmt text;
           begin
