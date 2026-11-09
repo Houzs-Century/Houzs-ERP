@@ -428,6 +428,12 @@ export const amountInWordsMyr = (centi: number | null | undefined): string => {
   return `RINGGIT MALAYSIA ${intToWords(rm)}${senPart} ONLY`;
 };
 
+/* The warehouse a DO ships from / a GRN received into (Conts-ERP #717): its
+   name, else its code label; null when the document recorded none, so the row
+   is omitted rather than dashed. */
+export const warehousePrintName = (h: { warehouse_name?: string | null; warehouse_code?: string | null }): string | null =>
+  (h.warehouse_name ?? '').trim() || (h.warehouse_code ?? '').trim() || null;
+
 export const fmtRm = (centi: number | null, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /** Document date → "31/05/2026". Null-safe ("—"). Delegates to the shared

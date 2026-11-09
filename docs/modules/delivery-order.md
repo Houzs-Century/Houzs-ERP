@@ -73,6 +73,7 @@ QR scan and paper
 - Loading List projections select no `*_sen` column.
 - The PDF QR is armed only by an explicit `loadScanId`; the Consignment Note reuses the renderer and never passes one.
 - Printed DO (Epson LQ-310 dot-matrix, 2-ply): black ink only, no fills, helvetica at 9pt or more, Letter page, solid rules of at least 0.25mm.
+- The printed DO names its ship-from warehouse in DELIVERY DETAILS (`warehouse_name` from the detail GET, code as fallback, row omitted when the DO recorded none; Conts-ERP #717). The name is read by `scm/lib/do-warehouse-labels.ts`, company-scoped.
 
 POD, money, AutoCount
 - POD evidence columns are written only when present; Mobile POD sends `signatureData` only after the customer actually drew.

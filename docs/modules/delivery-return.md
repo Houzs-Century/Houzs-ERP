@@ -39,6 +39,7 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 - Every write path accepting a `do_item_id` must confirm the linked DO line is the SAME PRODUCT (409 `link_material_mismatch`), checked before any quantity cap — a valid but wrong-product link would draw down the wrong source line.
 - Source-cost reads and the "live documents" pickers (`checkCrOverRemaining`, returnable/deliverable line lists) must be company-scoped and paginated — an unpaged or unscoped read can leak another tenant's cost or let an over-return guard silently pass.
 - The incoming status is normalised (trim + uppercase) once before any gate reads it — comparing the raw request value against gates that expect the persisted (already-normalised) shape misses the idempotent CANCEL echo entirely.
+- Every status write in `PATCH /:id/status` is compare-and-set: the UPDATE carries `.eq('status', <status it read>)` plus the company predicate. Zero rows updated means another request moved the return first; the handler re-reads and answers 409 `status_changed` (plain-sentence `message`, plus `currentStatus`), nothing written. The one exception is two cancels racing: the loser finds CANCELLED and echoes it without a second stock reversal. A cancel that read RECEIVED but finds INSPECTED/REFUNDED is refused, not applied over it.
 
 ## Gotchas
 

@@ -68,6 +68,14 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   view, or a company with no snapshot row yet, computes live. A
   category/warehouse filter changes the allocation inputs, not just the
   displayed rows, so a stored result can never be safely post-filtered.
+- **Proceed PO refuses a stale plan.** The page sends the plan's
+  `computedAt` as `planAsOf`; `POST /from-sos` with `fromMrp` answers 409
+  `mrp_plan_stale` (no write, idempotency claim released) when a PO line on any
+  picked SO line, on a PO that counts as supply (not DRAFT / CANCELLED), was
+  created after it (`lib/mrp-plan-freshness.ts`). A created PO also refreshes
+  the stored snapshot in the background, and the page recalculates a stored plan
+  after a create or a stale refusal. A caller that sends no `planAsOf` (the
+  Procurement Agent, which only drafts) is not checked.
 
 ## Permissions
 

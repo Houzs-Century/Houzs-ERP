@@ -134,6 +134,7 @@ type HeaderFields = SoListRow & {
   venue?: string | null;
   branding?: string | null;
   debtor_code?: string | null;
+  sales_location?: string | null;
 };
 
 /**
@@ -264,7 +265,9 @@ export async function attachSoLines(
         description2: lineDescription2(l.item_group, l.variants, l.description2),
         item_group: item ? item.itemGroup : text(l.item_group),
         uom: item ? item.uom : text(l.uom),
-        location: bookSpellingOrOwn(warehouseLabel(w) ?? l.location, LOCATION_MAP),
+        /* A line with no warehouse of its own ships from the order's, which is
+           what the AutoCount write-back sends (defaultLocation = sales_location). */
+        location: bookSpellingOrOwn(warehouseLabel(w) ?? l.location ?? text(r.sales_location), LOCATION_MAP),
         qty: num(l.qty) ?? 0,
         unit_price_sen: num(l.unit_price_sen),
         discount_sen: num(l.discount_sen),

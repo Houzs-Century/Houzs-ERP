@@ -3,6 +3,7 @@ import { PageHeader } from "../components/Layout";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { HubGrid, type HubCard } from "../components/HubGrid";
 import { useAuth } from "../auth/AuthContext";
+import { collapsedEntryTo } from "../components/navFilter";
 
 /**
  * Card copy per module — Nick 2026-07-09 "加上description". Keyed by
@@ -118,7 +119,28 @@ export function ScmSubgroupHub({
     return undefined;
   };
   const group = findGroup(NAV_TABS);
-  const kids = (group?.children ?? []).filter(visible);
+  /* Finance keeps its pages inside sub-groups (Money in, Books, ...), which have
+     no page of their own; taking only direct children with a `to` told a clerk
+     with Money-in access alone that they had no Finance modules. A sub-group
+     stands for the pages in it the reader may open; a collapsed one (Reports)
+     stays one card, opening the first of its reports they may open, as the
+     sidebar does. */
+  const openable = (tabs: readonly NavTab[]): NavTab[] =>
+    tabs.filter(visible).flatMap((k): NavTab[] => {
+      if (!k.children) return k.to ? [k] : [];
+      const inner = openable(k.children);
+      if (k.collapsed) {
+        const to = collapsedEntryTo(inner, null);
+        return to ? [{ ...k, to }] : [];
+      }
+      return k.to ? [k] : inner;
+    });
+  const seen = new Set<string>();
+  const kids = openable(group?.children ?? []).filter((k) => {
+    if (!k.to || seen.has(k.to)) return false;
+    seen.add(k.to);
+    return true;
+  });
 
   // Empty state — a role with SCM access but no leaves inside this specific
   // sub-group (e.g. warehouse without inventory / stock take). Better than a
