@@ -318,8 +318,13 @@ export async function extractOneBill(
 /* ── Supplier fuzzy match — server-side, plain code ─────────────────────────
    Normalise both sides (case, punctuation, the SDN BHD / S/B / ENTERPRISE
    tails every Malaysian company name drags around) and score:
-   exact normalized = 1, one contains the other = 0.8. Below that, no match —
-   a wrong supplier pre-selected is worse than none. */
+   exact normalized = 1, one contains the other = 0.8. Below that, or two
+   suppliers fitting equally, no match — a wrong supplier pre-selected is worse
+   than none.
+   The output is a STORED key (acc_vendor_memory.vendor_key, pv-extract), so it
+   must not change for any name: "SDN. BHD." at the end loses its last "." to
+   the punctuation pass (the \b fails after it, the regex backtracks to "BHD"),
+   which tests pin rather than rewrite. */
 export const normalizeVendor = (s: string): string =>
   s.toUpperCase()
     .replace(/\b(SDN\.?\s*BHD\.?|BHD\.?|S\/B|PLT|ENTERPRISE|TRADING|COMPANY|CO\.?)\b/g, ' ')
@@ -335,12 +340,11 @@ export function matchSupplier(
   if (!vendorName) return null;
   const v = normalizeVendor(vendorName);
   if (!v) return null;
-  for (const s of suppliers) {
-    if (normalizeVendor(s.name) === v) return { supplier: s, confidence: 'exact' };
-  }
-  for (const s of suppliers) {
+  const exact = suppliers.filter((s) => normalizeVendor(s.name) === v);
+  if (exact.length > 0) return exact.length === 1 ? { supplier: exact[0]!, confidence: 'exact' } : null;
+  const contains = suppliers.filter((s) => {
     const n = normalizeVendor(s.name);
-    if (n && (n.includes(v) || v.includes(n))) return { supplier: s, confidence: 'contains' };
-  }
-  return null;
+    return n && (n.includes(v) || v.includes(n));
+  });
+  return contains.length === 1 ? { supplier: contains[0]!, confidence: 'contains' } : null;
 }

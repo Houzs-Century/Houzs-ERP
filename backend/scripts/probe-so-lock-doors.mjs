@@ -53,7 +53,7 @@ async function main() {
   raw(`  doc under investigation: ${DOC}`);
   raw(`  today (Malaysia, UTC+8, same expr as the route): ${TODAY_MY}`);
   raw(`  soProcessingLocked = processing_date < '${TODAY_MY}' AND upper(status) NOT IN (${NEVER_LOCK_STATUS.join(", ")})`);
-  raw(`  soPoLocked applies ONLY to doc_no LIKE '2990-%' (so-po-lock.ts isMirroredDocNo)`);
+  raw(`  soPoLocked applies to every company (owner 2026-11-09; so-po-lock.ts)`);
   raw(`  edit lease TTL = 5 minutes (mfg-sales-orders.ts:7274)`);
   raw(`  DB: ${String(process.env.DATABASE_URL || "").replace(/:[^:@/]*@/, ":***@").slice(0, 55)}...`);
 
@@ -213,8 +213,8 @@ async function main() {
     )
     SELECT coalesce(company_id,0)::int AS company_id, is_2990,
            count(*)::int AS live_total,
-           count(*) FILTER (WHERE NOT date_locked AND NOT (is_2990 AND has_live_po))::int AS unlocked,
-           count(*) FILTER (WHERE NOT date_locked AND NOT (is_2990 AND has_live_po) AND has_live_po)::int AS unlocked_with_live_po
+           count(*) FILTER (WHERE NOT date_locked AND NOT has_live_po)::int AS unlocked,
+           count(*) FILTER (WHERE NOT date_locked AND NOT has_live_po AND has_live_po)::int AS unlocked_with_live_po
       FROM live GROUP BY 1,2 ORDER BY 1,2`;
   raw(`  company  2990?   live   UNLOCKED   ..of which have a LIVE PO`);
   for (const r of unlocked) {

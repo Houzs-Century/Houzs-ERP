@@ -26,6 +26,13 @@ export type StatementColumnMap = {
   gross?: string;
   fee?: string;
   net?: string;
+  /** The heading of the column that says HOW a line was paid, for a merchant
+      whose file mixes card and QR money in one layout — Hong Leong's
+      TENURE/CASHOUT*. Optional: a file without the column reads as before. */
+  qr?: string;
+  /** The values of that column that mean QR money, comma-separated, any case —
+      Hong Leong prints DN (DuitNow QR), WC and WL (WeChat QR). */
+  qr_values?: string;
 };
 
 export type ParseConfig = {
@@ -60,6 +67,11 @@ export type ParsedRow = {
   grossSen: number;  // negative = refund / chargeback line
   feeSen: number;    // always ≥ 0
   netSen: number;
+  /** 'QR' for a customer's QR payment (owner 2026-11-09: 这个hlbb merchant 的
+      0000PP 是qr direct 去bank 的，不算卡机的). Its money is in the bank by the
+      sale itself, so it is matched to the sale, never to card money, and never
+      joins what the acquirer owes through its clearing account. Absent = card. */
+  channel?: 'QR';
 };
 
 export type ParseResult =
@@ -283,6 +295,10 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   const idxRef = map.ref ? headerIndex(headers, map.ref) : -1;
   const idxFee = map.fee ? headerIndex(headers, map.fee) : -1;
   const idxNet = map.net ? headerIndex(headers, map.net) : -1;
+  /* HOW the line was paid, when the layout says so. Not a required heading: a
+     merchant's older export without the column still reads, as card lines. */
+  const idxQr = map.qr ? headerIndex(headers, map.qr) : -1;
+  const qrValues = new Set(String(map.qr_values ?? '').split(',').map((v) => v.trim().toUpperCase()).filter(Boolean));
 
   /* Only for files whose dates carry no year — the operator says which month
      the statement covers, rather than the system inventing one. */
@@ -368,6 +384,14 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
       }
     }
 
+    /* A QR line carries a placeholder where a card's approval code sits — Hong
+       Leong prints 0000PP on every one — so it has no reference at all: the
+       same "code" on two QR payments of one amount and day would otherwise read
+       as one transaction printed twice. */
+    if (idxQr >= 0 && qrValues.has(String(cells[idxQr] ?? '').trim().toUpperCase())) {
+      rows.push({ lineNo: i + 1, txnDate, ref: null, grossSen, feeSen, netSen, channel: 'QR' });
+      continue;
+    }
     // GHL exports every id with Excel's leading text-guard apostrophe.
     const ref = idxRef >= 0 ? (cells[idxRef] ?? '').trim().replace(/^'/, '') || null : null;
     rows.push({ lineNo: i + 1, txnDate, ref, grossSen, feeSen, netSen });
@@ -473,5 +497,29 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     skippedLines: skipped,
     statedNetSen,
     adjustmentSen,
+  };
+}
+
+/**
+ * What a report owes THROUGH THE ACQUIRER'S CLEARING ACCOUNT — its card lines.
+ *
+ * A QR line's money reached the bank by the sale itself (keyed Online, booked
+ * straight to the bank), so it is no part of what the acquirer pays out of the
+ * clearing account: counting it there would leave the report "owed" money that
+ * never passes through it, and invite the bank's QR credit to be booked as a
+ * card payout — the money into the bank a second time. Its net comes off the
+ * net the file states too, so the statement's own adjustment is unchanged.
+ */
+export function cardTotalsOf(p: Extract<ParseResult, { ok: true }>): {
+  grossSen: number; feeSen: number; netSen: number; statedNetSen: number | null;
+} {
+  const qr = p.rows.filter((r) => r.channel === 'QR');
+  const sum = (pick: (r: ParsedRow) => number) => qr.reduce((s, r) => s + pick(r), 0);
+  const qrNet = sum((r) => r.netSen);
+  return {
+    grossSen: p.grossSen - sum((r) => r.grossSen),
+    feeSen: p.feeSen - sum((r) => r.feeSen),
+    netSen: p.netSen - qrNet,
+    statedNetSen: p.statedNetSen == null ? null : p.statedNetSen - qrNet,
   };
 }

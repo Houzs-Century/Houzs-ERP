@@ -16,7 +16,6 @@ import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useAuth } from "../../auth/AuthContext";
 import { useToast } from "../../hooks/useToast";
-import { useBranding } from "../../hooks/useBranding";
 import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
 import { sentToast } from "./mail-delivery";
@@ -77,7 +76,6 @@ export function ComposeDialog({
   const navigate = useNavigate();
   const toast = useToast();
   const { user } = useAuth();
-  const branding = useBranding();
   const { data: addresses } = useQuery<MailAddress[]>("/api/mail-center/addresses",
     () => api.get("/api/mail-center/addresses"),
     [],
@@ -289,7 +287,7 @@ export function ComposeDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Compose new email"
-        className="relative mx-4 flex max-h-[90vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface shadow-slab"
+        className="relative mx-4 flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-slab"
       >
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -454,7 +452,7 @@ export function ComposeDialog({
                 <textarea
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
-                  rows={8}
+                  rows={10}
                   placeholder="Write your message…"
                   disabled={sending}
                   className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
@@ -502,23 +500,11 @@ export function ComposeDialog({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-2 border-t border-border bg-surface-dim px-4 py-3">
-          <p className="text-[11px] text-ink-muted">
-            {noMailbox
-              ? ""
-              : `Sent from ${fromAddress || branding.companyName}.`}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (!sending) onClose();
-              }}
-              disabled={sending}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
-            >
-              Cancel
-            </button>
+        {/* Footer (owner 2026-11-09: the buttons wrapped into two-line slabs of
+            uneven height). Left: what goes WITH the email; right: what you do
+            with it. Every control stays on one line and wraps as a group. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-border bg-surface-dim px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
             {!noMailbox && (
               <>
                 <input
@@ -533,33 +519,46 @@ export function ComposeDialog({
                   disabled={sending}
                   onClick={() => fileInputRef.current?.click()}
                   title="Attach images or PDF files (max 10 files, 5 MB total)"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
                 >
                   <Paperclip className="h-4 w-4" />
                   Attach
                 </button>
-                <button
-                  disabled={!canSaveDraft}
-                  onClick={handleSaveDraft}
-                  title="Save this email as a local draft"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
-                >
-                  <Save className="h-4 w-4" />
-                  Save draft
-                </button>
                 <label
                   title={NEEDS_ACK_HINT}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
+                  className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-[12px] font-medium text-ink-secondary hover:text-ink"
                 >
                   <input type="checkbox" checked={needsAck} disabled={sending} onChange={(e) => setNeedsAck(e.target.checked)} />
                   Needs acknowledgement
                 </label>
               </>
             )}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (!sending) onClose();
+              }}
+              disabled={sending}
+              className="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            {!noMailbox && (
+              <button
+                disabled={!canSaveDraft}
+                onClick={handleSaveDraft}
+                title="Save this email as a local draft"
+                className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" />
+                Save draft
+              </button>
+            )}
             <button
               disabled={!canSend}
               onClick={handleSend}
-              className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-3 py-1.5 text-[12px] font-bold text-white hover:bg-primary-ink disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-primary bg-primary px-4 text-[12px] font-bold text-white hover:bg-primary-ink disabled:opacity-50"
             >
               {sending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

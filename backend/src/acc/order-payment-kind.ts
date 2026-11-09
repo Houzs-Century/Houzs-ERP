@@ -1,8 +1,12 @@
 // ----------------------------------------------------------------------------
-// order-payment-kind — is a customer's payment a deposit (订金) or the balance
-// (尾款)? The rule the owner agreed on 2026-11-05: the payment that brings an
-// order's paid total up to its order total is the balance; every payment
-// before it is a deposit; an order not yet fully paid has only deposits.
+// order-payment-kind — is a customer's payment a deposit (订金) or the settlement
+// (尾款)? The rule the owner agreed on 2026-11-05, refined on 2026-11-09 (一次性
+// 收完的我想要把它当deposit; 一次付清 = 同一天付清 → 对): the payment that brings an
+// order's paid total up to its order total ON A LATER DAY than the customer's first
+// payment is the settlement; every other payment is a deposit — an order paid in full
+// on its first paying day (one payment, or card and cash together) is all deposit; an
+// order not yet fully paid has only deposits. The first paying day is the first day
+// with money IN: money moved out of the order (a negative mirror) is no payment.
 //
 // It reads ALL of an order's payments, whatever their month, so September's
 // deposit stays a deposit when the balance comes in October. A payment after
@@ -34,11 +38,15 @@ export function paymentKinds(facts: OrderPaymentFacts): Map<string, PaymentKind>
       String(a.paid_at ?? '').slice(0, 10).localeCompare(String(b.paid_at ?? '').slice(0, 10))
       || String(a.created_at ?? '').localeCompare(String(b.created_at ?? ''))
       || String(a.id).localeCompare(String(b.id)));
+    const day = (p: OrderPaymentFacts['payments'][number]): string => String(p.paid_at ?? p.created_at ?? '').slice(0, 10);
+    const first = sorted.find((p) => Number(p.amount_sen) > 0);
+    const firstDay = first ? day(first) : '';
     let paid = 0;
     for (const p of sorted) {
       paid += Number(p.amount_sen);
-      /* With no order total there is nothing to complete: a deposit. */
-      out.set(String(p.id), total > 0 && paid >= total ? 'BAL' : 'DEP');
+      /* With no order total there is nothing to complete: a deposit. Paid in full on
+         the first paying day: a deposit too (一次性收完). */
+      out.set(String(p.id), total > 0 && paid >= total && day(p) !== firstDay ? 'BAL' : 'DEP');
     }
   }
   return out;

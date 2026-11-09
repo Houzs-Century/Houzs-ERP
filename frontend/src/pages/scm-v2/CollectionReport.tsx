@@ -19,6 +19,7 @@
 // Print as shown and the CSV under ⋯.
 // ----------------------------------------------------------------------------
 
+import { guardFormula } from '../../lib/csv';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
@@ -48,7 +49,7 @@ const THRESHOLDS = [10, 20, 30, 40, 50, 60, 70, 80, 90] as const;
 
 /* The CSV of the open view — one line per salesman, then one per order. */
 export const collectionCsv = (r: CollectionReport, view: View, onlyBelow: boolean): string => {
-  const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const lines: string[] = [];
   if (view === 'deposit') {
     lines.push(['Salesman', 'Orders', 'Order value', 'Deposit', 'Deposit %', `Below ${r.thresholdPct}%`].map(esc).join(','));

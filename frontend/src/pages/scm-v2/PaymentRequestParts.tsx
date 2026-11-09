@@ -133,7 +133,7 @@ export function BalanceForm({ request, onDone, onCancel }: { request: PaymentReq
       )}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>What is it for</span>
-        <input className={styles.fieldInput} value={purpose} onChange={(e) => setPurpose(e.target.value)} aria-label="Balance purpose" />
+        <input data-upper className={styles.fieldInput} value={purpose} onChange={(e) => setPurpose(e.target.value)} aria-label="Balance purpose" />
       </label>
       <label className={styles.field}>
         <span className={styles.fieldLabel}>The official invoice (optional — when the first was a proforma)</span>

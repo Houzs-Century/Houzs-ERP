@@ -7,11 +7,18 @@ import {
   useMfgDeliveryOrdersPaged,
   useUpdateMfgDeliveryOrderStatus,
 } from "../vendor/scm/lib/delivery-order-queries";
-import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
+import { uploadFieldPhoto } from "../vendor/scm/lib/slip";
+import { useFieldPhotos } from "../lib/fieldPhotos";
+import { FieldPhotos } from "../components/FieldPhotos";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import {
+  deliveryIssueDraftError, invalidateDeliveryIssues, reportDoDeliveryIssue, useDoDeliveryIssues, useRunDeliveryIssues,
+  type DeliveryIssueDraft,
+} from "../vendor/scm/lib/delivery-issue-queries";
+import { DeliveryIssueForm, MobileDeliveryIssues, EMPTY_ISSUE_DRAFT } from "./DeliveryIssueForm";
 import "./mobile.css";
 
 /* Proof-of-Delivery (POD) — mobile driver screen for confirming a Delivery
@@ -27,8 +34,10 @@ import "./mobile.css";
      • Deliver         PATCH /delivery-orders-mfg/:id/status  body { status:
        "DELIVERED" }  flips the DO delivered (deducts stock + syncs the SO).
 
-   The delivery PHOTO is uploaded to R2 (the shared slip Worker-proxy
-   pipeline: uploadSlipFull → { r2Key }) and its key is persisted as
+   The delivery PHOTOS are uploaded to R2 one by one THE MOMENT THEY ARE TAKEN
+   (FieldPhotos -> uploadFieldPhoto, the shared slip Worker-proxy pipeline),
+   stamped with the DO number and server time; Confirm sends only the uploaded
+   keys. The first key is persisted as
    PATCH /:id/status { podKey } → delivery_orders.pod_r2_key. The customer
    SIGNATURE (base64 PNG) is persisted as { signatureData } →
    delivery_orders.signature_data. The delivery LOCATION (lat/lng + accuracy +
@@ -149,11 +158,18 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
   // A delivery takes several photos (goods off the lorry, installed, the signed note).
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoError, setPhotoError] = useState<string | null>(null);
+  // Each uploads as soon as it is taken; the backend claims at most 20 per POD (pod-photo-claim.ts MAX_POD_KEYS).
+  const photos = useFieldPhotos({ stampLabel: docNo, max: 20, upload: (file) => uploadFieldPhoto({ file }) });
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /* "Delivered with issue": the crew ticks the problem and it is sent AFTER the
+     delivery is saved, so a problem never blocks the delivery (A2). */
+  const [issueOn, setIssueOn] = useState(false);
+  const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
+  const crewIssuesQ = useRunDeliveryIssues({ do: [docNo] }, isCrew);
+  const officeIssuesQ = useDoDeliveryIssues(isCrew ? null : doId);
+  const reportedIssues = isCrew ? crewIssuesQ.data : officeIssuesQ.data;
 
   const delivered = h ? isDelivered(h.status) : false;
   const cancelled = h ? isCancelled(h.status) : false;
@@ -166,10 +182,14 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     /* Every job closes with a photo (owner, 2026-10-07: 每个 Job 都必须上传 POD).
        The customer signs the paper delivery note for now, so a photo of that
        signed note is the POD; the on-screen signature stays optional. */
-    if (!photoFiles.length) {
-      setActionError("Take a POD photo first - a photo of the signed delivery note is fine.");
+    // Photos upload as they are taken; only the uploaded ones go with the delivery.
+    const gate = photos.gate("Take a POD photo first - a photo of the signed delivery note is fine.");
+    if (!gate.ok) {
+      setActionError(gate.reason);
       return;
     }
+    const issueError = issueOn ? deliveryIssueDraftError(issueDraft) : null;
+    if (issueError) { setActionError(issueError); return; }
     const notes: string[] = [];
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
@@ -181,8 +201,9 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
        the SILENCE: this screen offered a signature pad and then filed the
        delivery either way without saying which had happened. */
     if (!hasSignature) notes.push("No customer signature has been captured.");
+    if (issueOn) notes.push("The problem will be reported and a service case opened.");
     if (!(await confirm({
-      title: `Mark ${h.do_number ?? docNo} delivered?`,
+      title: issueOn ? `Mark ${h.do_number ?? docNo} delivered with issue?` : `Mark ${h.do_number ?? docNo} delivered?`,
       body: notes.length ? notes.join(" ") : undefined,
       confirmLabel: "Confirm delivered",
     }))) return;
@@ -196,11 +217,9 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       // last sentence here used to read "GPS stays client-side (no server
       // column)", which stopped being true at 0249 and is corrected in place
       // rather than left to teach the next reader the old shape.
-      // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
-      // its key rides the same PATCH. A failed upload aborts the whole action —
-      // we never mark delivered while claiming a photo we didn't store.
-      const podKeys: string[] = [];
-      for (const f of photoFiles) podKeys.push((await uploadSlipFull({ file: f })).r2Key);
+      // The photos are already in R2 (uploaded on pick); the gate above refused
+      // while any was still uploading or failed, so these keys are all stored.
+      const podKeys = gate.keys;
       const podKey = podKeys[0];
       /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
          An untouched pad is a sized, fully transparent bitmap, so
@@ -251,12 +270,42 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       invalidateDoShared(qc);
       invalidateInventoryShared(qc);
       invalidateSoShared(qc);
-      onDone?.();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-    } finally {
       setBusy(false);
+      return;
     }
+    if (issueOn && !(await sendIssue("The delivery is saved, but the problem report did not send"))) {
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    onDone?.();
+  };
+
+  /* Sends the problem report. The DO is already delivered when this runs (from
+     Confirm, or later on a delivered DO); a failure keeps the form so the crew
+     can send it again. */
+  const sendIssue = async (failPrefix: string): Promise<boolean> => {
+    try {
+      await reportDoDeliveryIssue(h?.do_number ?? doId ?? docNo, issueDraft);
+      setIssueDraft(EMPTY_ISSUE_DRAFT);
+      setIssueOn(false);
+      await invalidateDeliveryIssues(qc);
+      return true;
+    } catch (e) {
+      setActionError(`${failPrefix}: ${e instanceof Error ? e.message : "please try again"}.`);
+      return false;
+    }
+  };
+  const sendIssueOnly = async () => {
+    if (busy) return;
+    const err = deliveryIssueDraftError(issueDraft);
+    if (err) { setActionError(err); return; }
+    setActionError(null);
+    setBusy(true);
+    await sendIssue("The problem report did not send");
+    setBusy(false);
   };
 
   const captureGps = () => {
@@ -380,53 +429,10 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               }) : <div style={{ fontSize: 11.5, color: "var(--mut2)", padding: "9px 2px" }}>No items on this delivery.</div>}
             </div>
 
-            {/* Delivery photos — designer two-column row: Take-photo button + a
-                preview tile that lights up once captured. Photos are captured
-                locally and uploaded to R2 on Confirm. */}
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Delivery photos</div>
-            <div style={{ display: "flex", gap: 9 }}>
-              <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "var(--brand)", border: "none", borderRadius: 13, padding: 14, color: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
-                  <circle cx="12" cy="13" r="3" />
-                </svg>
-                {photoFiles.length ? "Add another photo" : "Take photo"}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="environment"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files ?? []);
-                    e.target.value = "";
-                    if (!picked.length) return;
-                    // Guard against the R2 pipeline's contract (jpeg/png/webp)
-                    // up front so the operator learns before Confirm, not
-                    // mid-upload. No size guard here any more: uploadSlipFull
-                    // compresses photos (WO-7), so a raw 8 MB camera capture
-                    // is EXPECTED input now — it leaves the phone at well
-                    // under the 5 MiB slip ceiling.
-                    if (picked.some((f) => !ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number]))) {
-                      setPhotoError("Please use JPEG, PNG or WebP photos.");
-                      return;
-                    }
-                    setPhotoError(null);
-                    setPhotoFiles((prev) => [...prev, ...picked].slice(0, 10));
-                  }}
-                />
-              </label>
-              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "var(--mut)", background: photoFiles.length ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }}>
-                {photoFiles.length ? `${photoFiles.length} photo${photoFiles.length === 1 ? "" : "s"}` : "No photo yet"}
-              </div>
+            {/* Delivery photos — each uploads the moment it is taken (FieldPhotos). */}
+            <div style={{ margin: "18px 0 0" }}>
+              <FieldPhotos api={photos} disabled={busy || delivered} title="Delivery photos" />
             </div>
-            {photoFiles.map((f, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--mut)", marginTop: 6 }}>
-                <span className="tnum">{i + 1}. {f.name}</span>
-                <button type="button" onClick={() => setPhotoFiles((prev) => prev.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "var(--red)", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>Remove</button>
-              </div>
-            ))}
-            {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
             {/* Customer signature — design signature pad (canvas keeps the real capture). */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Customer signature</div>
@@ -463,6 +469,26 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               </button>
             </div>
 
+            {/* Delivered with issue — reported problems, then the form. */}
+            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Problem with this delivery?</div>
+            <MobileDeliveryIssues issues={reportedIssues} />
+            {!cancelled && canComplete && (
+              !issueOn ? (
+                <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", color: "var(--red)", borderColor: "var(--red)" }}>
+                  {delivered ? "Report a problem" : "Delivered with issue"}
+                </button>
+              ) : (
+                <div className="card" style={{ padding: 12, border: "1px solid var(--red)" }}>
+                  <DeliveryIssueForm value={issueDraft} onChange={setIssueDraft} disabled={busy} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button type="button" className="btn-ghost" disabled={busy} onClick={() => { setIssueOn(false); setIssueDraft(EMPTY_ISSUE_DRAFT); }} style={{ flex: 1 }}>No problem</button>
+                    {delivered && <button type="button" className="btn" disabled={busy} onClick={sendIssueOnly} style={{ flex: 1 }}>{busy ? "Sending…" : "Send report"}</button>}
+                  </div>
+                  {!delivered && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 8 }}>The delivery is still recorded as delivered; the office gets a service case with your photos.</div>}
+                </div>
+              )
+            )}
+
             {actionError && <div style={{ marginTop: 14, fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{actionError}</div>}
           </>
         )}
@@ -472,7 +498,7 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       <footer className="actbar">
         {!loading && !notFound && !loadError && h && !delivered && !cancelled && canComplete && (
           <button type="button" className="btn" disabled={busy} onClick={confirmDelivered} style={{ opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}>
-            {busy ? "Working…" : "Confirm delivered →"}
+            {busy ? "Working…" : issueOn ? "Confirm delivered with issue →" : "Confirm delivered →"}
           </button>
         )}
         {/* View-only (Sales cohort): confirming a delivery is the Office team's

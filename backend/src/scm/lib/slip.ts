@@ -32,3 +32,22 @@ export function isExpired(isoTimestamp: string): boolean {
 export function expiresInOneHour(now = new Date()): string {
   return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
 }
+
+/* A field photo (POD / job stop) is uploaded the moment it is taken, but the
+   job is completed - and the upload claimed - only when the crew finishes,
+   which on an installation can be hours later. An hour-long session would let
+   the slip reaper delete the photo first, so these sessions are held for a day.
+   An unclaimed one (a photo the crew removed, a job never completed) is still
+   reaped after that. */
+export const FIELD_PHOTO_HOLD_HOURS = 24;
+
+export type SlipPurpose = 'field_photo';
+
+export function parseSlipPurpose(raw: unknown): SlipPurpose | null {
+  return raw === 'field_photo' ? 'field_photo' : null;
+}
+
+export function slipSessionExpiry(purpose: SlipPurpose | null, now = new Date()): string {
+  if (purpose === 'field_photo') return new Date(now.getTime() + FIELD_PHOTO_HOLD_HOURS * 60 * 60 * 1000).toISOString();
+  return expiresInOneHour(now);
+}

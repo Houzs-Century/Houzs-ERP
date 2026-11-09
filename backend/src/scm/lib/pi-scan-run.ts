@@ -26,7 +26,11 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { loadScanCodes } from './grn-scan-codes';
 import { createDraftPiFromGrnItems } from './pi-from-grn-core';
-import { buildPiReview, type BillableLine, type PiReview } from './pi-scan-check';
+import { matchSupplier } from '../../acc/bill-extract';
+import { loadSuppliers } from './grn-scan-load';
+import { buildPiReview, readKey, NO_CODES, type BillableLine, type PiReview, type SupplierCodes } from './pi-scan-check';
+import { aiSkuMatcher, rowSize, type AiSkuMatcher } from './pi-scan-ai-match';
+import { modelPrefixes } from './pi-scan-sku';
 import { loadOutstandingGrnLines, remainingToBill } from './outstanding-grn-lines';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
@@ -130,7 +134,7 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     await storePiScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
 
     if (job.review) {
-      const { review, note } = await reviewOfPiRead(svc, job.companyId, parsed);
+      const { review, note } = await reviewOfPiRead(svc, job.companyId, parsed, aiSkuMatcher(env, job.companyId, job.houzsUserId));
       await touch({ status: 'done', review_state: 'pending', review, error: note });
       return;
     }
@@ -213,29 +217,50 @@ export async function loadBillableLines(svc: SupabaseClient, companyId: number |
   return res.items.map((l) => ({
     grnItemId: l.grnItemId, grnNumber: l.grnDocNo, supplierId: l.supplierId, poNumber: l.poDocNo,
     itemCode: l.itemCode, supplierSku: l.supplierSku, description: l.description, remaining: l.remaining, unitPriceSen: l.unitPriceSen,
+    receivedAt: l.receivedAt,
   }));
 }
 
-/** The working copy of the check step: anchor, match, and tie what the name
- *  allows, for the operator to confirm. Codes the delivery-order scanner has
- *  learned for the supplier count here too. */
-export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | null, parsed: PiScanExtract | null): Promise<{ review: PiReview; note: string | null }> {
-  if (!parsed) return { review: buildPiReview(null, null, null, [], [], new Map()), note: MSG.unreadable };
+/** The working copy of the check step: anchor, match, and tie what the code,
+ *  the supplier's model prefixes and the name allow, then ask the AI about the
+ *  rows still untied, for the operator to confirm. Codes the delivery-order
+ *  scanner has learned for the supplier count here too. */
+export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | null, parsed: PiScanExtract | null, ai: AiSkuMatcher | null): Promise<{ review: PiReview; note: string | null }> {
+  if (!parsed) return { review: buildPiReview(null, null, null, [], [], NO_CODES, null), note: MSG.unreadable };
   const anchors = await findAnchorGrns(svc, parsed, companyId);
   const supplierId = anchors[0]?.supplier_id ?? await resolveSupplierId(svc, parsed, companyId);
   const open = ((await loadBillableLines(svc, companyId)) ?? []).filter((l) => l.supplierId === supplierId);
   const anchorNumbers = anchors.map((a) => a.grn_number);
-  const families = await loadSupplierFamilies(svc, supplierId, companyId, open);
-  if (anchors.length === 0) {
-    const review = buildPiReview(parsed, supplierId, null, open, [], families);
-    return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noAnchor };
+  const codes = await loadSupplierCodes(svc, supplierId, companyId, open);
+  let match: ReturnType<typeof matchInvoiceLinesToGrnLines> | null = null;
+  if (anchors.length > 0) {
+    const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
+    const bindingBySku = await loadSupplierBindings(svc, anchors, companyId);
+    if (supplierId) for (const t of await loadScanCodes(svc, companyId, supplierId)) bindingBySku.set(normalizeCode(t.supplierSku), t.itemCode);
+    match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
   }
-  const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
-  const bindingBySku = await loadSupplierBindings(svc, anchors, companyId);
-  if (supplierId) for (const t of await loadScanCodes(svc, companyId, supplierId)) bindingBySku.set(normalizeCode(t.supplierSku), t.itemCode);
-  const match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
-  const review = buildPiReview(parsed, supplierId, match, open, anchorNumbers, families);
-  return { review, note: review.lines.some((l) => l.grnItemId) ? null : MSG.noLines };
+  const first = buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, null);
+  const aiSkus = await askAi(ai, first, open);
+  const review = aiSkus.size > 0 ? buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, aiSkus) : first;
+  const note = review.lines.some((l) => l.grnItemId) ? null : anchors.length === 0 ? MSG.noAnchor : MSG.noLines;
+  return { review, note };
+}
+
+/** The rows the rules left untied, put to the AI in one call; printed row -> our SKU. */
+async function askAi(ai: AiSkuMatcher | null, review: PiReview, open: ReadonlyArray<BillableLine>): Promise<Map<string, string>> {
+  const untied = review.lines.filter((l) => !l.grnItemId && l.read && (l.read.itemCode || l.read.description));
+  if (!ai || untied.length === 0 || open.length === 0) return new Map();
+  const bySku = new Map<string, { itemCode: string; description: string | null; supplierSku: string | null; grns: string[] }>();
+  for (const l of open) {
+    const s = bySku.get(l.itemCode) ?? { itemCode: l.itemCode, description: l.description, supplierSku: l.supplierSku, grns: [] };
+    s.grns.push(`${l.grnNumber} (left ${l.remaining})`);
+    bySku.set(l.itemCode, s);
+  }
+  const rows = untied.map((l, i) => ({ n: i + 1, code: l.read!.itemCode, description: l.read!.description, size: rowSize(l.read!.itemCode, l.read!.description), unitPrice: l.read!.unitPrice }));
+  const picked = await ai(rows, [...bySku.values()].map((s) => ({ ...s, grns: s.grns.join(', ') })));
+  const out = new Map<string, string>();
+  for (const [n, sku] of picked) { const l = untied.at(n - 1); if (n >= 1 && l) out.set(readKey(l.read), sku); }
+  return out;
 }
 
 function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | null {
@@ -324,11 +349,19 @@ async function resolveSupplierId(
     const byCode = await tryOne('code', parsed.supplierCode.trim());
     if (byCode) return byCode;
   }
-  if (parsed.supplierName) {
-    const byName = await tryOne('name', parsed.supplierName.trim());
-    if (byName) return byName;
+  if (!parsed.supplierName) return null;
+  const byName = await tryOne('name', parsed.supplierName.trim());
+  if (byName) return byName;
+  // HOOKKA INDUSTRIES SDN BHD on the paper is HOOKKA INDUSTRIES SDN. BHD. in the
+  // master: punctuation and the company tail aside, and only one supplier fitting.
+  try {
+    const suppliers = await loadSuppliers(svc, companyId);
+    const named = suppliers.flatMap((s) => (s.name ? [{ id: s.id, code: s.code, name: s.name }] : []));
+    return matchSupplier(parsed.supplierName, named)?.supplier.id ?? null;
+  } catch (e) {
+    console.warn('[pi-scan-job] supplier list read failed:', (e as Error).message);
+    return null;
   }
-  return null;
 }
 
 /** The anchored GRNs' outstanding lines (remaining-to-bill > 0). */
@@ -367,24 +400,25 @@ async function loadGrnLinesForAnchors(
   return out;
 }
 
-/** Which of our families each of this supplier's model words names, from its
- *  bindings, the codes the scanner learned and the lines waiting to be billed. A
- *  failed read costs a suggestion, never a wrong link. */
-async function loadSupplierFamilies(
+/** What this supplier's codes name of ours — model words and model prefixes —
+ *  from its bindings, the codes the scanner learned and the lines waiting to be
+ *  billed. A failed read costs a suggestion, never a wrong link. */
+async function loadSupplierCodes(
   svc: SupabaseClient,
   supplierId: string | null,
   companyId: number | null,
   open: ReadonlyArray<BillableLine>,
-): Promise<Map<string, Set<string>>> {
+): Promise<SupplierCodes> {
   const known: Array<{ supplierSku: string | null; itemCode: string }> = open.map((l) => ({ supplierSku: l.supplierSku, itemCode: l.itemCode }));
-  if (!supplierId) return familiesByModelWord(known);
+  const of = (): SupplierCodes => ({ families: familiesByModelWord(known), prefixes: modelPrefixes(known) });
+  if (!supplierId) return of();
   let q = svc.from('supplier_material_bindings').select('item_code, supplier_sku').eq('supplier_id', supplierId);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
   if (error) console.warn('[pi-scan-job] supplier families read failed:', error.message);
   for (const r of (data as Array<{ item_code: string; supplier_sku: string | null }> | null) ?? []) known.push({ supplierSku: r.supplier_sku, itemCode: r.item_code });
   for (const t of await loadScanCodes(svc, companyId, supplierId)) known.push({ supplierSku: t.supplierSku, itemCode: t.itemCode });
-  return familiesByModelWord(known);
+  return of();
 }
 
 /** supplier_material_bindings.supplier_sku -> item_code for the anchored GRNs'

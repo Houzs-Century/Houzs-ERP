@@ -394,7 +394,7 @@ export const Receipts = () => {
           onOpen={(id) => openInTab(moneyInDocHref('official', id))} />
       )}
       {gates.official && (kind === 'all' || kind === 'official') && (
-        <span className={ui.hint}>Cash turns formal at the counter; card when its merchant line is confirmed; transfers when you confirm the money.</span>
+        <span className={ui.hint}>Cash turns formal at the counter; card when its merchant line is confirmed; a transfer when Bank recon matches its bank line, or when you confirm the money.</span>
       )}
 
       <div className={ui.stack}>

@@ -2,8 +2,9 @@
    文件一起, which first needs the file to LIVE with the voucher): upload puts
    the bytes in R2 and an index row beside the PV; list walks sort order;
    stream hands the bytes back with the stored mime; delete works until the
-   voucher is CHECKED — evidence locks with the document. Fake R2 binding,
-   bare-Hono harness (pvApControlGuard family). */
+   voucher is APPROVED (owner 2026-11-09: 可以 — a wrong file put on a checked
+   voucher may still go), and every removal is on the voucher's history. Fake
+   R2 binding, bare-Hono harness (pvApControlGuard family). */
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -72,12 +73,16 @@ const fakeR2 = () => {
   };
 };
 
-function harness(tables: Record<string, Row[]>, r2 = fakeR2()) {
+function harness(tables: Record<string, Row[]>, r2 = fakeR2(), opts: { auditWritable?: boolean } = {}) {
   const app = new Hono<{ Bindings: { SLIPS: ReturnType<typeof fakeR2> } }>();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
+      /* The trail's pre-flight probe (entity-audit.ts assertAuditWritable). */
+      rpc: async (fn: string) => (fn === 'entity_audit_writable'
+        ? { data: opts.auditWritable ?? true, error: null }
+        : { data: null, error: { message: `unexpected rpc ${fn}` } }),
     } as never);
     c.set('companyId' as never, CO as never);
     c.set('user' as never, { id: 'u1' } as never);
@@ -93,7 +98,7 @@ function harness(tables: Record<string, Row[]>, r2 = fakeR2()) {
 }
 
 const PV = (over: Row = {}): Row => ({
-  id: 'pv-9', pv_number: 'HC-PV-2609-009', status: 'DRAFT', checked_at: null, company_id: CO, ...over,
+  id: 'pv-9', pv_number: 'HC-PV-2609-009', status: 'DRAFT', checked_at: null, approved_at: null, company_id: CO, ...over,
 });
 
 const b64 = (s: string) => btoa(s);
@@ -193,7 +198,7 @@ describe('PV attachments — the bill lives with its voucher', () => {
     expect((await missing.json() as { message: string }).message).toContain('nothing was printed');
   });
 
-  test('delete works while DRAFT-unchecked, removes the R2 object too, and locks once CHECKED', async () => {
+  test('delete works while DRAFT-unchecked and removes the R2 object too', async () => {
     const tables: Record<string, Row[]> = { payment_vouchers: [PV()], acc_pv_files: [] };
     const { app, r2 } = harness(tables);
     await upload(app);
@@ -202,11 +207,55 @@ describe('PV attachments — the bill lives with its voucher', () => {
     expect((await app.request(`/pv/pv-9/files/${fileId}`, { method: 'DELETE' })).status).toBe(200);
     expect(tables.acc_pv_files).toHaveLength(0);
     expect(r2.store.size).toBe(0);
+  });
 
+  /* Owner 2026-11-09: 「payment 的attachment 不能delete? 如果我不小心放错」 → 可以. */
+  test('a CHECKED voucher still lets a wrong file go, until it is approved', async () => {
+    const tables: Record<string, Row[]> = { payment_vouchers: [PV({ checked_at: '2026-11-06T03:22:41Z' })], acc_pv_files: [] };
+    const { app, r2 } = harness(tables);
+    await upload(app, 'wrong-bill.jpg');
+    expect((await app.request(`/pv/pv-9/files/${tables.acc_pv_files[0]!.id}`, { method: 'DELETE' })).status).toBe(200);
+    expect(tables.acc_pv_files).toHaveLength(0);
+    expect(r2.store.size).toBe(0);
+    /* The voucher itself does not move: still checked. */
+    expect(tables.payment_vouchers[0]!.checked_at).toBe('2026-11-06T03:22:41Z');
+  });
+
+  test.each([
+    ['approved, its post unfinished', { checked_at: '2026-11-06T03:22:41Z', approved_at: '2026-11-06T04:00:00Z' }],
+    ['posted', { status: 'POSTED', checked_at: '2026-11-06T03:22:41Z', approved_at: '2026-11-06T04:00:00Z' }],
+  ])('%s: its files stay', async (_name, over) => {
+    const tables: Record<string, Row[]> = { payment_vouchers: [PV()], acc_pv_files: [] };
+    const { app, r2 } = harness(tables);
     await upload(app);
-    tables.payment_vouchers[0]!.checked_at = '2026-09-03T12:00:00Z';
+    Object.assign(tables.payment_vouchers[0]!, over);
     const locked = await app.request(`/pv/pv-9/files/${tables.acc_pv_files[0]!.id}`, { method: 'DELETE' });
     expect(locked.status).toBe(409);
     expect((await locked.json() as { error: string }).error).toBe('evidence_locked');
+    expect(tables.acc_pv_files).toHaveLength(1);
+    expect(r2.store.size).toBe(1);
+    expect(tables.entity_audit_log ?? []).toHaveLength(0);
+  });
+
+  test('every removal is on the voucher\'s history: who removed which file', async () => {
+    const tables: Record<string, Row[]> = { payment_vouchers: [PV({ checked_at: '2026-11-06T03:22:41Z' })], acc_pv_files: [] };
+    const { app } = harness(tables);
+    await upload(app, 'wrong-bill.jpg');
+    await app.request(`/pv/pv-9/files/${tables.acc_pv_files[0]!.id}`, { method: 'DELETE' });
+    const trail = tables.entity_audit_log ?? [];
+    expect(trail).toHaveLength(1);
+    expect(trail[0]).toMatchObject({ entity_type: 'PAYMENT_VOUCHER', entity_id: 'pv-9', entity_doc_no: 'HC-PV-2609-009', action: 'UPDATE' });
+    expect(trail[0]!.actor_name_snapshot).toBe('Tester');
+    expect(trail[0]!.field_changes).toEqual([{ field: 'fileRemoved', from: 'wrong-bill.jpg', to: null }]);
+  });
+
+  test('when the history cannot be written, nothing is removed', async () => {
+    const tables: Record<string, Row[]> = { payment_vouchers: [PV({ checked_at: '2026-11-06T03:22:41Z' })], acc_pv_files: [] };
+    const { app, r2 } = harness(tables, fakeR2(), { auditWritable: false });
+    await upload(app);
+    const r = await app.request(`/pv/pv-9/files/${tables.acc_pv_files[0]!.id}`, { method: 'DELETE' });
+    expect(r.status).toBe(409);
+    expect(tables.acc_pv_files).toHaveLength(1);
+    expect(r2.store.size).toBe(1);
   });
 });

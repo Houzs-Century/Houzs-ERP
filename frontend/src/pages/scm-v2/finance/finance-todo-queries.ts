@@ -131,7 +131,9 @@ export type TaskRemark = {
   id: number;
   authorName: string;
   body: string;
-  tag: 'done' | 'reopen' | null;
+  /* done / reopen: left by those buttons; edit / deleted: a change to the task or its delete
+     (owner 2026-11-09), lines nobody can rewrite. */
+  tag: 'done' | 'reopen' | 'edit' | 'deleted' | null;
   occursOn: string | null;
   history: Array<{ text: string; at: string }>;
   editedAt: string | null;
@@ -144,7 +146,12 @@ export type TaskDetail = {
   occurrences: Array<{ occursOn: string; movedTo: string | null; doneAt: string | null; doneBy: string | null }>;
   remarks: TaskRemark[];
   me: { id: number | null; name: string };
+  /** Whether the viewer may change or delete it: whoever asked for it, or an Owner. */
+  mayEdit?: boolean;
 };
+
+/** What Edit task sends: the whole task, as the form holds it (no remark — the change is the line). */
+export type TaskEdit = Omit<NewTask, 'remark'>;
 
 export type NewTask = {
   title: string;
@@ -237,10 +244,21 @@ export function useUpdateTask() {
   const refresh = useRefresh();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; isOff?: boolean; amountSen?: number | null; payee?: string | null; title?: string }) =>
+    /* A routine's switch, amount, payee or title (Setup › To do rules); a task's whole edit (Edit task). */
+    mutationFn: ({ id, ...body }: { id: string; isOff?: boolean; amountSen?: number | null; payee?: string | null; title?: string } | ({ id: string } & TaskEdit)) =>
       authedFetch<{ task: TodoTask }>(`/accounting/todo/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_r, v) => { refresh(v.id); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
     onError: writeFailedAs('Not saved'),
+  });
+}
+
+/** Delete a task (owner 2026-11-09): it is switched off — its done days and remarks stay. */
+export function useDeleteTask() {
+  const refresh = useRefresh();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true }>(`/accounting/todo/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: (_r, id) => refresh(id),
+    onError: writeFailedAs('Task not deleted'),
   });
 }
 

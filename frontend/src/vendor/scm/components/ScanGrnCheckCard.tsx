@@ -19,6 +19,7 @@ import {
   type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,
 } from '../lib/scan-gr-check';
 import styles from './ScanGrnCheck.module.css';
+import { openLoadedTab } from '../../../lib/openLoadedTab';
 
 type Props = {
   doc: CheckDoc;
@@ -91,9 +92,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
   const setLine = (key: string, patch: Partial<ReviewLine>) => set({ lines: review.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
   const viewFile = async () => {
     try {
-      const { url } = await fetchDocFileBlobUrl(`/scan-gr/check/${doc.id}/file`);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openLoadedTab(async () => (await fetchDocFileBlobUrl(`/scan-gr/check/${doc.id}/file`)).url, 60_000);
     } catch (e) { writeFailedAs('Could not open the file')(e); }
   };
   const pickPo = (key: string, v: string) => {

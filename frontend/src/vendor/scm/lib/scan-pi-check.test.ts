@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { piAmounts, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
+import { piAmounts, piAmountsDiffer, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
 
 const bill = (grnItemId: string, unitPriceSen: number): BillLine => ({ supplierSku: null, grnItemId, grnNumber: 'GRN-1', supplierId: 's', poNumber: 'PO-1', itemCode: 'X', description: null, remaining: 9, unitPriceSen });
 const row = (key: string, grnItemId: string | null, qty: number, read: PiReviewLine['read']): PiReviewLine => ({ key, grnItemId, grnNumber: null, qty, suggested: false, read });
@@ -10,12 +10,22 @@ const lines = new Map([['a', bill('a', 80_000)], ['b', bill('b', 20_000)]]);
 describe('piAmounts', () => {
   it('adds what the invoice printed beside the same rows at our price', () => {
     const r = review([row('1', 'a', 2, read(830, 1660)), row('2', 'b', 1, read(200, null))]);
-    expect(piAmounts(r, lines)).toEqual({ invoiceSen: 186_000, oursSen: 180_000 });
+    expect(piAmounts(r, lines)).toEqual({ invoiceSen: 186_000, oursSen: 180_000, matchedInvoiceSen: 186_000, unmatched: 0 });
   });
 
-  it('leaves our amount empty until every row is tied, so a part is not read as the whole', () => {
-    const r = review([row('1', 'a', 2, read(830, 1660)), row('2', null, 1, read(200, 200))]);
-    expect(piAmounts(r, lines)).toEqual({ invoiceSen: 186_000, oursSen: null });
+  it('INV-2610-027: two rows untied still shows our amount for the rows tied, and how many are not', () => {
+    const r = review([row('1', 'a', 2, read(800, 1600)), row('2', null, 1, read(200, 200)), row('3', null, 1, read(50, 50))]);
+    const a = piAmounts(r, lines);
+    expect(a).toEqual({ invoiceSen: 185_000, oursSen: 160_000, matchedInvoiceSen: 160_000, unmatched: 2 });
+    // The tied rows are compared with what the invoice charges for them, not with the whole invoice.
+    expect(piAmountsDiffer(a)).toBe(false);
+    expect(piAmountsDiffer(piAmounts(review([row('1', 'a', 2, read(830, 1660)), row('2', null, 1, read(200, 200))]), lines))).toBe(true);
+  });
+
+  it('no row tied: no amount of ours, nothing to compare', () => {
+    const a = piAmounts(review([row('1', null, 1, read(200, 200))]), lines);
+    expect(a).toMatchObject({ oursSen: null, unmatched: 1 });
+    expect(piAmountsDiffer(a)).toBe(false);
   });
 
   it('leaves the invoice amount empty when a row printed no price', () => {

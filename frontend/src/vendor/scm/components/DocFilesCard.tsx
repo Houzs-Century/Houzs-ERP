@@ -19,6 +19,7 @@ import { useNotify } from './NotifyDialog';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFile, type PvFilePayload } from '../lib/payment-voucher-queries';
 import { docFileMime } from '../lib/doc-file-mime';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
+import { openLoadedTab } from '../../../lib/openLoadedTab';
 
 export type DocFilesCardProps = {
   files: PvFile[];
@@ -53,11 +54,9 @@ export const DocFilesCard = ({
   const view = async (fileId: string, fileName: string) => {
     setViewingId(fileId);
     try {
-      const { url } = await openUrl(fileId);
-      window.open(url, '_blank', 'noopener');
       /* Revoke AFTER the new tab has loaded the blob — immediate revocation
          races the open and shows a blank tab. */
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+      await openLoadedTab(async () => (await openUrl(fileId)).url, 60_000);
     } catch (e) {
       void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     } finally {

@@ -92,6 +92,7 @@ import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./R
 import { OrderMoneyPanel } from "../vendor/scm/components/OrderMoneyPanel"; import type { MobileConvertPrefill } from "./MobileOrderMoney"; // money on a cancelled order (docs/bugs/0933)
 import { owesPaymentReason } from "../vendor/scm/lib/payment-reason";
 import { MobileLineRemark } from "./MobileLineRemark";
+import { MobileSoDeliveryIssues } from "./DeliveryIssueForm";
 import "./mobile.css";
 
 import { isFocLine } from '../vendor/scm/lib/foc-line';
@@ -1226,6 +1227,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               )}
               <OrderMoneyPanel docNo={docNo} onOpenNewOrder={(copyFrom, picks) => onConvert?.({ copyFrom, picks })} />
             </div>
+            <MobileSoDeliveryIssues docNo={docNo} />
 
             {/* History — owner requirement (Inistate-style audit timeline): WHO
                 created / edited / changed status, WHEN, via WHICH app, with an

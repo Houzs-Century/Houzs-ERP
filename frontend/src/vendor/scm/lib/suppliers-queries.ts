@@ -46,6 +46,9 @@ export type SupplierRow = {
   name: string;
   whatsapp_number: string | null;
   email: string | null;
+  /* Email 2 / Email 3 (owner 2026-11-09) — the PO email copies them (Cc). */
+  email2?: string | null;
+  email3?: string | null;
   contact_person: string | null;
   phone: string | null;
   address: string | null;

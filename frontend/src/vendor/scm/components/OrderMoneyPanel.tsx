@@ -75,11 +75,11 @@ function BankFields({ value, onChange, of }: { value: RefundAskBank; onChange: (
   const at = of ? ` for ${of}` : '';
   return (
     <>
-      <input value={value.bankName} onChange={(e) => onChange({ ...value, bankName: e.target.value })} placeholder="Customer's bank *"
+      <input data-upper value={value.bankName} onChange={(e) => onChange({ ...value, bankName: e.target.value })} placeholder="Customer's bank *"
         aria-label={`Customer's bank${at}`} style={{ ...field, width: 150 }} />
       <input value={value.bankAccountNo} onChange={(e) => onChange({ ...value, bankAccountNo: e.target.value })} placeholder="Account number *"
         aria-label={`Account number${at}`} inputMode="numeric" style={{ ...field, width: 160 }} />
-      <input value={value.bankAccountName} onChange={(e) => onChange({ ...value, bankAccountName: e.target.value })} placeholder="Name on the account *"
+      <input data-upper value={value.bankAccountName} onChange={(e) => onChange({ ...value, bankAccountName: e.target.value })} placeholder="Name on the account *"
         aria-label={`Name on the account${at}`} style={{ ...field, width: 190 }} />
     </>
   );
@@ -113,7 +113,7 @@ function RefundForm({ docNo, remainingSen, onDone }: { docNo: string; remainingS
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span>Refund</span>
         <MoneyInput valueSen={amountSen} onCommit={(sen) => setAmountSen(sen ?? 0)} aria-label="Refund amount" />
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason *" aria-label="Refund reason"
+        <input data-upper value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason *" aria-label="Refund reason"
           style={{ ...field, flex: 1, minWidth: 200 }} />
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -235,7 +235,7 @@ export function RefundPicker({ rows, onDone }: { rows: Array<{ docNo: string; cu
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason *" aria-label="Refund reason"
+        <input data-upper value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason *" aria-label="Refund reason"
           style={{ ...field, flex: 1, minWidth: 200 }} />
         <button type="button" style={primary} disabled={Boolean(bad) || Boolean(gappy) || request.isPending} onClick={() => void submit()}>Send {rows.length} refund request{rows.length === 1 ? '' : 's'}</button>
         <button type="button" style={btn} onClick={onDone}>Cancel</button>
