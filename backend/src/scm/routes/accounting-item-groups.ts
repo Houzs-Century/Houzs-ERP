@@ -27,8 +27,7 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { CONTROL_ROLES, resolveRoles } from '../../acc/rules';
-/* The CONTROL specials (SDC / SCC / SBS): one home, the chart route's. */
-import { CONTROL_SPECIALS } from './accounting-chart';
+import { whyNotPostable } from './accounting-chart';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to manage the chart of accounts." };
@@ -75,7 +74,8 @@ function readBinding(raw: any): { ok: true; binding: GroupBinding } | { ok: fals
  * And it must be a POSTABLE account (Conts #338): never a header (父户不记账 —
  * every invoice of the group would then fail to post), never a control account
  * (a role of CONTROL_ROLES or an SDC/SCC/SBS special — binding AR as the sales
- * account posts revenue as Dr AR / Cr AR). Fails closed on a read error.
+ * account posts revenue as Dr AR / Cr AR). The rule itself is whyNotPostable in
+ * accounting-chart.ts; this only gathers its inputs. Fails closed on a read error.
  */
 async function verifyBinding(
   sb: any,
@@ -111,12 +111,16 @@ async function verifyBinding(
     if (row.is_active !== true) {
       return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is switched off for this company — tick it on the chart first.` };
     }
-    if (headers.has(code)) {
+    const blocked = whyNotPostable({
+      hasChildren: headers.has(code),
+      specialType: row.special_type,
+      controlRole: controlRoleOf.get(code),
+    });
+    if (blocked?.kind === 'header') {
       return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a header with sub-accounts — 父户不记账: bind one of its sub-accounts instead.` };
     }
-    const control = controlRoleOf.get(code) ?? (row.special_type && CONTROL_SPECIALS.has(row.special_type) ? row.special_type : null);
-    if (control) {
-      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a control account (${control}) — its balance belongs to its own module; bind an ordinary ${slot === 'sales' || slot === 'salesReturn' ? 'sales' : 'purchase'} account instead.` };
+    if (blocked?.kind === 'control') {
+      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a control account (${blocked.label}) — its balance belongs to its own module; bind an ordinary ${slot === 'sales' || slot === 'salesReturn' ? 'sales' : 'purchase'} account instead.` };
     }
   }
   return { ok: true };
