@@ -15,6 +15,7 @@
 import { Hono, type Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
+import { parseReturnLineQty, returnLineQtyMessage } from '../shared/return-line-qty';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -1008,7 +1009,7 @@ async function crossCompanyDoSourceBlocked(sb: any, c: any, doIds: string[]) {
 // ── Create ──────────────────────────────────────────────────────────────
 // Accepts the full DO-cloned header + line items. A return is RECEIVED on
 // creation → stock is increased immediately (idempotent).
-deliveryReturns.post('/', async (c) => {
+export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
      insertHeader / insertWithDocNoRetry stamp the active company on that row, so
@@ -1020,6 +1021,18 @@ deliveryReturns.post('/', async (c) => {
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
   let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (!Array.isArray(items) || items.length === 0) return c.json({ error: 'items_required' }, 400);
+
+  /* Each line's quantity is read ONCE, here, and every reader below (the
+     over-return cap, the unlinked scan, the insert) sees that one number. They
+     used to read it apart: the cap counted a blank as 0, the insert wrote 1,
+     and a negative line lowered "already returned" (shared/return-line-qty.ts). */
+  {
+    const bad = items.find((it) => parseReturnLineQty(it.qtyReturned ?? it.qty) === null);
+    if (bad) {
+      return c.json({ error: 'invalid_qty', message: returnLineQtyMessage(bad.itemCode as string | undefined, bad.qtyReturned ?? bad.qty) }, 400);
+    }
+    items = items.map((it) => ({ ...it, qtyReturned: parseReturnLineQty(it.qtyReturned ?? it.qty) }));
+  }
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -1209,7 +1222,8 @@ deliveryReturns.post('/', async (c) => {
   await reopenSoFromReturn(sb, h.id, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+deliveryReturns.post('/', createDeliveryReturnHandler);
 
 // ── Convert picked DO LINES (partial qty) → ONE Delivery Return ────────────
 /* Commander 2026-05-30 (Phase B) — LINE-LEVEL, QUANTITY-BASED convert, mirroring
@@ -1506,13 +1520,19 @@ deliveryReturns.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-deliveryReturns.post('/:id/items', async (c) => {
+export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
+  /* Same one-read quantity rule as the create path (shared/return-line-qty.ts). */
+  {
+    const q = parseReturnLineQty(it.qtyReturned ?? it.qty);
+    if (q === null) return c.json({ error: 'invalid_qty', message: returnLineQtyMessage(it.itemCode as string, it.qtyReturned ?? it.qty) }, 400);
+    it = { ...it, qtyReturned: q };
+  }
 
   /* Bug #16 — "no DO, no Return": a single-added line must also reference a DO line. */
   if (!((it.doItemId as string | undefined) ?? null)) {
@@ -1581,7 +1601,8 @@ deliveryReturns.post('/:id/items', async (c) => {
   try { resyncErrs = await resyncInventoryForReturn(sb, id, c.get('user')?.id); }
   catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
   return c.json({ item: data, movementErrors: resyncErrs.length ? resyncErrs : undefined }, 201);
-});
+};
+deliveryReturns.post('/:id/items', addDeliveryReturnItemHandler);
 
 deliveryReturns.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
@@ -1633,7 +1654,14 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
-  const qty = (it.qtyReturned ?? it.qty) !== undefined ? Number(it.qtyReturned ?? it.qty) : Number(prev.qty_returned);
+  /* An edit that names a quantity must name a real one: a 0 or negative edit
+     would lower "already returned" and re-open the DO line for another return. */
+  let qty = Number(prev.qty_returned);
+  if ((it.qtyReturned ?? it.qty) !== undefined) {
+    const q = parseReturnLineQty(it.qtyReturned ?? it.qty);
+    if (q === null) return c.json({ error: 'invalid_qty', message: returnLineQtyMessage((it.itemCode ?? prev.item_code) as string, it.qtyReturned ?? it.qty) }, 400);
+    qty = q;
+  }
 
   /* Over-return cap (parity with create + add-line; was the one DR back door).
      An edited qty must not push the DO line past its remaining (delivered −

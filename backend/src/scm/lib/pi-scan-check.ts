@@ -11,7 +11,7 @@ import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
 import { sameSize, type PiLineMatchResult } from './pi-scan-match';
 import { proposeGrnLines, skuOfRow, type SkuRow } from './pi-scan-sku';
-import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize } from './scan-word-match';
+import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize, wordsOf } from './scan-word-match';
 
 /** A posted GRN line with something left to bill. */
 export type BillableLine = {
@@ -176,9 +176,17 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     const size = l.grnItemId || !l.read ? null : printedSize(`${l.read.itemCode ?? ''} ${l.read.description ?? ''}`);
     if (size) bySize.set(size, [...(bySize.get(size) ?? []), l]);
   }
+  /* ...unless the row prints a name the line does not carry: CODY printed, JAGER left on
+     the receipt, is a bed the receipt does not hold, not the last one of the size. A row
+     that prints only codes and generic words (NB's SB12-KHB(C)-NH79(A)) still fills. */
+  const nameWords = (text: string): string[] => wordsOf(text).filter((w) => /^[A-Z]{4,}$/.test(w));
   for (const [size, rows] of bySize) {
     const lefts = open.filter((o) => anchored.has(o.grnNumber) && lineSizeOf(o.itemCode) === size && (left.get(o.grnItemId) ?? 0) > 0);
     if (rows.length !== 1 || lefts.length !== 1) continue;
+    const read = rows[0]!.read;
+    const named = nameWords(`${read?.itemCode ?? ''} ${read?.description ?? ''}`);
+    const own = new Set(wordsOf(familyOf(lefts[0]!.itemCode)));
+    if (named.length > 0 && !named.some((w) => own.has(w))) continue;
     rows[0]!.grnItemId = lefts[0]!.grnItemId;
     rows[0]!.suggested = true;
   }

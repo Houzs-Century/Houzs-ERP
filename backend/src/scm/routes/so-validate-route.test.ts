@@ -33,6 +33,11 @@ describe('the validate route is wired to the shared collector', () => {
     expect(handler).toContain('origDelivDate: str(body.origDeliveryDate)');
   });
 
+  it('forwards the stored phone on an edit only (B16)', () => {
+    /* Without it an imported order saved with no phone could not be edited at all. */
+    expect(handler).toContain("origPhone: isEdit && typeof body.origPhone === 'string' ? body.origPhone : null");
+  });
+
   it('asks the INTRODUCED-mix question on an edit, not the flat one', () => {
     /* mixes(after) && !mixes(before): on a create origItemGroups is [] so it is
        flat; on an edit a pre-existing mix the change does not touch must not

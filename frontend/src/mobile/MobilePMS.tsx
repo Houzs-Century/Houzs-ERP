@@ -11,7 +11,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { booleanPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent, quickActionAccess } from "../auth/salesAccess";
 import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
 import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
@@ -336,20 +336,53 @@ const STAGE_TO_INDEX: Record<string, number> = {
 };
 
 // ── Component ──
-export function MobilePMS({ onBack, initialProjectId }: { onBack?: () => void; initialProjectId?: number }) {
+export function MobilePMS({
+  onBack,
+  initialProjectId,
+  onCreateSO,
+  onCreateCase,
+}: {
+  onBack?: () => void;
+  initialProjectId?: number;
+  /** Owner 2026-11-09 "letak balik button tu": the + speed-dial on the project
+   *  detail reuses these from MobileApp so New Sales Order and New Service Case
+   *  reach the same screens the Orders-tab FAB opens — one setScreen path per
+   *  action, not a duplicated navigation surface. */
+  onCreateSO?: () => void;
+  onCreateCase?: () => void;
+}) {
   const [openId, setOpenId] = useState<number | null>(initialProjectId ?? null);
   // When entered straight into a detail (e.g. tapped from the Calendar), Back
   // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
+  // Lifted from ProjectListView so the + FAB inside ProjectDetailView can open
+  // the New Project sheet after it closes itself back to the list.
+  const [creating, setCreating] = useState(false);
 
   // Peter 2026-10-14: the list screen unmounts while a detail is open, so its
   // scroll position died with it — remember it here and restore on return.
   const listScroll = useRef(0);
 
   if (openId != null) {
-    return <ProjectDetailView id={openId} onBack={() => (direct ? onBack?.() : setOpenId(null))} />;
+    return (
+      <ProjectDetailView
+        id={openId}
+        onBack={() => (direct ? onBack?.() : setOpenId(null))}
+        onCreateSO={onCreateSO ?? null}
+        onCreateCase={onCreateCase ?? null}
+        onCreateProject={() => { setOpenId(null); setDirect(false); setCreating(true); }}
+      />
+    );
   }
-  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} scrollMemory={listScroll} />;
+  return (
+    <ProjectListView
+      onOpen={(id) => { setDirect(false); setOpenId(id); }}
+      onBack={onBack}
+      scrollMemory={listScroll}
+      creating={creating}
+      setCreating={setCreating}
+    />
+  );
 }
 
 // ── List ──
@@ -389,7 +422,21 @@ const STAGE_FILTERS: [string, string][] = [
 
 const PMS_PAGE_SIZE = 30;
 
-function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number) => void; onBack?: () => void; scrollMemory?: { current: number } }) {
+function ProjectListView({
+  onOpen,
+  onBack,
+  scrollMemory,
+  creating,
+  setCreating,
+}: {
+  onOpen: (id: number) => void;
+  onBack?: () => void;
+  scrollMemory?: { current: number };
+  /** Lifted up to MobilePMS so the project-detail + FAB can trigger "New
+   *  Project" by closing itself and setting this flag. */
+  creating: boolean;
+  setCreating: (v: boolean) => void;
+}) {
   const { can, user } = useAuth();
   // Owner 2026-07-21: the sales cohort's list rows show progress over THEIR
   // OWN deliverables (SALES PIC tasks) — the admin section chip ("CONTRACT
@@ -413,7 +460,8 @@ function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number
   // daily reminder can arm the same filter on either shell.
   const [myPendingOn, setMyPendingOn] = useIdentityPreference("projects:myPending", false, booleanPreference);
   // New-event sheet (owner 2026-07-31), gated by canCreateEvent below.
-  const [creating, setCreating] = useState(false);
+  // `creating`/`setCreating` now come from MobilePMS so the detail-view + FAB
+  // can open it after closing itself back to the list.
   const notify = useNotify();
   // Owner 2026-07-21: field/sales roles (Sales Executive/Manager except Sales
   // Director, plus Driver/Helper/Storekeeper) get a slimmed filter bar — only
@@ -704,7 +752,25 @@ function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number
 }
 
 // ── Detail ──
-function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
+function ProjectDetailView({
+  id,
+  onBack,
+  onCreateSO,
+  onCreateCase,
+  onCreateProject,
+}: {
+  id: number;
+  onBack: () => void;
+  /** Owner 2026-11-09: the right-bottom + FAB on the project detail — a mobile
+   *  mirror of the desktop QuickActionsFAB. These callbacks reach into
+   *  MobileApp's setScreen (SO, Service) and MobilePMS's own list flag
+   *  (Project), so a tap routes to the SAME create screens the rest of the
+   *  phone already uses. Each is a required null when absent so the gate check
+   *  has only one shape to read. */
+  onCreateSO: (() => void) | null;
+  onCreateCase: (() => void) | null;
+  onCreateProject: (() => void) | null;
+}) {
   const { pageAccess, can, user } = useAuth();
   // NOTE: the old `canSeeFinance = pageAccess("projects.finances") !== "none"`
   // is gone. It was only ever the FALLBACK arm of the finance gate, and it
@@ -719,6 +785,22 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const canWrite = can("projects.write");
   const canManage = can("projects.manage");
   const canTick = canWrite || can("projects.checklist.tick");
+
+  // Owner 2026-11-09 "letak balik button tu": the + speed-dial on project
+  // detail — same three actions as the desktop QuickActionsFAB (New Sales
+  // Order / New Service Case / New Project), filtered by the same three
+  // gates (quickActionAccess + canCreateEvent). Hidden entirely when nothing
+  // is eligible so a view-only cohort doesn't see a dead "+".
+  const { canNewSo, canNewCase } = quickActionAccess(user, can, pageAccess);
+  const canNewProject = canCreateEvent(user);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const quickActions = useMemo(() => {
+    const list: Array<{ key: "so" | "case" | "project"; label: string; onClick: () => void }> = [];
+    if (canNewSo && onCreateSO) list.push({ key: "so", label: "New Sales Order", onClick: onCreateSO });
+    if (canNewCase && onCreateCase) list.push({ key: "case", label: "New Service Case", onClick: onCreateCase });
+    if (canNewProject && onCreateProject) list.push({ key: "project", label: "New Project", onClick: onCreateProject });
+    return list;
+  }, [canNewSo, canNewCase, canNewProject, onCreateSO, onCreateCase, onCreateProject]);
 
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -1687,6 +1769,91 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       </button>
+      {/* Quick-actions "+" speed-dial (owner 2026-11-09 "letak balik button
+          tu. asal ko buang"). Right-bottom, so the left-bottom Chat FAB
+          above still clears it. One-action operators tap through directly;
+          2+ actions open the pills. Hidden when the user has none of the
+          three. */}
+      {quickActions.length > 0 && (
+        <>
+          {quickOpen && (
+            <div
+              onClick={() => setQuickOpen(false)}
+              aria-hidden
+              style={{ position: "fixed", inset: 0, zIndex: 40 }}
+            />
+          )}
+          {quickOpen && (
+            <div
+              style={{
+                position: "fixed",
+                right: 16,
+                bottom: "calc(140px + env(safe-area-inset-bottom, 0px))",
+                zIndex: 50,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                alignItems: "flex-end",
+              }}
+            >
+              {quickActions.map((a, i) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={() => { setQuickOpen(false); a.onClick(); }}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: i === 0 ? "#16695f" : "#fff",
+                    color: i === 0 ? "#fff" : "#414539",
+                    border: i === 0 ? "none" : "1px solid #d6d9d2",
+                    borderRadius: 22,
+                    padding: "9px 14px",
+                    boxShadow: "0 4px 12px rgba(17,20,15,.18)",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            aria-label={quickActions.length === 1 ? quickActions[0].label : quickOpen ? "Close quick actions" : "Quick actions"}
+            onClick={() => {
+              if (quickActions.length === 1) { quickActions[0].onClick(); return; }
+              setQuickOpen((o) => !o);
+            }}
+            style={{
+              position: "fixed",
+              right: 16,
+              bottom: "calc(74px + env(safe-area-inset-bottom, 0px))",
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              background: "#16695f",
+              color: "#fff",
+              border: "none",
+              boxShadow: "0 6px 18px rgba(17,20,15,.3)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              zIndex: 50,
+              transform: quickOpen ? "rotate(45deg)" : "none",
+              transition: "transform 180ms ease-out",
+            }}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </>
+      )}
     </div>
     </DefectActionsCtx.Provider>
   );
