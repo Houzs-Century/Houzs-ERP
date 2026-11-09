@@ -221,7 +221,7 @@ describe("Copy as new", () => {
 /* Conts #699: a fully delivered order was offered Transfer to Delivery Order,
    which opened an empty DO form. `has_undelivered` is the list's live reading. */
 describe("Transfer to Delivery Order needs something left to deliver", () => {
-  test("is not offered once every line is delivered", () => {
+  test("is not offered on a row whose has_undelivered is false", () => {
     expect(labels(soMenu()(R({ status: "DELIVERED", has_undelivered: false }))).join("|")).not.toMatch(/Delivery Order/);
   });
 
