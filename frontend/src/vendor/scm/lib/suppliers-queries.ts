@@ -656,12 +656,19 @@ export function useSetCostAnchor() {
   });
 }
 
-export function useSuppliersForMaterial(kind: MaterialKind | null, code: string | null) {
-  return useQuery({
-    queryKey: ['suppliers-for-material', kind, code],
+/* Shared by the hook and the phone PO screen, which asks imperatively when a SKU is added. */
+export function suppliersForMaterialQuery(kind: MaterialKind | null, code: string | null) {
+  return {
+    queryKey: ['suppliers-for-material', kind, code] as const,
     queryFn: () => authedFetch<{ bindings: (BindingRow & { supplier: { id: string; code: string; name: string; status: SupplierStatus } })[] }>(
       `/suppliers/material/${kind}/${encodeURIComponent(code ?? '')}`,
     ),
+  };
+}
+
+export function useSuppliersForMaterial(kind: MaterialKind | null, code: string | null) {
+  return useQuery({
+    ...suppliersForMaterialQuery(kind, code),
     enabled: Boolean(kind && code),
     staleTime: 30_000,
     retry: retryUnlessClientError,
