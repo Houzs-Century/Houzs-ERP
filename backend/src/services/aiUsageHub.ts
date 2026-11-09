@@ -18,10 +18,10 @@ import { sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { costUsd, type TokenCounts } from "./aiUsage";
+import { hubTarget } from "./itHub";
 
 const DAYS = 7;
 const HUB_TIMEOUT_MS = 20_000;
-const COMPANY_CODE = /^[A-Z0-9]{2,12}$/;
 
 /** One grouped row of ai_usage_events (UTC day, company, feature, model). */
 export interface HubAggRow extends TokenCounts {
@@ -69,11 +69,9 @@ const num = (v: unknown) => Number(v) || 0;
 
 /** Send the summary. Returns null when this environment is not set up to send. */
 export async function sendAiUsageToHub(env: Env, now: Date): Promise<{ days: number; rows: number } | null> {
-  const base = (env.IT_HUB_URL ?? "").trim().replace(/\/+$/, "");
-  const company = (env.IT_HUB_AI_USAGE_COMPANY ?? "").trim().toUpperCase();
-  const secret = COMPANY_CODE.test(company) ? (env as unknown as Record<string, unknown>)[`IT_HUB_API_KEY_${company}`] : undefined;
-  const key = typeof secret === "string" ? secret.trim() : "";
-  if (!base || !key) return null;
+  const target = hubTarget(env);
+  if (!target) return null;
+  const { base, key } = target;
 
   const days = lastUtcDays(now, DAYS);
   // company-scope: IT-wide by design, like the AI Usage report; the output is per company.

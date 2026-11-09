@@ -1,6 +1,8 @@
 // ----------------------------------------------------------------------------
-// PATCH /payment-vouchers/:id/text { notes?, lines?: [{ id, description }] } — a
-// voucher's words alone (owner 2026-11-06: 有时我要改 description), until it is
+// PATCH /payment-vouchers/:id/text { notes?, lines?: [{ id, description }],
+// payToBankName?, payToAccountNo?, payToAccountName? } — a voucher's words alone
+// (owner 2026-11-06: 有时我要改 description) and the bank it pays into (owner
+// 2026-11-09: 可以，开放 — 31 checked vouchers had no bank anywhere), until it is
 // approved, a checked voucher included (pvCanEditText). Everything else the body
 // carries is ignored: no amount, account, payee or stage mark moves, so the voucher
 // stays where it is, and the change is on its trail.
@@ -10,6 +12,7 @@ import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { pvCanEditText, type PvApprovalShape } from '../lib/pv-approval';
+import { PAY_TO_AUDIT_FIELDS, payToUpdates } from './payment-vouchers-describe';
 import { HEADER } from './payment-vouchers-list';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Hono context and PostgREST client, untyped in this router family */
@@ -47,7 +50,16 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
   }
   const notesTo = body.notes === undefined ? undefined : words(body.notes);
   const notesChange = notesTo === undefined ? null : fieldChange('notes', (before.notes as string | null) ?? null, notesTo);
-  if (!notesChange && lineChanges.length === 0) return c.json({ paymentVoucher: cur });
+  /* The bank: only the fields the body names, each trimmed, a blank one cleared;
+     the trail spells them as the whole edit does (payToBankName, …). */
+  const payTo = payToUpdates(body);
+  const bank = PAY_TO_AUDIT_FIELDS
+    .filter(([, col]) => col in payTo)
+    .map(([key, col]) => ({ col, to: payTo[col] ?? null, change: fieldChange(key, (before[col] as string | null) ?? null, payTo[col]) }))
+    .filter((b) => b.change !== null);
+  const bankChanges = compactChanges(bank.map((b) => b.change));
+  const bankWrites = Object.fromEntries(bank.map((b) => [b.col, b.to]));
+  if (!notesChange && lineChanges.length === 0 && bankChanges.length === 0) return c.json({ paymentVoucher: cur });
 
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
@@ -55,7 +67,7 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
   /* Guarded on the row itself: an approval landing in between has written the
      journal with the old words, and then the words stay. */
   const { data: saved, error: saveErr } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ ...(notesChange ? { notes: notesTo } : {}), updated_at: new Date().toISOString() })
+    .update({ ...(notesChange ? { notes: notesTo } : {}), ...bankWrites, updated_at: new Date().toISOString() })
     .eq('id', id).eq('status', 'DRAFT').is('approved_at', null), co.companyId).select(HEADER).maybeSingle();
   if (saveErr) return c.json({ error: 'save_failed', reason: saveErr.message }, 500);
   if (!saved) return c.json({ error: 'voucher_moved', message: 'This voucher changed a moment ago — open it again.' }, 409);
@@ -68,7 +80,7 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
     entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: (before.pv_number as string | null) ?? null,
     action: 'UPDATE', actor: c.get('houzsUser'), companyId: co.companyId,
     statusSnapshot: (before.status as string | null) ?? null,
-    fieldChanges: compactChanges([notesChange, ...lineChanges.map((l) => fieldChange('lineDescription', l.from, l.to))]),
+    fieldChanges: [...compactChanges([notesChange, ...lineChanges.map((l) => fieldChange('lineDescription', l.from, l.to))]), ...bankChanges],
   });
   return c.json({ paymentVoucher: saved });
 };

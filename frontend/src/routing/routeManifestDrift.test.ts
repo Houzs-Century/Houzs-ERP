@@ -130,7 +130,8 @@ describe("executable route contract", () => {
     // 193 still since 2026-11-03: /scm/deposit-invoices folded into Invoices (a
     // legacy redirect now) and /scm/finance/deposit-invoices, Setup › Deposit
     // invoices, holds its switch (Claude Design, batch 5 step 5).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(193);
+    // 194 since 2026-11-08: /scm/payment-listing — the day's payments with their banks.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(194);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -196,7 +197,8 @@ describe("executable route contract", () => {
     // 203 since 2026-11-03 — the sundry receipt and other debtor pages; see the staff-route count above.
     // 203 still since 2026-11-03 — /scm/official-receipts moved from page to legacy redirect.
     // 204 since 2026-11-03 — Setup › Deposit invoices (+1), /scm/deposit-invoices a legacy redirect.
-    expect(ROUTE_CONTRACT).toHaveLength(204);
+    // 205 since 2026-11-08 — /scm/payment-listing; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(205);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

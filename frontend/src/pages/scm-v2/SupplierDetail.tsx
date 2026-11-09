@@ -34,6 +34,7 @@ import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
 import { SupplierLeadTimes } from './SupplierLeadTimes';
 import { FabricTracking } from './FabricTracking';
 import { setActiveCompanyId } from '../../lib/activeCompany';
+import { scmListReturnTo } from '../../lib/scmListReturn';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
@@ -354,7 +355,7 @@ export const SupplierDetail = () => {
     const otherCo = detail.isError ? readOtherCompanyMiss(detail.error) : null;
     return (
       <div className="space-y-4">
-        <Link to="/scm/suppliers" className={BACK_LINK_CLASS}>
+        <Link to={scmListReturnTo("/scm/suppliers")} className={BACK_LINK_CLASS}>
           <ArrowLeft {...ICON} />
           <span>Back to Suppliers</span>
         </Link>
@@ -389,7 +390,7 @@ export const SupplierDetail = () => {
         title={`${supplier.code} — ${supplier.name}`}
         description="Supplier scorecard, SKU mappings and recent purchase order history."
         primaryAction={
-          <Link to="/scm/suppliers" className={BACK_LINK_CLASS}>
+          <Link to={scmListReturnTo("/scm/suppliers")} className={BACK_LINK_CLASS}>
             <ArrowLeft size={14} />
             <span>Back</span>
           </Link>

@@ -1,7 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { PAIRING_ALPHABET, formatPairingCode, isPairingCode, mintPairingCode, normalizePairingCode, pairingCodeFromUrl, pairingCodeHash } from "./pos-pairing";
+import { PAIRING_ALPHABET, formatPairingCode, isPairingCode, mintPairingCode, normalizePairingCode, pairingCodeFromUrl, pairingCodeHash, pairingCodeLive } from "./pos-pairing";
 
 describe("pairing code", () => {
+  test("a code is live until its expiry, whatever text form the database hands back", () => {
+    const now = Date.parse("2026-11-09T02:09:00.000Z");
+    expect(pairingCodeLive("2026-11-09 02:14:45.665+00", now)).toBe(true);
+    expect(pairingCodeLive("2026-11-09T02:14:45.665Z", now)).toBe(true);
+    expect(pairingCodeLive("2026-11-09 02:08:59+00", now)).toBe(false);
+    expect(pairingCodeLive("2026-11-09T02:08:59.000Z", now)).toBe(false);
+    expect(pairingCodeLive(null, now)).toBe(false);
+    expect(pairingCodeLive("garbage", now)).toBe(false);
+  });
   test("minted codes are 8 characters of the unambiguous alphabet and differ", () => {
     const a = mintPairingCode();
     const b = mintPairingCode();

@@ -45,8 +45,16 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
-  /** The header's Notes, as Finance typed them — the list shows them (owner 2026-10-14). */
+  /** The Description (stored as notes): what the money is for, as Finance typed it
+      (owner 2026-10-14: the list shows it; 2026-11-08: Notes renamed Description). */
   notes?: string | null;
+  /** What it is for in the listing's words: its payment requests by number and
+      purpose, else its lines (server: payment-vouchers-describe.ts). */
+  purpose_text?: string;
+  /** The bank it pays into: its own fields, else its request's, else its supplier's. */
+  pay_bank?: string | null;
+  pay_account_no?: string | null;
+  pay_account_name?: string | null;
   supplier?: { id: string; code: string; name: string } | null;
   /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
      Prepared (still editable). checked: locked, on Daily Bank's pending.
@@ -93,6 +101,23 @@ export const usePaymentVouchers = (opts: { status?: string; q?: string; counts?:
     retry: retryUnlessClientError,
     retryDelay: 800,
     enabled: opts.enabled ?? true,
+  });
+};
+
+/** The Payment listing (owner 2026-11-08): the vouchers dated up to `to` (and
+    from `from`) at the stages asked, oldest first — whole, never cut short. */
+export type PaymentListingStage = 'DRAFT' | 'PREPARED' | 'CHECKED' | 'POSTED' | 'CANCELLED';
+export type PaymentListingRow = PaymentVoucherRow & { stage: PaymentListingStage };
+export const usePaymentListing = (q: { from: string; to: string; stages: PaymentListingStage[] }) => {
+  const params = new URLSearchParams({ to: q.to, stages: q.stages.join(',') });
+  if (q.from) params.set('from', q.from);
+  return useQuery({
+    queryKey: ['payment-listing', q.from, q.to, q.stages.join(',')],
+    queryFn: () => authedFetch<{ vouchers: PaymentListingRow[]; from: string | null; to: string; stages: PaymentListingStage[] }>(`/payment-vouchers/listing?${params.toString()}`),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+    enabled: q.stages.length > 0,
   });
 };
 
@@ -147,15 +172,21 @@ export const useUpdatePaymentVoucher = () => {
   });
 };
 
-/* A voucher's words alone, until it is approved (owner 2026-11-06: 有时我要改 description). */
+/* A voucher's words and the bank it pays into, until it is approved (owner
+   2026-11-06: 有时我要改 description; 2026-11-09: 可以，开放). The bank rides only
+   when it was changed. */
 export const useUpdatePvText = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; notes: string; lines: Array<{ id: string; description: string }> }) =>
+    mutationFn: ({ id, ...body }: {
+      id: string; notes: string; lines: Array<{ id: string; description: string }>;
+      payToBankName?: string | null; payToAccountNo?: string | null; payToAccountName?: string | null;
+    }) =>
       authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}/text`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-listing'] });
     },
   });
 };

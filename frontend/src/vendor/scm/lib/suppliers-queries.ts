@@ -416,6 +416,16 @@ export function useSupplierPriceHistory(id: string | null) {
   });
 }
 
+/** Every supplier list: the picker list and the paged Suppliers page. The paged
+ *  one was missed, so a changed supplier showed its old values on the list for up
+ *  to 30 seconds after Back (Conts-ERP #406). */
+export function invalidateSupplierLists(qc: ReturnType<typeof useQueryClient>) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ['suppliers'] }),
+    qc.invalidateQueries({ queryKey: ['suppliers-paged'] }),
+  ]);
+}
+
 export function useSupplierDetail(id: string | null) {
   return useQuery({
     queryKey: ['supplier-detail', id],
@@ -467,7 +477,7 @@ export function useCreateSupplier() {
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+    onSuccess: () => invalidateSupplierLists(qc),
     onError: writeFailed,
   });
 }
@@ -481,7 +491,7 @@ export function useUpdateSupplier() {
         body: JSON.stringify(body),
       }),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['suppliers'] });
+      void invalidateSupplierLists(qc);
       qc.invalidateQueries({ queryKey: ['supplier-detail', vars.id] });
     },
   });

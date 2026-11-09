@@ -14,7 +14,9 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 /* Hoisted with the mocks that read them (vi.mock factories run before the
    file's own consts exist). */
-const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
+const { updateAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
+  /* The voucher's stored files, as usePvFiles hands them (empty unless a test fills it). */
+  const FILES: Array<Record<string, unknown>> = [];
   const updateAsync = vi.fn(async (_b: Record<string, unknown>) => ({ ok: true }));
   const idle = () => ({ mutateAsync: vi.fn(async () => ({ ok: true })), isPending: false });
   /* The rejected voucher as prod holds it: its formal number kept, every mark
@@ -30,7 +32,7 @@ const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
     lines: [{ id: 'l1', line_no: 1, description: 'Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED', debit_account_code: '405-0000', amount_sen: 1007742 }],
     allocations: [{ id: 'a1', kind: 'API', apInvoiceId: 'api-meta', invoiceNumber: '2990-API-2609-004', supplierInvoiceRef: 'META-SEP', invoiceDate: '2026-09-01', amountSen: 1007742, status: 'POSTED' }],
   };
-  return { updateAsync, idle, DETAIL };
+  return { updateAsync, idle, DETAIL, FILES };
 });
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
@@ -49,7 +51,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   useCheckPaymentVoucher: idle, useApprovePaymentVoucher: idle, useRejectPaymentVoucher: idle,
   useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
-  usePvFiles: () => ({ data: { files: [] }, isLoading: false, refetch: async () => ({ data: { files: [] } }) }),
+  usePvFiles: () => ({ data: { files: FILES }, isLoading: false, refetch: async () => ({ data: { files: FILES } }) }),
   fetchPvFileBlobUrl: async () => ({ url: '', contentType: '' }),
   usePvReservations: () => ({ data: { byPi: {}, byApInvoice: {}, holders: {} }, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
@@ -113,8 +115,9 @@ const draw = () => render(
   </MemoryRouter>,
 );
 
-/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only. */
-describe('Edit text: the words of a voucher the first yes has locked', () => {
+/* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only;
+   2026-11-09: 可以，开放 — and the bank it pays into. */
+describe('Edit text & bank: the words and the bank of a voucher the first yes has locked', () => {
   const atStage = (over: Record<string, unknown>) => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
     return render(
@@ -124,34 +127,38 @@ describe('Edit text: the words of a voucher the first yes has locked', () => {
     );
   };
   const MARK = '2026-11-06T03:00:00Z';
-  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null }); });
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
 
-  test('checked: Edit text and no Edit; it opens the form with the voucher\'s words, and closes', () => {
-    atStage({ submitted_at: MARK, checked_at: MARK });
+  test('checked: Edit text & bank and no Edit; it opens the form with the voucher\'s words and bank, and closes', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK, pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: null });
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit text & bank' }));
     expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED');
+    /* The bank the voucher pays into, as the page reads it (own, else request's, else supplier's). */
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('0123 4567');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('Line 1 description')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit text' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit text & bank' })).toBeTruthy();
   });
 
-  test('prepared: the whole Edit, no Edit text', () => {
+  test('prepared: the whole Edit, no Edit text & bank', () => {
     atStage({ submitted_at: MARK });
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
   });
 
   test('approved or posted: neither', () => {
     const { unmount } = atStage({ submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     unmount();
     atStage({ status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK });
-    expect(screen.queryByRole('button', { name: 'Edit text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit text & bank' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  test('the list\'s Edit text opens straight on the form', () => {
+  test('the list\'s Edit text & bank opens straight on the form', () => {
     Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: MARK, checked_at: MARK, approved_at: null });
     render(
       <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9?text=1']}>
@@ -159,6 +166,39 @@ describe('Edit text: the words of a voucher the first yes has locked', () => {
       </MemoryRouter>,
     );
     expect(screen.getByLabelText('Line 1 description')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-11-09: 「payment 的attachment 不能delete? 如果我不小心放错」 → 可以 —
+   a wrong file on a checked voucher may go until approval; approved, its files stay. */
+describe('Files: a wrong file may go until the voucher is approved', () => {
+  const MARK = '2026-11-06T03:00:00Z';
+  const atStage = (over: Record<string, unknown>) => {
+    FILES.splice(0, FILES.length, { id: 'f1', file_name: 'wrong-bill.jpg', mime: 'image/jpeg', sort_no: 1, size_bytes: 1024, created_at: MARK });
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null, ...over });
+    return render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+  afterEach(() => {
+    FILES.splice(0, FILES.length);
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null });
+  });
+
+  test('checked: the file can still be removed', () => {
+    atStage({ submitted_at: MARK, checked_at: MARK });
+    expect(screen.getByRole('button', { name: 'Remove wrong-bill.jpg' })).toBeTruthy();
+  });
+
+  test.each([
+    ['approved', { submitted_at: MARK, checked_at: MARK, approved_at: MARK }],
+    ['posted', { status: 'POSTED', submitted_at: MARK, checked_at: MARK, approved_at: MARK }],
+  ])('%s: the file stays, and the card says why', (_name, over) => {
+    atStage(over);
+    expect(screen.queryByRole('button', { name: 'Remove wrong-bill.jpg' })).toBeNull();
+    expect(screen.getByText(/Approved vouchers keep their files/)).toBeTruthy();
   });
 });
 
@@ -213,6 +253,35 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     expect(updateAsync.mock.calls[0]![0]).toMatchObject({
       lines: [{ debitAccountCode: '405-0000', amountSen: 250000, description: 'prepay 2500.00 — META PLATFORM IRELAND LIMITED' }],
       allocations: [],
+    });
+  });
+});
+
+/* Owner 2026-11-08 (pv notes 我不想要全部挤在一排，然后把notes 换成description): the
+   Description says what the money is for; the bank it pays into has fields of its own. */
+describe('the Description and the bank it pays into', () => {
+  const BANK = { notes: 'META ADS SEPTEMBER', purpose_text: 'META ADS SEPTEMBER INVOICE', pay_bank: 'CITIBANK', pay_account_no: '0123 4567', pay_account_name: 'META PLATFORMS IRELAND' };
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { notes: null, purpose_text: undefined, pay_bank: undefined, pay_account_no: undefined, pay_account_name: undefined }); });
+
+  test('the voucher shows its Description, its Purpose and its bank; the edit starts from that bank and saves a change', async () => {
+    updateAsync.mockClear();
+    Object.assign(DETAIL.paymentVoucher, BANK);
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    for (const value of ['META ADS SEPTEMBER', 'META ADS SEPTEMBER INVOICE', 'CITIBANK', '0123 4567', 'META PLATFORMS IRELAND']) expect(screen.getByText(value)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('META ADS SEPTEMBER');
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('META PLATFORMS IRELAND');
+    fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '0123 9999' } });
+    await waitFor(() => expect(screen.getByText('Save')).toBeTruthy());
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
+    expect(updateAsync.mock.calls[0]![0]).toMatchObject({
+      notes: 'META ADS SEPTEMBER', payToBankName: 'CITIBANK', payToAccountNo: '0123 9999', payToAccountName: 'META PLATFORMS IRELAND',
     });
   });
 });
