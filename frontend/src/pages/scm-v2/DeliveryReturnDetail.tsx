@@ -42,6 +42,7 @@ import { pickState } from '../../vendor/scm/lib/address-cascade';
 import { useStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
+import { DetailLoadFailure } from './DetailLoadFailure';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -182,10 +183,7 @@ export const DeliveryReturnDetail = () => {
         <Link to="/scm/delivery-returns" className={styles.backBtn}>
           <ArrowLeft {...ICON} /><span>Back</span>
         </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Delivery return not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
+        <DetailLoadFailure noun="Delivery return" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
       </div>
     );
   }
