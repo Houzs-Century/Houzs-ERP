@@ -436,7 +436,10 @@ export const DeliveryPlanning = () => {
         title="Delivery Planning"
         description={`Orders that need delivering · grouped by region (customer state) · ${counts.ALL} in ${activeRegionLabel}`}
         primaryAction={
-          <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
+          /* Wraps: on a narrow desktop window the three buttons ran off the
+             right edge, because this group is ONE item in PageHeader's
+             wrapping rail and could not break itself. */
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', maxWidth: '100%', gap: 'var(--space-2)' }}>
             {/* Send Message — standing header button (owner picked design B,
                 2026-07-22): always visible, WhatsApp green, counts the selected
                 SO rows; disabled until something is ticked. */}
