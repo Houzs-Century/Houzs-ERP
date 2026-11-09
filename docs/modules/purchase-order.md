@@ -58,6 +58,7 @@ Line identity, variants, order
 - `variants` jsonb has several writers: always MERGE owned keys, never rebuild the object.
 - `line_no` is 1-based dense and MIRRORS the SO line order; set at write time on all six write paths via `lib/po-line-order.ts` (pinned by `backend/tests/poLineOrderWiring.test.ts`); reads order `line_no NULLS FIRST, created_at, id`; display never re-derives it; the PDF sorts table and photo block from the same stored order.
 - `POST /from-sos` buckets per `po-grouping.ts` `groupKeyFor`, key always starts (warehouse, supplier). PER-SO: each (SO, category) own PO. COMBINE: sofa per SO with that SO's accessories riding on it (`sofaSoDocNos`); bedframe per SO either way; mattress per supplier within a Monday-anchored 7-day delivery window; standalone accessory merges across SOs; `fabric_accessory` keyed as sofa.
+- `POST /from-sos` with `fromMrp` skips the per-line qty cap on a pooled line, so the duplicate guard is plan freshness instead: `planAsOf` older than a live PO line on a picked SO line -> 409 `mrp_plan_stale` (see `docs/modules/mrp.md`). A 201 that created POs defers an MRP snapshot refresh (`deferMrpSnapshotRefresh`, as cancel and reopen do).
 
 Allocations (`scm.purchase_order_item_allocations`)
 - Slices `(seq, qty, so_item_id | NULL=stock)`; positive integer qty, SUM <= line qty (409 `allocation_exceeds_line_qty`, DB triggers are the concurrency backstop); line qty cannot shrink below allocated (409 `line_qty_below_allocated`); seq resequenced dense on delete.
