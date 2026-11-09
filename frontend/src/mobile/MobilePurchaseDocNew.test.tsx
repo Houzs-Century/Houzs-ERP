@@ -262,3 +262,68 @@ describe("MobilePurchaseDocNew — the convert flow stays one tap away", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("MobilePurchaseDocNew — picking a SKU before a supplier fills its main supplier", () => {
+  const twoSuppliers = [
+    { id: "sup-1", code: "OHANA", name: "Ohana Furniture", status: "ACTIVE" },
+    { id: "sup-2", code: "HOOKKA", name: "Hookka Industries", status: "ACTIVE" },
+  ];
+  const withBindings = (bindings: unknown[]) => {
+    const base = authedFetch.getMockImplementation()!;
+    authedFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/suppliers/material/")) return { bindings };
+      if (url.startsWith("/suppliers")) return { suppliers: twoSuppliers };
+      return base(url, init);
+    });
+  };
+  const binding = (supplierId: string, main: boolean) => ({
+    id: `b-${supplierId}`, is_main_supplier: main, item_code: "PILLOW-STD",
+    supplier: { id: supplierId, code: supplierId, name: supplierId, status: "ACTIVE" },
+  });
+  const supplierSelect = async () => {
+    const el = (await screen.findByLabelText("Supplier")) as HTMLSelectElement;
+    await screen.findByRole("option", { name: "HOOKKA — Hookka Industries" });
+    return el;
+  };
+  const addItem = async () => {
+    await userEvent.click(screen.getByRole("button", { name: "+ Add item" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-pick" }));
+  };
+
+  it("adopts the main supplier when several carry the SKU", async () => {
+    withBindings([binding("sup-1", false), binding("sup-2", true)]);
+    mount("po");
+    const supplier = await supplierSelect();
+    await addItem();
+    await waitFor(() => expect(supplier.value).toBe("sup-2"));
+    expect(calls().some((c) => c.url === "/suppliers/material/mfg_product/PILLOW-STD")).toBe(true);
+  });
+
+  it("never overwrites a supplier the buyer already chose — and does not even ask", async () => {
+    withBindings([binding("sup-1", false), binding("sup-2", true)]);
+    mount("po");
+    const supplier = await supplierSelect();
+    await userEvent.selectOptions(supplier, "sup-1");
+    await addItem();
+    expect(supplier.value).toBe("sup-1");
+    expect(calls().some((c) => c.url.startsWith("/suppliers/material/"))).toBe(false);
+  });
+
+  it("leaves the supplier empty when several carry the SKU and none is main", async () => {
+    withBindings([binding("sup-1", false), binding("sup-2", false)]);
+    mount("po");
+    const supplier = await supplierSelect();
+    await addItem();
+    await waitFor(() => expect(calls().some((c) => c.url.startsWith("/suppliers/material/"))).toBe(true));
+    expect(supplier.value).toBe("");
+  });
+
+  it("does not fill a supplier on a goods receipt or purchase invoice", async () => {
+    withBindings([binding("sup-2", true)]);
+    mount("grn");
+    const supplier = await supplierSelect();
+    await addItem();
+    expect(supplier.value).toBe("");
+    expect(calls().some((c) => c.url.startsWith("/suppliers/material/"))).toBe(false);
+  });
+});

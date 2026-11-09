@@ -4,7 +4,7 @@ Shared team mailboxes inside the ERP — inbound mail lands in threads, and staf
 
 ## Statuses and flow
 
-Sending goes through one durable queue: `sendEmail()` enqueues to `email_outbox` first, then attempts immediate delivery; a failure leaves the row `pending` and a `*/5` cron retries up to 3 attempts. `email_log` records every attempt; the outbox row records the current state. The row carries everything a retry needs: From mailbox, threading headers, and (written only on failure) the attachments, whose bytes sit in R2 under `mail-outbox/<id>/`.
+Sending goes through one durable queue: `sendEmail()` enqueues to `email_outbox` first, then attempts immediate delivery; a failure leaves the row `pending` and a `*/5` cron retries up to 3 attempts. `email_log` records every attempt; the outbox row records the current state. The row carries everything a retry needs: From mailbox, threading headers, and (written only on failure) the attachments, whose bytes sit in R2 under `mail-outbox/<id>/`. Whoever is sending a row holds it (`claimed_at`, a 10-minute lease: the immediate send writes the row claimed, the drain takes each row with a compare-and-set), so two drains, or a drain during a send, cannot deliver it twice; a claim older than the lease is treated as a dead Worker and retaken.
 
 A reply / compose whose immediate send failed but will be retried answers `{ ok: true, queued: true }` and is recorded on the thread with `outbox_id`; the thread shows it as "Queued, retrying" or "Not delivered" from the outbox status. Only a send that cannot be retried answers 502.
 

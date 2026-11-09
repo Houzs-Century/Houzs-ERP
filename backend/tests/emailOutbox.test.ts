@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { drainEmailOutbox, sendEmail } from "../src/services/email";
+import { drainEmailOutbox, EMAIL_CLAIM_LEASE_MS, sendEmail } from "../src/services/email";
 import { createOutboundFetchMock } from "./outboundFetchMock";
 
 // Durable email outbox (migrations 095 / 0005). sendEmail() enqueues a row and
@@ -116,5 +116,40 @@ describe("email outbox", () => {
     const row = await outbox("seed-1");
     expect(row?.status).toBe("pending");
     expect(row?.attempts).toBe(0);
+  });
+  /* B14: the row is written 'pending' before Resend answers, and the drain used
+     to take every 'pending' row, so a cron tick during a send delivered a second
+     copy. A claim younger than the lease is now left to its holder. */
+  test("drain leaves a row another sender still holds, and takes it once the lease has run out", async () => {
+    const fresh = new Date(Date.now() - 60_000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO email_outbox (id, to_address, subject, body_html, purpose, status, attempts, claimed_at)
+       VALUES ('held-1', 'd@test.local', 'DO', '<p>do</p>', 'generic', 'pending', 1, ?)`,
+    ).bind(fresh).run();
+
+    // No Resend intercept registered: a send here would fail assertDone / the fetch mock.
+    const r1 = await drainEmailOutbox(liveEnv);
+    expect(r1).toEqual({ processed: 0, sent: 0, failed: 0 });
+    expect((await outbox("held-1"))?.status).toBe("pending");
+
+    const stale = new Date(Date.now() - EMAIL_CLAIM_LEASE_MS - 60_000).toISOString();
+    await env.DB.prepare(`UPDATE email_outbox SET claimed_at = ? WHERE id = 'held-1'`).bind(stale).run();
+    mockResend(200, { id: "prov-held" });
+    const r2 = await drainEmailOutbox(liveEnv);
+    expect(r2).toEqual({ processed: 1, sent: 1, failed: 0 });
+    const row = await env.DB.prepare(`SELECT status, claimed_at FROM email_outbox WHERE id = 'held-1'`)
+      .first<{ status: string; claimed_at: string | null }>();
+    expect(row).toEqual({ status: "sent", claimed_at: null });
+  });
+
+  test("a failed immediate send releases its claim so the drain retries it", async () => {
+    mockResend(500, "boom");
+    const res = await sendEmail(liveEnv, { to: "e@test.local", subject: "PO", html: "<p>po</p>", purpose: "generic" });
+    expect(res.status).toBe("error");
+    const row = await env.DB.prepare(`SELECT status, claimed_at FROM email_outbox LIMIT 1`)
+      .first<{ status: string; claimed_at: string | null }>();
+    expect(row).toEqual({ status: "pending", claimed_at: null });
+    mockResend(200, { id: "prov-retry" });
+    expect(await drainEmailOutbox(liveEnv)).toEqual({ processed: 1, sent: 1, failed: 0 });
   });
 });

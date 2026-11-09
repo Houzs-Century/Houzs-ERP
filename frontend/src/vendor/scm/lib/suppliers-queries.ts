@@ -1146,6 +1146,9 @@ export function useCreatePosFromSoItems() {
          reference-only: bypass the qty_exceeds_remaining cap + tag PO lines
          from_mrp so they don't lock the source SO line (infinite-convert). */
       fromMrp?: boolean;
+      /* computedAt of the MRP plan on screen; the server refuses with
+         mrp_plan_stale when a PO was raised on these lines after it. */
+      planAsOf?: string | null;
     }) =>
       authedFetch<{
         // Create-new-POs shape:

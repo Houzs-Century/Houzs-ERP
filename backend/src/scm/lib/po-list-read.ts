@@ -65,6 +65,8 @@ export type PoListFilters = {
   /** POs with a line bought for an SO whose reference matches `q`
       (lib/so-ref-search.ts); a PO carries no ref of its own. */
   soRefPoIds: string[];
+  /** POs with a line whose item code matches `q` (lib/po-item-code-search.ts). */
+  itemCodePoIds: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -104,6 +106,7 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
     currencies: jsonArrayParam(query('currencies')),
     docDates: isoDates(jsonArrayParam(query('docDates'))),
     soRefPoIds: [],
+    itemCodePoIds: [],
   };
 }
 
@@ -180,12 +183,13 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
   if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
   if (f.docDates && f.docDates.length > 0) out = out.in('po_date', f.docDates);
   out = scopeToCompany(out, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns. Supplier name / code are
+  /* free-text search over the base-table text columns, plus the POs resolved
+     beforehand by SO reference and by line item code. Supplier name / code are
      embedded resources, not base purchase_orders columns, so they can't be
      ilike'd here. */
   if (f.q) {
     const s = escapeForOr(f.q);
-    if (s) out = out.or([`po_number.ilike.%${s}%`, `notes.ilike.%${s}%`, ...inArm('id', f.soRefPoIds)].join(','));
+    if (s) out = out.or([`po_number.ilike.%${s}%`, `notes.ilike.%${s}%`, ...inArm('id', [...f.soRefPoIds, ...f.itemCodePoIds])].join(','));
   }
   if (f.from) out = out.gte('po_date', f.from);
   if (f.to) out = out.lte('po_date', f.to);

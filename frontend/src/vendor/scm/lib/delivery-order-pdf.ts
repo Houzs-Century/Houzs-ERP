@@ -35,6 +35,7 @@ import {
   ensurePdfCjkFont,
   fmtDocDate,
   safeName,
+  warehousePrintName,
   type PdfAction,
 } from './pdf-common';
 import {
@@ -112,6 +113,10 @@ type DoHeader = {
   /* The delivery window keyed on the Delivery Planning board. Drivers work from
      this paper, so it prints beside the date. Absent ⇒ the row is omitted. */
   time_range?: string | null;
+  /* The ship-from warehouse, from the DO detail GET. Absent on the Consignment
+     Note reuse, so the row is omitted there. */
+  warehouse_name?: string | null;
+  warehouse_code?: string | null;
 };
 
 type DoItem = {
@@ -501,6 +506,7 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     ...(header.time_range && header.time_range.trim()
       ? [{ label: 'Time Slot', value: header.time_range.trim(), bold: true }]
       : []),
+    ...(warehousePrintName(header) ? [{ label: 'Warehouse', value: warehousePrintName(header) }] : []),
     // Who is bringing it, and in what. Printed only once the run is assigned —
     // a dashed "Driver —" on an unassigned DO is noise on the driver's sheet.
     ...(header.driver_name ? [{ label: 'Driver', value: header.driver_name }] : []),
