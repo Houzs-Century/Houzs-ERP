@@ -27,6 +27,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 - PO amendments: `scm.po_amendment.create` (raise), `scm.po_amendment.approve` (approve, reject; withdraw = requester or approver).
 - Line import preview AND apply are POSTs, so both need `edit`.
 - `POST /:id/send-to-supplier` also requires the `purchase_order` email channel enabled (fails closed).
+- The attached PDF is rendered in the browser and refused above 5 MB. `purchaseOrderPdfForEmail` (`frontend/src/vendor/scm/lib/purchase-order-pdf.ts`) re-renders a PDF that is too big with 800 px photos, then with no photos, and the "Sent to supplier" notice says which (`po-email-photos.ts`).
 - PO chasing list `GET /api/scm/outstanding/po-lines` is behind `scm.finance.outstanding` and is cross-company (`scopeToAllowedCompanies`).
 
 ## Rules that must not break
