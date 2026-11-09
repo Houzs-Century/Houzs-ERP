@@ -85,7 +85,8 @@ describe('a posted manual journal edited', () => {
     expect(old.reversed_by_je).toBe(contra.id);
     const fresh = jes.find((r) => r.source_type === 'MANUAL' && r.id !== 'je-163')!;
     expect(fresh.posted).toBe(true);
-    expect(fresh.narration).toBe("Salary - Jun'26 (corrected)");
+    /* What the person typed is kept in upper case (owner 2026-11-09: finance 自动大写); the contra's words are the system's. */
+    expect(fresh.narration).toBe("SALARY - JUN'26 (CORRECTED)");
     expect(fresh.entry_date).toBe('2026-06-30');
     expect(String(fresh.je_no)).not.toBe('2990-JE-2606-0163');
     expect(out.journalEntry.je_no).toBe(fresh.je_no);
@@ -95,7 +96,7 @@ describe('a posted manual journal edited', () => {
     const lines = sb.tables.journal_entry_lines as Row[];
     const freshLines = lines.filter((l) => l.journal_entry_id === fresh.id);
     expect(freshLines.map((l) => [l.account_code, l.debit_sen, l.credit_sen, l.notes])).toEqual([
-      ['900-S100', 1900000, 0, 'Gross'], ['900-S500', 20698, 0, 'Allowance'], ['410-0010', 0, 1920698, 'Net'],
+      ['900-S100', 1900000, 0, 'GROSS'], ['900-S500', 20698, 0, 'ALLOWANCE'], ['410-0010', 0, 1920698, 'NET'],
     ]);
     const contraLines = lines.filter((l) => l.journal_entry_id === contra.id);
     expect(contraLines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([['900-S100', 0, 1920698], ['410-0010', 1920698, 0]]);
@@ -144,7 +145,7 @@ describe('what an edit refuses, and a draft', () => {
     expect(out.journalEntry.je_no).toBe('2990-JE-2606-0163');
     const jes = sb.tables.journal_entries as Row[];
     expect(jes).toHaveLength(1);
-    expect(jes[0]).toMatchObject({ posted: false, reversed: false, narration: "Salary - Jun'26 (corrected)", total_debit_sen: 1920698 });
+    expect(jes[0]).toMatchObject({ posted: false, reversed: false, narration: "SALARY - JUN'26 (CORRECTED)", total_debit_sen: 1920698 });
     const lines = sb.tables.journal_entry_lines as Row[];
     expect(lines.map((l) => [l.journal_entry_id, l.line_no, l.account_code, l.debit_sen, l.credit_sen])).toEqual([
       ['je-163', 1, '900-S100', 1900000, 0], ['je-163', 2, '900-S500', 20698, 0], ['je-163', 3, '410-0010', 0, 1920698],

@@ -150,6 +150,14 @@ describe('the payment voucher sheet', () => {
 });
 
 describe('the Customer Refund sheet (§14)', () => {
+  test('a transfer still prints as TRANSFER VOUCHER now that its payee is stored in upper case (owner 2026-11-09)', async () => {
+    for (const payee of ['Internal transfer to 310-0030 CASH AT BANK - ALLIANCE', 'INTERNAL TRANSFER TO 310-0030 CASH AT BANK - ALLIANCE']) {
+      const draws = await render({ payee_name: payee, supplier: null }, []);
+      expect(has(draws, 'TRANSFER VOUCHER')).toBe(true);
+      expect(has(draws, 'PAYMENT VOUCHER')).toBe(false);
+    }
+  });
+
   test('the paper says what it is — CUSTOMER REFUND, refund to the customer, and the document it refunds', async () => {
     const draws = await render({ purpose: 'CUSTOMER_REFUND', payee_name: 'Ah Meng', refund_source_type: 'SO', refund_source_doc_no: '2990-SO-2607-001', supplier: null }, []);
     expect(has(draws, 'CUSTOMER REFUND')).toBe(true);
