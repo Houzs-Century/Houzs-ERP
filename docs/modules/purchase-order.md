@@ -114,7 +114,7 @@ Export and print
 - PO hooks live in `vendor/scm/lib/suppliers-queries.ts`, not a purchase-order-queries file.
 - The desktop list key `mfg-purchase-orders-paged` is not localStorage-persisted — a cold open really loads.
 - `GET /` without `?page` is the legacy path capped at 500 rows (still used by `GrnNew.tsx`); do not build new pickers on it.
-- List search `q` covers only `po_number` and `notes`, not supplier name.
+- List search `q` covers `po_number`, `notes`, the SO reference and line `item_code`, not supplier name; the SO-reference and item-code matches share a cap of 60 POs (URL budget); item-code matches keep the newest.
 - A status count that cannot be read must return 500 `status_counts_failed`, never 0.
 - Assigned SO / Delivered columns arrive later from `GET /list-mrp-enrichment`; while loading show WORKING… / NOT LOADED, never `STOCK` or a dash.
 - `/outstanding-so-items` shows only lines with pooled MRP shortage > 0; a line MRP did not plan reads the same as a covered one. A DRAFT SO is never convertible — confirm it first.
