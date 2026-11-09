@@ -2,8 +2,16 @@ import { describe, expect, it } from "vitest";
 import { isDeliveredOwing, isPastDue, todayIso } from "./tableHighlight";
 
 describe("table highlight rules", () => {
-  it("today is the local calendar date", () => {
-    expect(todayIso(new Date(2026, 8, 5, 23, 59))).toBe("2026-09-05");
+  it("today is the Malaysian calendar date, whatever zone the device is in", () => {
+    expect(todayIso(new Date("2026-11-09T17:30:00Z"))).toBe("2026-11-10");
+    expect(todayIso(new Date("2026-11-09T15:59:59Z"))).toBe("2026-11-09");
+  });
+
+  it("a timestamp is past due by the Malaysian day it falls on", () => {
+    // 01:30 on the 10th in Malaysia: not yet overdue on the 10th.
+    expect(isPastDue("2026-11-09T17:30:00Z", true, "2026-11-10")).toBe(false);
+    expect(isPastDue("2026-11-09T15:59:59Z", true, "2026-11-10")).toBe(true);
+    expect(isPastDue("not a date", true, "2026-11-10")).toBe(false);
   });
 
   it("a date is past due only before today and only while the document is open", () => {

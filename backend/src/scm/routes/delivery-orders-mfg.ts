@@ -22,7 +22,7 @@ import { mountHoldRoute } from './document-hold-routes';
 import { doListStatusCounts } from '../lib/do-status-counts';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
-  DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
+  DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES, doHasArrived,
 } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
@@ -5068,6 +5068,14 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       return c.json({
         error: 'illegal_status_transition',
         reason: 'This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.',
+      }, 409);
+    }
+    /* A delivered DO going back a stage is an un-delivery: it needs a reason, an
+       audit row and the invoice / return checks, which only the revert route has. */
+    if (doHasArrived(prevUpper) && !doHasArrived(toStatus) && toStatus !== 'CANCELLED') {
+      return c.json({
+        error: 'use_revert',
+        reason: 'This Delivery Order is marked Delivered. To take it back to Loaded, use "Undo delivered" on the Delivery Order and give the reason.',
       }, 409);
     }
   }

@@ -229,18 +229,23 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   // client-side; mfg_products is small enough (~hundreds of rows) that pulling
   // a single id column is cheaper than a per-model count roundtrip.
   const counts = new Map<string, number>();
+  const activeCounts = new Map<string, number>();
   if (rows.length > 0) {
     // Paged and chunked: one bare request is cut at 1000 rows by PostgREST, which
     // showed "0 SKUs" on every model whose SKUs fell past the cut (2990-0022).
     const { data: skuRows, error: cntErr } = await chunkIn(rows.map((m) => m.id), (batch, from, to) =>
-      scopeToCompany(supabase.from('mfg_products').select('model_id').in('model_id', batch).order('id'), c)
+      scopeToCompany(supabase.from('mfg_products').select('model_id, status').in('model_id', batch).order('id'), c)
         .range(from, to));
     if (cntErr) return c.json({ error: 'load_failed', reason: cntErr.message }, 500);
-    for (const r of (skuRows ?? []) as Array<{ model_id: string | null }>) {
-      if (r.model_id) counts.set(r.model_id, (counts.get(r.model_id) ?? 0) + 1);
+    for (const r of (skuRows ?? []) as Array<{ model_id: string | null; status: string | null }>) {
+      if (!r.model_id) continue;
+      counts.set(r.model_id, (counts.get(r.model_id) ?? 0) + 1);
+      if (r.status === 'ACTIVE') activeCounts.set(r.model_id, (activeCounts.get(r.model_id) ?? 0) + 1);
     }
   }
-  const models = rows.map((m) => ({ ...m, sku_count: counts.get(m.id) ?? 0 }));
+  /* active_sku_count: Modular hides a Model whose codes are all off (merged away)
+     unless "Show inactive" is on (owner, 2026-11-10). */
+  const models = rows.map((m) => ({ ...m, sku_count: counts.get(m.id) ?? 0, active_sku_count: activeCounts.get(m.id) ?? 0 }));
   /* Perf (go-live) — Models back the catalog picker's variant-filter pools and
      the Modular list; they change rarely (config edits, not per-order). A short
      PRIVATE max-age lets the browser reuse the list across a burst of picker

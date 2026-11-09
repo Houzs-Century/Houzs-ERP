@@ -61,6 +61,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } fro
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
 import { dateOrNull } from '../lib/date-coerce';
+import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -612,7 +613,7 @@ trips.get('/packing', async (c) => {
 
    Static segment → Hono matches it before '/:id'.
    ─────────────────────────────────────────────────────────────────────────*/
-const DO_DELIVERED = ['DELIVERED', 'SIGNED', 'INVOICED'];
+const DO_DELIVERED = [...DO_ARRIVED_STATES];
 
 trips.get('/history', async (c) => {
   const from = c.req.query('from');
