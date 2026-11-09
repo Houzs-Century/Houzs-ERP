@@ -19,6 +19,9 @@
 -- REVERSAL: DROP INDEX IF EXISTS email_outbox_claimed_idx;
 --           ALTER TABLE email_outbox DROP COLUMN IF EXISTS claimed_at;
 --   Only together with the code that reads it (services/email.ts).
+--
+-- Verified against: PostgreSQL 16 (tests-pg/emailOutboxClaim.pg.test.ts applies this file twice,
+--   then races two drains and ten claimers on separate connections).
 
 ALTER TABLE email_outbox
   ADD COLUMN IF NOT EXISTS claimed_at timestamptz NULL;

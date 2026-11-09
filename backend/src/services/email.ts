@@ -470,14 +470,16 @@ function parseHeaders(json: string | null): Record<string, string> | null {
 export const EMAIL_CLAIM_LEASE_MS = 10 * 60_000;
 
 /** Take one pending row for sending: a compare-and-set that only one caller
- *  can win, so two drains running at once never send the same row twice. */
-async function claimOutboxRow(env: Env, id: string, nowMs: number): Promise<boolean> {
-  const res = await env.DB.prepare(
-    `UPDATE email_outbox SET claimed_at=? WHERE id=? AND status='pending' AND (claimed_at IS NULL OR claimed_at < ?)`,
+ *  can win, so two drains running at once never send the same row twice.
+ *  Returns the row's attempts as it stands at the claim (null = not ours): the
+ *  drain's earlier SELECT can be stale if another drain already tried the row. */
+export async function claimOutboxRow(env: Env, id: string, nowMs: number): Promise<{ attempts: number } | null> {
+  const row = await env.DB.prepare(
+    `UPDATE email_outbox SET claimed_at=? WHERE id=? AND status='pending' AND (claimed_at IS NULL OR claimed_at < ?) RETURNING attempts`,
   )
     .bind(new Date(nowMs).toISOString(), id, new Date(nowMs - EMAIL_CLAIM_LEASE_MS).toISOString())
-    .run();
-  return Number(res.meta?.changes ?? 0) === 1;
+    .first<{ attempts: number | null }>();
+  return row ? { attempts: Number(row.attempts ?? 0) } : null;
 }
 
 // Cron drain (called from the every-5-min scheduled handler): retry pending
@@ -522,7 +524,8 @@ export async function drainEmailOutbox(
   const list = rows.results ?? [];
   let processed = 0;
   for (const r of list) {
-    if (!(await claimOutboxRow(env, r.id, nowMs))) continue;
+    const claim = await claimOutboxRow(env, r.id, nowMs);
+    if (!claim) continue;
     processed++;
     // Respect the LIVE channel toggle at retry time: an admin may have turned
     // the channel (or master switch) OFF after this row was enqueued. Don't
@@ -570,7 +573,7 @@ export async function drainEmailOutbox(
       attachments,
       companyCode: r.company_code,
     });
-    const attempts = (r.attempts ?? 0) + 1;
+    const attempts = claim.attempts + 1;
     if (result.status === "sent") {
       await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), attempts=?, provider_id=?, claimed_at=NULL WHERE id=?`).bind(attempts, result.providerId ?? null, r.id).run();
       sent++;
