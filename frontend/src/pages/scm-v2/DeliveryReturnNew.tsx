@@ -247,7 +247,7 @@ export const DeliveryReturnNew = () => {
        named, not silently dropped: the server refuses it too (400 invalid_qty). */
     const badQty = lines.find((l) => l.itemCode.trim() && parseReturnLineQty(l.qty) === null);
     if (badQty) {
-      notify({ title: returnLineQtyMessage(badQty.itemCode, Number.isFinite(badQty.qty) ? badQty.qty : null), tone: 'error' });
+      void notify({ title: returnLineQtyMessage(badQty.itemCode, Number.isFinite(badQty.qty) ? badQty.qty : null), tone: 'error' });
       return;
     }
     const validLines = lines.filter((l) => l.itemCode.trim());
