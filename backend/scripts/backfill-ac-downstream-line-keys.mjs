@@ -68,6 +68,7 @@
  * RE-RUN: inert. Only rows with no `linked_ac_dtlkey` are stamped, and a stored
  * key that DISAGREES with the derived one is REPORTED, never overwritten.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -279,7 +280,7 @@ async function shapeOf(sql) {
 
 const printShape = (label, s) => {
   log(`${label}:`);
-  plain(`      grn_items          rows ${s.grn_items.rows}, qty ${s.grn_items.qty}, unit_price_sen ${s.grn_items.unit_sen}, extended ${s.grn_items.ext_sen}`);
+  plain(`      grn_items          rows ${s.grn_items.rows}, qty ${s.grn_items.qty}, unit_price_sen ${s.grn_items.unit_sen}, extended_sen ${s.grn_items.ext_sen}`);
   plain(`      grns               rows ${s.grns.rows}, total_sen ${s.grns.total_sen}, cancelled ${s.grns.cancelled}, migrated_no_stock ${s.grns.migrated}`);
   plain(`      do_items           rows ${s.do_items.rows}, qty ${s.do_items.qty}, unit_price_sen ${s.do_items.unit_sen}`);
   plain(`      delivery_orders    rows ${s.delivery_orders.rows}, local_total_sen ${s.delivery_orders.total_sen}, migrated_no_stock ${s.delivery_orders.migrated}`);

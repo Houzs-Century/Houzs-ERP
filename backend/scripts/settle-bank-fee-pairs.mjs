@@ -41,6 +41,7 @@
 //   COMPANY_ID=2 STATEMENT_ID=15 npx tsx scripts/settle-bank-fee-pairs.mjs                          # plan
 //   COMPANY_ID=2 STATEMENT_ID=15 MODE=apply CONFIRM="JOIN AND BOOK FEE PAIRS" npx tsx scripts/settle-bank-fee-pairs.mjs
 
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { planRegroup, applyRegroup } from '../src/acc/bank-regroup.ts';

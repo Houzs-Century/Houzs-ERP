@@ -77,6 +77,7 @@
 //
 // DRY-RUN by default; APPLY=1 writes. The dry-run prints ONE LINE PER PLANNED
 // WRITE -- the same list APPLY walks -- so what a reviewer reads is what runs.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -226,7 +227,7 @@ async function main() {
       if (price === 0) { stillZero++; continue; }
       const total = Number(r.line_total_sen ?? 0);
       if (price === p.centi && total === p.centi * Number(r.qty ?? 0)) ok++;
-      else { wrong++; log(`  MISMATCH ${p.id}: unit ${price} (wanted ${p.centi}), line total ${total} (wanted ${p.centi * Number(r.qty ?? 0)})`); }
+      else { wrong++; log(`  MISMATCH ${p.id}: unit_price_sen=${price} (wanted ${p.centi} sen), line_total_sen=${total} (wanted ${p.centi * Number(r.qty ?? 0)} sen)`); }
     }
     log(`  read back ${ok + wrong + stillZero} row(s): ${ok} carry the intended price, ${wrong} do not, ${stillZero} are still zero (declined by the guard, or not reached).`);
     if (wrong) { console.error("VERIFY FAILED - the rows do not read back as intended."); process.exitCode = 1; }

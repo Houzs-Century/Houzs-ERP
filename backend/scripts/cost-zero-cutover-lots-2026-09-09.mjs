@@ -136,6 +136,7 @@
  * Env:  DATABASE_URL (required)   MODE=plan|apply   CONFIRM (on apply)
  *       COMPANY_ID (default 1)   RECOST=1 (also repair this script's mispicks)
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';

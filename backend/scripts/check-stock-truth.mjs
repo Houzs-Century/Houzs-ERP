@@ -110,6 +110,7 @@
 // production read must never become routine CI noise).
 // AutoCount side: scripts/export-ac-item-location-balance.py refreshes
 // data/ac-item-location-balance.json.gz from the live book over read-only ODBC.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import path from "node:path";

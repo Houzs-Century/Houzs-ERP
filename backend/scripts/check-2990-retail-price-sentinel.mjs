@@ -21,6 +21,7 @@
  * is an e-mail that names the SKU. Run it by hand without ALARM and it always
  * exits 0: the answer is the report.
  */
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import {

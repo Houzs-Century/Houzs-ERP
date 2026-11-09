@@ -37,6 +37,7 @@
  *      MAX_SNAPSHOT_AGE_DAYS (default 2)   SHOW (default 40)
  *      TYPES (default "SO,GR,DO" — the three the reconcile reports unpairable)
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

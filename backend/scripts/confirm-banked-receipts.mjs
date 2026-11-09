@@ -30,6 +30,7 @@
 //   COMPANY_ID=2 REHEARSE=1 npx tsx scripts/confirm-banked-receipts.mjs                              # try, roll back
 //   COMPANY_ID=2 MODE=apply CONFIRM="CONFIRM BANKED RECEIPTS" npx tsx scripts/confirm-banked-receipts.mjs
 
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { formaliseReceipt } from '../src/acc/receipts.ts';

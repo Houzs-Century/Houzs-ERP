@@ -54,6 +54,7 @@
  * READ-ONLY BY CONSTRUCTION: every statement is a SELECT, there is no APPLY
  * flag, and there is no path through this file that writes.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

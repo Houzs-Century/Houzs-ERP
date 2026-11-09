@@ -20,6 +20,7 @@
    Writes nothing. Prints counts, sums and up to LIMIT worked examples.
 
    COMPANY=1 LIMIT=25 node scripts/probe-so-overpay.mjs */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

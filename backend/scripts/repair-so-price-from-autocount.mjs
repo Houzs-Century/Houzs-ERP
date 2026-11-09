@@ -36,6 +36,7 @@
  * RE-RUN: convergent. The book's DtlKey is the source and the truth does not
  * move, so a second run finds nothing to write and says so.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

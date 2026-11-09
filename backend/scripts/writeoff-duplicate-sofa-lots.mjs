@@ -38,6 +38,7 @@
 // RE-RUN: convergent. A written-off lot has qty_remaining 0, so it is no longer
 // OPEN and the next run does not see it. A second apply with nothing to do
 // writes nothing. It can never write off the same lot twice.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { planDuplicateSofaLots, variantKeyMirror } from "./lib/duplicate-sofa-lot-plan.mjs";

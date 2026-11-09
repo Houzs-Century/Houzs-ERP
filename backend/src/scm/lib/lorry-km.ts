@@ -6,12 +6,12 @@ export type Fix = { lat: number; lng: number; recorded_at: string };
 const EARTH_KM = 6371;
 // ponytail: a hop faster than this is treated as a GPS jump and skipped; a
 // road-snapped distance (map-matching API) if straight-line km proves too low.
-const MAX_KMH = 150;
+export const MAX_KMH = 150;
 // ponytail: a hop under this is parked-GPS drift (288 fixes/day x a few metres
 // adds phantom km); an ignition-aware filter if crawling traffic gets lost.
-const MIN_HOP_KM = 0.05;
+export const MIN_HOP_KM = 0.05;
 
-function haversineKm(a: Fix, b: Fix): number {
+export function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const rad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * rad;
   const dLng = (b.lng - a.lng) * rad;

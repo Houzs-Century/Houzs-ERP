@@ -20,6 +20,7 @@
  * the per-code tallies of the two scripts must agree; if they diverge, this
  * audit is stale and its conclusions must not be trusted.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,7 +95,7 @@ async function main() {
   log(`=== scm.special_addons (company ${CO}): ${addons.length} rows ===`);
   log(`   ${"sell".padStart(7)} ${"cost".padStart(7)}  active  categories        code`);
   for (const r of addons)
-    log(`   ${String(r.selling_price_sen ?? 0).padStart(7)} ${String(r.cost_price_sen ?? 0).padStart(7)}` +
+    log(`   sell_sen=${String(r.selling_price_sen ?? 0).padStart(7)} cost_sen=${String(r.cost_price_sen ?? 0).padStart(7)}` +
         `  ${r.active === false ? "  no  " : " yes  "}  ${(r.categories || []).join("+").padEnd(16)}  [${r.code}]`);
 
   const priceOf = new Map(addons.map((r) => [r.code, {
