@@ -22,12 +22,10 @@
     "gate that punishes somebody for REMOVING a per-company branch is a gate that",
     "stops the work. Clear them anyway.",
     "",
-    "THE TWO ENTRIES WORTH RE-READING BEFORE ANY SWEEP, because they are real",
-    "capability differences and not branding:",
+    "THE ENTRY WORTH RE-READING BEFORE ANY SWEEP, because it is a real",
+    "capability difference and not branding:",
     "  - frontend/src/auth/AuthGate.tsx - the mobile build exists for the base",
     "    company only (owner: 2990 手机关闭).",
-    "  - backend/src/scm/lib/so-po-lock.ts - the SO-PO edit lock applies to 2990",
-    "    orders only, scoped by doc-number prefix (owner, 2026-08-12).",
     "",
     "WHAT IS NOT IN HERE, and cannot be: a config row one company lacks, a column",
     "one importer never writes, and a status list that only ever matches one",
@@ -171,24 +169,6 @@
       "text": "return `${MIGRATED_NUMBER_PREFIX}${acInvoiceNo.trim()}`;",
       "why": "'HC-' is the prefix the AutoCount carry-over invoices must mint under so a migrated invoice mirrors the AutoCount number one-for-one. It names a numbering series, which is per-company DATA.",
       "whoSetIt": "Owner, 2026-08-07 — 'HC-' is the house code he chose."
-    },
-    {
-      "file": "backend/src/scm/lib/so-po-lock.ts",
-      "text": "const docs = [...new Set(docNos.filter((d): d is string => !!d && isMirroredDocNo(d)))];",
-      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
-      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
-    },
-    {
-      "file": "backend/src/scm/lib/so-po-lock.ts",
-      "text": "if (!docNo || !isMirroredDocNo(docNo)) return false;",
-      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
-      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
-    },
-    {
-      "file": "backend/src/scm/lib/so-po-lock.ts",
-      "text": "import { isMirroredDocNo } from './companyScope';",
-      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
-      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
     },
     {
       "file": "backend/src/scm/lib/so-revision.ts",

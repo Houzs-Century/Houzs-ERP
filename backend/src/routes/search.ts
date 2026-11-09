@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { escapeForOr } from "../scm/lib/postgrest-search";
+import { escapeForOr, phoneSearchOrParts } from "../scm/lib/postgrest-search";
+import { normalizePhone } from "../scm/shared/phone";
 import {
   activeCompanySql,
   allowedCompaniesSql,
@@ -117,6 +118,15 @@ export function searchPattern(raw: string, postgrest = false): string | null {
   // first key a real whole-database prefix search; from the second key onward
   // the existing trigram-backed contains search takes over.
   return [...term].length === 1 ? `${term}%` : `%${term}%`;
+}
+
+/** The SO phone arms of the top search bar. Phones are stored E.164
+ *  ("+60123456789"), so "012-345 6789" as staff type it never substring-matched;
+ *  the SO / DO / SI lists' own normaliser adds the bare-digit E.164 arm. A
+ *  one-key prefix search (no leading %) stays a single raw arm. */
+export function soPhoneArms(raw: string, wildcard: string): string[] {
+  if (!wildcard.startsWith("%")) return [`phone.ilike.${wildcard}`];
+  return phoneSearchOrParts(wildcard.slice(1, -1), raw, normalizePhone);
 }
 
 /* ASSR company scope — now IMPORTED from routes/assr.ts rather than copied.
@@ -350,8 +360,11 @@ async function appendScmHits(
     .from("mfg_sales_orders")
     .select("doc_no, debtor_name, phone, ref, so_date, branding")
     .or(
-      `doc_no.ilike.${wildcard},debtor_name.ilike.${wildcard},` +
-        `ref.ilike.${wildcard},customer_so_no.ilike.${wildcard},phone.ilike.${wildcard}`
+      [
+        `doc_no.ilike.${wildcard}`, `debtor_name.ilike.${wildcard}`,
+        `ref.ilike.${wildcard}`, `customer_so_no.ilike.${wildcard}`,
+        ...soPhoneArms(raw, wildcard),
+      ].join(",")
     );
   const prodQuery = sb
     .from("mfg_products")

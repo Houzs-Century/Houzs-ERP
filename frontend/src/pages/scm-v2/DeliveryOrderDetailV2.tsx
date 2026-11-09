@@ -72,6 +72,7 @@ import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { DoProofOfDeliveryCard, doIsDelivered } from "./DoProofOfDeliveryCard";
+import { DoDeliveryIssuesCard } from "../../components/scm-v2/DeliveryIssuesCard";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -1535,6 +1536,7 @@ export function DeliveryOrderDetailV2() {
                 />
               </AsideCard>
 
+              <DoDeliveryIssuesCard doId={deliveryOrder.id} />
               <DoProofOfDeliveryCard h={deliveryOrder} />
 
               <AsideCard title="People">

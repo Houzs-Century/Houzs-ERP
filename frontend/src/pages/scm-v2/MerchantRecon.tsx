@@ -41,7 +41,7 @@ import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
 import { customerRefOf } from '../../lib/customer-ref';
 import { todayMY } from '../../vendor/shared/format';
-import { LINE_STATUS_WORDS, isOpenLine, lineStatus, openReportsOf, ordersOf, reportLinesMatrix } from './merchantReconExport';
+import { LINE_STATUS_WORDS, QR_REF_WORDS, isOpenLine, isQrLine, lineStatus, openReportsOf, ordersOf, reportLinesMatrix, statusWordsOf } from './merchantReconExport';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   BUCKET_LABEL, refusalText, payableOf,
@@ -647,6 +647,16 @@ const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
    list shows what is still to do, the upload summary shows everything that
    upload read. */
 
+/* A DuitNow QR line's Reference cell (owner 2026-11-09: 0000PP 是 qr direct 去
+   bank 的，不算卡机的): Hong Leong prints a placeholder there, so the line says
+   what it is instead. */
+const RefCell = ({ row }: { row: SettlementRow }) => (isQrLine(row)
+  ? <span className={styles.codeChip}>{QR_REF_WORDS}</span>
+  : row.ref ? <b>{row.ref}</b> : <span className={grid.sub}>—</span>);
+
+/** A report's QR money, said beside its net and never in it: its sales put it in the bank. */
+const qrMoneyWords = (sen: number): string => `QR ${fmt(sen)} · straight to the bank`;
+
 const LinesTable = ({ batches, onOpen, openOnly, onExport }: {
   batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
   /** The work list exports from its header's right-click; the upload summary does not. */
@@ -719,6 +729,8 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       {/* The period is on every line below as its own date; only the report's
           TOTAL is worth repeating here, because no single line carries it. */}
       <div className={grid.sub}>net {fmt(payableOf(batch))}</div>
+      {/* QR money is no part of that net: its sales put it in the bank (owner 2026-11-09). */}
+      {(batch.qr_gross_sen ?? 0) !== 0 && <div className={grid.sub}>{qrMoneyWords(batch.qr_gross_sen ?? 0)}</div>}
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -758,7 +770,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
               <div>{r.txn_date}</div>
               <div className={grid.sub}>line {r.line_no}</div>
             </td>
-            <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
+            <td><RefCell row={r} /></td>
             <td className={grid.num}>{fmt(r.gross_sen)}</td>
             <td className={grid.num}>{fmt(r.fee_sen)}</td>
             <td className={grid.num}>{fmt(r.net_sen)}</td>
@@ -783,7 +795,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
                     <UndoDone rowId={r.id} />
                   </span>
                 )
-                : <span className={status === 'matched' ? grid.good : status === 'none' ? grid.bad : undefined}>{LINE_STATUS_WORDS[status]}</span>}
+                : <span className={status === 'matched' ? grid.good : status === 'none' ? grid.bad : undefined}>{statusWordsOf(r)}</span>}
             </td>
           </tr>
         );
@@ -1006,7 +1018,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
             {noChoice.map((r) => (
               <tr key={r.id}>
                 <td>{r.txn_date}<div className={grid.sub}>line {r.line_no}</div></td>
-                <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
+                <td><RefCell row={r} /></td>
                 <td className={grid.num}>{fmt(r.gross_sen)}</td>
                 <td className={grid.num}>{fmt(r.fee_sen)}</td>
                 <td className={grid.num}>{fmt(r.net_sen)}</td>
@@ -1084,6 +1096,18 @@ const HandOff = ({ batch, toConfirm, toDecide }: { batch: SettlementBatch; toCon
       </div>
     );
   }
+  /* A report of DuitNow QR money owes nothing through the clearing account: the
+     bank's QR credit is matched to the linked sales instead (owner 2026-11-09). */
+  if (payable === 0 && (batch.qr_gross_sen ?? 0) !== 0) {
+    return (
+      <div style={{ ...panel('plain'), display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>Every QR line is linked to its sale. The bank&rsquo;s QR credit is matched to those sales on the bank statement.</b>
+        <Link to="/scm/bank-recon" style={{ ...btn(true), textDecoration: 'none' }}>
+          Match the bank statement <ArrowRight {...ICON} />
+        </Link>
+      </div>
+    );
+  }
   return (
     <div style={{ ...panel(outstanding === 0 ? 'good' : 'plain'), display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
       <b>
@@ -1112,29 +1136,32 @@ const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
    gross marked "possible" and ranked first, and any one of them ticked
    (owner: 可以注明 possible，但不能不让我选其他的). The confirm reads the chosen
    payments back, so the amount still has to add up before anything posts. */
-const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
+const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle, qr = false }: {
   rowId: number; grossSen: number; picked: Set<string>;
   /** Already offered above — not listed twice. */
   shown: Set<string>;
   onToggle: (p: SettlementCandidate) => void;
+  /** A DuitNow QR line: the server searches Online payments, and the words say so. */
+  qr?: boolean;
 }) => {
   const [q, setQ] = useState('');
   const found = useFindPayments(rowId, q);
   const list = (found.data?.payments ?? []).filter((p) => !shown.has(key(p)));
+  const kind = qr ? 'Online' : 'card';
   return (
     <div className="space-y-1" style={{ borderTop: '1px dashed var(--c-line, rgba(34,31,32,0.15))', paddingTop: 'var(--space-2)' }}>
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find the sale"
           placeholder="SO number, customer, approval code or amount"
           style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.25))', borderRadius: 'var(--radius-sm)', minWidth: 260 }} />
-        <span style={softText}>Any card payment of this company, whatever its date — the exact {fmt(grossSen)} is marked possible.</span>
+        <span style={softText}>Any {kind} payment of this company, whatever its date — the exact {fmt(grossSen)} is marked possible.</span>
       </div>
       {found.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{refusalText(found.error, 'The search did not run.')}</div>
       )}
       {found.isLoading && <div style={softText}>Searching…</div>}
       {found.data && list.length === 0 && (
-        <div style={softText}>No card payment of this company {q.trim() ? `matches "${q.trim()}"` : 'is waiting for a merchant report'}.</div>
+        <div style={softText}>No {kind} payment of this company {q.trim() ? `matches "${q.trim()}"` : 'is waiting for a merchant report'}.</div>
       )}
       {list.length > 0 && (
         <table style={table}>
@@ -1237,6 +1264,12 @@ const SettlementLine = ({ row, others = [] }: {
     return next;
   });
   const asGroup = joining && withLines.length > 0;
+  /* A DuitNow QR line (owner 2026-11-09): its sale is keyed Online and already in
+     the bank, so the press LINKS it — no fee, nothing posted. */
+  const qr = isQrLine(row);
+  const pressWords = asGroup
+    ? (qr ? `Link the ${withLines.length + 1} lines` : `Confirm the ${withLines.length + 1} lines and post`)
+    : (qr ? 'Link the sale' : 'Confirm and post');
   const press = () => {
     const payments = chosen.map((p) => ({ source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen }));
     if (asGroup) confirmGroup.mutate({ rowIds: [row.id, ...withLines.map((o) => o.id)], payments });
@@ -1254,10 +1287,12 @@ const SettlementLine = ({ row, others = [] }: {
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span className={styles.codeChip}>Line {row.line_no}</span>
         <span>{row.txn_date}</span>
-        {row.ref && <span>ref <b>{row.ref}</b></span>}
+        {qr ? <span className={styles.codeChip}>{QR_REF_WORDS}</span> : row.ref && <span>ref <b>{row.ref}</b></span>}
         <span style={{ flex: 1 }} />
         <span><b>{fmt(row.gross_sen)}</b> gross</span>
-        <span style={softText}>− {fmt(row.fee_sen)} fee = {fmt(row.net_sen)} net</span>
+        {qr
+          ? <span style={softText}>no fee · straight to the bank with its sale</span>
+          : <span style={softText}>− {fmt(row.fee_sen)} fee = {fmt(row.net_sen)} net</span>}
       </div>
 
       {/* A matched line says it ONCE. The clue ("Reference 969745 matches
@@ -1348,7 +1383,7 @@ const SettlementLine = ({ row, others = [] }: {
       )}
 
       {!row.confirmed_at && finding && (
-        <FindTheSale rowId={row.id} grossSen={row.gross_sen} picked={picked}
+        <FindTheSale rowId={row.id} grossSen={row.gross_sen} picked={picked} qr={qr}
           shown={new Set(row.candidates.map(key))} onToggle={toggleFound} />
       )}
 
@@ -1365,7 +1400,7 @@ const SettlementLine = ({ row, others = [] }: {
             <button type="button" style={btn(true, !balanced || pending)}
               disabled={!balanced || pending}
               onClick={press}>
-              {asGroup ? `Confirm the ${withLines.length + 1} lines and post` : 'Confirm and post'}
+              {pressWords}
             </button>
             {findButton}
             {joinButton}
@@ -1379,9 +1414,9 @@ const SettlementLine = ({ row, others = [] }: {
       {!row.confirmed_at && row.candidates.length === 0 && row.linked.length === 0 && extra.size === 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No payment within the matching window explains this money. If the sale IS in the ERP — keyed later,
-            or without a bank — find it below; otherwise record it first, because it must not be cleared out of
-            in-transit without one.
+            {qr
+              ? 'No Online payment explains this QR money. A DuitNow QR sale is keyed Online, with the QR’s code — key it, or find it below if it is in the ERP on another day.'
+              : 'No payment within the matching window explains this money. If the sale IS in the ERP — keyed later, or without a bank — find it below; otherwise record it first, because it must not be cleared out of in-transit without one.'}
           </span>
           {findButton}
           {joinButton}

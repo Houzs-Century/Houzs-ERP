@@ -261,6 +261,22 @@ describe('the report layout — the shared half', () => {
     expect(saveLayout).not.toHaveBeenCalled();
   });
 
+  /* Owner 2026-11-09 (0000PP 是 qr direct 去 bank 的，不算卡机的): Hong Leong prints
+     its DuitNow QR payments in the card layout, marked in one column. The layout
+     names that column and its codes, and saving keeps them. */
+  test('the QR column and its codes are part of the layout, and saving keeps them', () => {
+    saveLayout.mockReset();
+    draw();
+    fireEvent.click(within(merchantRow('PBB')).getByText('Edit'));
+    fireEvent.change(screen.getByLabelText('PBB QR column heading'), { target: { value: 'TENURE/CASHOUT*' } });
+    fireEvent.change(screen.getByLabelText('PBB QR codes in it'), { target: { value: 'DN, WC, WL' } });
+    fireEvent.click(screen.getByText('Save'));
+    expect(saveLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'PBB', columnMap: expect.objectContaining({ date: 'Date', qr: 'TENURE/CASHOUT*', qr_values: 'DN, WC, WL' }) }),
+      expect.anything(),
+    );
+  });
+
   test('a date tolerance that is not a whole number of days is refused', () => {
     saveLayout.mockReset();
     draw();

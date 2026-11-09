@@ -323,6 +323,92 @@ describe("renumber reconciliation", () => {
     ]);
   });
 
+  describe("on staging, where preview branches share the database", () => {
+    const staging = { previewLeftoversTolerated: true };
+
+    it("reports a preview-only row as a leftover and still runs main's new files", () => {
+      const result = planMigrationChecksums(
+        [file("20261109T1200_scm_supplier_email2_email3.sql", "sha256:main")],
+        [{ filename: "20261109T1200_assr_supplier_return_eta.sql", checksum: "sha256:preview" }],
+        staging,
+      );
+
+      expect(result.drift).toEqual([]);
+      expect(result.previewLeftovers).toEqual([
+        {
+          filename: "20261109T1200_assr_supplier_return_eta.sql",
+          storedChecksum: "sha256:preview",
+          suspectedRenumberOf: null,
+        },
+      ]);
+      expect(result.pending.map((e: { filename: string }) => e.filename)).toEqual([
+        "20261109T1200_scm_supplier_email2_email3.sql",
+      ]);
+    });
+
+    it("keeps a renumbered preview file pending so main's version runs", () => {
+      const result = planMigrationChecksums(
+        [file("0167_x.sql", "sha256:edited")],
+        [{ filename: "0165_x.sql", checksum: "sha256:original" }],
+        staging,
+      );
+
+      expect(result.drift).toEqual([]);
+      expect(result.previewLeftovers).toEqual([
+        expect.objectContaining({ filename: "0165_x.sql", suspectedRenumberOf: "0167_x.sql" }),
+      ]);
+      expect(result.pending.map((e: { filename: string }) => e.filename)).toEqual(["0167_x.sql"]);
+    });
+
+    it("re-applies a file that was edited after its preview ran", () => {
+      const result = planMigrationChecksums(
+        [file("0001.sql", "sha256:new")],
+        [{ filename: "0001.sql", checksum: "sha256:old" }],
+        staging,
+      );
+
+      expect(result.drift).toEqual([]);
+      expect(result.reapply).toEqual([
+        expect.objectContaining({ filename: "0001.sql", checksum: "sha256:new", storedChecksum: "sha256:old" }),
+      ]);
+    });
+
+    it("still fails closed on a retired filename and an unverifiable legacy row", () => {
+      const result = planMigrationChecksums(
+        [file("0017_scm_suppliers.sql", "sha256:x")],
+        [{ filename: "0099_legacy.sql", checksum: null }],
+        {
+          ...staging,
+          retiredMigrations: [
+            { filename: "0017_scm_suppliers.sql", archivedChecksum: "sha256:a", gitBlob: "b" },
+          ],
+        },
+      );
+
+      expect(result.drift.map((d: { reason: string }) => d.reason).sort()).toEqual([
+        "legacy_file_deleted_unverifiable",
+        "retired_filename_reused",
+      ]);
+    });
+
+    it("is off unless asked for, which is how production runs", () => {
+      const result = planMigrationChecksums(
+        [file("0001.sql", "sha256:new")],
+        [
+          { filename: "0001.sql", checksum: "sha256:old" },
+          { filename: "0002.sql", checksum: "sha256:gone" },
+        ],
+      );
+
+      expect(result.drift.map((d: { reason: string }) => d.reason).sort()).toEqual([
+        "content_changed",
+        "file_deleted",
+      ]);
+      expect(result.previewLeftovers).toEqual([]);
+      expect(result.reapply).toEqual([]);
+    });
+  });
+
   it("never repoints onto a retired filename", () => {
     const retired = {
       filename: "0017_scm_suppliers.sql",
