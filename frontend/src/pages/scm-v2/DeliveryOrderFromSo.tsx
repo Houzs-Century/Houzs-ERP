@@ -40,6 +40,12 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { fmtMoneySen, fmtQty } from '@2990s/shared';
+import { lineDiscountShare } from '../../vendor/shared/line-discount-share';
+
+/* A pick carries its share of the SO line's discount (never the whole discount
+   on each partial delivery), so Line Value here is what the DO will hold. */
+const pickDiscount = (r: DeliverableSoLine, pickQty: number): number =>
+  lineDiscountShare(r.discountSen, r.qty, r.qty - r.remaining, pickQty);
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -357,11 +363,14 @@ export const DeliveryOrderFromSo = () => {
         const pickQty = p?.picked ? p.qty : r.remaining;
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceSen)}
+            {fmtRm(pickQty * r.unitPriceSen - pickDiscount(r, pickQty))}
           </span>
         );
       },
-      exportValue: (r) => ((Object.hasOwn(picks, r.soItemId) && picks[r.soItemId].picked ? picks[r.soItemId].qty : r.remaining) * r.unitPriceSen) / 100,
+      exportValue: (r) => {
+        const q = Object.hasOwn(picks, r.soItemId) && picks[r.soItemId].picked ? picks[r.soItemId].qty : r.remaining;
+        return (q * r.unitPriceSen - pickDiscount(r, q)) / 100;
+      },
       exportFormat: 'money',
       sortFn: (a, b) => a.remaining * a.unitPriceSen - b.remaining * b.unitPriceSen,
     },
@@ -390,7 +399,7 @@ export const DeliveryOrderFromSo = () => {
           uom: r.uom ?? 'UNIT',
           qty: v.qty,
           unitPriceSen: r.unitPriceSen,
-          discountSen: r.discountSen,
+          discountSen: pickDiscount(r, v.qty),
           unitCostSen: r.unitCostSen,
           variants: r.variants ?? {},
         };

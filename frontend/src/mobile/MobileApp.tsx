@@ -1031,7 +1031,7 @@ function MobileAppInner() {
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onEdit={screen.key !== "delivery-orders-mfg"
-        ? () => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })
+        ? (fresh?: Record<string, unknown>) => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: fresh ?? screen.row })
         : canOperateDeliveryOrders(user, can, pageAccess) && screen.row?.id
           ? () => setScreen({ t: "do-edit", key: screen.key, row: screen.row, title: screen.title })
           : undefined}
