@@ -7,7 +7,9 @@ import {
   useMfgDeliveryOrdersPaged,
   useUpdateMfgDeliveryOrderStatus,
 } from "../vendor/scm/lib/delivery-order-queries";
-import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
+import { uploadFieldPhoto } from "../vendor/scm/lib/slip";
+import { useFieldPhotos } from "../lib/fieldPhotos";
+import { FieldPhotos } from "../components/FieldPhotos";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
@@ -27,8 +29,10 @@ import "./mobile.css";
      • Deliver         PATCH /delivery-orders-mfg/:id/status  body { status:
        "DELIVERED" }  flips the DO delivered (deducts stock + syncs the SO).
 
-   The delivery PHOTO is uploaded to R2 (the shared slip Worker-proxy
-   pipeline: uploadSlipFull → { r2Key }) and its key is persisted as
+   The delivery PHOTOS are uploaded to R2 one by one THE MOMENT THEY ARE TAKEN
+   (FieldPhotos -> uploadFieldPhoto, the shared slip Worker-proxy pipeline),
+   stamped with the DO number and server time; Confirm sends only the uploaded
+   keys. The first key is persisted as
    PATCH /:id/status { podKey } → delivery_orders.pod_r2_key. The customer
    SIGNATURE (base64 PNG) is persisted as { signatureData } →
    delivery_orders.signature_data. The delivery LOCATION (lat/lng + accuracy +
@@ -149,8 +153,8 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
   // A delivery takes several photos (goods off the lorry, installed, the signed note).
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoError, setPhotoError] = useState<string | null>(null);
+  // Each uploads as soon as it is taken; the backend claims at most 20 per POD (pod-photo-claim.ts MAX_POD_KEYS).
+  const photos = useFieldPhotos({ stampLabel: docNo, max: 20, upload: (file) => uploadFieldPhoto({ file }) });
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -166,8 +170,10 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     /* Every job closes with a photo (owner, 2026-10-07: 每个 Job 都必须上传 POD).
        The customer signs the paper delivery note for now, so a photo of that
        signed note is the POD; the on-screen signature stays optional. */
-    if (!photoFiles.length) {
-      setActionError("Take a POD photo first - a photo of the signed delivery note is fine.");
+    // Photos upload as they are taken; only the uploaded ones go with the delivery.
+    const gate = photos.gate("Take a POD photo first - a photo of the signed delivery note is fine.");
+    if (!gate.ok) {
+      setActionError(gate.reason);
       return;
     }
     const notes: string[] = [];
@@ -196,11 +202,9 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       // last sentence here used to read "GPS stays client-side (no server
       // column)", which stopped being true at 0249 and is corrected in place
       // rather than left to teach the next reader the old shape.
-      // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
-      // its key rides the same PATCH. A failed upload aborts the whole action —
-      // we never mark delivered while claiming a photo we didn't store.
-      const podKeys: string[] = [];
-      for (const f of photoFiles) podKeys.push((await uploadSlipFull({ file: f })).r2Key);
+      // The photos are already in R2 (uploaded on pick); the gate above refused
+      // while any was still uploading or failed, so these keys are all stored.
+      const podKeys = gate.keys;
       const podKey = podKeys[0];
       /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
          An untouched pad is a sized, fully transparent bitmap, so
@@ -380,53 +384,10 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               }) : <div style={{ fontSize: 11.5, color: "var(--mut2)", padding: "9px 2px" }}>No items on this delivery.</div>}
             </div>
 
-            {/* Delivery photos — designer two-column row: Take-photo button + a
-                preview tile that lights up once captured. Photos are captured
-                locally and uploaded to R2 on Confirm. */}
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Delivery photos</div>
-            <div style={{ display: "flex", gap: 9 }}>
-              <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "var(--brand)", border: "none", borderRadius: 13, padding: 14, color: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
-                  <circle cx="12" cy="13" r="3" />
-                </svg>
-                {photoFiles.length ? "Add another photo" : "Take photo"}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="environment"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files ?? []);
-                    e.target.value = "";
-                    if (!picked.length) return;
-                    // Guard against the R2 pipeline's contract (jpeg/png/webp)
-                    // up front so the operator learns before Confirm, not
-                    // mid-upload. No size guard here any more: uploadSlipFull
-                    // compresses photos (WO-7), so a raw 8 MB camera capture
-                    // is EXPECTED input now — it leaves the phone at well
-                    // under the 5 MiB slip ceiling.
-                    if (picked.some((f) => !ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number]))) {
-                      setPhotoError("Please use JPEG, PNG or WebP photos.");
-                      return;
-                    }
-                    setPhotoError(null);
-                    setPhotoFiles((prev) => [...prev, ...picked].slice(0, 10));
-                  }}
-                />
-              </label>
-              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "var(--mut)", background: photoFiles.length ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }}>
-                {photoFiles.length ? `${photoFiles.length} photo${photoFiles.length === 1 ? "" : "s"}` : "No photo yet"}
-              </div>
+            {/* Delivery photos — each uploads the moment it is taken (FieldPhotos). */}
+            <div style={{ margin: "18px 0 0" }}>
+              <FieldPhotos api={photos} disabled={busy || delivered} title="Delivery photos" />
             </div>
-            {photoFiles.map((f, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--mut)", marginTop: 6 }}>
-                <span className="tnum">{i + 1}. {f.name}</span>
-                <button type="button" onClick={() => setPhotoFiles((prev) => prev.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "var(--red)", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>Remove</button>
-              </div>
-            ))}
-            {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
             {/* Customer signature — design signature pad (canvas keeps the real capture). */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Customer signature</div>
