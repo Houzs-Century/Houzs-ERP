@@ -854,6 +854,8 @@ export const createSupplierBindingHandler = async (c: any) => {
   const { data, error } = await supabase.from('supplier_material_bindings').insert({ ...row, company_id: activeCompanyId(c) }).select(BINDING_COLS).single();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    // The unique index catches what the pre-check above loses to a concurrent create.
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   // Auto-derive stage 2b: recompute the product cost from all suppliers when the
@@ -969,6 +971,7 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
     .select(BINDING_COLS);
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   // Auto-derive stage 2b: recompute each affected SKU's product cost when ON;
@@ -1083,6 +1086,7 @@ export const patchSupplierBindingHandler = async (c: any) => {
   const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').update(updates).eq('id', bindingId), co.companyId).select(BINDING_COLS).maybeSingle();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
