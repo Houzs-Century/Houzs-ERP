@@ -80,6 +80,10 @@ export type LoginResult = { kind: "ok" } | { kind: "totp"; challenge: string };
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string, remember?: boolean) => Promise<LoginResult>;
+  /** Crew sign-in: staff code (the digits after EMP-) + 6-digit PIN. The
+   *  server stamps the session as a field session and holds it to the crew
+   *  screens; the device keeps it like a remembered login. */
+  pinLogin: (login: string, pin: string) => Promise<LoginResult>;
   /** Second step of a 2FA login — exchange the challenge + code for a session. */
   verifyTotpLogin: (challenge: string, code: string, remember?: boolean) => Promise<void>;
   logout: () => Promise<void>;
@@ -261,6 +265,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [fetchMe, fetchStatus]
   );
 
+  const pinLogin = useCallback(
+    async (login: string, pin: string): Promise<LoginResult> => {
+      const res = await api.post<{ token?: string; totp_required?: boolean; challenge?: string }>(
+        "/api/auth/pin-login",
+        { login, pin },
+      );
+      if (res.totp_required && res.challenge) return { kind: "totp", challenge: res.challenge };
+      resetSessionCaches();
+      tokenStore.set(res.token!, true);
+      storeSessionPass(res, true);
+      void registerNativePush();
+      await fetchMe();
+      await fetchStatus();
+      return { kind: "ok" };
+    },
+    [fetchMe, fetchStatus]
+  );
+
   const verifyTotpLogin = useCallback(
     async (challenge: string, code: string, remember = true) => {
       const res = await api.post<{ token: string }>("/api/auth/totp/login", {
@@ -408,6 +430,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       login,
+      pinLogin,
       verifyTotpLogin,
       logout,
       bootstrap,
@@ -421,6 +444,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       state,
       login,
+      pinLogin,
       verifyTotpLogin,
       logout,
       bootstrap,

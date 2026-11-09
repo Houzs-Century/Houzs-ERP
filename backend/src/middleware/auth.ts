@@ -5,6 +5,7 @@ import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { canViewItPages } from "../services/itAccess";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
+import { FIELD_SESSION_REFUSAL, fieldSessionAllowsPath, isFieldPinEligible } from "../services/fieldPin";
 import {
   fullAccessMap,
   meetsLevel,
@@ -122,6 +123,31 @@ export const PUBLIC_API_PREFIXES = [
   "/api/auth",
 ];
 
+/**
+ * A crew PIN session (origin 'field', services/fieldPin.ts) is held to the field
+ * screens HERE, on the server, for every request on both auth paths — the menus
+ * hiding office modules is presentation, this is the boundary. Two refusals:
+ * the member's Title stopped being a crew Title since the PIN was issued (401 —
+ * the session is no longer one we would mint), or the path is outside the field
+ * list (403). Every other session returns null and is untouched.
+ */
+export function fieldSessionRefusal(
+  user: Pick<AuthUser, "session_origin" | "position_policy">,
+  path: string,
+): { status: 401 | 403; body: { error: string; code: string } } | null {
+  if (user.session_origin !== "field") return null;
+  if (!isFieldPinEligible(user.position_policy)) {
+    return {
+      status: 401,
+      body: { error: "This account can no longer sign in with a crew PIN. Ask the office.", code: "field_pin_not_eligible" },
+    };
+  }
+  if (!fieldSessionAllowsPath(path)) {
+    return { status: 403, body: { error: FIELD_SESSION_REFUSAL, code: "field_session_scope" } };
+  }
+  return null;
+}
+
 export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (PUBLIC_API_PREFIXES.some((p) => path === p || path.startsWith(p + "/"))) {
@@ -160,6 +186,8 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   // every request takes the DB path exactly as before.
   const passUser = await tryPassAuth(c.env, c.req.header("X-Session-Pass") || "", token, Date.now());
   if (passUser) {
+    const refused = fieldSessionRefusal(passUser, path);
+    if (refused) return c.json(refused.body, refused.status);
     c.set("authPath", "pass");
     c.set("user", passUser);
     c.set("userId", passUser.id);
@@ -173,6 +201,8 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (!user) {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   }
+  const refused = fieldSessionRefusal(user, path);
+  if (refused) return c.json(refused.body, refused.status);
   /* RE-ISSUE THE PASS HERE, because reaching this line means the caller has no
      usable one — and until now the only way to get one was to LOG IN AGAIN.
      A pass lives 8 hours (SESSION_PASS_TTL_MS); a session lives 7 days
