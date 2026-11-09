@@ -540,13 +540,18 @@ export function useUpdateMfgProductPrices() {
         accessor: (d, f) => d?.product?.[f],
       });
 
-      if (!result.ok) {
-        throw new Error(friendlySaveMessage(result, {
-          noun: 'change',
-          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
-          fmt: (v) => (v == null ? '(blank)' : fmtSen(Number(v))),
-        }));
+      const message = (r: Exclude<typeof result, { ok: true }>) => friendlySaveMessage(r, {
+        noun: 'change',
+        fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
+        fmt: (v) => (v == null ? '(blank)' : fmtSen(Number(v))),
+      });
+      /* The PATCH succeeded; only the confirming read did not finish. Saying
+         "Save failed" here made staff re-key a price that had saved. */
+      if (!result.ok && result.reason === 'unverified') {
+        void serviceNotify({ title: 'Saved', body: message(result), tone: 'info' });
+        return { ok: true as const, changed: 1 };
       }
+      if (!result.ok) throw new Error(message(result));
       return { ok: true as const, changed: 1 };
     },
     onError: (err) => {
