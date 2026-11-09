@@ -28,11 +28,16 @@ type NoteActivity = {
 
 type ActivityResponse = { activity: NoteActivity[] };
 
-/** The chat section mounted inside ProjectDetailView. Collapsed by default so
- *  the phone's long scroll doesn't jump past the finance panel; tap opens.
- *  Shows the message list and (when allowed) a textarea + send button; any
- *  sales-report parsing runs server-side, so the post is a single POST and the
- *  effect shows up in the panel above after the detail reload. */
+/** DOM id of the collapsible Chat section — the floating "Chat" FAB in
+ *  ProjectDetailView uses it to scroll the page to the panel and pop it open
+ *  without the user having to scroll past everything above it (owner 2026-11-09). */
+export const MOBILE_PROJECT_CHAT_ID = "mobile-project-chat-section";
+
+/** The chat section mounted inside ProjectDetailView. Open by default so the
+ *  floor sees it immediately after the Chat FAB scrolls them here. Shows the
+ *  message list and (when allowed) a textarea + send button; any sales-report
+ *  parsing runs server-side, so the post is a single POST and the effect shows
+ *  up in the panel above after the detail reload. */
 export function MobileProjectChat({
   projectId,
   onPosted,
@@ -89,7 +94,7 @@ export function MobileProjectChat({
   };
 
   return (
-    <details className="pacc" open={false}>
+    <details id={MOBILE_PROJECT_CHAT_ID} className="pacc" open>
       <summary>
         <span className="psec-t">Chat ({notes.length})</span>
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
