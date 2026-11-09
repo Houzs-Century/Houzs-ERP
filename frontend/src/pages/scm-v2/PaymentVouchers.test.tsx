@@ -58,6 +58,13 @@ const notifyFn = vi.fn((_a: unknown) => undefined);
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifyFn }));
 /* The waiting-requests reminder has its own contract (PaymentRequestsWaiting.test.tsx). */
 vi.mock('./PaymentRequestsWaiting', () => ({ PaymentRequestsWaiting: () => null }));
+/* The list on paper has its own contract (pv-list-pdf.test.ts): here, what the header's
+   Export to PDF hands it. The words on top stay real. */
+const printed: Array<{ view: { keys: string[]; rows: ReadonlyArray<{ id: string }> }; opts: { cutTo: string; action?: string } }> = [];
+vi.mock('../../vendor/scm/lib/pv-list-pdf', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/pv-list-pdf')>()),
+  generatePvListPdf: async (view: (typeof printed)[number]['view'], opts: (typeof printed)[number]['opts']) => { printed.push({ view, opts }); },
+}));
 
 import { PaymentVouchers } from './PaymentVouchers';
 
@@ -199,6 +206,49 @@ describe('the Description column — the Notes (owner 2026-10-14: pv 那边的 l
     expect(screen.getByText(/Search “penang” · 1 voucher across every stage and month/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Clear the search'));
     expect(await screen.findByText('PV-2609-002')).toBeTruthy();
+  });
+});
+
+describe('the Total and the list on paper (owner 2026-11-09: 表格最下面的总数（Total）- payment voucher 可以加; 我filter 了，right click header print 不行？)', () => {
+  const totalOf = (key: string) => document.querySelector(`[data-total-key="${key}"]`)?.textContent;
+
+  test('the footer totals the ringgit of the vouchers showing', () => {
+    draw();
+    expect(totalOf('total_sen')).toBe('RM 4,050.00');
+    expect(screen.getByText('Total · 6 rows')).toBeTruthy();
+    expect(totalOf('status')).toBe('');
+  });
+
+  test('a cancelled voucher stays listed but is not counted, and the footer says so', async () => {
+    const was = searched.getMockImplementation()!;
+    searched.mockImplementation(() => [
+      { id: 'gone', pv_number: 'HCMPV-2601-009', payee_name: 'Gone Co', status: 'CANCELLED', voucher_date: '2026-01-09', total_sen: 99_900, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: null, notes: '', je_no: null },
+      { id: 'kept', pv_number: 'HCMPV-2601-010', payee_name: 'Kept Co', status: 'POSTED', voucher_date: '2026-01-10', total_sen: 7_000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: '', je_no: null },
+    ] as unknown as ReturnType<typeof was>);
+    try {
+      draw();
+      fireEvent.change(screen.getByLabelText('Find any voucher'), { target: { value: 'co' } });
+      expect(await screen.findByText('HCMPV-2601-009')).toBeTruthy();
+      expect(totalOf('total_sen')).toBe('RM 70.00');
+      expect(totalOf('status')).toBe('1 cancelled not counted');
+    } finally {
+      searched.mockImplementation(was);
+    }
+  });
+
+  test("the header's right-click prints the list showing, and says the stage and month it was cut to", async () => {
+    printed.length = 0;
+    draw();
+    /* The chip comes first, the row's tag after it. */
+    fireEvent.click(screen.getAllByText('Checked')[0]!);
+    expect(screen.queryByText('PV-2609-001')).toBeNull();
+    fireEvent.contextMenu(screen.getByRole('columnheader', { name: /^Payee/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export to PDF' }));
+    await waitFor(() => expect(printed).toHaveLength(1));
+    const { view, opts } = printed[0]!;
+    expect(view.rows.map((r) => r.id)).toEqual(['chk']);
+    expect(view.keys).toContain('total_sen');
+    expect(opts).toEqual({ cutTo: 'Payment vouchers as filtered on the screen. Stage: Checked. Month: All months.', action: 'preview' });
   });
 });
 

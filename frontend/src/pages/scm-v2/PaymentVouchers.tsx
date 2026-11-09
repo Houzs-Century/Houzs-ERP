@@ -30,6 +30,8 @@ import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../components/DataGridCompat';
+import type { TablePdfView } from '../../components/dataTableLineExport';
+import { pvListTotal, pvListTotalNote, ringgitSenOfPv } from '../../vendor/scm/lib/pv-list-total';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -136,13 +138,9 @@ function queueLabel(r: PaymentVoucherRow): string {
   return `${stageTag(r).text}${advanceOpenSen(r) > 0 ? ' · Advance open' : ''}`;
 }
 
-/* MYR-equivalent for the approve dialog — the same conversion Daily Bank and
-   posting use: round(total_sen × exchange_rate). */
-const myrSen = (r: PaymentVoucherRow): number => {
-  const raw = Number(r.exchange_rate ?? 1);
-  const rate = Number.isFinite(raw) && raw > 0 ? raw : 1;
-  return Math.round(Number(r.total_sen ?? 0) * rate);
-};
+/* MYR-equivalent for the approve dialog and the Total — the same conversion Daily
+   Bank and posting use: round(total_sen × exchange_rate) (lib/pv-list-total.ts). */
+const myrSen = ringgitSenOfPv;
 
 /** The last three months, newest first: the month chips (the design). */
 const lastMonths = (today: string, n: number): string[] => {
@@ -409,6 +407,18 @@ export const PaymentVouchers = () => {
     }
   };
   const printSelected = (action: PdfAction) => printVouchers(rows.filter((r) => selected.has(r.id)), batchWithFiles, action);
+  /* The list itself on paper (owner 2026-11-09: 我filter 了，right click header print
+     不行？): the header's Export to PDF prints the rows showing, the listing paper the
+     Payment listing prints on, saying what the screen was cut to. */
+  const printList = async (view: TablePdfView<PaymentVoucherRow>) => {
+    try {
+      const { generatePvListPdf, pvListCutTo } = await import('../../vendor/scm/lib/pv-list-pdf');
+      const cutTo = pvListCutTo({ stage: CHIP_LABELS[statusChip] ?? statusChip, month: monthChip === 'all' ? '' : monthName(monthChip), search: searching ? q : '' });
+      await generatePvListPdf(view, { cutTo, action: 'preview' });
+    } catch (e) {
+      void notify({ title: 'The list was not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   const doCancelPv = async (r: PaymentVoucherRow) => {
     if (!(await askConfirm({ title: `Cancel ${r.pv_number}?`, body: 'It turns Cancelled; a posted journal is reversed with a contra entry. Nothing is deleted and the number stays.', confirmLabel: 'Cancel voucher', danger: true }))) return;
@@ -518,6 +528,12 @@ export const PaymentVouchers = () => {
       exportValue: (r) => Number(r.total_sen ?? 0) / 100,
       exportFormat: 'money',
       sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
+      /* The Total (owner 2026-11-09: 表格最下面的总数（Total）- payment voucher 可以加):
+         the ringgit of the rows showing, a cancelled voucher not counted. */
+      total: (shown) => {
+        const t = pvListTotal(shown);
+        return <span className={mo.money} title={pvListTotalNote(t) || undefined}>{fmtMoney(t.sen)}</span>;
+      },
     },
     {
       /* The four layers' marks ride as the tag, never inside the status enum
@@ -537,6 +553,11 @@ export const PaymentVouchers = () => {
       groupValue: (r) => queueLabel(r),
       exportValue: (r) => queueLabel(r),
       sortFn: (a, b) => a.status.localeCompare(b.status),
+      /* Beside the Total: what it left out, or converted. */
+      total: (shown) => {
+        const note = pvListTotalNote(pvListTotal(shown));
+        return note ? <span style={{ fontWeight: 400, color: 'var(--fg-muted)' }}>{note}</span> : null;
+      },
     },
     {
       /* The next step on the row (the design): the voucher's own door. */
@@ -759,6 +780,7 @@ export const PaymentVouchers = () => {
         columns={columns}
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
+        onExportPdf={(view) => void printList(view)}
         rowKey={(r) => r.id}
         selectable={{
           selectedKeys: selected,
