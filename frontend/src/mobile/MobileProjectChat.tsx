@@ -72,7 +72,7 @@ export function MobileProjectChat({
     onSuccess: () => {
       setDraft("");
       setFailed(null);
-      qc.invalidateQueries({ queryKey });
+      void qc.invalidateQueries({ queryKey });
       onPosted();
     },
     onError: (e) => {
