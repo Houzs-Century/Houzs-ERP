@@ -10,8 +10,7 @@
 
 /** Why a PATCH body's verification fields are refused, or null when they are fine. Absent and null pass. */
 export function verificationFieldsError(body: Record<string, unknown>): string | null {
-  const has = (k: string) => body[k] !== undefined && body[k] !== null;
-  for (const k of ["inspection_findings", "next_action", "pending_with"])
-    if (has(k) && typeof body[k] !== "string") return `${k} must be text`;
-  return null;
+  const textError = (k: string) =>
+    body[k] !== undefined && body[k] !== null && typeof body[k] !== "string" ? `${k} must be text` : null;
+  return textError("inspection_findings") ?? textError("next_action") ?? textError("pending_with");
 }
