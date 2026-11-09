@@ -76,7 +76,7 @@ describe('Payments not matched yet', () => {
   /* Owner 2026-11-09: sales person 应该不太对，应该是collected by 的人. */
   test('names who collected the payment; the order\'s salesperson waits under Columns', () => {
     draw();
-    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads).toContain('Collected by');
     expect(heads.some((h) => h.startsWith('Salesperson'))).toBe(false);
     const card = within(rowOf('2990-SO-2609-045'));
