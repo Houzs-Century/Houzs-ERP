@@ -284,7 +284,7 @@ export async function formaliseReceipt(
     if (plan.move) {
       const moved = await moveReceipts(sb, input.companyId, [item], input.accountCode);
       if (!moved.ok) return { ok: false, status: 'load_failed', reason: moved.reason };
-      const out = moved.results[0];
+      const out = moved.results.at(0);
       if (!out || out.status !== 'moved') {
         return { ok: false, status: 'journal_not_moved', reason: `${r.or_number}'s payment entry did not move to ${input.accountCode}: ${out?.reason ?? 'no result'}` };
       }
