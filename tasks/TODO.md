@@ -3,6 +3,9 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- HC-SO-2610-075: the JAGER-(Q) line gained HB + Divan Top Fully Cover after HC-PO-2610-142 was raised (Lucas, 2026-10-07 16:27); the bed was received without covers: warehouse checks before delivery, Hookka redoes or the customer is told — owner / warehouse — 2026-11-09
+- Owner rulings for the sister-ERP review: fiscal year, leave balances, lead pipeline, staff KPI; delivered-with-issue invoice hold and customer WhatsApp (issue #5459) — 2026-11-09
+- Houzs vs 2990 temporary differences: switch Houzs deposit invoices on, lift the migrated-AutoCount-order lock, confirm the Fair-required rule (relayed via Finance), remove the dormant 2990 mirror guards — 2026-11-09
 - Logistics cost, September: 332 DOs have no lorry picked (Penang 77, KL 255), so the month's own-lorry cost cannot be shared per lorry; pick the lorries in Delivery Planning, or decide to leave September as it is — owner said "later" — 2026-11-05
 - DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; Team, Mailboxes lists the addresses still waiting (P3) — 2026-10-09
 - HC-0125 Employees & Attendance: after phase 1 deploys, grant `hr.employees.manage` (or `hr.employees.read`) to Nico's role in Team > Roles & Permissions; until then only Owner / IT Admin (`*`) see HR > Employees & Attendance — 2026-10-21
@@ -36,6 +39,8 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
+- Sister-ERP backlog for the MacBook session: 7 features + 8 recommendations, one PR each (issue #5459) — 2026-11-09
+- Model merge: SIGTWG PINNACLE into SIG TWG PINNACLE (Modular merge); RELAX SLEEP LUXURT / LUXURTY into LUXURY after the PG SERVICE ledger -1 on DUNLOPILLO RELAX SLEEP LUXURTY MATT (K) is costed (retro-cost dry-run 42619497993: not auto-repairable, no open lot) — 2026-11-09
 - Sales Orders list: server-side funnels for the derived columns (PO No., DO No., stock status, payment method, line columns) are on branch `fix/so-list-col-filter` (fa28f14c0), NOT shipped: its first request makes about 740 database calls against the Worker limit of 1,000 — measure on staging and cut the reads before merging — 2026-10-18
 - Product request: after `scm.product_request_lines` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_request_lines.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration; it replaced the `product_requests.item_code` line of 2026-10-07) — 2026-10-15
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
