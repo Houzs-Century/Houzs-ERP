@@ -156,8 +156,7 @@ if (MODE === "basis-cost" && DOS.length === 0) {
 }
 if (ITEM_CODES.length > 0 && MODE !== "retro-cost" && MODE !== "reconstruct") { console.error(`ITEM_CODES limits retro-cost and reconstruct only; MODE=${MODE} would ignore it.`); process.exit(2); }
 
-const notice = (m) =>
-  console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const warn = (m) =>
   console.log(process.env.GITHUB_ACTIONS ? `::warning::${m}` : m);
 
