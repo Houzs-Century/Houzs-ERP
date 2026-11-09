@@ -528,12 +528,15 @@ export function customerPaymentLines(
     transitAccountCode?: string | null; // resolved acquirer transit, when mapped
     customerCode?: string | null;
     customerName?: string | null;
+    /** The bank Finance confirmed a transfer into (Conts #476); null = the
+        company's default bank. Ignored for every other method. */
+    bankAccountCode: string | null;
   },
   amountSen: number,
 ): RuleLine[] {
   const debitAccount =
     p.method === 'cash' ? roles.CASH
-    : p.method === 'transfer' ? roles.BANK_DEFAULT
+    : p.method === 'transfer' ? (p.bankAccountCode || roles.BANK_DEFAULT)
     : (p.transitAccountCode || roles.TRANSIT_EDC);
   return [
     {
