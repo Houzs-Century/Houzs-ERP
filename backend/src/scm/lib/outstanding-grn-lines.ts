@@ -28,7 +28,8 @@
 //   2. those notes' headers, in URL-sized batches — status and the hold marker
 //      re-checked on the row itself, company-scoped.
 //   3. their lines, in URL-sized batches, each batch paged — company-scoped.
-//   4. each line's OWN purchase order, through its purchase_order_item_id.
+//   4. each line's OWN purchase order, through its purchase_order_item_id
+//      (`loadPoByPoItem`, shared with the invoice scanner's PO anchor).
 //
 // THE PO IS PER LINE (staff, 2026-11-09: "convert GRN list all same PO
 // number"). One goods receipt can take lines from several POs (the add-PO
@@ -148,7 +149,7 @@ export async function loadOutstandingGrnLines(args: {
 
   const billable = lines.data.filter((r) => noteById.has(r.grn_id) && remainingToBill(r) > 0);
 
-  const linePo = await loadLinePos({ sb, scopeQuery, lines: billable });
+  const linePo = await loadPoByPoItem({ sb, scopeQuery, poItemIds: billable.map((r) => r.purchase_order_item_id) });
   if (linePo.error !== null) return { error: linePo.error };
 
   const items = billable
@@ -158,20 +159,23 @@ export async function loadOutstandingGrnLines(args: {
   return { error: null, items, truncated: ids.truncated };
 }
 
-type LinePo = { purchaseOrderId: string; poDocNo: string | null };
+export type LinePo = { purchaseOrderId: string; poDocNo: string | null };
 
 /* purchase_order_item_id -> its PO id and number, both reads company-scoped and
    batched like the lines. A failed read is an error, not "no PO": the picker
-   would otherwise fall back to the header PO this module exists not to trust. */
-async function loadLinePos(args: {
+   would otherwise fall back to the header PO this module exists not to trust.
+   Exported because a goods receipt's header names one PO while its lines can
+   come from several, and every reader that asks "which PO is this receipt
+   for" needs the same per-line answer (the invoice scanner's PO anchor too). */
+export async function loadPoByPoItem(args: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around
   sb: any;
   scopeQuery: <Q>(q: Q) => Q;
-  lines: LineRow[];
+  poItemIds: ReadonlyArray<string | null>;
 }): Promise<{ error: string } | { error: null; byPoItem: Map<string, LinePo> }> {
-  const { sb, scopeQuery, lines } = args;
+  const { sb, scopeQuery } = args;
   const byPoItem = new Map<string, LinePo>();
-  const poItemIds = [...new Set(lines.map((r) => r.purchase_order_item_id).filter((x): x is string => !!x))];
+  const poItemIds = [...new Set(args.poItemIds.filter((x): x is string => !!x))];
   if (poItemIds.length === 0) return { error: null, byPoItem };
 
   const poItems = await chunkIn<{ id: string; purchase_order_id: string | null }>(poItemIds, (batch, from, to) =>
