@@ -102,6 +102,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { withSoRefPoIds } from '../lib/so-ref-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
+import { loadSoLinesOrderedSincePlan, parsePlanAsOf } from '../lib/mrp-plan-freshness';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1443,6 +1444,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        part of that supply pool — NOT by per-line locking. The ordinary From-SO
        picker leaves this false → keeps its cap. */
     fromMrp?: boolean;
+    /* computedAt of the MRP plan the operator pressed Proceed on (fromMrp only).
+       Absent = no freshness check (older page, the procurement agent). */
+    planAsOf?: string | null;
     /* Land the created POs as DRAFT instead of SUBMITTED (owner 2026-07-17 —
        the Procurement Agent's Stage 1: propose, then approve).
 
@@ -1637,6 +1641,26 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       if ((!fromMrp || isBoundForCompany(activeCompanyId(c) ?? null, row)) && p.qty > remaining)
         return c.json({ error: 'qty_exceeds_remaining', soItemId: p.soItemId, requested: p.qty, remaining }, 409);
       pickedItems.push({ row, qty: p.qty, pickSupplierId: p.supplierId ?? null });
+    }
+    /* A stale MRP plan must not order the same lines twice: the page sends the
+       computedAt of the plan on screen, and a live PO line raised on any picked
+       SO line since then means the plan has not counted it (lib/mrp-plan-freshness.ts). */
+    const planAsOfMs = fromMrp ? parsePlanAsOf(body.planAsOf) : null;
+    const scopeCompanyId = activeCompanyId(c) ?? null;
+    if (planAsOfMs !== null && scopeCompanyId !== null) {
+      let since: string[];
+      try {
+        since = await loadSoLinesOrderedSincePlan(supabase, scopeCompanyId, ids, planAsOfMs);
+      } catch (e) {
+        return c.json({ error: 'mrp_plan_check_failed', reason: String((e as Error).message) }, 503);
+      }
+      if (since.length > 0) {
+        return c.json({
+          error: 'mrp_plan_stale',
+          reason: 'A PO was raised on some of these Sales Order lines after this MRP plan was calculated. Regenerate the plan and check what is still short.',
+          soItemIds: since,
+        }, 409);
+      }
     }
   } else {
     // Legacy soItems path — kept so old callers don't break.
@@ -2396,6 +2420,13 @@ mfgPurchaseOrders.post('/from-sos', async (c) => {
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
+  /* New POs move MRP supply: refresh the stored plan now, as cancel and reopen
+     do, so no page keeps showing the lines just ordered as short for up to 15 min. */
+  const createdCount = Number((out.body as { total?: unknown }).total ?? 0);
+  const coId = activeCompanyId(c) ?? null;
+  if (out.status === 201 && createdCount > 0 && coId !== null) {
+    deferMrpSnapshotRefresh(c, c.get('supabase'), coId, 'po-from-sos');
+  }
   return c.json(out.body, out.status as 201);
 });
 

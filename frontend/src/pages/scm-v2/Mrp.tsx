@@ -446,7 +446,10 @@ export const Mrp = () => {
        (warehouse, supplier); 'per-so' splits further by source SO doc so each
        SO gets its own PO. fromMrp tags every PO line as reference-only so it
        never locks the source SO line (infinite-convert). */
-    const body = { picks, mode: poMode, fromMrp: true, ...(expectedAt ? { expectedAt } : {}) };
+    /* planAsOf: the server refuses (mrp_plan_stale) when a PO was raised on these
+       SO lines after the plan on screen was calculated, so a stale plan cannot
+       order the same goods twice (backend lib/mrp-plan-freshness.ts). */
+    const body = { picks, mode: poMode, fromMrp: true, planAsOf: data?.computedAt ?? null, ...(expectedAt ? { expectedAt } : {}) };
     const runKey = runKeyRef.current ?? newIdempotencyKey();
     runKeyRef.current = runKey;
     createPos.mutate({ ...body, idempotencyKey: runKey }, {
@@ -465,7 +468,9 @@ export const Mrp = () => {
         // Refresh so coverage updates immediately; keep the result in an in-app
         // dialog (not a browser alert) per commander.
         setSelected(new Set());
-        void q.refetch();
+        /* The page reads a stored plan: recompute it, or the lines just ordered
+           stay short on screen and can be ordered again. */
+        regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
         setDialog({
           kind: 'created',
           title: `Successfully created ${res.total} PO${res.total === 1 ? '' : 's'}`,
@@ -477,7 +482,10 @@ export const Mrp = () => {
         let codes: string[] = [];
         let errCode = '';
         try {
-          const m = raw.match(/\{.*\}/);
+          /* authedFetch turns the body into a plain sentence for `message` and
+             keeps the raw JSON on `body`, so the code is read from there. */
+          const rawBody = (err as { body?: unknown }).body;
+          const m = (typeof rawBody === 'string' ? rawBody : raw).match(/\{.*\}/s);
           if (m) {
             const j = JSON.parse(m[0]);
             errCode = typeof j.error === 'string' ? j.error : '';
@@ -488,12 +496,12 @@ export const Mrp = () => {
         // another session/tab (server: qty_exceeds_remaining). Refresh so the
         // ordered line drops off, and tell the operator plainly instead of
         // showing the raw error (Commander 2026-05-29).
-        if (errCode === 'qty_exceeds_remaining') {
-          void q.refetch();
+        if (errCode === 'qty_exceeds_remaining' || errCode === 'mrp_plan_stale') {
+          regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
           setDialog({
             kind: 'info',
             title: 'Already ordered',
-            body: 'Some of these lines were already put on a PO. The list has been refreshed — review what still needs ordering and proceed again.',
+            body: 'Some of these lines were put on a PO after this plan was calculated. The plan has been recalculated. Review what still needs ordering and proceed again.',
           });
           return;
         }
