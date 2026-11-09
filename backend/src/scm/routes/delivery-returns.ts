@@ -1836,32 +1836,30 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
   if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
-  /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
-     window: two concurrent cancels can both read a non-cancelled status and both
-     fall through to reverse the return's stock (double-reverse). For the CANCELLED
-     transition we make the write conditional on the row still being non-cancelled
-     and treat "no row returned" as "someone else already cancelled" → idempotent
-     echo, NO second reversal. Postgres serialises the UPDATEs so exactly one wins
-     the row and fires the single reversal. */
-  let data: { id: string; status: string } | null;
-  if (toStatus === 'CANCELLED') {
-    const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
-      .update(ts).eq('id', id), co.companyId).neq('status', 'CANCELLED')
-      .select('id, status').maybeSingle();
-    if (isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
-    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    if (!updated) {
-      // Lost the race — another concurrent cancel already flipped it. Do NOT
-      // reverse again; echo the cancelled state.
+  /* COMPARE-AND-SET on the status we read. Every status write — cancel and the
+     RECEIVED / INSPECTED / REFUNDED stamps alike — carries `.eq('status',
+     prevStatus)`, so a write that lost a race matches zero rows instead of
+     overwriting the winner. The CANCELLED gate above is a read; without this a
+     REFUNDED landing just after a concurrent cancel turned CANCELLED back into
+     REFUNDED with the stock already drained (Hookka #1130 sister). Two cancels
+     racing: Postgres serialises the UPDATEs, one wins and fires the single
+     reversal, the loser re-reads CANCELLED and echoes without reversing. */
+  const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
+    .update(ts).eq('id', id), co.companyId).eq('status', prevStatus)
+    .select('id, status').maybeSingle();
+  if (toStatus === 'CANCELLED' && isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!updated) {
+    const { data: latest } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!latest) return c.json(NOT_THIS_COMPANY, 404);
+    const nowStatus = (latest as { status: string }).status;
+    if (toStatus === 'CANCELLED' && nowStatus === 'CANCELLED') {
       return c.json({ deliveryReturn: { id, status: 'CANCELLED' } });
     }
-    data = updated as { id: string; status: string };
-  } else {
-    const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
-      .update(ts).eq('id', id), co.companyId).select('id, status').single();
-    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    data = updated as { id: string; status: string };
+    const message = `This return was changed by someone else just now (it is now ${nowStatus}, it was ${prevStatus} when you started). Nothing was saved. Refresh and check before trying again.`;
+    return c.json({ error: 'status_changed', message, reason: message, currentStatus: nowStatus }, 409);
   }
+  const data = updated as { id: string; status: string };
 
   // Cancelling a DR → drain the inventory IN it wrote on create back out, via
   // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed
