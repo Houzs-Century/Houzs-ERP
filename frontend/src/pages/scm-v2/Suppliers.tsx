@@ -595,6 +595,8 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
     fax: '',
     whatsappNumber: '',
     email: '',
+    email2: '',
+    email3: '',
     website: '',
     address: '',
     address1: '',
@@ -693,6 +695,8 @@ const SupplierFields = ({
       <PhoneField label="WhatsApp" value={(form.whatsappNumber as string) ?? ''} onChange={(v) => onChange('whatsappNumber', v)} />
       <Field label="Fax" value={(form.fax as string) ?? ''} onChange={(v) => onChange('fax', v)} />
       <Field label="Email" value={(form.email as string) ?? ''} onChange={(v) => onChange('email', v)} />
+      <Field label="Email 2" value={(form.email2 as string | undefined) ?? ''} onChange={(v) => onChange('email2', v)} />
+      <Field label="Email 3" value={(form.email3 as string | undefined) ?? ''} onChange={(v) => onChange('email3', v)} />
       <Field label="Website" value={(form.website as string) ?? ''} onChange={(v) => onChange('website', v)} />
     </div>
     <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Commercial</p>

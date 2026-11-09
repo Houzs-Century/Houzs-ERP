@@ -179,7 +179,9 @@ function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
     currency: r.currency ?? 'MYR',
     totalSen: total,
     paidSen: paid,
-    outstandingSen: Math.max(0, total - paid),
+    /* A cancelled bill owes nothing: its posting was reversed, so its face
+       amount must not show (or export, or add up) as money owed to the supplier. */
+    outstandingSen: String(r.status ?? '').toUpperCase() === 'CANCELLED' ? 0 : Math.max(0, total - paid),
     status: String(r.status ?? ''),
     /* Trade creditors (AP, 400) or Other creditors (AP_OTHER, 405) — by the supplier's code. */
     controlRole,

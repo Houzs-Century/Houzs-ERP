@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
+import { uploadFieldPhoto } from "../vendor/scm/lib/slip";
+import { useFieldPhotos } from "../lib/fieldPhotos";
+import { FieldPhotos } from "../components/FieldPhotos";
 import {
   deliveryIssueDraftError, invalidateDeliveryIssues, reportJobDeliveryIssue, useRunDeliveryIssues,
   type DeliveryIssueDraft,
@@ -31,7 +33,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const q = useQuery({ queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -44,6 +45,8 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const progress = q.data?.progress ?? null;
   const ctx = q.data?.context;
   const done = !!progress?.completed_at;
+  // The backend takes at most 10 photos when a job is completed (delivery-job-progress.ts MAX_PHOTOS).
+  const photos = useFieldPhotos({ stampLabel: str(ctx?.ref) ?? (LEG_LABEL[jobRef.leg] ?? jobRef.leg), max: 10, upload: (file) => uploadFieldPhoto({ file }) });
 
   const refresh = async () => {
     await Promise.all([
@@ -75,20 +78,20 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   };
 
   const complete = async () => {
-    if (!photos.length) { setError("Take at least one POD photo first."); return; }
+    // Photos upload as they are taken; Complete sends only the uploaded ones.
+    const gate = photos.gate("Take at least one POD photo first.");
+    if (!gate.ok) { setError(gate.reason); return; }
     const issueError = issueOn ? deliveryIssueDraftError(issueDraft) : null;
     if (issueError) { setError(issueError); return; }
     setError(null); setBusy(true);
     try {
-      const keys: string[] = [];
-      for (const f of photos) keys.push((await uploadSlipFull({ file: f })).r2Key);
       await authedFetch(`${base}/complete`, {
         method: "POST",
-        body: JSON.stringify({ photoKeys: keys, notes, ...(gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM, locatedAt: gps.atIso } : {}) }),
+        body: JSON.stringify({ photoKeys: gate.keys, notes, ...(gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM, locatedAt: gps.atIso } : {}) }),
       });
       await refresh();
     } catch (e) {
-      setError((e as Error).message || "Could not complete the job. Nothing was saved; try again.");
+      setError((e as Error).message || "Could not complete the job. Your photos are uploaded; try Complete again.");
       setBusy(false);
       return;
     }
@@ -182,10 +185,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
 
             {step === "arrived" && (
               <div className="card" style={{ padding: 12 }}>
-                <div className="fld-l" style={{ marginBottom: 6 }}>POD photos (at least one)</div>
-                <input type="file" accept={ALLOWED_SLIP_MIMES.filter((m) => m.startsWith("image/")).join(",")} capture="environment" multiple
-                  onChange={(e) => setPhotos((prev) => [...prev, ...Array.from(e.target.files ?? [])].slice(0, 10))} />
-                {photos.length > 0 && <div style={{ fontSize: 12, marginTop: 6 }}>{photos.length} photo{photos.length === 1 ? "" : "s"} ready</div>}
+                <FieldPhotos api={photos} disabled={busy} title="POD photos (at least one)" />
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" rows={2}
                   style={{ width: "100%", marginTop: 10, fontFamily: "inherit", fontSize: 12.5, borderRadius: 8, padding: 8, border: "1px solid var(--line)" }} />
                 <button type="button" className="btn-ghost" onClick={captureGps} disabled={capturing} style={{ marginTop: 8 }}>
@@ -218,7 +218,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
       <footer className="actbar">
         {ctx && step === "sched" && <button type="button" className="btn" disabled={busy} onClick={() => post("depart")}>Start — I'm on the way</button>}
         {ctx && step === "otw" && <button type="button" className="btn" disabled={busy} onClick={() => post("arrive")}>Mark arrived</button>}
-        {ctx && step === "arrived" && <button type="button" className="btn" disabled={busy} onClick={complete}>{busy ? "Uploading…" : issueOn ? "Complete with issue →" : "Complete job →"}</button>}
+        {ctx && step === "arrived" && <button type="button" className="btn" disabled={busy} onClick={complete}>{busy ? "Completing…" : issueOn ? "Complete with issue →" : "Complete job →"}</button>}
         {ctx && done && <div style={{ textAlign: "center", fontSize: 12, color: "var(--green)", fontWeight: 700, padding: 6 }}>This job is completed.</div>}
         {!ctx && <button type="button" className="btn-ghost" onClick={onBack}>Back</button>}
       </footer>

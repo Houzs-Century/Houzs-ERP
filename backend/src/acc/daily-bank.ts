@@ -127,6 +127,8 @@ export type PendingVoucherRow = {
   pv_number?: string | null;
   payee_name?: string | null;
   notes?: string | null;
+  /** What it pays for, as the bills say it (payment-vouchers-describe.ts), when the route read it. */
+  description_text?: string | null;
   purpose?: string | null;
   credit_account_code?: string | null;
   voucher_date?: string | null;
@@ -139,8 +141,12 @@ const myrSen = (v: PendingVoucherRow): number => {
   return Math.round(Number(v.total_sen) * rate);
 };
 
-/** What a pending line says: the voucher's own note, else its purpose in words. */
+/** What a pending line says: what the voucher pays for, as the PV list's Description says
+    it (owner 2026-11-09: 只显示单上的费用, never the bill number); else its own remark,
+    else its purpose in words. */
 const pendingDescription = (v: PendingVoucherRow): string => {
+  const described = String(v.description_text ?? '').replace(/\s+/g, ' ').trim();
+  if (described) return described;
   const note = String(v.notes ?? '').replace(/\s+/g, ' ').trim();
   if (note) return note;
   const purpose = String(v.purpose ?? '').trim();

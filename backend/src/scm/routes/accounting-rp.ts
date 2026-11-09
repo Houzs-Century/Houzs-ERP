@@ -59,6 +59,7 @@ import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type Ca
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
 import { loadAutoCountReceipts, type AutoCountReceipt } from '../../acc/autocount-receipts';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
+import { partyNameKey } from '../../acc/typed-text';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
@@ -537,7 +538,8 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         /* The party keys on its CODE where the line carries one (owner 2026-09-08:
            one customer, one code — two customers can share a name), the name
            still being what the row reads. */
-        const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? l.party_name ?? '—'}` : l.account_code;
+        /* A name keys the row case-blind: Finance's words are upper case from 2026-11-09, older lines are not. */
+        const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? partyNameKey(l.party_name) ?? '—'}` : l.account_code;
         const name = byParty && onControl ? `${l.party_name ?? '(no party)'} · ${l.account_name ?? l.account_code}` : String(l.account_name ?? l.account_code);
         const lineMeta = { ...meta, party: l.party_name ?? null };
         if (!byParty && l.account_code === roles.AR) {

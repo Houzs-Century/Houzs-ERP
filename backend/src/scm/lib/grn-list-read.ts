@@ -28,7 +28,7 @@ export const GRN_HEADER_COLS =
    list "Purchase Location" column). Supplier CONTACT fields ride the embed for
    the quick-view drawer. */
 export const GRN_LIST_SELECT =
-  `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name), ` +
+  `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name), ` +
   /* The AutoCount GR number's two homes (lib/grn-export-rows.ts grnAcDocNo). */
   'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 
@@ -86,8 +86,8 @@ export function grnListSelect(f: GrnListFilters): string {
     (f.creditorNames !== null && f.creditorNames.length > 0) ||
     (f.creditorCodes !== null && f.creditorCodes.length > 0);
   const supplierEmbed = creditorFilter
-    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, address)'
-    : 'supplier:suppliers(id, code, name, contact_person, phone, email, address)';
+    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, email2, email3, address)'
+    : 'supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address)';
   return `${GRN_HEADER_COLS}, ${supplierEmbed}, purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name), ` +
     'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 }

@@ -46,6 +46,7 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
+import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -258,7 +259,7 @@ export function PurchaseConsignmentOrderDrawer({
           <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
             <DrawerKV k="Contact" v={row.supplier?.contact_person || '—'} />
             <DrawerKV k="Phone" v={row.supplier?.phone || '—'} />
-            <DrawerKV k="Email" v={row.supplier?.email || '—'} />
+            <DrawerKV k="Email" v={supplierEmailList(row.supplier).join(', ') || '—'} />
             <DrawerKV k="Address" v={row.supplier?.address || '—'} />
             {row.notes ? <DrawerKV k="Notes" v={row.notes} /> : null}
           </DrawerPartyCard>
