@@ -11,7 +11,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, warehousePrintName, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 /* The status WORD comes from the one home for it, never from a caser here:
@@ -24,6 +24,8 @@ type GrnHeader = {
   received_at: string; delivery_note_ref: string | null;
   notes: string | null; posted_at: string | null;
   supplier_id?: string | null;
+  warehouse_name?: string | null;
+  warehouse_code?: string | null;
   supplier?: { code: string; name: string };
   purchase_order?: { id: string; po_number: string };
 };
@@ -102,6 +104,7 @@ export async function renderGrnInto(
       rows: [
         [opts?.docNoLabel ?? 'GRN No', header.grn_number],
         ['Received', fmtDocDate(header.received_at)],
+        ['Warehouse', warehousePrintName(header)],
         ['DN Ref', header.delivery_note_ref],
         ['PO Ref', header.purchase_order?.po_number],
         ['Posted', header.posted_at ? fmtDocDate(header.posted_at) : null],

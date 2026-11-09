@@ -345,18 +345,21 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
   // Durable: enqueue first (so a failed send is never silently lost), then try
   // to deliver immediately. On failure the row stays 'pending' for the */5 cron
   // drain (drainEmailOutbox) to retry. email_log remains the per-attempt audit.
+  // The row is written CLAIMED (claimed_at): the drain leaves it alone while
+  // this request is still talking to Resend, so a cron tick mid-send cannot
+  // deliver a second copy. Every outcome below releases the claim.
   const id = crypto.randomUUID();
   let enqueued = false;
   try {
     await env.DB.prepare(
       `INSERT INTO email_outbox
-         (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, status, attempts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
+         (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, status, attempts, claimed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?)`,
     )
       /* Stored as the joined lists so a cron retry sends to exactly the same
          people the immediate attempt did — a retry that quietly dropped the Cc
          would be worse than the failure it is recovering from. */
-      .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null, opts.from ?? null, opts.headers ? JSON.stringify(opts.headers) : null)
+      .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null, opts.from ?? null, opts.headers ? JSON.stringify(opts.headers) : null, new Date().toISOString())
       .run();
     enqueued = true;
   } catch (e) {
@@ -379,26 +382,26 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
   let retrying = false;
   try {
     if (result.status === "sent") {
-      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), provider_id=? WHERE id=?`).bind(result.providerId ?? null, id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), provider_id=?, claimed_at=NULL WHERE id=?`).bind(result.providerId ?? null, id).run();
     } else if (opts.outboxRetry === false) {
       // The caller tells the operator "not sent" and they send again by hand, so
       // a retry would be a second copy (see SendOptions.outboxRetry). The row and
       // the reason stay for the ops trace — this suppresses the RETRY only.
-      await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=? WHERE id=?`)
+      await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=?, claimed_at=NULL WHERE id=?`)
         .bind(`${result.reason ?? "send failed"} [not retried: the caller reports the failure instead]`, id)
         .run();
     } else if (opts.attachments?.length) {
       const stashed = await stashOutboxAttachments(env, id, opts.attachments);
       if (stashed) {
-        await env.DB.prepare(`UPDATE email_outbox SET attachments=?, last_error=? WHERE id=?`).bind(stashed, result.reason ?? null, id).run();
+        await env.DB.prepare(`UPDATE email_outbox SET attachments=?, last_error=?, claimed_at=NULL WHERE id=?`).bind(stashed, result.reason ?? null, id).run();
         retrying = enqueued;
       } else {
-        await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=? WHERE id=?`)
+        await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=?, claimed_at=NULL WHERE id=?`)
           .bind(`${result.reason ?? "send failed"} [not retried: attachments could not be stored for the retry]`, id)
           .run();
       }
     } else {
-      await env.DB.prepare(`UPDATE email_outbox SET last_error=? WHERE id=?`).bind(result.reason ?? null, id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET last_error=?, claimed_at=NULL WHERE id=?`).bind(result.reason ?? null, id).run();
       retrying = enqueued;
     }
   } catch {
@@ -460,19 +463,41 @@ function parseHeaders(json: string | null): Record<string, string> | null {
   }
 }
 
+/** How long a sender holds an outbox row (email_outbox.claimed_at). A claim
+ *  older than this is treated as abandoned (a Worker killed mid-send) and the
+ *  row may be taken again. Longer than any Resend call and than the 5-minute
+ *  cron period, so a slow but live send is never taken over. */
+export const EMAIL_CLAIM_LEASE_MS = 10 * 60_000;
+
+/** Take one pending row for sending: a compare-and-set that only one caller
+ *  can win, so two drains running at once never send the same row twice.
+ *  Returns the row's attempts as it stands at the claim (null = not ours): the
+ *  drain's earlier SELECT can be stale if another drain already tried the row. */
+export async function claimOutboxRow(env: Env, id: string, nowMs: number): Promise<{ attempts: number } | null> {
+  const row = await env.DB.prepare(
+    `UPDATE email_outbox SET claimed_at=? WHERE id=? AND status='pending' AND (claimed_at IS NULL OR claimed_at < ?) RETURNING attempts`,
+  )
+    .bind(new Date(nowMs).toISOString(), id, new Date(nowMs - EMAIL_CLAIM_LEASE_MS).toISOString())
+    .first<{ attempts: number | null }>();
+  return row ? { attempts: Number(row.attempts ?? 0) } : null;
+}
+
 // Cron drain (called from the every-5-min scheduled handler): retry pending
 // outbox rows — the immediate-send failures. Up to 3 attempts total, then
 // 'failed'. No-op when RESEND_API_KEY is unset. Each attempt mirrors to email_log.
+// A row someone is still sending (claimed_at inside the lease) is skipped, and
+// each row is claimed before it is sent.
 export async function drainEmailOutbox(
   env: Env,
   limit = 25,
 ): Promise<{ processed: number; sent: number; failed: number }> {
   if (!env.RESEND_API_KEY) return { processed: 0, sent: 0, failed: 0 };
+  const nowMs = Date.now();
   const rows = await env.DB.prepare(
     `SELECT id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, attachments, attempts
-       FROM email_outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?`,
+       FROM email_outbox WHERE status = 'pending' AND (claimed_at IS NULL OR claimed_at < ?) ORDER BY created_at LIMIT ?`,
   )
-    .bind(limit)
+    .bind(new Date(nowMs - EMAIL_CLAIM_LEASE_MS).toISOString(), limit)
     .all<{
       id: string;
       to_address: string;
@@ -497,13 +522,17 @@ export async function drainEmailOutbox(
   let sent = 0;
   let failed = 0;
   const list = rows.results ?? [];
+  let processed = 0;
   for (const r of list) {
+    const claim = await claimOutboxRow(env, r.id, nowMs);
+    if (!claim) continue;
+    processed++;
     // Respect the LIVE channel toggle at retry time: an admin may have turned
     // the channel (or master switch) OFF after this row was enqueued. Don't
     // deliver it then — mark it terminal so the drain stops re-trying.
     if (!(await isChannelEnabled(env, r.purpose))) {
       await env.DB.prepare(
-        `UPDATE email_outbox SET status='failed', last_error='channel disabled at drain' WHERE id=?`,
+        `UPDATE email_outbox SET status='failed', last_error='channel disabled at drain', claimed_at=NULL WHERE id=?`,
       )
         .bind(r.id)
         .run();
@@ -524,7 +553,7 @@ export async function drainEmailOutbox(
     const attachments = r.attachments ? await loadOutboxAttachments(env, r.attachments) : null;
     if (r.attachments && !attachments) {
       await env.DB.prepare(
-        `UPDATE email_outbox SET status='failed', last_error='attachment missing at drain' WHERE id=?`,
+        `UPDATE email_outbox SET status='failed', last_error='attachment missing at drain', claimed_at=NULL WHERE id=?`,
       )
         .bind(r.id)
         .run();
@@ -544,13 +573,13 @@ export async function drainEmailOutbox(
       attachments,
       companyCode: r.company_code,
     });
-    const attempts = (r.attempts ?? 0) + 1;
+    const attempts = claim.attempts + 1;
     if (result.status === "sent") {
-      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), attempts=?, provider_id=? WHERE id=?`).bind(attempts, result.providerId ?? null, r.id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), attempts=?, provider_id=?, claimed_at=NULL WHERE id=?`).bind(attempts, result.providerId ?? null, r.id).run();
       sent++;
     } else {
       const status = attempts >= 3 ? "failed" : "pending";
-      await env.DB.prepare(`UPDATE email_outbox SET status=?, attempts=?, last_error=? WHERE id=?`).bind(status, attempts, result.reason ?? null, r.id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET status=?, attempts=?, last_error=?, claimed_at=NULL WHERE id=?`).bind(status, attempts, result.reason ?? null, r.id).run();
       if (status === "failed") failed++;
     }
     await logEmail(
@@ -566,7 +595,7 @@ export async function drainEmailOutbox(
       result,
     );
   }
-  return { processed: list.length, sent, failed };
+  return { processed, sent, failed };
 }
 
 // ── Convenience: build a public URL for email links ──────────

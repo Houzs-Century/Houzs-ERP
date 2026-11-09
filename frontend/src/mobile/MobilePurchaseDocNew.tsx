@@ -24,19 +24,21 @@
  *     line can be SAVED AS A DRAFT and completed on desktop; CONFIRM is refused
  *     with the desktop's own message, from the shared rule.
  *   - no supplier price auto-fill (desktop prices a PO from the supplier's price
- *     table). The buyer types the unit price.
+ *     table). The buyer types the unit price. Picking a SKU before a supplier
+ *     does fill the supplier (its only or main one), as desktop does.
  *   - MYR only (desktop offers foreign currency + exchange rate + landed-cost
  *     allocation on GRN / PI).
  *   - no per-line delivery date, warehouse override, discount or rack.
  * ------------------------------------------------------------------------- */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateMobileLists } from "./sharedInvalidate";
 import { lineIdentity } from "@2990s/shared";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { useWarehouses } from "../vendor/scm/lib/inventory-queries";
-import { useSuppliers, useCreatePurchaseOrder } from "../vendor/scm/lib/suppliers-queries";
+import { useSuppliers, useCreatePurchaseOrder, useSuppliersForMaterial } from "../vendor/scm/lib/suppliers-queries";
+import { defaultSupplierBinding } from "../vendor/scm/lib/default-supplier-binding";
 import { useCreateGrn, usePostGrn } from "../vendor/scm/lib/grn-queries";
 import { useCreatePurchaseInvoice, usePostPurchaseInvoice } from "../vendor/scm/lib/purchase-invoice-queries";
 import { zeroCostRefusalFrom, zeroCostRefusalText } from "../vendor/scm/lib/zero-cost-refusal";
@@ -199,7 +201,22 @@ export function MobilePurchaseDocNew({
          buyer's keystrokes). */
       { key: newKey(), itemCode: sku.itemCode, name: sku.name, itemGroup: sku.itemGroup, qty: 1, unitPriceSen: null, remark: "" },
     ]);
+    if (kind === "po" && !header.supplierId) setMainSupplierFor(sku.itemCode);
   };
+
+  /* Same rule as desktop PurchaseOrderNew's item-first pick. The setter
+     re-checks the header: a supplier the buyer picked while the lookup was in
+     flight wins. A failed lookup leaves the supplier for the buyer to pick. */
+  const [mainSupplierFor, setMainSupplierFor] = useState<string | null>(null);
+  const itemSuppliersQ = useSuppliersForMaterial(mainSupplierFor ? "mfg_product" : null, mainSupplierFor);
+  useEffect(() => {
+    if (!mainSupplierFor || itemSuppliersQ.isLoading) return;
+    const b = defaultSupplierBinding(itemSuppliersQ.data?.bindings ?? []);
+    if (b && (suppliersQ.data ?? []).some((s) => s.id === b.supplier.id)) {
+      setHeader((h) => (h.supplierId ? h : { ...h, supplierId: b.supplier.id }));
+    }
+    setMainSupplierFor(null);
+  }, [mainSupplierFor, itemSuppliersQ.isLoading, itemSuppliersQ.data, suppliersQ.data]);
 
   const finish = async (created: Created, asDraft: boolean) => {
     /* The vendored hooks refresh the desktop's canonical keys; the phone list
