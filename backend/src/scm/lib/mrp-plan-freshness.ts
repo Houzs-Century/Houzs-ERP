@@ -13,6 +13,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this SCM tree passes around (see companyScope.ts header). */
 import { chunkIn } from './paginate-all';
+import { deferMrpSnapshotRefresh } from './mrp-snapshot';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 
 /* Same set as routes/mrp.ts PO_DEAD: a cancelled or draft PO is not supply in
    the plan, so a newer one does not make the plan stale. */
@@ -67,4 +69,52 @@ export async function loadSoLinesOrderedSincePlan(
      direction that lets the duplicate order through. */
   if (error) throw new Error(`mrp_plan_freshness_read_failed: ${error.message}`);
   return soLinesOrderedSincePlan(data, planAsOfMs);
+}
+
+export type PlanRefusal = { body: Record<string, unknown>; status: 409 | 503 };
+
+/** The convert's refusal when the plan the operator is looking at is stale, else
+ *  null. `planAsOfRaw` null (not an MRP convert, or no timestamp sent) skips the
+ *  check. Runs before any write, which settleFromSosForMrp relies on. */
+export async function mrpPlanStaleRefusal(
+  sb: any,
+  companyId: number | null,
+  soItemIds: readonly string[],
+  planAsOfRaw: unknown,
+): Promise<PlanRefusal | null> {
+  const planAsOfMs = parsePlanAsOf(planAsOfRaw);
+  if (planAsOfMs === null || companyId === null) return null;
+  let since: string[];
+  try {
+    since = await loadSoLinesOrderedSincePlan(sb, companyId, soItemIds, planAsOfMs);
+  } catch (e) {
+    return { body: { error: 'mrp_plan_check_failed', reason: String((e as Error).message) }, status: 503 };
+  }
+  if (since.length === 0) return null;
+  return {
+    body: {
+      error: 'mrp_plan_stale',
+      reason: 'A PO was raised on some of these Sales Order lines after this MRP plan was calculated. Regenerate the plan and check what is still short.',
+      soItemIds: since,
+    },
+    status: 409,
+  };
+}
+
+/** POST /from-sos after the core has answered. New POs move MRP supply, so the
+ *  stored plan is refreshed now, as cancel and reopen do. A plan refusal wrote
+ *  nothing, so its idempotency claim is released: the page keeps its key on an
+ *  error, and the stored 409 would otherwise refuse the next Proceed on the
+ *  recalculated plan as a reused key. */
+export function settleFromSosForMrp(
+  c: any,
+  companyId: number | null,
+  out: { status: number; body: Record<string, unknown> },
+): void {
+  if (out.status === 201 && Number(out.body.total ?? 0) > 0 && companyId !== null) {
+    deferMrpSnapshotRefresh(c, c.get('supabase'), companyId, 'po-from-sos');
+  }
+  if (out.body.error === 'mrp_plan_stale' || out.body.error === 'mrp_plan_check_failed') {
+    markIdempotencyNoWrite(c);
+  }
 }

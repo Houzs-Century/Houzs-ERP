@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   loadSoLinesOrderedSincePlan,
+  settleFromSosForMrp,
   parsePlanAsOf,
   soLinesOrderedSincePlan,
   type PoLineSince,
@@ -71,15 +72,29 @@ describe('loadSoLinesOrderedSincePlan', () => {
 
 describe('POST /from-sos wiring', () => {
   const src = readFileSync(new URL('../src/scm/routes/mfg-purchase-orders.ts', import.meta.url), 'utf8');
-  it('refuses a stale MRP plan and refreshes the stored plan after creating POs', () => {
-    expect(src).toMatch(/loadSoLinesOrderedSincePlan\(supabase, scopeCompanyId, ids, planAsOfMs\)/);
-    expect(src).toContain("error: 'mrp_plan_stale'");
-    expect(src).toContain("deferMrpSnapshotRefresh(c, c.get('supabase'), coId, 'po-from-sos')");
-  });
-
-  it('releases the idempotency claim on a stale-plan refusal, so Proceed on the recalculated plan is not refused as a reused key', () => {
+  it('the convert core asks for the stale-plan refusal, and the route settles the outcome', () => {
+    expect(src).toContain('mrpPlanStaleRefusal(supabase, activeCompanyId(c) ?? null, ids, fromMrp ? body.planAsOf : null)');
     const route = src.slice(src.indexOf("mfgPurchaseOrders.post('/from-sos'"));
-    const handler = route.slice(0, route.indexOf('\n});') + 4);
-    expect(handler).toMatch(/out\.body\.error === 'mrp_plan_stale'[\s\S]*markIdempotencyNoWrite\(c\)/);
+    expect(route.slice(0, route.indexOf('\n});'))).toContain('settleFromSosForMrp(c, activeCompanyId(c) ?? null, out)');
+  });
+});
+
+describe('settleFromSosForMrp', () => {
+  const ctx = () => {
+    const headers: Record<string, string> = {};
+    return { headers, c: { header: (k: string, v: string) => { headers[k] = v; }, get: () => ({}), env: {} } };
+  };
+  it('releases the idempotency claim on a plan refusal, never on a created PO', () => {
+    for (const error of ['mrp_plan_stale', 'mrp_plan_check_failed']) {
+      const t = ctx();
+      settleFromSosForMrp(t.c, 1, { status: 409, body: { error } });
+      expect(Object.values(t.headers)).toHaveLength(1);
+    }
+    const ok = ctx();
+    settleFromSosForMrp(ok.c, 99, { status: 201, body: { total: 1 } });
+    expect(ok.headers).toEqual({});
+    const other = ctx();
+    settleFromSosForMrp(other.c, 1, { status: 409, body: { error: 'qty_exceeds_remaining' } });
+    expect(other.headers).toEqual({});
   });
 });
