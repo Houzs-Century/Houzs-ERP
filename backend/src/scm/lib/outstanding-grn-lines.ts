@@ -149,7 +149,7 @@ export async function loadOutstandingGrnLines(args: {
   const billable = lines.data.filter((r) => noteById.has(r.grn_id) && remainingToBill(r) > 0);
 
   const linePo = await loadLinePos({ sb, scopeQuery, lines: billable });
-  if (linePo.error) return { error: linePo.error };
+  if (linePo.error !== null) return { error: linePo.error };
 
   const items = billable
     .sort((a, b) => compareForPicker(noteById.get(a.grn_id)!, a, noteById.get(b.grn_id)!, b))
