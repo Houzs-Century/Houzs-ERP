@@ -68,6 +68,7 @@ import { Panel, PanelSection, FieldRow } from "../components/Panel";
 import { CaseAccessSection } from "../components/CaseAccessSection";
 import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
+import { CaseTimeline } from "../components/assr/CaseTimeline";
 import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
@@ -3296,15 +3297,6 @@ function DetailContent({
   // fields, incl. the SO-No mirror re-match.
   const [custEditing, setCustEditing] = useState(false);
   const [noteCategory, setNoteCategory] = useState<AssrNoteAudience>("service");
-  // Activity timeline filter. 'all' = show everything; the others
-  // narrow to one stored category (four buckets + system since mig
-  // 0108): service / customer / supplier / sales cover authored notes
-  // and portal activity; auto-emitted events (stage_change,
-  // assignment, escalation, …) live under 'system'. Channel inference
-  // only backstops legacy rows that predate the category backfill.
-  const [activityFilter, setActivityFilter] = useState<
-    "all" | "service" | "customer" | "supplier" | "sales" | "system"
-  >("all");
   const [transitioning, setTransitioning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
@@ -4539,6 +4531,83 @@ function DetailContent({
 
           </div>
 
+          <CaseTimeline
+            activity={activity}
+            salesAgent={c.sales_agent || null}
+            userNames={new Map(userOptions.map((option) => [String(option.id), option.name]))}
+            canEdit={!c.archived_at}
+            onAddUpdate={() => setNoteFormOpen((isOpen) => !isOpen)}
+            onArchive={async (activityId) => {
+              if (!(await dialog.confirm("Archive this entry?"))) return;
+              try {
+                await api.post(`/api/assr/activity/${activityId}/archive`);
+                toast.success("Archived");
+                detail.reload();
+              } catch (e: any) {
+                toast.error(e?.message || "Something went wrong. Please try again.");
+              }
+            }}
+            composer={
+              noteFormOpen && !c.archived_at && (
+                <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
+                  <div className="mb-2 flex items-center gap-2">
+                    <select
+                      value={noteCategory}
+                      onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
+                      className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
+                      title="Where this note is visible"
+                    >
+                      {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
+                          two lists had already drifted on the one label that
+                          matters: this side promised "Customer-visible", the phone
+                          said only "Customer". */}
+                      {ASSR_NOTE_AUDIENCES.map((a) => (
+                        <option key={a.value} value={a.value}>{a.label}</option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-ink-muted">
+                      {assrNoteIsCustomerVisible(noteCategory)
+                        ? "The customer will see this note on the portal."
+                        : "Internal only — hidden from the customer."}
+                    </span>
+                  </div>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
+                    }}
+                    placeholder={
+                      assrNoteIsCustomerVisible(noteCategory)
+                        ? "Write a note for the customer…"
+                        : "Internal note…"
+                    }
+                    rows={2}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
+                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setNote("");
+                        setNoteFormOpen(false);
+                      }}
+                      className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={addNote}
+                      disabled={!note.trim() || isPostingNote}
+                      className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
+                    >
+                      {isPostingNote ? "Posting…" : "Post note"}
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+          />
+
             </DetailMain>
 
             <DetailAside>
@@ -4851,415 +4920,6 @@ function DetailContent({
               </div>
             );
           })()}
-
-          {/* Timeline — chronological log of stage changes, notes,
-              customer comments, escalations, etc. Add-note form is
-              behind the header button so the timeline reads cleanly. */}
-          <section className="mb-3 rounded-lg border border-border bg-surface px-4 py-3.5 shadow-stone">
-            <div className="mb-3 flex items-center gap-2">
-              <Clock size={13} className="shrink-0 text-ink-muted" />
-              <h3 className="flex-1 text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-                Timeline
-              </h3>
-              {!c.archived_at && (
-                <button
-                  onClick={() => setNoteFormOpen((x) => !x)}
-                  className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm hover:bg-accent/90"
-                >
-                  <Plus size={11} /> Add Note
-                </button>
-              )}
-            </div>
-
-            {/* Add-note form — toggled by the header button. Stays
-                compact so it doesn't push the timeline below the fold. */}
-            {noteFormOpen && !c.archived_at && (
-              <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
-                <div className="mb-2 flex items-center gap-2">
-                  <select
-                    value={noteCategory}
-                    onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
-                    className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
-                    title="Where this note is visible"
-                  >
-                    {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
-                        two lists had already drifted on the one label that
-                        matters: this side promised "Customer-visible", the phone
-                        said only "Customer". */}
-                    {ASSR_NOTE_AUDIENCES.map((a) => (
-                      <option key={a.value} value={a.value}>{a.label}</option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-ink-muted">
-                    {assrNoteIsCustomerVisible(noteCategory)
-                      ? "The customer will see this note on the portal."
-                      : "Internal only — hidden from the customer."}
-                  </span>
-                </div>
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
-                  }}
-                  placeholder={
-                    assrNoteIsCustomerVisible(noteCategory)
-                      ? "Write a note for the customer…"
-                      : "Internal note…"
-                  }
-                  rows={2}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
-                />
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setNote("");
-                      setNoteFormOpen(false);
-                    }}
-                    className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={addNote}
-                    disabled={!note.trim() || isPostingNote}
-                    className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
-                  >
-                    {isPostingNote ? "Posting…" : "Post note"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Filter tabs — Design PR 2. Roles reflect who authored the
-                activity (Service = internal, Customer = via customer
-                portal, Supplier = via supplier portal, Sales = via the
-                sales portal link). */}
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {(
-                [
-                  { value: "all" as const, label: "All" },
-                  { value: "system" as const, label: "System" },
-                  { value: "service" as const, label: "Service" },
-                  { value: "customer" as const, label: "Customer" },
-                  { value: "supplier" as const, label: "Supplier" },
-                  { value: "sales" as const, label: "Sales" },
-                ]
-              ).map((opt) => {
-                const active = activityFilter === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    onClick={() => setActivityFilter(opt.value)}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
-                      active
-                        ? "bg-primary text-white"
-                        : "border border-border bg-bg text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Timeline list. A vertical guide runs down the left edge;
-                each row anchors to a small ring marker so the eye can
-                trace the case's history at a glance. */}
-            {(() => {
-              // Design PR 2 — derive an actor role from source_channel /
-              // action so the filter tabs and the per-entry pill agree.
-              const roleOf = (a: any): "customer" | "supplier" | "service" | "sales" | "system" => {
-                // The stored category is authoritative (four buckets +
-                // system since mig 0108); the channel inference below
-                // only backstops legacy rows without one.
-                const cat = String(a.category || "").toLowerCase();
-                if (cat === "purchasing") return "service";
-                if (
-                  cat === "service" ||
-                  cat === "customer" ||
-                  cat === "supplier" ||
-                  cat === "sales" ||
-                  cat === "system"
-                ) {
-                  return cat;
-                }
-                const ch = a.source_channel;
-                if (a.source === "sales" || a.action === "sales_comment" || a.action === "sales_upload") return "sales";
-                if (ch === "customer_portal" || a.source === "customer" || a.action === "customer_comment") return "customer";
-                if (ch === "supplier_portal") return "supplier";
-                return "service";
-              };
-              const filtered = activity.filter((a: any) => {
-                if (activityFilter === "all") return true;
-                return roleOf(a) === activityFilter;
-              });
-              // Service-form photo relay notes carry a long provenance
-              // string ending in the [gdrive:...] dedup marker (which
-              // must stay in the DB — the relay dedups on it). Collapse
-              // consecutive ones into a single compact entry and strip
-              // the marker for display.
-              // Backend notes embed the R2 storage key — a UUID filename
-              // that reads as garbage (Nico 2026-08-01: 乱码). Swap each
-              // for a friendly kind derived from the extension.
-              const prettifyText = (t: string): string =>
-                t.replace(
-                  /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
-                  (_m, ext) => {
-                    const e = String(ext || "").toLowerCase();
-                    if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
-                    if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
-                    return "(file)";
-                  },
-                );
-              const photoImportFile = (a: any): string | null => {
-                const m = /^Photo migrated from Google Form history(?::\s*(.*?))?\s*\[gdrive:[^\]]+\]$/.exec(
-                  String(a.note || "").trim()
-                );
-                return m ? (m[1] || "photo") : null;
-              };
-              const rows: any[] = [];
-              for (const a of filtered) {
-                const file = photoImportFile(a);
-                const prev = rows[rows.length - 1];
-                if (file !== null && prev?.__photoImports) {
-                  prev.__photoImports.push(file);
-                } else if (file !== null) {
-                  rows.push({ ...a, __photoImports: [file] });
-                } else {
-                  rows.push(a);
-                }
-              }
-              if (rows.length === 0) {
-                return (
-                  <div className="text-[12px] text-ink-muted">
-                    No activity yet
-                  </div>
-                );
-              }
-              return (
-                // Bounded, self-scrolling timeline — a long history scrolls
-                // inside this box instead of stretching the whole page.
-                <div className="max-h-[65vh] overflow-y-auto overflow-x-hidden pr-1">
-                <ol className="relative space-y-3 pl-5">
-                  <span className="pointer-events-none absolute left-[7px] top-1.5 bottom-1.5 w-px bg-border" />
-                  {rows.map((a: any) => {
-                    const author =
-                      a.source === "customer"
-                        ? a.customer_name_display || a.customer_email || "Customer"
-                        : a.source === "sales"
-                          ? c.sales_agent || "Sales"
-                          : a.user_name || "System";
-                    const isEscalated = a.action === "escalated";
-                    const isCustomer = a.source === "customer";
-                    const archivable =
-                      !c.archived_at &&
-                      !a.__photoImports &&
-                      (a.action === "note" || a.action === "customer_comment" || a.action === "sales_comment");
-                    let title: React.ReactNode = a.action;
-                    let body: React.ReactNode = null;
-                    if (a.__photoImports) {
-                      const n = a.__photoImports.length;
-                      title = n > 1 ? `${n} photos imported from service form` : "Photo imported from service form";
-                      body = a.__photoImports.join("\n");
-                    } else switch (a.action) {
-                      case "stage_change":
-                        title = (
-                          <>
-                            Status changed to{" "}
-                            <span className="font-bold">
-                              {caseStageLabel(a.to_value || "")}
-                            </span>
-                          </>
-                        );
-                        if (a.note) body = a.note;
-                        break;
-                      case "sub_status_change":
-                        title = (
-                          <>
-                            Sub-status changed to{" "}
-                            <span className="font-bold">{assrSubStatusLabel(a.to_value)}</span>
-                          </>
-                        );
-                        break;
-                      case "note":
-                        // Title is redundant — the CUSTOMER/PURCHASING
-                        // pill on the "by" row already says which kind.
-                        // The note body becomes the prominent line.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "created":
-                        title = "Case created";
-                        if (a.note) body = a.note;
-                        break;
-                      case "assignment":
-                        title = `Assigned to ${
-                          userOptions.find((u) => String(u.id) === a.to_value)
-                            ?.name || `user #${a.to_value}`
-                        }`;
-                        break;
-                      case "assignment_2":
-                        title = a.to_value
-                          ? `Co-assignee set to ${
-                              userOptions.find((u) => String(u.id) === a.to_value)
-                                ?.name || `user #${a.to_value}`
-                            }`
-                          : "Co-assignee cleared";
-                        break;
-                      case "approval":
-                        title = (
-                          <>
-                            Quality review:{" "}
-                            <span className="font-bold">
-                              {a.to_value === "passed" ? "Passed" : "Reviewed"}
-                            </span>
-                          </>
-                        );
-                        break;
-                      case "po_generated":
-                        title = (
-                          <>
-                            PO generated:{" "}
-                            <span className="font-mono font-bold">
-                              {a.to_value}
-                            </span>
-                          </>
-                        );
-                        break;
-                      case "escalated":
-                        title = "Case escalated — SLA breached >24h";
-                        break;
-                      case "survey_submitted":
-                        title = (
-                          <>
-                            Satisfaction survey ·{" "}
-                            <span className="font-bold">{a.to_value}/5</span>
-                          </>
-                        );
-                        if (a.note) body = a.note;
-                        break;
-                      case "customer_comment":
-                        // Same reasoning as 'note' — the customer-coloured
-                        // ring marker + author "Customer" already convey
-                        // the kind. Comment body becomes the headline.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "customer_upload":
-                        title = "Photo uploaded";
-                        if (a.note) body = a.note;
-                        break;
-                      case "sales_comment":
-                        // Same reasoning as customer_comment — the pill
-                        // already says Sales; the comment is the headline.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "sales_upload":
-                        title = "Photo uploaded";
-                        if (a.note) body = a.note;
-                        break;
-                      default:
-                        // Backend-logged audit actions we don't special-case
-                        // (field_change, item_remark, item_added/removed,
-                        // attachment_*, logistics_*, …). Their note is a full
-                        // human sentence — show it so the timeline is a
-                        // complete, reviewable history of everything done.
-                        if (a.note) {
-                          title = null;
-                          body = a.note;
-                        }
-                        break;
-                    }
-                    if (typeof body === "string") body = prettifyText(body);
-                    const actorRole = roleOf(a);
-                    return (
-                      <li key={a.id} className="group relative">
-                        <span
-                          className={cn(
-                            "absolute -left-5 top-1 h-3.5 w-3.5 rounded-full border-2 bg-surface",
-                            isEscalated
-                              ? "border-err"
-                              : actorRole === "customer"
-                                ? "border-amber-500"
-                                : actorRole === "supplier"
-                                  ? "border-primary"
-                                  : actorRole === "sales"
-                                    ? "border-accent"
-                                    : "border-border"
-                          )}
-                        />
-                        <div className="flex items-center gap-2 text-[10.5px] text-ink-muted">
-                          <span>{formatDateTime(a.created_at)}</span>
-                          {archivable && (
-                            <button
-                              onClick={async () => {
-                                if (!(await dialog.confirm("Archive this entry?")))
-                                  return;
-                                try {
-                                  await api.post(
-                                    `/api/assr/activity/${a.id}/archive`
-                                  );
-                                  toast.success("Archived");
-                                  detail.reload();
-                                } catch (e: any) {
-                                  toast.error(e?.message || "Something went wrong. Please try again.");
-                                }
-                              }}
-                              className="ml-auto rounded p-0.5 text-ink-muted opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
-                              title="Archive entry"
-                            >
-                              <Trash2 size={10} />
-                            </button>
-                          )}
-                        </div>
-                        {title && (
-                          <div
-                            className={cn(
-                              "text-[12.5px] font-bold",
-                              isEscalated ? "text-err" : "text-ink"
-                            )}
-                          >
-                            {title}
-                          </div>
-                        )}
-                        <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-ink-muted">
-                          <span
-                            className={cn(
-                              "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                              actorRole === "customer" && "bg-amber-100 text-amber-800",
-                              actorRole === "supplier" && "bg-primary/10 text-primary",
-                              actorRole === "sales" && "bg-accent-soft text-accent",
-                              actorRole === "service" && "bg-bg text-ink-secondary",
-                              actorRole === "system" && "border border-border-subtle bg-bg text-ink-muted",
-                            )}
-                          >
-                            {{ service: "Service", customer: "Customer", supplier: "Supplier", sales: "Sales", system: "System" }[actorRole]}
-                          </span>
-                          <span>by {author}</span>
-                        </div>
-                        {body && (
-                          <div
-                            className={cn(
-                              "mt-1 whitespace-pre-line",
-                              title
-                                ? "text-[12px] text-ink-secondary"
-                                : "text-[12.5px] text-ink"
-                            )}
-                          >
-                            {body}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-                </div>
-              );
-            })()}
-          </section>
 
           {/* Cost / Quality / CSAT — folded by default (v2); relevant
               mostly at sign-off / close. */}
