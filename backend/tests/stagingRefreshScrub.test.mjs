@@ -96,3 +96,12 @@ test("the check is on shape, not on counts alone, and raises when anything survi
   assert.match(verify, /not like 'STG-%'/);
   assert.match(verify, /raise exception 'PRODUCTION DATA SURVIVED THE SCRUB/);
 });
+
+// 2026-11-08: the refresh had failed since 26 Sep because scm.pos_sofa_combos_guard
+// refuses TRUNCATE; emptying staging must run with user triggers off.
+test("the truncate step runs as a replica so business delete-guards do not block it", () => {
+  const body = step("Truncate staging tables (public + scm, keep _pg_migrations)").body;
+  const at = body.indexOf("set session_replication_role = replica;");
+  assert.ok(at >= 0, "truncate step must set session_replication_role = replica");
+  assert.ok(at < body.indexOf("execute stmt;"), "replica must be set before the truncate runs");
+});
