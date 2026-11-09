@@ -1144,7 +1144,7 @@ function DeliveryReturnDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
-            <FlowDocFilesCard kind="delivery-return" docId={String(deliveryReturn.id)} status={deliveryReturn.status ?? null} />
+            <FlowDocFilesCard kind="delivery-return" docId={String(deliveryReturn.id)} status={deliveryReturn.status} />
           </DetailMain>
 
           <DetailAside>

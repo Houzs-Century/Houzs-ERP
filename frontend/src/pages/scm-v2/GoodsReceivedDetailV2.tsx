@@ -792,7 +792,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
-            <FlowDocFilesCard kind="grn" docId={String(grn.id)} status={grn.status ?? null} />
+            <FlowDocFilesCard kind="grn" docId={String(grn.id)} status={grn.status} />
           </DetailMain>
 
           <DetailAside>

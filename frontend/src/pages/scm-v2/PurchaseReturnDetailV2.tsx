@@ -617,7 +617,7 @@ function PurchaseReturnDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
-            <FlowDocFilesCard kind="purchase-return" docId={String(purchaseReturn.id)} status={purchaseReturn.status ?? null} />
+            <FlowDocFilesCard kind="purchase-return" docId={String(purchaseReturn.id)} status={purchaseReturn.status} />
           </DetailMain>
 
           <DetailAside>

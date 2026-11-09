@@ -904,7 +904,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
-            <FlowDocFilesCard kind="purchase-invoice" docId={String(purchaseInvoice.id)} status={purchaseInvoice.status ?? null} />
+            <FlowDocFilesCard kind="purchase-invoice" docId={String(purchaseInvoice.id)} status={purchaseInvoice.status} />
           </DetailMain>
 
           <DetailAside>

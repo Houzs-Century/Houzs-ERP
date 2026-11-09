@@ -21,7 +21,7 @@ export const FLOW_DOC_FILES: Record<FlowDocKind, { path: string; area: string; n
 };
 
 /** The phone's generic detail screen names documents by module key. */
-export const FLOW_DOC_KIND_BY_MODULE: Record<string, FlowDocKind> = {
+export const FLOW_DOC_KIND_BY_MODULE: Partial<Record<string, FlowDocKind>> = {
   grns: 'grn',
   'purchase-invoices': 'purchase-invoice',
   'delivery-returns': 'delivery-return',
