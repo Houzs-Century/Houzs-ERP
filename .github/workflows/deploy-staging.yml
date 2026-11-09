@@ -79,6 +79,11 @@ on:
         required: false
         default: false
         type: boolean
+      preview_alias:
+        description: 'Preview name (e.g. service-case). Leaves the main staging site alone and publishes this branch at https://NAME.houzs-erp-staging.pages.dev, talking to https://NAME-autocount-sync-api-staging.houzs-erp.workers.dev. Same staging database. Empty = normal staging deploy.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: deploy-staging
@@ -95,6 +100,12 @@ jobs:
     outputs:
       deploy: ${{ steps.compare.outputs.deploy }}
     steps:
+      - name: Check the preview name
+        if: ${{ inputs.preview_alias != '' }}
+        env:
+          PREVIEW_ALIAS: ${{ inputs.preview_alias }}
+        run: |
+          [[ "$PREVIEW_ALIAS" =~ ^[a-z0-9]([a-z0-9-]{0,22}[a-z0-9])?$ && "$PREVIEW_ALIAS" != main && "$PREVIEW_ALIAS" != staging ]]             || { echo "::error title=Bad preview name::'$PREVIEW_ALIAS' must be 1-24 lowercase letters, digits or hyphens, and not main or staging"; exit 1; }
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -230,13 +241,13 @@ jobs:
           # 2026-07-31 there was no way, from outside, to tell that staging had
           # frozen on the 2026-07-29 build while the nightly E2E went on passing
           # against it for two weeks. See docs/staging-bench-rot-coe.md.
-          command: deploy --env staging --var GIT_SHA:${{ github.sha }}
+          command: ${{ inputs.preview_alias != '' && format('versions upload --env staging --preview-alias {0} --var GIT_SHA:{1}', inputs.preview_alias, github.sha) || format('deploy --env staging --var GIT_SHA:{0}', github.sha) }}
       # Post-deploy smoke check. STAGING_SMOKE_URL repo VAR overrides the
       # default workers.dev origin if the staging Worker is served from a
       # custom domain. The authed SCM probes need DASHBOARD_API_KEY to run;
       # without it the script logs a WARN and skips them — mirrors the prod
       # behaviour so we don't introduce a new failure mode here.
-      - run: node scripts/smoke-check.mjs "${{ vars.STAGING_SMOKE_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}"
+      - run: node scripts/smoke-check.mjs "${{ inputs.preview_alias != '' && format('https://{0}-autocount-sync-api-staging.houzs-erp.workers.dev', inputs.preview_alias) || vars.STAGING_SMOKE_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}"
 
   # Staging frontend — mirrors deploy.yml's frontend job onto the
   # houzs-erp-staging Pages project, bundle pointed at the staging Worker.
@@ -264,7 +275,7 @@ jobs:
       # vite build only: tsc and the tests already passed in PR CI (11 of 13 minutes).
       - run: npx vite build
         env:
-          VITE_API_URL: https://autocount-sync-api-staging.houzs-erp.workers.dev
+          VITE_API_URL: ${{ inputs.preview_alias != '' && format('https://{0}-autocount-sync-api-staging.houzs-erp.workers.dev', inputs.preview_alias) || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}
       # See deploy.yml: the bundle gate needs a merge base and has none here.
       - run: npm run check:sw
       - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4
@@ -274,10 +285,11 @@ jobs:
           workingDirectory: frontend
           # --branch=main: a run from the `staging` branch would otherwise publish to
           # staging.houzs-erp-staging.pages.dev and the smoke below would read the old build.
-          command: pages deploy ./dist --project-name=houzs-erp-staging --branch=main --commit-dirty=true
+          # A preview_alias publishes to NAME.houzs-erp-staging.pages.dev instead.
+          command: pages deploy ./dist --project-name=houzs-erp-staging --branch=${{ inputs.preview_alias != '' && inputs.preview_alias || 'main' }} --commit-dirty=true
       # See deploy.yml for why the script's 16s default is too tight for
       # Cloudflare Pages propagation.
-      - run: npm run smoke -- "${{ vars.STAGING_FRONTEND_SMOKE_URL || 'https://houzs-erp-staging.pages.dev' }}"
+      - run: npm run smoke -- "${{ inputs.preview_alias != '' && format('https://{0}.houzs-erp-staging.pages.dev', inputs.preview_alias) || vars.STAGING_FRONTEND_SMOKE_URL || 'https://houzs-erp-staging.pages.dev' }}"
         env:
           FRONTEND_SMOKE_ATTEMPTS: 20
           FRONTEND_SMOKE_RETRY_MS: 5000
