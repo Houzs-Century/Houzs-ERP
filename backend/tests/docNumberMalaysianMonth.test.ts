@@ -78,12 +78,10 @@ describe('document minters use the Malaysian month', () => {
 });
 
 /* The SCM routes each built YYMM inline from `new Date().getMonth()`. This
-   keeps a new minter from copying that idiom back in. The PO route is the one
-   exception while PR #5464, which moves it to yymmFor(), is unmerged; once it
-   lands the exception simply matches nothing. */
+   keeps a new minter from copying that idiom back in. No exceptions: the PO
+   route moved to yymmFor() in #5464. */
 describe('no document minter builds YYMM from the UTC month', () => {
   const UTC_YYMM = /String\(\s*\w+\.getFullYear\(\)\s*\)\.slice\(\s*2\s*\)\s*\}\s*\$\{\s*String\(\s*\w+\.getMonth\(\)\s*\+\s*1\s*\)/;
-  const PENDING_ELSEWHERE = new Set(['src/scm/routes/mfg-purchase-orders.ts']);
   const root = path.resolve(__dirname, '..');
   const walk = (dir: string): string[] =>
     readdirSync(dir).flatMap((name) => {
@@ -102,7 +100,6 @@ describe('no document minter builds YYMM from the UTC month', () => {
     expect(files.length).toBeGreaterThan(100);
     const offenders = files
       .map((f) => path.relative(root, f).split(path.sep).join('/'))
-      .filter((rel) => !PENDING_ELSEWHERE.has(rel))
       .filter((rel) => UTC_YYMM.test(readFileSync(path.join(root, rel), 'utf8')));
     expect(offenders).toEqual([]);
   });
