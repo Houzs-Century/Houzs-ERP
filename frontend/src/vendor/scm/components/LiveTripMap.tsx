@@ -22,6 +22,22 @@ export type LiveMarker = {
   stale: boolean;     // last-seen older than the staleness threshold
 };
 
+/* A lorry's driven path today, drawn under its pin (owner 2026-11-10). */
+export type LiveTrail = { key: string; path: Array<{ lat: number; lng: number }> };
+const NO_TRAILS: LiveTrail[] = [];
+
+function TrailsOverlay({ trails }: { trails: LiveTrail[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map || typeof google === 'undefined') return;
+    const lines = trails
+      .filter((t) => t.path.length >= 2)
+      .map((t) => new google.maps.Polyline({ path: t.path, map, strokeColor: '#475569', strokeOpacity: 0.8, strokeWeight: 4, zIndex: 1 }));
+    return () => { for (const l of lines) l.setMap(null); };
+  }, [map, trails]);
+  return null;
+}
+
 function MarkersOverlay({ markers }: { markers: LiveMarker[] }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -91,10 +107,12 @@ function MarkersOverlay({ markers }: { markers: LiveMarker[] }) {
 export function LiveTripMap({
   apiKey,
   markers,
+  trails = NO_TRAILS,
   height = 320,
 }: {
   apiKey: string;
   markers: LiveMarker[];
+  trails?: LiveTrail[];
   height?: number;
 }) {
   const [failed, setFailed] = useState(false);
@@ -121,6 +139,7 @@ export function LiveTripMap({
           disableDefaultUI={false}
           style={{ width: '100%', height }}
         >
+          <TrailsOverlay trails={trails} />
           <MarkersOverlay markers={markers} />
         </Map>
       </APIProvider>
