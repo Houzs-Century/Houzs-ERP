@@ -32,6 +32,10 @@ export type NoteRow = {
   created_at: string | null;
   author_email: string | null;
   author_position: string | null;
+  /** The author's role name — canSaveSalesReport admits role "Sales Person" as
+   *  well as position "Owner" / "Sales Director" (owner 2026-11-09). Caller joins
+   *  roles on users.role_id. Null means the user has no role assigned. */
+  author_role: string | null;
 };
 
 export type ReportSummary = {
@@ -58,7 +62,7 @@ export function collectReport(
   const contributing = new Set<number>();
   let summary: ReportSummary | null = null;
   for (const n of ordered) {
-    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position }, attendeeEmails)) continue;
+    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position, role_name: n.author_role }, attendeeEmails)) continue;
     const parsed = parseSalesReport(n.note);
     if (parsed.bills.length > 0) {
       const reportDate = reportDateFor(parsed.date, projectStartDate);
@@ -181,16 +185,16 @@ export type BillTotals = {
 /* ── who may save ──────────────────────────────────────────────────────────
    Owner 2026-10-14: "ummu, owner, weisiang". Owner 2026-10-30: add Peter
    (Sales Director, yzhe212@gmail.com) and every Sales Attending of THIS
-   project. The admin tier stays named (Owner position + emails); the per-event
-   path takes a Set<string> of attendee emails the caller resolved from
-   project_sales_attendees. Mirrored in frontend/src/auth/salesAccess.ts
+   project. Owner 2026-11-09: open to every Sales Director (position) and every
+   Sales Person (role), so the floor can post without being named one by one.
+   The admin tier stays named (Owner position + two emails) and the per-event
+   attendee path still works. Mirrored in frontend/src/auth/salesAccess.ts
    canSaveSalesReport, which only decides whether the chat shows the Save
    button; this is the authority. Reading the saved report needs only the Sales
    section's own gate — every attending rep sees their red number. */
 const SAVE_EMAILS = new Set([
   "weisiang329@gmail.com",
   "ummuaimanlm@gmail.com",
-  "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
 ]);
 
 /* attendeeEmails is REQUIRED (CLAUDE.md: a parameter that decides something is
@@ -201,14 +205,27 @@ const SAVE_EMAILS = new Set([
    the bug behind the "No chat report" marker on project overview and the empty
    SALES REPORT (CHAT) panel on KLCC 31/10. */
 export function canSaveSalesReport(
-  user: { email?: string | null; position_name?: string | null } | null | undefined,
+  user: {
+    email?: string | null;
+    position_name?: string | null;
+    role_name?: string | null;
+  } | null | undefined,
   attendeeEmails: ReadonlySet<string> | null,
 ): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
+  const role = (user.role_name ?? "").trim().toLowerCase();
   const email = (user.email ?? "").trim().toLowerCase();
+  // Named admin tier: the Owner position + Weisiang + Ummu (owner 2026-10-14).
   if (position === "owner") return true;
   if (SAVE_EMAILS.has(email)) return true;
+  // Open Sales tiers (owner 2026-11-09): any Sales Director (position) and any
+  // Sales Person (role) may post. Position AND role are both checked because the
+  // ERP writes a Sales Director either way — role on some seats, position on
+  // others — and "Sales Person" is the role name every sales-floor seat holds.
+  if (position === "sales director" || role === "sales director") return true;
+  if (role === "sales person") return true;
+  // Per-event attendee path — unchanged.
   if (attendeeEmails && email && attendeeEmails.has(email)) return true;
   return false;
 }
