@@ -29,6 +29,8 @@ import { RETIRED_MIGRATIONS } from "./lib/migration-retirements.mjs";
 const DRY = process.argv.includes("--dry-run");
 const VERIFY_ONLY = process.argv.includes("--verify-only");
 const READ_ONLY = DRY || VERIFY_ONLY;
+const PREVIEW_LEFTOVERS_TOLERATED = process.argv.includes("--tolerate-preview-leftovers");
+const STAGING_PROJECT_REF = "minnapsemfzjmtvnnvdd";
 const DIR = "src/db/migrations-pg";
 // CI/deploy passes DATABASE_URL as an env var (GitHub secret); locally we read
 // it from .dev.vars. Env wins so the deploy pipeline can apply migrations with
@@ -56,6 +58,12 @@ if (!url) {
    single migration file. So the only database a migration could ever be tried
    against was PRODUCTION, which is how mig 0290 first met a real server during
    a deploy (docs/migration-gate-coe.md). */
+if (PREVIEW_LEFTOVERS_TOLERATED && !url.includes(STAGING_PROJECT_REF)) {
+  console.error(
+    `--tolerate-preview-leftovers is for the staging database (${STAGING_PROJECT_REF}) only. Aborting.`,
+  );
+  process.exit(1);
+}
 const pg = postgres(url, { ssl: pgSslMode(url), prepare: false, max: 1 });
 
 /* A dry-run/verification is a production diagnostic, so it must be literally
@@ -85,10 +93,11 @@ const files = await Promise.all(
 // happens exactly once, and everything it trusts is printed below.
 const genesis = isGenesisTracker(appliedRows);
 
-const { pending, backfill, drift, retired, renamed, adopted } =
+const { pending, backfill, drift, retired, renamed, adopted, previewLeftovers, reapply } =
   planMigrationChecksums(files, appliedRows, {
     retiredMigrations: RETIRED_MIGRATIONS,
     genesis,
+    previewLeftoversTolerated: PREVIEW_LEFTOVERS_TOLERATED,
   });
 
 const newlyAdopted = adopted.filter((entry) => !entry.alreadyAdopted);
@@ -121,6 +130,20 @@ for (const entry of newlyAdopted) {
       (entry.suspectedRenumberOf
         ? ` (looks like it was renumbered to ${entry.suspectedRenumberOf})`
         : ""),
+  );
+}
+
+for (const leftover of previewLeftovers) {
+  const msg =
+    `${leftover.filename} is in staging's tracker but not in this tree ` +
+    `(${leftover.storedChecksum}): a preview branch applied it. Its tables and columns stay.` +
+    (leftover.suspectedRenumberOf ? ` It may be an earlier cut of ${leftover.suspectedRenumberOf}.` : "");
+  console.warn(process.env.GITHUB_ACTIONS ? `::warning title=Preview migration leftover::${msg}` : `  PREVIEW ${msg}`);
+}
+for (const file of reapply) {
+  console.log(
+    `  REAPPLY ${file.filename}: staging ran an earlier version (${file.storedChecksum}); ` +
+      `this tree has ${file.checksum}` + (READ_ONLY ? "" : ", running it again"),
   );
 }
 
@@ -200,6 +223,7 @@ if (VERIFY_ONLY) {
   if (
     backfill.length > 0 ||
     pending.length > 0 ||
+    reapply.length > 0 ||
     newlyAdopted.length > 0 ||
     renamed.length > 0
   ) {
@@ -294,7 +318,31 @@ if (backfill.length > 0 || renamed.length > 0 || newlyAdopted.length > 0) {
   }
 }
 
-for (const file of pending) {
+const runs = [
+  ...pending.map((file) => ({ file, storedChecksum: null })),
+  ...reapply.map((file) => ({ file, storedChecksum: file.storedChecksum })),
+].sort((left, right) => (left.file.filename < right.file.filename ? -1 : 1));
+
+async function recordApplied(tx, file, storedChecksum) {
+  if (storedChecksum === null) {
+    await tx`
+      INSERT INTO _pg_migrations (filename, checksum)
+      VALUES (${file.filename}, ${file.checksum})
+    `;
+    return;
+  }
+  const restamped = await tx`
+    UPDATE _pg_migrations
+    SET checksum = ${file.checksum}
+    WHERE filename = ${file.filename} AND checksum = ${storedChecksum}
+    RETURNING filename
+  `;
+  if (restamped.length !== 1) {
+    throw new Error(`tracker row for ${file.filename} changed under this runner`);
+  }
+}
+
+for (const { file, storedChecksum } of runs) {
   // Multi-statement files run statement-by-statement inside one transaction
   // (postgres.js .unsafe runs a single statement at a time). The splitter is
   // dollar-quote aware, so a PL/pgSQL body survives intact — see
@@ -313,10 +361,7 @@ for (const file of pending) {
       // run. See 20260925T0859_relocate_tables_built_under_a_leaked_search_path.sql.
       await tx.unsafe("RESET search_path");
       for (const s of stmts) await tx.unsafe(s);
-      await tx`
-        INSERT INTO _pg_migrations (filename, checksum)
-        VALUES (${file.filename}, ${file.checksum})
-      `;
+      await recordApplied(tx, file, storedChecksum);
     });
     console.log(
       `  APPLIED ${file.filename} (${stmts.length} statements, ${file.checksum})`,
@@ -360,7 +405,7 @@ try {
 // pool on every release is its own risk (see the COE's durable-prevention
 // options). Detection over source only; a false positive costs one manual look.
 const VIEW_DDL = /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+(?:MATERIALIZED\s+)?VIEW\b/i;
-const viewMigrations = pending.filter((f) => VIEW_DDL.test(f.sql));
+const viewMigrations = runs.map(({ file }) => file).filter((f) => VIEW_DDL.test(f.sql));
 if (viewMigrations.length > 0) {
   const names = viewMigrations.map((f) => f.filename).join(", ");
   const msg =
