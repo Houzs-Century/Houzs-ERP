@@ -35,14 +35,14 @@ export function pvListTable(view: PvListView): {
   const matrix = {
     header: pick(view.matrix.header).map((h, c) => (c === amountAt ? 'Amount (RM)' : h)),
     formats: pick(view.matrix.formats).map((f, c) => (c === amountAt ? 'money' : DATE_KEYS.has(keys[c] ?? '') ? 'date' : f)),
-    body: view.matrix.body.map((row, i) => pick(row).map((v, c) => (c === amountAt ? ringgitSenOfPv(view.rows[i] ?? {}) / 100 : v))),
+    body: view.matrix.body.map((row, i) => pick(row).map((v, c) => (c === amountAt ? ringgitSenOfPv(view.rows.at(i) ?? {}) / 100 : v))),
   };
   const { head, body } = screenTable({ keys, matrix });
   const figures = matrix.formats.map((f) => f === 'money' || f === 'number');
   if (amountAt < 0) return { head, body, foot: null, totalSen: null, cancelled: 0, figures };
 
   const printed = body.map((cells, i) => {
-    const r = view.rows[i];
+    const r = view.rows.at(i);
     return r && isForeignPv(r)
       ? cells.map((cell, c) => (c === amountAt ? `${cell}\n${fmtMoneySen(Number(r.total_sen ?? 0), String(r.currency))}` : cell))
       : cells;
