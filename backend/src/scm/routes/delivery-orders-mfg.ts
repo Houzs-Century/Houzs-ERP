@@ -72,7 +72,6 @@ import { findNotReadySoLines, itemsNotReadyResponse } from '../lib/do-not-ready-
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { maybeSendPodDeliveredWhatsApp } from '../lib/pod-delivered-message';
-import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { netDeliveredBySoItem } from '../lib/do-unlinked-coverage';
@@ -115,6 +114,7 @@ import {
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
 import { resolveDoLineWarehouses, doShipFromWarehouseId } from '../lib/do-line-warehouses';
+import { doWarehouseLabels } from '../lib/do-warehouse-labels';
 import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
 import { doLifecycleFrom, type DoLifecycle, type DoLifecycleSi, type DoLifecycleDr } from '../lib/do-lifecycle';
@@ -1006,22 +1006,7 @@ function primaryWarehouseOf(lineWarehouses: Array<string | null>): string | null
   return best;
 }
 
-/* warehouseCodeMap (Agent D 2026-05-31, TASK #32) — resolve a set of
-   warehouse_ids to their display CODE so the detail GET can stamp a per-line
-   Warehouse column. Read-only label lookup; never touches stock. */
-async function warehouseCodeMap(
-  sb: any,
-  ids: Array<string | null | undefined>,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const uniq = [...new Set(ids.filter((x): x is string => !!x))];
-  if (uniq.length === 0) return out;
-  const { data } = await sb.from('warehouses').select('id, code, name').in('id', uniq);
-  for (const w of (data ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
-    out.set(w.id, warehouseLabel(w) ?? '');
-  }
-  return out;
-}
+/* warehouseCodeMap moved to scm/lib/do-warehouse-labels.ts 2026-11-09. */
 
 /* Traceability (source-PO on a shipped DO line). Two ledger reads, unioned per
    (item_code, variant_key) bucket — the SAME bucket key the ship uses:
@@ -2775,10 +2760,12 @@ deliveryOrdersMfg.get('/:id', async (c) => {
        resolved → bound-PO fallback below, else a dash. */
     resolveDoLineSources(sb, id),
   ]);
-  const codeMap = await warehouseCodeMap(sb, [...lineWh.values(), headerWh]);
+  const whLabels = await doWarehouseLabels(sb, c, [...lineWh.values(), headerWh]);
   /* The DO's own ship-from warehouse label, for the phone's header (the desktop
-     resolves it from the warehouse list). Null when the DO recorded none. */
-  (deliveryOrder as Record<string, unknown>).warehouse_code = headerWh ? (codeMap.get(headerWh) ?? null) : null;
+     resolves it from the warehouse list), and its name for the printed DO
+     (Conts-ERP #717). Null when the DO recorded none. */
+  (deliveryOrder as Record<string, unknown>).warehouse_code = headerWh ? (whLabels.get(headerWh)?.label ?? null) : null;
+  (deliveryOrder as Record<string, unknown>).warehouse_name = headerWh ? (whLabels.get(headerWh)?.name ?? null) : null;
   /* Storekeeper picking — the rack(s) each line's source PO was received onto
      (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
   const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
@@ -2855,7 +2842,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
     return {
       ...it,
       warehouse_id: wid,
-      warehouse_code: wid ? (codeMap.get(wid) ?? null) : null,
+      warehouse_code: wid ? (whLabels.get(wid)?.label ?? null) : null,
       downstream: downstreamMap.get(it.id) ?? [],
       /* Source PO number(s) the goods came from: shipped-ledger batches (OUT
          movements ∪ consumed lots), else the SO line's bound PO. Empty only

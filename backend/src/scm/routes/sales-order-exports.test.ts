@@ -173,6 +173,25 @@ describe('attachSoLines — one line shape for the screen and the file', () => {
     expect(rows[1]!.lines![0]).toMatchObject({ item_code: erpCode, item_group: 'bedframe', description: 'OUR WORDS' });
   });
 
+  /* Conts #383: a line with neither a warehouse nor a location of its own
+     exported a blank Location, while AutoCount books it at the order's
+     sales_location (autocount-writeback composeDetails defaultLocation). */
+  it('a line with no warehouse or location of its own takes the order\'s location, as AutoCount books it', async () => {
+    const h = so({ sales_location: 'PG WAREHOUSE' });
+    const t = { sos: [h], lines: [soLine(h, { location: null, warehouse_id: null }), soLine(h, { location: null, warehouse_id: 'wh-pg', line_no: 2 })] };
+    const rows = [{ ...h }] as Array<Row & { lines?: Row[] }>;
+    expect((await attachSoLines(sbFor(t), ctx(1), rows, null)).error).toBeNull();
+    expect(rows[0]!.lines!.map((l) => l.location)).toEqual(['PG', 'PG']);
+  });
+
+  it('a line\'s own warehouse still wins over the order\'s location', async () => {
+    const h = so({ sales_location: 'KL' });
+    const t = { sos: [h], lines: [soLine(h, { location: null, warehouse_id: 'wh-pg' })] };
+    const rows = [{ ...h }] as Array<Row & { lines?: Row[] }>;
+    expect((await attachSoLines(sbFor(t), ctx(1), rows, null)).error).toBeNull();
+    expect(rows[0]!.lines![0]!.location).toBe('PG');
+  });
+
   it('reuses the builder\'s base-table and warehouse reads instead of reading them again (HC-0002)', async () => {
     const h = so();
     const t = {

@@ -50,6 +50,7 @@ import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
 import { defaultPiUnitPriceSen } from '../../vendor/scm/lib/pi-po-price-rule';
 import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
+import { piCreatedAndPostedSentence } from '../../vendor/scm/lib/pi-ledger-outcome';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
@@ -591,10 +592,8 @@ export const PurchaseInvoiceNew = () => {
           variants:       l.variants,
         })),
       });
-      if (!asDraft) {
-        // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
-        await post.mutateAsync(createRes.id);
-      }
+      // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
+      const ledger = asDraft ? undefined : (await post.mutateAsync(createRes.id)).ledger;
       /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — and on a purchase
          invoice the field most likely to be missing is the SUPPLIER'S OWN
          invoice number, which is the one accounts will ask about. Same shared
@@ -604,7 +603,7 @@ export const PurchaseInvoiceNew = () => {
         title: `PI ${createRes.invoiceNumber} created`,
         body: asDraft
           ? 'Saved as Draft — review, then Confirm to post the AP liability.'
-          : 'Created + posted — AP liability recorded.',
+          : piCreatedAndPostedSentence(ledger),
         goTo: afterCreatePath(`/scm/purchase-invoices/${createRes.id}`, sourceDocPath.goodsReceipt(grnId)),
         goLabel: grnId ? 'Back to GRN' : undefined,
       });

@@ -97,6 +97,7 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../compon
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { SoLockBanner } from './SoLockBanner';
+import { SaveFailedBanner } from './SaveFailedBanner';
 import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -1992,12 +1993,7 @@ export const SalesOrderDetail = () => {
 
       {/* PR-A — Inline error from the page-level Save. Cleared on Edit /
           Cancel / next successful Save. */}
-      {saveError && (
-        <div className={styles.bannerWarn}>
-          <strong>Save failed.</strong>
-          <span>{saveError}</span>
-        </div>
-      )}
+      {saveError && <SaveFailedBanner message={saveError} className={styles.bannerWarn} />}
 
       {versionConflict && (
         <SoVersionConflictBanner
