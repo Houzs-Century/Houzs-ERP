@@ -5,13 +5,9 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
-import { returnCreditLabel, type ReturnCreditState } from '../../vendor/scm/lib/return-credit-state';
+import { RETURN_CREDIT_TONE, returnCreditLabel, type ReturnCreditState } from '../../vendor/scm/lib/return-credit-state';
 
 export type ReturnCreditNote = { state: ReturnCreditState; notes: Array<{ id: string; number: string; status: string }> };
-
-const TONE: Record<ReturnCreditState, 'warning' | 'success' | 'neutral' | 'error'> = {
-  AWAITING: 'warning', DRAFTED: 'neutral', ISSUED: 'success', NOT_INVOICED: 'neutral', UNKNOWN: 'error',
-};
 
 export const createCreditNoteHref = (returnId: string): string =>
   `/scm/credit-notes?form=new&fromReturn=${encodeURIComponent(returnId)}`;
@@ -30,7 +26,7 @@ export function ReturnCreditNoteCard({ returnId, credit, cancelled, canCreate }:
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Credit note</span>
-          <Badge tone={TONE[credit.state]} size="sm">{returnCreditLabel(credit.state)}</Badge>
+          <Badge tone={RETURN_CREDIT_TONE[credit.state]} size="sm">{returnCreditLabel(credit.state)}</Badge>
           {credit.notes.map((n) => (
             <Link key={n.id} to={`/scm/credit-notes/${encodeURIComponent(n.id)}`} className="font-mono text-[12.5px] font-semibold text-primary-ink hover:underline">
               {n.number} <span className="text-ink-muted">({n.status.toLowerCase()})</span>

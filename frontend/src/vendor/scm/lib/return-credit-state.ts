@@ -12,5 +12,10 @@ export const RETURN_CREDIT_LABEL: Record<ReturnCreditState, string> = {
   UNKNOWN: 'Credit note status could not be read',
 };
 
+/** The badge tone each state shows in. */
+export const RETURN_CREDIT_TONE: Record<ReturnCreditState, 'warning' | 'success' | 'neutral' | 'error'> = {
+  NOT_INVOICED: 'neutral', AWAITING: 'warning', DRAFTED: 'neutral', ISSUED: 'success', UNKNOWN: 'error',
+};
+
 export const returnCreditLabel = (state: unknown): string =>
   typeof state === 'string' && Object.prototype.hasOwnProperty.call(RETURN_CREDIT_LABEL, state) ? RETURN_CREDIT_LABEL[state as ReturnCreditState] : '';
