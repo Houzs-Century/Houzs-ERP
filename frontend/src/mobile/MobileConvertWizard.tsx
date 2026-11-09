@@ -20,6 +20,7 @@ import { matchesSearch } from '../lib/so-ref-search';
    "Label: value" (see "Supplier SKU:" below), not uppercase — the WORD is
    shared, the presentation stays per surface. */
 import { DESCRIPTION_2_LABEL } from '../vendor/scm/components/VariantDescription';
+import { lineDiscountShare } from '../vendor/shared/line-discount-share';
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -157,12 +158,14 @@ type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
   itemGroup: string | null; variants: unknown;
   qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
+  discountSen?: number;
   notReady: { reason: string } | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
   itemGroup: string | null; variants: unknown;
   remaining: number; unitPriceSen: number; debtorName: string | null;
+  delivered?: number; discountSen?: number;
 };
 // SO→PO — the OUTSTANDING axis (qty − po_qty_picked + sofa MRP rollup), from
 // /mfg-purchase-orders/outstanding-so-items (the SAME stock-aware shortage view
@@ -220,9 +223,21 @@ type PickLine = {
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
   unitPriceSen: number;
+  /* The source line's whole-line discount, its quantity and what earlier
+     documents already took: a pick shows only ITS share (lineDiscountShare),
+     the same split the server writes. 0 / 0 / 0 for SO→PO (no sales discount). */
+  discountSen: number;
+  discountBaseQty: number;
+  discountMovedQty: number;
   checked: boolean;
   qty: string;           // as typed (the qty to convert this pass)
 };
+
+/** A pick's value: qty x price less ITS share of the source line's discount. */
+const pickLineValueSen = (
+  l: Pick<PickLine, "unitPriceSen" | "discountSen" | "discountBaseQty" | "discountMovedQty">,
+  qty: number,
+): number => l.unitPriceSen * qty - lineDiscountShare(l.discountSen, l.discountBaseQty, l.discountMovedQty, qty);
 
 export function MobileConvertWizard({
   target,
@@ -387,6 +402,9 @@ export function MobileConvertWizard({
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
             unitPriceSen: Number(l.unitPriceSen) || 0,
+            discountSen: 0,
+            discountBaseQty: 0,
+            discountMovedQty: 0,
             checked: true,
             qty: String(Number(l.remainingQty) || 0),
           }));
@@ -403,6 +421,9 @@ export function MobileConvertWizard({
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
           unitPriceSen: Number(l.unitPriceSen) || 0,
+          discountSen: Number(l.discountSen) || 0,
+          discountBaseQty: Number(l.qty) || 0,
+          discountMovedQty: (Number(l.qty) || 0) - (Number(l.remaining) || 0),
           checked: !l.notReady,
           qty: String(Number(l.remaining) || 0),
         }));
@@ -421,6 +442,9 @@ export function MobileConvertWizard({
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
         unitPriceSen: Number(l.unitPriceSen) || 0,
+        discountSen: Number(l.discountSen) || 0,
+        discountBaseQty: Number(l.delivered) || 0,
+        discountMovedQty: (Number(l.delivered) || 0) - (Number(l.remaining) || 0),
         checked: true,
         qty: String(Number(l.remaining) || 0),
       }));
@@ -441,7 +465,7 @@ export function MobileConvertWizard({
     [lines],
   );
   const pickedTotalSen = useMemo(
-    () => picks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
+    () => picks.reduce((a, l) => a + pickLineValueSen(l, clampQty(l.qty, l.remaining)), 0),
     [picks],
   );
 
@@ -1017,7 +1041,7 @@ function LinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickLineValueSen(l, qtyNum))}</span>
                 </div>
               )}
             </div>

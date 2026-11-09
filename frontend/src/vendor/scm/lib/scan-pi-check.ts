@@ -13,6 +13,8 @@ export type PiReviewLine = {
   grnNumber: string | null;
   qty: number;
   suggested: boolean;
+  // Tied by the AI: the row says "AI match, please check". Older copies carry no flag.
+  ai?: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; unitPrice: number | null; lineTotal: number | null } | null;
 };
 export type PiReview = {
@@ -101,27 +103,32 @@ export function priceDiffers(printed: number | null | undefined, unitPriceSen: n
   return printed != null && Math.abs(Math.round(printed * 100) - unitPriceSen) >= 1;
 }
 
-/** The two amounts to tie off: what the invoice charges for the rows it printed,
- *  and what those rows come to at our price. A row tied to no receipt line has no
- *  price of ours, so `ours` is null until every printed row is tied. */
-export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>): { invoiceSen: number | null; oursSen: number | null } {
-  const rows = review.lines.filter((l) => l.read);
-  const printed = rows.map((l) => {
+/** The amounts to tie off. `invoiceSen` is what the invoice charges for every
+ *  row it printed. `oursSen` is the rows tied to a receipt line at our price, and
+ *  `matchedInvoiceSen` what the invoice charges for those same rows, so the two
+ *  compare like for like while some rows are still untied (`unmatched`). */
+export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>): { invoiceSen: number | null; oursSen: number | null; matchedInvoiceSen: number | null; unmatched: number } {
+  const printedOf = (l: PiReviewLine): number | null => {
     const r = l.read;
     if (r?.lineTotal != null) return Math.round(r.lineTotal * 100);
     return r?.unitPrice != null ? Math.round(r.unitPrice * 100 * l.qty) : null;
-  });
-  /* A row printed with no price is a free gift (Diglant's GWP pillow): it adds nothing,
-     it does not leave the invoice without an amount. */
-  const priced = printed.filter((v): v is number => v != null);
-  const invoiceSen = priced.length > 0 ? priced.reduce((a, v) => a + v, 0) : null;
-  const ours = review.lines.map((l) => {
-    const line = l.grnItemId ? lines.get(l.grnItemId) : undefined;
-    return line ? Math.round(line.unitPriceSen * l.qty) : null;
-  });
-  const oursSen = ours.length > 0 && ours.every((v) => v != null) ? ours.reduce<number>((a, v) => a + v, 0) : null;
-  return { invoiceSen, oursSen };
+  };
+  const sum = (vs: Array<number | null>): number | null => {
+    /* A row printed with no price is a free gift (Diglant's GWP pillow): it adds nothing,
+       it does not leave the invoice without an amount. */
+    const priced = vs.filter((v): v is number => v != null);
+    return priced.length > 0 ? priced.reduce((a, v) => a + v, 0) : null;
+  };
+  const invoiceSen = sum(review.lines.filter((l) => l.read).map(printedOf));
+  const tied = review.lines.filter((l) => l.grnItemId && lines.get(l.grnItemId));
+  const oursSen = tied.length > 0 ? tied.reduce((a, l) => a + Math.round((lines.get(l.grnItemId as string) as BillLine).unitPriceSen * l.qty), 0) : null;
+  const matchedInvoiceSen = sum(tied.filter((l) => l.read).map(printedOf));
+  return { invoiceSen, oursSen, matchedInvoiceSen, unmatched: review.lines.length - tied.length };
 }
+
+/** The receipt side differs from what the invoice charges for the same rows. */
+export const piAmountsDiffer = (a: { oursSen: number | null; matchedInvoiceSen: number | null }): boolean =>
+  a.oursSen != null && a.matchedInvoiceSen != null && a.oursSen !== a.matchedInvoiceSen;
 
 /** Pieces on the paper and on the GRN lines chosen, for the card's total row. */
 export function piQtyTotals(review: PiReview, lines: ReadonlyMap<string, BillLine>): { qty: number; left: number } {

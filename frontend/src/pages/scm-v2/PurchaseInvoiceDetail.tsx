@@ -81,6 +81,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { DetailLoadFailure } from './DetailLoadFailure';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -88,6 +89,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { purchaseInvoiceLinesLocked } from '../../vendor/scm/lib/line-add-lock';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
+import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -390,10 +392,7 @@ export const PurchaseInvoiceDetail = () => {
           <ArrowLeft {...ICON} />
           <span>Back</span>
         </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Purchase invoice not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
+        <DetailLoadFailure noun="Purchase invoice" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
       </div>
     );
   }
@@ -1008,7 +1007,7 @@ const SupplierCard = ({
             <InfoCell label="Contact"       value={supplier.contact_person ?? supplier.attention} />
             <InfoCell label="Phone"         value={formatPhone(supplier.phone ?? supplier.mobile)} />
             <InfoCell label="Payment terms" value={supplier.payment_terms} />
-            <InfoCell label="Email"         value={supplier.email} />
+            <InfoCell label="Email"         value={supplierEmailList(supplier).join(", ") || null} />
             <InfoCell label="TIN"           value={supplier.tin_number} />
             <InfoCell label="Country / state" value={[supplier.country, supplier.state].filter(Boolean).join(' / ') || null} />
             <InfoCell label="Bindings count" value={String(supplierDetail.data?.bindings?.length ?? 0)} />

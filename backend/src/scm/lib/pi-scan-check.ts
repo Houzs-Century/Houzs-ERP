@@ -10,12 +10,14 @@
 import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
 import { sameSize, type PiLineMatchResult } from './pi-scan-match';
+import { proposeGrnLines, skuOfRow, type SkuRow } from './pi-scan-sku';
 import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize } from './scan-word-match';
 
 /** A posted GRN line with something left to bill. */
 export type BillableLine = {
   grnItemId: string; grnNumber: string; supplierId: string | null; poNumber: string | null;
   itemCode: string; supplierSku: string | null; description: string | null; remaining: number; unitPriceSen: number;
+  receivedAt: string | null;
 };
 
 export type PiReviewLine = {
@@ -26,6 +28,8 @@ export type PiReviewLine = {
   qty: number;
   // Tied by the product name printed, not by a code: shown for the operator to check.
   suggested: boolean;
+  // Tied by the AI reading the row against the supplier's open SKUs: shown as "AI match, please check".
+  ai: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; unitPrice: number | null; lineTotal: number | null } | null;
 };
 
@@ -43,11 +47,36 @@ export type PiReview = {
   lines: PiReviewLine[];
 };
 
-export const PI_REVIEW_VERSION = 4;
+export const PI_REVIEW_VERSION = 5;
+
+/** The invoice as read, rebuilt from a working copy's own rows, for a copy whose
+ *  stored read is not kept (no scan sample): it can still take newer matching.
+ *  Each row keeps its own pieces, so a printed row split across two GRN lines
+ *  adds back to what was printed and two identical printed rows stay two. PURE. */
+export function extractOfReview(r: PiReview): PiScanExtract | null {
+  const lines: PiScanLine[] = r.lines
+    .filter((l) => l.read && l.qty > 0)
+    .map((l) => {
+      const read = l.read!;
+      const whole = read.qty === l.qty;
+      return {
+        itemCode: read.itemCode, articleNo: null, description: read.description, qty: l.qty,
+        unitPrice: read.unitPrice, salesTax: null,
+        lineTotal: whole ? read.lineTotal : read.unitPrice != null ? Math.round(read.unitPrice * l.qty * 100) / 100 : null,
+      };
+    });
+  if (lines.length === 0) return null;
+  return {
+    supplierName: r.supplierRead, supplierCode: null, invoiceNumber: r.invoiceNumber, invoiceDate: r.invoiceDate,
+    poNo: r.poNo, doNo: r.doNo, salesTax: null, totalAmount: null, lines,
+  };
+}
 
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
 const readOf = (l: PiScanLine) => ({ itemCode: l.itemCode ?? l.articleNo, description: l.description, qty: l.qty ?? 0, unitPrice: l.unitPrice, lineTotal: l.lineTotal });
+/** One printed row across two builds of the working copy: its code and its name. */
+export const readKey = (read: PiReviewLine['read']): string => (read ? `${read.itemCode ?? ''}|${read.description ?? ''}` : '');
 
 /** One invoice row for a set ("DSL 8075 - 2 + L" x1 at RM 1,950), which the receipt
  *  holds piece by piece: when the pieces' prices add up to the row's within a fifth,
@@ -60,21 +89,59 @@ export function setPieces(row: PiReviewLine, lines: ReadonlyArray<BillableLine>)
   if (sum <= 0 || ratio < 0.8 || ratio > 1.25) return null;
   return lines.map((l) => {
     const unitPrice = Math.round((printed * l.unitPriceSen) / sum * 100) / 100;
-    return { key: lineKey(), grnItemId: l.grnItemId, grnNumber: l.grnNumber, qty: 1, suggested: true, read: { ...(row.read as NonNullable<PiReviewLine['read']>), qty: 1, unitPrice, lineTotal: unitPrice } };
+    return { key: lineKey(), grnItemId: l.grnItemId, grnNumber: l.grnNumber, qty: 1, suggested: true, ai: row.ai, read: { ...(row.read as NonNullable<PiReviewLine['read']>), qty: 1, unitPrice, lineTotal: unitPrice } };
   });
 }
 
-/** Tie rows the matcher left untied, by name: on the GRNs this invoice is
- *  anchored to, or, with none, only when exactly one line of the supplier fits.
- *  Each line takes only what is left to bill. */
-export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, families: ReadonlyMap<string, ReadonlySet<string>>): void {
+/** Rows whose SKU is known but whose receipt line is not: a line of that SKU on
+ *  the receipts the invoice is for, else the proposal across the supplier's open
+ *  receipts (pi-scan-sku proposeGrnLines). Each is marked for the operator to check. */
+export function tieToSkus(pending: ReadonlyArray<{ line: PiReviewLine; itemCode: string }>, open: ReadonlyArray<BillableLine>, anchored: ReadonlySet<string>, left: Map<string, number>, ai: boolean): void {
+  const rest: Array<{ line: PiReviewLine; itemCode: string }> = [];
+  for (const p of pending) {
+    const on = open.filter((o) => o.itemCode === p.itemCode && anchored.has(o.grnNumber) && (left.get(o.grnItemId) ?? 0) > 0);
+    if (on.length === 0) { rest.push(p); continue; }
+    const pick = on.find((o) => (left.get(o.grnItemId) ?? 0) >= p.line.qty) ?? on[0]!;
+    Object.assign(p.line, { grnItemId: pick.grnItemId, suggested: true, ai });
+    left.set(pick.grnItemId, (left.get(pick.grnItemId) ?? 0) - p.line.qty);
+  }
+  const rows: SkuRow[] = rest.map((p) => ({ key: p.line.key, itemCode: p.itemCode, qty: p.line.qty }));
+  const picked = proposeGrnLines(rows, open, left);
+  for (const p of rest) {
+    const id = picked.get(p.line.key);
+    if (id) Object.assign(p.line, { grnItemId: id, suggested: true, ai });
+  }
+}
+
+/** What each line still has to bill once the rows already tied take theirs. */
+const leftAfter = (lines: ReadonlyArray<PiReviewLine>, open: ReadonlyArray<BillableLine>): Map<string, number> => {
   const left = new Map(open.map((l) => [l.grnItemId, l.remaining]));
   for (const l of lines) if (l.grnItemId) left.set(l.grnItemId, (left.get(l.grnItemId) ?? 0) - l.qty);
+  return left;
+};
+
+/** The receipts the invoice is for: those it is anchored to and those its tied rows bill. */
+const anchoredOf = (lines: ReadonlyArray<PiReviewLine>, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>): Set<string> => {
   const anchored = new Set(anchorGrns);
   for (const l of lines) { const hit = open.find((o) => o.grnItemId === l.grnItemId); if (hit) anchored.add(hit.grnNumber); }
+  return anchored;
+};
+
+/** Tie rows the matcher left untied. First the SKU: the printed code, a model
+ *  prefix the supplier's other sizes teach (1007-(K) is CODY-(K), so 1007-(Q) is
+ *  CODY-(Q)), the model name printed, then the name heuristics. Then the line: on
+ *  the receipts this invoice is anchored to, else the supplier's receipt holding
+ *  most of the invoice, then the oldest, never a pick between two equally good. */
+export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, families: ReadonlyMap<string, ReadonlySet<string>>, prefixes: ReadonlyMap<string, ReadonlySet<string>>): void {
+  const left = leftAfter(lines, open);
+  const anchored = anchoredOf(lines, open, anchorGrns);
+  const pending: Array<{ line: PiReviewLine; itemCode: string }> = [];
   for (const l of [...lines]) {
-    if (l.grnItemId || !l.read?.description) continue;
+    if (l.grnItemId || !l.read) continue;
     const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0);
+    const sku = skuOfRow(l.read.itemCode, l.read.description, prefixes, [...new Set(owing.map((o) => o.itemCode))]);
+    if (sku) { pending.push({ line: l, itemCode: sku }); continue; }
+    if (!l.read.description) continue;
     const printed = `${l.read.itemCode ?? ''} ${l.read.description}`;
     /* NB prints SB10-B11EC-KHJ50(A)(MH-12") 5 FTS for HILTON (A)-(Q): the code names
        the family through any size bound to this supplier, the row names the size. */
@@ -84,7 +151,12 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     const named = family.length > 0 ? family : owing.filter((o) => nameFits(l.read?.description, o.itemCode));
     const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.description ?? ''}`);
     const scoped = anchored.size > 0 ? fits.filter((o) => anchored.has(o.grnNumber)) : fits;
-    if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) continue;
+    if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) {
+      // One SKU on several receipts, or only off the anchored ones: the proposal decides.
+      const skus = new Set(fits.map((o) => o.itemCode));
+      if (skus.size === 1) pending.push({ line: l, itemCode: [...skus][0]! });
+      continue;
+    }
     const pieces = setPieces(l, scoped);
     if (pieces) {
       lines.splice(lines.indexOf(l), 1, ...pieces);
@@ -96,6 +168,7 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     l.suggested = true;
     left.set(pick.grnItemId, (left.get(pick.grnItemId) ?? 0) - l.qty);
   }
+  tieToSkus(pending, open, anchored, left, false);
   /* What is left of an anchored receipt, one row for one line of the same size:
      the invoice bills that receipt, so the last row of a size can only be that line. */
   const bySize = new Map<string, PiReviewLine[]>();
@@ -161,22 +234,32 @@ export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableL
   return `Prices include sales tax RM ${rm(tax)}, shared across the rows.`;
 }
 
+/** What the supplier's codes teach: model words (familiesByModelWord) and model
+ *  prefixes (pi-scan-sku modelPrefixes). */
+export type SupplierCodes = { families: ReadonlyMap<string, ReadonlySet<string>>; prefixes: ReadonlyMap<string, ReadonlySet<string>> };
+export const NO_CODES: SupplierCodes = { families: new Map(), prefixes: new Map() };
+
 /** The first working copy. Matched rows arrive tied to their GRN line; rows the
  *  matcher could not place arrive with what was printed, so nothing read is
- *  silently dropped. */
-export function buildPiReview(parsed: PiScanExtract | null, supplierId: string | null, match: PiLineMatchResult | null, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, families: ReadonlyMap<string, ReadonlySet<string>>): PiReview {
+ *  silently dropped. `aiSkus` (printed row -> our SKU, readKey) ties what the
+ *  rules left, marked as an AI match. */
+export function buildPiReview(parsed: PiScanExtract | null, supplierId: string | null, match: PiLineMatchResult | null, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>, codes: SupplierCodes, aiSkus: ReadonlyMap<string, string> | null): PiReview {
   const lines: PiReviewLine[] = [];
   for (const p of match?.picks ?? []) {
     const printed = parsed?.lines[p.invoiceLineIndex];
-    lines.push({ key: lineKey(), grnItemId: p.grnItemId, grnNumber: p.grnNumber, qty: p.qty, suggested: false, read: printed ? readOf(printed) : null });
+    lines.push({ key: lineKey(), grnItemId: p.grnItemId, grnNumber: p.grnNumber, qty: p.qty, suggested: false, ai: false, read: printed ? readOf(printed) : null });
   }
   for (const u of match?.unmatched ?? []) {
     const left = (u.qty ?? 0) - u.billed;
     const printed = parsed?.lines[u.invoiceLineIndex];
-    if (left > 0 && printed) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: left, suggested: false, read: readOf(printed) });
+    if (left > 0 && printed) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: left, suggested: false, ai: false, read: readOf(printed) });
   }
-  if (!match && parsed) for (const l of parsed.lines) if ((l.qty ?? 0) > 0) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: l.qty ?? 0, suggested: false, read: readOf(l) });
-  suggestBills(lines, open, anchorGrns, families);
+  if (!match && parsed) for (const l of parsed.lines) if ((l.qty ?? 0) > 0) lines.push({ key: lineKey(), grnItemId: null, grnNumber: null, qty: l.qty ?? 0, suggested: false, ai: false, read: readOf(l) });
+  suggestBills(lines, open, anchorGrns, codes.families, codes.prefixes);
+  if (aiSkus && aiSkus.size > 0) {
+    const pending = lines.flatMap((l) => { const sku = l.grnItemId ? undefined : aiSkus.get(readKey(l.read)); return sku ? [{ line: l, itemCode: sku }] : []; });
+    tieToSkus(pending, open, anchoredOf(lines, open, anchorGrns), leftAfter(lines, open), true);
+  }
   const taxNote = addSalesTax(lines, open, parsed?.salesTax ?? null, parsed?.totalAmount ?? null);
   // In the order the invoice prints them, so the card reads down beside the paper.
   const printedAt = new Map(parsed?.lines.map((l, i) => [l.description, i]) ?? []);
@@ -215,6 +298,7 @@ export function cleanPiReview(input: unknown): PiReview | null {
       grnNumber: str(l.grnNumber),
       qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
       suggested: l.suggested === true,
+      ai: l.ai === true,
       read: read ? { itemCode: str(read.itemCode), description: str(read.description), qty: Number(read.qty) || 0, unitPrice: num(read.unitPrice), lineTotal: num(read.lineTotal) } : null,
     };
   });
@@ -293,5 +377,23 @@ export function billCodesToTeach(review: PiReview, itemOf: (grnItemId: string) =
   return review.lines.flatMap((l) => {
     const item = l.grnItemId ? itemOf(l.grnItemId) : undefined;
     return item && l.read?.itemCode && sameSize(l.read.itemCode, item) ? [{ printedCode: l.read.itemCode, itemCode: item }] : [];
+  });
+}
+
+/** A waiting copy rebuilt by newer matching: rows already tied stay as they are
+ *  (the operator may have chosen them), a row still untied takes the newer
+ *  build's tie for the same printed row, and a row the operator removed is not
+ *  brought back. */
+export function mergeRebuiltLines(kept: ReadonlyArray<PiReviewLine>, rebuilt: ReadonlyArray<PiReviewLine>): PiReviewLine[] {
+  const used = new Set<string>();
+  return kept.flatMap((l) => {
+    if (l.grnItemId || !l.read) return [l];
+    const key = readKey(l.read);
+    const fresh = rebuilt.filter((r) => !used.has(r.key) && r.grnItemId && readKey(r.read) === key);
+    if (fresh.length === 0) return [l];
+    // A set split into its pieces comes back as several rows of the one printed row.
+    const take = fresh.length > 1 && fresh.every((r) => r.qty === 1) && l.qty === 1 ? fresh : [fresh[0]!];
+    for (const r of take) used.add(r.key);
+    return take;
   });
 }

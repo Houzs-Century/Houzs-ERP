@@ -487,6 +487,13 @@ tr.dt-row-cancelled:hover > td.dt-cancel-keep > * {
   opacity: 0.85;
 }
 
+/* Finance's typed words in UPPER CASE (owner 2026-11-09: 可以默认…自动大写吗？…主要是
+   finance 模块). A field marked data-upper shows what is typed in upper case; the
+   database stores it so (migration 20261109T1500, scm.upper_typed_text). The hint
+   text keeps its own case. */
+input[data-upper], textarea[data-upper] { text-transform: uppercase; }
+input[data-upper]::placeholder, textarea[data-upper]::placeholder { text-transform: none; }
+
 /* Option rows of the searchable pickers (SearchableSelect, StatePicker) grow to
    a finger-sized target on touch screens. Their menus are portalled to <body>,
    so a page-scoped rule cannot reach them; they read this variable instead. */

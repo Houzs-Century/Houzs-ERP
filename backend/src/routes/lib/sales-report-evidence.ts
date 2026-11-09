@@ -123,11 +123,12 @@ export async function loadReportEvidence(
   const res = await db
     .prepare(
       `SELECT a.id AS id, a.project_id AS project_id, a.note AS note, a.created_at AS created_at,
-              p.start_date AS start_date, u.email AS author_email, ps.name AS author_position
+              p.start_date AS start_date, u.email AS author_email, ps.name AS author_position, r.name AS author_role
          FROM project_activity a
          JOIN projects p ON p.id = a.project_id
          LEFT JOIN users u ON u.id = a.user_id
          LEFT JOIN positions ps ON ps.id = u.position_id
+         LEFT JOIN roles r ON r.id = u.role_id
         WHERE a.action = 'note' AND a.archived_at IS NULL AND ${where}${companySql}`,
     )
     .bind(...binds)
@@ -145,6 +146,7 @@ export async function loadReportEvidence(
       created_at: text(r.created_at),
       author_email: text(r.author_email),
       author_position: text(r.author_position),
+      author_role: text(r.author_role),
     });
     notesByProject.set(pid, list);
   }

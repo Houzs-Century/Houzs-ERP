@@ -11,7 +11,7 @@
  */
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { DataTable, type Column } from "./DataTable";
-import type { ExportCell } from "./dataTableLineExport";
+import type { ExportCell, TablePdfView } from "./dataTableLineExport";
 import { gridLayoutToTableLayout } from "./dataTableLegacyGridLayout";
 import type { LayoutSeed } from "../lib/tableLayouts";
 import { isoForExport } from "../vendor/shared/format";
@@ -40,6 +40,9 @@ export type GridColumn<T> = {
   dateValue?: (row: T) => string | null | undefined;
   numberValue?: (row: T) => number | null | undefined;
   defaultHidden?: boolean;
+  /** The footer cell over the rows showing (DataTable's `total`): a column that
+   *  has one turns the table's Total row on. */
+  total?: (rows: T[]) => ReactNode;
 };
 
 export type GridContextMenuItem = {
@@ -61,6 +64,9 @@ export type DataGridCompatProps<T> = {
   loadedSearchLimit?: number;
   hideSearch?: boolean;
   exportName?: string;
+  /** See DataTable `onExportPdf`: a page that prints adds Export to PDF to the
+   *  header's right-click menu and receives the cells of the rows showing. */
+  onExportPdf?: (view: TablePdfView<T>) => void;
   onRowClick?: (row: T) => void;
   onRowDoubleClick?: (row: T) => void;
   rowStyle?: (row: T) => CSSProperties | undefined;
@@ -178,6 +184,7 @@ export function gridColumnToTableColumn<T>(c: GridColumn<T>): Column<T> {
     ...(c.filterType === "date" ? { filterType: "date" as const, dateValue: c.dateValue } : {}),
     ...(c.filterType === "number" ? { filterType: "number" as const, numberValue: c.numberValue } : {}),
     defaultHidden: c.defaultHidden,
+    ...(c.total ? { total: c.total } : {}),
   };
 }
 
@@ -190,6 +197,7 @@ export function DataGridCompat<T>({
   loadedSearchLimit,
   hideSearch = false,
   exportName,
+  onExportPdf,
   onRowClick,
   onRowDoubleClick,
   rowStyle,
@@ -250,6 +258,7 @@ export function DataGridCompat<T>({
       focusSearchNonce={focusSearchNonce}
       exportName={exportName ?? storageKey}
       exportXlsx
+      onExportPdf={onExportPdf}
       groupBanner={groupBanner && !embedded}
       embedded={embedded}
       groupBy={groupBy}

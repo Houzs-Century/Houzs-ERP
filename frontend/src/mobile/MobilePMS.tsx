@@ -41,6 +41,7 @@ import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
 import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
+import { MobileProjectChat, MOBILE_PROJECT_CHAT_ID } from "./MobileProjectChat";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { saleAmountRm, validateSaleAmount } from "./saleAmount";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
@@ -1637,9 +1638,55 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 reload={reload}
               />
             )}
+
+            {/* Chat — the project's message thread. Owner 2026-11-09 asked for
+                this box on mobile so the sales floor can paste the evening
+                report without opening the web browser. Read for anyone who can
+                see the project; posting gated the same way the server gates
+                POST /api/projects/:id/notes (projects.write OR projects.chat).
+                Server-side parser (routes/lib/sales-report-bills.ts) picks up
+                any bill lines without any extra UI on this phone. */}
+            <MobileProjectChat projectId={id} onPosted={reload} />
           </>
         )}
       </div>
+      {/* Chat jump button (owner 2026-11-09: "quick button for chat for mobile
+          version. easy to find compare need to scroll down"). Fixed bottom-left
+          — the owner's green "+ Add" sits bottom-right, so this doesn't fight
+          with it — and jumps the page to the Chat panel. Clamped above the
+          mobile bottom nav with env(safe-area-inset-bottom) so it clears the
+          iOS home indicator. */}
+      <button
+        type="button"
+        aria-label="Jump to chat"
+        onClick={() => {
+          const el = document.getElementById(MOBILE_PROJECT_CHAT_ID);
+          if (!el) return;
+          if (el instanceof HTMLDetailsElement) el.open = true;
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+        style={{
+          position: "fixed",
+          left: 14,
+          bottom: "calc(74px + env(safe-area-inset-bottom, 0px))",
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          background: "#16695f",
+          color: "#fff",
+          border: "none",
+          boxShadow: "0 4px 14px rgba(17,20,15,.28)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          zIndex: 30,
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      </button>
     </div>
     </DefectActionsCtx.Provider>
   );

@@ -179,9 +179,24 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(june.card).toEqual({ takingsSen: 5000, transitSen: 5000, codes: ['326-0000', '326-0010'] });
   });
 
+  test('party=1 keeps one row for a party whose name came in two casings (owner 2026-11-09: Finance writes names upper case from now on)', async () => {
+    const sb = world();
+    (sb.tables.v_gl_entries as Row[]).push(
+      gl('JE-U', '2026-07-20', 'SOPAY', 'pay-u', '310-0010', 'CASH AT BANK - MAYBANK', 7000, 0),
+      gl('JE-U', '2026-07-20', 'SOPAY', 'pay-u', '300-0000', 'ACCOUNT RECEIVEABLE', 0, 7000, { party_type: 'CUSTOMER', party_name: 'AH MENG' }),
+    );
+    (sb.tables.mfg_sales_order_payments as Row[]).push({ company_id: CO, id: 'pay-u', so_doc_no: 'SO-3', amount_sen: 7000, paid_at: '2026-07-20', created_at: '2026-07-20T03:00:00Z' });
+    const r = await fetchReport(harness(sb), 'from=2026-07-01&to=2026-07-31&party=1');
+    /* The bank receipts: one row, both casings in it (the card swipe keeps its own row by design). */
+    const bankRows = r.receipts.filter((x) => x.key.startsWith('300-0000:') && !x.key.includes(':CARD'));
+    expect(bankRows.map((x) => x.key)).toEqual(['300-0000:AH MENG']);
+    expect(cell(r.receipts, '300-0000:AH MENG', '310-0010')).toBe(50000 + 7000);
+  });
+
   test('party=1 names the control rows by debtor/creditor and does not split the supplier payment', async () => {
     const r = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31&party=1');
-    expect(r.receipts.find((x) => x.key === '300-0000:Ah Meng')?.name).toBe('Ah Meng · ACCOUNT RECEIVEABLE');
+    /* The name keys a row case-blind (owner 2026-11-09: Finance's words are upper case from now on; older lines are not). */
+    expect(r.receipts.find((x) => x.key === '300-0000:AH MENG')?.name).toBe('Ah Meng · ACCOUNT RECEIVEABLE');
     expect(cell(r.payments, '400-0000:FOSHAN CHAIRS', '310-0010')).toBe(100000);
     expect(r.payments.find((x) => x.key === '601-0003')).toBeUndefined();
     expect(r.totals.payments['310-0010']).toBe(125000); // the same money, differently named

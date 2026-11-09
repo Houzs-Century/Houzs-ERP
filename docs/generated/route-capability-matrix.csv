@@ -101,7 +101,7 @@ PATCH,/api/assr/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,
 POST,/api/assr/:id/logistics,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 PATCH,/api/assr/:id/logistics/:logId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/logistics/:logId/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
-POST,/api/assr/:id/notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+POST,/api/assr/:id/notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.create"", ""service_cases.manage""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/notes/:noteId/correct,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/reopen,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/resolve-creditor,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
