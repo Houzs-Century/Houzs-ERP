@@ -27,6 +27,13 @@
 // share its reference and its date. Two credits are never joined, whatever they
 // share. That is exactly the gross-and-fee shape and nothing else.
 //
+// And the credit must be a payout (owner 2026-11-09): Hong Leong prints the other
+// party's name as the reference, so 2990's own transfers — 40,000 in from its
+// Maybank and 33,000 out to its Alliance, both "2990 HOME SDN. BHD. Transfer" on
+// 05/11 — were one credit and one debit sharing a reference, and read as a
+// 7,000 payout less a 33,000 charge. With rules, only a credit a rule recognises
+// takes a charge back, and never more than a tenth of it (MAX_CHARGE_SHARE).
+//
 // Maybank's statement PDF prints NO reference (owner 2026-10-15, 2990's
 // September: 这一笔RM4048.00是要扣RM18.22的 … 转full amount给我们再扣):
 //     2026-09-07  +4,048.00  DR/CARD SALES M/N 2649949 D 9
@@ -85,12 +92,25 @@ function joinKey(l: BankLine, rules: BankRecognitionRule[]): string | null {
 }
 
 /**
+ * The most a bank takes back from a card payout as its fee, as a share of the credit.
+ * Merchant discount runs about 0.5–3 % and an instalment plan's a few per cent more; a
+ * debit bigger than this beside a credit is some other movement. Owner 2026-11-09:
+ * 2990's Hong Leong November statement read "2990 HOME SDN. BHD. Transfer" 40,000 in and
+ * 33,000 out on one day as a payout of 7,000 less a 33,000 charge.
+ */
+export const MAX_CHARGE_SHARE = 0.1;
+
+/**
  * Join a credit with the charge(s) the bank took back against it.
  *
  * Only that shape. See the header: two credits sharing a reference are two
  * payouts, and the real file contains both traps. `rules` lets lines with no
  * reference join on the acquirer and merchant they are recognised as; without
- * rules such lines stand alone.
+ * rules such lines stand alone. With rules, a credit only takes a charge back
+ * when a rule proves it is an acquirer's payout — Hong Leong prints the other
+ * party's name as the reference, and an own-account transfer names the company
+ * itself both ways, so a transfer in and a transfer out share it — and never a
+ * charge above MAX_CHARGE_SHARE of the credit.
  */
 export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule[] = []): BankMovement[] {
   const single = (l: BankLine): BankMovement => ({
@@ -118,8 +138,14 @@ export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule
     const credit = credits[0]!;
     const chargeSen = debits.reduce((s, d) => s + -d.amountSen, 0);
     /* A "charge" bigger than the credit is not a charge; something else is
-       going on and a human should look at it, not this function. */
+       going on and a human should look at it, not this function. Nor is one
+       above a tenth of it — no acquirer keeps that much. */
     if (chargeSen >= credit.amountSen) continue;
+    if (chargeSen > credit.amountSen * MAX_CHARGE_SHARE) continue;
+    /* Only an acquirer's payout has a fee taken back against it. A credit no
+       rule recognises is a transfer, a deposit, a refund: the debits beside it
+       are payments of their own, whatever words they share. */
+    if (rules.length > 0 && !recogniseAcquirer(rules, credit)) continue;
     for (const l of group) joined.add(l);
     out.push({
       lines: [credit, ...debits],

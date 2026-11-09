@@ -9,9 +9,10 @@
 //           ({co}DraftOR-YYMM-NNN) — the salesperson can hand something over;
 //   FORMAL  the moment the money is CONFIRMED — which mints the channel
 //           number: cash {co}COR-YYMM-NNN immediately (钱当场在手), card when
-//           merchant recon confirms that payment, transfer by a manual
-//           confirm; ANY draft can be formalised by hand after a human
-//           verified the money (客户催收据).
+//           merchant recon confirms that payment, transfer when bank recon
+//           matches its line on the statement (owner 2026-11-09: 这个不是我
+//           bank recon了就confirm 了？); ANY draft can be formalised by hand
+//           after a human verified the money (客户催收据).
 //   CANCELLED a formal receipt whose payment changed or was removed (owner
 //           2026-10-29: 收据跟着付款改或作废). Kept on file, its number never
 //           reused; the payment's live receipt is a new row. A DRAFT is never
@@ -406,6 +407,53 @@ export async function followPaymentRemoval(
   const gone = await cancelFormal(sb, p.companyId, r, p.why, p.actor);
   if (!gone.ok) return gone;
   return { ok: true, touch: { from: r.or_number, to: null, draft: false } };
+}
+
+/**
+ * Money matched in bank reconciliation → the receipts of the customer payments
+ * the matched entries hold turn FORMAL on that bank (owner 2026-11-09: 这个不是
+ * 我bank recon了就confirm 了？ — a transfer's money is confirmed by its line on
+ * the bank statement, as a card's is by its merchant line). A customer payment's
+ * entry is source SOPAY / SIPAY with the payment's id; its leg on this bank names
+ * it. BEST-EFFORT like the card path: a match never fails over a receipt — a read
+ * that fails, a missing letter or an absent receipt leaves the draft for Confirm
+ * money, and nothing is thrown. Payments are confirmed in the order the entries
+ * were matched.
+ */
+export async function formaliseReceiptsForBankMatch(
+  sb: any,
+  companyId: number,
+  accountCode: string,
+  jeNos: string[],
+  actor: string | null,
+): Promise<Array<{ paymentId: string; outcome: string }>> {
+  if (jeNos.length === 0) return [];
+  try {
+    const { data, error } = await sb.from('v_gl_entries')
+      .select('je_no, source_type, source_doc_no')
+      .eq('company_id', companyId).eq('account_code', accountCode).in('je_no', jeNos);
+    if (error) return [];
+    const legs = (Array.isArray(data) ? data : []) as Array<{ je_no: string; source_type: string | null; source_doc_no: string | null }>;
+    const seen = new Set<string>();
+    const payments: Array<{ source: string; id: string }> = [];
+    for (const je of jeNos) {
+      for (const g of legs) {
+        const source = String(g.source_type ?? '');
+        const id = String(g.source_doc_no ?? '');
+        if (g.je_no !== je || (source !== 'SOPAY' && source !== 'SIPAY') || !id || seen.has(`${source}:${id}`)) continue;
+        seen.add(`${source}:${id}`);
+        payments.push({ source, id });
+      }
+    }
+    if (payments.length === 0) return [];
+    const code = await companyCodeById(sb, companyId);
+    if (!code) return [];
+    return await formaliseReceiptsForSettlement(sb, companyId, code, payments, accountCode, actor);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] bank match formalise skipped:', e);
+    return [];
+  }
 }
 
 /**
