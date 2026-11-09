@@ -3317,9 +3317,8 @@ function DataTableInner<T, L>({
 
               {/* Value checklist — its own scroller. `overscroll-contain` so a
                   wheel that hits the top/bottom of the list doesn't chain into
-                  a page scroll (which closes the popover). `shrink-0`: on a
-                  short screen the date filter above used to squeeze this to
-                  one row (2990-0054); now the whole popover scrolls instead. */}
+                  a page scroll (which closes the popover). `shrink-0`: never
+                  squeezed to one row; the whole popover scrolls (2990-0054). */}
               <div className="max-h-[240px] shrink-0 overflow-y-auto overscroll-contain py-1">
                 {shown.length === 0 && (
                   <div className="px-3 py-2 text-[12px] text-ink-muted">No values</div>
