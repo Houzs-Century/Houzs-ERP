@@ -27,7 +27,7 @@
 //
 // Env: COMPANY_ID, DATABASE_URL.
 //   COMPANY_ID=2 npx tsx scripts/confirm-banked-receipts.mjs                                          # plan
-//   COMPANY_ID=2 MODE=rehearse npx tsx scripts/confirm-banked-receipts.mjs                            # try, roll back
+//   COMPANY_ID=2 REHEARSE=1 npx tsx scripts/confirm-banked-receipts.mjs                              # try, roll back
 //   COMPANY_ID=2 MODE=apply CONFIRM="CONFIRM BANKED RECEIPTS" npx tsx scripts/confirm-banked-receipts.mjs
 
 import postgres from 'postgres';
@@ -37,7 +37,8 @@ import { companyCodeById } from '../src/scm/lib/doc-no.ts';
 
 const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
 const APPLY = MODE === 'apply' || process.env.APPLY === '1';
-const REHEARSE = MODE === 'rehearse';
+/* REHEARSE=1 too: the shared runner (run-script.yml) passes only plan / apply as MODE. */
+const REHEARSE = !APPLY && (MODE === 'rehearse' || process.env.REHEARSE === '1');
 const PHRASE = 'CONFIRM BANKED RECEIPTS';
 const COMPANY_ID = Number(process.env.COMPANY_ID);
 const WHO = 'Claude, for the owner (2026-11-09) — matched in Bank recon';

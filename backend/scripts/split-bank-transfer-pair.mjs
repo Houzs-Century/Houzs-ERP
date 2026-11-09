@@ -37,7 +37,7 @@
 //
 // Env: COMPANY_ID, STATEMENT_ID, DATABASE_URL.
 //   COMPANY_ID=2 STATEMENT_ID=21 npx tsx scripts/split-bank-transfer-pair.mjs                                  # plan
-//   COMPANY_ID=2 STATEMENT_ID=21 MODE=rehearse npx tsx scripts/split-bank-transfer-pair.mjs                    # do it, roll back
+//   COMPANY_ID=2 STATEMENT_ID=21 REHEARSE=1 npx tsx scripts/split-bank-transfer-pair.mjs                      # do it, roll back
 //   COMPANY_ID=2 STATEMENT_ID=21 MODE=apply CONFIRM="SPLIT TRANSFER PAIRS" npx tsx scripts/split-bank-transfer-pair.mjs
 
 import postgres from 'postgres';
@@ -48,7 +48,8 @@ import { lockMonthOf, lockedRefusal } from '../src/acc/bank-lock.ts';
 
 const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
 const APPLY = MODE === 'apply' || process.env.APPLY === '1';
-const REHEARSE = MODE === 'rehearse';
+/* REHEARSE=1 too: the shared runner (run-script.yml) passes only plan / apply as MODE. */
+const REHEARSE = !APPLY && (MODE === 'rehearse' || process.env.REHEARSE === '1');
 const PHRASE = 'SPLIT TRANSFER PAIRS';
 const COMPANY_ID = Number(process.env.COMPANY_ID);
 const STATEMENT_ID = Number(process.env.STATEMENT_ID);
