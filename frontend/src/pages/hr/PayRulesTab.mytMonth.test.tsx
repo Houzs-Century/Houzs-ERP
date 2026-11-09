@@ -14,7 +14,7 @@ afterEach(() => {
 
 const dayRateLine = () => {
   const { container } = render(<Explainer r={{ ...DEFAULT_PAY_RULES, dayRateDivisorMode: "calendarDays" }} />);
-  return container.textContent ?? "";
+  return container.textContent;
 };
 
 describe("pay-rules example uses the Malaysian month", () => {

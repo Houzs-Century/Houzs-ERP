@@ -93,6 +93,7 @@
 // Idempotent: a (product, warehouse, batch, variant) that already carries an
 // AC_CUTOVER sofa lot is skipped, so re-running tops up rather than doubles.
 // DRY-RUN by default; APPLY=1 writes.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

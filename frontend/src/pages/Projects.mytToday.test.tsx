@@ -15,6 +15,9 @@ vi.mock("../auth/AuthContext", async (orig) => ({
 
 import { ProjectStageStepper, TasklistSections } from "./Projects";
 import { PROJECT_STAGES } from "./projects/projectStage";
+
+type StepperProps = Parameters<typeof ProjectStageStepper>[0];
+type SectionsProps = Parameters<typeof TasklistSections>[0];
 import { DialogProvider } from "../hooks/useDialog";
 
 beforeEach(() => {
@@ -26,7 +29,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const FLOORPLAN_OPEN = [{ id: 1, title: PROJECT_STAGES[0].titles[0], status: "pending" } as any];
+const FLOORPLAN_OPEN = [{ id: 1, title: PROJECT_STAGES[0].titles[0], status: "pending" }] as unknown as StepperProps["checklist"];
 const ymdPlus = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 
 describe("stage tracker counts lateness from the Malaysian today", () => {
@@ -52,7 +55,7 @@ describe("task section chip counts days from the Malaysian today", () => {
           projectName="Expo"
           projectStartDate={null}
           projectEndDate={null}
-          checklist={[{ id: 1, title: "Book hall", status: "pending", due_date: due, section_id: null } as any]}
+          checklist={[{ id: 1, title: "Book hall", status: "pending", due_date: due, section_id: null }] as unknown as SectionsProps["checklist"]}
           sections={[]}
           sectionProgress={[]}
           attachments={[]}
@@ -65,7 +68,7 @@ describe("task section chip counts days from the Malaysian today", () => {
           onReload={() => {}}
           onItemStatus={() => {}}
           onItemDelete={() => {}}
-          toast={{ success: () => {}, error: () => {}, info: () => {}, warning: () => {}, show: () => {} } as any}
+          toast={{ success: () => {}, error: () => {}, info: () => {}, warning: () => {}, show: () => {} } as unknown as SectionsProps["toast"]}
         />
       </DialogProvider></MemoryRouter></QueryClientProvider>,
     );

@@ -42,6 +42,7 @@
 //   WINDOW_DAYS   date proximity window (default 3)
 //   REPORT_FLOOR  near-miss overlap floor for NEEDS-EYES (default 0.8)
 //   VERIFY_POS    section-H PO numbers (default 2990-PO-2607-001,2990-PO-2607-005)
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import {

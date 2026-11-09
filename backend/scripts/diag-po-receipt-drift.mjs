@@ -23,6 +23,7 @@
 // EXITS NON-ZERO WHEN IT FINDS DRIFT. That is the entire point. A probe that
 // only prints is another log nobody reads; the schedule below turns a red run
 // into the notification that was missing.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

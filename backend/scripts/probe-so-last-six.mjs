@@ -21,6 +21,7 @@
  * with `linked_ac_dtlkey` beside it so the reader can check identity rather
  * than order.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -115,7 +116,7 @@ async function main() {
     p(`  ${rows.length} ERP line(s):`);
     for (const r of rows) {
       p(`    line ${r.line_no}  id=${r.id}`);
-      p(`      group=${j(r.item_group)} code=${j(r.item_code)} qty=${r.qty} unit=${r.unit_price_sen} total=${r.total_sen} balance=${r.balance_sen}`);
+      p(`      group=${j(r.item_group)} code=${j(r.item_code)} qty=${r.qty} unit_sen=${r.unit_price_sen} total_sen=${r.total_sen} balance=${r.balance_sen}`);
       p(`      dtlkey=${j(r.linked_ac_dtlkey ?? null)} warehouse=${j(r.warehouse_id ?? null)} uom=${j(r.uom ?? null)} location=${j(r.location ?? null)}`);
       p(`      description=${j(r.description)}`);
       p(`      description2=${j(r.description2)}`);
@@ -153,7 +154,7 @@ async function main() {
     const rows = await sql`SELECT * FROM scm.purchase_order_items WHERE purchase_order_id = ${h.id} ORDER BY id`;
     p(`  ${rows.length} ERP line(s):`);
     for (const r of rows) {
-      p(`    id=${r.id} group=${j(r.item_group)} code=${j(r.item_code)} qty=${r.qty} unit=${r.unit_price_sen} total=${r.line_total_sen} received=${r.received_qty}`);
+      p(`    id=${r.id} group=${j(r.item_group)} code=${j(r.item_code)} qty=${r.qty} unit_sen=${r.unit_price_sen} total_sen=${r.line_total_sen} received=${r.received_qty}`);
       p(`      dtlkey=${j(r.linked_ac_dtlkey ?? null)} so_item_id=${j(r.so_item_id ?? null)} warehouse=${j(r.warehouse_id ?? null)}`);
       p(`      description2=${j(r.description2)}`);
       p(`      variants=${j(r.variants)}`);
@@ -183,10 +184,10 @@ async function main() {
     p(`  ${grns.length} ERP goods receipt(s) whose number starts ${doc}`);
     for (const g of grns) {
       const [po] = await sql`SELECT po_number FROM scm.purchase_orders WHERE id = ${g.purchase_order_id}`;
-      p(`  ── ${g.grn_number}  po=${j(po?.po_number)} migrated_no_stock=${j(g.migrated_no_stock ?? null)} status=${j(g.status)} total=${g.total_sen}`);
+      p(`  ── ${g.grn_number}  po=${j(po?.po_number)} migrated_no_stock=${j(g.migrated_no_stock ?? null)} status=${j(g.status)} total_sen=${g.total_sen}`);
       const items = await sql`SELECT * FROM scm.grn_items WHERE grn_id = ${g.id} ORDER BY id`;
       for (const r of items) {
-        p(`     id=${r.id} code=${j(r.item_code)} name=${j(r.material_name)} qty_recv=${r.qty_received} unit=${r.unit_price_sen}`);
+        p(`     id=${r.id} code=${j(r.item_code)} name=${j(r.material_name)} qty_recv=${r.qty_received} unit_sen=${r.unit_price_sen}`);
         p(`       dtlkey=${j(r.linked_ac_dtlkey ?? null)} po_item=${j(r.purchase_order_item_id ?? null)}`);
         p(`       description2=${j(r.description2)}`);
         if (r.purchase_order_item_id) {

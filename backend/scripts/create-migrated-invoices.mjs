@@ -48,6 +48,7 @@
 //
 // Run it with tsx so the shared rules import directly:
 //   npx tsx scripts/create-migrated-invoices.mjs
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

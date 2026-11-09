@@ -37,7 +37,7 @@ describe("stock movement filter buckets by the Malaysian day", () => {
     const row = (id: string, created_at: string) =>
       ({ id, movement_type: "IN", warehouse_id: "kl", source_doc_no: null, created_at }) as const;
     const rows = [row("a", "2026-11-09T16:30:00Z"), row("b", "2026-11-10T16:00:00Z"), row("c", "2026-11-09T15:59:00Z")];
-    const kept = filterMovements(rows as any, { ...EMPTY_MOVEMENT_FILTER, dateFrom: "2026-11-10", dateTo: "2026-11-10" });
+    const kept = filterMovements(rows, { ...EMPTY_MOVEMENT_FILTER, dateFrom: "2026-11-10", dateTo: "2026-11-10" });
     expect(kept.map((r) => r.id)).toEqual(["a"]);
   });
   it("an unreadable time is ''", () => {

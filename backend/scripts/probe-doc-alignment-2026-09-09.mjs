@@ -25,6 +25,7 @@
  * expected to be run IMMEDIATELY BEFORE an apply, and its stock-movement
  * figures quoted in that apply's PR.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const url = process.env.DATABASE_URL;

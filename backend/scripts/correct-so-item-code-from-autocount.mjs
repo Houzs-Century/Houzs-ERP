@@ -54,6 +54,7 @@
 // says so, and exits 0 without writing. Re-running plan is free and re-prints
 // the table. The UPDATE re-asserts the OLD code, so a row a person corrected in
 // between is not touched and shows up in the count.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

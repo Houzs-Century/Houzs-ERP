@@ -30,6 +30,7 @@
  *
  * Env: DATABASE_URL (required)   COMPANY_ID (default 1)
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';

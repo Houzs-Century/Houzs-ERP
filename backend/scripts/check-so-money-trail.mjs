@@ -18,6 +18,7 @@
 // production"), mode plan, variables DOCS=2990-SO-2608-006,2990-SO-2607-024.
 // Exits 0 for every real answer, including "no such order"; only an
 // unreachable database or a failed query exits non-zero.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

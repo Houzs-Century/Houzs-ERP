@@ -35,6 +35,7 @@
  *   COMPANY_ID     optional, default 1
  *     npx tsx scripts/check-priced-specials-exposure.mjs
  */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DST = process.env.DATABASE_URL;

@@ -3,6 +3,7 @@
    the 9th is "Yesterday", even when the phone's clock zone is UTC. */
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 const { apiGet, lastAt } = vi.hoisted(() => ({ apiGet: vi.fn(), lastAt: { current: "" } }));
 
@@ -12,7 +13,7 @@ vi.mock("../hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: {} }) }));
 vi.mock("./MobileVirtualList", () => ({
-  MobileVirtualList: ({ items, renderItem }: any) => <div>{items.map((item: any, i: number) => renderItem(item, i))}</div>,
+  MobileVirtualList: ({ items, renderItem }: { items: unknown[]; renderItem: (item: unknown, i: number) => ReactNode }) => <div>{items.map((item, i) => renderItem(item, i))}</div>,
 }));
 
 import { MobileMailCenter } from "./MobileMailCenter";

@@ -55,6 +55,7 @@
 
    RE-RUN: inert. A restored line no longer reads unit_price_sen = 0, so it
    leaves the selection; the SI and write-back steps only act on what is named. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import {

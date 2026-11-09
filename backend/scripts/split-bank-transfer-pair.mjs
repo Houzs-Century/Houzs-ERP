@@ -43,6 +43,7 @@
 //   COMPANY_ID=2 STATEMENT_ID=21 REHEARSE=1 npx tsx scripts/split-bank-transfer-pair.mjs                      # do it, roll back
 //   COMPANY_ID=2 STATEMENT_ID=21 MODE=apply CONFIRM="SPLIT TRANSFER PAIRS" npx tsx scripts/split-bank-transfer-pair.mjs
 
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { groupBankMovements, matchBankMovements } from '../src/acc/bank-match.ts';

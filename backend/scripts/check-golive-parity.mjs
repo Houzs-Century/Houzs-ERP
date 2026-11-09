@@ -80,6 +80,7 @@
 // export older than STALE_HOURS (default 48) is reported as STALE — a finding,
 // never a silent comparison.
 // ============================================================================
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

@@ -44,6 +44,7 @@
 
    Env: DATABASE_URL, MODE=plan|apply, CONFIRM="RENUMBER RECEIPT MONTHS",
    optional COMPANY_ID to narrow it. */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const MODE = (process.env.MODE || "plan").toLowerCase();

@@ -14,6 +14,7 @@
 // reachable over ZeroTier from the office network and a CI runner is not on it.
 // data/ac-live-export-manifest.json records when it was taken; a stale export
 // is itself reported rather than silently compared.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

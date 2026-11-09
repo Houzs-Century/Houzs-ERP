@@ -40,6 +40,7 @@
 // side has no such exemption. Both numbers are printed separately rather than
 // netted, because "what the customer pays" and "what we book as cost" are two
 // different questions and the owner is entitled to answer them separately.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 import {
   buildLiveIndex, classifyLine, loadPhraseMap,
