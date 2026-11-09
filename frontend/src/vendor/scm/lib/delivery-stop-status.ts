@@ -12,8 +12,10 @@
    The board's delivery_state is NOT used for "done": it reads DELIVERED once
    every unit has SHIPPED, which is a stop still on the lorry. */
 
+import { DO_ARRIVED_STATES } from "../../shared/do-shipped-states";
+
 /** DO statuses that mean the customer has the goods. */
-export const DO_DELIVERED_STATUSES: readonly string[] = ["DELIVERED", "SIGNED", "INVOICED"];
+export const DO_DELIVERED_STATUSES: readonly string[] = DO_ARRIVED_STATES;
 
 export type StopStatus = "done" | "active" | "overdue" | "scheduled";
 

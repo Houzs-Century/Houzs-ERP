@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-330 route modules (103 in `backend/src/routes`, 227 in `backend/src/scm/routes`), 1758 endpoint registrations.
+329 route modules (103 in `backend/src/routes`, 226 in `backend/src/scm/routes`), 1742 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -190,9 +190,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-messages.ts` | 3 | 529 |
 | `backend/src/scm/routes/delivery-order-exports.ts` | 1 | 56 |
 | `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
-| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 206 |
+| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 284 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5356 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5364 |
 | `backend/src/scm/routes/delivery-planning-changes.ts` | 0 | 47 |
 | `backend/src/scm/routes/delivery-planning-fields.ts` | 0 | 166 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
@@ -223,7 +223,6 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fleet-plan-service.ts` | 1 | 78 |
 | `backend/src/scm/routes/fleet-work-order-files.ts` | 3 | 104 |
 | `backend/src/scm/routes/fleet-work-order-photos.ts` | 1 | 19 |
-| `backend/src/scm/routes/flow-doc-files.ts` | 16 | 143 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 115 |
 | `backend/src/scm/routes/grn-exports.ts` | 1 | 36 |
 | `backend/src/scm/routes/grns-list-enrichment.ts` | 1 | 120 |
@@ -342,7 +341,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/threepl-do-charges.ts` | 8 | 196 |
 | `backend/src/scm/routes/threepl-from-ap.ts` | 0 | 325 |
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
-| `backend/src/scm/routes/trips.ts` | 17 | 1544 |
+| `backend/src/scm/routes/trips.ts` | 17 | 1545 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 429 |
 | `backend/src/scm/routes/venture-portal-feed.ts` | 11 | 631 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
@@ -359,13 +358,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 175 | `175_email_outbox_claim.sql` (175) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 632 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 631 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4373 files, 1075506 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (4381 files, 1076168 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -375,13 +374,13 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Projects.tsx` | 7633 |
 | `frontend/src/pages/Team.tsx` | 5675 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5356 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5364 |
 | `backend/src/routes/projects.ts` | 5187 |
 | `backend/src/scm/routes/scan-so.ts` | 4797 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 4795 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4483 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4209 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4186 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4182 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3826 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `frontend/src/components/DataTable.tsx` | 3544 |
@@ -610,7 +609,7 @@ Page files by directory:
 | `frontend/src/pages/pos-admin` | 11 |
 | `frontend/src/pages/projects` | 25 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 274 |
+| `frontend/src/pages/scm-v2` | 275 |
 | `frontend/src/pages/scm-v2/books` | 3 |
 | `frontend/src/pages/scm-v2/carriers` | 2 |
 | `frontend/src/pages/scm-v2/delivery-zones` | 3 |
@@ -644,7 +643,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileCaseDocChips.tsx` | 38 |
 | `frontend/src/mobile/MobileChangeLog.tsx` | 237 |
 | `frontend/src/mobile/MobileCollectedOnOrder.tsx` | 37 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1248 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1253 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 524 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2397 |
@@ -669,7 +668,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1857 |
 | `frontend/src/mobile/MobileMailPersonal.tsx` | 87 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 421 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1906 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1904 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 396 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2103 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 330 |
