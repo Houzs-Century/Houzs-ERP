@@ -290,6 +290,11 @@ jobs:
       - run: node ../frontend/scripts/check-silent-writes.mjs --strict
       # CLAUDE.md, module guides, the bug summary and TODO stay short (line limits).
       - run: node ../scripts/check-docs-size.mjs
+      # This repository is public, so an artifact is downloadable by anyone with
+      # a GitHub account. A dump, backup or export of database rows must be
+      # encrypted before upload (docs/staging-dump-artifact-exposure-coe.md).
+      - run: node ../scripts/check-workflow-dump-artifacts.mjs
+      - run: node --test ../scripts/check-workflow-dump-artifacts.test.mjs
 
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written

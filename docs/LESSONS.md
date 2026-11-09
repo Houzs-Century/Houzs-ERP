@@ -133,3 +133,8 @@ read one with `git show archive/docs-2026-09-15:docs/<slug>-coe.md`. A new serio
 - Saw: sizes and headrest options vanished from the pickers (421 Models, both companies); the same day the 2990 POS lost every sofa colour.
 - Cause: bulk scripts treated every `allowed_options` pool as a restriction, but MATTRESS/BEDFRAME `sizes` and `mattress_thickness_cm` are the configuration and the POS builds its colour chips from `fabrics`; both were restored from backups.
 - Rule: enumerate every reader of a shared column, in both repos, before a bulk change; describe a destructive option by what it really deletes; a destructive script keeps its backup and restore statement beside it.
+
+**2026-11-09 — staging refresh published the unmasked production database** [staging-dump-artifact-exposure]
+- Saw: nothing — found by the money-in-logs sweep. Every staging refresh (15 since 2026-09-11) left a ~235 MB `prod-data` artifact any GitHub account could download; 23 older backups were also readable.
+- Cause: the repository is public, so artifacts are public; the refresh uploaded the dump before masking, which ran later on staging. Kept as a full write-up in `docs/staging-dump-artifact-exposure-coe.md`.
+- Rule: never upload database rows unencrypted — seal to the requester's key (`.github/actions/seal-artifact`) or keep them on the runner; `scripts/check-workflow-dump-artifacts.mjs` fails CI otherwise.

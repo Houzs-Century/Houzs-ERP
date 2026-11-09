@@ -171,10 +171,14 @@ jobs:
             --no-owner --no-privileges --file=masked.dump
           openssl rand 32 > data.key
           openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:data.key -in masked.dump -out masked.dump.enc
+          # pg_restore's errors can quote a row value from the UNMASKED dump, so
+          # they ride under the same key. Extensions and row counts are already
+          # in the log and the summary; they are not uploaded again.
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:data.key -in restore-errors.log -out restore-errors.log.enc
           openssl pkeyutl -encrypt -pubin -inkey recipient.pem \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in data.key -out data.key.enc
-          rm -f data.key masked.dump
-          ls -la masked.dump.enc data.key.enc
+          rm -f data.key masked.dump restore-errors.log
+          ls -la masked.dump.enc data.key.enc restore-errors.log.enc
 
       - uses: actions/upload-artifact@v4
         with:
@@ -182,8 +186,6 @@ jobs:
           path: |
             masked.dump.enc
             data.key.enc
-            extensions.txt
-            restore-errors.log
-            row-counts.txt
+            restore-errors.log.enc
           retention-days: 1
           if-no-files-found: error

@@ -7,6 +7,10 @@ name: Align export company (read-only)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       target:
         description: "Which DB"
         required: true
@@ -25,6 +29,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -35,9 +44,16 @@ jobs:
         run: |
           if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
           node scripts/align-export-company.mjs
+      - name: Seal the rows to the requester's key before upload
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: backend/out/*.json
+          name: rows
       - uses: actions/upload-artifact@v4
         with:
           name: align-export-company-${{ inputs.company_id }}-${{ inputs.target }}
-          path: backend/out/*.json
+          path: sealed/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
