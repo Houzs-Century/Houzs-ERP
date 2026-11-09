@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Mail, MapPin, ShieldCheck } from "lucide-react";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // Customer-facing portal shell. Designed to feel like a considered,
 // well-made document rather than a generic SaaS layout — this is a
@@ -17,7 +18,7 @@ import { Mail, MapPin, ShieldCheck } from "lucide-react";
 const LOGO_WORDMARK = "/logo-wordmark.png";
 
 export function PortalFrame({ children }: { children: ReactNode }) {
-  const year = new Date().getFullYear();
+  const year = todayMyt().slice(0, 4);
 
   return (
     <div className="flex min-h-screen flex-col bg-bg">

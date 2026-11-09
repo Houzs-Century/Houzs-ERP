@@ -1,4 +1,5 @@
 import { compareCalendarEvents } from "../../lib/calendarSort";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 import type { ProjectStage, ProjectStatus } from "./types";
 
 /** A venue's initials, so "sccc" finds Setia City Convention Centre (owner 2026-11-04). */
@@ -85,16 +86,15 @@ export function buildCalendarWindow(
   if (/^\d{4}-\d{2}$/.test(monthStr)) {
     monthAnchor = new Date(Number(monthStr.slice(0, 4)), Number(monthStr.slice(5, 7)) - 1, 1);
   } else {
-    monthAnchor = new Date();
-    monthAnchor.setDate(1);
+    const today = todayMyt();
+    monthAnchor = new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, 1);
   }
 
   let weekAnchor: Date;
   if (/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) {
     weekAnchor = new Date(weekStartStr + "T00:00:00Z");
   } else {
-    weekAnchor = new Date();
-    weekAnchor.setUTCHours(0, 0, 0, 0);
+    weekAnchor = new Date(todayMyt() + "T00:00:00Z");
   }
   weekAnchor.setUTCDate(weekAnchor.getUTCDate() - ((weekAnchor.getUTCDay() + 6) % 7));
 

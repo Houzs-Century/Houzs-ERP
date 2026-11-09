@@ -36,7 +36,7 @@ import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
 import { isSetupDismantleJob } from "./setupDismantleJob";
 import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
-import { mytDayOfValue, todayMyt } from "../vendor/scm/lib/dates";
+import { instantToMytLocal, mytDayOfValue, todayMyt } from "../vendor/scm/lib/dates";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -245,8 +245,8 @@ const isLate = (o: BoardRow, isToday: boolean): boolean => {
   if (stopFlags(o).done) return false;
   const em = windowEndMin(o);
   if (em == null) return false;
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes() > em;
+  const hm = instantToMytLocal(new Date().toISOString()).slice(11, 16);
+  return Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)) > em;
 };
 const trackState = (o: BoardRow, isToday: boolean): TrackState => {
   const { started, arrived, done } = stopFlags(o);
@@ -441,16 +441,7 @@ export function MobileDeliveryPlanning({
   // History has no single date, so we fall back to the tab label). MUST be
   // declared BEFORE the detailOrder early-return below, or opening a stop
   // renders fewer hooks than the list view and React throws error #300.
-  const routeDate = useMemo(() => {
-    const now = new Date();
-    if (day === "today") return now;
-    if (day === "tomorrow") {
-      const t = new Date(now);
-      t.setDate(t.getDate() + 1);
-      return t;
-    }
-    return null;
-  }, [day]);
+  const routeDate = day === "today" ? todayKey : day === "tomorrow" ? tomorrowKey : null;
 
   const detailJob = detailOrder ? jobRefOf(detailOrder) : null;
   if (detailOrder && detailJob) {
@@ -475,9 +466,9 @@ export function MobileDeliveryPlanning({
 
   const dayLabel = DAY_TABS.find((t) => t.key === day)?.label;
   const routeWeekday = routeDate
-    ? routeDate.toLocaleDateString("en-GB", { weekday: "long" })
+    ? new Date(`${routeDate}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })
     : dayLabel;
-  const routeDateStr = routeDate ? dm(routeDate.toISOString()) : null;
+  const routeDateStr = routeDate ? dm(routeDate) : null;
 
   return (
     <div

@@ -132,6 +132,7 @@ import {
   Square,
 } from "lucide-react";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
+import { mytDayOf, todayMyt } from "../../vendor/scm/lib/dates";
 
 type MailThreadRow = {
   id: string;
@@ -237,8 +238,7 @@ function fmtTime(iso: string | number | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
+  const sameDay = mytDayOf(d.toISOString()) === todayMyt();
   /* Today shows the clock, older rows show the date — one INBOX convention,
      but both halves come from the one rule rather than the OS locale. */
   return sameDay ? fmtClock(d) : fmtDate(d);

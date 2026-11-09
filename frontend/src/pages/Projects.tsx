@@ -3488,7 +3488,7 @@ function TaskAttachmentRow({
 // ── Project Stage stepper ─────────────────────────────────────
 // The 10-step tracker; its rule lives in projects/projectStage.ts, shared with
 // Project Overview's event list.
-function ProjectStageStepper({
+export function ProjectStageStepper({
   checklist,
   startDate,
   setupCrew,
@@ -3502,9 +3502,7 @@ function ProjectStageStepper({
 }) {
   const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), driverKeyedOf(setupCrew), startDate, todayMY());
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
+  const todayMs = new Date(`${todayMY()}T00:00:00`).getTime();
   const startMs = startDate ? new Date(`${startDate}T00:00:00`).getTime() : null;
   const deadlineMs = (offset: number) => (startMs != null ? startMs + offset * 86400000 : null);
 
@@ -3564,7 +3562,7 @@ function ProjectStageStepper({
 // rows. Each section is collapsible; admins can add/rename/delete
 // sections inline. Tasks without a section land in an "Uncategorised"
 // bucket pinned at the bottom.
-function TasklistSections({
+export function TasklistSections({
   projectId,
   projectName,
   projectStartDate,
@@ -3970,9 +3968,7 @@ function TasklistSections({
             if (dates.length === 0) return null;
             const latest = dates.sort().slice(-1)[0];
             const target = new Date(`${latest}T00:00:00Z`);
-            const now = new Date();
-            now.setUTCHours(0, 0, 0, 0);
-            const ms = target.getTime() - now.getTime();
+            const ms = target.getTime() - new Date(`${todayMY()}T00:00:00Z`).getTime();
             const days = Math.round(ms / 86400000);
             return { days, targetIso: latest };
           })();

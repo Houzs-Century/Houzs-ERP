@@ -206,7 +206,7 @@ describe("ShareCalendar", () => {
     await screen.findByText(/Booth 3053-3055/);
     fireEvent.click(screen.getByText("Export to Excel"));
     await waitFor(() => expect(written.length).toBe(1));
-    const y = String(new Date().getFullYear());
+    const y = todayMyt().slice(0, 4);
     expect(fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/export"))).toEqual([
       expect.stringMatching(new RegExp(`/contractor-calendar/.*/export\\?year=${y}$`)),
     ]);
