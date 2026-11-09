@@ -1850,7 +1850,8 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   if (toStatus === 'CANCELLED' && isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!updated) {
-    const { data: latest } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
+    const { data: latest, error: reErr } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (reErr) return c.json({ error: 'status_changed', message: 'This return was changed by someone else just now and its new state could not be read. Nothing was saved. Refresh and check before trying again.', reason: reErr.message }, 409);
     if (!latest) return c.json(NOT_THIS_COMPANY, 404);
     const nowStatus = (latest as { status: string }).status;
     if (toStatus === 'CANCELLED' && nowStatus === 'CANCELLED') {
