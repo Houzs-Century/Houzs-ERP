@@ -12,6 +12,7 @@
 //
 // Mounted at '/delivery-returns' in apps/api/src/index.ts.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
@@ -85,8 +86,7 @@ const ITEM =
   'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'delivery_returns', 'return_number', `${p}DR-${yymm}`);
 };

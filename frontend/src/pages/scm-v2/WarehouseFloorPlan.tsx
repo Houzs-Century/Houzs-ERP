@@ -34,6 +34,7 @@ import {
   itemMeta, matchSlot, resolvedZoneLabel, statusCounts, toSlot, ZONE_LABELS,
   type FloorFilters, type Slot, type SlotStatus,
 } from '../../vendor/scm/lib/warehouse-floorplan';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 /* Slot-state palette — every value is an Ink & Petrol token from the README
    handoff table. Drives the cell fill / border / level pill / tick / badge for
@@ -146,7 +147,7 @@ export function WarehouseFloorPlan({
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `warehouse-slots-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `warehouse-slots-${todayMyt()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterOutstandingGrnLines, searchTerms } from './outstanding-grn-search';
+import { filterOutstandingGrnLines, notePoLabel, searchTerms } from './outstanding-grn-search';
 import type { OutstandingGrnItem } from './suppliers-queries';
 
 const line = (o: Partial<OutstandingGrnItem>): OutstandingGrnItem => ({
@@ -77,5 +77,29 @@ describe('filterOutstandingGrnLines', () => {
   it('finds a line by its Description 2', () => {
     const fabric = line({ grnItemId: 'sofa-1', itemGroup: 'sofa', itemCode: '5530-2A', description: null, variants: { fabricCode: 'PC151-12' } });
     expect(filterOutstandingGrnLines([...LINES, fabric], 'pc151-12').map((l) => l.grnItemId)).toEqual(['sofa-1']);
+  });
+});
+
+/* Staff 2026-11-09, HC-GRN-2611-052: one receipt held lines from two POs and
+   the picker labelled all of them with the first. */
+describe('a note that received from several POs', () => {
+  const NOTE_52 = [
+    line({ grnItemId: 'g52-1', grnId: 'grn-52', grnDocNo: 'HC-GRN-2611-052', purchaseOrderId: 'po-125', poDocNo: 'HC-PO-2610-125' }),
+    line({ grnItemId: 'g52-2', grnId: 'grn-52', grnDocNo: 'HC-GRN-2611-052', purchaseOrderId: 'po-202', poDocNo: 'HC-PO-2610-202' }),
+    line({ grnItemId: 'g52-3', grnId: 'grn-52', grnDocNo: 'HC-GRN-2611-052', purchaseOrderId: 'po-202', poDocNo: 'HC-PO-2610-202' }),
+  ];
+
+  it('searching one PO keeps only the lines received against it', () => {
+    expect(filterOutstandingGrnLines(NOTE_52, 'HC-PO-2610-202').map((l) => l.grnItemId)).toEqual(['g52-2', 'g52-3']);
+    expect(filterOutstandingGrnLines(NOTE_52, 'HC-PO-2610-125').map((l) => l.grnItemId)).toEqual(['g52-1']);
+  });
+
+  it('the card heading names every PO once, not the first line\'s alone', () => {
+    expect(notePoLabel(NOTE_52)).toBe('PO HC-PO-2610-125, HC-PO-2610-202');
+    expect(notePoLabel([NOTE_52[1]!])).toBe('PO HC-PO-2610-202');
+  });
+
+  it('a note with no PO on any line gets no PO in its heading', () => {
+    expect(notePoLabel([line({ poDocNo: null }), line({ poDocNo: null })])).toBeNull();
   });
 });

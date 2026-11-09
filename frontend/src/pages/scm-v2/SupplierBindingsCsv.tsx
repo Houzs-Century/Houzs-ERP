@@ -22,6 +22,7 @@ import type { MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { composeSupplierSku } from '../../vendor/scm/lib/supplier-sku-helpers';
 import styles from './SupplierDetail.module.css';
 import { readImportGrid, resolveImportHeaders } from '../../lib/import-sheet';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 import { guardFormula } from '../../lib/csv';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -184,7 +185,7 @@ export function exportBindingsCsv(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `supplier-${supplierCode}-bindings-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `supplier-${supplierCode}-bindings-${todayMyt()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

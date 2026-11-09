@@ -78,6 +78,17 @@ The code is stored in the EXISTING `reason` column — no migration, no rewrite.
 - The desktop detail page has no line-editing UI today — the item POST/PATCH/DELETE routes are reachable by API only; don't assume a frontend caller exists when changing their contract.
 - No mobile-specific screen — the generic `MobileModuleList`/`MobileModuleDetail` cover it.
 
+## Files and photos (`/purchase-returns/:id/files`)
+
+Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a purchase return keeps attached files: the supplier's paperwork, an invoice scan, photos of the goods. Images (JPEG / PNG / WebP) and PDFs, 20 MB each, many per document.
+
+- `POST /:id/files` `{fileName, mime, dataBase64}`, `GET /:id/files` (rows + `locked`), `GET /:id/files/:fileId` (streams), `DELETE /:id/files/:fileId`.
+- Write = `edit` on `scm.procurement.pr`, the same `scmAreaGuard` that gates every other write here; the router passes `mayWrite` because this document has no flat permission key.
+- `CANCELLED` takes no more files. A file stops being removable once the document is finished: `COMPLETED`. Not at posting, on purpose.
+- Index `scm.purchase_return_files` (mig `20261110T0300_scm_flow_doc_files.sql`), bytes in the SLIPS R2 bucket under `purchase-return-files/<company>/<doc>/<uuid>.<ext>`. Company-scoped on every read and write.
+- UI: the Files card (`FlowDocFilesCard`) on the desktop detail page and on the phone's generic detail screen (`MobileModuleDetail`), both through `vendor/scm/lib/flow-doc-files.ts`.
+- Code: `backend/src/scm/routes/flow-doc-files.ts` (one spec per document over `lib/doc-files.ts`). Tests: `backend/tests/flowDocFiles.test.ts`, `frontend/src/vendor/scm/components/FlowDocFilesCard.test.tsx`.
+
 ## Where the code is
 
 - `backend/src/scm/routes/purchase-returns.ts` — main API surface.

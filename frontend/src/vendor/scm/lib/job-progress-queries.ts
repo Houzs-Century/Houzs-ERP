@@ -4,12 +4,13 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "./authed-fetch";
 import type { JobProgress } from "./delivery-job";
+import { todayMyt } from "./dates";
 
 export const JOB_PROGRESS_KEY = ["delivery-job-progress"];
 
 /** Every job's progress in the last 45 days, keyed by jobKey. */
 export function useJobProgressMap(enabled = true): Map<string, JobProgress> {
-  const since = useMemo(() => new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10), []);
+  const since = useMemo(() => todayMyt(-45), []);
   const q = useQuery({
     queryKey: [...JOB_PROGRESS_KEY, since],
     queryFn: () => authedFetch<{ progress: JobProgress[] }>(`/delivery-jobs/progress?since=${since}`),

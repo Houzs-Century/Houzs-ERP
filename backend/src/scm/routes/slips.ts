@@ -30,8 +30,8 @@
 // Houzs adaptations vs 2990:
 //   - Auth: supabaseAuth (same as the other ported routes) attaches the
 //     scm-scoped service client + the SCM_SYSTEM_STAFF_ID user. RLS does not
-//     apply (service role), so the showroom fallback below is purely to
-//     satisfy the NOT NULL FK pending_slip_uploads.showroom_id → scm.showrooms.
+//     apply (service role), so the showroom stamp below is informational:
+//     nothing reads pending_slip_uploads.showroom_id back.
 //   - R2: native SLIPS binding put/head/delete — no S3 API, no presigned URLs.
 //   - camelCase??snake_case dual-read on the request body.
 // ---------------------------------------------------------------------------
@@ -83,11 +83,11 @@ slips.post('/init', async (c) => {
   try { slipBindings(c.env); }
   catch (e) { return c.json({ error: 'r2_not_configured', reason: (e as Error).message }, 500); }
 
-  // pending_slip_uploads.showroom_id is NOT NULL (FK → scm.showrooms). Houzs
-  // has no showroom concept and the system staff carries none, so stamp the
-  // first active showroom (by sort_order). 2990 did the same fallback for
-  // elevated roles. No showroom seeded → a clear error rather than a FK 500.
-  // Multi-company (mig 0089): pick the ACTIVE company's showroom.
+  // Stamp the active company's first active showroom (by sort_order) when it
+  // has one; 2990 did the same for elevated roles. A company with none stores
+  // the upload with none (showroom_id nullable since
+  // 20261110T0300_slip_upload_showroom_optional) — refusing here used to stop
+  // every POD photo and payment slip for that company.
   let roomQ = sb
     .from('showrooms')
     .select('id')
@@ -98,7 +98,6 @@ slips.post('/init', async (c) => {
   const { data: defaultRoom, error: roomErr } = await roomQ.maybeSingle();
   if (roomErr) return c.json({ error: 'showroom_lookup_failed', reason: roomErr.message }, 500);
   const showroomId = (defaultRoom as { id?: string } | null)?.id ?? null;
-  if (!showroomId) return c.json({ error: 'no_active_showroom' }, 400);
 
   const sessionId = crypto.randomUUID();
   const r2Key = buildSlipKey(sessionId, contentType as SlipMime);

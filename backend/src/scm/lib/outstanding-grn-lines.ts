@@ -28,6 +28,14 @@
 //   2. those notes' headers, in URL-sized batches — status and the hold marker
 //      re-checked on the row itself, company-scoped.
 //   3. their lines, in URL-sized batches, each batch paged — company-scoped.
+//   4. each line's OWN purchase order, through its purchase_order_item_id.
+//
+// THE PO IS PER LINE (staff, 2026-11-09: "convert GRN list all same PO
+// number"). One goods receipt can take lines from several POs (the add-PO
+// picker, `/from-po-items`), and `grns.purchase_order_id` names only the first.
+// Labelling every line with the header PO showed HC-GRN-2611-052's lines all as
+// HC-PO-2610-125 while the invoice line billed from it said HC-PO-2610-202. The
+// header PO is used only for a line with no PO link at all (a manual line).
 //
 // Every query form here is one production already runs: `.eq` on a view column
 // (routes/outstanding.ts), `.in` on a key, `.order().range()` windows. Nothing
@@ -59,6 +67,7 @@ type NoteRow = {
 type LineRow = {
   id: string; grn_id: string; material_kind: string; item_code: string;
   material_name: string; item_group: string | null; description: string | null; supplier_sku: string | null;
+  purchase_order_item_id: string | null;
   qty_accepted: number | null; qty_rejected: number | null;
   invoiced_qty: number | null; returned_qty: number | null;
   unit_price_sen: number; variants: unknown; created_at: string | null;
@@ -72,7 +81,7 @@ const NOTE_SELECT = `
 
 const LINE_SELECT = `
       id, grn_id, material_kind, item_code, material_name, item_group,
-      description, supplier_sku, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants, created_at
+      description, supplier_sku, purchase_order_item_id, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants, created_at
     `;
 
 /** What is still to bill on one line. Kept here so the route, the tests and
@@ -137,12 +146,64 @@ export async function loadOutstandingGrnLines(args: {
       .order('id').range(from, to));
   if (lines.error) return { error: lines.error.message };
 
-  const items = lines.data
-    .filter((r) => noteById.has(r.grn_id) && remainingToBill(r) > 0)
+  const billable = lines.data.filter((r) => noteById.has(r.grn_id) && remainingToBill(r) > 0);
+
+  const linePo = await loadLinePos({ sb, scopeQuery, lines: billable });
+  if (linePo.error !== null) return { error: linePo.error };
+
+  const items = billable
     .sort((a, b) => compareForPicker(noteById.get(a.grn_id)!, a, noteById.get(b.grn_id)!, b))
-    .map((r) => toItem(noteById.get(r.grn_id)!, r));
+    .map((r) => toItem(noteById.get(r.grn_id)!, r, linePo.byPoItem));
 
   return { error: null, items, truncated: ids.truncated };
+}
+
+type LinePo = { purchaseOrderId: string; poDocNo: string | null };
+
+/* purchase_order_item_id -> its PO id and number, both reads company-scoped and
+   batched like the lines. A failed read is an error, not "no PO": the picker
+   would otherwise fall back to the header PO this module exists not to trust. */
+async function loadLinePos(args: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around
+  sb: any;
+  scopeQuery: <Q>(q: Q) => Q;
+  lines: LineRow[];
+}): Promise<{ error: string } | { error: null; byPoItem: Map<string, LinePo> }> {
+  const { sb, scopeQuery, lines } = args;
+  const byPoItem = new Map<string, LinePo>();
+  const poItemIds = [...new Set(lines.map((r) => r.purchase_order_item_id).filter((x): x is string => !!x))];
+  if (poItemIds.length === 0) return { error: null, byPoItem };
+
+  const poItems = await chunkIn<{ id: string; purchase_order_id: string | null }>(poItemIds, (batch, from, to) =>
+    scopeQuery(sb.from('purchase_order_items').select('id, purchase_order_id').in('id', batch))
+      .order('id').range(from, to));
+  if (poItems.error) return { error: poItems.error.message };
+
+  const poIds = [...new Set(poItems.data.map((r) => r.purchase_order_id).filter((x): x is string => !!x))];
+  const poNumberById = new Map<string, string>();
+  if (poIds.length > 0) {
+    const pos = await chunkIn<{ id: string; po_number: string }>(poIds, (batch, from, to) =>
+      scopeQuery(sb.from('purchase_orders').select('id, po_number').in('id', batch))
+        .order('id').range(from, to));
+    if (pos.error) return { error: pos.error.message };
+    for (const p of pos.data) poNumberById.set(p.id, p.po_number);
+  }
+
+  for (const r of poItems.data) {
+    if (!r.purchase_order_id) continue;
+    byPoItem.set(r.id, { purchaseOrderId: r.purchase_order_id, poDocNo: poNumberById.get(r.purchase_order_id) ?? null });
+  }
+  return { error: null, byPoItem };
+}
+
+/* A line linked to a PO item names THAT item's PO, and only a line with no link
+   falls back to the header. A link that did not resolve in this company reads
+   as no PO rather than borrowing the header's, which is the wrong-PO label. */
+function poForLine(h: NoteRow, r: LineRow, byPoItem: Map<string, LinePo>): { purchaseOrderId: string | null; poDocNo: string | null } {
+  if (!r.purchase_order_item_id) {
+    return { purchaseOrderId: h.purchase_order_id, poDocNo: h.purchase_order?.po_number ?? null };
+  }
+  return byPoItem.get(r.purchase_order_item_id) ?? { purchaseOrderId: null, poDocNo: null };
 }
 
 /* NEWEST NOTE FIRST, and a total order. The picker renders one card per note
@@ -157,8 +218,9 @@ function compareForPicker(na: NoteRow, a: LineRow, nb: NoteRow, b: LineRow): num
   return a.id.localeCompare(b.id);
 }
 
-function toItem(h: NoteRow, r: LineRow): OutstandingGrnItem {
+function toItem(h: NoteRow, r: LineRow, byPoItem: Map<string, LinePo>): OutstandingGrnItem {
   const currency = normalizeCurrency(h.currency);
+  const po = poForLine(h, r, byPoItem);
   return {
     grnItemId:       r.id,
     grnId:           r.grn_id,
@@ -167,8 +229,8 @@ function toItem(h: NoteRow, r: LineRow): OutstandingGrnItem {
     supplierId:      h.supplier_id,
     supplierCode:    h.supplier?.code ?? '',
     supplierName:    h.supplier?.name ?? '',
-    purchaseOrderId: h.purchase_order_id,
-    poDocNo:         h.purchase_order?.po_number ?? null,
+    purchaseOrderId: po.purchaseOrderId,
+    poDocNo:         po.poDocNo,
     itemCode:        r.item_code,
     supplierSku:     r.supplier_sku,
     description:     r.description ?? r.material_name,

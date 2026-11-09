@@ -4613,7 +4613,7 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
   // so a file's contents are obvious — the export only ever holds the rows
   // currently filtered on screen (Wei Siang 2026-06-09).
   const catTag = category === 'all' ? '' : `${category.toLowerCase()}-`;
-  a.download = `2990s-skus-${catTag}${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `2990s-skus-${catTag}${todayMyt()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

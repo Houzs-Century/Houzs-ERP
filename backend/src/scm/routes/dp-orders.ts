@@ -11,6 +11,7 @@
 // SQL, exactly as delivery-planning.ts does for the ASSR union.
 // ---------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Env, Variables } from '../env';
@@ -679,8 +680,7 @@ async function resolveScheduleTrip(
     isOutsourced = !lErr && (((lorryRow as { isInternal?: boolean | null; is_internal?: boolean | null } | null)?.isInternal
       ?? (lorryRow as { is_internal?: boolean | null } | null)?.is_internal) === false);
   }
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const { data: created, error: tErr } = await insertWithDocNoRetry<{ id: string }>(
     () => mintMonthlyDocNo(sb, 'trips', 'trip_no', `TRIP-${yymm}`),
     (tripNo) => sb.from('trips').insert({

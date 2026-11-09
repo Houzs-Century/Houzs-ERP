@@ -124,6 +124,9 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
 - `backend/src/scm/lib/scan-sample-review.ts` — the DRAFT→CONFIRMED learning
   feed.
 - `backend/src/scm/routes/scan-payment.ts` — sibling: card/receipt OCR
-  (extraction-only, no learning).
+  (extraction-only, no learning). It also keeps the receipt as a slip
+  (`pending_slip_uploads`, showroom optional since
+  `20261110T0300_slip_upload_showroom_optional.sql`); when that fails the
+  response carries `slipError` naming the step, never a bare null.
 - `backend/src/scm/routes/scan-lorry-invoice.ts` — sibling: workshop
   quotation/invoice OCR (extraction-only, no learning).

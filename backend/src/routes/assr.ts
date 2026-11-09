@@ -64,6 +64,7 @@ import { verificationFieldsError } from "../scm/shared/assr-verification-fields"
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
+import { todayMyt } from "../scm/lib/my-time";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1268,7 +1269,7 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     lines.push(fields.map((f) => esc(f === "po_amount" && r[f] != null && Number.isFinite(Number(r[f])) ? Number(r[f]).toFixed(2) : r[f])).join(","));
   }
   const csv = "\uFEFF" + lines.join("\r\n");
-  const date = new Date().toISOString().slice(0, 10);
+  const date = todayMyt();
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

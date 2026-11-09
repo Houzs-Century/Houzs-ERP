@@ -1,6 +1,7 @@
 // /grns — Goods Receipt Notes (procurement receiving step).
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
+import { yymmFor } from '../../services/documentRefs';
 import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
@@ -709,8 +710,7 @@ const ITEM =
   'zero_cost_ack, zero_cost_reason, zero_cost_ack_by, zero_cost_ack_at';
 
 const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> extends never ? never : any, prefix: string, table: string, col: string, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, table, col, `${p}${prefix}-${yymm}`);
 };
@@ -1784,8 +1784,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   // Generate GRN number using same pattern as the single-POST endpoint.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const cp = companyDocPrefix(c);
   let grnNumber = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
 
