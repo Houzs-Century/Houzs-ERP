@@ -38,12 +38,12 @@ const TONE_CLASSES: Record<TimelineTone, string> = {
   grey: "border border-border bg-bg text-ink-secondary",
 };
 
-const GRID_COLUMNS = "md:grid md:grid-cols-[20px_112px_128px_168px_minmax(0,1fr)_24px] md:items-start md:gap-x-3";
+const GRID_COLUMNS = "grid grid-cols-[14px_76px_minmax(0,1fr)] items-start gap-x-2.5";
 
 function StatusChip({ row }: { row: TimelineRow }): ReactNode {
-  if (!row.status) return <span className="hidden text-[12px] text-ink-muted md:inline">-</span>;
+  if (!row.status) return null;
   return (
-    <span className={cn("inline-block rounded-md px-2 py-0.5 text-[11.5px] font-bold", TONE_CLASSES[row.status.tone])}>
+    <span className={cn("inline-block rounded-md px-2 py-0.5 text-[11px] font-bold", TONE_CLASSES[row.status.tone])}>
       {row.status.label}
     </span>
   );
@@ -51,40 +51,34 @@ function StatusChip({ row }: { row: TimelineRow }): ReactNode {
 
 function TimelineEntry({ row, canArchive, onArchive }: { row: TimelineRow; canArchive: boolean; onArchive: (activityId: number) => void }): ReactNode {
   return (
-    <li className={cn("group relative flex flex-col border-b border-border-subtle py-2.5 pl-6 last:border-b-0 md:pl-0", GRID_COLUMNS)}>
-      <span
-        className={cn(
-          "absolute left-0 top-3.5 z-[1] h-3 w-3 rounded-full border-2 bg-surface md:relative md:left-auto md:top-auto md:mt-1 md:justify-self-center",
-          row.isEscalation ? "border-err" : "border-primary",
+    <li className={cn("group relative border-b border-border-subtle py-2.5 last:border-b-0", GRID_COLUMNS)}>
+      <span className={cn("relative z-[1] mt-1 h-3 w-3 rounded-full border-2 bg-surface", row.isEscalation ? "border-err" : "border-primary")} />
+      <div className="text-[11.5px] leading-snug text-ink">
+        <div>{fmtDate(row.at)}</div>
+        <div className="text-ink-muted">{fmtTime(row.at)}</div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-start gap-2">
+          <StatusChip row={row} />
+          <span className="ml-auto truncate pt-0.5 text-[11px] text-ink-muted">by {row.by}</span>
+          {canArchive && row.isArchivable && (
+            <button
+              onClick={() => onArchive(row.id)}
+              className="-my-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-muted hover:text-err focus:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+              title="Archive entry"
+              aria-label="Archive entry"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+        </div>
+        {row.remarks && (
+          <div className={cn("mt-1 whitespace-pre-line break-words text-[12.5px]", row.isEscalation ? "text-err" : "text-ink")}>
+            {row.upload && <Paperclip size={12} className="mr-1 inline text-ink-muted" />}
+            {row.remarks}
+          </div>
         )}
-      />
-      <div className="flex items-center gap-2 text-[11px] text-ink-muted md:block md:text-[12px] md:text-ink">
-        <span>{fmtDate(row.at)}</span>
-        <span className="md:block md:text-ink-muted">{fmtTime(row.at)}</span>
       </div>
-      <div className="order-last mt-1 text-[11px] text-ink-muted md:order-none md:mt-0 md:text-[12.5px] md:text-ink">
-        <span className="md:hidden">by </span>
-        {row.by}
-      </div>
-      <div className="mt-1 md:mt-0">
-        <StatusChip row={row} />
-      </div>
-      <div className={cn("mt-1 whitespace-pre-line text-[12.5px] md:mt-0", row.isEscalation ? "text-err" : "text-ink")}>
-        {row.upload && <Paperclip size={12} className="mr-1 inline text-ink-muted" />}
-        {row.remarks || <span className="text-ink-muted">-</span>}
-      </div>
-      {canArchive && row.isArchivable ? (
-        <button
-          onClick={() => onArchive(row.id)}
-          className="absolute right-0 top-2 flex h-8 w-8 items-center justify-center rounded text-ink-muted hover:text-err focus:opacity-100 md:static md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100"
-          title="Archive entry"
-          aria-label="Archive entry"
-        >
-          <Trash2 size={12} />
-        </button>
-      ) : (
-        <span className="hidden md:block" />
-      )}
     </li>
   );
 }
@@ -136,7 +130,7 @@ export function CaseTimeline({ activity, salesAgent, userNames, canEdit, compose
           {(hiddenCount > 0 || shouldShowDetails) && (
             <button
               onClick={() => setShouldShowDetails((isShown) => !isShown)}
-              className="ml-auto min-h-[30px] text-[11px] font-semibold text-primary hover:underline"
+              className="min-h-[30px] text-[11px] font-semibold text-primary hover:underline"
             >
               {shouldShowDetails ? "Show key updates only" : `Show all updates (${hiddenCount} system log hidden)`}
             </button>
@@ -150,19 +144,16 @@ export function CaseTimeline({ activity, salesAgent, userNames, canEdit, compose
         <div ref={scrollBoxRef} className="max-h-[65vh] overflow-y-auto overflow-x-hidden px-4 pb-2">
           <div
             className={cn(
-              "sticky top-0 z-10 hidden border-b border-border bg-bg py-2 text-[11.5px] font-bold text-ink-secondary",
+              "sticky top-0 z-10 border-b border-border bg-bg py-2 text-[11px] font-bold text-ink-secondary",
               GRID_COLUMNS,
             )}
           >
             <span />
             <span>Date & Time</span>
-            <span>By</span>
-            <span>Status</span>
-            <span>Update / Remarks</span>
-            <span />
+            <span>Status / Update</span>
           </div>
           <ol className="relative">
-            <span className="pointer-events-none absolute bottom-4 left-[5px] top-4 w-0.5 bg-primary/30 md:left-[9px]" />
+            <span className="pointer-events-none absolute bottom-4 left-[5px] top-4 w-0.5 bg-primary/30" />
             {rows.map((row) => (
               <TimelineEntry key={row.id} row={row} canArchive={canEdit} onArchive={onArchive} />
             ))}
