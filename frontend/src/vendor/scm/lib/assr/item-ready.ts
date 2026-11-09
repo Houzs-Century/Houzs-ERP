@@ -24,3 +24,28 @@ export function actionRequiredLabel(value: string | null | undefined): string {
 export function returnDoPath(caseId: number, doId: number | null): string {
   return doId === null ? `/api/assr/${caseId}/return-dos` : `/api/assr/${caseId}/return-dos/${doId}`;
 }
+
+export interface QcStageChip {
+  label: string;
+  tone: "ok" | "warn" | "muted";
+}
+
+const QC_STAGE_CHIPS: Record<string, QcStageChip> = {
+  pass: { label: "QC Passed", tone: "ok" },
+  fail: { label: "QC Failed", tone: "warn" },
+  na: { label: "QC Other", tone: "muted" },
+};
+
+export function qcStageChip(value: string | null | undefined): QcStageChip | null {
+  return QC_STAGE_CHIPS[value ?? ""] ?? null;
+}
+
+export function itemReadySummary(value: string | null | undefined): string {
+  return qcStageChip(value) ? `QC Result: ${actionRequiredLabel(value)}` : "Awaiting supplier return + QC";
+}
+
+export function returnDoAttachmentCategory(doId: number): `return_do_${number}` {
+  return `return_do_${doId}`;
+}
+
+export const RECEIVED_BY_SUGGESTIONS: readonly string[] = ["Warehouse Team", "Logistics Team", "Service Team", "Supplier Driver"];

@@ -277,7 +277,7 @@ export function SupplierReturnsList({
   };
 
   return (
-    <CaseSection title="3. Supplier Service / Return" badge={count > 1 ? `${count} trips` : null}>
+    <CaseSection title="3. Supplier Service / Return" badge={count > 1 ? `${count} trips` : null} icon={null} action={null} isCollapsible={false}>
       {firstTrip && (
         <p className="text-[12px] text-ink-muted">No supplier return recorded yet.</p>
       )}

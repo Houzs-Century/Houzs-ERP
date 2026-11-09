@@ -3,14 +3,15 @@
 // read here and edited in Pickup / Return; the QC Result is that trip's own
 // qc_result, so it is never typed twice. Kept out of ServiceCases.tsx, which is
 // at its size ceiling.
-import type { ReactElement, ReactNode } from "react";
+import { useState, type ReactElement, type ReactNode } from "react";
+import { ArrowLeftRight, FileText, Image, Search } from "lucide-react";
 import { api } from "../../api/client";
 import { formatDate } from "../../lib/utils";
 import { InlineEdit } from "../InlineEdit";
 import { ACTION_REQUIRED_OPTIONS, actionRequiredLabel, type ReturnDo } from "../../vendor/scm/lib/assr/item-ready";
 import { currentRound, QC_RESULTS, tripTabLabel, type SupplierReturn } from "../../vendor/scm/lib/assr/returns";
 import { CaseSection } from "./CaseSection";
-import { ReturnDoList } from "./ReturnDoList";
+import { AddDoButton, ReturnDoList } from "./ReturnDoList";
 
 export interface ItemReadyCase {
   complaint_issue?: string | null;
@@ -31,7 +32,7 @@ export interface ItemReadyFieldsProps {
   onChanged: () => void;
   onError: (message: string) => void;
   confirm: (message: string) => boolean | Promise<boolean>;
-  doAttachments: ReactNode;
+  renderDoAttachment: (doId: number) => ReactNode;
   inspectionReport: ReactNode;
 }
 
@@ -80,19 +81,18 @@ function TripQcResult({ caseId, trip, canWrite, onChanged, onError }: {
   );
 }
 
-function CurrentTripInfo({ trip }: { trip: SupplierReturn }): ReactElement {
+function CurrentTripInfo({ trip, serviceNote }: { trip: SupplierReturn; serviceNote: string | null | undefined }): ReactElement {
   return (
     <>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <ReadOnly label="Sent to Supplier" value={formatDate(trip.pickup_at)} />
         <ReadOnly label="Back from Supplier (ETA)" value={formatDate(trip.expected_return_at)} />
-        <ReadOnly label="Actual Back Date" value={formatDate(trip.returned_at)} />
+        <ReadOnly label="Back from Supplier Date" value={formatDate(trip.returned_at)} />
       </div>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <ReadOnly label="Supplier" value={trip.creditor_name || trip.creditor_code || "—"} />
-        <div className="sm:col-span-2">
-          <ReadOnly label="Reason for Return" value={trip.reason || "—"} />
-        </div>
+        <ReadOnly label="Reason for Return" value={trip.reason || "—"} />
+        <ReadOnly label="Supplier Service Note" value={serviceNote || "—"} />
       </div>
       <p className="text-[11px] text-ink-muted">Edit these in Pickup / Return. They update here by themselves.</p>
     </>
@@ -102,15 +102,18 @@ function CurrentTripInfo({ trip }: { trip: SupplierReturn }): ReactElement {
 export function ItemReadyFields(props: ItemReadyFieldsProps): ReactElement {
   const { c, caseId, trips, returnDos, canWrite, patch, onChanged, onError, confirm } = props;
   const trip = currentRound(trips);
+  const [isAddingDo, setIsAddingDo] = useState(false);
   return (
     <div className="space-y-3">
-      <CaseSection title="1. Delivery Order (DO) Details" badge={returnDos.length > 1 ? `${returnDos.length} DOs` : null}>
-        <ReturnDoList caseId={caseId} returnDos={returnDos} canWrite={canWrite} onChanged={onChanged}
+      <CaseSection title="Delivery Order (DO) Details" badge={returnDos.length > 1 ? `${returnDos.length} DOs` : null}
+        icon={<FileText size={16} />} isCollapsible={false}
+        action={<AddDoButton isAdding={isAddingDo} canWrite={canWrite} onAddingChange={setIsAddingDo} />}>
+        <ReturnDoList caseId={caseId} returnDos={returnDos} canWrite={canWrite} isAdding={isAddingDo}
+          onAddingChange={setIsAddingDo} renderAttachment={props.renderDoAttachment} onChanged={onChanged}
           onError={onError} confirm={confirm} formatDate={formatDate} />
-        {props.doAttachments}
       </CaseSection>
 
-      <CaseSection title="2. QC Inspection Details" badge={null}>
+      <CaseSection title="QC Inspection Details" badge={null} icon={<Search size={16} />} action={null} isCollapsible>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
           <InlineEdit label="QC Inspection Date *" type="date" value={c.qc_inspected_at}
             onSave={(value) => patch({ qc_inspected_at: value })} />
@@ -129,11 +132,14 @@ export function ItemReadyFields(props: ItemReadyFieldsProps): ReactElement {
         </div>
       </CaseSection>
 
-      <CaseSection title="3. Supplier Return Info (Current Trip)" badge={trip ? tripTabLabel(trip.round_no) : null}>
-        {trip ? <CurrentTripInfo trip={trip} /> : <p className="text-[12px] text-ink-muted">No supplier return recorded yet.</p>}
+      <CaseSection title="Supplier Return Info (Current Trip)" badge={trip ? tripTabLabel(trip.round_no) : null}
+        icon={<ArrowLeftRight size={16} />} action={null} isCollapsible>
+        {trip
+          ? <CurrentTripInfo trip={trip} serviceNote={c.supplier_service_note} />
+          : <p className="text-[12px] text-ink-muted">No supplier return recorded yet.</p>}
       </CaseSection>
 
-      <CaseSection title="4. QC Inspection Report" badge={null}>
+      <CaseSection title="QC Inspection Report" badge={null} icon={<Image size={16} />} action={null} isCollapsible>
         {props.inspectionReport}
       </CaseSection>
     </div>

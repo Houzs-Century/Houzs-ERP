@@ -6,7 +6,7 @@ import { useState, type CSSProperties, type ReactElement, type ReactNode } from 
 import { api } from "../api/client";
 import { DateField } from "../vendor/scm/components/DateField";
 import { fmtDate } from "@2990s/shared";
-import { ACTION_REQUIRED_OPTIONS, returnDoPath, type ReturnDo } from "../vendor/scm/lib/assr/item-ready";
+import { ACTION_REQUIRED_OPTIONS, RECEIVED_BY_SUGGESTIONS, returnDoPath, type ReturnDo } from "../vendor/scm/lib/assr/item-ready";
 import { currentRound, QC_RESULTS, tripTabLabel, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { get, type Any } from "./assr-case-fields";
 import { MobileSectionHead } from "./MobileFactoryTrips";
@@ -29,19 +29,22 @@ export interface MobileItemReadyProps {
   busy: boolean;
   disabled: boolean;
   runWrite: (write: () => Promise<void>, failTitle: string) => void | Promise<void>;
-  doFiles: ReactNode;
+  renderDoFiles: (doId: number) => ReactNode;
   report: ReactNode;
 }
 
 type Write = MobileItemReadyProps["runWrite"];
 
-function TextInput({ label, value, placeholder, isMultiline, disabled, onSave }: {
+const RECEIVED_BY_LIST_ID = "m-assr-received-by-suggestions";
+
+function TextInput({ label, value, placeholder, isMultiline, disabled, onSave, suggestionListId }: {
   label: string;
   value: unknown;
   placeholder: string;
   isMultiline: boolean;
   disabled: boolean;
   onSave: (value: string | null) => void;
+  suggestionListId?: string;
 }): ReactElement {
   const saved = value ? String(value) : "";
   const save = (next: string) => { if (next.trim() !== saved) onSave(next.trim() || null); };
@@ -51,7 +54,7 @@ function TextInput({ label, value, placeholder, isMultiline, disabled, onSave }:
       {isMultiline ? (
         <textarea style={inp} rows={2} defaultValue={saved} placeholder={placeholder} disabled={disabled} key={saved} onBlur={(event) => save(event.target.value)} />
       ) : (
-        <input style={inp} defaultValue={saved} placeholder={placeholder} disabled={disabled} key={saved} onBlur={(event) => save(event.target.value)} />
+        <input style={inp} defaultValue={saved} placeholder={placeholder} disabled={disabled} key={saved} list={suggestionListId} onBlur={(event) => save(event.target.value)} />
       )}
     </div>
   );
@@ -66,7 +69,7 @@ function DateInput({ label, value, disabled, onSave }: { label: string; value: u
   );
 }
 
-function DoCard({ row, caseId, disabled, runWrite }: { row: ReturnDo; caseId: number; disabled: boolean; runWrite: Write }): ReactElement {
+function DoCard({ row, caseId, disabled, runWrite, files }: { row: ReturnDo; caseId: number; disabled: boolean; runWrite: Write; files: ReactNode }): ReactElement {
   const save = (field: keyof ReturnDo) => (value: string | null) => {
     if (field === "do_no" && !value) return;
     void runWrite(async () => { await api.patch(returnDoPath(caseId, row.id), { [field]: value }); }, "Couldn't save the DO");
@@ -83,8 +86,9 @@ function DoCard({ row, caseId, disabled, runWrite }: { row: ReturnDo; caseId: nu
         <DateInput label="DO Date *" value={row.do_date} disabled={disabled} onSave={save("do_date")} />
         <DateInput label="Item Received *" value={row.received_at} disabled={disabled} onSave={save("received_at")} />
       </div>
-      <TextInput label="Received By" value={row.received_by} placeholder="e.g. Warehouse Team" isMultiline={false} disabled={disabled} onSave={save("received_by")} />
+      <TextInput label="Received By" value={row.received_by} placeholder="Pick or type, e.g. Warehouse Team" isMultiline={false} disabled={disabled} onSave={save("received_by")} suggestionListId={RECEIVED_BY_LIST_ID} />
       <TextInput label="Remarks (Optional)" value={row.remarks} placeholder="e.g. Item received in good condition" isMultiline disabled={disabled} onSave={save("remarks")} />
+      {files}
     </div>
   );
 }
@@ -110,13 +114,14 @@ function AddDo({ caseId, busy, runWrite }: { caseId: number; busy: boolean; runW
   );
 }
 
-function TripSummary({ trip }: { trip: SupplierReturn }): ReactElement {
+function TripSummary({ trip, serviceNote }: { trip: SupplierReturn; serviceNote: string }): ReactElement {
   const rows: Array<[string, string]> = [
     ["Sent to Supplier", fmtDate(trip.pickup_at) || "—"],
     ["Back from Supplier (ETA)", fmtDate(trip.expected_return_at) || "—"],
-    ["Actual Back Date", fmtDate(trip.returned_at) || "—"],
+    ["Back from Supplier Date", fmtDate(trip.returned_at) || "—"],
     ["Supplier", trip.creditor_name || trip.creditor_code || "—"],
     ["Reason for Return", trip.reason || "—"],
+    ["Supplier Service Note", serviceNote || "—"],
   ];
   return (
     <div>
@@ -131,7 +136,7 @@ function TripSummary({ trip }: { trip: SupplierReturn }): ReactElement {
   );
 }
 
-export function MobileItemReady({ c, caseId, trips, returnDos, busy, disabled, runWrite, doFiles, report }: MobileItemReadyProps): ReactElement {
+export function MobileItemReady({ c, caseId, trips, returnDos, busy, disabled, runWrite, renderDoFiles, report }: MobileItemReadyProps): ReactElement {
   const trip = currentRound(trips);
   const off = disabled || busy;
   const patchCase = (body: Record<string, string | null>) =>
@@ -144,13 +149,15 @@ export function MobileItemReady({ c, caseId, trips, returnDos, busy, disabled, r
 
   return (
     <div>
-      <MobileSectionHead title="1. Delivery Order (DO)" badge={returnDos.length > 1 ? `${returnDos.length} DOs` : null} />
-      {!returnDos.length ? <div style={{ fontSize: 12, color: MUTED }}>No supplier DO recorded yet.</div> : null}
-      {returnDos.map((row) => <DoCard key={row.id} row={row} caseId={caseId} disabled={off} runWrite={runWrite} />)}
+      <datalist id={RECEIVED_BY_LIST_ID}>
+        {RECEIVED_BY_SUGGESTIONS.map((name) => <option key={name} value={name} />)}
+      </datalist>
+      <MobileSectionHead title="Delivery Order (DO)" badge={returnDos.length > 1 ? `${returnDos.length} DOs` : null} />
       {!disabled ? <AddDo caseId={caseId} busy={busy} runWrite={runWrite} /> : null}
-      {doFiles}
+      {!returnDos.length ? <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>No supplier DO recorded yet.</div> : null}
+      {returnDos.map((row) => <DoCard key={row.id} row={row} caseId={caseId} disabled={off} runWrite={runWrite} files={renderDoFiles(row.id)} />)}
 
-      <MobileSectionHead title="2. QC Inspection" badge={null} />
+      <MobileSectionHead title="QC Inspection" badge={null} />
       <div style={pair}>
         <DateInput label="QC Inspection Date *" value={get(c, "qcInspectedAt", "qc_inspected_at")} disabled={off} onSave={(iso) => patchCase({ qc_inspected_at: iso })} />
         <TextInput label="QC By *" value={get(c, "qcBy", "qc_by")} placeholder="e.g. Farra" isMultiline={false} disabled={off} onSave={(value) => patchCase({ qc_by: value })} />
@@ -172,10 +179,12 @@ export function MobileItemReady({ c, caseId, trips, returnDos, busy, disabled, r
         {ACTION_REQUIRED_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
 
-      <MobileSectionHead title="3. Current Trip" badge={trip ? tripTabLabel(trip.round_no) : null} />
-      {trip ? <TripSummary trip={trip} /> : <div style={{ fontSize: 12, color: MUTED }}>No supplier return recorded yet.</div>}
+      <MobileSectionHead title="Supplier Return (Current Trip)" badge={trip ? tripTabLabel(trip.round_no) : null} />
+      {trip
+        ? <TripSummary trip={trip} serviceNote={String(get(c, "supplierServiceNote", "supplier_service_note") ?? "")} />
+        : <div style={{ fontSize: 12, color: MUTED }}>No supplier return recorded yet.</div>}
 
-      <MobileSectionHead title="4. QC Inspection Report" badge={null} />
+      <MobileSectionHead title="QC Inspection Report" badge={null} />
       {report}
     </div>
   );

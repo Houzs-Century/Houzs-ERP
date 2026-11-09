@@ -288,7 +288,7 @@ export interface AssrAttachment {
     | "receipt_evidence"
     | "pickup_form"
     | "ready_doc"
-    | "return_do"
+    | `return_do_${number}`
     | "delivery_pod";
   uploaded_by: number | null;
   created_at: string;

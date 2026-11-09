@@ -31,6 +31,7 @@ import {
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips, MobileSectionHead } from "./MobileFactoryTrips";
 import { MobileItemReady } from "./MobileItemReady";
+import { returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
@@ -1115,7 +1116,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
       case "pending_item_ready":
         return (
           <MobileItemReady c={c} caseId={id} trips={(data?.supplier_returns ?? []) as SupplierReturn[]} returnDos={data?.return_dos ?? []} busy={busy} disabled={dis} runWrite={runWrite}
-            doFiles={<PhotoGrid caseId={id} attachments={attachments.filter((a) => String(get(a, "category") ?? "") === "return_do")} category="return_do" label="DO attachment" hint="Supplier DO photo or PDF" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />}
+            renderDoFiles={(doId) => <PhotoGrid caseId={id} attachments={attachments.filter((a) => String(get(a, "category") ?? "") === returnDoAttachmentCategory(doId))} category={returnDoAttachmentCategory(doId)} label="DO attachment" hint="Supplier DO photo or PDF" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />}
             report={<PhotoGrid caseId={id} attachments={attachments.filter((a) => ["qc", "inspection_report"].includes(String(get(a, "category") ?? "")))} category="qc" label="QC photos / video" hint="After-repair QC evidence / report" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />} />
         );
       case "pending_delivery_service":

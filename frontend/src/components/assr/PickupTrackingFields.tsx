@@ -40,7 +40,7 @@ export const PICKUP_BY_OPTIONS = [
 export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): ReactElement {
   return (
     <>
-      <CaseSection title="1. Pickup Details" badge={null}>
+      <CaseSection title="1. Pickup Details" badge={null} icon={null} action={null} isCollapsible={false}>
         <div>
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Pickup By</div>
           <div className="flex flex-wrap gap-1.5">
@@ -92,7 +92,7 @@ export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): R
           <LogisticsConfirmedNote requested={c.customer_pickup_at} confirmed={c.sched_pickup_date} />
         )}
       </CaseSection>
-      <CaseSection title="2. Item Tracking" badge={null}>
+      <CaseSection title="2. Item Tracking" badge={null} icon={null} action={null} isCollapsible={false}>
         <InlineEdit
           label="Current Item Location"
           value={c.item_location ? pickupTrackingLabel(c.item_location) : null}

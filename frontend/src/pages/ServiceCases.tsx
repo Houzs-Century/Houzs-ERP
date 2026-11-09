@@ -72,6 +72,9 @@ import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
 import { CaseSection } from "../components/assr/CaseSection";
 import { ItemReadyFields } from "../components/assr/ItemReadyFields";
+import { QcStageChipView } from "../components/assr/QcStageChipView";
+import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
+import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
@@ -4296,7 +4299,7 @@ function DetailContent({
                   formatDate={formatDate}
                   confirm={dialog.confirm}
                 />
-                <CaseSection title="4. Handover Documents" badge={null}>
+                <CaseSection title="4. Handover Documents" badge={null} icon={null} action={null} isCollapsible={false}>
                   {/* Mig 106 — send-out slip that goes with the item
                       when supplier collects. Supplier sees this on
                       their portal (read-only). */}
@@ -4331,11 +4334,8 @@ function DetailContent({
               priorityMap={priorityMap}
               stageId="pending_item_ready"
               title="Pending Item Ready"
-              summary={
-                c.inspection_result
-                  ? `QC: ${c.inspection_result}${c.items_ready_at ? ` · ready ${formatDate(c.items_ready_at)}` : ""}`
-                  : "Awaiting supplier return + QC"
-              }
+              summary={itemReadySummary(c.inspection_result)}
+              badge={<QcStageChipView value={c.inspection_result} />}
               currentStage={c.stage}
               stages={activeStages}
               openStage={openStage}
@@ -4351,11 +4351,11 @@ function DetailContent({
                 onChanged={() => { detail.reload(); onUpdated(); }}
                 onError={(m) => toast.error(m)}
                 confirm={dialog.confirm}
-                doAttachments={<MilestoneAttachmentSlot caseId={id} category="return_do" label="DO Attachment"
-                  emptyLabel="No DO file yet." uploadLabel="Upload DO" attachments={attachments}
+                renderDoAttachment={(doId) => <MilestoneAttachmentSlot caseId={id} category={returnDoAttachmentCategory(doId)}
+                  label="DO Attachment" uploadLabel="Upload DO file" attachments={attachments} compact
                   archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
                 inspectionReport={<MilestoneAttachmentSlot caseId={id} category="inspection_report" label="QC Inspection Report"
-                  emptyLabel="No inspection report uploaded yet." uploadLabel="Upload photo / video / report" attachments={attachments}
+                  uploadLabel="Upload Photo / Video" attachments={attachments} gallery
                   archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
               />
             </StageRow>
@@ -5540,6 +5540,7 @@ function StageRow({
   stageId,
   title,
   summary,
+  badge,
   children,
   currentStage,
   stages,
@@ -5551,6 +5552,7 @@ function StageRow({
   stageId: AssrStage;
   title: string;
   summary: string;
+  badge?: React.ReactNode;
   children: React.ReactNode;
   currentStage: AssrStage;
   // PR 4 — filtered active-stage list. If stageId isn't in it, the
@@ -5625,6 +5627,7 @@ function StageRow({
             >
               {chip}
             </span>
+            {badge}
             {/* Per-stage SLA pill — only on the CURRENT row. Reuses
                 LeadTimePill's elapsed-vs-target computation so the
                 Detail matches the case list's SLA lens. */}
@@ -6256,7 +6259,7 @@ type MilestoneCategory =
   | "receipt_evidence"
   | "pickup_form"
   | "ready_doc"
-  | "return_do"
+  | `return_do_${number}`
   | "delivery_pod";
 
 function MilestoneAttachmentSlot({
@@ -6271,6 +6274,7 @@ function MilestoneAttachmentSlot({
   dialog,
   toast,
   compact,
+  gallery,
 }: {
   caseId: number;
   category: MilestoneCategory;
@@ -6286,6 +6290,8 @@ function MilestoneAttachmentSlot({
    *  uppercase header label since the surrounding field already
    *  contextualises the slot. */
   compact?: boolean;
+  /** Wider thumbnail grid with file names and an upload tile (QC Inspection Report). */
+  gallery?: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
   const [lbIndex, setLbIndex] = useState<number | null>(null);
@@ -6319,10 +6325,10 @@ function MilestoneAttachmentSlot({
           </div>
         )}
         {matches.length > 0 ? (
-          <div className="mb-2 grid grid-cols-3 gap-2">
+          <div className={cn("mb-2 grid gap-2", gallery ? "grid-cols-[repeat(auto-fill,minmax(96px,1fr))]" : "grid-cols-3")}>
             {matches.map((att: any, i: number) => (
+              <figure key={att.id} className="m-0 min-w-0">
               <AttachmentThumb
-                key={att.id}
                 att={att}
                 onClick={() => {
                   const t = att.content_type || "";
@@ -6339,14 +6345,21 @@ function MilestoneAttachmentSlot({
                   }
                 }}
               />
+              {gallery && <figcaption className="mt-1 truncate text-[11px] text-ink-secondary">{att.file_name}</figcaption>}
+              </figure>
             ))}
+            {gallery && !archived && <GalleryUploadTile label={uploadLabel || "Upload"} isUploading={uploading} onFiles={uploadFiles} />}
+          </div>
+        ) : gallery && !archived ? (
+          <div className="mb-2 grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
+            <GalleryUploadTile label={uploadLabel || "Upload"} isUploading={uploading} onFiles={uploadFiles} />
           </div>
         ) : !compact ? (
           <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
             {emptyLabel || `No ${label.toLowerCase()} yet.`}
           </div>
         ) : null}
-        {!archived && (
+        {!archived && !gallery && (
           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
             <Upload size={12} />
             {uploading
