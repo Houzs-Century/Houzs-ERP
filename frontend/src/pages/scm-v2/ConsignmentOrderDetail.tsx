@@ -78,6 +78,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -909,7 +910,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   const datesXor =
     (form.processingDate.trim() !== '') !== (form.customerDeliveryDate.trim() !== '');
-  const today = new Date().toLocaleDateString('en-CA');
+  const today = todayMyt();
   const originalProcessing = header.processing_date ?? '';
   const originalDelivery = header.customer_delivery_date ?? '';
   const processingLocked = originalProcessing !== '' && originalProcessing < today;

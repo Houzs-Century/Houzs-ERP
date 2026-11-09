@@ -46,6 +46,8 @@
 // computed from data that was never there.
 // ----------------------------------------------------------------------------
 
+import { todayMY } from './format';
+
 export const EXPIRY_RED_DAYS = 14;
 export const EXPIRY_AMBER_DAYS = 45;
 
@@ -75,14 +77,11 @@ export const COMPLIANCE_COLUMN: Record<ComplianceKind, string> = {
 
 export const COMPLIANCE_KINDS: ComplianceKind[] = ['roadTax', 'insurance', 'puspakom'];
 
-/** Today as YYYY-MM-DD in the VIEWER's local zone. These are calendar dates on
- *  Malaysian documents read by a user in Malaysia — using UTC would roll the
- *  day over at 8am MYT and make a tile flip a day early every morning. */
-export function todayIso(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+/** Today as YYYY-MM-DD on the MALAYSIAN calendar. These are calendar dates on
+ *  Malaysian documents: UTC would roll the day over at 8am MYT, and the
+ *  viewer's own zone moved it for a laptop or phone set to another one. */
+export function todayIso(): string {
+  return todayMY();
 }
 
 /** Whole days from `today` to `iso` (negative = already past). Both are anchored

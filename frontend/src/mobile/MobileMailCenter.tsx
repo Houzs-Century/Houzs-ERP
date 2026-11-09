@@ -44,6 +44,7 @@ import { MobileVisibility } from "./MobileMailPersonal";
 import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
+import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
@@ -201,12 +202,9 @@ const fmtTime = (iso: string | null | undefined): string => {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(+d)) return "";
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return fmtClock(d);
-  const yest = new Date(now);
-  yest.setDate(now.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  const day = mytDayOf(d.toISOString());
+  if (day === todayMyt()) return fmtClock(d);
+  if (day === todayMyt(-1)) return "Yesterday";
   return fmtDate(d);
 };
 

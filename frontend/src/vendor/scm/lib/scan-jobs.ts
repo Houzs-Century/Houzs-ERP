@@ -11,6 +11,8 @@
 // its existing consumers (MobileSalesOrders) are unaffected.
 // ----------------------------------------------------------------------------
 
+import { instantToMytLocal, mytDayOf, todayMyt } from "./dates";
+
 export type ScanJob = {
   id: string;
   status: string; // queued | running | done | error
@@ -53,14 +55,9 @@ export const jobTs = (s: string | null): number => {
 };
 export const isTodayTs = (t: number): boolean => {
   if (t === 0) return false;
-  const d = new Date(t);
-  const n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return mytDayOf(new Date(t).toISOString()) === todayMyt();
 };
-export const hhmm = (t: number): string => {
-  const d = new Date(t);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
+export const hhmm = (t: number): string => instantToMytLocal(new Date(t).toISOString()).slice(11, 16);
 /* A job is "active" while the server is still working it — the only states that
    keep a poll interval running. */
 export const isActiveJob = (j: ScanJob): boolean => j.status === "queued" || j.status === "running";

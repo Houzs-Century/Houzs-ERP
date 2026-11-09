@@ -7,6 +7,7 @@ import { useBranding } from "../hooks/useBranding";
 import { useIdleSessionFilter } from "../hooks/useIdleSessionFilter";
 import { HOUZS_COMPANY_CODE, shortCompanyName } from "../lib/branding";
 import { compareCalendarEvents } from "../lib/calendarSort";
+import { todayMyt } from "../vendor/scm/lib/dates";
 import "./mobile.css";
 
 /**
@@ -218,7 +219,8 @@ export function MobileCalendar({
   /** Visually highlight this project's bar (paired with initialYear/Month). */
   focusProjectId?: number;
 } = {}) {
-  const today = new Date();
+  const todayIso = todayMyt();
+  const today = { year: Number(todayIso.slice(0, 4)), month: Number(todayIso.slice(5, 7)) - 1, day: Number(todayIso.slice(8, 10)) };
 
   // Header brand lockup — company-aware, mirroring the login/profile pattern.
   // HOUZS keeps the historic literal ("HOUZS" / "CENTURY · ERP") verbatim; any
@@ -238,8 +240,8 @@ export function MobileCalendar({
     ? "CENTURY · ERP"
     : (brandWords.length > 1 ? `${brandWords.slice(1).join(" ")} · ERP` : "ERP").toUpperCase();
 
-  const [year, setYear] = useState(initialYear ?? today.getFullYear());
-  const [month, setMonth] = useState(initialMonth ?? today.getMonth());
+  const [year, setYear] = useState(initialYear ?? today.year);
+  const [month, setMonth] = useState(initialMonth ?? today.month);
   const [mode, setMode] = useState<"month" | "week">("month");
   // Owner 2026-09-30: the calendar filter must survive going into a project and
   // back, clearing only on logout or after an hour untouched — same rule as the
@@ -467,19 +469,18 @@ export function MobileCalendar({
     setMonth(d.getMonth());
   };
   const goToday = () => {
-    const n = new Date();
-    setYear(n.getFullYear());
-    setMonth(n.getMonth());
+    setYear(today.year);
+    setMonth(today.month);
     setMode("month");
   };
 
-  const isThisMonth = year === today.getFullYear() && month === today.getMonth();
+  const isThisMonth = year === today.year && month === today.month;
   // Day-of-month to mark with the brown "today" badge — only when the grid is
   // showing the current month (null otherwise so no cell is falsely marked).
-  const todayDay = isThisMonth ? today.getDate() : null;
+  const todayDay = isThisMonth ? today.day : null;
   let weeks = monthWeeks(year, month);
   if (mode === "week") {
-    const target = isThisMonth ? today.getDate() : 1;
+    const target = isThisMonth ? today.day : 1;
     weeks = [weeks.find((w) => w.includes(target)) ?? weeks[0]];
   }
 

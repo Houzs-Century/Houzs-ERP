@@ -15,6 +15,7 @@ import { validatePasswordStrength } from "../lib/passwordStrength";
 import { AmbientSnow } from "../components/AmbientSnow";
 import { consumeCorrelated, correlatedFetch } from "../lib/requestCorrelation";
 import { readRememberedEmail } from "../lib/rememberedEmail";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 // NOTE: this module is lazy-loaded by auth/AuthGate.tsx — every screen here is
 // unauthenticated-only UI, kept out of the initial bundle on purpose. AuthGate
@@ -45,7 +46,7 @@ function AuthShell({
   subtitle: string;
   children: ReactNode;
 }) {
-  const year = new Date().getFullYear();
+  const year = todayMyt().slice(0, 4);
   const branding = useBranding();
   return (
     <div
