@@ -293,6 +293,49 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     expect(res.addedLineIds).toEqual([]);
   });
 
+  /* Conts #384: the ADD insert wrote no line_no, so the SO, DO and invoice
+     (ordered by line_no, NULLS LAST) dropped amended lines to the bottom in no
+     fixed order. */
+  it('ADDED lines continue the order\'s line numbering, one number each', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine(), soLine({ id: 'L2', line_no: 2 })];
+    store.so_amendment_lines = [
+      specLine({ id: 'al-add-1', sales_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 4500, old_snapshot: null }),
+      specLine({ id: 'al-add-2', sales_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 4500, old_snapshot: null }),
+    ];
+
+    const res = await apply(store);
+
+    const nos = res.addedLineIds.map((id) => lineOf(store, id).line_no);
+    expect(nos).toEqual([3, 4]);
+  });
+
+  it('a line added to a pre-0165 order (no line numbers) stays un-numbered', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ line_no: null })];
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_qty: 1, new_unit_price_sen: 4500, old_snapshot: null,
+    })];
+
+    const res = await apply(store);
+
+    expect(lineOf(store, res.addedLineIds[0]).line_no).toBeUndefined();
+  });
+
+  it('another company\'s line on the same doc number does not set the next number', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine(), soLine({ id: 'X9', company_id: 2, line_no: 40 })];
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_qty: 1, new_unit_price_sen: 4500, old_snapshot: null,
+    })];
+
+    const res = await apply(store);
+
+    expect(lineOf(store, res.addedLineIds[0]).line_no).toBe(2);
+  });
+
   it('the audit trail records the price that actually landed', async () => {
     const store = baseStore();
     store.so_amendment_lines = [specLine({ new_unit_price_sen: 5000 })];
