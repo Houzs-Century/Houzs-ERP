@@ -46,6 +46,7 @@
  * Mirrors backend/scripts/check-foreign-rate-one.mjs (the repo's read-only
  * diagnostic shape) and its workflow.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

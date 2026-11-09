@@ -47,6 +47,7 @@
 // Mirrors backend/scripts/check-inventory-integrity.mjs + check-uncosted-cogs.mjs
 // (the repo's read-only-diagnostic shape) and its workflow
 // .github/workflows/costless-stock-check.yml.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

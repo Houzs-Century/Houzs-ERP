@@ -54,6 +54,7 @@
  * values the plan read. A second run finds discount 0 and the line total already
  * equal to qty x unit price, plans nothing, and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

@@ -25,6 +25,7 @@
 // Run it: Actions -> "Run a backend script on production (plan / apply)" ->
 // script = report-product-binding-gaps.mjs, mode = plan,
 // env = COMPANY_ID=1 (or blank for both), optional LIST_LIMIT=200.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

@@ -76,6 +76,7 @@
  * information_schema introspection.  There is no APPLY flag and no path through
  * this file that writes.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

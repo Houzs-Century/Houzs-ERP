@@ -83,6 +83,7 @@
    RE-RUN: inert. A line already split (qty = QTY1, fabricCode = COLOUR1, and a
    sibling row with the same item and book key holding QTY2 of COLOUR2) is
    reported as done and skipped; anything else that no longer matches is refused. */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;

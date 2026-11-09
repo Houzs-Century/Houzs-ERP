@@ -39,6 +39,7 @@
 // Strictly one SELECT. No DDL, no writes, no transaction. Exits 0 for every
 // answer, including zero; only an unreachable database or a query error exits
 // non-zero.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;

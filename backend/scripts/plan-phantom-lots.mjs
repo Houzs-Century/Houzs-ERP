@@ -48,6 +48,7 @@
 //   node backend/scripts/plan-phantom-lots.mjs
 // ---------------------------------------------------------------------------
 
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

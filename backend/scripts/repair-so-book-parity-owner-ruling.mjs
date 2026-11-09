@@ -113,6 +113,7 @@
  * the delete), then re-sum the header the way `applyHeader` below does. Nothing
  * else in the database has to change.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

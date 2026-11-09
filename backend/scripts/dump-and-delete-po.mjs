@@ -41,6 +41,7 @@
 //
 // RE-RUN: inert after a delete — the header is gone, the script says so and
 // exits 0 without writing.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
@@ -182,7 +183,7 @@ async function main() {
   }
 
   if (blockers > 0) { log(`REFUSED: ${blockers} row(s) in other tables reference this document. Nothing deleted.`); await sql.end(); process.exit(1); }
-  if (totalSen !== 0) { log(`REFUSED: total_sen is ${totalSen}, not 0. Nothing deleted.`); await sql.end(); process.exit(1); }
+  if (totalSen !== 0) { log(`REFUSED: total_sen=${totalSen}, not 0. Nothing deleted.`); await sql.end(); process.exit(1); }
   if (received !== 0) { log(`REFUSED: received_qty sums to ${received}, not 0. Nothing deleted.`); await sql.end(); process.exit(1); }
 
   await sql.begin(async (tx) => {

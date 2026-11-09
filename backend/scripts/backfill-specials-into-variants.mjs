@@ -38,6 +38,7 @@
 // asserting it.
 //
 // DRY-RUN by default; APPLY=1 writes.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 /* The phrase -> picker-code rules moved to scripts/lib/special-order-phrase-mapper.mjs
    so the follow-up that records the HELD-BACK priced options derives the SAME
@@ -103,7 +104,7 @@ async function main() {
   log(`scm.special_addons rows: ${addons.length}`);
   log(`   ${"sell".padStart(6)} ${"cost".padStart(6)}  active  categories        code`);
   for (const r of addons) {
-    log(`   ${String(r.selling_price_sen ?? 0).padStart(6)} ${String(r.cost_price_sen ?? 0).padStart(6)}` +
+    log(`   sell_sen=${String(r.selling_price_sen ?? 0).padStart(6)} cost_sen=${String(r.cost_price_sen ?? 0).padStart(6)}` +
         `  ${r.active === false ? "  no  " : " yes  "}  ${(r.categories || []).join("+").padEnd(16)}  [${r.code}]`);
   }
 
@@ -115,7 +116,7 @@ async function main() {
   const livePriced = addons.filter((r) => isPriced(r.code));
   log("");
   log(`live price split of scm.special_addons: ${addons.length - livePriced.length} zero-priced, ${livePriced.length} priced`);
-  for (const r of livePriced) log(`   PRICED  sell=${r.selling_price_sen} cost=${r.cost_price_sen}  [${r.code}]`);
+  for (const r of livePriced) log(`   PRICED  sell_sen=${r.selling_price_sen} cost_sen=${r.cost_price_sen}  [${r.code}]`);
   if (SKIP_PRICED) log(`SKIP_PRICED=1 — only 0/0 codes will be stamped; any line receiving a priced code is skipped whole.`);
 
   // families whose code the owner has not created (or has re-categorised away)

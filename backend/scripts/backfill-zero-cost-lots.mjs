@@ -26,6 +26,7 @@
 // DRY-RUN by default; APPLY=1 writes.
 //
 // RE-RUN: inert. Keyed on a lot whose unit_cost_sen is 0 or NULL, which its own write fills with a real cost.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

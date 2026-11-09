@@ -36,6 +36,7 @@
 // Mirrors backend/scripts/check-uncosted-cogs.mjs + check-costless-stock.mjs (the
 // repo's read-only-diagnostic shape) and its workflow
 // .github/workflows/cancelled-do-cogs-check.yml.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

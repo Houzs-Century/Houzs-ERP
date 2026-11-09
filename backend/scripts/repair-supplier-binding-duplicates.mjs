@@ -36,6 +36,7 @@
 
    RE-RUN: inert once a group is down to one row — it no longer matches
    HAVING COUNT(*) > 1. A group of three loses one row per run. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

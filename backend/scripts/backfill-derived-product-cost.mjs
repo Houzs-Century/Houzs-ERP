@@ -42,6 +42,7 @@
 
    RE-RUN: idempotent — once applied, a re-run plans 0 changes (stored == merged
    derived, retail rows included). */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { deriveProductCostFromSuppliers } from '../src/scm/lib/derive-product-cost-from-suppliers.ts';
 import { mergeRetailOntoDerivedSeatGrid } from '../src/scm/lib/auto-derive-cost.ts';

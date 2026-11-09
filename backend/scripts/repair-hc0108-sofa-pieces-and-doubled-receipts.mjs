@@ -43,6 +43,7 @@
  * successful apply removes both conditions, so a second run refuses every item
  * as already done and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { buildCloneInsert } from './lib/redecode-sofa-plan.mjs';
 import { poStatusFromLines } from './lib/po-received-recount.mjs';

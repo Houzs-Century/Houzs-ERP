@@ -79,6 +79,7 @@
  * Env:  DATABASE_URL (required)   MODE=plan|apply   CONFIRM (on apply)
  *       COMPANY_ID (default 1)   TOP (default 40, how many cells to print)
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';

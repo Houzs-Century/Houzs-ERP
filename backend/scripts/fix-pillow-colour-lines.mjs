@@ -37,6 +37,7 @@
 
    RE-RUN: idempotent. Lines already carrying a fabricCode are skipped, and a
    split line no longer has qty 2, so the split is refused as already done. */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;
