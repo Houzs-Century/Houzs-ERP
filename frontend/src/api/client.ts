@@ -574,6 +574,8 @@ function cachedGet<T>(path: string): Promise<T> {
   return p;
 }
 
+// Uploads below call invalidateForMutation too: a just-uploaded photo or file
+// was otherwise hidden by the cached read for up to its TTL.
 function mutate<T>(path: string, opts: RequestInit): Promise<T> {
   return request<T>(path, opts).then((r) => {
     invalidateForMutation(path);
@@ -635,6 +637,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
 
@@ -660,6 +663,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
 
@@ -687,6 +691,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     if (res.status === 204) return undefined as T;
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
@@ -714,6 +719,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     if (res.status === 204) return undefined as T;
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
