@@ -22,7 +22,7 @@ import { loadSuppliers } from '../lib/grn-scan-load';
 import { createDraftPiFromGrnItems } from '../lib/pi-from-grn-core';
 import { loadBillableLines, reviewOfPiRead } from '../lib/pi-scan-run';
 import type { PiScanExtract } from '../lib/pi-scan-extract';
-import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, mergeRebuiltLines, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
+import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, extractOfReview, mergeRebuiltLines, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
 import { aiSkuMatcher, type AiSkuMatcher } from '../lib/pi-scan-ai-match';
 import { refVariants } from '../lib/grn-scan-check';
 import { callerId, goldSamples, handleDiscard, handleFile, handleGold, handleRetry, handleUpload, idsOf, jsonBody, ownRows, svcOf, waitingRows, type CheckRow } from './scan-check-shared';
@@ -46,11 +46,18 @@ async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | 
 }
 
 async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | null, r: CheckRow<PiReview>, ai: AiSkuMatcher | null): Promise<void> {
-  if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION || !r.sample_id) return;
-  const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
-  if (error) { console.warn('[scan-pi check] read not loaded, copy left as it is:', r.id, error.message); return; }
-  const parsed = (data as { extracted: PiScanExtract | null } | null)?.extracted ?? null;
-  if (!parsed || !Array.isArray(parsed.lines)) return;
+  if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION) return;
+  /* The stored read when there is one; else the copy's own rows (2026-11-09: the
+     five HOOKKA invoices waiting at deploy carried no scan sample, so they were
+     skipped and kept their old, empty matching). */
+  let parsed: PiScanExtract | null = null;
+  if (r.sample_id) {
+    const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
+    if (error) { console.warn('[scan-pi check] read not loaded, copy left as it is:', r.id, error.message); return; }
+    parsed = (data as { extracted: PiScanExtract | null } | null)?.extracted ?? null;
+  }
+  if (!parsed || !Array.isArray(parsed.lines)) parsed = extractOfReview(r.review);
+  if (!parsed) return;
   const { review, note } = await reviewOfPiRead(svc, companyId, parsed, ai);
   // A supplier the operator chose stands; the rows' ties then follow the copy kept.
   const keepSupplier = r.review.supplierId != null && r.review.supplierId !== review.supplierId;
