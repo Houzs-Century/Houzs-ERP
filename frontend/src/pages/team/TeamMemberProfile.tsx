@@ -15,6 +15,7 @@ import { Button } from "../../components/Button";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { managerOptions } from "./orgChartPickers";
 import { PosPinCard } from "./PosPinCard";
+import { FieldPinCard } from "./FieldPinCard";
 import { showsPosPinCard } from "./posPinEligibility";
 import type { TeamMember, Department, Position, Role } from "../../types";
 import { empCode, statusBadgeProps, divisionOf, roleOptions, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
@@ -573,6 +574,10 @@ export function TeamMemberProfile({
               pendingSave={!posPinSaved}
               autoOpen={pinPrompt}
             />
+          )}
+
+          {tab === "details" && canManage && member.status !== "invited" && (
+            <FieldPinCard userId={member.id} memberName={member.name || member.email} />
           )}
 
           {tab === "details" && canManage && member.status !== "invited" && (

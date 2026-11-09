@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { MobileFieldPin } from "./MobileFieldPin";
 
 /* Member account actions (Team -> Members). The desktop member profile exposes
    Set password / Send reset link / Resend invitation; this mirrors them 1:1 on
@@ -145,6 +146,7 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
           </>
         )}
       </div>
+      {!isInvited && Number(id) > 0 && <MobileFieldPin userId={Number(id)} memberName={email || `member ${id}`} />}
     </>
   );
 }
