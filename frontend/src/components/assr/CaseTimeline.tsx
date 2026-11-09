@@ -38,7 +38,7 @@ const TONE_CLASSES: Record<TimelineTone, string> = {
   grey: "border border-border bg-bg text-ink-secondary",
 };
 
-const GRID_COLUMNS = "grid grid-cols-[14px_76px_minmax(0,1fr)] items-start gap-x-2.5";
+const GRID_COLUMNS = "grid grid-cols-[14px_72px_68px_minmax(0,1fr)] items-start gap-x-2.5";
 
 function StatusChip({ row }: { row: TimelineRow }): ReactNode {
   if (!row.status) return null;
@@ -57,21 +57,9 @@ function TimelineEntry({ row, canArchive, onArchive }: { row: TimelineRow; canAr
         <div>{fmtDate(row.at)}</div>
         <div className="text-ink-muted">{fmtTime(row.at)}</div>
       </div>
-      <div className="min-w-0">
-        <div className="flex items-start gap-2">
-          <StatusChip row={row} />
-          <span className="ml-auto truncate pt-0.5 text-[11px] text-ink-muted">by {row.by}</span>
-          {canArchive && row.isArchivable && (
-            <button
-              onClick={() => onArchive(row.id)}
-              className="-my-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-muted hover:text-err focus:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-              title="Archive entry"
-              aria-label="Archive entry"
-            >
-              <Trash2 size={12} />
-            </button>
-          )}
-        </div>
+      <div className="break-words text-[11.5px] leading-snug text-ink">{row.by}</div>
+      <div className={cn("min-w-0", canArchive && row.isArchivable && "pr-7")}>
+        <StatusChip row={row} />
         {row.remarks && (
           <div className={cn("mt-1 whitespace-pre-line break-words text-[12.5px]", row.isEscalation ? "text-err" : "text-ink")}>
             {row.upload && <Paperclip size={12} className="mr-1 inline text-ink-muted" />}
@@ -79,6 +67,16 @@ function TimelineEntry({ row, canArchive, onArchive }: { row: TimelineRow; canAr
           </div>
         )}
       </div>
+      {canArchive && row.isArchivable && (
+        <button
+          onClick={() => onArchive(row.id)}
+          className="absolute right-0 top-2 flex h-7 w-7 items-center justify-center rounded text-ink-muted hover:text-err focus:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+          title="Archive entry"
+          aria-label="Archive entry"
+        >
+          <Trash2 size={12} />
+        </button>
+      )}
     </li>
   );
 }
@@ -150,7 +148,8 @@ export function CaseTimeline({ activity, salesAgent, userNames, canEdit, compose
           >
             <span />
             <span>Date & Time</span>
-            <span>Status / Update</span>
+            <span>By</span>
+            <span>Status / Remarks</span>
           </div>
           <ol className="relative">
             <span className="pointer-events-none absolute bottom-4 left-[5px] top-4 w-0.5 bg-primary/30" />
