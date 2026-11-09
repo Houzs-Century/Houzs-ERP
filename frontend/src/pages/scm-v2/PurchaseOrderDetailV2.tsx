@@ -97,6 +97,7 @@ import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { resolvePoRecipients, supplierEmailList } from "../../vendor/shared/supplier-emails";
+import { poEmailPhotosNote } from "../../vendor/scm/lib/po-email-photos";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -664,14 +665,14 @@ function PurchaseOrderDetailV2ReadOnly() {
         your_ref_no: (purchaseOrder as unknown as { your_ref_no?: string | null }).your_ref_no ?? null,
         source_so_doc_no: (purchaseOrder as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
       };
-      const { purchaseOrderPdfBase64 } = await import("../../vendor/scm/lib/purchase-order-pdf");
-      const pdfBase64 = await purchaseOrderPdfBase64(headerForPdf as never, items as never);
+      const { purchaseOrderPdfForEmail } = await import("../../vendor/scm/lib/purchase-order-pdf");
+      const { pdfBase64, photos } = await purchaseOrderPdfForEmail(headerForPdf as never, items as never);
       const res = await authedFetch<{ sent: boolean; to: string; result: { reason?: string } }>(
         `/mfg-purchase-orders/${id}/send-to-supplier`,
         { method: "POST", body: JSON.stringify({ pdfBase64 }) },
       );
       if (res.sent) {
-        notify({ title: "Sent to supplier", body: `PO emailed to ${res.to}.` });
+        notify({ title: "Sent to supplier", body: `PO emailed to ${res.to}.${poEmailPhotosNote(photos)}` });
       } else {
         notify({ title: "Not sent", body: res.result?.reason ?? "The email channel may be off — check email settings.", tone: "error" });
       }

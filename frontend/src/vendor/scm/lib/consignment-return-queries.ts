@@ -26,6 +26,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { serviceNotify } from './dialog-service';
 import { authedFetch } from './authed-fetch';
+import { fetchAllPages } from '../../../lib/csv';
 import { writeFailed } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -64,6 +65,29 @@ export const useConsignmentReturns = (status?: string) => useQuery({
    non-finance caller (canViewScmFinance), so they are optional here and the
    Cost / Margin tiles are not rendered for such a viewer. */
 export type ConsignmentReturnAggregates = { revenueSen: number; costSen?: number; marginSen?: number };
+type ConsignmentReturnsListFilter = { status?: string; q?: string; sort?: string };
+function consignmentReturnsListParams(page: number, pageSize: number, f: ConsignmentReturnsListFilter): URLSearchParams {
+  const usp = new URLSearchParams();
+  usp.set('page', String(page));
+  usp.set('pageSize', String(pageSize));
+  if (f.status) usp.set('status', f.status);
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  return usp;
+}
+
+/* The list's Export: every page the list's status + search match, not the page
+   on screen. Same query string as the paged hook, so the file holds what the
+   list would show page by page; the server keeps the company scope.
+   fetchAllPages counts pages from 1 and the route from 0. */
+export function fetchConsignmentReturnsExportRows<T>(f: ConsignmentReturnsListFilter): Promise<T[]> {
+  return fetchAllPages<T>(async (page, perPage) => {
+    const usp = consignmentReturnsListParams(page - 1, perPage, f);
+    const body = await authedFetch<{ deliveryReturns?: T[]; total: number }>(`/consignment-returns?${usp.toString()}`);
+    return { data: body.deliveryReturns ?? [], total: body.total };
+  });
+}
+
 export const useConsignmentReturnsPaged = (params: {
   page: number;
   pageSize: number;
@@ -72,12 +96,7 @@ export const useConsignmentReturnsPaged = (params: {
   sort?: string;
 }) => {
   const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
-  usp.set('page', String(page));
-  usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
+  const usp = consignmentReturnsListParams(page, pageSize, { status, q, sort });
   return useQuery<{ deliveryReturns: any[]; total: number; page: number; pageSize: number; aggregates?: ConsignmentReturnAggregates }>({
     queryKey: ['consignment-return', 'list-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

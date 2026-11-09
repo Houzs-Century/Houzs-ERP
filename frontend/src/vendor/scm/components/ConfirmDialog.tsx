@@ -22,6 +22,7 @@ import {
   createContext, useCallback, useContext, useState,
   type CSSProperties, type ReactNode,
 } from 'react';
+import { useEscapeLayer } from '../../../lib/escapeStack';
 
 const backdrop: CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)',
@@ -92,6 +93,7 @@ export const ConfirmDialog = ({
   value = '', onValueChange, onConfirm, onCancel,
 }: ConfirmDialogProps) => {
   const blocked = Boolean(input?.required) && value.trim() === '';
+  useEscapeLayer(onCancel, true);
   return (
     <div style={backdrop} onClick={onCancel} role="presentation">
       <div style={card} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">

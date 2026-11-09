@@ -11,7 +11,7 @@
  */
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { DataTable, type Column } from "./DataTable";
-import type { ExportCell, TablePdfView } from "./dataTableLineExport";
+import type { DataTableLineExport, ExportCell, TablePdfView } from "./dataTableLineExport";
 import { gridLayoutToTableLayout } from "./dataTableLegacyGridLayout";
 import type { LayoutSeed } from "../lib/tableLayouts";
 import { isoForExport } from "../vendor/shared/format";
@@ -64,6 +64,10 @@ export type DataGridCompatProps<T> = {
   loadedSearchLimit?: number;
   hideSearch?: boolean;
   exportName?: string;
+  /** See DataTable `exportLines`. A server-paged list passes it so Export reads
+   *  every page the filter matches; absent, Export writes the rows loaded, which
+   *  is the whole list on a page that loads everything. */
+  exportLines?: DataTableLineExport<T, never>;
   /** See DataTable `onExportPdf`: a page that prints adds Export to PDF to the
    *  header's right-click menu and receives the cells of the rows showing. */
   onExportPdf?: (view: TablePdfView<T>) => void;
@@ -197,6 +201,7 @@ export function DataGridCompat<T>({
   loadedSearchLimit,
   hideSearch = false,
   exportName,
+  exportLines,
   onExportPdf,
   onRowClick,
   onRowDoubleClick,
@@ -258,6 +263,7 @@ export function DataGridCompat<T>({
       focusSearchNonce={focusSearchNonce}
       exportName={exportName ?? storageKey}
       exportXlsx
+      exportLines={exportLines}
       onExportPdf={onExportPdf}
       groupBanner={groupBanner && !embedded}
       embedded={embedded}
