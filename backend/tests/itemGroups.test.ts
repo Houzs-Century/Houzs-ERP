@@ -128,6 +128,47 @@ describe('POST /accounting/item-groups — born bound, or not born', () => {
     expect(sb.rpcCalls).toHaveLength(0);
   });
 
+  /* Conts #338: a header makes every invoice of the group fail to post; a
+     control account (AR bound as sales) posts revenue as Dr AR / Cr AR. */
+  test('a header account is refused by code, on create and on bind', async () => {
+    const { app, sb } = harness({
+      accounts: [
+        ...CHART.map((r) => ({ ...r })),
+        { company_id: 2, account_code: '501-0001', account_name: 'SALES OF SOFA', account_type: 'INCOME', is_active: false, parent_code: '501-0000' },
+      ],
+    });
+    const res = await post(app, '/accounting/item-groups', {
+      code: 'CURTAIN', name: 'Curtain', companyId: 2, accounts: GOOD_ACCOUNTS,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('bad_account');
+    expect(body.message).toContain('501-0000');
+    expect(body.message).toContain('header');
+    expect(sb.rpcCalls).toHaveLength(0);
+    const bind = await put(app, '/accounting/item-groups/SOFA/accounts', { companyId: 2, accounts: GOOD_ACCOUNTS });
+    expect(bind.status).toBe(400);
+    expect(sb.tables.acc_item_group_accounts).toHaveLength(0);
+  });
+
+  test('a control account is refused — by its role (AR) or by its special type', async () => {
+    const { app, sb } = harness({
+      accounts: [
+        ...CHART.map((r) => ({ ...r })),
+        { company_id: 2, account_code: '300-0000', account_name: 'TRADE DEBTORS', account_type: 'ASSET', is_active: true },
+        { company_id: 2, account_code: '330-0001', account_name: 'STOCK', account_type: 'ASSET', is_active: true, special_type: 'SBS' },
+      ],
+      acc_account_roles: [{ company_id: 2, role: 'AR', account_code: '300-0000' }],
+    });
+    const ar = await put(app, '/accounting/item-groups/SOFA/accounts', { companyId: 2, accounts: { ...GOOD_ACCOUNTS, sales: '300-0000' } });
+    expect(ar.status).toBe(400);
+    expect(((await ar.json()) as { message: string }).message).toMatch(/300-0000 is a control account \(AR\)/);
+    const stock = await put(app, '/accounting/item-groups/SOFA/accounts', { companyId: 2, accounts: { ...GOOD_ACCOUNTS, purchase: '330-0001' } });
+    expect(stock.status).toBe(400);
+    expect(((await stock.json()) as { message: string }).message).toMatch(/330-0001 is a control account \(SBS\)/);
+    expect(sb.tables.acc_item_group_accounts).toHaveLength(0);
+  });
+
   test('an account missing from the chart entirely is refused by code', async () => {
     const { app } = harness();
     const res = await post(app, '/accounting/item-groups', {
