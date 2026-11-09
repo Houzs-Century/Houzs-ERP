@@ -199,7 +199,11 @@ export function MobileInvitations() {
           {q.isLoading && <div className="ph" style={{ height: 40, borderRadius: 8, marginTop: 8 }} />}
           {!q.isLoading && !!q.error && (
             <div className="empty-s" style={{ padding: "10px 0" }}>
-              Couldn't load invitations. Pull to refresh to try again.
+              Couldn't load invitations.{" "}
+              <button type="button" disabled={q.isFetching} onClick={() => void q.refetch()}
+                style={{ background: "none", border: "none", padding: 0, color: "var(--brand)", font: "inherit", fontWeight: 700, cursor: "pointer" }}>
+                {q.isFetching ? "Retrying…" : "Retry"}
+              </button>
             </div>
           )}
           {!q.isLoading && !q.error && invites.length === 0 && (

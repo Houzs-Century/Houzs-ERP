@@ -792,6 +792,8 @@ export const NAV_TABS: NavTab[] = [
           // design's three pages first, then the ERP's own, kept where the owner
           // put them. Every permission gate is as it was.
           { to: "/scm/payment-vouchers", label: "Payment vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
+          // The day's payments, a line each with the bank (owner 2026-11-08: 每天要过账的listing).
+          { to: "/scm/payment-listing", label: "Payment listing", icon: ListChecks, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
           // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
           { to: "/scm/payment-requests", label: "Payment requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
           { to: "/scm/ap-invoices", label: "Supplier bills", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },

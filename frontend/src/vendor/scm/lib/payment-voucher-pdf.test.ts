@@ -88,6 +88,17 @@ const has = (draws: TextDraw[], needle: string): boolean =>
   draws.some((d) => d.text.includes(needle));
 
 describe('the payment voucher sheet', () => {
+  /* Owner 2026-11-08: the bank a row each under PAY TO, then what the money is for. */
+  test('PAY TO prints the bank, the account number and name, and the Description, a row each', async () => {
+    const draws = await render({ pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'ABC FREIGHT SDN BHD', notes: 'Freight October' });
+    for (const label of ['Bank', 'Account no.', 'Acc. name', 'Description']) expect(draws.some((d) => d.text === label)).toBe(true);
+    for (const value of ['MAYBANK', '5140 1234 5678', 'ABC FREIGHT SDN BHD', 'Freight October']) expect(has(draws, value)).toBe(true);
+    expect(draws.some((d) => d.text === 'Note')).toBe(false);
+    /* No bank on file: no empty rows. */
+    const bare = await render({ pay_bank: null, pay_account_no: null, pay_account_name: null });
+    expect(bare.some((d) => d.text === 'Bank' || d.text === 'Acc. name')).toBe(false);
+  });
+
   test('the four-layer strip is the signature block — recorded names in their boxes, Received by left blank', async () => {
     const draws = await render();
     for (const boxLabel of ['Prepared by', 'Checked by', 'Approved by', 'Received by']) {

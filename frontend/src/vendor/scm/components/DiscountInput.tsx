@@ -86,7 +86,7 @@ export const DiscountInput = ({
   baseSen,
   bare = false,
   inputClassName,
-  selectOnFocus = false,
+  selectOnFocus = true,
   disabled = false,
   currency = 'RM',
   className,

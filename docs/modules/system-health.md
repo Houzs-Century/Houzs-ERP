@@ -7,7 +7,7 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - Every route under `/api/admin/health`, and the page and its menu row, require `it.view` (the IT pages gate, `services/itAccess.ts`, exposed to the client as the `it.pages.view` capability). `IT_PAGES_WILDCARD_PASSES` is true, so the `*` wildcard passes and Owner and Super Admin see it; set it false to hide the IT pages from them again.
 - The ledger, AutoCount reconcile/pull/snapshot, host-build and page-ceiling routes additionally require `*`, so while the switch is off nobody can call them.
 - The `system_health` page-access key no longer gates anything.
-- `GET /jobs` (last run and verdict per cron job, from `public.job_runs`) and `GET /queues` (waiting / failed / oldest age per queue, plus failed slip scans in 7 days) need only `it.view`.
+- `GET /jobs` (last run and verdict per cron job, from `public.job_runs`), `GET /queues` (waiting / failed / oldest age per queue, plus failed slip scans in 7 days) and `GET /hub-report` (IT Hub report set up? last sent / last failed, from the `health-hub` job runs) need only `it.view`.
 
 ## Rules that must not break
 
@@ -18,6 +18,8 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - Both AutoCount cron sweeps (`scm.autocount_relink_sweep`, `scm.autocount_delivery_date_sweep`) must fail CLOSED to off on any config value they cannot read — they end in writes.
 
 ## Gotchas
+
+- IT Hub health report (`services/healthHub.ts`, `health-hub` job, every 5 min): POST `<IT_HUB_URL>/api/v1/sys/health` with the key of `IT_HUB_AI_USAGE_COMPANY`, payload `{ ok, time, db, counts, checks, problems }` as Hookka and Conts send it. Jobs, queues and the AI verdict come from `services/healthMeasures.ts` / `serviceHealth.ts`, the same code as the panels, so never compute them a second way. No hub address or key = nothing sent; a refusal is a failed job run.
 
 - `so-pull` backfill: work backwards from the oldest missing `doc_no` in monthly `?since=` windows and stop when a window returns `fetched: 0`; the checkpoint is not read or advanced on this path, so re-running is always safe (upsert on `doc_no`).
 - An order missing from the mirror with a current, healthy checkpoint usually just predates the mirror's earliest checkpoint (`filtered` mode can never reach it) — check the doc_no range before assuming something is broken.

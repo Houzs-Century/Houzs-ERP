@@ -6,8 +6,11 @@
 //   POST   /payment-vouchers/:id/files          {fileName, mime, dataBase64}
 //   GET    /payment-vouchers/:id/files          the index rows
 //   GET    /payment-vouchers/:id/files/:fileId  streams the bytes from R2
-//   DELETE /payment-vouchers/:id/files/:fileId  until CHECKED — evidence
-//          locks with the document (the owner's own four-layer rule).
+//   DELETE /payment-vouchers/:id/files/:fileId  until APPROVED — a wrong file
+//          on a checked voucher may still go (owner 2026-11-09: 「payment 的
+//          attachment 不能delete? 如果我不小心放错」 → 可以); approved, the
+//          journal is written and the evidence stays. Every removal is on the
+//          voucher's history: who removed which file (fileRemoved).
 //
 // Bytes live in the SLIPS R2 bucket (the one binding that exists — see
 // slips.ts's history) under pv-files/<company>/<pv>/<uuid>.<ext>; the index
@@ -35,16 +38,22 @@ export const PV_FILES: DocFilesSpec = {
   load: async (c: any) => {
     const sb = c.get('supabase');
     const { data, error } = await scopeToCompany(
-      sb.from('payment_vouchers').select('id, pv_number, status, checked_at, company_id').eq('id', c.req.param('id')), c,
+      sb.from('payment_vouchers').select('id, pv_number, status, checked_at, approved_at, company_id').eq('id', c.req.param('id')), c,
     ).maybeSingle();
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     if (!data) return { resp: c.json({ error: 'not_found' }, 404) };
     const pv = data as Row;
-    /* Evidence locks with the document: checked 的人就不可以改了. */
-    return { doc: { id: String(pv.id), closed: pv.status === 'CANCELLED', locked: !!pv.checked_at } };
+    /* Evidence locks with the journal: once approved (posted included), the files stay. */
+    return {
+      doc: {
+        id: String(pv.id), closed: pv.status === 'CANCELLED', locked: !!pv.approved_at || pv.status === 'POSTED',
+        docNo: (pv.pv_number as string | null) ?? null, status: (pv.status as string | null) ?? null,
+      },
+    };
   },
   closedRefusal: { error: 'voucher_cancelled', message: 'A cancelled voucher takes no more evidence.' },
-  lockedRefusal: { error: 'evidence_locked', message: 'The voucher is checked — its evidence stays.' },
+  lockedRefusal: { error: 'evidence_locked', message: 'The voucher is approved — its evidence stays.' },
+  trail: { entityType: 'PAYMENT_VOUCHER' },
 };
 
 const handlers = makeDocFileHandlers(PV_FILES);

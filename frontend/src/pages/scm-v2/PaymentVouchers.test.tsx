@@ -30,7 +30,8 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
     ? { data: { paymentVouchers: searched(opts.q), q: opts.q }, isLoading: false, error: null }
     : { data: { counts: { all: 61, DRAFT: 11, PREPARED: 12, CHECKED: 13, POSTED: 14, ADVANCE: 15, CANCELLED: 16 }, paymentVouchers: [
-    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)' },
+    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)',
+      purpose_text: 'HC-PRQ-2610-030 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
     { id: 'done', pv_number: 'PV-2609-004', payee_name: 'Posted Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 40000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' },
@@ -168,15 +169,24 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
   });
 });
 
-describe('the For column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
-  test('each row shows its Notes under For, whole on hover; a voucher without notes reads —', () => {
+describe('the Description column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？; 2026-11-08: 把notes 换成description)', () => {
+  test('each row shows its Description, whole on hover; a voucher without one reads —', () => {
     draw();
-    expect(screen.getByRole('columnheader', { name: /^For/ })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /^Description/ })).toBeTruthy();
     const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
     const cell = screen.getByText(note).closest('td');
     expect(cell?.getAttribute('title')).toBe(note);
     /* The other five carry none. */
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
+  });
+
+  test('Purpose, Bank and Account no. stand beside it (owner 2026-11-08)', () => {
+    draw();
+    /* The grid title-cases a header: Account no. reads Account No. */
+    for (const name of [/^Purpose/, /^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
+    expect(screen.getByText('HC-PRQ-2610-030 Booth deposit')).toBeTruthy();
+    expect(screen.getByText('MAYBANK')).toBeTruthy();
+    expect(screen.getByText('5140 1234 5678')).toBeTruthy();
   });
 
   test('the search box asks the server for any voucher, every stage and month, and says what it found', async () => {
@@ -242,13 +252,13 @@ describe('the next step on each row (the redesign)', () => {
     fireEvent.click(screen.getByLabelText('More for PV-2609-002'));
     let menu = screen.getByRole('menu');
     for (const label of ['Open', 'Edit', 'Print', 'Print + files', 'Copy as new', 'Cancel…']) expect(within(menu).getByText(label)).toBeTruthy();
-    expect(within(menu).queryByText('Edit text')).toBeNull();
+    expect(within(menu).queryByText('Edit text & bank')).toBeNull();
     fireEvent.click(within(menu).getByText('Open'));
     fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
     menu = screen.getByRole('menu');
     expect(within(menu).queryByText('Edit')).toBeNull();
-    /* A checked voucher takes its words only (owner 2026-11-06). */
-    expect(within(menu).getByText('Edit text')).toBeTruthy();
+    /* A checked voucher takes its words and its bank only (owner 2026-11-06, 2026-11-09). */
+    expect(within(menu).getByText('Edit text & bank')).toBeTruthy();
   });
 });
 

@@ -65,6 +65,8 @@ import { PageHeader } from '../../components/Layout';
 import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { BooksLine, PvTrail, StageTag, VoucherTaskDrawer, pvStage } from './PvDocParts';
+import { NO_PAY_TO, isBlankPayTo, payToBody, payToOfVoucher, type PayTo } from './pv-pay-to';
+import { PvPayToFields } from './PvPayToFields';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
@@ -221,8 +223,9 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
-  /* The first yes locks the voucher but not its words, until the second (owner
-     2026-11-06: 有时我要改 description). The list's Edit text opens with ?text=1. */
+  /* The first yes locks the voucher but not its words or its bank, until the second
+     (owner 2026-11-06: 有时我要改 description; 2026-11-09: 可以，开放). The list's
+     Edit text & bank opens with ?text=1. */
   const mayEditText = isDraft && canWrite && isChecked && !isApprovedPv;
   const [editingText, setEditingText] = useState(() => searchParams.get('text') === '1');
   /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
@@ -238,6 +241,7 @@ export const PaymentVoucherDetail = () => {
   const [creditAccountCode, setCreditAccountCode] = useState('');
   const [voucherDate, setVoucherDate]             = useState('');
   const [notes, setNotes]                         = useState('');
+  const [payTo, setPayTo]                         = useState<PayTo>(NO_PAY_TO);
   const [bankChargeSen, setBankChargeSen]         = useState(0);
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Seeded from the voucher on enter-edit; shown only for a foreign currency. */
@@ -279,6 +283,7 @@ export const PaymentVoucherDetail = () => {
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
+    setPayTo(payToOfVoucher(pv));
     setBankChargeSen(Number(pv.bank_charge_sen ?? 0));
     setExchangeRate(String(pv.exchange_rate ?? '1'));
     /* Cleared on entering edit, never back-derived from the stored rate: the MYR
@@ -473,6 +478,7 @@ export const PaymentVoucherDetail = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
+        ...payToBody(payTo),
         bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
@@ -602,7 +608,7 @@ export const PaymentVoucherDetail = () => {
                 )}
                 {mayEditText && !editingText && (
                   <Button variant="ghost" size="md" onClick={() => setEditingText(true)} disabled={busy}>
-                    <Pencil {...ICON} /> Edit text
+                    <Pencil {...ICON} /> Edit text &amp; bank
                   </Button>
                 )}
                 {isDraft && canWrite && !isPrepared && (
@@ -698,7 +704,16 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
               <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
-              <InfoCell label="Notes" value={pv.notes ?? null} />
+              <InfoCell label="Description" value={pv.notes ?? null} />
+              {/* What it is for in the listing's words, and the bank it pays into (owner 2026-11-08). */}
+              <InfoCell label="Purpose" value={(pv.purpose_text as string | undefined) || null} />
+              {isBlankPayTo(payToOfVoucher(pv))
+                ? <InfoCell label="Bank" value={null} />
+                : <>
+                  <InfoCell label="Bank" value={payToOfVoucher(pv).bank || null} />
+                  <InfoCell label="Account no." value={payToOfVoucher(pv).accountNo || null} />
+                  <InfoCell label="Account name" value={payToOfVoucher(pv).accountName || null} />
+                </>}
               {/* The bill's own number and date (item 1) and its official invoice (欠正式单, item 3). */}
               {(pv.bill_ref || pv.bill_date) && <InfoCell label="Bill" value={`${pv.bill_ref ?? '—'}${pv.bill_date ? ` · ${fmtDateOrDash(pv.bill_date)}` : ''}`} />}
               {!isRefundPv && pv.status !== 'CANCELLED' && (
@@ -787,16 +802,17 @@ export const PaymentVoucherDetail = () => {
                   inputClassName={styles.fieldInput} selectOnFocus />
               </label>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Notes</span>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+                <span className={styles.fieldLabel}>Description</span>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Voucher description" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
               </label>
+              <PvPayToFields value={payTo} onChange={setPayTo} />
             </div>
           )}
         </div>
       </section>
 
       {mayEditText && editingText && (
-        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} onClose={() => setEditingText(false)}
+        <PvTextEdit pvId={String(pv.id)} notes={pv.notes ?? null} payTo={payToOfVoucher(pv)} onClose={() => setEditingText(false)}
           lines={lines.map((l) => ({ id: String(l.id), description: l.description ?? null }))} />
       )}
 
@@ -1060,9 +1076,10 @@ export const PaymentVoucherDetail = () => {
       {/* ── Files — the bill behind this voucher (owner 2026-09-03: 我希望可以
           print pv include ocr 的文件一起, which first needs the file to LIVE
           here). Scan attaches automatically; this card takes manual adds,
-          views, and deletes — deleting only until CHECKED: evidence locks
-          with the document (server enforces both). */}
-      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isChecked} cancelled={pv.status === 'CANCELLED'} />
+          views, and deletes — deleting until APPROVED (owner 2026-11-09), each
+          removal on the voucher's history; then the evidence stays with the
+          journal (server enforces both). */}
+      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isApprovedPv} cancelled={pv.status === 'CANCELLED'} />
 
       {/* ── The advance this voucher holds, and the knock-off that spends it
           (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
@@ -1144,9 +1161,10 @@ export const PaymentVoucherDetail = () => {
 
 /* ── Files card — the bill pages behind this voucher (mig 0352). The card
    itself is the shared DocFilesCard (since 2026-09-06 the AP invoice shows
-   the same one); this binds the voucher's hooks and its four-layer rule:
-   a CHECKED voucher's evidence stays (remove hidden, server refuses too),
-   a CANCELLED one takes no more files. */
+   the same one); this binds the voucher's hooks and its rule: a wrong file
+   may go until the voucher is APPROVED (owner 2026-11-09: 「如果我不小心放错」
+   → 可以), each removal on its history; an approved voucher's evidence stays
+   (remove hidden, server refuses too); a CANCELLED one takes no more files. */
 const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
   const filesQ = usePvFiles(pvId);
   const upload = useUploadPvFile();
@@ -1155,9 +1173,9 @@ const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canW
     <DocFilesCard
       files={filesQ.data?.files ?? []}
       canWrite={canWrite} locked={locked} closed={cancelled}
-      lockedNote=" · Checked vouchers keep their files. Nothing can be removed."
+      lockedNote=" · Approved vouchers keep their files. Nothing can be removed."
       emptyNote="No files attached. The bill or quotation goes here and prints with the voucher; one opened from Scan bills attaches its scans by itself."
-      removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
+      removeBody="The stored file is deleted, and the voucher's history records who removed which file. Once the voucher is approved, its files stay."
       attachAriaLabel="Attach voucher files"
       uploading={upload.isPending} removing={remove.isPending}
       onUpload={(file) => upload.mutateAsync({ pvId, file })}
