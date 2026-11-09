@@ -28,6 +28,7 @@ import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
 import { setChecklistStatus, getUserPhasesOnProject } from '../../services/projects';
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
+import { todayMyt } from '../lib/my-time';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
@@ -217,7 +218,7 @@ export async function startTripIfPlanned(sb: any, tripId: string | null): Promis
 deliveryJobProgress.get('/progress', async (c) => {
   const since = c.req.query('since') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) return c.json({ error: 'invalid_since', reason: 'since must be YYYY-MM-DD.' }, 400);
-  const floor = new Date(Date.now() - 62 * 86400_000).toISOString().slice(0, 10);
+  const floor = todayMyt(-62);
   let q = c.get('supabase').from('job_progress')
       .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
       .gte('updated_at', since < floor ? floor : since);

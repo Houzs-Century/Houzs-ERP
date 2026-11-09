@@ -78,6 +78,7 @@ import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { grnPrintChain } from "../../lib/printChain";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 type GrnRow = HoldFields & {
@@ -765,7 +766,7 @@ export function GoodsReceivedListV2() {
       for (const r of chosen) bundles.push(await fetchGrnBundle(r));
       if (how === "one") {
         await generateCombinedGrnPdf(bundles as never, {
-          fileName: `goods-received-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `goods-received-${todayMyt()}.pdf`,
           action,
         });
       } else {

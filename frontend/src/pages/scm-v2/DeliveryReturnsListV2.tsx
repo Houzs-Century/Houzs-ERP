@@ -83,6 +83,7 @@ import {
 } from "../../vendor/scm/lib/return-line-export-columns";
 import { fetchDeliveryReturnExportRows } from "../../vendor/scm/lib/return-list-export";
 import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -938,7 +939,7 @@ export function DeliveryReturnsListV2() {
       for (const r of chosen) bundles.push(await fetchDrBundle(r.id));
       if (how === "one") {
         await generateCombinedDeliveryReturnPdf(bundles as never, {
-          fileName: `delivery-returns-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `delivery-returns-${todayMyt()}.pdf`,
           action,
         });
       } else {
