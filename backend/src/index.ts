@@ -41,6 +41,7 @@ import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
+import { HEALTH_HUB_JOB, sendHealthReportToHub } from "./services/healthHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
@@ -728,6 +729,14 @@ export default {
           .catch((e) => console.error("[cron email-outbox]", e))
           .then(() => backfillOutboundMessageIds(env.DB, env, null, 10))
           .catch((e) => console.error("[cron mail-message-ids]", e))
+      );
+      // Health report to the IT Hub: live DB, email backlog, jobs, AI failures,
+      // measured as the System Health page measures them (services/healthHub.ts).
+      // No hub address or key: nothing is sent. A refusal is only logged.
+      ctx.waitUntil(
+        track("health-hub", () => sendHealthReportToHub(env, event.scheduledTime))
+          .then((r) => { if (r.sent && !r.ok) console.log(`[cron ${HEALTH_HUB_JOB}] sent, health is not ok`); })
+          .catch((e) => console.error(`[cron ${HEALTH_HUB_JOB}]`, e))
       );
       // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
       ctx.waitUntil(

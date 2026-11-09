@@ -81,7 +81,7 @@ import { dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
   todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
-  todoTaskCreateHandler, todoTaskGetHandler, todoTaskPatchHandler, todoTaskDoneHandler, todoTaskReopenHandler,
+  todoTaskCreateHandler, todoTaskGetHandler, todoTaskPatchHandler, todoTaskDeleteHandler, todoTaskDoneHandler, todoTaskReopenHandler,
   todoTaskMoveHandler, todoRemarkAddHandler, todoRemarkEditHandler, todoLinkSearchHandler, todoRuleAddHandler,
 } from './accounting-todo-tasks';
 import { todoCalendarHandler } from './accounting-todo-calendar';
@@ -237,6 +237,7 @@ accounting.post('/receipts/rebank', rebankMoveHandler);
 accounting.post('/todo/tasks', todoTaskCreateHandler);
 accounting.get('/todo/tasks/:id', todoTaskGetHandler);
 accounting.patch('/todo/tasks/:id', todoTaskPatchHandler);
+accounting.delete('/todo/tasks/:id', todoTaskDeleteHandler);
 accounting.post('/todo/tasks/:id/done', todoTaskDoneHandler);
 accounting.post('/todo/tasks/:id/reopen', todoTaskReopenHandler);
 accounting.post('/todo/tasks/:id/move', todoTaskMoveHandler);

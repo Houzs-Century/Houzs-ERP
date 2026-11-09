@@ -3,6 +3,8 @@ import {
   SCM_LIST_RETURN_KEY,
   rememberScmListReturn,
   scmListReturnTo,
+  rememberScmListFocus,
+  takeScmListFocus,
 } from "./scmListReturn";
 
 beforeEach(() => sessionStorage.clear());
@@ -59,5 +61,15 @@ describe("scmListReturn", () => {
       JSON.stringify({ "/scm/purchase-orders": "//evil.example/x" }),
     );
     expect(scmListReturnTo("/scm/purchase-orders")).toBe("/scm/purchase-orders");
+  });
+});
+
+describe("scmListFocus (Conts-ERP #406)", () => {
+  it("returns the row last opened from a list once, per list", () => {
+    rememberScmListFocus("/scm/suppliers", "s37");
+    rememberScmListFocus("/scm/purchase-orders", "po1");
+    expect(takeScmListFocus("/scm/suppliers")).toBe("s37");
+    expect(takeScmListFocus("/scm/suppliers")).toBeNull();
+    expect(takeScmListFocus("/scm/purchase-orders")).toBe("po1");
   });
 });

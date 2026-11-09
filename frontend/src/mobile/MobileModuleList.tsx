@@ -8,6 +8,7 @@ import { formatDate } from "../lib/utils";
 import { deliveryReturnSearchText } from "../lib/so-ref-search";
 import { fmtAmt } from "../lib/scm";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useMobileListView } from "./useMobileListView";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { api } from "../api/client";
 import { SearchProgress } from "../components/SearchProgress";
@@ -386,10 +387,7 @@ export function MobileModuleList({
    *  cards (e.g. the Members list's Pending Invitations accordion). */
   aboveList?: ReactNode;
 }) {
-  const [q, setQ] = useState("");
-  const [chip, setChip] = useState("all");
-  const [chip2, setChip2] = useState("all");
-  const [sortKey, setSortKey] = useState(config.sorts?.[0]?.key ?? "");
+  const { q, setQ, chip, setChip, chip2, setChip2, sortKey, setSortKey } = useMobileListView(config.endpoint, config.sorts?.[0]?.key ?? "");
 
   /* Debounced search term — the value actually sent to the server (and keyed
      into the infinite query) so a keystroke doesn't fire a request per
@@ -425,7 +423,7 @@ export function MobileModuleList({
 
   const {
     data, isLoading, isFetching, isPlaceholderData, error,
-    fetchNextPage, hasNextPage, isFetchingNextPage,
+    fetchNextPage, hasNextPage, isFetchingNextPage, refetch,
   } = useInfiniteQuery({
     // Paged lists key on the debounced search so changing it restarts at page 0
     // and the server re-searches the whole table. Un-paged lists keep the old
@@ -643,7 +641,7 @@ export function MobileModuleList({
         {!!error && !listLoading && (
           <div className="empty">
             <div className="empty-t">Couldn't load {config.title.toLowerCase()}.</div>
-            <div className="empty-s">Pull to refresh to try again.</div>
+            <button type="button" className="btn-ghost" style={{ marginTop: 14 }} disabled={isFetching} onClick={() => void refetch()}>{isFetching ? "Retrying…" : "Retry"}</button>
           </div>
         )}
 
@@ -1155,7 +1153,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
-      { key: "Loaded", label: "Loaded", match: (r) => eq(pick(r, "status"), "dispatched") }, // stored value unchanged; DISPATCHED reads "Loaded" since 2026-08-26. Key moves with the label — `chip` is local useState (:388), nothing persists it.
+      { key: "Loaded", label: "Loaded", match: (r) => eq(pick(r, "status"), "dispatched") }, // stored value unchanged; DISPATCHED reads "Loaded" since 2026-08-26. Key moves with the label — `chip` lives only in this tab's session (useMobileListView), so an old key just reads as no chip.
       { key: "Delivered", label: "Delivered", match: (r) => eq(pick(r, "status"), "delivered") },
       { key: "Cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],

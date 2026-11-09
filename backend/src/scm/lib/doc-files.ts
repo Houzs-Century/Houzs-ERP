@@ -18,6 +18,7 @@
 
 import { hasHouzsPerm } from './houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from './companyScope';
+import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit, type EntityType } from './entity-audit';
 import type { PdfAttachment } from './pdf-attach';
 import { linkScanFiles, type ScanFileKind } from './scan-files';
 import { sha256Hex } from './scan-ocr';
@@ -34,8 +35,9 @@ const EXT: Record<string, string> = {
 
 /** What a spec's loader hands back: the document's id and the two states the
     handlers refuse on — `closed` takes no more evidence (cancelled), `locked`
-    keeps what it has (checked / posted). */
-export type DocForFiles = { id: string; closed: boolean; locked: boolean };
+    keeps what it has (checked / approved / posted, as each document decides).
+    `docNo` and `status` name it on the trail, for a spec that keeps one. */
+export type DocForFiles = { id: string; closed: boolean; locked: boolean; docNo?: string | null; status?: string | null };
 
 export type DocFilesSpec = {
   /** The index table (in scm) and the column that names the document. */
@@ -57,6 +59,10 @@ export type DocFilesSpec = {
   /** Set when the document must keep at least one file (a payment request's
       bill, owner 2026-10-01: 申请一定要有) — removing the last one is refused. */
   keepOne?: { error: string; message: string };
+  /** Set when a removal goes on the document's own history (entity_audit_log):
+      who removed which file (owner 2026-11-09, a voucher's file after its
+      check). The trail must be writable first, or nothing is removed. */
+  trail?: { entityType: EntityType };
   /** The scan kind whose kept original (scm.scan_files) an attached file links
       to by its bytes (HC-0006 T7), or null when this document is never scanned. */
   scanKind: ScanFileKind | null;
@@ -176,11 +182,11 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     if (!bucket) return noBucket(c);
     const found = await spec.load(c);
     if ('resp' in found) return found.resp;
-    /* Evidence locks with the document: checked 的人就不可以改了. */
+    /* Evidence locks with the document, at the stage the spec names. */
     if (found.doc.locked) return c.json(spec.lockedRefusal, 409);
     const sb = c.get('supabase');
     const { data: row, error } = await scopeToCompany(
-      sb.from(spec.table).select('id, file_key, company_id').eq(spec.fkColumn, found.doc.id).eq('id', c.req.param('fileId')), c,
+      sb.from(spec.table).select('id, file_key, file_name, company_id').eq(spec.fkColumn, found.doc.id).eq('id', c.req.param('fileId')), c,
     ).maybeSingle();
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     if (!row) return c.json({ error: 'not_found' }, 404);
@@ -189,10 +195,23 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
       if (allErr) return c.json({ error: 'load_failed', reason: allErr.message }, 500);
       if (((all ?? []) as Row[]).length <= 1) return c.json(spec.keepOne, 409);
     }
+    const companyId = Number((row as Row).company_id);
+    if (spec.trail) {
+      const pf = await assertAuditWritable(sb, { entityType: spec.trail.entityType, entityId: found.doc.id, action: 'UPDATE', companyId });
+      if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+    }
     const { error: delErr } = await sb.from(spec.table)
       .delete().eq('company_id', (row as Row).company_id).eq('id', (row as Row).id);
     if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
     await bucket.delete((row as Row).file_key);
+    if (spec.trail) {
+      await recordEntityAudit(sb, {
+        entityType: spec.trail.entityType, entityId: found.doc.id, entityDocNo: found.doc.docNo ?? null,
+        action: 'UPDATE', actor: c.get('houzsUser'), companyId,
+        statusSnapshot: found.doc.status ?? null,
+        fieldChanges: compactChanges([fieldChange('fileRemoved', (row as Row).file_name ?? null, null)]),
+      });
+    }
     return c.json({ ok: true });
   };
 

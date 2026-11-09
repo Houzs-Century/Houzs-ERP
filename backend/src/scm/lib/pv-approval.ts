@@ -14,8 +14,10 @@
 //   Prepared  (submitted_at)   -> STILL editable (owner: prepare 还可以改),
 //                                 checkable, withdrawable; not approvable
 //   Checked   (checked_at)     -> LOCKED (owner: checked 的人就不可以改了),
-//                                 approvable / rejectable only; its words alone
-//                                 may still change (owner 2026-11-06)
+//                                 approvable / rejectable only; its words and
+//                                 bank may still change (owner 2026-11-06,
+//                                 2026-11-09), and a wrong file may still be
+//                                 removed (pv-files.ts, owner 2026-11-09)
 //   Approved  (approved_at)    -> the approve route posts the GL itself;
 //                                 a voucher seen in this state without a JE
 //                                 is a post that failed halfway — approve
