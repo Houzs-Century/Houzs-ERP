@@ -99,10 +99,10 @@ describe("seenKey — the reminder returns by itself tomorrow", () => {
 });
 
 describe("localToday", () => {
-  it("reads the LOCAL calendar date, not the UTC one", () => {
-    // 2026-09-09 08:30 Malaysia is still 2026-09-09 00:30 UTC — same day here,
-    // but the reverse (late evening MYT) is the case that used to slip a day.
-    const lateEvening = new Date(2026, 8, 9, 23, 30, 0);
-    expect(localToday(lateEvening)).toBe("2026-09-09");
+  it("reads the MALAYSIAN calendar date, whatever zone the device is in", () => {
+    // 01:30 on 10 Nov in Malaysia is still 9 Nov in UTC and on a device abroad.
+    expect(localToday(new Date("2026-11-09T17:30:00Z"))).toBe("2026-11-10");
+    expect(localToday(new Date("2026-11-09T16:00:00Z"))).toBe("2026-11-10");
+    expect(localToday(new Date("2026-11-09T15:59:59Z"))).toBe("2026-11-09");
   });
 });

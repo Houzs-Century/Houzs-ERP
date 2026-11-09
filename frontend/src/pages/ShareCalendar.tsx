@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { correlatedFetch } from "../lib/requestCorrelation";
 import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 export type ShareMode = "contractor" | "brand";
 
@@ -250,7 +251,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const [data, setData] = useState<ShareData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const today = useMemo(() => new Date(), []);
+  const today = useMemo(() => parseDay(todayMyt()) ?? new Date(), []);
   const [cursor, setCursor] = useState<{ y: number; m: number }>({ y: today.getFullYear(), m: today.getMonth() });
   // The event whose panel is open, and what the server said about it.
   const [open, setOpen] = useState<ShareEvent | null>(null);
