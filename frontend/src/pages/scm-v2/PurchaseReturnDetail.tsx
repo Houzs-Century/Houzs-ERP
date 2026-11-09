@@ -63,6 +63,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { DetailLoadFailure } from './DetailLoadFailure';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -233,10 +234,7 @@ export const PurchaseReturnDetail = () => {
           <ArrowLeft {...ICON} />
           <span>Back</span>
         </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Purchase return not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
+        <DetailLoadFailure noun="Purchase return" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
       </div>
     );
   }

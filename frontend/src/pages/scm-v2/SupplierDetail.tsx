@@ -36,6 +36,7 @@ import { FabricTracking } from './FabricTracking';
 import { setActiveCompanyId } from '../../lib/activeCompany';
 import { scmListReturnTo } from '../../lib/scmListReturn';
 import { Button } from '../../components/Button';
+import { DetailLoadFailure } from './DetailLoadFailure';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import {
@@ -373,10 +374,7 @@ export const SupplierDetail = () => {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-1 rounded-md border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err">
-            <strong>Supplier not found or failed to load.</strong>
-            {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-          </div>
+          <DetailLoadFailure noun="Supplier" error={detail.isError ? detail.error : null} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
         )}
       </div>
     );
