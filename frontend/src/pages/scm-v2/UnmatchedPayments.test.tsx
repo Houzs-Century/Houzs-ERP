@@ -12,7 +12,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { UnmatchedPayment } from './unmatched-payments-queries';
 
 const row = (over: Partial<UnmatchedPayment>): UnmatchedPayment => ({
-  source: 'SOPAY', paymentId: 'p1', docNo: '2990-SO-2609-045', customerName: 'YEAP KAR CHUN', salespersonName: 'Nico',
+  source: 'SOPAY', paymentId: 'p1', docNo: '2990-SO-2609-045', customerName: 'YEAP KAR CHUN', salespersonName: 'Nico', collectedByName: 'Esther',
   paidOn: '2026-09-02', kind: 'card', channel: 'PBB', amountSen: 324_000, reference: 'R18656', ageDays: 28,
   state: 'CARD_TO_CONFIRM', bankAccountCode: null, statementUpTo: null, ...over,
 });
@@ -20,7 +20,7 @@ const ROWS: UnmatchedPayment[] = [
   row({}),
   row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28' }),
   row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28' }),
-  row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED' }),
+  row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED', collectedByName: null }),
 ];
 
 const asked: Array<[string, string]> = [];
@@ -71,6 +71,21 @@ describe('Payments not matched yet', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Card (2)' }));
     expect(screen.queryByText('2990-SO-2609-031')).toBeNull();
     expect(screen.getByText('2990-SO-2609-045')).toBeTruthy();
+  });
+
+  /* Owner 2026-11-09: sales person 应该不太对，应该是collected by 的人. */
+  test('names who collected the payment; the order\'s salesperson waits under Columns', () => {
+    draw();
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Collected by');
+    expect(heads.some((h) => h.startsWith('Salesperson'))).toBe(false);
+    const card = within(rowOf('2990-SO-2609-045'));
+    expect(card.getByText('Esther')).toBeTruthy();
+    expect(card.queryByText('Nico')).toBeNull();
+    /* Nobody recorded: a dash, not the salesperson standing in. */
+    const nobody = within(rowOf('2990-SO-2609-050'));
+    expect(nobody.getByText('—')).toBeTruthy();
+    expect(nobody.queryByText('Nico')).toBeNull();
   });
 
   test('asks for the last 180 days by default', () => {
