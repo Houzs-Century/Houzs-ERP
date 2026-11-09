@@ -78,7 +78,7 @@ import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 import {
-  buildPurchaseOrderEmail,
+  buildPurchaseOrderEmail, poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
   PO_RESEND_WINDOW_MS,
@@ -4127,11 +4127,8 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   }
 
   const branding = await getBrandingForCompany(c.env, row.company_id ?? null);
-  const msg = buildPurchaseOrderEmail(
-    row,
-    branding.companyName,
-    typeof body.message === 'string' ? body.message : null,
-  );
+  const note = typeof body.message === 'string' ? body.message : null;
+  const msg = buildPurchaseOrderEmail(row, branding.companyName, note);
   /* Unreachable given the recipient check above — buildPurchaseOrderEmail's only
      null is a bad address. Handled rather than asserted: the two checks are in
      different files and a future edit could separate them. */
@@ -4177,6 +4174,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
     cc: msg.cc.length ? msg.cc : null,
     subject: msg.subject,
     html: msg.html,
+    replyTo: poReplyTo(c.get('houzsUser')),
     purpose: 'purchase_order',
     refType: 'purchase_order',
     // po id is a uuid; email_log.ref_id is INTEGER, so identity lives in the subject.
