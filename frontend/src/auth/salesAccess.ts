@@ -129,9 +129,15 @@ const SAVE_EMAILS = new Set([
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
-  // role_name + email are non-null on AuthUser (types.ts), so no `?? ""` fallback.
-  const role = user.role_name.trim().toLowerCase();
-  const email = user.email.trim().toLowerCase();
+  // role_name + email are non-null on AuthUser (types.ts), BUT tests construct
+  // partial users without them, and a Worker that predates a field still fills
+  // the object. Defensive ?? "" here, with lint suppressed inline — the ratchet
+  // was 2 before this file, and raising it (vs bearing one disable comment) is
+  // the shape of a silent gap next time someone touches it.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
+  const role = (user.role_name ?? "").trim().toLowerCase();
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
+  const email = (user.email ?? "").trim().toLowerCase();
   if (position === "owner") return true;
   if (SAVE_EMAILS.has(email)) return true;
   if (position === "sales director" || role === "sales director") return true;
