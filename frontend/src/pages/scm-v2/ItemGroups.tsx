@@ -22,7 +22,7 @@ import { getActiveCompanyId } from '../../lib/activeCompany';
 import { useToastOptional } from '../../hooks/useToast';
 import { PiBackfillCard } from './PiBackfill';
 import { SearchCombo, type ComboOption } from '../../vendor/scm/components/SearchCombo';
-import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
+import { postableAccounts, useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import {
   useItemGroups, useCreateItemGroup, useBindItemGroup, usePatchItemGroup,
   type ItemGroup, type ItemGroupBinding,
@@ -111,8 +111,10 @@ export const ItemGroupsTab = () => {
       const i = order.indexOf(section);
       return i < 0 ? order.length : i;
     };
-    const build = (wants: 'EXPENSE' | 'INCOME'): ComboOption[] => (accountsQ.data?.accounts ?? [])
-      .filter((a) => a.is_active !== false && a.account_type === wants)
+    /* Postable only (Conts #338): never a header (a group bound to one fails
+       every posting) nor a control account — the server refuses both too. */
+    const build = (wants: 'EXPENSE' | 'INCOME'): ComboOption[] => postableAccounts(accountsQ.data?.accounts ?? [])
+      .filter((a) => a.account_type === wants)
       .map((a) => ({
         value: a.account_code,
         label: `${a.account_code} — ${a.account_name}`,
