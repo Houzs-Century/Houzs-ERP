@@ -15,7 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
-import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
+import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch, QrReportForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
 import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
 import { isReversalPair } from './reversal-pairs';
@@ -176,6 +176,80 @@ export async function loadPayableBatches(
 }
 
 /**
+ * Every merchant report that carries DuitNow QR lines, as the bank side needs
+ * it (owner 2026-11-09: QR 是 direct 去 bank 的，不算卡机的): each QR line,
+ * whether a person has linked it to its sale, and the sales it is linked to —
+ * each with its live journal entry and the accounts that entry debits — so the
+ * bank's QR credit can be matched to those entries (acc/bank-match qrSalesFor).
+ *
+ * A QR line matched together with others (option B) is linked through its lead,
+ * which holds the payments; the lead's report is the line's report. Reads fail
+ * closed, as every read here does.
+ */
+export async function loadQrReports(
+  sb: any, companyId: number,
+): Promise<{ ok: true; reports: QrReportForMatch[] } | Fail> {
+  const rows = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_rows').select('id, batch_id, line_no, txn_date, gross_sen, confirmed_at')
+    .eq('company_id', companyId).eq('channel', 'QR').order('id').range(f, t));
+  if (rows.error) return { ok: false, reason: `QR lines: ${rows.error.message}` };
+  const qrRows = rows.data ?? [];
+  if (qrRows.length === 0) return { ok: true, reports: [] };
+
+  const batchIds = [...new Set(qrRows.map((r) => Number(r.batch_id)))];
+  const batches = await chunkIn<Record<string, any>, number>(batchIds, (ids, f, t) => sb
+    .from('acc_settlement_batches').select('id, acquirer_code, file_name, period_from, period_to')
+    .eq('company_id', companyId).in('id', ids).order('id').range(f, t));
+  if (batches.error) return { ok: false, reason: `QR reports: ${batches.error.message}` };
+
+  const links = await chunkIn<Record<string, any>, number>(qrRows.map((r) => Number(r.id)), (ids, f, t) => sb
+    .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
+    .eq('company_id', companyId).in('settlement_row_id', ids).order('id').range(f, t));
+  if (links.error) return { ok: false, reason: `QR sales: ${links.error.message}` };
+
+  /* Each sale's LIVE entry — a payment corrected since is reversed and booked
+     again, and only the standing one is the money on the bank account. */
+  const paymentIds = [...new Set(links.data.map((l) => String(l.payment_id)))];
+  const jes = paymentIds.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(paymentIds, (ids, f, t) => sb
+    .from('journal_entries').select('id, je_no, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId).in('source_type', ['SOPAY', 'SIPAY']).in('source_doc_no', ids).eq('posted', true)
+    .order('id').range(f, t));
+  if (jes.error) return { ok: false, reason: `QR sales' entries: ${jes.error.message}` };
+  const live = jes.data.filter((e) => e.reversed !== true);
+  const legs = live.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(live.map((e) => String(e.id)), (ids, f, t) => sb
+    .from('journal_entry_lines').select('journal_entry_id, account_code, debit_sen')
+    .in('journal_entry_id', ids).order('journal_entry_id').range(f, t));
+  if (legs.error) return { ok: false, reason: `QR sales' entry lines: ${legs.error.message}` };
+  const debitsOf = new Map<string, string[]>();
+  for (const l of legs.data) {
+    if (Number(l.debit_sen ?? 0) <= 0) continue;
+    const id = String(l.journal_entry_id);
+    debitsOf.set(id, [...new Set([...(debitsOf.get(id) ?? []), String(l.account_code)])]);
+  }
+  const entryOf = new Map<string, { jeNo: string; accounts: string[] }>();
+  for (const e of live) entryOf.set(`${String(e.source_type)}:${String(e.source_doc_no)}`, { jeNo: String(e.je_no), accounts: debitsOf.get(String(e.id)) ?? [] });
+
+  const reports: QrReportForMatch[] = [];
+  for (const b of batches.data) {
+    const mine = qrRows.filter((r) => Number(r.batch_id) === Number(b.id)).sort((x, y) => Number(x.line_no) - Number(y.line_no));
+    const ids = new Set(mine.map((r) => Number(r.id)));
+    reports.push({
+      batchId: Number(b.id),
+      fileName: b.file_name == null ? null : String(b.file_name),
+      acquirerCode: String(b.acquirer_code),
+      periodFrom: String(b.period_from ?? '').slice(0, 10),
+      periodTo: String(b.period_to ?? '').slice(0, 10),
+      lines: mine.map((r) => ({ lineNo: Number(r.line_no), txnDate: String(r.txn_date).slice(0, 10), grossSen: Number(r.gross_sen), linked: r.confirmed_at != null })),
+      sales: links.data.filter((l) => ids.has(Number(l.settlement_row_id))).map((l) => {
+        const entry = entryOf.get(`${String(l.payment_source)}:${String(l.payment_id)}`);
+        return { docNo: l.doc_no == null ? null : String(l.doc_no), amountSen: Number(l.amount_sen), jeNo: entry?.jeNo ?? null, accounts: entry?.accounts ?? [] };
+      }),
+    });
+  }
+  return { ok: true, reports };
+}
+
+/**
  * Every payment advice uploaded for this company — the acquirer's own written
  * answer to "which days does one credit pay" (acc/payout-advice).
  *
@@ -234,11 +308,16 @@ export async function loadPayoutAdvices(
 export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
 ): Promise<{ ok: true; movements: LedgerMovement[] } | Fail> {
-  const { data, error } = await sb.from('v_gl_entries')
+  /* Paged (Conts #334): a bank account passes 1,000 ledger lines within a year,
+     and an unpaged read got the first 1,000 and no error, so the rest of the
+     postings read as "not in the books". line_id keeps the pages stable. */
+  const { data, error } = await paginateAll<Record<string, any>>((lo, hi) => sb.from('v_gl_entries')
     .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes, party_name, reversed, reversed_by_je')
     .eq('company_id', companyId)
     .eq('account_code', accountCode)
-    .lte('entry_date', upTo);
+    .lte('entry_date', upTo)
+    .order('line_id')
+    .range(lo, hi));
   if (error) return { ok: false, reason: error.message };
 
   /* One ENTRY per row, not one line: an entry can touch the bank account twice
@@ -298,28 +377,29 @@ export async function loadClaimedElsewhere(
   sb: Parameters<typeof loadAccountLedger>[0], companyId: number, accountCode: string, exceptStatementId: number | null,
   upTo: string | null = null,
 ): Promise<{ ok: true; claimed: Set<string>; firstPeriodFrom: string | null } | Fail> {
-  const { data: stmts, error: sErr } = await sb.from('acc_bank_statements')
-    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode);
+  const { data: stmts, error: sErr } = await paginateAll<{ id: number; period_from: string | null }>((lo, hi) => sb.from('acc_bank_statements')
+    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode).order('id').range(lo, hi));
   if (sErr) return { ok: false, reason: sErr.message };
-  const all = (stmts ?? []) as Array<{ id: number; period_from: string | null }>;
+  const all = stmts ?? [];
   const firstPeriodFrom = all.map((s) => String(s.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
   const ids = all.map((s) => Number(s.id)).filter((id) => id !== exceptStatementId);
   const claimed = new Set<string>();
   if (ids.length === 0) return { ok: true, claimed, firstPeriodFrom };
 
-  const { data: lines, error: lErr } = await sb.from('acc_bank_statement_lines')
-    .select('id, posted_je_no, state, booked_on').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
+  const { data: lines, error: lErr } = await chunkIn<{ id: number; posted_je_no: string | null; booked_on: string | null }, number>(ids, (batch, lo, hi) => sb.from('acc_bank_statement_lines')
+    .select('id, posted_je_no, state, booked_on').eq('company_id', companyId).in('statement_id', batch).eq('state', 'POSTED')
+    .order('id').range(lo, hi));
   if (lErr) return { ok: false, reason: lErr.message };
-  const posted = ((lines ?? []) as Array<{ id: number; posted_je_no: string | null; booked_on: string | null }>)
+  const posted = lines
     .filter((l) => upTo == null || String(l.booked_on ?? '').slice(0, 10) <= upTo);
   for (const l of posted) for (const je of jeNosOf(l.posted_je_no)) claimed.add(je);
 
   const postedIds = posted.map((l) => Number(l.id));
   if (postedIds.length > 0) {
-    const { data: matches, error: mErr } = await sb.from('acc_bank_statement_matches')
-      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', postedIds);
+    const { data: matches, error: mErr } = await chunkIn<{ je_no: string }, number>(postedIds, (batch, lo, hi) => sb.from('acc_bank_statement_matches')
+      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', batch).order('id').range(lo, hi));
     if (mErr) return { ok: false, reason: mErr.message };
-    for (const m of (matches ?? []) as Array<{ je_no: string }>) claimed.add(String(m.je_no));
+    for (const m of matches) claimed.add(String(m.je_no));
   }
   return { ok: true, claimed, firstPeriodFrom };
 }
@@ -448,4 +528,37 @@ export async function loadLinesForRepeats(
         : `${file}${state === 'OPEN' ? ' (still open there)' : state === 'IGNORED' ? ' (left out there)' : ''}`);
     }),
   };
+}
+
+/** Rows or the read's error, the shape a single PostgREST call answers with,
+    so a call site swaps its query for one of these and keeps its handling. */
+type Rows = { data: Array<Record<string, any>>; error: { message: string } | null };
+
+/**
+ * Every statement line of these statements, paged and chunked (Conts #334):
+ * an account's lines pass PostgREST's 1,000-row reply within a year, and the
+ * unpaged read dropped the rest without an error. Sorted by day, then where the
+ * line sat in its file — the order the month screens read downwards.
+ */
+export async function loadStatementLines(
+  sb: any, companyId: number, statementIds: readonly number[], fields: string,
+): Promise<Rows> {
+  if (statementIds.length === 0) return { data: [], error: null };
+  const res = await chunkIn<Record<string, any>, number>([...statementIds], (batch, lo, hi) => sb.from('acc_bank_statement_lines')
+    .select(fields).eq('company_id', companyId).in('statement_id', batch).order('id').range(lo, hi));
+  if (res.error) return { data: [], error: res.error };
+  const data = [...res.data].sort((a, b) =>
+    String(a.booked_on ?? '').localeCompare(String(b.booked_on ?? ''))
+    || Number(a.line_no ?? 0) - Number(b.line_no ?? 0)
+    || Number(a.id ?? 0) - Number(b.id ?? 0));
+  return { data, error: null };
+}
+
+/** Every match row of the company, paged: a company's matches pass 1,000 long
+    before any one account's lines do, and a dropped match row turned a
+    reconciled line back into an unexplained one (Conts #334). */
+export async function loadCompanyMatches(sb: any, companyId: number, fields: string): Promise<Rows> {
+  const res = await paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_bank_statement_matches')
+    .select(fields).eq('company_id', companyId).order('id').range(lo, hi));
+  return { data: res.data ?? [], error: res.error };
 }

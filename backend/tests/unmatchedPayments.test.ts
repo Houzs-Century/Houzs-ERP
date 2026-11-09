@@ -110,7 +110,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
   const sb = fakeSb({
     mfg_sales_order_payments: [
       pay({ id: 'p-card-done', method: 'merchant', merchant_provider: 'GHL', amount_sen: 166800, paid_at: '2026-09-01' }),
-      pay({ id: 'p-card-confirm', method: 'merchant', merchant_provider: 'PBB', amount_sen: 324000, paid_at: '2026-09-02', approval_code: 'R18656' }),
+      pay({ id: 'p-card-confirm', method: 'merchant', merchant_provider: 'PBB', amount_sen: 324000, paid_at: '2026-09-02', approval_code: 'R18656', collected_by: 'st-2' }),
       pay({ id: 'p-card-waiting', method: 'installment', merchant_provider: 'MBB', amount_sen: 269000, paid_at: '2026-09-03', so_doc_no: 'SO-B' }),
       pay({ id: 'p-card-cimb', method: 'merchant', merchant_provider: 'CIMB', amount_sen: 50000, paid_at: '2026-09-05' }),
       pay({ id: 'p-tr-matched', amount_sen: 162000 }),
@@ -126,7 +126,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       pay({ id: 'p-other-company', company_id: 1 }),
     ],
     sales_invoice_payments: [
-      { id: 'si-pay-1', company_id: CO, sales_invoice_id: 'inv-1', paid_at: '2026-09-12', amount_sen: 200000, method: 'transfer', merchant_provider: null, online_type: 'Bank Transfer', approval_code: null },
+      { id: 'si-pay-1', company_id: CO, sales_invoice_id: 'inv-1', paid_at: '2026-09-12', amount_sen: 200000, method: 'transfer', merchant_provider: null, online_type: 'Bank Transfer', approval_code: null, collected_by: 'st-1' },
     ],
     mfg_sales_orders: [
       { company_id: CO, doc_no: 'SO-A', debtor_name: 'Chong Hui Wen', status: 'CONFIRMED', salesperson_id: 'st-1' },
@@ -134,7 +134,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { company_id: CO, doc_no: 'SO-X', debtor_name: 'Gone', status: 'CANCELLED', salesperson_id: null },
     ],
     sales_invoices: [{ id: 'inv-1', company_id: CO, invoice_number: 'SI-2609-001', debtor_name: 'Acme' }],
-    staff: [{ id: 'st-1', name: 'Nico' }],
+    staff: [{ id: 'st-1', name: 'Nico' }, { id: 'st-2', name: 'Esther' }],
     acc_acquirers: [
       { company_id: CO, display_name: 'GHL', is_active: true },
       { company_id: CO, display_name: 'PBB', is_active: true },
@@ -225,5 +225,17 @@ describe('GET /unmatched-payments', () => {
     /* Its only entry was reversed: nothing live for a bank to claim. */
     expect(byId['p-tr-reversed']).toMatchObject({ state: 'TRANSFER_NOT_BOOKED' });
     expect(byId['si-pay-1']).toMatchObject({ source: 'SIPAY', docNo: 'SI-2609-001', customerName: 'Acme', state: 'TRANSFER_NOT_BOOKED' });
+  });
+
+  /* Owner 2026-11-09 (sales person 应该不太对，应该是collected by 的人): the person who took
+     the money is named off the payment itself — not the order's salesperson; nobody
+     recorded, nobody named. An invoice payment names its collector too. */
+  test('names who collected each payment, beside the order\'s salesperson', async () => {
+    const { app } = harness();
+    const body = await (await app.request('/unmatched-payments?from=2026-09-01&to=2026-09-30')).json() as any;
+    const byId = Object.fromEntries((body.rows as any[]).map((r) => [r.paymentId, r]));
+    expect(byId['p-card-confirm']).toMatchObject({ collectedByName: 'Esther', salespersonName: 'Nico' });
+    expect(byId['p-card-waiting']).toMatchObject({ collectedByName: null });
+    expect(byId['si-pay-1']).toMatchObject({ collectedByName: 'Nico' });
   });
 });

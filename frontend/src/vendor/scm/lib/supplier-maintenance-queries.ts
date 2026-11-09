@@ -95,6 +95,8 @@ export type SupplierMaintenanceBody = {
   contactPerson?: string | null;
   phone?: string | null;
   email?: string | null;
+  email2?: string | null;
+  email3?: string | null;
   address?: string | null;
   notes?: string | null;
   tinNumber?: string | null;

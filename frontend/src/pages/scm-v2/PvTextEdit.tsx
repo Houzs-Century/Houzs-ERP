@@ -53,13 +53,13 @@ export const PvTextEdit = ({ pvId, notes, lines, payTo, onClose }: {
           Only the words and the bank it pays into change. Amounts, accounts and the payee stay as they are, and the change shows in the voucher&rsquo;s history.
         </p>
         <label className={styles.field}>
-          <span className={styles.fieldLabel}>Description</span>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical' }} aria-label="Description" />
+          <span className={styles.fieldLabel}>Remark</span>
+          <textarea data-upper value={text} onChange={(e) => setText(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical' }} aria-label="Remark" />
         </label>
         {lines.map((l, i) => (
           <label key={l.id} className={styles.field}>
             <span className={styles.fieldLabel}>{`Line ${i + 1}`}</span>
-            <input type="text" value={lineText[l.id] ?? ''} className={styles.fieldInput} aria-label={`Line ${i + 1} description`}
+            <input data-upper type="text" value={lineText[l.id] ?? ''} className={styles.fieldInput} aria-label={`Line ${i + 1} description`}
               onChange={(e) => setLineText((was) => ({ ...was, [l.id]: e.target.value }))} />
           </label>
         ))}

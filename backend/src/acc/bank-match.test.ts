@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
+  MAX_CHARGE_SHARE, groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
   type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor,
   bankReversalPairs, type ReversalSource } from './bank-match';
 import type { BankLine } from './bank-parse';
@@ -201,6 +201,43 @@ describe('a gross-and-fee pair with no reference — joined on the acquirer rule
       pdf({ amountSen: -394, reference: null }),
     ], RULES);
     expect(movements).toHaveLength(2);
+  });
+});
+
+/* Owner 2026-11-09 (2990's November HLB statement, line 28 read as "RM 40,000.00 less
+   RM 33,000.00 charge"): Hong Leong prints the other party's name as the reference, and
+   an own-account transfer names the company itself both ways — so a transfer in and a
+   transfer out on one day share it. They are two movements: only a card payout takes
+   its fee back, and a fee is a small share of the payout. */
+describe('a shared reference is not a payout and its fee', () => {
+  const hlb = (over: Partial<BankLine>) => line({
+    bookedOn: '2026-11-05', description: 'Instant Transfer', reference: '2990 HOME SDN. BHD. Transfer', ...over,
+  });
+
+  it('keeps a transfer in and a transfer out apart, whole, when no rule calls the credit a payout', () => {
+    const movements = groupBankMovements([hlb({ lineNo: 28, amountSen: 4_000_000 }), hlb({ lineNo: 29, amountSen: -3_300_000 })], RULES);
+    expect(movements.map((m) => [m.lines[0]!.lineNo, m.amountSen, m.chargeSen])).toEqual([[28, 4_000_000, 0], [29, -3_300_000, 0]]);
+  });
+
+  it('keeps a small debit beside a transfer apart too: a shared word is not a shared payout', () => {
+    expect(groupBankMovements([
+      line({ amountSen: 500_000, reference: 'Fund Transfer', description: 'MBB CT- SOMEBODY*' }),
+      line({ amountSen: -10_000, reference: 'Fund Transfer', description: 'MBB CT- SUPPLIER*' }),
+    ], RULES)).toHaveLength(2);
+  });
+
+  it('never calls more than a tenth of a payout its fee, rules or not', () => {
+    expect(groupBankMovements([hlb({ amountSen: 4_000_000 }), hlb({ amountSen: -3_300_000 })])).toHaveLength(2);
+    const card = { reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' };
+    expect(groupBankMovements([line({ ...card, amountSen: 100_000 }), line({ ...card, amountSen: -20_000 })], RULES)).toHaveLength(2);
+    expect(MAX_CHARGE_SHARE).toBe(0.1);
+  });
+
+  it('still joins the card payout and its fee the rules recognise', () => {
+    const card = { reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' };
+    const movements = groupBankMovements([line({ ...card, amountSen: 87_500 }), line({ ...card, amountSen: -394 })], RULES);
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({ amountSen: 87_106, chargeSen: 394 });
   });
 });
 

@@ -254,11 +254,14 @@ describe("IT Support — one request", () => {
 
   it("opens a file through the authorised blob fetch, and says so when it cannot", async () => {
     api.get.mockResolvedValue(detail("in_progress"));
-    const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+    // The tab opens inside the click (a phone blocks one opened after the fetch), then loads the file.
+    const tab = { opener: {}, location: { href: "" }, close: vi.fn() };
+    const opened = vi.spyOn(window, "open").mockImplementation(() => tab as unknown as Window);
     api.fetchBlobUrl.mockResolvedValueOnce("blob:test");
     open("/it-support?request=HC-0001");
     fireEvent.click(await screen.findByText("shot.png"));
-    await waitFor(() => expect(opened).toHaveBeenCalledWith("blob:test", "_blank", "noopener"));
+    expect(opened).toHaveBeenCalledWith("", "_blank");
+    await waitFor(() => expect(tab.location.href).toBe("blob:test"));
     expect(api.fetchBlobUrl).toHaveBeenCalledWith("/api/it-support/attachments/9", "image/png");
 
     api.fetchBlobUrl.mockRejectedValueOnce(new Error("That file could not be found."));

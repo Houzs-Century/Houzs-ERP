@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../../vendor/scm/lib/slip";
+import { uploadFieldPhoto } from "../../vendor/scm/lib/slip";
+import { useFieldPhotos } from "../../lib/fieldPhotos";
+import { FieldPhotos } from "../FieldPhotos";
 import {
   jobKey, jobRefOf, LEG_LABEL, detailRows, str, hm, type JobRef, type JobResponse,
 } from "../../vendor/scm/lib/delivery-job";
@@ -99,7 +101,16 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
   const qc = useQueryClient();
   const base = jobApiPath(jobRef);
   const q = useQuery({ queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000 });
-  const [files, setFiles] = useState<File[]>([]);
+  /* Same upload-on-pick block as the phone (lib/fieldPhotos.ts). Not stamped:
+     the office uploads photos it was sent, so the time burned in would be the
+     office's, not the photo's. Limits mirror delivery-job-progress.ts: 10 to
+     complete, 20 in all once completed. */
+  const hadPhotos = q.data?.progress?.pod_photo_keys?.length ?? 0;
+  const picked = useFieldPhotos({
+    stampLabel: null,
+    max: q.data?.progress?.completed_at ? Math.max(0, 20 - hadPhotos) : 10,
+    upload: (file) => uploadFieldPhoto({ file }),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,22 +124,22 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
   const done = !!p?.completed_at;
 
   const upload = async () => {
-    if (!files.length) { setError("Choose at least one photo."); return; }
+    const gate = picked.gate("Choose at least one photo.");
+    if (!gate.ok) { setError(gate.reason); return; }
+    const keys = gate.keys;
     setBusy(true); setError(null);
     try {
-      const keys: string[] = [];
-      for (const f of files) keys.push((await uploadSlipFull({ file: f })).r2Key);
       await authedFetch(`${base}/${done ? "add-photos" : "complete"}`, {
         method: "POST",
         body: JSON.stringify(done ? { photoKeys: keys } : { photoKeys: keys, notes: "Completed by the office" }),
       });
-      setFiles([]);
+      picked.clear();
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["delivery-job", jobKey(jobRef)] }),
         qc.invalidateQueries({ queryKey: ["delivery-job-progress"] }),
       ]);
     } catch (e) {
-      setError((e as Error).message || "Upload failed. Nothing was saved; try again.");
+      setError((e as Error).message || "Could not save. The photos are uploaded; try again.");
     } finally { setBusy(false); }
   };
 
@@ -164,11 +175,10 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
         />
         <div className="mt-3 border-t border-border-subtle pt-3">
           <div className="mb-1 text-[12.5px] text-ink-muted">{done ? "Add more photos" : "Upload the POD for the crew (completes the job)"}</div>
-          <input type="file" multiple accept={ALLOWED_SLIP_MIMES.filter((m) => m.startsWith("image/")).join(",")}
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []).slice(0, 10))} className="text-[12.5px]" />
-          <button type="button" disabled={busy || !files.length} onClick={upload}
+          <FieldPhotos api={picked} disabled={busy} title="Photos" />
+          <button type="button" disabled={busy || !picked.photos.length} onClick={upload}
             className="mt-2 w-full rounded-md bg-accent py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {busy ? "Uploading…" : done ? `Add ${files.length || ""} photo${files.length === 1 ? "" : "s"}` : "Upload and complete"}
+            {busy ? "Saving…" : done ? `Add ${picked.photos.length || ""} photo${picked.photos.length === 1 ? "" : "s"}` : "Complete the job with these photos"}
           </button>
           {error && <div className="mt-2 text-[12.5px] text-red-600">{error}</div>}
         </div>

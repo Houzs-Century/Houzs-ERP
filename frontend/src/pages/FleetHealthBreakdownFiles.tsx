@@ -5,6 +5,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../api/client";
 import { fileLabel } from "./FleetHealthWorkOrderFiles";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 export const BREAKDOWN_MEDIA_ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.mp4,.mov,.pdf";
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
@@ -38,7 +39,7 @@ export function BreakdownFiles({ caseId, refs, onChanged }: { caseId: string; re
   };
 
   const open = async (key: string) => {
-    try { window.open(await api.fetchBlobUrl(`${base}/file?key=${encodeURIComponent(key)}`), "_blank", "noopener"); }
+    try { await openLoadedTab(() => api.fetchBlobUrl(`${base}/file?key=${encodeURIComponent(key)}`), 60_000); }
     catch (e) { setErr(errText(e)); }
   };
 

@@ -13,9 +13,10 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
-import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
+import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
+import { openLoadedTab } from '../../../lib/openLoadedTab';
 
 type Props = Omit<CardProps<PiReview, PiCheckDoc>, 'onOpenDoc'> & { suppliers: CheckSupplier[]; billLines: BillLine[]; onOpenPi: (id: string) => void };
 
@@ -47,22 +48,22 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
   const oddDate = isOddDate(review.invoiceDate, today);
   const swapped = swappedDate(review.invoiceDate, today);
   const anyTied = review.lines.some((l) => l.grnItemId);
-  const { invoiceSen, oursSen } = piAmounts(review, byId);
+  const amounts = piAmounts(review, byId);
+  const { invoiceSen, oursSen, unmatched } = amounts;
   const qtyTotals = piQtyTotals(review, byId);
-  const amountsDiffer = invoiceSen != null && oursSen != null && invoiceSen !== oursSen;
+  const amountsDiffer = piAmountsDiffer(amounts);
+  const notMatched = unmatched > 0 && oursSen != null ? ` (${unmatched} ${unmatched === 1 ? 'line' : 'lines'} not matched)` : '';
 
   const set = (patch: Partial<PiReview>) => onChange({ ...review, ...patch });
   const setLine = (key: string, patch: Partial<PiReviewLine>) => set({ lines: review.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
   const viewFile = async () => {
     try {
-      const { url } = await fetchDocFileBlobUrl(`/scan-pi/check/${doc.id}/file`);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openLoadedTab(async () => (await fetchDocFileBlobUrl(`/scan-pi/check/${doc.id}/file`)).url, 60_000);
     } catch (e) { writeFailedAs('Could not open the file')(e); }
   };
   const pickGrn = (key: string, v: string) => {
     const on = mine.filter((l) => l.grnNumber === v);
-    setLine(key, { grnNumber: v || null, suggested: false, grnItemId: on.length === 1 ? on[0].grnItemId : null });
+    setLine(key, { grnNumber: v || null, suggested: false, ai: false, grnItemId: on.length === 1 ? on[0].grnItemId : null });
   };
 
   const cardClass = [styles.card, repeat || doc.repeatOf ? styles.cardRepeat : checked ? styles.cardOn : ''].join(' ');
@@ -75,7 +76,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
         </button>
         <SearchableSelect
           value={review.supplierId ?? ''}
-          onChange={(v) => set({ supplierId: v || null, lines: review.lines.map((l) => ({ ...l, grnItemId: null, grnNumber: null, suggested: false })) })}
+          onChange={(v) => set({ supplierId: v || null, lines: review.lines.map((l) => ({ ...l, grnItemId: null, grnNumber: null, suggested: false, ai: false })) })}
           options={suppliers.map((s) => ({ value: s.id, label: s.name ?? s.code ?? s.id, search: s.code ?? undefined }))}
           placeholder={review.supplierRead ? `Read: ${review.supplierRead}` : 'Choose the supplier'}
           className={`${styles.field} ${styles.supplier}`}
@@ -102,7 +103,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
 
       <div className={styles.amounts}>
         <span>Invoice Amount <strong>{invoiceSen == null ? '—' : fmtSen(invoiceSen)}</strong></span>
-        <span>PO Amount <strong className={amountsDiffer ? styles.priceOff : ''}>{oursSen == null ? '—' : fmtSen(oursSen)}</strong></span>
+        <span>PO Amount <strong className={amountsDiffer ? styles.priceOff : ''}>{oursSen == null ? '—' : fmtSen(oursSen)}</strong>{notMatched}</span>
       </div>
       {review.taxNote && <div className={styles.hint}>{review.taxNote}</div>}
 
@@ -154,7 +155,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 <span className={`${styles.mono} ${styles.po}`} title={line?.poNumber ?? undefined}>{line?.poNumber ?? '—'}</span>
                 <SearchableSelect
                   value={l.grnItemId ?? ''}
-                  onChange={(v) => setLine(l.key, { grnItemId: v, grnNumber: byId.get(v)?.grnNumber ?? null, suggested: false })}
+                  onChange={(v) => setLine(l.key, { grnItemId: v, grnNumber: byId.get(v)?.grnNumber ?? null, suggested: false, ai: false })}
                   options={billSkuOptions(mine, grn || null)}
                   placeholder={review.supplierId ? 'Choose SKU' : 'Choose the supplier first'}
                   className={styles.cell}
@@ -163,7 +164,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 />
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
-                  {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
+                  {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.ai ? 'AI match, please check: ' : l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />
@@ -177,7 +178,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
             <span /><span>Total</span><span /><span /><span>{review.lines.length} {review.lines.length === 1 ? 'line' : 'lines'}</span>
             <span className={styles.right}>{qtyTotals.left}</span>
             <span className={styles.right}>{qtyTotals.qty}</span>
-            <span className={`${styles.right} ${amountsDiffer ? styles.priceOff : ''}`}>{oursSen == null ? '—' : fmtSen(oursSen)}</span>
+            <span className={`${styles.right} ${amountsDiffer ? styles.priceOff : ''}`} title={notMatched ? `Rows tied to a receipt line only${notMatched}` : undefined}>{oursSen == null ? '—' : fmtSen(oursSen)}</span>
             <span className={styles.right}>{invoiceSen == null ? '—' : fmtSen(invoiceSen)}</span>
             <span />
           </div>

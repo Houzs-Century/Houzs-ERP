@@ -8,8 +8,8 @@ import { buildReportEvidence, loadReportEvidence, orderBookletTokens, reportVerd
    four in the IOIGECC fair's (#307) report of 10-11 October. */
 
 const ummu = { author_email: "ummuaimanlm@gmail.com", author_position: "Operation Executive" };
-const note = (id: number, text: string, author: Partial<Pick<NoteRow, "author_email" | "author_position">> = ummu): NoteRow => ({
-  id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: null, author_position: null, ...author,
+const note = (id: number, text: string, author: Partial<Pick<NoteRow, "author_email" | "author_position" | "author_role">> = ummu): NoteRow => ({
+  id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: null, author_position: null, author_role: null, ...author,
 });
 
 const EVIDENCE = buildReportEvidence(

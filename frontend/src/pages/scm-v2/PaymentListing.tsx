@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
 // Payment listing — the vouchers to pay, a line each, with the bank each pays
 // into (owner 2026-11-08: 「每天要过账的listing，就算pv号码，名字，description,
-// purpose，包含bank account number 这些」, 「我能自己filter 吗？」, 「purpose 可以」).
+// purpose，包含bank account number 这些」, 「我能自己filter 吗？」; 2026-11-09: the
+// Description IS the purpose — what the bills say is paid for, never the bill no.).
 //
 // It opens on what is not posted yet (Prepared and Checked) dated up to today;
 // the reader picks the days, the stages, the payee and the account it is paid
@@ -89,8 +90,10 @@ export const PaymentListing = () => {
     },
     { key: 'voucher_date', label: 'Date', render: (r) => fmtDate(r.voucher_date), getValue: (r) => r.voucher_date ?? '', exportFormat: 'date' },
     { key: 'payee', label: 'Payee', render: (r) => payeeOf(r) || '—', getValue: (r) => payeeOf(r) },
-    { key: 'description', label: 'Description', render: (r) => r.notes?.trim() || '—', getValue: (r) => r.notes?.trim() ?? '' },
-    { key: 'purpose', label: 'Purpose', render: (r) => r.purpose_text || '—', getValue: (r) => r.purpose_text ?? '' },
+    /* What is paid for, as the bills say it — never the bill number (owner 2026-11-09:
+       description 就是 purpose; 只显示单上的费用). The typed Remark rides hidden. */
+    { key: 'description', label: 'Description', render: (r) => r.description_text?.trim() || '—', getValue: (r) => r.description_text?.trim() ?? '' },
+    { key: 'remark', label: 'Remark', render: (r) => r.notes?.trim() || '—', getValue: (r) => r.notes?.trim() ?? '', defaultHidden: true },
     { key: 'bank', label: 'Bank', render: (r) => r.pay_bank || '—', getValue: (r) => r.pay_bank ?? '' },
     { key: 'accountNo', label: 'Account no.', render: (r) => r.pay_account_no || '—', getValue: (r) => r.pay_account_no ?? '' },
     { key: 'accountName', label: 'Account name', render: (r) => r.pay_account_name || '—', getValue: (r) => r.pay_account_name ?? '', defaultHidden: true },

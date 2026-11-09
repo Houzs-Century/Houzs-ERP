@@ -17,7 +17,7 @@ describe("BreakdownFiles", () => {
 
   it("opens the old mobile photo through the case's own file route", async () => {
     fetchBlobUrl.mockResolvedValue("blob:x");
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue({ opener: {}, location: { href: "" }, close: vi.fn() } as unknown as Window);
     render(<BreakdownFiles caseId="b1" refs={["slips/2026/10/abc.jpg"]} onChanged={vi.fn()} />);
     fireEvent.click(screen.getByText("Driver photo"));
     await waitFor(() => expect(fetchBlobUrl).toHaveBeenCalledWith("/api/fleet-breakdown-files/b1/file?key=slips%2F2026%2F10%2Fabc.jpg"));

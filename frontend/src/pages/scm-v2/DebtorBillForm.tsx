@@ -148,7 +148,7 @@ export const DebtorBillForm = ({
             </div>
             <label className={`${ui.formField} ${ui.formFull}`}>
               <span className={ui.formLabel}>Description</span>
-              <input className={ui.formInput} value={v.notes} onChange={(e) => { const t = e.target.value; setV((p) => ({ ...p, notes: t })); }} aria-label="Bill description"
+              <input data-upper className={ui.formInput} value={v.notes} onChange={(e) => { const t = e.target.value; setV((p) => ({ ...p, notes: t })); }} aria-label="Bill description"
                 placeholder="What the bill is for · prints on the invoice" />
             </label>
             {/* The event this bill is for — optional: sets every line, and a line
@@ -168,7 +168,7 @@ export const DebtorBillForm = ({
                 <div key={l.rid} data-line={l.rid} className={`${ui.lineRow} ${ui.lineRowEvent}`}>
                   <AccountSelect accounts={accounts} value={l.creditAccountCode} className={ui.formInput}
                     onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} placeholder="— Pick an account —" />
-                  <input className={ui.formInput} placeholder="What it is for" value={l.description} aria-label={`line ${l.rid} description`}
+                  <input data-upper className={ui.formInput} placeholder="What it is for" value={l.description} aria-label={`line ${l.rid} description`}
                     onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
                   <MoneyInput bare valueSen={l.amountSen} inputClassName={ui.formInput} selectOnFocus aria-label={`line ${l.rid} amount`}
                     placeholder="0.00" onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}

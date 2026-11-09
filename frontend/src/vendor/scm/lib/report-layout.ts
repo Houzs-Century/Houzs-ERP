@@ -40,8 +40,19 @@ export type LayoutCategory = {
   flow?: Side;
   /** Cash Flow only: what the category's subtotal line prints; absent = "Total <label>". */
   totalLabel?: string;
+  /** Cash Flow only: how its money divides between the Settlement and the Deposit columns;
+      absent = it follows the category above (none above = not split). */
+  split?: CashSplit;
   children: LayoutItem[];
 };
+/** Owner 2026-11-09 (his Receipt & Payment workbook: each month Settlement | Deposit, some
+    groups a third and two thirds): a Cash Flow group's money in whole parts — {1, 0} all
+    Settlement, {0, 1} all Deposit, {1, 2} a third Settlement and two thirds Deposit. Each
+    part 0–99, never both 0 (the server's rule, acc/report-layout.ts). */
+export type CashSplit = { settlement: number; deposit: number };
+export const SPLIT_MAX_PART = 99;
+/** A line's figure in the Settlement and the Deposit columns; absent = not split (one figure). */
+export type SettleDeposit = { settlementSen: number; depositSen: number };
 /** Cash Flow only: a running-sum line at the top level — everything above it, In less Out. */
 export type LayoutSubtotal = { kind: 'subtotal'; id: string; label: string };
 export type LayoutItem = LayoutAccount | LayoutCategory | LayoutSubtotal;
@@ -81,6 +92,10 @@ export type LaidNode = {
   flow?: Flow;
   /** Cash Flow: what a top category's subtotal line prints. */
   totalLabel?: string;
+  /** Cash Flow: the figure split into Settlement and Deposit — on a line whose group (or
+      its own payment) says which, a group whose every line splits, a running subtotal
+      whose every group above splits; absent = one figure. */
+  sd?: SettleDeposit;
   children: LaidNode[];
 };
 
@@ -408,6 +423,43 @@ export function setTotalLabel(layout: Layout, id: string, label: string): Layout
   }
   return layout;
 }
+
+/** A category's Settlement / Deposit parts, at any depth; null clears them, and the
+    category follows the one above it again. An account line has none (it follows its group). */
+export function setCategorySplit(layout: Layout, id: string, split: CashSplit | null): Layout {
+  const next = clone(layout);
+  for (const items of Object.values(next.blocks)) {
+    const hit = locate(items, id);
+    if (!hit || hit.item.kind !== 'category') continue;
+    if (split) hit.item.split = { settlement: split.settlement, deposit: split.deposit }; else delete hit.item.split;
+    return next;
+  }
+  return layout;
+}
+
+/** The editor's choice for a split: '' (as above / not split), all Settlement, all Deposit, or parts. */
+export type SplitChoice = '' | 'settlement' | 'deposit' | 'parts';
+export const splitChoice = (split: CashSplit | undefined): SplitChoice => {
+  if (!split) return '';
+  if (split.deposit === 0) return 'settlement';
+  if (split.settlement === 0) return 'deposit';
+  return 'parts';
+};
+/** The parts a choice starts from — parts start at his workbook's third and two thirds. */
+export const splitOfChoice = (choice: SplitChoice): CashSplit | null => {
+  switch (choice) {
+    case 'settlement': return { settlement: 1, deposit: 0 };
+    case 'deposit': return { settlement: 0, deposit: 1 };
+    case 'parts': return { settlement: 1, deposit: 2 };
+    default: return null;
+  }
+};
+/** A part as typed: a whole number 0–99; a blank or unreadable entry keeps the part it had. */
+export const splitPart = (typed: string, had: number): number => {
+  const n = Math.trunc(Number(typed));
+  if (typed.trim() === '' || !Number.isFinite(n)) return had;
+  return Math.min(SPLIT_MAX_PART, Math.max(0, n));
+};
 
 /** An account line's direction: In, Out, or Net (in − out). Its key changes
     with it — one account's In line and Out line are two lines. */

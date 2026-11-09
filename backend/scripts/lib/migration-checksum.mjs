@@ -80,6 +80,13 @@ function migrationStem(filename) {
  *    blocks every later migration. On the genesis run those rows are adopted
  *    and stamped, and the runner prints each one. After genesis they are hard
  *    drift.
+ *
+ * 3. PREVIEW LEFTOVERS (staging only, `previewLeftoversTolerated`). Preview
+ *    branches deploy their migrations to the one shared staging database, so
+ *    staging's tracker collects rows whose file never reaches main, or reaches
+ *    it edited. Failing closed there blocked every later main migration on
+ *    staging (2026-11-09). With the option on, a missing file is reported as a
+ *    leftover and an edited file is re-applied. Production never sets it.
  */
 export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
   const localByName = new Map(localFiles.map((file) => [file.filename, file]));
@@ -88,6 +95,7 @@ export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
     (options.retiredMigrations ?? []).map((entry) => [entry.filename, entry]),
   );
   const genesis = options.genesis ?? false;
+  const previewLeftoversTolerated = options.previewLeftoversTolerated === true;
 
   const pending = [];
   const backfill = [];
@@ -95,6 +103,8 @@ export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
   const retired = [];
   const renamed = [];
   const adopted = [];
+  const previewLeftovers = [];
+  const reapply = [];
 
   for (const file of localFiles) {
     if (retiredByName.has(file.filename)) {
@@ -117,7 +127,9 @@ export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
       continue;
     }
 
-    if (applied.checksum !== file.checksum) {
+    if (applied.checksum !== file.checksum && previewLeftoversTolerated) {
+      reapply.push({ ...file, storedChecksum: applied.checksum });
+    } else if (applied.checksum !== file.checksum) {
       drift.push({
         filename: file.filename,
         storedChecksum: applied.checksum,
@@ -205,7 +217,13 @@ export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
 
     const suspect = suspectedRenumber(applied.filename);
 
-    if (applied.checksum) {
+    if (applied.checksum && previewLeftoversTolerated) {
+      previewLeftovers.push({
+        filename: applied.filename,
+        storedChecksum: applied.checksum,
+        suspectedRenumberOf: suspect,
+      });
+    } else if (applied.checksum) {
       drift.push({
         filename: applied.filename,
         storedChecksum: applied.checksum,
@@ -236,5 +254,14 @@ export function planMigrationChecksums(localFiles, appliedRows, options = {}) {
   // must not be replayed.
   const stillPending = pending.filter((file) => !renamedTo.has(file.filename));
 
-  return { pending: stillPending, backfill, drift, retired, renamed, adopted };
+  return {
+    pending: stillPending,
+    backfill,
+    drift,
+    retired,
+    renamed,
+    adopted,
+    previewLeftovers,
+    reapply,
+  };
 }

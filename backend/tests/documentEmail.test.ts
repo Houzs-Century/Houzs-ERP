@@ -247,6 +247,7 @@ describe("purchase order email builder", () => {
   test("renders the PO number, supplier, date and total", () => {
     const msg = buildPurchaseOrderEmail(poRow(), "Houzs Century")!;
     expect(msg.to).toBe("sales@kilangkayu.com");
+    expect(msg.cc).toEqual([]);
     expect(msg.subject).toBe("Houzs Century — Purchase Order PO-2607-014");
     expect(msg.html).toContain("PO-2607-014");
     expect(msg.html).toContain("Kilang Kayu Sdn Bhd");
@@ -262,6 +263,31 @@ describe("purchase order email builder", () => {
     expect(buildPurchaseOrderEmail(poRow({ supplier: { name: "X", email: null } }), "Houzs")).toBeNull();
     expect(buildPurchaseOrderEmail(poRow({ supplier: { name: "X", email: "   " } }), "Houzs")).toBeNull();
     expect(buildPurchaseOrderEmail(poRow({ supplier: null }), "Houzs")).toBeNull();
+  });
+
+  /* Owner 2026-11-09 — Email 2 / Email 3. To = Email, Cc = the other two, only
+     valid ones, each once whatever the case; Email blank -> the first valid
+     of the others is To. */
+  test("Email 2 and Email 3 go as Cc", () => {
+    const msg = buildPurchaseOrderEmail(poRow({ supplier: { name: "K", email: "a@k.com", email2: "b@k.com", email3: "c@k.com" } }), "Houzs")!;
+    expect(msg.to).toBe("a@k.com");
+    expect(msg.cc).toEqual(["b@k.com", "c@k.com"]);
+  });
+
+  test("a repeat (any case) and an invalid Email 2/3 are left off the Cc", () => {
+    const msg = buildPurchaseOrderEmail(poRow({ supplier: { name: "K", email: "a@k.com", email2: " A@K.COM ", email3: "a@b" } }), "Houzs")!;
+    expect(msg.to).toBe("a@k.com");
+    expect(msg.cc).toEqual([]);
+  });
+
+  test("Email blank: the first valid of Email 2 / Email 3 is To", () => {
+    const msg = buildPurchaseOrderEmail(poRow({ supplier: { name: "K", email: "", email2: "not valid", email3: "c@k.com" } }), "Houzs")!;
+    expect(msg.to).toBe("c@k.com");
+    expect(msg.cc).toEqual([]);
+  });
+
+  test("an invalid main Email still refuses, even with a valid Email 2", () => {
+    expect(buildPurchaseOrderEmail(poRow({ supplier: { name: "K", email: "a@b", email2: "b@k.com" } }), "Houzs")).toBeNull();
   });
 
   test("a supplier name carrying markup is escaped, not interpolated raw", () => {

@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import type { Layout, LayoutItem, ReportLayoutResponse } from '../../vendor/scm/lib/report-layout';
+import type { Layout, LayoutCategory, LayoutItem, ReportLayoutResponse } from '../../vendor/scm/lib/report-layout';
 
 const RESPONSE: ReportLayoutResponse = {
   report: 'pnl',
@@ -355,5 +355,30 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
       { 'side:out': ['601-0003'] },
     ]);
     expect(((saved().blocks.accounts![0] as { children: LayoutItem[] }).children[1])).toEqual({ kind: 'account', code: '910-0000', flow: 'in' });
+  });
+
+  test('a group\'s Settlement / Deposit column: one side, parts like 1 : 2, or as the group above; Save sends it (owner 2026-11-09)', async () => {
+    saveAsync.mockClear();
+    drawRp();
+    expect(screen.getByText('Settlement / Deposit', { selector: 'th' })).toBeTruthy();
+    /* A top group with nothing set is not split; one below follows the group above; a line has no choice of its own. */
+    const top = screen.getByLabelText('Settlement / Deposit of RECEIPTS') as HTMLSelectElement;
+    expect([top.value, top.selectedOptions[0]!.textContent]).toEqual(['', 'Not split']);
+    expect((screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('As above');
+    expect(screen.queryByLabelText('Settlement / Deposit of 300-0000')).toBeNull();
+    fireEvent.change(top, { target: { value: 'deposit' } });
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of PAYMENTS'), { target: { value: 'parts' } });
+    /* Parts start at a third Settlement, two thirds Deposit, and are typed as whole numbers. */
+    expect((screen.getByLabelText('Settlement parts of PAYMENTS') as HTMLInputElement).value).toBe('1');
+    expect((screen.getByLabelText('Deposit parts of PAYMENTS') as HTMLInputElement).value).toBe('2');
+    fireEvent.change(screen.getByLabelText('Deposit parts of PAYMENTS'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS'), { target: { value: 'settlement' } });
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    const [rin, rout] = saved().blocks.accounts! as [LayoutCategory, LayoutCategory];
+    expect(rin.split).toEqual({ settlement: 0, deposit: 1 });
+    expect(rout.split).toEqual({ settlement: 1, deposit: 3 });
+    expect(rin.children[0]).not.toHaveProperty('split');
   });
 });

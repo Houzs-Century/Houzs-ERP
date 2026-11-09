@@ -30,7 +30,8 @@ import { setChecklistStatus, getUserPhasesOnProject } from '../../services/proje
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
-type SourceType = 'dp' | 'project' | 'assr';
+export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
+type SourceType = (typeof JOB_SOURCE_TYPES)[number];
 
 const PROJECT_LEGS = ['SETUP', 'DISMANTLE'] as const;
 const MAX_PHOTOS = 10;
@@ -38,11 +39,11 @@ const MAX_PHOTOS = 10;
 export const deliveryJobProgress = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryJobProgress.use('*', supabaseAuth);
 
-function parseJob(c: Ctx): { sourceType: SourceType; sourceId: string; leg: string } | { error: string } {
+export function parseJob(c: Ctx): { sourceType: SourceType; sourceId: string; leg: string } | { error: string } {
   const sourceType = c.req.param('sourceType') as SourceType;
   const sourceId = c.req.param('sourceId') ?? '';
   const leg = c.req.param('leg') ?? '';
-  if (!['dp', 'project', 'assr'].includes(sourceType)) return { error: 'Unknown job type.' };
+  if (!(JOB_SOURCE_TYPES as readonly string[]).includes(sourceType)) return { error: 'Unknown job type.' };
   if (!sourceId) return { error: 'Missing job id.' };
   if (sourceType === 'project' && !(PROJECT_LEGS as readonly string[]).includes(leg)) return { error: 'A project job is SETUP or DISMANTLE.' };
   if (sourceType === 'assr' && !(ASSR_BOARD_LEGS as readonly string[]).includes(leg)) return { error: 'A service case job is customer_pickup, inspection or delivery.' };
@@ -63,7 +64,7 @@ const tripCrew = (t: Record<string, unknown> | null | undefined): CrewAssignment
 
 /* The job's own row (for the context read and the write-backs) plus whether the
    caller may act on it, and the trip it rides when there is one. */
-async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: string): Promise<
+export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: string): Promise<
   { ok: true; row: Record<string, unknown>; tripId: string | null; companyId: number | null }
   | { ok: false; status: 403 | 404 | 500; error: string; reason: string }
 > {

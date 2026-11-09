@@ -624,7 +624,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
                 <input value={v.soDocNo} onChange={(e) => setV({ ...v, soDocNo: e.target.value, knockOff: {} })} placeholder="2990-SO-2607-019" aria-label="Sales order" style={input} disabled={mode === 'edit'} />
               </Field>
               <Field label="or customer name">
-                <input value={v.partyName} onChange={(e) => setV({ ...v, partyName: e.target.value, knockOff: {} })} placeholder="when there is no order" aria-label="Customer name" style={input} disabled={mode === 'edit' || v.soDocNo.trim() !== ''} />
+                <input data-upper value={v.partyName} onChange={(e) => setV({ ...v, partyName: e.target.value, knockOff: {} })} placeholder="when there is no order" aria-label="Customer name" style={input} disabled={mode === 'edit' || v.soDocNo.trim() !== ''} />
               </Field>
             </>
           )}
@@ -632,7 +632,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
             <input value={v.sourceDocNo} onChange={(e) => setV({ ...v, sourceDocNo: e.target.value })} placeholder="DR-2609-001" aria-label="Reference" style={input} />
           </Field>
           <Field label="Reason">
-            <input value={v.reason} onChange={(e) => setV({ ...v, reason: e.target.value })} placeholder="why this note" aria-label="Reason" style={input} />
+            <input data-upper value={v.reason} onChange={(e) => setV({ ...v, reason: e.target.value })} placeholder="why this note" aria-label="Reason" style={input} />
           </Field>
         </div>
 
@@ -641,7 +641,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
           <tbody>
             {v.lines.map((l) => (
               <tr key={l.rid}>
-                <td style={td}><input value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} aria-label={`Line ${l.rid} description`} style={{ ...input, minWidth: 220 }} /></td>
+                <td style={td}><input data-upper value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} aria-label={`Line ${l.rid} description`} style={{ ...input, minWidth: 220 }} /></td>
                 <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder={blankAccount} /></td>
                 {/* The event the line's money is for (owner 2026-10-22). Credited
                     against an AP invoice, a blank line takes the invoice's. */}

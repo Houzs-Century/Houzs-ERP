@@ -46,6 +46,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
+import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
 type PrStatus = "DRAFT" | "POSTED" | "COMPLETED" | "CANCELLED" | string;
 
@@ -584,7 +585,7 @@ function PurchaseReturnDetailV2ReadOnly() {
                 <Field label="Supplier code" value={supplierCodeOf(purchaseReturn)} mono />
                 <Field label="Contact" value={purchaseReturn.supplier?.contact_person || "—"} muted={!purchaseReturn.supplier?.contact_person} />
                 <Field label="Phone" value={purchaseReturn.supplier?.phone || "Not provided"} muted={!purchaseReturn.supplier?.phone} mono={!!purchaseReturn.supplier?.phone} />
-                <Field label="Email" value={purchaseReturn.supplier?.email || "Not provided"} muted={!purchaseReturn.supplier?.email} />
+                <Field label="Email" value={supplierEmailList(purchaseReturn.supplier).join(", ") || "Not provided"} muted={supplierEmailList(purchaseReturn.supplier).length === 0} />
                 <Field label="Address" value={purchaseReturn.supplier?.address || "—"} muted={!purchaseReturn.supplier?.address} />
               </div>
             </Section>

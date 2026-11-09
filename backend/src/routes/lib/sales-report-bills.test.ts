@@ -36,32 +36,42 @@ const ATTENDEES: AttendeeRow[] = [
 ];
 
 describe("canSaveSalesReport", () => {
-  test("the Owner position and the named accounts (incl. Peter), nobody else", () => {
+  test("the Owner position and the two named accounts, nobody else outside the open Sales tiers", () => {
     expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, null)).toBe(true);
     expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" }, null)).toBe(true);
     expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" }, null)).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true); // Peter
-    expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" }, null)).toBe(false);
     expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Finance Executive", email: "fin@houzs.com" }, null)).toBe(false);
     expect(canSaveSalesReport(null, null)).toBe(false);
   });
-  test("a sales attendee of THIS project is accepted via attendeeEmails; others still rejected", () => {
+  test("every Sales Director (position OR role) and every Sales Person (role) pass (owner 2026-11-09)", () => {
+    // Sales Director by position
+    expect(canSaveSalesReport({ position_name: "Sales Director", role_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true); // Peter
+    expect(canSaveSalesReport({ position_name: "Sales Director", role_name: null, email: "anothersd@houzs.com" }, null)).toBe(true);
+    // Sales Director by role only (seat that carries the role but a different position name)
+    expect(canSaveSalesReport({ position_name: "Sales Manager", role_name: "Sales Director", email: "sm@houzs.com" }, null)).toBe(true);
+    // Sales Person by role
+    expect(canSaveSalesReport({ position_name: "Sales Executive", role_name: "Sales Person", email: "jason@houzs.com" }, null)).toBe(true);
+    // Sales Executive WITHOUT the Sales Person role is not in the open tier
+    expect(canSaveSalesReport({ position_name: "Sales Executive", role_name: "Position Preview", email: "newjoiner@houzs.com" }, null)).toBe(false);
+  });
+  test("a sales attendee of THIS project is accepted via attendeeEmails; non-attendee non-Sales roles still rejected", () => {
     const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
-    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "anthony@houzs.com" }, attendees)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "anthony@houzs.com" }, attendees)).toBe(true);
     // Input is normalised to lowercase, so mixed-case email still matches a lowercased attendee set.
-    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "ADRIAN@houzs.com" }, attendees)).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "someoneelse@houzs.com" }, attendees)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "ADRIAN@houzs.com" }, attendees)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "someoneelse@houzs.com" }, attendees)).toBe(false);
     // Admin tier still passes without an attendee list.
     expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, attendees)).toBe(true);
     // An attendees set in mixed case is a caller mistake — a mixed-case attendee entry is not matched.
     const mixedAttendees = new Set(["Mixed@case.com"]);
-    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "mixed@case.com" }, mixedAttendees)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "mixed@case.com" }, mixedAttendees)).toBe(false);
   });
 });
 
 describe("collectReport", () => {
-  const note = (id: number, text: string, author: Partial<Pick<NoteRow, "author_email" | "author_position">> = {}): NoteRow => ({
-    id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Operation Executive", ...author,
+  const note = (id: number, text: string, author: Partial<Pick<NoteRow, "author_email" | "author_position" | "author_role">> = {}): NoteRow => ({
+    id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Operation Executive", author_role: null, ...author,
   });
 
   test("counts the bills of messages written by someone who may report, newest message winning per booklet number", () => {
@@ -98,16 +108,18 @@ describe("collectReport", () => {
     expect(r.bills).toEqual([]);
   });
 
-  test("an attending rep's paste counts when the project's attendee emails include theirs", () => {
+  test("an attending rep or any Sales Person's paste counts; non-attendee non-Sales still rejected", () => {
     const r = collectReport([
-      /* Peter — admin tier (SAVE_EMAILS) — always counts. */
-      note(1, "1. HC2001 RM100 CH", { author_email: "yzhe212@gmail.com", author_position: "Sales Director" }),
+      /* Peter — Sales Director (position) — counts via the open Sales tier (owner 2026-11-09). */
+      note(1, "1. HC2001 RM100 CH", { author_email: "yzhe212@gmail.com", author_position: "Sales Director", author_role: "Sales Director" }),
       /* An attendee of THIS project — counts because the Set carries their email. */
-      note(2, "1. HC2002 RM200 Anthony", { author_email: "anthony@houzs.com", author_position: "Sales Executive" }),
-      /* A sales rep who is NOT this event's attendee — still rejected. */
-      note(3, "1. HC2003 RM300 Random", { author_email: "random@houzs.com", author_position: "Sales Executive" }),
+      note(2, "1. HC2002 RM200 Anthony", { author_email: "anthony@houzs.com", author_position: "Sales Executive", author_role: "Sales Person" }),
+      /* A Sales Person who is NOT this event's attendee — still counts via role (owner 2026-11-09). */
+      note(3, "1. HC2003 RM300 Random", { author_email: "random@houzs.com", author_position: "Sales Executive", author_role: "Sales Person" }),
+      /* A non-Sales role, non-attendee — still rejected. */
+      note(4, "1. HC2004 RM400 Driver", { author_email: "driver@houzs.com", author_position: "Driver", author_role: "Driver" }),
     ], "2026-10-09", new Set(["anthony@houzs.com"]));
-    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["HC2001", "HC2002"]);
+    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["HC2001", "HC2002", "HC2003"]);
   });
 });
 
@@ -222,7 +234,7 @@ describe("matchBills + summarizeBills", () => {
 });
 
 describe("a report posted again to fix a typo", () => {
-  const note = (id: number, text: string): NoteRow => ({ id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Owner" });
+  const note = (id: number, text: string): NoteRow => ({ id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Owner", author_role: null });
   test("replaces the first, so the mistyped bill goes", () => {
     const first = ["13/9", "1. ZNT6730 RM100 A", "2. ZNT6766 RM100 B", "3. ZNF6767 RM100 C"].join("\n");
     const r = collectReport([note(1, first), note(2, first.replace("ZNF6767", "ZNT6767"))], "2026-09-11", null);

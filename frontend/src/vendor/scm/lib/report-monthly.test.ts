@@ -176,6 +176,39 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash surplus / (deficit)', kind: 'net', amountSen: -20_000, pct: -40 });
     expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
     expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
+    /* Nothing split on this tree: no line carries a Settlement / Deposit pair. */
+    expect(lines.some((l) => 'sd' in l)).toBe(false);
+  });
+
+  test('the Cash Flow\'s Settlement / Deposit pair rides on the tree\'s lines, a side\'s total and a running subtotal; a column keeps it per cell (owner 2026-11-09)', () => {
+    const sdOf = (settlementSen: number, depositSen: number) => ({ settlementSen, depositSen });
+    const r = {
+      layout: {
+        inSen: 90_000, outSen: 30_000,
+        tree: [
+          { ...cat('cf:in', 'CASH IN', [{ ...acc('300-0000', 90_000, 100), id: 'in:acc:300-0000', flow: 'in' as const, sd: sdOf(50_000, 40_000) }], 100), flow: 'in' as const, totalLabel: 'Total Cash In', sd: sdOf(50_000, 40_000) },
+          { ...cat('cf:ops', 'OPERATIONS', [{ ...acc('900-R002', 30_000, 100), id: 'out:acc:900-R002', flow: 'out' as const, sd: sdOf(10_000, 20_000) }], 100), flow: 'out' as const, sd: sdOf(10_000, 20_000) },
+          { kind: 'subtotal' as const, id: 'cf:sub:ops', label: 'NET OPERATION SURPLUS / (DEFICIT)', amountSen: 60_000, pct: null, sd: sdOf(40_000, 20_000), children: [] },
+          { ...cat('cf:tax', 'TAXATION', [{ ...acc('910-0000', 5_000, 100), id: 'out:acc:910-0000', flow: 'out' as const }], 100), flow: 'out' as const },
+        ],
+      },
+      columns: [{ code: '310-0010', name: 'CASH AT BANK - MAYBANK' }],
+      opening: { '310-0010': 0 },
+      totals: { openingTotalSen: 0, receiptsTotalSen: 90_000, paymentsTotalSen: 35_000, closingTotalSen: 55_000, closing: { '310-0010': 55_000 } },
+    };
+    const lines = rpLines(r);
+    const sdAt = (id: string) => lines.find((l) => l.id === id)?.sd;
+    expect(sdAt('in:acc:300-0000')).toEqual(sdOf(50_000, 40_000));
+    expect(sdAt('tot:cf:in')).toEqual(sdOf(50_000, 40_000));
+    expect(sdAt('tot:cf:ops')).toEqual(sdOf(10_000, 20_000));
+    expect(sdAt('cf:sub:ops')).toEqual(sdOf(40_000, 20_000));
+    /* Not split: the tax group, its line, the block titles, the surplus and the balances. */
+    expect([sdAt('out:acc:910-0000'), sdAt('tot:cf:tax'), sdAt('blk:cf:in'), sdAt('net:surplus'), sdAt('bal:closing')]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    const merged = mergeColumns([{ key: '2026-10', lines }, { key: '2026-09', lines: lines.map((l) => (l.id === 'cf:sub:ops' ? { ...l, amountSen: 1, sd: sdOf(1, 0) } : l)) }]);
+    const sub = merged.find((l) => l.id === 'cf:sub:ops')!;
+    expect(sub.cells['2026-10']).toEqual({ amountSen: 60_000, pct: null, sd: sdOf(40_000, 20_000) });
+    expect(sub.cells['2026-09']).toEqual({ amountSen: 1, pct: null, sd: sdOf(1, 0) });
+    expect(merged.find((l) => l.id === 'tot:cf:tax')!.cells['2026-10']).toEqual({ amountSen: 5_000, pct: 100 });
   });
 });
 

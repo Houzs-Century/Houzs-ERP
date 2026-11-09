@@ -269,17 +269,33 @@ export async function postSiPayment(sb: any, p: SiPaymentRow, opts: { bankAccoun
 
   const { data: si, error: siErr } = await sb
     .from('sales_invoices')
-    .select('invoice_number, company_id, debtor_code, debtor_name, migrated_no_stock')
+    .select('invoice_number, company_id, debtor_code, debtor_name, migrated_no_stock, so_doc_no')
     .eq('id', p.sales_invoice_id)
     .maybeSingle();
   if (siErr) return { ok: false, status: 'si_read_failed', reason: siErr.message };
-  const inv = si as { invoice_number?: string; company_id?: number | null; debtor_code?: string | null; debtor_name?: string | null; migrated_no_stock?: boolean | null } | null;
+  const inv = si as { invoice_number?: string; company_id?: number | null; debtor_code?: string | null; debtor_name?: string | null; migrated_no_stock?: boolean | null; so_doc_no?: string | null } | null;
   if (!inv) return { ok: false, status: 'si_not_found', reason: p.sales_invoice_id };
   /* A migrated invoice booked NO receivable here (AutoCount carries it), so
      its payment must not relieve an AR this ledger never recorded. */
   if (inv.migrated_no_stock === true) return { ok: true, status: 'skipped_imported' };
 
   const companyId = inv.company_id ?? p.company_id ?? null;
+
+  /* THE CUSTOMER'S CODE on the AR leg, by the rule the invoice's own revenue
+     entry follows (post-si-revenue.ts): the debtor code when the business keeps
+     one (HOUZS), else the order's customer_id (2990 keeps no debtor codes).
+     Reading the invoice's debtor code alone booked every 2990 invoice payment
+     under no customer, so the customer's sub-ledger still showed the invoice
+     owed (Conts #395). The order read is company-scoped. */
+  let customerCode: string | null = customerPartyCode(inv.debtor_code, null);
+  if (!customerCode && inv.so_doc_no && companyId != null) {
+    const { data: so, error: soErr } = await sb.from('mfg_sales_orders')
+      .select('customer_id, debtor_code').eq('company_id', companyId).eq('doc_no', inv.so_doc_no).maybeSingle();
+    if (soErr) return { ok: false, status: 'so_read_failed', reason: soErr.message };
+    const order = so as { customer_id?: string | null; debtor_code?: string | null } | null;
+    customerCode = customerPartyCode(order?.debtor_code, order?.customer_id);
+  }
+
   const roles = await resolveRoles(sb, companyId);
   const transit = p.method === 'merchant' || p.method === 'installment'
     ? await transitFor(sb, companyId, p.merchant_provider)
@@ -295,7 +311,7 @@ export async function postSiPayment(sb: any, p: SiPaymentRow, opts: { bankAccoun
       method: p.method,
       docNo: inv.invoice_number ?? p.sales_invoice_id,
       transitAccountCode: transit,
-      customerCode: inv.debtor_code ?? null,
+      customerCode,
       customerName: inv.debtor_name ?? null,
       bankAccountCode: opts.bankAccountCode ?? null,
     }, amountSen),

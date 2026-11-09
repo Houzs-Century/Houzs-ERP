@@ -203,8 +203,10 @@ describe("the reviewed allowlist", () => {
     const files = new Set(doc.reviewed.map((e) => e.file));
     expect(files, "the mobile-build-is-HOUZS-only rule left the allowlist")
       .toContain("frontend/src/auth/AuthGate.tsx");
-    expect(files, "the 2990-only SO-PO edit lock left the allowlist")
-      .toContain("backend/src/scm/lib/so-po-lock.ts");
+    /* The SO-PO edit lock was the second one until the owner extended it to
+       every company on 2026-11-09 (HC-SO-2610-075); it must now NOT be listed. */
+    expect(files, "the SO-PO edit lock is every company's now")
+      .not.toContain("backend/src/scm/lib/so-po-lock.ts");
     // …and the deposit threshold, the owner's most-quoted per-company rule.
     expect(files, "the per-company deposit threshold left the allowlist")
       .toContain("backend/src/scm/shared/order-rules.ts");
