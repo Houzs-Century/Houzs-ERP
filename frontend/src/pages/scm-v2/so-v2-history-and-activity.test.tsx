@@ -66,6 +66,7 @@ vi.mock("../../vendor/scm/lib/document-cancel-queries", async (orig) => ({
   useCancelRequest: () => ({ data: undefined }),
   useRaiseCancelRequest: () => ({ mutateAsync: vi.fn() }),
 }));
+vi.mock("../../components/scm-v2/DeliveryIssuesCard", () => ({ SoDeliveryIssuesCard: () => null }));
 vi.mock("../../vendor/scm/components/CancelRequestPanel", () => ({ CancelRequestPanel: () => null }));
 vi.mock("./so-relationship-map", () => ({ useSoRelationshipMap: () => ({ nodes: [], edges: [] }) }));
 vi.mock("../../components/scm-v2/PrintPreviewModal", () => ({
