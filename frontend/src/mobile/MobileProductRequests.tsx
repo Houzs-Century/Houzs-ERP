@@ -43,6 +43,7 @@ import { fmtDateOrDash } from "../vendor/shared/format";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { takePickedFiles } from "../vendor/scm/lib/pick-files";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -176,9 +177,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
   };
   const viewFile = async (fileId: string) => {
     try {
-      const { url } = await fetchProductRequestFileBlobUrl(r.id, fileId);
-      window.open(url, "_blank", "noopener");
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+      await openLoadedTab(async () => (await fetchProductRequestFileBlobUrl(r.id, fileId)).url, 60_000);
     } catch (e) {
       setFileError(e instanceof Error ? e.message : "The file could not be opened.");
     }
