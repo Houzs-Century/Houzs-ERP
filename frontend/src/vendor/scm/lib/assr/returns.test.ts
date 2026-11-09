@@ -5,7 +5,7 @@
  * an archived (mistaken) trip must not be current, must not be counted, yet must
  * still consume its number so a re-add never collides. */
 import { describe, expect, test } from "vitest";
-import { roundCount, currentRound, nextRoundNo, roundLabel, qcResultLabel, returnNotePath, type SupplierReturn } from "./returns";
+import { roundCount, currentRound, nextRoundNo, roundLabel, qcResultLabel, returnNotePath, shownRound, tripTabLabel, type SupplierReturn } from "./returns";
 
 const r = (round_no: number, extra: Partial<SupplierReturn> = {}): SupplierReturn => ({
   id: round_no * 10,
@@ -62,5 +62,23 @@ describe("labels", () => {
 describe("returnNotePath", () => {
   test("prints ONE trip on the supplier copy (both surfaces open this)", () => {
     expect(returnNotePath(42, 7)).toBe("/api/assr-print/42?variant=supplier&round=7");
+  });
+});
+
+describe("trip tabs (Operation Dept 2026-11-09: flip between trips, old ones stay viewable)", () => {
+  test("shows the current trip when nothing is picked", () => {
+    expect(shownRound([r(1), r(2)], null)?.round_no).toBe(2);
+  });
+  test("shows an older trip once it is picked", () => {
+    expect(shownRound([r(1), r(2)], 10)?.round_no).toBe(1);
+  });
+  test("falls back to the current trip when the picked one was removed", () => {
+    expect(shownRound([r(1, { archived_at: "2026-11-09" }), r(2)], 10)?.round_no).toBe(2);
+  });
+  test("no trips -> nothing to show", () => {
+    expect(shownRound([], null)).toBeNull();
+  });
+  test("tab title", () => {
+    expect(tripTabLabel(3)).toBe("Trip #3");
   });
 });

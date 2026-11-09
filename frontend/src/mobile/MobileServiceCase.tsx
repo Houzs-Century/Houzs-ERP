@@ -29,8 +29,8 @@ import {
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
-import { MobileFactoryTrips } from "./MobileFactoryTrips";
-import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
+import { MobileFactoryTrips, MobileSectionHead } from "./MobileFactoryTrips";
+import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
@@ -726,7 +726,6 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
      yet", never as a hardcoded taxonomy the admin cannot change. */
   const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
-  const pickupPicDrivers = usePickupPicDrivers();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
@@ -1096,7 +1095,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <StageSubChip c={c} stage="pending_supplier_pickup" busy={busy} disabled={dis} patchCase={patchCase} />
             <KV label="Supplier" value={String(get(c, "creditorName", "creditor_name") ?? creditorCode ?? "—")} />
             <KV label="Supplier code" value={creditorCode ? String(creditorCode) : "—"} mono />
-            {/* Pickup by — own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
+            <MobileSectionHead title="1. Pickup Details" badge={null} />{/* Pickup by: own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
@@ -1104,8 +1103,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             {get(c, "pickupBy", "pickup_by") === "customer" && !get(c, "actualPickupAt", "actual_pickup_at") && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "customerPickupAt", "customer_pickup_at"), get(c, "schedPickupDate", "sched_pickup_date"))}</div>}
             <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
-            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
-            <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
+            <EditRow label="Pickup PIC" type="text" value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <MobileSectionHead title="2. Item Tracking" badge={null} /><EditRow label="Current item location" type="text" value={get(c, "itemLocation", "item_location") ? pickupTrackingLabel(String(get(c, "itemLocation", "item_location"))) : null} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
                 supplier_pickup_at / items_ready_at for the board + sheet. */}

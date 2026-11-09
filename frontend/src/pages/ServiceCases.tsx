@@ -70,6 +70,7 @@ import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
 import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
+import { CaseSection } from "../components/assr/CaseSection";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
@@ -4275,40 +4276,9 @@ function DetailContent({
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
-              <div className="space-y-2.5 rounded-md border border-border-subtle bg-surface px-3 py-2.5">
-                {/* Folded in from the retired Item Pickup stage (mig 0110):
-                    the date logistics collects the faulty item from the
-                    customer's house — precedes the supplier handover. */}
-                {/* Pickup by (Nico 2026-08-07) — who collects the faulty
-                    item. Own team pickup (stored 'customer') = our logistics
-                    goes to the customer's house, which syncs the PICKUP leg to
-                    the HC Delivery sheet; Supplier direct = the supplier
-                    collects it themselves and it never reaches the sheet. */}
-                <div className="flex items-center gap-2">
-                  <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-                    Pickup by
-                  </span>
-                  <div className="flex gap-1.5">
-                    {([
-                      { v: "customer", label: "Own team pickup" },
-                      { v: "supplier", label: "Supplier direct" },
-                    ] as const).map((o) => (
-                      <button
-                        key={o.v}
-                        type="button"
-                        onClick={() => patch({ pickup_by: c.pickup_by === o.v ? null : o.v })}
-                        className={cn(
-                          "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                          c.pickup_by === o.v
-                            ? "border-primary bg-primary-soft text-primary"
-                            : "border-border bg-surface text-ink-secondary hover:border-primary/40",
-                        )}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div className="space-y-3">
+                {/* Folded in from the retired Item Pickup stage (mig 0110). Sections
+                    follow the service flow (Operation Dept 2026-11-09). */}
                 <PickupTrackingFields c={c} patch={patch} />
                 {/* 返厂 (owner 2026-09-21). Every factory trip is a row; ops
                     adds as many as needed (a real case has been back 4 times).
@@ -4325,30 +4295,32 @@ function DetailContent({
                   formatDate={formatDate}
                   confirm={dialog.confirm}
                 />
-                {/* Mig 106 — send-out slip that goes with the item
-                    when supplier collects. Supplier sees this on
-                    their portal (read-only). */}
-                <InlineEdit
-                  label="Goods Returned Note"
-                  textarea
-                  value={c.goods_returned_note}
-                  onSave={(v) => patch({ goods_returned_note: v })}
-                  placeholder="What's leaving with the supplier (contents, condition, expected fix)"
-                />
-                {(c.supplier_pickup_at || attachments.some((a: any) => a?.category === "pickup_form")) && (
-                  <MilestoneAttachmentSlot
-                    caseId={id}
-                    category="pickup_form"
-                    label="Pickup Form / Consignment Note"
-                    emptyLabel="No pickup form yet."
-                    uploadLabel="Upload pickup form"
-                    attachments={attachments}
-                    archived={!!c.archived_at}
-                    detail={detail}
-                    dialog={dialog}
-                    toast={toast}
+                <CaseSection title="4. Handover Documents" badge={null}>
+                  {/* Mig 106 — send-out slip that goes with the item
+                      when supplier collects. Supplier sees this on
+                      their portal (read-only). */}
+                  <InlineEdit
+                    label="Goods Returned Note"
+                    textarea
+                    value={c.goods_returned_note}
+                    onSave={(v) => patch({ goods_returned_note: v })}
+                    placeholder="What's leaving with the supplier (contents, condition, expected fix)"
                   />
-                )}
+                  {(c.supplier_pickup_at || attachments.some((a: any) => a?.category === "pickup_form")) && (
+                    <MilestoneAttachmentSlot
+                      caseId={id}
+                      category="pickup_form"
+                      label="Pickup Form / Consignment Note"
+                      emptyLabel="No pickup form yet."
+                      uploadLabel="Upload pickup form"
+                      attachments={attachments}
+                      archived={!!c.archived_at}
+                      detail={detail}
+                      dialog={dialog}
+                      toast={toast}
+                    />
+                  )}
+                </CaseSection>
               </div>
             </StageRow>
 

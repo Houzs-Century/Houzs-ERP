@@ -30,11 +30,24 @@ export const SUPPLIER_RETURN_REF = {
 
 export interface SupplierReturnInput {
   pickup_at?: string | null;
+  expected_return_at?: string | null;
   returned_at?: string | null;
   qc_result?: string | null;
   creditor_code?: string | null;
   reason?: string | null;
   note?: string | null;
+}
+
+const SUPPLIER_RETURN_DATE_FIELDS = ["pickup_at", "expected_return_at", "returned_at"] as const;
+
+/** Why a trip PATCH body is refused, or null when it is fine. Dates are YYYY-MM-DD or null. */
+export function supplierReturnPatchError(body: SupplierReturnInput): string | null {
+  for (const field of SUPPLIER_RETURN_DATE_FIELDS) {
+    const value = body[field];
+    if (value != null && !(typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)))
+      return `${field} must be a YYYY-MM-DD date`;
+  }
+  return null;
 }
 
 /** The current (latest) trip = highest round_no among non-archived rows. Pure,
@@ -205,7 +218,7 @@ export async function patchSupplierReturn(
   roundId: number,
   input: SupplierReturnInput,
 ): Promise<boolean> {
-  const allowed = ["pickup_at", "returned_at", "qc_result", "creditor_code", "reason", "note"] as const;
+  const allowed = ["pickup_at", "expected_return_at", "returned_at", "qc_result", "creditor_code", "reason", "note"] as const;
   const sets: string[] = [];
   const binds: unknown[] = [];
   for (const k of allowed) {
@@ -306,6 +319,8 @@ export async function patchSupplierReturnRoute(c: Ctx) {
   const roundId = parseInt(c.req.param("roundId") ?? "", 10);
   if (isNaN(id) || isNaN(roundId)) return c.json({ error: "Invalid ID" }, 400);
   const body = await c.req.json<SupplierReturnInput>().catch(() => ({}) as SupplierReturnInput);
+  const invalid = supplierReturnPatchError(body);
+  if (invalid) return c.json({ error: invalid }, 400);
   const ok = await patchSupplierReturn(c.env, id, roundId, body);
   return ok ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404);
 }
