@@ -36,6 +36,7 @@ Locks and required fields
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
+- New PO (desktop, PC Order, phone): picking a SKU while Supplier is empty adopts its only supplier, else its one ACTIVE main supplier (`default-supplier-binding.ts`); several or no main suppliers leaves the choice to the buyer, and a chosen supplier is never replaced.
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
 - Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
@@ -94,7 +95,7 @@ Desktop / mobile parity (change both)
 - Create: `PurchaseOrderNew.tsx` <-> `MobilePurchaseDocNew.tsx` (`kind = "po"`, same `useCreatePurchaseOrder`); SO -> PO: `PurchaseOrderFromSo.tsx` <-> `MobileConvertWizard.tsx` (`target = "po"`).
 - Add line: editor add row <-> `MobileAddLine.tsx`, same hook and body.
 - Cache: mutation hooks in `suppliers-queries.ts` <-> `mobile/sharedInvalidate.ts` (maps to `mfg-purchase-orders`, `-paged`, `mfg-purchase-order-detail`).
-- Phone gaps (known, not parity): no option editor, no supplier price auto-fill, MYR only, sofa/bedframe lines save as DRAFT only; no per-line editor, SO-link picker or allocation editor (chips display-only); no photos, import, export or chasing list.
+- Phone gaps (known, not parity): no option editor, no supplier price auto-fill (the supplier itself is filled), MYR only, sofa/bedframe lines save as DRAFT only; no per-line editor, SO-link picker or allocation editor (chips display-only); no photos, import, export or chasing list.
 
 Line import (`/line-import/preview`, `/line-import/apply`)
 - Editable fields only: Delivery Date (line), Estimate Delivery Date 1/2/3 (PO-level -> `supplier_delivery_date_2/3/4` + every line), Item Description 2, Remarks (`notes`). Qty, price, item never change by import.
