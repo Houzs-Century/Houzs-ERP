@@ -18,6 +18,7 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { transitionStage, logActivity, type Stage } from "./assr";
 import { mintDocumentRef, voidDocumentRef } from "./documentRefs";
+import { utcNowText } from "../lib/utc-now-text";
 
 // Each trip's own document number, SVC-RTN-YYMM-NNNN (owner 2026-09-24): the
 // company-wide registry, so it is unique, restarts monthly (MYT) and is voided,
@@ -228,8 +229,8 @@ export async function patchSupplierReturn(
     }
   }
   if (!sets.length) return false;
-  sets.push("updated_at = datetime('now')");
-  binds.push(roundId, assrId);
+  sets.push("updated_at = ?");
+  binds.push(utcNowText(), roundId, assrId);
   const r = await env.DB.prepare(
     `UPDATE assr_supplier_returns SET ${sets.join(", ")} WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
   )
@@ -283,10 +284,10 @@ export async function archiveSupplierReturn(
     .bind(roundId, assrId)
     .first<{ ref_no: string | null }>();
   const r = await env.DB.prepare(
-    `UPDATE assr_supplier_returns SET archived_at = datetime('now'), updated_at = datetime('now')
+    `UPDATE assr_supplier_returns SET archived_at = ?, updated_at = ?
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
   )
-    .bind(roundId, assrId)
+    .bind(utcNowText(), utcNowText(), roundId, assrId)
     .run();
   if (r.meta.changes > 0) {
     if (trip?.ref_no) {

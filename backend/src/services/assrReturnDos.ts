@@ -7,6 +7,7 @@
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { currentSupplierReturn, patchSupplierReturn } from "./assrSupplierReturns";
+import { utcNowText } from "../lib/utc-now-text";
 
 export interface ReturnDoInput {
   do_no?: string | null;
@@ -111,10 +112,10 @@ export async function patchReturnDo(env: Env, assrId: number, doId: number, body
   const fields = RETURN_DO_FIELDS.filter((field) => field in input);
   if (!fields.length) return false;
   const result = await env.DB.prepare(
-    `UPDATE assr_return_dos SET ${fields.map((field) => `${field} = ?`).join(", ")}, updated_at = datetime('now')
+    `UPDATE assr_return_dos SET ${fields.map((field) => `${field} = ?`).join(", ")}, updated_at = ?
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`,
   )
-    .bind(...fields.map((field) => input[field] ?? null), doId, assrId)
+    .bind(...fields.map((field) => input[field] ?? null), utcNowText(), doId, assrId)
     .run();
   if (result.meta.changes > 0) await fillCurrentTripBackDate(env, assrId, input.received_at);
   return result.meta.changes > 0;
@@ -122,10 +123,10 @@ export async function patchReturnDo(env: Env, assrId: number, doId: number, body
 
 export async function archiveReturnDo(env: Env, assrId: number, doId: number): Promise<boolean> {
   const result = await env.DB.prepare(
-    `UPDATE assr_return_dos SET archived_at = datetime('now'), updated_at = datetime('now')
+    `UPDATE assr_return_dos SET archived_at = ?, updated_at = ?
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`,
   )
-    .bind(doId, assrId)
+    .bind(utcNowText(), utcNowText(), doId, assrId)
     .run();
   return result.meta.changes > 0;
 }
