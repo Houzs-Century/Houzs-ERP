@@ -426,7 +426,7 @@ export const PaymentVouchers = () => {
       menu.push({ label: 'Edit', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?edit=1`) });
     }
     if (canWrite && isApprovable(r) && r.approved_at == null) {
-      menu.push({ label: 'Edit text', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
+      menu.push({ label: 'Edit text & bank', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?text=1`) });
     }
     menu.push({ divider: true });
     menu.push({ label: 'Print', onClick: () => void printVouchers([r], false, 'print') });
@@ -470,15 +470,39 @@ export const PaymentVouchers = () => {
     },
     {
       /* The header's Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes
-         显示出来吗？) — the design calls it For. A long note is cut with … and
-         reads whole on hover (the cell's title comes from filterValue) or with
-         WRAP on; the search box and Export carry it. */
-      key: 'notes', label: 'For', width: 260, sortable: true, groupable: false,
+         显示出来吗？), called Description since 2026-11-08 (把notes 换成description).
+         A long one is cut with … and reads whole on hover (the cell's title comes
+         from filterValue) or with WRAP on; the search box and Export carry it. */
+      key: 'notes', label: 'Description', width: 260, sortable: true, groupable: false,
       accessor: (r) => forOf(r) || '—',
       filterValue: (r) => forOf(r),
       searchValue: (r) => notesOf(r),
       exportValue: (r) => notesOf(r),
       sortFn: (a, b) => notesOf(a).localeCompare(notesOf(b)),
+    },
+    {
+      /* What it is for in the listing's words, and the bank it pays into (owner
+         2026-11-08: listing 包含 bank account number; the server reads them). */
+      key: 'purpose_text', label: 'Purpose', width: 220, sortable: true, groupable: false,
+      accessor: (r) => r.purpose_text || '—',
+      filterValue: (r) => r.purpose_text ?? '',
+      searchValue: (r) => r.purpose_text ?? '',
+      exportValue: (r) => r.purpose_text ?? '',
+      sortFn: (a, b) => (a.purpose_text ?? '').localeCompare(b.purpose_text ?? ''),
+    },
+    {
+      key: 'pay_bank', label: 'Bank', width: 130, sortable: true, groupable: true,
+      accessor: (r) => r.pay_bank || '—',
+      searchValue: (r) => r.pay_bank ?? '',
+      groupValue: (r) => r.pay_bank || '(none)',
+      exportValue: (r) => r.pay_bank ?? '',
+      sortFn: (a, b) => (a.pay_bank ?? '').localeCompare(b.pay_bank ?? ''),
+    },
+    {
+      key: 'pay_account_no', label: 'Account no.', width: 150, sortable: true, groupable: false,
+      accessor: (r) => r.pay_account_no || '—',
+      searchValue: (r) => r.pay_account_no ?? '',
+      exportValue: (r) => r.pay_account_no ?? '',
     },
     {
       /* The money account it is paid from: code on one line, name below (owner 2026-09-15). */

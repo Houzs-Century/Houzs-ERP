@@ -14,6 +14,7 @@
 // events with money booked); four tiles; the events on the Finance-Table.
 // ----------------------------------------------------------------------------
 
+import { guardFormula } from '../../lib/csv';
 import { useMemo, useState } from 'react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
@@ -41,7 +42,7 @@ const isCost = (row: EventCostRow, accountCode: string): boolean =>
 
 /* The table as CSV: one row per event, then its entries beneath it. */
 export const eventCostsCsv = (r: EventCosts): string => {
-  const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const lines: string[] = [['Event', 'Dates', 'Status', 'Entry', 'Date', 'Document', 'Account', 'Notes', 'Cost', 'Other'].map(esc).join(',')];
   for (const e of r.events) {
     lines.push([e.event.name, fmtDayMonthRange(e.event.startDate, e.event.endDate), e.event.status ?? '', '', '', '', '', '', fmtRm(e.costSen), fmtRm(e.otherSen)].map(esc).join(','));

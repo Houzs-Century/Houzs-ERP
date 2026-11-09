@@ -51,7 +51,7 @@ export const MoneyInput = ({
   inputClassName,
   style,
   align = 'right',
-  selectOnFocus = false,
+  selectOnFocus = true,
   disabled = false,
   'aria-label': ariaLabel,
   onKeyDown,
@@ -70,7 +70,9 @@ export const MoneyInput = ({
   inputClassName?: string;
   style?: CSSProperties;
   align?: 'left' | 'right';
-  /** Select-all on focus so a default like "1.00" is overwritten in one go. */
+  /** Select-all on focus so a default like "0.00" is overwritten in one go.
+      Default on: with the caret left before a resting 0, typing 5000 read as
+      50000 (RM 50,000). */
   selectOnFocus?: boolean;
   disabled?: boolean;
   'aria-label'?: string;

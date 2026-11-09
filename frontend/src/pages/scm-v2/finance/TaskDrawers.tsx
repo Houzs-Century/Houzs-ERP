@@ -11,11 +11,13 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Info, Paperclip, Plus, Search, X } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
 import { DateField } from '../../../vendor/scm/components/DateField';
+import { todayMyt } from '../../../vendor/scm/lib/dates';
 import { fmtDate, fmtDateTime } from '../../../vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import {
-  useAddGroup, useAddRemark, useCreateTask, useEditRemark, useLinkSearch, useMarkTask, useTodoPeople, useTodoTask,
-  type NewTask, type TaskLink, type TaskRemark, type TodoGroupDef, type TodoTask,
+  useAddGroup, useAddRemark, useCreateTask, useDeleteTask, useEditRemark, useLinkSearch, useMarkTask, useTodoPeople, useTodoTask,
+  useUpdateTask,
+  type NewTask, type TaskEdit, type TaskLink, type TaskRemark, type TodoGroupDef, type TodoTask,
 } from './finance-todo-queries';
 
 export const BUILT_IN_GROUPS: TodoGroupDef[] = [
@@ -78,28 +80,42 @@ function Field({ label, optional = false, children }: { label: string; optional?
   );
 }
 
-/* ── Add task ──────────────────────────────────────────────────────────── */
+/* ── The task form — Add task, and Edit task (owner 2026-11-09) ─────────── */
 
-/** `initialLink` opens the drawer with a document already linked (a voucher's own Add task). */
-export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null }: { open: boolean; onClose: () => void; today: string; groups: TodoGroupDef[]; initialLink?: TaskLink | null }) {
-  const people = useTodoPeople(open);
-  const create = useCreateTask();
+/** Where the form starts: a new task's defaults, or the task as it is. */
+type TaskStart = {
+  title: string; assigneeId: number | null; dueDate: string; repeat: NewTask['repeat']; dayMode: 'all' | 'wk' | 'ms';
+  weekdays: number[]; monthDay: string; everyMonths: number; groupKey: string; link: TaskLink | null;
+};
+const startOfTask = (t: TodoTask): TaskStart => ({
+  title: t.title, assigneeId: t.assigneeId, dueDate: t.dueDate, repeat: t.repeat, dayMode: t.dayMode, weekdays: t.weekdays,
+  monthDay: t.monthDay ?? '', everyMonths: t.everyMonths, groupKey: t.groupKey, link: t.link,
+});
+
+/** The fields, body and foot of a task drawer. Mounted only while its drawer is open, so it
+    starts afresh each time. Edit sends the whole task and has no remark box — the change is
+    its own line in the thread. */
+function TaskForm({ start, today, groups, mode, busy, onSubmit, onCancel }: {
+  start: TaskStart; today: string; groups: TodoGroupDef[]; mode: 'add' | 'edit'; busy: boolean;
+  onSubmit: (task: TaskEdit, remark: string) => void; onCancel: () => void;
+}) {
+  const people = useTodoPeople(true);
   const addGroup = useAddGroup();
-  const [title, setTitle] = useState('');
-  const [assignee, setAssignee] = useState<number | null>(null);
-  const [due, setDue] = useState(addDays(today, 1));
-  const [repeat, setRepeat] = useState<NewTask['repeat']>('none');
-  const [dayMode, setDayMode] = useState<'all' | 'wk' | 'ms'>('all');
-  const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [monthDay, setMonthDay] = useState<string>('');
-  const [every, setEvery] = useState(1);
-  const [group, setGroup] = useState('misc');
+  const [title, setTitle] = useState(start.title);
+  const [assignee, setAssignee] = useState<number | null>(start.assigneeId);
+  const [due, setDue] = useState(start.dueDate);
+  const [repeat, setRepeat] = useState<NewTask['repeat']>(start.repeat);
+  const [dayMode, setDayMode] = useState<'all' | 'wk' | 'ms'>(start.dayMode);
+  const [weekdays, setWeekdays] = useState<number[]>(start.weekdays);
+  const [monthDay, setMonthDay] = useState<string>(start.monthDay);
+  const [every, setEvery] = useState(start.everyMonths);
+  const [group, setGroup] = useState(start.groupKey);
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [newGroup, setNewGroup] = useState('');
-  const [link, setLink] = useState<TaskLink | null>(initialLink);
+  const [link, setLink] = useState<TaskLink | null>(start.link);
   const [linkQ, setLinkQ] = useState('');
   const [remark, setRemark] = useState('');
-  const docs = useLinkSearch(open ? linkQ : '');
+  const docs = useLinkSearch(linkQ);
 
   const me = people.data?.me ?? null;
   const allGroups = [...BUILT_IN_GROUPS, ...groups];
@@ -118,34 +134,20 @@ export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null
   const pasted = q.startsWith('/') && !q.startsWith('//') ? [{ type: 'Page', no: linkQ.trim(), name: 'This address', to: linkQ.trim() }] : [];
   const results: TaskLink[] = [...pasted, ...(docs.data?.results ?? []), ...pageHits];
 
-  const reset = () => {
-    setTitle(''); setAssignee(null); setDue(addDays(today, 1)); setRepeat('none'); setDayMode('all'); setWeekdays([]);
-    setMonthDay(''); setEvery(1); setGroup('misc'); setLink(null); setLinkQ(''); setRemark(''); setNewGroupOpen(false); setNewGroup('');
-  };
-  const close = () => { reset(); onClose(); };
   const ready = title.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(due) && (repeat !== 'week' || weekdays.length > 0);
   const save = () => {
     if (!ready) return;
-    create.mutate({
+    onSubmit({
       title: title.trim(), assigneeId: assignee ?? me?.id ?? null, dueDate: due, groupKey: group, repeat,
       ...(repeat === 'day' ? { dayMode } : {}),
       ...(repeat === 'week' ? { weekdays } : {}),
       ...(repeat === 'month' ? { monthDay: monthDay || String(dueDay), everyMonths: every } : {}),
-      link, remark: remark.trim(),
-    }, { onSuccess: close });
+      link,
+    }, remark.trim());
   };
 
   return (
-    <ResizableDetailDrawer open={open} onClose={close} ariaLabel="Add task">
-      {open && (
-        <div className={styles.drawer}>
-          <div className={styles.head}>
-            <div>
-              <div className={styles.headTitle}>Add task</div>
-              <div className={styles.headSub}>For you or a teammate. It shows in To do with its due date.</div>
-            </div>
-            <button type="button" className={styles.close} onClick={close} aria-label="Close"><X size={16} /></button>
-          </div>
+    <>
           <div className={styles.body}>
             <Field label="Task">
               <input className={styles.input} value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200}
@@ -258,18 +260,50 @@ export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null
                 </>
               )}
             </Field>
-            <Field label="Remark" optional>
-              <textarea className={styles.textarea} rows={3} value={remark} onChange={(e) => setRemark(e.target.value)}
-                placeholder="Anything the person doing it should know" aria-label="Remark" />
-            </Field>
+            {mode === 'add' && (
+              <Field label="Remark" optional>
+                <textarea className={styles.textarea} rows={3} value={remark} onChange={(e) => setRemark(e.target.value)}
+                  placeholder="Anything the person doing it should know" aria-label="Remark" />
+              </Field>
+            )}
           </div>
           <div className={styles.foot}>
-            <div className={styles.note}><Info size={15} /><span>A task you add stays in To do until someone marks it done. It never posts anything to the books.</span></div>
+            <div className={styles.note}><Info size={15} />
+              <span>{mode === 'add'
+                ? 'A task you add stays in To do until someone marks it done. It never posts anything to the books.'
+                : 'What you change shows in the task\'s remarks, with your name. Days already done stay done.'}</span>
+            </div>
             <div className={styles.footButtons}>
-              <button type="button" className={styles.btnSecondary} onClick={close}>Cancel</button>
-              <button type="button" className={styles.btnPrimary} disabled={!ready || create.isPending} onClick={save}>Add task</button>
+              <button type="button" className={styles.btnSecondary} onClick={onCancel}>Cancel</button>
+              <button type="button" className={styles.btnPrimary} disabled={!ready || busy} onClick={save}>{mode === 'add' ? 'Add task' : 'Save changes'}</button>
             </div>
           </div>
+    </>
+  );
+}
+
+/* ── Add task ──────────────────────────────────────────────────────────── */
+
+/** `initialLink` opens the drawer with a document already linked (a voucher's own Add task). */
+export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null }: { open: boolean; onClose: () => void; today: string; groups: TodoGroupDef[]; initialLink?: TaskLink | null }) {
+  const create = useCreateTask();
+  const start: TaskStart = {
+    title: '', assigneeId: null, dueDate: addDays(today, 1), repeat: 'none', dayMode: 'all', weekdays: [],
+    monthDay: '', everyMonths: 1, groupKey: 'misc', link: initialLink,
+  };
+  return (
+    <ResizableDetailDrawer open={open} onClose={onClose} ariaLabel="Add task">
+      {open && (
+        <div className={styles.drawer}>
+          <div className={styles.head}>
+            <div>
+              <div className={styles.headTitle}>Add task</div>
+              <div className={styles.headSub}>For you or a teammate. It shows in To do with its due date.</div>
+            </div>
+            <button type="button" className={styles.close} onClick={onClose} aria-label="Close"><X size={16} /></button>
+          </div>
+          <TaskForm mode="add" start={start} today={today} groups={groups} busy={create.isPending} onCancel={onClose}
+            onSubmit={(task, remark) => create.mutate({ ...task, remark }, { onSuccess: onClose })} />
         </div>
       )}
     </ResizableDetailDrawer>
@@ -280,8 +314,15 @@ export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null
 
 const initials = (name: string): string => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || '?';
 
+/** The chip a remark the buttons left carries. */
+const TAG_WORDS: Record<NonNullable<TaskRemark['tag']>, string> = {
+  done: 'Marked done', reopen: 'Reopened', edit: 'Changed', deleted: 'Deleted',
+};
+
 function RemarkItem({ r, taskId }: { r: TaskRemark; taskId: string }) {
   const edit = useEditRemark();
+  /* A change to the task, or its delete, is the task's history: nobody rewrites it. */
+  const isChangeLine = r.tag === 'edit' || r.tag === 'deleted';
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(r.body);
   const [histOpen, setHistOpen] = useState(false);
@@ -297,13 +338,13 @@ function RemarkItem({ r, taskId }: { r: TaskRemark; taskId: string }) {
         <div className={styles.remarkHead}>
           <span className={styles.remarkWho}>{r.authorName}</span>
           <span className={styles.remarkTime}>{fmtDateTime(r.createdAt)}</span>
-          {r.tag && <span className={`${styles.remarkTag} ${r.tag === 'done' ? styles.remarkTagDone : ''}`}>{r.tag === 'done' ? 'Marked done' : 'Reopened'}</span>}
+          {r.tag && <span className={`${styles.remarkTag} ${r.tag === 'done' ? styles.remarkTagDone : ''}`}>{TAG_WORDS[r.tag]}</span>}
           {r.history.length > 0 && r.editedAt && (
             <button type="button" className={styles.edited} onClick={() => setHistOpen(!histOpen)} title="Show earlier versions">
               edited {fmtDateTime(r.editedAt).slice(11)}{histOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           )}
-          {r.mine && r.body && !editing && <button type="button" className={styles.editLink} onClick={() => { setText(r.body); setEditing(true); }}>Edit</button>}
+          {r.mine && r.body && !isChangeLine && !editing && <button type="button" className={styles.editLink} onClick={() => { setText(r.body); setEditing(true); }}>Edit</button>}
         </div>
         {r.body && !editing && <div className={styles.remarkText}>{r.body}</div>}
         {editing && (
@@ -351,22 +392,48 @@ export function TaskDrawer({ open, onClose, target, groups }: {
   const q = useTodoTask(open && target ? target.id : null);
   const mark = useMarkTask();
   const addRemark = useAddRemark();
+  const update = useUpdateTask();
+  const del = useDeleteTask();
   const [draft, setDraft] = useState('');
+  /* Edit task swaps the drawer's body for the form; Delete asks first, in the foot. */
+  const [editing, setEditing] = useState(false);
+  const [asking, setAsking] = useState(false);
   const d = q.data;
   const t = d?.task;
   const me = d?.me;
   const groupLabel = useMemo(() => [...BUILT_IN_GROUPS, ...groups].find((g) => g.id === t?.groupKey)?.label ?? '—', [groups, t?.groupKey]);
   const occ = target ? d?.occurrences.find((o) => o.occursOn === target.occursOn) : undefined;
   const done = !!occ?.doneAt;
-  const mayMark = !!t && !!me && (t.kind === 'routine' || t.assigneeId === me.id || t.createdById === me.id);
-  const close = () => { setDraft(''); onClose(); };
+  const deleted = !!t && t.kind === 'task' && t.isOff;
+  const mayEdit = !!d?.mayEdit && !deleted;
+  const mayMark = !!t && !!me && !deleted && (t.kind === 'routine' || t.assigneeId === me.id || t.createdById === me.id);
+  const close = () => { setDraft(''); setEditing(false); setAsking(false); onClose(); };
   const markDone = () => {
     if (!target || !t) return;
     mark.mutate({ id: t.id, kind: 'done', occursOn: target.occursOn, remark: draft.trim() }, { onSuccess: close });
   };
   const sub = t
-    ? `${t.kind === 'routine' ? 'Finance routine' : t.assigneeId === me?.id ? 'Your task' : `Asked of ${t.assigneeName ?? '—'}`}${t.kind === 'task' && t.createdById !== me?.id ? ` · from ${t.createdByName ?? '—'}` : ''}${done ? ' · done' : ''}`
+    ? `${t.kind === 'routine' ? 'Finance routine' : t.assigneeId === me?.id ? 'Your task' : `Asked of ${t.assigneeName ?? '—'}`}${t.kind === 'task' && t.createdById !== me?.id ? ` · from ${t.createdByName ?? '—'}` : ''}${done ? ' · done' : ''}${deleted ? ' · deleted' : ''}`
     : '';
+
+  if (open && editing && t) {
+    return (
+      <ResizableDetailDrawer open={open} onClose={close} ariaLabel="Edit task">
+        <div className={styles.drawer}>
+          <div className={styles.head}>
+            <div>
+              <div className={styles.headTitle}>Edit task</div>
+              <div className={styles.headSub}>{t.title}</div>
+            </div>
+            <button type="button" className={styles.close} onClick={close} aria-label="Close"><X size={16} /></button>
+          </div>
+          <TaskForm mode="edit" start={startOfTask(t)} today={todayMyt()} groups={groups} busy={update.isPending}
+            onCancel={() => setEditing(false)}
+            onSubmit={(task) => update.mutate({ id: t.id, ...task }, { onSuccess: () => setEditing(false) })} />
+        </div>
+      </ResizableDetailDrawer>
+    );
+  }
 
   return (
     <ResizableDetailDrawer open={open} onClose={close} ariaLabel="Task details">
@@ -381,6 +448,7 @@ export function TaskDrawer({ open, onClose, target, groups }: {
           </div>
           <div className={styles.body}>
             {q.isError && <div className={styles.problem}>The task could not be read — {q.error instanceof Error ? q.error.message : 'try again'}.</div>}
+            {deleted && <div className={styles.hint}>This task was deleted. It no longer shows in To do; its remarks stay.</div>}
             {t && target && (
               <>
                 <div className={styles.meta}>
@@ -392,29 +460,55 @@ export function TaskDrawer({ open, onClose, target, groups }: {
                   <span>{t.link ? <Link to={t.link.to} className={styles.linkChip} title={`Open ${t.link.no}`}><Paperclip size={12} />{t.link.no}</Link> : '—'}</span>
                 </div>
                 <div className={styles.remarks}>
-                  <div className={styles.remarksHead}><span>Remarks</span><span className={styles.count}>{d.remarks.filter((r) => r.body).length}</span></div>
+                  <div className={styles.remarksHead}><span>Remarks</span><span className={styles.count}>{d.remarks.filter((r) => r.body && r.tag !== 'edit').length}</span></div>
                   {d.remarks.map((r) => <RemarkItem key={r.id} r={r} taskId={t.id} />)}
                   {d.remarks.length === 0 && <div className={styles.hint}>No remarks yet.</div>}
-                  <textarea className={styles.textarea} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a remark…" aria-label="Add a remark" />
-                  <div className={styles.rightRow}>
-                    <button type="button" className={styles.btnSecondary} disabled={!draft.trim() || addRemark.isPending}
-                      onClick={() => addRemark.mutate({ id: t.id, text: draft.trim() }, { onSuccess: () => setDraft('') })}>Add remark</button>
-                  </div>
+                  {!deleted && (
+                    <>
+                      <textarea className={styles.textarea} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a remark…" aria-label="Add a remark" />
+                      <div className={styles.rightRow}>
+                        <button type="button" className={styles.btnSecondary} disabled={!draft.trim() || addRemark.isPending}
+                          onClick={() => addRemark.mutate({ id: t.id, text: draft.trim() }, { onSuccess: () => setDraft('') })}>Add remark</button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </>
             )}
           </div>
           <div className={styles.foot}>
+            {asking && (
+              <div className={styles.note}><Info size={15} />
+                <span>Delete this task? It leaves To do and the calendar. Its done days and remarks stay, with your name on the delete.</span>
+              </div>
+            )}
             <div className={styles.footButtons}>
-              <button type="button" className={styles.btnSecondary} onClick={close}>Close</button>
-              {t && target && mayMark && done && (
-                <button type="button" className={styles.btnSecondary} disabled={mark.isPending}
-                  onClick={() => mark.mutate({ id: t.id, kind: 'reopen', occursOn: target.occursOn }, { onSuccess: close })}>Reopen</button>
-              )}
-              {t && target && mayMark && !done && (
-                <button type="button" className={styles.btnPrimary} disabled={mark.isPending} onClick={markDone}>
-                  {draft.trim() ? 'Add remark & mark done' : 'Mark done'}
-                </button>
+              {asking && t ? (
+                <>
+                  <button type="button" className={styles.btnSecondary} onClick={() => setAsking(false)}>Keep it</button>
+                  <button type="button" className={styles.btnDanger} disabled={del.isPending}
+                    onClick={() => del.mutate(t.id, { onSuccess: close })}>Yes, delete</button>
+                </>
+              ) : (
+                <>
+                  {mayEdit && (
+                    <>
+                      <button type="button" className={styles.btnSecondary} onClick={() => setEditing(true)}>Edit task</button>
+                      <button type="button" className={styles.btnSecondary} onClick={() => setAsking(true)}>Delete</button>
+                      <span className={styles.footGap} />
+                    </>
+                  )}
+                  <button type="button" className={styles.btnSecondary} onClick={close}>Close</button>
+                  {t && target && mayMark && done && (
+                    <button type="button" className={styles.btnSecondary} disabled={mark.isPending}
+                      onClick={() => mark.mutate({ id: t.id, kind: 'reopen', occursOn: target.occursOn }, { onSuccess: close })}>Reopen</button>
+                  )}
+                  {t && target && mayMark && !done && (
+                    <button type="button" className={styles.btnPrimary} disabled={mark.isPending} onClick={markDone}>
+                      {draft.trim() ? 'Add remark & mark done' : 'Mark done'}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

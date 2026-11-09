@@ -110,6 +110,57 @@ describe('a checked voucher\'s words', () => {
   });
 });
 
+/* The bank it pays into (owner 2026-11-09: 可以，开放): 31 checked vouchers had no
+   bank anywhere, so the three fields come through the same door until approval.
+   Like the words, they move no money and stay on the trail. */
+describe('a checked voucher\'s bank', () => {
+  test('filled in, trimmed, and it stays checked', async () => {
+    const r = await send(sb, { payToBankName: ' MAYBANK ', payToAccountNo: '5123 4567 8901', payToAccountName: 'KL CHEN ENTERPRISE (M) SDN BHD' });
+    expect(r.status).toBe(200);
+    expect(voucher(sb)).toMatchObject({
+      pay_to_bank_name: 'MAYBANK', pay_to_account_no: '5123 4567 8901', pay_to_account_name: 'KL CHEN ENTERPRISE (M) SDN BHD',
+      checked_by: 'Siti Rafidah', checked_at: '2026-11-06T03:22:41Z', status: 'DRAFT', notes: 'BILL PI-000555 · DATED 2026-09-21',
+    });
+    expect(r.body.paymentVoucher.pay_to_bank_name).toBe('MAYBANK');
+  });
+
+  test('the trail names each field, from what to what', async () => {
+    sb = worldWith({ pay_to_bank_name: 'CIMB', pay_to_account_no: '8000 1111', pay_to_account_name: 'KL CHEN ENTERPRISE (M) SDN BHD' });
+    await send(sb, { notes: 'New words', payToBankName: 'MAYBANK', payToAccountNo: '5123 4567 8901', payToAccountName: 'KL CHEN ENTERPRISE (M) SDN BHD' });
+    const trail = sb.tables.entity_audit_log!;
+    expect(trail).toHaveLength(1);
+    expect(trail[0]!.field_changes).toEqual([
+      { field: 'notes', from: 'BILL PI-000555 · DATED 2026-09-21', to: 'New words' },
+      { field: 'payToBankName', from: 'CIMB', to: 'MAYBANK' },
+      { field: 'payToAccountNo', from: '8000 1111', to: '5123 4567 8901' },
+    ]);
+  });
+
+  test('fields left out stay; a blank one is cleared', async () => {
+    sb = worldWith({ pay_to_bank_name: 'CIMB', pay_to_account_no: '8000 1111', pay_to_account_name: 'KL CHEN' });
+    const r = await send(sb, { payToAccountName: '   ' });
+    expect(r.status).toBe(200);
+    expect(voucher(sb)).toMatchObject({ pay_to_bank_name: 'CIMB', pay_to_account_no: '8000 1111', pay_to_account_name: null });
+  });
+
+  test('the same bank again: nothing written, no trail', async () => {
+    sb = worldWith({ pay_to_bank_name: 'CIMB', pay_to_account_no: '8000 1111', pay_to_account_name: null });
+    const r = await send(sb, { payToBankName: 'CIMB', payToAccountNo: '8000 1111', payToAccountName: '' });
+    expect(r.status).toBe(200);
+    expect(voucher(sb).updated_at).toBe('2026-11-06T03:22:41Z');
+    expect(sb.tables.entity_audit_log).toHaveLength(0);
+  });
+
+  test('approved: refused, the bank stays', async () => {
+    sb = worldWith({ approved_at: '2026-11-06T04:00:00Z', approved_by: 'Owner' });
+    const r = await send(sb, { payToBankName: 'MAYBANK', payToAccountNo: '5123' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('already_approved');
+    expect(voucher(sb).pay_to_bank_name ?? null).toBeNull();
+    expect(sb.tables.entity_audit_log).toHaveLength(0);
+  });
+});
+
 describe('who and when', () => {
   test.each([
     ['a draft', { submitted_at: null, submitted_by: null, checked_at: null, checked_by: null }],

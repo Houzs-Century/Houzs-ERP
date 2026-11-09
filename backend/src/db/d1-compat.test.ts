@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toPgPlaceholders, rewriteDialect } from "./d1-compat";
+import { toPgPlaceholders, rewriteDialect, d1Compat, TRANSIENT_CONN_RE } from "./d1-compat";
 
 describe("toPgPlaceholders", () => {
   it("rewrites sequential ? to $1,$2,...", () => {
@@ -82,5 +82,33 @@ describe("rewriteDialect LIKE handling", () => {
     expect(rewriteDialect("WHERE a ILIKE ? AND liked_by = ?")).toBe(
       "WHERE a ILIKE ? AND liked_by = ?",
     );
+  });
+});
+
+describe("a full session pool is retried (Conts-ERP #610)", () => {
+  const FULL = "(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15";
+
+  it("matches Supavisor's refusal as a transient connection failure", () => {
+    expect(TRANSIENT_CONN_RE.test(FULL)).toBe(true);
+  });
+
+  it("still refuses to treat a real SQL error as transient", () => {
+    expect(TRANSIENT_CONN_RE.test('column "x" does not exist')).toBe(false);
+  });
+
+  it("runs the query again on a fresh client and answers with its rows", async () => {
+    let calls = 0;
+    let made = 0;
+    const client = (fail: boolean) => ({
+      unsafe: async () => {
+        calls++;
+        if (fail) throw new Error(FULL);
+        return Object.assign([{ n: 1 }], { count: 1 });
+      },
+    });
+    const db = d1Compat(() => client(made++ === 0) as never);
+    const r = await db.prepare("SELECT 1 AS n").all<{ n: number }>();
+    expect([...(r.results as Array<{ n: number }>)]).toEqual([{ n: 1 }]);
+    expect(calls).toBe(2);
   });
 });

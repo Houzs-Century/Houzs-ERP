@@ -10,6 +10,7 @@ import {
   hostDefaultCompanyCode,
   shortCompanyName,
 } from "../lib/branding";
+import { STAGING_SIGN_IN_TEXT, STAGING_SIGN_IN_TITLE, currentHostIsStaging } from "../auth/stagingSignIn";
 import "./mobile.css";
 
 /** Mobile login — 1:1 with the owner's design: dark surface, drifting aurora
@@ -102,6 +103,12 @@ export function MobileLogin() {
 
         {!challenge ? (
           <>
+            {currentHostIsStaging() && (
+              <div role="note" data-testid="staging-sign-in-note" className="hz-lg-item" style={{ ...delay(3), marginTop: 16, fontSize: 12, lineHeight: 1.5, color: "rgba(231,234,228,.85)", background: "rgba(201,162,39,.12)", border: "1px solid rgba(201,162,39,.35)", borderRadius: 10, padding: "9px 12px" }}>
+                <div style={{ fontWeight: 700, color: "var(--gold)" }}>{STAGING_SIGN_IN_TITLE}</div>
+                <div style={{ marginTop: 2 }}>{STAGING_SIGN_IN_TEXT}</div>
+              </div>
+            )}
             <div className="hz-lg-item" style={{ ...delay(3), display: "flex", flexDirection: "column", gap: 13, marginTop: 18 }}>
               <label style={{ display: "block" }}>
                 <span style={labelStyle}>Email or phone</span>

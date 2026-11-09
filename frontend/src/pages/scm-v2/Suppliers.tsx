@@ -14,6 +14,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useSearchParams } from 'react-router-dom';
+import { rememberScmListFocus, takeScmListFocus } from '../../lib/scmListReturn';
 import { Search, Plus, X } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -73,12 +75,33 @@ const STATUS_CLASS: Record<SupplierStatus, string> = {
 
 export const Suppliers = () => {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<'all' | SupplierStatus>('all');
+  /* Status, category, search and page live in the address, so a supplier's Back
+     (which returns to the last list address, lib/scmListReturn) lands on the same
+     page with the same filters instead of page 1 (Conts-ERP #406). */
+  const [params, setParams] = useSearchParams();
+  const setParam = (changes: Record<string, string | null>) =>
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(changes)) {
+        if (v === null || v === '') next.delete(k); else next.set(k, v);
+      }
+      return next;
+    }, { replace: true });
+  const statusParam = params.get('status');
+  const status: 'all' | SupplierStatus = STATUS_CHIPS.some((c) => c.value !== 'all' && c.value === statusParam)
+    ? (statusParam as SupplierStatus)
+    : 'all';
+  const setStatus = (v: 'all' | SupplierStatus) => setParam({ status: v === 'all' ? null : v, page: null });
   // Supply Category filter — now applied SERVER-SIDE (the /suppliers paged
   // endpoint takes ?category=/?pool=) so it stays correct across pages.
-  const [category, setCategory] = useState<string>(FILTER_ALL);
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
+  const category = params.get('category') ?? FILTER_ALL;
+  const setCategory = (v: string) => setParam({ category: v === FILTER_ALL ? null : v, page: null });
+  const [search, setSearch] = useState(() => params.get('q') ?? '');
+  const page = Math.max(0, Math.floor(Number(params.get('page')) || 0));
+  const setPage = (n: number) => setParam({ page: n > 0 ? String(n) : null });
+  /* The supplier last opened from this list, brought back into view on return. */
+  const [returnFocus] = useState(() => takeScmListFocus('/scm/suppliers'));
+  const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
   const [creating, setCreating] = useState(false);
 
   const [pageSize, setPageSize] = useLocalStorage<number>('scm:perpage:suppliers', 50);
@@ -90,11 +113,14 @@ export const Suppliers = () => {
   // "Mixed / Other" chip needs the pool to be computed exactly server-side).
   const pool = useSupplierCategoryPool();
 
-  // Reset to the first page whenever a server-query input changes — otherwise a
-  // filter change could leave the operator stranded on an out-of-range page.
+  // A new search goes back to the first page (status and category do it in their
+  // setters); the search already in the address on the way back does not, or Back
+  // would lose the page.
   useEffect(() => {
-    setPage(0);
-  }, [status, category, debouncedSearch]);
+    const term = debouncedSearch.trim();
+    if (term !== (params.get('q') ?? '')) setParam({ q: term || null, page: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a settled new search term moves the address
+  }, [debouncedSearch]);
 
   /* Batch edit (Commander 2026-06-19 — HOOKKA parity). Selection lives in the
      parent so it survives DataGrid re-renders and drives the batch modal. */
@@ -156,6 +182,12 @@ export const Suppliers = () => {
      /suppliers paged endpoint, so this is just the loaded page. */
   const rows = data?.suppliers ?? [];
   const total = data?.total ?? 0;
+
+  // Back from a supplier: once its page has loaded, bring that supplier into view (once).
+  useEffect(() => {
+    if (!returnFocus || scrollTo || isPlaceholderData) return;
+    if (rows.some((r) => r.id === returnFocus)) setScrollTo({ key: returnFocus, nonce: Date.now() });
+  }, [returnFocus, scrollTo, isPlaceholderData, rows]);
 
   /* Shared DataGrid conversion (2026-06-12). Status + Supply Category chip
      rows above stay as-is (they drive the server query / client pre-filter);
@@ -319,7 +351,11 @@ export const Suppliers = () => {
           groupBanner={false}
           isLoading={listLoading}
           emptyMessage="No suppliers yet."
-          onRowClick={(r) => navigate(`/scm/suppliers/${r.id}`)}
+          onRowClick={(r) => {
+            rememberScmListFocus('/scm/suppliers', r.id);
+            navigate(`/scm/suppliers/${r.id}`);
+          }}
+          scrollToRow={scrollTo}
           selectable={{ selectedKeys: selectedIds, onToggle: toggle, onToggleAll: toggleAll }}
         />
 

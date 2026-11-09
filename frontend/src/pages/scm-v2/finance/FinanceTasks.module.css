@@ -93,14 +93,19 @@
   text-decoration: none; border-bottom: 1px dotted var(--fin-petrol);
 }
 
-.btnPrimary, .btnSecondary {
+.btnPrimary, .btnSecondary, .btnDanger {
   height: 34px; padding: 0 14px; border-radius: 6px; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
 .btnPrimary { border: 1px solid #b9d6d1; background: var(--fin-petrol-pale); color: var(--fin-petrol-ink); }
 .btnPrimary:hover:not(:disabled) { background: #d3e7e3; }
 .btnSecondary { border: 1px solid var(--fin-line); background: #ffffff; color: var(--fin-text); }
 .btnSecondary:hover:not(:disabled) { background: var(--fin-paper); }
-.btnPrimary:disabled, .btnSecondary:disabled { opacity: 0.55; cursor: default; }
+/* A task's delete, once asked (the same reds as .problem). */
+.btnDanger { border: 1px solid #e7c9c9; background: #fbeeee; color: #7a2222; }
+.btnDanger:hover:not(:disabled) { background: #f6e0e0; }
+.btnPrimary:disabled, .btnSecondary:disabled, .btnDanger:disabled { opacity: 0.55; cursor: default; }
+/* Pushes Edit task / Delete to the left of the foot, Close and Mark done to the right. */
+.footGap { flex: 1; }
 
 .meta { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; font-size: 13px; }
 .metaKey { color: var(--fin-muted); }
