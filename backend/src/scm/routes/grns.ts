@@ -1267,8 +1267,14 @@ grns.get('/:id', async (c) => {
   const itemRows = (i.data ?? []) as Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>;
   // The detail page and phone show warehouse_code; only warehouse_id is a column
   // (Sim, 2026-10-19: "the GRN also did not capture the warehouse").
-  const header = h.data as Record<string, unknown> & { warehouse?: { code?: string | null } | null };
-  const grn = { ...header, warehouse_code: header.warehouse?.code ?? null, ...computeGrnFlags(itemRows) };
+  // warehouse_name is what the printed GRN names (Conts-ERP #717).
+  const header = h.data as Record<string, unknown> & { warehouse?: { code?: string | null; name?: string | null } | null };
+  const grn = {
+    ...header,
+    warehouse_code: header.warehouse?.code ?? null,
+    warehouse_name: (header.warehouse?.name ?? '').trim() || null,
+    ...computeGrnFlags(itemRows),
+  };
 
   /* Bug #2 (Agent C 2026-05-31) — surface "received from which PO" + "receive
      date" per GRN line. The header carries received_at; each line links to a PO
