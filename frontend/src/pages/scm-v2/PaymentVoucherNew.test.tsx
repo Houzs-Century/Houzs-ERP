@@ -57,6 +57,8 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
 }));
 /* The company's pay-from bank (BANK_PAY_DEFAULT); unset = the receive bank. */
 let payFromRole: string | null = null;
+/* The supplier's bank on Supplier maintenance — set by the bank-fields test only. */
+let supplierBank: Record<string, string> = {};
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
@@ -86,7 +88,8 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
     /* No invoice anywhere — the prepay-only case. */
     { id: 'sup-2', code: 'S002', name: 'Empty Hands Sdn Bhd', currency: 'MYR' },
   ], isLoading: false }),
-  useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR' } } }),
+  /* A fresh object every render, as a refetch gives: the bank fields must not loop on it. */
+  useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR', ...supplierBank } } }),
 }));
 vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -162,6 +165,28 @@ describe('the AP Payment (?type=ap)', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 255000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-1', amountSen: 255000 }]);
+  });
+
+  /* Owner 2026-11-08 (pv notes 我不想要全部挤在一排): the bank in fields of its own. */
+  test('the supplier\'s bank fills the bank fields, not the Description; a typed number stays; the save sends them', async () => {
+    mutateAsync.mockClear();
+    supplierBank = { bank_name: 'PUBLIC BANK', bank_account_no: '3188 0000 11', bank_account_name: 'FOSHAN CHAIRS SDN BHD' };
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('PUBLIC BANK');
+    expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('3188 0000 11');
+    expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('FOSHAN CHAIRS SDN BHD');
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '3188 0000 99' } });
+    fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
+    expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('3188 0000 99');
+    fireEvent.click(screen.getByText('Save draft'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0]![0]).toMatchObject({
+      payToBankName: 'PUBLIC BANK', payToAccountNo: '3188 0000 99', payToAccountName: 'FOSHAN CHAIRS SDN BHD',
+    });
+    supplierBank = {};
   });
 
   test('a 405-x supplier debits AP_OTHER — the split follows the code, not the screen', async () => {
@@ -416,7 +441,7 @@ describe('the plain Payment Voucher (/new)', () => {
     const date = screen.getByLabelText(/Voucher date/) as HTMLInputElement;
     expect(date.value).toBe(`${y}/${m}/${d}`);
     expect(date.value).not.toBe('2026/08/25');
-    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
   });
 
   test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
@@ -639,6 +664,10 @@ describe('answering several payment requests with ONE voucher (?fromRequests=)',
     expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('');
     expect(screen.getByText(/Answering 2 payment requests, RM 151.06 in all/)).toBeTruthy();
     expect(screen.getByText(/They name different payees/)).toBeTruthy();
+    /* Two account names: no bank is guessed, and the page says so. */
+    expect(screen.getByText(/They name different banks: type the bank yourself/)).toBeTruthy();
+    expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Voucher description') as HTMLTextAreaElement).value).toBe('lalamove to Armani; meta ads invoice');
     fireEvent.change(screen.getByLabelText(/^Pay to/), { target: { value: 'STAFF CLAIMS' } });
     for (const n of [1, 2]) {
       const account = screen.getByLabelText(`line ${n} amount`).closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
@@ -674,7 +703,9 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.paymentRequestId).toBe('prq-1');
-    expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · pay to Maybank 5123 MLE EVENTS SDN BHD');
+    /* What it is for in the Description; the bank in its own fields (owner 2026-11-08). */
+    expect(payload.notes).toBe('Booth F1 rental');
+    expect(payload).toMatchObject({ payToBankName: 'Maybank', payToAccountNo: '5123', payToAccountName: 'MLE EVENTS SDN BHD' });
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'Booth F1 rental', debitAccountCode: '900-A002', amountSen: 850000, projectId: 348 })]);
     requestDetail = undefined;
   });
@@ -689,7 +720,7 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    expect(mutateAsync.mock.calls[0]![0].notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · pay to Maybank 5123 MLE EVENTS SDN BHD · Note: Pay before 25/09');
+    expect(mutateAsync.mock.calls[0]![0].notes).toBe('Booth F1 rental · Pay before 25/09');
     requestDetail = undefined;
   });
 
@@ -697,7 +728,7 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
      replace the one asked for, on the request's event, under the account this
      vendor was last paid from; its number and date join the notes; a total that
      differs from the amount asked is said. */
-  test('its bill is read on opening: the lines, the bill in the notes, and a total that differs is said', async () => {
+  test('its bill is read on opening: the lines, the bill in the Description, and a total that differs is said', async () => {
     mutateAsync.mockClear(); extractRequestAsync.mockClear();
     requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null };
     extractRequestAsync.mockResolvedValueOnce({ bills: [{
@@ -713,7 +744,9 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.paymentRequestId).toBe('prq-1');
-    expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · BILL MLE-0925 · DATED 2026-09-01');
+    expect(payload.notes).toBe('Booth F1 rental · BILL MLE-0925 · DATED 2026-09-01');
+    /* A request with no bank leaves the bank fields empty. */
+    expect(payload).toMatchObject({ payToBankName: null, payToAccountNo: null, payToAccountName: null });
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A002', amountSen: 800000, projectId: 348 })]);
     /* The bill's own number and date ride the voucher (item 1, 2026-10-01). */
     expect(payload).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01' });
@@ -853,7 +886,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
 
   /* Owner 2026-10-14: a refund raised from a Sales Order is a payment request — Finance
      approves it here, on its own order, for the amount asked. */
-  test('answering a refund request: its order fixed, its amount, the customer\'s bank in the notes, no bill read; the save names the request', async () => {
+  test('answering a refund request: its order fixed, its amount, the customer\'s bank in the bank fields, no bill read; the save names the request', async () => {
     mutateAsync.mockClear(); extractRequestAsync.mockClear(); refundSourceAsks.length = 0;
     requestDetail = {
       id: 'r9', request_no: 'HC-PRQ-2610-009', requested_by_name: 'Nancy', payee_name: 'NG WAN JUN', amount_sen: 120_000,
@@ -883,7 +916,8 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     expect(payload).toMatchObject({
       purpose: 'CUSTOMER_REFUND', refundSourceType: 'SO', refundSourceDocNo: 'HC-SO-2610-144', refundAmountSen: 120_000, paymentRequestId: 'r9',
     });
-    expect(payload.notes).toBe('Payment request HC-PRQ-2610-009 — Customer want cancel this bill · pay to Maybank 5123 4567 8901 NG WAN JUN');
+    expect(payload.notes).toBe('Customer want cancel this bill');
+    expect(payload).toMatchObject({ payToBankName: 'Maybank', payToAccountNo: '5123 4567 8901', payToAccountName: 'NG WAN JUN' });
     requestDetail = undefined; refundSource = undefined;
   });
 });

@@ -32,6 +32,7 @@ import { useJournalEntriesGrouped, type JournalEntryGrouped, type JournalGrouped
 import { fmtLedger, fmtSide, journalLabel, type LedgerJournal } from '../../vendor/scm/lib/ledger-queries';
 import { exportFileName } from '../../vendor/scm/lib/report-sheet';
 import { triggerDownload } from '../../vendor/scm/lib/fabric-csv';
+import { guardFormula } from '../../lib/csv';
 import { fmtDate } from '../../vendor/shared/format';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 import { AccountCell, jeStatus, jeStatusTag, toneClass } from './JournalEntryCards';
@@ -98,7 +99,10 @@ const PAGE = 100;
 /** The server's own cap on one period's read (accounting.ts journalEntriesList). */
 const LOADED_LIMIT = 500;
 
-const csvCell = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+const csvCell = (raw: string): string => {
+  const v = guardFormula(raw);
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+};
 
 /** The journal as a flat CSV: one row per line, the entry's head repeated in
     front of it, the line's account, party and note behind. */
