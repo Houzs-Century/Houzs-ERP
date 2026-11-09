@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Share2, X as XIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useEscapeLayer } from "../../lib/escapeStack";
 
 export type ChainNodeState = "done" | "current" | "pending";
 
@@ -83,6 +84,7 @@ export function ModalOverlay({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  useEscapeLayer(onClose, open);
   return createPortal(
     <>
       <div
