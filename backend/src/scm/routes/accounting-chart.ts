@@ -39,7 +39,27 @@ const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENS
    customer deposits), SBS balance-sheet stock. The owner's 2026-09-03 call:
    lock them — 由模块自动过账. */
 const SPECIAL_RE = /^[A-Z]{2,4}$/;
-const CONTROL_SPECIALS = new Set(['SDC', 'SCC', 'SBS']);
+const CONTROL_SPECIALS: ReadonlySet<string> = new Set(['SDC', 'SCC', 'SBS']);
+export const isControlSpecial = (special: string | null | undefined): boolean =>
+  !!special && CONTROL_SPECIALS.has(special);
+
+/* The ONE rule for "may a hand-picked binding or line name this account".
+   Every door asks it (requireLeafAccount for voucher lines, the item-group
+   bind) so the doors cannot drift apart; the frontend's postableAccounts in
+   vendor/scm/lib/accounting-queries.ts is the display mirror of this rule.
+   A header (any child, retired ones included: the GL gate counts every child)
+   never books — 父户不记账. A control account — a CONTROL_ROLES holder the
+   caller resolved, or an SDC/SCC/SBS special — belongs to its module. */
+export type NotPostable = { kind: 'header' } | { kind: 'control'; label: string };
+export const whyNotPostable = (a: {
+  hasChildren: boolean;
+  specialType?: string | null;
+  controlRole?: string | null;
+}): NotPostable | null => {
+  if (a.hasChildren) return { kind: 'header' };
+  const label = a.controlRole || (isControlSpecial(a.specialType) ? a.specialType! : null);
+  return label ? { kind: 'control', label } : null;
+};
 const ACCOUNT_CODE_RE = /^\d{3}-[A-Za-z0-9]{4}$/;
 
 type AccountRow = {
@@ -343,7 +363,7 @@ export const requireLeafAccount = async (
     .eq('parent_code', code)
     .limit(1);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  if (((kids ?? []) as unknown[]).length > 0) {
+  if (whyNotPostable({ hasChildren: ((kids ?? []) as unknown[]).length > 0 })) {
     return c.json({
       error: 'not_a_leaf_account',
       message: `${code} is a header with sub-accounts (retired ones count too) — 父户不记账: pick the specific sub-account instead.`,
@@ -358,10 +378,11 @@ export const requireLeafAccount = async (
     .maybeSingle();
   if (selfRes.error) return c.json({ error: 'load_failed', reason: selfRes.error.message }, 500);
   const special = (selfRes.data as { special_type?: string | null } | null)?.special_type ?? null;
-  if (special && CONTROL_SPECIALS.has(special)) {
+  const blocked = whyNotPostable({ hasChildren: false, specialType: special });
+  if (blocked?.kind === 'control') {
     return c.json({
       error: 'control_account_locked',
-      message: `${code} is a control account (${special}) — 由模块自动过账 (AR/AP/stock post through their own flows); pick an ordinary account instead.`,
+      message: `${code} is a control account (${blocked.label}) — 由模块自动过账 (AR/AP/stock post through their own flows); pick an ordinary account instead.`,
     }, 400);
   }
   return null;
