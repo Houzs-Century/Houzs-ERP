@@ -33,6 +33,7 @@ import { companyCodeById, docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-n
 import { docPrefixForCode } from '../scm/lib/companyScope';
 import { fmtSen } from '../scm/shared/format';
 import { resolveRoles } from './rules';
+import { moveReceipts, transferMoveFor } from './receipt-rebank';
 
 export const CASH_SERIES_LETTER = 'C';
 /** A receipt kept on file but no longer the payment's — see the header. Every
@@ -155,11 +156,11 @@ export async function formaliseReceipt(
   input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null },
 ): Promise<{ ok: true; orNumber: string; already?: boolean } | { ok: false; status: string; reason: string }> {
   const { data: rRaw, error: rErr } = await sb.from('acc_official_receipts')
-    .select('id, or_number, status, company_id, paid_at')
+    .select('id, or_number, status, company_id, paid_at, method, payment_source, payment_id')
     .eq('id', input.receiptId).eq('company_id', input.companyId).maybeSingle();
   if (rErr) return { ok: false, status: 'load_failed', reason: rErr.message };
   if (!rRaw) return { ok: false, status: 'not_found', reason: `receipt ${input.receiptId} not found` };
-  const r = rRaw as { id: number; or_number: string; status: string; paid_at: string | null };
+  const r = rRaw as { id: number; or_number: string; status: string; paid_at: string | null; method: string | null; payment_source: string | null; payment_id: string | null };
   if (r.status === 'FORMAL') return { ok: true, orNumber: r.or_number, already: true };
   if (r.status === CANCELLED) {
     return { ok: false, status: 'cancelled', reason: `${r.or_number} was cancelled — its payment changed or was removed. Confirm the payment's current receipt instead.` };
@@ -173,6 +174,33 @@ export async function formaliseReceipt(
       status: 'bank_letter_missing',
       reason: `${input.accountCode} has no series letter yet — set one on the Voucher numbering card (Reconciliation setup), then confirm again.`,
     };
+  }
+
+  /* THE MONEY GOES WHERE THE RECEIPT SAYS (Conts #476). A transfer was booked
+     on the default bank when it was recorded; confirmed into another bank, its
+     entry moves there first — reversed on its own date, booked again on the
+     chosen bank — or that bank's reconciliation never shows the money. A move
+     the bank side forbids (matched on a statement, a closed month) refuses the
+     confirm, so the receipt never names a bank the books disagree with. */
+  if (r.method === 'transfer' && (r.payment_source === 'SOPAY' || r.payment_source === 'SIPAY') && r.payment_id) {
+    const item = { source: r.payment_source, paymentId: r.payment_id } as const;
+    const plan = await transferMoveFor(sb, input.companyId, item, input.accountCode);
+    if (!plan.ok) return { ok: false, status: 'load_failed', reason: plan.reason };
+    if (plan.move?.blocked) {
+      return {
+        ok: false,
+        status: 'payment_reconciled',
+        reason: `${r.or_number}'s payment is booked on ${plan.move.fromAccount} and cannot move to ${input.accountCode}: ${plan.move.blocked}.`,
+      };
+    }
+    if (plan.move) {
+      const moved = await moveReceipts(sb, input.companyId, [item], input.accountCode);
+      if (!moved.ok) return { ok: false, status: 'load_failed', reason: moved.reason };
+      const out = moved.results[0];
+      if (!out || out.status !== 'moved') {
+        return { ok: false, status: 'journal_not_moved', reason: `${r.or_number}'s payment entry did not move to ${input.accountCode}: ${out?.reason ?? 'no result'}` };
+      }
+    }
   }
 
   const digits = await digitsOf(sb, input.companyId);

@@ -101,7 +101,9 @@ const paymentDate = (paidAt: string | null): string | null => {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
 };
 
-export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean } = {}): Promise<PostPaymentResult> {
+/** `bankAccountCode`: book a transfer into this bank rather than the company's
+    default — the bank Finance confirmed the money landed in (Conts #476). */
+export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean; bankAccountCode?: string | null } = {}): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
   /* Money moved from a cancelled order is not money received: it books the
      transfer between the two customers' AR, never a bank (docs/bugs/0927). */
@@ -148,6 +150,7 @@ export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
       transitAccountCode: transit,
       customerCode,
       customerName,
+      bankAccountCode: opts.bankAccountCode ?? null,
     }, amountSen),
   };
   /* DRY RUN (docs/bugs/0652): "would this post, and if not, why?" — answered
@@ -257,7 +260,7 @@ export type SiPaymentRow = {
   company_id: number | null;
 };
 
-export async function postSiPayment(sb: any, p: SiPaymentRow): Promise<PostPaymentResult> {
+export async function postSiPayment(sb: any, p: SiPaymentRow, opts: { bankAccountCode?: string | null } = {}): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
   const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
@@ -294,6 +297,7 @@ export async function postSiPayment(sb: any, p: SiPaymentRow): Promise<PostPayme
       transitAccountCode: transit,
       customerCode: inv.debtor_code ?? null,
       customerName: inv.debtor_name ?? null,
+      bankAccountCode: opts.bankAccountCode ?? null,
     }, amountSen),
   });
   if (r.ok) {
