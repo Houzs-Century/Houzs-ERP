@@ -25,7 +25,7 @@ await sql.begin('READ ONLY', async (tx) => {
        FROM scm.payment_vouchers v
       WHERE v.status = 'DRAFT' AND v.submitted_at IS NOT NULL AND v.approved_at IS NULL)
     UNION ALL
-    (SELECT * FROM (
+    (SELECT x.company_id, x.id, x.pv_number, x.payee_name, x.purpose, x.notes, x.bill_ref, x.status, x.waiting FROM (
        SELECT v.company_id, v.id::text AS id, v.pv_number, v.payee_name, v.purpose, v.notes, v.bill_ref, v.status, false AS waiting,
               row_number() OVER (PARTITION BY v.company_id ORDER BY v.approved_at DESC) AS rn
          FROM scm.payment_vouchers v WHERE v.status = 'POSTED' AND v.approved_at IS NOT NULL) x
