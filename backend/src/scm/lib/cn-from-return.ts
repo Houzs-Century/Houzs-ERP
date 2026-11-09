@@ -14,6 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout scm/lib */
 import { chunkIn } from './paginate-all';
+import { fmtSen } from '../shared/format';
 
 type Row = Record<string, any>;
 
@@ -115,7 +116,7 @@ export function checkReturnLines(priced: readonly PricedReturnLine[], asked: rea
     }
     const cap = lineCapSen(p.unitSen, a.qty);
     if (a.amountSen > cap) {
-      return { error: 'over_invoice_price', message: `${at}: ${name} — ${a.qty} unit(s) were invoiced at ${(cap / 100).toFixed(2)} in all; the credit cannot be more (asked ${(a.amountSen / 100).toFixed(2)}).` };
+      return { error: 'over_invoice_price', message: `${at}: ${name} — ${a.qty} unit(s) were invoiced at ${fmtSen(cap)} in all; the credit cannot be more (asked ${fmtSen(a.amountSen)}).` };
     }
   }
   return null;
