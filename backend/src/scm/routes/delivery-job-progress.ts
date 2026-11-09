@@ -22,7 +22,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, allowedCompaniesSql, allowedCompanyIds } from '../lib/companyScope';
 import { claimPodPhotos } from '../lib/pod-photo-claim';
-import { ASSR_LEG_BY_STOP } from './delivery-pod-context';
+import { ASSR_LEG_BY_STOP, podPhotoResponse } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
@@ -484,9 +484,7 @@ export async function streamPhoto(c: Ctx, key: string | undefined): Promise<Resp
   if (!key) return c.json({ error: 'not_found', reason: 'No such photo.' }, 404);
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: 'not_found', reason: 'The photo file is missing from storage.' }, 404);
-  return new Response(obj.body, {
-    headers: { 'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg', 'cache-control': 'private, max-age=300' },
-  });
+  return podPhotoResponse(obj);
 }
 
 /* The delivery-run POD of a stock transfer, for the Stock Transfer page (it sits

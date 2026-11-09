@@ -1453,7 +1453,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       {/* Parts table */}
       {(wo.photoRefs?.length ?? 0) > 0 && (
         <div className="mt-3">
-          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} />
+          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} title={wo.woNo ?? `Work order ${wo.id}`} />
         </div>
       )}
       {wo.parts.length > 0 && (
