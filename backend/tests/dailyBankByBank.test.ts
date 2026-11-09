@@ -55,7 +55,7 @@ const voucher = (over: Row): Row => ({
   submitted_at: '2026-09-18T01:00:00Z', checked_at: '2026-09-18T02:00:00Z', approved_at: null, ...over,
 });
 
-function harness() {
+function harness(extraVouchers: Row[] = []) {
   const sb = fakeSb({
     v_gl_entries: LEDGER.map((r) => ({ ...r })),
     accounts: [
@@ -76,6 +76,7 @@ function harness() {
       voucher({ id: 'pv-2', pv_number: 'HPV-050', payee_name: 'PREPARED ONLY', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 9_999, checked_at: null }),
       voucher({ id: 'pv-3', pv_number: 'HPV-051', payee_name: 'CHECKED TOMORROW', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 8_888, checked_at: '2026-09-30T02:00:00Z' }),
       voucher({ id: 'pv-4', pv_number: 'PV-0432', payee_name: 'Tan Yong Hong', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 44_264, status: 'POSTED', approved_at: `${DAY}T03:00:00Z` }),
+      ...extraVouchers,
     ],
     acc_official_receipts: [
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'pay-1', or_number: '2990-MOR-2609-009', doc_no: 'SO-1', status: 'FORMAL' },
@@ -133,5 +134,15 @@ describe('GET /accounting/daily-bank — by bank', () => {
     /* The generic clearing account names no bank. */
     expect(b.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['未标银行', 3_365]]);
     expect(b.pendingApprovalSen).toBe(1_083_600);
+  });
+
+  test('pending is judged by the MALAYSIAN day the voucher was checked: 23:59 counts, 00:30 the next morning does not', async () => {
+    const res = await harness([
+      voucher({ id: 'pv-5', pv_number: 'HPV-060', payee_name: 'LATE EVENING', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 100, checked_at: '2026-09-29T15:59:00Z' }),
+      voucher({ id: 'pv-6', pv_number: 'HPV-061', payee_name: 'AFTER MIDNIGHT', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 200, checked_at: '2026-09-29T16:30:00Z' }),
+    ]).request(`/accounting/daily-bank?date=${DAY}`);
+    expect(res.status, await res.clone().text()).toBe(200);
+    const hlbb = (await res.json() as Board).blocks.find((x) => x.accountCode === '310-0020')!;
+    expect(hlbb.pending.map((p) => p.pvNumber).sort()).toEqual(['HPV-023', 'HPV-060']);
   });
 });

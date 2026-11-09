@@ -31,6 +31,7 @@
  * purchase order. All four of these are MYR at rate 1.000000 in the book; the
  * ERP side is printed so the two can be compared rather than assumed equal.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;

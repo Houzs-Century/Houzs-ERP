@@ -37,6 +37,7 @@
 // No writes, no DDL. Exits 0 for every legitimate answer, including "no
 // disagreement" — a probe that exits non-zero on a finding cannot be dispatched
 // twice without reading the exit code as a failure.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

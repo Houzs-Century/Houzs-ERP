@@ -41,10 +41,39 @@ export type CreditNote = {
   depositPaper?: DepositPaperKind | null;
   /** A supplier note's control, by the supplier code: AP = 400, AP_OTHER = 405. */
   controlRole?: 'AP' | 'AP_OTHER';
+  /** The delivery return a customer note answers (backlog A1). */
+  delivery_return_id?: string | null;
 };
 /** project_id / projectId: the event the line's money is for (owner 2026-10-22). */
-export type CreditNoteLine = { id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null };
-export type CreditNoteLineInput = { description?: string | null; accountCode?: string | null; amountSen: number; projectId?: number | null };
+export type CreditNoteLine = {
+  id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null;
+  /** The delivery-return line it credits and its units (backlog A1). */
+  delivery_return_item_id?: string | null; qty?: number | null;
+};
+export type CreditNoteLineInput = { description?: string | null; accountCode?: string | null; amountSen: number; projectId?: number | null; deliveryReturnItemId?: string; qty?: number };
+
+/** GET /credit-notes/from-return/:id — a new customer note's starting point from a delivery return. */
+export type ReturnCreditLine = {
+  returnItemId: string; itemCode: string | null; description: string | null;
+  qtyReturned: number; creditedQty: number; remainingQty: number;
+  /** Per-unit credit off the invoice (unrounded); null = never invoiced. */
+  unitSen: number | null; invoiceIds: string[]; capSen: number | null;
+};
+export type ReturnCreditPrefill = {
+  deliveryReturn: { id: string; returnNumber: string; status: string; doDocNo: string | null; customer: string | null };
+  soDocNo: string | null;
+  invoice: { id: string; number: string } | null;
+  lines: ReturnCreditLine[];
+  notes: Array<{ id: string; number: string; status: NoteStatus; totalSen: number }>;
+  state: 'NOT_INVOICED' | 'AWAITING' | 'DRAFTED' | 'ISSUED';
+};
+export const useCreditNoteFromReturn = (returnId: string | null) => useQuery({
+  queryKey: [KEY, 'from-return', returnId],
+  enabled: returnId != null && returnId !== '',
+  queryFn: () => authedFetch<ReturnCreditPrefill>(`/credit-notes/from-return/${encodeURIComponent(String(returnId))}`),
+  staleTime: 0,
+  retry: retryUnlessClientError,
+});
 export type CreditNoteCreate = {
   kind: NoteKind; noteDate: string; reason?: string | null; sourceDocNo?: string | null; notes?: string | null;
   soDocNo?: string | null; salesInvoiceId?: string | null; partyName?: string | null; partyCode?: string | null;
@@ -92,6 +121,7 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   for (const key of [
     KEY, 'journal-entries', 'gl-entries', 'other-debtors', 'other-debtor-detail', 'ar-invoices', 'ar-bill', 'finance-todo',
     'sales-invoices', 'sales-invoices-paged', 'sales-invoice-detail', 'outstanding', 'outstanding-summary',
+    'delivery-return-detail', 'delivery-returns',
   ]) {
     void qc.invalidateQueries({ queryKey: [key] });
   }

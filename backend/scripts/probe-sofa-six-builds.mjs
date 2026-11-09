@@ -36,6 +36,7 @@
  * afterwards because both names look plausible. Every row below is printed with
  * `linked_ac_dtlkey` beside it so identity can be checked rather than order.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -150,7 +151,7 @@ async function main() {
     let soMoney = 0;
     for (const r of sofa) {
       soMoney += Number(r.unit_price_sen || 0) * Number(r.qty || 0);
-      p(`    line ${r.line_no} id=${r.id} code=${j(r.item_code)} qty=${r.qty} unit=${r.unit_price_sen} total=${r.total_sen}`);
+      p(`    line ${r.line_no} id=${r.id} code=${j(r.item_code)} qty=${r.qty} unit_sen=${r.unit_price_sen} total_sen=${r.total_sen}`);
       p(`      dtlkey=${j(r.linked_ac_dtlkey ?? null)} seat=${j(r.variants?.seatHeight ?? r.variants?.depth ?? null)}`);
       p(`      description2=${j(r.description2)}`);
       p(`      variants=${j(r.variants)}`);
@@ -196,7 +197,7 @@ async function main() {
       let poMoney = 0;
       for (const r of pr) {
         poMoney += Number(r.unit_price_sen || 0) * Number(r.qty || 0);
-        p(`    id=${r.id} code=${j(r.item_code)} qty=${r.qty} unit=${r.unit_price_sen} line_total=${r.line_total_sen} received=${r.received_qty}`);
+        p(`    id=${r.id} code=${j(r.item_code)} qty=${r.qty} unit_sen=${r.unit_price_sen} line_total_sen=${r.line_total_sen} received=${r.received_qty}`);
         p(`      dtlkey=${j(r.linked_ac_dtlkey ?? null)} so_item_id=${j(r.so_item_id ?? null)} seat=${j(r.variants?.seatHeight ?? r.variants?.depth ?? null)}`);
         p(`      description2=${j(r.description2)}`);
         p(`      variants=${j(r.variants)}`);

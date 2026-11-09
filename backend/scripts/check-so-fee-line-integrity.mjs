@@ -21,6 +21,7 @@
 // legitimate answer — clean AND dirty are both answers; only an unreachable
 // database or a query error exits non-zero. Manual trigger only (see
 // .github/workflows/so-fee-line-integrity.yml).
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

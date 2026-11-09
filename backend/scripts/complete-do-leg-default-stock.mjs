@@ -33,6 +33,7 @@
 // RUN. DRY-RUN (default): DATABASE_URL only, reports the plan, writes nothing.
 //   APPLY: APPLY=1 CONFIRM="COMPLETE THE FIVE STRANDED LINES".
 //   Under tsx (the TS imports): npx tsx scripts/complete-do-leg-default-stock.mjs
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

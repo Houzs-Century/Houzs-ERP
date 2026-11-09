@@ -70,6 +70,7 @@
 //
 //   MODE=apply CONFIRM="ALIGN THE LAST THREE TO THE BOOK" \
 //     node scripts/align-last-three-cutover-docs.mjs
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;

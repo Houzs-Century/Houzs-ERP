@@ -74,6 +74,7 @@
  *
  * RE-RUN: read-only, so a second run answers again from current state.
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';

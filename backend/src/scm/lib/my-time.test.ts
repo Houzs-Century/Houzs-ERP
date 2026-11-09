@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { todayMyt, mytDateOf } from "./my-time";
+import { todayMyt, mytDateOf, mytDayWindow } from "./my-time";
 
 // The whole point of todayMyt() is the 00:00-08:00 MYT window, where the UTC
 // calendar date is still YESTERDAY. Every assertion below pins a moment inside
@@ -81,5 +81,28 @@ describe("mytDateOf", () => {
     const iso = "2026-07-16T17:00:00Z";
     expect(mytDateOf(new Date(iso))).toBe("2026-07-17");
     expect(mytDateOf(new Date(iso).getTime())).toBe("2026-07-17");
+  });
+});
+
+describe("mytDayWindow — a TIMESTAMPTZ filter by Malaysian calendar day", () => {
+  it("runs from 00:00 MYT on `from` to 00:00 MYT the day after `to`", () => {
+    expect(mytDayWindow("2026-11-10", "2026-11-10")).toEqual({
+      startUtc: "2026-11-09T16:00:00.000Z",
+      endUtc: "2026-11-10T16:00:00.000Z",
+    });
+    expect(mytDayWindow("2026-11-01", "2026-11-30")).toEqual({
+      startUtc: "2026-10-31T16:00:00.000Z",
+      endUtc: "2026-11-30T16:00:00.000Z",
+    });
+  });
+
+  it("leaves an absent bound open", () => {
+    expect(mytDayWindow(undefined, "2026-11-10")).toEqual({ startUtc: null, endUtc: "2026-11-10T16:00:00.000Z" });
+    expect(mytDayWindow("", null)).toEqual({ startUtc: null, endUtc: null });
+  });
+
+  it("refuses a bound that is not YYYY-MM-DD instead of dropping the filter", () => {
+    expect(mytDayWindow("10/11/2026", null)).toBeNull();
+    expect(mytDayWindow(null, "2026-11-10T23:59:59Z")).toBeNull();
   });
 });

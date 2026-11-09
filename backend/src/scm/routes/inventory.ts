@@ -50,6 +50,7 @@ import type { Env, Variables } from '../env';
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { isStockBucket } from '../lib/stock-bucket';
+import { mytDayWindow } from '../lib/my-time';
 import { NETTING_EMBED, deliveredReturnedBySoItem, nettingFromEmbedded, type EmbeddedDemandLine } from '../lib/inventory-netting';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
@@ -994,6 +995,8 @@ inventory.get('/movements', async (c) => {
   const dateFrom = c.req.query('dateFrom');
   const dateTo = c.req.query('dateTo');
   const limit = Math.min(500, Number(c.req.query('limit') ?? 200));
+  const win = mytDayWindow(dateFrom, dateTo);
+  if (!win) return c.json({ error: 'invalid_date', message: 'Dates must be YYYY-MM-DD.' }, 400);
 
   let q = sb.from('inventory_movements')
     .select('id, movement_type, warehouse_id, item_code, product_name, qty, unit_cost_sen, total_cost_sen, source_doc_type, source_doc_id, source_doc_no, reason_code, notes, performed_by, created_at')
@@ -1002,8 +1005,8 @@ inventory.get('/movements', async (c) => {
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
   if (itemCode) q = q.eq('item_code', itemCode);
   if (docType) q = q.eq('source_doc_type', docType);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59Z`);
+  if (win.startUtc) q = q.gte('created_at', win.startUtc);
+  if (win.endUtc) q = q.lt('created_at', win.endUtc);
   q = scopeToCompany(q, c); // stock ledger is per-company — don't leak the other company's movements.
 
   const { data, error } = await q;
@@ -1179,6 +1182,8 @@ inventory.get('/cogs', async (c) => {
   const itemCode = c.req.query('itemCode');
   const from = c.req.query('from');
   const to = c.req.query('to');
+  const win = mytDayWindow(from, to);
+  if (!win) return c.json({ error: 'invalid_date', message: 'Dates must be YYYY-MM-DD.' }, 400);
 
   // PostgREST's 1000-row cap silently truncated the COGS export — page through
   // so a long date range exports every consumption row, not just the first 1000.
@@ -1187,8 +1192,8 @@ inventory.get('/cogs', async (c) => {
     q = scopeToCompany(q, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (itemCode) q = q.eq('item_code', itemCode);
-    if (from) q = q.gte('consumed_at', from);
-    if (to)   q = q.lte('consumed_at', `${to}T23:59:59Z`);
+    if (win.startUtc) q = q.gte('consumed_at', win.startUtc);
+    if (win.endUtc) q = q.lt('consumed_at', win.endUtc);
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

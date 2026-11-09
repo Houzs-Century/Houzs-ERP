@@ -42,6 +42,7 @@
 // answer; the output IS the answer. Exit non-zero only if the DB is unreachable.
 //   DATABASE_URL  required
 //   SO_DOCS       comma-separated doc_no list (default the two restored docs)
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

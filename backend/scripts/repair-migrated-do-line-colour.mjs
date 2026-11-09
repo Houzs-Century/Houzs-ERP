@@ -65,6 +65,7 @@
  * value written is what the sales-order line already holds, so a second run
  * finds nothing to do and prints zero candidates.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

@@ -28,7 +28,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
-import { todayMyt } from '../lib/my-time';
+import { mytDayWindow, todayMyt } from '../lib/my-time';
 import { buildSeedRackLabels } from '../shared/rack-labels';
 import { siblingWarehouses, type WarehouseRef } from '../lib/rack-sibling-warehouses';
 
@@ -719,6 +719,8 @@ warehouse.get('/movements', async (c) => {
   const to = c.req.query('to');
   const warehouseId = c.req.query('warehouseId');
   const limit = Math.min(1000, Number(c.req.query('limit') ?? 500));
+  const win = mytDayWindow(from, to);
+  if (!win) return c.json({ error: 'invalid_date', message: 'Dates must be YYYY-MM-DD.' }, 400);
 
   let q = scopeToCompany(
     sb.from('warehouse_rack_movements').select(MOVE_COLS),
@@ -728,8 +730,8 @@ warehouse.get('/movements', async (c) => {
     .limit(limit);
   if (type) q = q.eq('movement_type', type);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-  if (from) q = q.gte('created_at', from);
-  if (to)   q = q.lte('created_at', `${to}T23:59:59Z`);
+  if (win.startUtc) q = q.gte('created_at', win.startUtc);
+  if (win.endUtc) q = q.lt('created_at', win.endUtc);
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

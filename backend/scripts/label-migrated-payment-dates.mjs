@@ -46,6 +46,7 @@
  * RE-RUN: idempotent and self-disarming.  A labelled row no longer matches the
  * selection, so a second run reports nothing to do and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;

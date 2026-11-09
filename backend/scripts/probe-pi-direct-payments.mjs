@@ -26,6 +26,7 @@
  * RE-RUN: safe and idempotent — it is a read. The route refuses every call
  * since this fix, so a second run should find no row newer than the deploy.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });

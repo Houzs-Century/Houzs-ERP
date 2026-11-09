@@ -81,6 +81,7 @@
  * settle-collected never appends a second payment row to an order whose live
  * balance is already zero.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
