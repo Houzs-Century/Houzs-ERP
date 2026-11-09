@@ -154,6 +154,37 @@ describe('postSiPayment — the invoice-side twin', () => {
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SIPAY', source_doc_no: 'sp-1' });
   });
 
+  /* Conts #395: a company that keeps no debtor codes (2990) booked every
+     invoice payment under no customer — the AR leg must name the customer the
+     invoice's own revenue entry names: the order's customer_id. */
+  it('an invoice with no debtor code books the payment under its order’s customer', async () => {
+    const sb = fakeSb({
+      accounts: CHART, acc_account_roles: [], acc_acquirers: [],
+      sales_invoices: [{ ...SI, debtor_code: null, so_doc_no: 'SO-2608-001' }],
+      mfg_sales_orders: [
+        { doc_no: 'SO-2608-001', company_id: 2, customer_id: 'other-co-cust', debtor_code: null },
+        { doc_no: 'SO-2608-001', company_id: 1, customer_id: 'cust-1', debtor_code: null },
+      ],
+      journal_entries: [], journal_entry_lines: [],
+    });
+    const out = await postSiPayment(sb, SIPAY as never);
+    expect(out).toMatchObject({ ok: true, status: 'posted' });
+    const ar = sb.tables.journal_entry_lines.find((l) => Number(l.credit_sen) > 0);
+    expect(ar).toMatchObject({ party_type: 'CUSTOMER', party_code: 'cust-1' });
+  });
+
+  it('a kept debtor code still wins over the order’s customer', async () => {
+    const sb = fakeSb({
+      accounts: CHART, acc_account_roles: [], acc_acquirers: [],
+      sales_invoices: [{ ...SI, so_doc_no: 'SO-2608-001' }],
+      mfg_sales_orders: [{ doc_no: 'SO-2608-001', company_id: 1, customer_id: 'cust-1', debtor_code: null }],
+      journal_entries: [], journal_entry_lines: [],
+    });
+    await postSiPayment(sb, SIPAY as never);
+    const ar = sb.tables.journal_entry_lines.find((l) => Number(l.credit_sen) > 0);
+    expect(ar).toMatchObject({ party_code: 'C1' });
+  });
+
   it('a MIGRATED invoice books nothing — its receivable lives in AutoCount', async () => {
     const sb = siWorld({ ...SI, migrated_no_stock: true });
     const out = await postSiPayment(sb, SIPAY as never);

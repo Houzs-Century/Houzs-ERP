@@ -16,7 +16,8 @@ export function PvPayToFields({ value, onChange }: { value: PayTo; onChange: (ne
       {FIELDS.map((f) => (
         <label key={f.key} className={styles.field}>
           <span className={styles.fieldLabel}>{f.label}</span>
-          <input type="text" className={styles.fieldInput} value={value[f.key]} aria-label={f.label}
+          {/* The bank and the account name are kept in upper case (owner 2026-11-09); the number is digits. */}
+          <input type="text" className={styles.fieldInput} value={value[f.key]} aria-label={f.label} data-upper={f.key === 'accountNo' ? undefined : ''}
             placeholder={f.placeholder} maxLength={120}
             onChange={(e) => onChange({ ...value, [f.key]: e.target.value })} />
         </label>
