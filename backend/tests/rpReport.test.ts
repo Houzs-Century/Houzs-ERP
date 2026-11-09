@@ -169,7 +169,8 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
     /* July's swipe, no report claims it: Card - not matched yet, on the debtor's row. */
     expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
-    expect(cell(july.receipts, '300-0000:BAL:CARD-UNMATCHED', 'CARD')).toBe(30000);
+    /* SO-2 paid in full by that one swipe: a Deposit (owner 2026-11-09: 一次性收完 = deposit). */
+    expect(cell(july.receipts, '300-0000:DEP:CARD-UNMATCHED', 'CARD')).toBe(30000);
     expect(cell(july.payments, '900-T009', 'CARD')).toBe(300);
     /* The memo still reads: July's swipe (the fee is the settlement module's own, not a taking)
        and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee = the Card c/f. */
@@ -235,7 +236,8 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(r.layout.inSen - r.layout.outSen).toBe(r.totals.receiptsTotalSen - r.totals.paymentsTotalSen);
     const [receipts, payments] = r.layout.tree as [Laid, Laid];
     expect(receipts.children.map((n) => [n.label, n.amountSen, n.pct, n.children.map((k) => [k.key, k.amountSen, k.pct])])).toEqual([
-      ['CURRENT ASSETS', 80000, 100, [[undefined, 50000, 62.5], [undefined, 30000, 37.5]]],
+      /* Both July payments are Deposits: SO-1 is not paid in full, SO-2 was paid in full on its first day. */
+      ['CURRENT ASSETS', 80000, 100, [[undefined, 80000, 100]]],
     ]);
     const byLabel = (label: string) => payments.children.find((n) => n.label === label)!;
     expect(payments.children.some((n) => n.children.some((k) => String(k.key).startsWith('XFER:')))).toBe(false);

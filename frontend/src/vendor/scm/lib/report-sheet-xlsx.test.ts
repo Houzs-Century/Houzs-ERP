@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import type { ReportSheet } from './report-sheet';
-import { AMOUNT_FORMAT, PCT_FORMAT, columnWidths, rowCells, sheetMatrix, sheetName } from './report-sheet-xlsx';
+import { AMOUNT_FORMAT, PCT_FORMAT, columnWidths, headRowsOf, rowCells, sheetMatrix, sheetName } from './report-sheet-xlsx';
 
 const sheet: ReportSheet = {
   title: 'P&L',
@@ -86,5 +86,47 @@ describe('sheetMatrix', () => {
     expect(grid[11]).toEqual(['NET PROFIT', -415, -0.069]);
     expect(ws.B9!.z).toBe(AMOUNT_FORMAT);
     expect(ws.C9!.z).toBe(PCT_FORMAT);
+  });
+});
+
+describe('columns under a heading — the Cash Flow\'s Settlement | Deposit (owner 2026-11-09)', () => {
+  const split: ReportSheet = {
+    title: 'Cash Flow',
+    subtitle: 'Settlement / Deposit',
+    meta: [],
+    tables: [{
+      columns: [
+        { label: 'Total', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
+        { label: 'Settlement', kind: 'amount', group: 'Oct 2026' }, { label: 'Deposit', kind: 'amount', group: 'Oct 2026' },
+      ],
+      rows: [
+        { kind: 'row', depth: 1, label: '300-0000', cells: [90_000, 100, 50_000, 40_000] },
+        { kind: 'row', depth: 1, label: 'TAXATION', cells: [5_000, 2.5, 5_000, null], spans: { 2: 2 } },
+      ],
+    }],
+  };
+
+  it('heads with two rows — the month over its two columns, the rest standing two rows tall — and merges a cell across', () => {
+    const m = sheetMatrix(split);
+    expect(m[3]!.map((c) => c && [c.value, c.span, c.rowSpan])).toEqual([['', undefined, 2], ['Total', undefined, 2], ['%', undefined, 2], ['Oct 2026', 2, undefined], null]);
+    expect(m[3]![3]).toMatchObject({ align: 'center' });
+    expect(m[4]!.map((c) => c?.value ?? null)).toEqual([null, null, null, 'Settlement', 'Deposit']);
+    expect(m[6]![3]).toMatchObject({ value: 50, span: 2, align: 'center' });
+    expect(m[6]![4]).toBeNull();
+    expect(headRowsOf(split)).toBe(2);
+    expect(headRowsOf(sheet)).toBe(1);
+  });
+
+  it('writes a workbook Excel reads back with the heading merged over its columns', async () => {
+    const writeXlsxFile = (await import('write-excel-file')).default;
+    const blob = await writeXlsxFile(sheetMatrix(split), { sheet: sheetName(split.title), columns: columnWidths(split), stickyRowsCount: 5, stickyColumnsCount: 1 });
+    const wb = read(new Uint8Array(await blob.arrayBuffer()), { type: 'array' });
+    const ws = wb.Sheets['Cash Flow']!;
+    const merges = (ws['!merges'] ?? []).map((r) => utils.encode_range(r));
+    expect(merges).toEqual(expect.arrayContaining(['A4:A5', 'B4:B5', 'D4:E4', 'D7:E7']));
+    const grid = utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true });
+    expect(grid[3]!.slice(1, 4)).toEqual(['Total', '%', 'Oct 2026']);
+    expect(grid[4]!.slice(3)).toEqual(['Settlement', 'Deposit']);
+    expect(grid[6]).toEqual(['TAXATION', 50, 0.025, 50]);
   });
 });
