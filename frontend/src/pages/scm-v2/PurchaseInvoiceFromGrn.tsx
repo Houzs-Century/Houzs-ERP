@@ -32,7 +32,7 @@ import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { filterOutstandingGrnLines } from '../../vendor/scm/lib/outstanding-grn-search';
+import { filterOutstandingGrnLines, notePoLabel } from '../../vendor/scm/lib/outstanding-grn-search';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
@@ -359,7 +359,7 @@ export const PurchaseInvoiceFromGrn = () => {
                   </label>
                   <span style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
                     {[meta.supplierName || meta.supplierCode,
-                      meta.poDocNo ? `PO ${meta.poDocNo}` : null,
+                      notePoLabel(lines),
                       `Received ${fmtDateOrDash(meta.receivedAt)}`,
                     ].filter(Boolean).join(' · ')}
                   </span>
