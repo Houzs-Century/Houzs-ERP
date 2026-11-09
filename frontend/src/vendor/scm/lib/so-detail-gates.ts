@@ -146,8 +146,8 @@ export function migratedReadonlyReason(header: SoDetailGateHeader | null | undef
    deleted line was unreachable in production, not a second opinion.
 
    Owner 2026-08-12 — the same soft lock now has a SECOND road: `po_locked`, set
-   by the server when a live PO already claims one of this SO's lines (2990
-   only). It short-circuits the date test entirely, including the DRAFT /
+   by the server when a live PO already claims one of this SO's lines (every
+   company since 2026-11-09). It short-circuits the date test entirely, including the DRAFT /
    CANCELLED exemptions below — a DRAFT SO cannot have a PO raised against it,
    and a CANCELLED one releases via cancelling the PO, not by editing the SO. So
    there is no state where po_locked is true and the date exemptions should win.
