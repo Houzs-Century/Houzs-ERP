@@ -18,6 +18,11 @@
 // groups sit last, then Cash surplus / (deficit), Balance b/f and Balance c/f,
 // each split into the banks and the card money not yet in the bank (the Card
 // column: a swipe is Cash In on its own day, owner 2026-11-05).
+// Settlement / Deposit (owner 2026-11-09, his Receipt & Payment workbook): the By
+// month reads with each month as two columns, Settlement | Deposit, as the layout
+// splits each group and each customer's payment goes by its own kind (a payment
+// that completes an order on a later day than the first one is the Settlement);
+// a line not split prints one figure across its month (reports/cashFlowSplit).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -42,6 +47,7 @@ import {
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
 import { MONTH_COUNTS, columnsSpan, monthColumns, monthName, type StatementColumn, type StatementLine } from './reports/statementColumns';
+import { splitColumns, splitLines } from './reports/cashFlowSplit';
 import {
   REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
   type ChartBarSeries, type ChartMonth,
@@ -51,10 +57,11 @@ import type { DashboardPeriod } from '../../vendor/scm/lib/dashboard-queries';
 import st from './reports/Statement.module.css';
 import s from './ReceiptsPayments.module.css';
 
-type CashView = 'total' | 'month';
+type CashView = 'total' | 'month' | 'split';
 const VIEWS: ReadonlyArray<{ value: CashView; label: string }> = [
   { value: 'total', label: 'Total' },
   { value: 'month', label: 'By month' },
+  { value: 'split', label: 'Settlement / Deposit' },
 ];
 const ROWS: ReadonlyArray<{ value: 'accounts' | 'party'; label: string }> = [
   { value: 'accounts', label: 'By account' },
@@ -172,9 +179,11 @@ export const ReceiptsPaymentsTab = () => {
   const accountsQ = useAccounts();
   const money = useMemo(() => (accountsQ.data?.accounts ?? []).filter((a) => a.acc_money === true && a.is_active), [accountsQ.data]);
 
-  /* Total: one read, as today. By month: the same endpoint once per column. */
+  /* Total: one read, as today. By month and Settlement / Deposit: the same endpoint once per month. */
+  const monthly = view !== 'total';
   const q = useRpReport(r.usable && view === 'total' ? r.from : '', r.usable && view === 'total' ? r.to : '', [], byParty);
-  const columns = useMemo(() => (r.usable && view === 'month' ? monthColumns(r.to, months, r.today, true) : []), [r.usable, view, r.to, months, r.today]);
+  const columns = useMemo(() => (r.usable && monthly ? monthColumns(r.to, months, r.today, true) : []), [r.usable, monthly, r.to, months, r.today]);
+  const splitCols = useMemo(() => (view === 'split' ? splitColumns(columns) : []), [view, columns]);
   const monthReads = useQueries({
     queries: columns.map((c) => ({
       queryKey: ['report-rp', c.from, c.to, '', byParty],
@@ -191,8 +200,10 @@ export const ReceiptsPaymentsTab = () => {
     ...codes.map((code): StatementColumn => ({ key: code, label: code, sub: report?.columns.find((c) => c.code === code)?.name ?? '', kind: 'period', from: r.from, to: r.to, pct: false })),
     { key: 'total', label: 'Total', sub: 'Every bank and cash account', kind: 'total', from: r.from, to: r.to, pct: true },
   ], [codes, report, r.from, r.to]);
-  const shownColumns = view === 'total' ? totalColumns : columns;
-  const lines = view === 'total' ? (report ? cashFlowLines(report, codes) : []) : cashFlowMonthLines(columns, byKey);
+  const shownColumns = view === 'total' ? totalColumns : view === 'split' ? splitCols : columns;
+  const lines = view === 'total'
+    ? (report ? cashFlowLines(report, codes) : [])
+    : view === 'split' ? splitLines(cashFlowMonthLines(columns, byKey), columns) : cashFlowMonthLines(columns, byKey);
   const shown = linesVisible(lines, level, tree.open);
   const depth = lines.reduce((d, l) => Math.max(d, l.depth), 0);
   const loading = view === 'total' ? q.isLoading : monthReads.some((x) => x.isLoading);
@@ -200,18 +211,21 @@ export const ReceiptsPaymentsTab = () => {
   const head = view === 'total' ? report : byKey.total;
   const span = columnsSpan(shownColumns);
   const rowsWord = byParty ? 'by debtor / creditor' : "by the owner's accounts";
-  const periodText = view === 'month' ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
+  const periodText = monthly ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const layoutWord = head ? (head.layout.stored ? ' · on the saved layout' : " · on the chart's own tree") : '';
-  useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${layoutWord}` : 'Pick dates.');
+  const splitWord = view === 'split' ? ' · each month Settlement | Deposit as the layout splits each group' : '';
+  useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${layoutWord}` : 'Pick dates.');
 
   /* The entries behind a figure: the rows under it (one, or a whole category's), the column or the total. */
   const entriesFor = (l: StatementLine, col: StatementColumn | null): { entries: DrillEntry[]; label: string } => {
     /* Total: the one read, an account's column filtering by account. By month:
-       the column's own read — the name opens the Total column's, the whole span. */
-    const src = view === 'total' ? report : byKey[col?.key ?? 'total'];
-    if (l.id === AUTOCOUNT_LINE_ID) return { entries: (src?.autoCount?.entries ?? []).map((e, idx) => ({ ...e, idx })), label: col?.label ?? 'Total' };
+       the column's own read — the name opens the Total column's, the whole span.
+       Settlement / Deposit: a figure across a month opens that month's read. */
+    const month = col?.group ?? col;
+    const src = view === 'total' ? report : byKey[month?.key ?? 'total'];
+    if (l.id === AUTOCOUNT_LINE_ID) return { entries: (src?.autoCount?.entries ?? []).map((e, idx) => ({ ...e, idx })), label: month?.label ?? 'Total' };
     const node = nodesById(src).get(l.id);
-    const label = col?.label ?? 'Total';
+    const label = month?.label ?? 'Total';
     if (!src || !node) return { entries: [], label };
     const sides = sidesOf(node);
     const keys = leafKeys(node);
@@ -225,15 +239,21 @@ export const ReceiptsPaymentsTab = () => {
   const sheet = (): ReportSheet | null => {
     if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct }) : null;
     if (columns.some((c) => !byKey[c.key])) return null;
+    const split = view === 'split';
     return {
       title: 'Cash Flow',
-      subtitle: `By month · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
+      subtitle: split
+        ? `Settlement / Deposit · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside Total" : 'amounts'}`
+        : `By month · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
       meta: [{ label: 'Months', value: `${monthName(span.from)} – ${monthName(span.to)}` }, { label: 'Rows', value: rowsWord }],
-      tables: [statementColumnsTable(columns.map((c) => ({ key: c.key, label: c.label, pct: showPct, edge: c.kind === 'total' })), shown)],
+      tables: [statementColumnsTable((split ? splitCols : columns).map((c) => ({
+        key: c.key, label: c.label, pct: showPct && c.pct, edge: c.kind === 'total', ...(c.group ? { group: c.group.label } : {}),
+      })), shown)],
       fmt: fmtRp,
     };
   };
-  const fileBase = view === 'month' ? `cash-flow-monthly-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}` : `cash-flow-${r.from}-to-${r.to}`;
+  const monthsInName = `${span.from.slice(0, 7)}-${span.to.slice(0, 7)}`;
+  const fileBase = view === 'month' ? `cash-flow-monthly-${monthsInName}` : view === 'split' ? `cash-flow-settlement-deposit-${monthsInName}` : `cash-flow-${r.from}-to-${r.to}`;
 
   return (
     <>
@@ -248,7 +268,7 @@ export const ReceiptsPaymentsTab = () => {
             <AccountsPicker accounts={[...money.map((a) => ({ code: a.account_code, name: a.account_name })), ...(report?.columns.filter((c) => c.code === CARD_COLUMN) ?? [])]} ticked={ticked} onTicked={setTicked} />
           </ReportTool>
         )}
-        {view === 'month' && (
+        {monthly && (
           <ReportTool label="Months"><Segmented options={MONTH_OPTIONS} value={months} onChange={setMonths} label="Months" /></ReportTool>
         )}
         <ReportTool label="Rows">
@@ -278,9 +298,9 @@ export const ReceiptsPaymentsTab = () => {
       {r.usable && view === 'total' && report && report.columns.length === 0 && (
         <ReportMessage>This company has no active bank or cash account.</ReportMessage>
       )}
-      {r.usable && !loading && lines.length > 0 && (view === 'month' || (report && report.columns.length > 0)) && (
+      {r.usable && !loading && lines.length > 0 && (monthly || (report && report.columns.length > 0)) && (
         <StatementTable
-          widthsKey={view === 'total' ? 'cf-total' : 'cf-month'}
+          widthsKey={view === 'total' ? 'cf-total' : view === 'split' ? 'cf-split' : 'cf-month'}
           head="Account"
           columns={shownColumns}
           lines={lines}
@@ -292,11 +312,14 @@ export const ReceiptsPaymentsTab = () => {
           finalId="bal:closing"
           strongIds={STRONG}
           drillRows="figures"
+          figureOpens={view === 'split' ? (_l, col, across) => !col.group || across : undefined}
           renderLines={(l, col, close, colSpan) => {
             const { entries, label } = entriesFor(l, col);
             return <EntriesRow key={`e:${l.id}`} title={l.label} sub={label} entries={entries} colSpan={colSpan} onClose={close} />;
           }}
-          note="% beside each receipt is of the receipts, beside each payment of the payments; the surplus’s is of the receipts. Click a figure for the entries behind it."
+          note={view === 'split'
+            ? 'Each month in Settlement and Deposit as the layout splits each group (Layout); a customer’s payment is the Settlement when it completes the order on a later day than the first payment, else a Deposit. A line not split prints one figure across its month. % beside Total is of the side’s total. Click a Total, or a figure across a month, for the entries behind it.'
+            : '% beside each receipt is of the receipts, beside each payment of the payments; the surplus’s is of the receipts. Click a figure for the entries behind it.'}
           drillKey={`${view}|${r.from}|${r.to}|${byParty}|${months}|${codes.join(',')}`}
           ariaLabel="Cash flow"
         />

@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 
 import type { Cell, Row, SheetData } from 'write-excel-file';
-import { sheetWithTotalsBelow, type ReportSheet, type SheetColumn, type SheetRow, type SheetRowKind } from './report-sheet';
+import { sheetWithTotalsBelow, type ReportSheet, type SheetColumn, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
 
 /* The screen's own colours (tokens.css): ink, soft text, the two shades. */
 const INK = '#11140f';
@@ -48,16 +48,46 @@ const figure = (col: SheetColumn, v: number | string | null, style: object): Cel
   return { value: v / 100, type: Number, format: AMOUNT_FORMAT, align: 'right', ...style };
 };
 
-/** One table row as Excel cells: the label indented by its depth, then a cell per column. */
+/** One table row as Excel cells: the label indented by its depth, then a cell per column;
+    a cell running across columns is merged over them, centred (the cells it covers stay
+    empty, as write-excel-file asks). */
 export const rowCells = (r: SheetRow, columns: SheetColumn[]): Row => {
   const style = kindStyle(r.kind);
   const label: Cell = { value: r.label, type: String, indent: r.depth, ...style };
   if (r.cells.length === 0) return [{ ...label, span: columns.length + 1 }];
-  return [label, ...columns.map((c, i) => figure(c, r.cells[i] ?? null, style))];
+  const covered = new Set<number>();
+  columns.forEach((_, i) => { for (let k = 1; k < (r.spans?.[i] ?? 1); k += 1) covered.add(i + k); });
+  return [label, ...columns.map((c, i): Cell => {
+    if (covered.has(i)) return null;
+    const cell = figure(c, r.cells[i] ?? null, style);
+    const n = Math.min(r.spans?.[i] ?? 1, columns.length - i);
+    return n > 1 ? { ...cell, span: n, align: 'center' } : cell;
+  })];
 };
 
-const headerCell = (label: string, align: 'left' | 'right'): Cell =>
+const headerCell = (label: string, align: 'left' | 'center' | 'right'): Cell =>
   ({ value: label, type: String, fontWeight: 'bold', align, bottomBorderStyle: 'thin', bottomBorderColor: INK });
+
+/** A table's header: one row of names; or, where columns share a heading (the Cash Flow's
+    month over Settlement | Deposit), the headings merged over their columns on a first row
+    and the columns' own names under them — a column without a heading stands both rows tall. */
+export function headerRows(t: SheetTable): Row[] {
+  if (!t.columns.some((c) => c.group)) return [[headerCell('', 'left'), ...t.columns.map((c) => headerCell(c.label, 'right'))]];
+  const top: Row = [{ ...headerCell('', 'left'), rowSpan: 2 }];
+  const under: Row = [null];
+  t.columns.forEach((c, i) => {
+    if (!c.group) { top.push({ ...headerCell(c.label, 'right'), rowSpan: 2 }); under.push(null); return; }
+    under.push(headerCell(c.label, 'right'));
+    if (t.columns[i - 1]?.group === c.group) { top.push(null); return; }
+    let n = 1;
+    while (t.columns[i + n]?.group === c.group) n += 1;
+    top.push({ ...headerCell(c.group, 'center'), ...(n > 1 ? { span: n } : {}) });
+  });
+  return [top, under];
+}
+
+/** How many rows the first table's header takes — what stays put under the title. */
+export const headRowsOf = (sheet: ReportSheet): number => (sheet.tables[0]?.columns.some((c) => c.group) ? 2 : 1);
 
 /** The whole sheet as write-excel-file's matrix — pure, so a test reads it without a workbook. */
 export function sheetMatrix(given: ReportSheet): SheetData {
@@ -69,7 +99,7 @@ export function sheetMatrix(given: ReportSheet): SheetData {
   ];
   sheet.tables.forEach((t) => {
     rows.push([]);
-    rows.push([headerCell('', 'left'), ...t.columns.map((c) => headerCell(c.label, 'right'))]);
+    rows.push(...headerRows(t));
     for (const r of t.rows) rows.push(rowCells(r, t.columns));
   });
   if (sheet.notes && sheet.notes.length > 0) {
@@ -96,7 +126,7 @@ export async function downloadReportXlsx(sheet: ReportSheet, fileName: string): 
     sheet: sheetName(sheet.title),
     columns: columnWidths(sheet),
     /* The title, the subtitle, a blank and the first table's header stay put; so does the name column. */
-    stickyRowsCount: 4,
+    stickyRowsCount: 3 + headRowsOf(sheet),
     stickyColumnsCount: 1,
   });
 }
