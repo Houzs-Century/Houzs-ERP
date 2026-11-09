@@ -19,7 +19,8 @@
 // slip upload — the SO-create / add-payment handlers consume the session by
 // upload_session_id and promote it (mfg-sales-orders.ts). The slip persistence
 // is best-effort: if R2 / the DB insert fails (or R2 is unbound), the OCR
-// fields still return — only slipKey/uploadSessionId come back null.
+// fields still return — slipKey/uploadSessionId come back null and slipError
+// names the step that failed.
 //
 // OWNER'S RECORDING CONVENTION (authoritative — ocr-payment-spec.md, 3-method
 // model): a card-terminal receipt is booked as Method = MERCHANT.
@@ -42,8 +43,8 @@
 //   active so_dropdown_options (categories payment_method / payment_merchant /
 //   online_type / installment_plan); any value not in the live list is cleared.
 //   paidAt is a bare YYYY-MM-DD string (the receipt's swipe date) or null.
-//   The response also carries { slipKey, uploadSessionId } (or null when the
-//   R2 persistence step was skipped/failed) — the receipt stored AS the
+//   The response also carries { slipKey, uploadSessionId, slipError } (the
+//   first two null and slipError set when the persistence step failed) — the receipt stored AS the
 //   payment's slip (RECEIPT-AS-SLIP, see header above).
 //
 // Auth: supabaseAuth on the whole router (same as scan-so). The catalog read
@@ -298,10 +299,13 @@ function validateReceipt(rec: ExtractedReceipt, options: CatalogOptions): Warnin
 // and register a pending_slip_uploads row at status 'uploaded' so the SO-create
 // / add-payment handlers can consume it by upload_session_id and promote it.
 // Returns { uploadSessionId, slipKey } for the frontend to attach as the
-// payment row's slip — or null when R2 is unbound or any step fails (the OCR
-// fields still return; the receipt just isn't auto-attached).
+// payment row's slip — or { error } naming the step that failed (the OCR
+// fields still return; the receipt just isn't auto-attached, and the response
+// says why in slipError instead of a bare null).
 // ===========================================================================
-type SlipPersistResult = { uploadSessionId: string; slipKey: string } | null;
+type SlipPersistResult =
+  | { ok: true; uploadSessionId: string; slipKey: string }
+  | { ok: false; error: string };
 
 async function persistReceiptAsSlip(
   c: { env: Env },
@@ -309,18 +313,15 @@ async function persistReceiptAsSlip(
   staffId: string,
   buf: ArrayBuffer,
   mime: SlipMime,
-  companyId?: number | null,
+  companyId: number | null,
 ): Promise<SlipPersistResult> {
-  // SLIPS binding unbound → skip silently; OCR fields still flow. (Since
-  // 2026-07-04 the binding is all slipBindings needs — no R2 S3 creds.)
   let bindings;
   try { bindings = slipBindings(c.env); }
-  catch { return null; }
+  catch { return { ok: false, error: 'r2_not_configured' }; }
 
-  // pending_slip_uploads.showroom_id is NOT NULL (FK → scm.showrooms). Houzs
-  // has no showroom concept, so stamp the first active showroom (same fallback
-  // as /slips/init). No showroom seeded → skip the slip (OCR still returns).
-  // Multi-company (mig 0089): pick the ACTIVE company's showroom.
+  // Stamp the company's first active showroom when it has one (same as
+  // /slips/init); a company with none keeps the slip with none (showroom_id
+  // nullable since 20261110T0300_slip_upload_showroom_optional).
   let roomQ = sb
     .from('showrooms')
     .select('id')
@@ -328,9 +329,9 @@ async function persistReceiptAsSlip(
     .order('sort_order', { ascending: true })
     .limit(1);
   if (companyId != null) roomQ = roomQ.eq('company_id', companyId);
-  const { data: defaultRoom } = await roomQ.maybeSingle();
+  const { data: defaultRoom, error: roomErr } = await roomQ.maybeSingle();
+  if (roomErr) return { ok: false, error: 'showroom_lookup_failed' };
   const showroomId = (defaultRoom as { id?: string } | null)?.id ?? null;
-  if (!showroomId) return null;
 
   const sessionId = crypto.randomUUID();
   const slipKey = buildSlipKey(sessionId, mime);
@@ -346,7 +347,7 @@ async function persistReceiptAsSlip(
     // native binding (no presigned PUT needed, unlike the browser flow).
     await bindings.bucket.put(slipKey, buf, { httpMetadata: { contentType: mime } });
   } catch {
-    return null;
+    return { ok: false, error: 'r2_put_failed' };
   }
 
   // Register the session as already 'uploaded' (the bytes are in R2) so the
@@ -367,10 +368,10 @@ async function persistReceiptAsSlip(
   if (insertErr) {
     // Roll back the orphaned R2 object so a failed insert doesn't leak bytes.
     await bindings.bucket.delete(slipKey).catch(() => {});
-    return null;
+    return { ok: false, error: 'db_insert_failed' };
   }
 
-  return { uploadSessionId: sessionId, slipKey };
+  return { ok: true, uploadSessionId: sessionId, slipKey };
 }
 
 // ===========================================================================
@@ -548,12 +549,16 @@ scanPayment.post('/extract', async (c) => {
 
   // RECEIPT-AS-SLIP: persist the receipt image as the payment row's slip and
   // hand back its session+key. Best-effort — never block the OCR result on it.
-  let slip: SlipPersistResult = null;
+  let slip: SlipPersistResult;
   try {
     const staffId = (c.get('user') as { id: string }).id;
-    slip = await persistReceiptAsSlip(c, sb, staffId, buf, slipMime, activeCompanyId(c));
-  } catch {
-    slip = null;
+    slip = await persistReceiptAsSlip(c, sb, staffId, buf, slipMime, activeCompanyId(c) ?? null);
+  } catch (e) {
+    slip = { ok: false, error: (e as Error).message || 'slip_persist_failed' };
+  }
+  if (!slip.ok) {
+    // eslint-disable-next-line no-console
+    console.warn('[scan-payment] receipt not kept as slip:', slip.error);
   }
   timer.mark('save');
   timer.done(c.env, null, 'ok');
@@ -563,10 +568,9 @@ scanPayment.post('/extract', async (c) => {
     data: {
       extracted: parsed,
       warnings,
-      // null when R2 is unbound / no showroom / persistence failed — the
-      // frontend then just skips auto-attaching (the OCR fields still apply).
-      slipKey: slip?.slipKey ?? null,
-      uploadSessionId: slip?.uploadSessionId ?? null,
+      slipKey: slip.ok ? slip.slipKey : null,
+      uploadSessionId: slip.ok ? slip.uploadSessionId : null,
+      slipError: slip.ok ? null : slip.error,
     },
   });
 });
