@@ -30,8 +30,8 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
     ? { data: { paymentVouchers: searched(opts.q), q: opts.q }, isLoading: false, error: null }
     : { data: { counts: { all: 61, DRAFT: 11, PREPARED: 12, CHECKED: 13, POSTED: 14, ADVANCE: 15, CANCELLED: 16 }, paymentVouchers: [
-    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)',
-      purpose_text: 'HC-PRQ-2610-030 Booth deposit', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' },
+    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BOOTH F1 RENTAL · BILL MLE-0925 · DATED 2026-09-01',
+      description_text: 'BOOTH RENTAL (ZANOTTI) - 6 UNIT @ 5,000.00', pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'MK PROPERTIES SDN BHD' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
     { id: 'done', pv_number: 'PV-2609-004', payee_name: 'Posted Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 40000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' },
@@ -176,22 +176,25 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
   });
 });
 
-describe('the Description column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？; 2026-11-08: 把notes 换成description)', () => {
-  test('each row shows its Description, whole on hover; a voucher without one reads —', () => {
+describe('the Description column (owner 2026-11-09: 对我来说 description 就是 purpose; 我只想显示单上的费用，不要像之前一样显示bill no. 等等)', () => {
+  test('each row shows what it pays for, as the server read it from the bills, whole on hover; a voucher without one reads —', () => {
     draw();
     expect(screen.getByRole('columnheader', { name: /^Description/ })).toBeTruthy();
-    const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
-    const cell = screen.getByText(note).closest('td');
-    expect(cell?.getAttribute('title')).toBe(note);
+    const items = 'BOOTH RENTAL (ZANOTTI) - 6 UNIT @ 5,000.00';
+    const cell = screen.getByText(items).closest('td');
+    expect(cell?.getAttribute('title')).toBe(items);
+    /* The typed remark, with its bill number, is not the Description. */
+    expect(screen.queryByText(/BILL MLE-0925/)).toBeNull();
     /* The other five carry none. */
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
   });
 
-  test('Purpose, Bank and Account no. stand beside it (owner 2026-11-08)', () => {
+  test('Bank and Account no. stand beside it; no Purpose column, and the Remark is off the list unless chosen', () => {
     draw();
     /* The grid title-cases a header: Account no. reads Account No. */
-    for (const name of [/^Purpose/, /^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
-    expect(screen.getByText('HC-PRQ-2610-030 Booth deposit')).toBeTruthy();
+    for (const name of [/^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: /^Purpose/ })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /^Remark/ })).toBeNull();
     expect(screen.getByText('MAYBANK')).toBeTruthy();
     expect(screen.getByText('5140 1234 5678')).toBeTruthy();
   });

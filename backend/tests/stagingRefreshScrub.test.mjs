@@ -4,7 +4,8 @@ import path from "node:path";
 import { test } from "vitest";
 
 // The prod -> staging copy must never carry a usable production credential
-// (sessions, password hashes, TOTP, POS PINs) or a real HR identifier. The
+// (sessions, TOTP, POS PINs) or a real HR identifier; staff password hashes
+// are kept on purpose so staff sign in with their own password. The
 // scrub is SQL inside the workflow, so this pins the parts that make it safe:
 // it always runs, runs before the staging account is re-seeded, and a
 // shape-based check after the seed fails the run if anything survived.
@@ -64,12 +65,12 @@ test("every token table is emptied and every one is checked afterwards", () => {
   assert.doesNotMatch(scrub, /truncate/i);
 });
 
-test("password hashes are replaced by a value verifyPassword can never accept", () => {
+// Owner 2026-11-09: staff sign in to staging with their own production
+// password, so password hashes are carried over; everything else is scrubbed.
+test("staff password hashes are kept, two-step and PINs are scrubbed", () => {
   const scrub = step(SCRUB).body;
-  const m = /update public\.users set password_hash = '([^']*)'/.exec(scrub);
-  assert.ok(m, "users.password_hash is not reset");
-  // services/auth.ts verifyPassword returns false for a stored value with no '$'.
-  assert.ok(!m[1].includes("$"), "the replacement hash must contain no '$'");
+  assert.doesNotMatch(scrub, /set password_hash/, "staff password hashes must survive the copy");
+  assert.doesNotMatch(step(VERIFY).body, /verifiable password hash/, "the check must not fail on kept staff passwords");
   assert.match(scrub, /totp_secret = null/);
   assert.match(scrub, /totp_backup_codes = null/);
   assert.match(scrub, /pos_cashiers set pin_hash = 'staging-scrubbed'/);
@@ -91,7 +92,7 @@ test("HR identifiers are masked and salaries never pass through unchanged", () =
 test("the check is on shape, not on counts alone, and raises when anything survived", () => {
   const verify = step(VERIFY).body;
   assert.match(verify, /SCRUB_STARTED: \$\{\{ steps\.scrub\.outputs\.started \}\}/);
-  assert.match(verify, /password_hash like '%\$%' and lower\(email\) <> 'hello@houzscentury\.com'/);
+  assert.match(verify, /lower\(email\) = 'hello@houzscentury\.com' and password_hash like '%\$%'/);
   assert.match(verify, /replace\(created_at::text, ''T'', '' ''\) < %L/);
   assert.match(verify, /not like 'STG-%'/);
   assert.match(verify, /raise exception 'PRODUCTION DATA SURVIVED THE SCRUB/);

@@ -295,7 +295,7 @@ purchaseReturns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
     scopeToCompany(sb.from('purchase_returns')
-      .select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number)`)
+      .select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number)`)
       .eq('id', id), c).maybeSingle(),
     sb.from('purchase_return_items').select(ITEM).eq('purchase_return_id', id).order('created_at'),
   ]);

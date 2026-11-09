@@ -36,6 +36,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { lineDiscountShare } from '../shared/line-discount-share';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtSen, computeVariantKey } from '../shared';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
@@ -1030,7 +1031,8 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
       uom: it.uom,
       qty: Math.min(Number(it.qty ?? 0), remaining),
       unitPriceSen: it.unit_price_sen,
-      discountSen: it.discount_sen,
+      // This invoice's share of the DO line's discount, not all of it.
+      discountSen: lineDiscountShare(Number(it.discount_sen ?? 0), Number(it.qty ?? 0), Number(it.qty ?? 0) - remaining, Math.min(Number(it.qty ?? 0), remaining)),
       unitCostSen: it.unit_cost_sen,
       variants: it.variants,
       notes: it.notes,

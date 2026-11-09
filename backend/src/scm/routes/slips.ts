@@ -14,7 +14,8 @@
 // The frontend (frontend/src/vendor/scm/lib/slip.ts: initSlipUpload →
 // uploadSlipBytes → confirmUpload, via uploadSlipFull ← SlipUploadField ←
 // PaymentsTable ← New SO, + the mobile PayCard / MobilePOD callers) calls:
-//   POST /slips/init               { fileSize, contentType, contentHash }
+//   POST /slips/init               { fileSize, contentType, contentHash, purpose? }
+//                                  purpose 'field_photo' holds the session 24h
 //                                  → { uploadSessionId, r2Key }   (NO putUrl)
 //   POST /slips/:session/upload    raw binary body (content-type header)
 //                                  → { ok: true }
@@ -40,7 +41,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
-import { slipBindings, expiresInOneHour, hashesMatch, isExpired } from '../lib/slip';
+import { slipBindings, slipSessionExpiry, parseSlipPurpose, hashesMatch, isExpired } from '../lib/slip';
 import { buildSlipKey, r2Head, type SlipMime } from '../lib/r2';
 
 export const slips = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -62,6 +63,8 @@ slips.post('/init', async (c) => {
   const contentType = (body.contentType ?? body.content_type) as string | undefined;
   const fileSize = Number(body.fileSize ?? body.file_size ?? NaN);
   const contentHash = (body.contentHash ?? body.content_hash) as string | undefined;
+  // 'field_photo' = a POD / job-stop photo uploaded on pick; held a day, not an hour.
+  const purpose = parseSlipPurpose(body.purpose);
 
   if (!contentType || !ALLOWED_MIMES.has(contentType as SlipMime)) {
     return c.json({ error: 'invalid_request', reason: 'unsupported content_type' }, 400);
@@ -99,7 +102,7 @@ slips.post('/init', async (c) => {
 
   const sessionId = crypto.randomUUID();
   const r2Key = buildSlipKey(sessionId, contentType as SlipMime);
-  const expiresAt = expiresInOneHour();
+  const expiresAt = slipSessionExpiry(purpose);
 
   const { error: insertErr } = await sb.from('pending_slip_uploads').insert({
     company_id: activeCompanyId(c),

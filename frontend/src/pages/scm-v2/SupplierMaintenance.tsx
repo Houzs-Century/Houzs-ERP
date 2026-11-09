@@ -262,6 +262,8 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
         <Meta label="Contact person" value={dash(s.contact_person)} />
         <Meta label="Phone" value={dash(s.phone)} />
         <Meta label="Email" value={dash(s.email)} />
+        <Meta label="Email 2" value={dash(s.email2 ?? null)} />
+        <Meta label="Email 3" value={dash(s.email3 ?? null)} />
         <Meta label="Currency" value={s.currency} />
         <Meta label="Payment terms" value={dash(s.payment_terms)} />
         <Meta label="Status" value={humaniseStatusKey(s.status)} />
@@ -349,10 +351,12 @@ type FormState = {
   tinNumber: string; businessRegNo: string; registrationNo: string; exemptionNo: string;
   creditLimitSen: number | null; statementType: string; agingBasis: string;
   bankName: string; bankAccountNo: string; bankAccountName: string;
-  paymentTerms: string; contactPerson: string; phone: string; email: string; address: string; notes: string;
+  paymentTerms: string; contactPerson: string; phone: string; email: string; email2: string; email3: string; address: string; notes: string;
 };
 /** The form's plain text fields — what the one-line field helper edits. */
 type TextKey = { [K in keyof FormState]: FormState[K] extends string ? K : never }[keyof FormState];
+/* The supplier's name and bank are kept in upper case (owner 2026-11-09; the database upper-cases them too). */
+const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankName', 'bankAccountName']);
 
 const fromSupplier = (s: SupplierRow | null): FormState => ({
   code: s?.code ?? '', name: s?.name ?? '', status: s?.status ?? 'ACTIVE',
@@ -362,7 +366,7 @@ const fromSupplier = (s: SupplierRow | null): FormState => ({
   creditLimitSen: s?.credit_limit_sen ?? null, statementType: s?.statement_type ?? 'OPEN_ITEM', agingBasis: s?.aging_basis ?? 'INVOICE_DATE',
   bankName: s?.bank_name ?? '', bankAccountNo: s?.bank_account_no ?? '', bankAccountName: s?.bank_account_name ?? '',
   paymentTerms: s?.payment_terms ?? '', contactPerson: s?.contact_person ?? '',
-  phone: s?.phone ?? '', email: s?.email ?? '', address: s?.address ?? '', notes: s?.notes ?? '',
+  phone: s?.phone ?? '', email: s?.email ?? '', email2: s?.email2 ?? '', email3: s?.email3 ?? '', address: s?.address ?? '', notes: s?.notes ?? '',
 });
 
 /** A code that names neither control posts to trade creditors (400-0000). */
@@ -389,6 +393,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
     <label className={styles.field} style={opts.full ? { gridColumn: '1 / -1' } : undefined}>
       <span className={styles.fieldLabel}>{label}</span>
       <input className={styles.fieldInput} value={f[k]} placeholder={opts.placeholder} aria-label={label}
+        data-upper={UPPER_FIELDS.has(k) ? '' : undefined}
         onChange={(e) => set(k, e.target.value)} />
     </label>
   );
@@ -405,7 +410,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
       creditLimitSen: f.creditLimitSen ?? 0, statementType: f.statementType, agingBasis: f.agingBasis,
       bankName: f.bankName, bankAccountNo: f.bankAccountNo, bankAccountName: f.bankAccountName,
       paymentTerms: f.paymentTerms.trim() || null, contactPerson: f.contactPerson.trim() || null,
-      phone: f.phone.trim() || null, email: f.email.trim() || null, address: f.address.trim() || null, notes: f.notes.trim() || null,
+      phone: f.phone.trim() || null, email: f.email.trim() || null, email2: f.email2.trim() || null, email3: f.email3.trim() || null, address: f.address.trim() || null, notes: f.notes.trim() || null,
     };
     try {
       if (supplier) {
@@ -489,6 +494,8 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         {field('Contact person', 'contactPerson')}
         {field('Phone', 'phone')}
         {field('Email', 'email')}
+        {field('Email 2', 'email2')}
+        {field('Email 3', 'email3')}
         {field('Billing address', 'address', { full: true })}
         {field('Notes', 'notes', { full: true })}
       </div>

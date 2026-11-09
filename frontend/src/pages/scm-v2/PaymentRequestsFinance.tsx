@@ -538,7 +538,7 @@ function SendBackBox({ request: r, busy, onCancel, onSend }: { request: PaymentR
           : `${r.requested_by_name ?? 'The requester'} reads your reason, fixes the request and sends it again.`}
       </div>
       <div className={look.backRow}>
-        <input ref={input} className={look.backInput} value={note} onChange={(e) => setNote(e.target.value)}
+        <input data-upper ref={input} className={look.backInput} value={note} onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
           aria-label={refund ? 'Why it is rejected' : 'Why it goes back'}
           placeholder={refund ? 'Why? e.g. the customer agreed to convert to a new order instead' : 'Why? e.g. attach the organiser invoice, not the quotation'} />

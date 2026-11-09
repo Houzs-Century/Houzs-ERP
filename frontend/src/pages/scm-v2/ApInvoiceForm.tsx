@@ -348,7 +348,7 @@ export const ApInvoiceForm = ({
         {mode !== 'edit' && v.officialDocOwed && (
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
-            <input className={styles.fieldInput} value={v.officialDocNote ?? ''} onChange={(e) => set({ officialDocNote: e.target.value })} maxLength={500}
+            <input data-upper className={styles.fieldInput} value={v.officialDocNote ?? ''} onChange={(e) => set({ officialDocNote: e.target.value })} maxLength={500}
               aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask for the tax invoice" />
           </label>
         )}
@@ -365,7 +365,7 @@ export const ApInvoiceForm = ({
       <BillMatchesNote matches={sameBill.data?.matches} />
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Description</span>
-        <input className={styles.fieldInput} value={v.description} onChange={(e) => set({ description: e.target.value })} aria-label="AP invoice description"
+        <input data-upper className={styles.fieldInput} value={v.description} onChange={(e) => set({ description: e.target.value })} aria-label="AP invoice description"
           placeholder="What this bill is for — shows on the list and prints on the listing" />
       </label>
 
@@ -400,7 +400,7 @@ export const ApInvoiceForm = ({
                   onChange={(code) => patchLine(l.rid, { debitAccountCode: code })} placeholder="— account this line charges —" />
               </td>
               <td style={td}>
-                <input className={styles.fieldInput} style={{ width: '100%' }} placeholder="Description" value={l.description} aria-label={`line ${l.rid} description`}
+                <input data-upper className={styles.fieldInput} style={{ width: '100%' }} placeholder="Description" value={l.description} aria-label={`line ${l.rid} description`}
                   onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
               </td>
               <td style={td}>
