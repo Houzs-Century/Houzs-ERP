@@ -42,7 +42,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -2498,42 +2498,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
   if (sdGate.refusal) return c.json(sdGate.refusal, 409);
-
-  /* A new ship-to warehouse takes the lines with it (sister fix Conts-ERP #783).
-     The GRN made from the outstanding-lines picker receives into the LINE's
-     warehouse while the GRN made from the PO uses the header's, so a header-only
-     change sent the same PO's goods to two buildings depending on the button.
-     Lines still on the OLD header warehouse move; a line deliberately set to
-     another warehouse keeps it. A line that already has goods received is never
-     moved: the header change is refused and says why (the GRN lock above covers
-     a live GRN; this covers received_qty left without one). */
-  const oldWh = (before.purchase_location_id as string | null) ?? null;
-  const newWh = updates['purchase_location_id'] === undefined ? undefined : ((updates['purchase_location_id'] as string | null) || null);
-  let whMoveIds: string[] = [];
-  if (newWh !== undefined && newWh !== null && newWh !== oldWh && oldWh) {
-    const { data: whLines, error: whErr } = await scopeToCompanyId(sb.from('purchase_order_items')
-      .select('id, item_code, warehouse_id, received_qty').eq('purchase_order_id', id), co.companyId);
-    if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
-    const onOld = ((whLines ?? []) as Array<{ id: string; item_code: string | null; warehouse_id: string | null; received_qty: number | null }>)
-      .filter((l) => l.warehouse_id === oldWh);
-    const received = onOld.filter((l) => Number(l.received_qty ?? 0) > 0);
-    if (received.length > 0) {
-      return c.json({
-        error: 'po_lines_received',
-        message: `Goods were already received on ${received.map((l) => l.item_code ?? l.id).join(', ')} into the current warehouse, `
-          + 'so the ship-to warehouse cannot be changed. Receive the rest as it is, or move the received stock with a stock transfer.',
-        lines: received.map((l) => ({ id: l.id, itemCode: l.item_code })),
-      }, 409);
-    }
-    whMoveIds = onOld.map((l) => l.id);
-  }
-  /* Lines BEFORE the header: if the header write then fails, a retry still sees
-     the old header warehouse, finds nothing left on it, and just saves the header. */
-  if (whMoveIds.length > 0) {
-    const { error: whMoveErr } = await scopeToCompanyId(sb.from('purchase_order_items')
-      .update({ warehouse_id: newWh }).in('id', whMoveIds), co.companyId);
-    if (whMoveErr) return c.json({ error: 'update_failed', message: 'The PO lines could not be moved to the new warehouse, so nothing was saved. Try again.', reason: whMoveErr.message }, 500);
-  }
+  { const m = await movePoLinesToNewWarehouse(sb, id, co.companyId, before, updates); if (m) return c.json(m.body, m.status); } // lib/po-warehouse-move.ts
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
