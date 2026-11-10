@@ -304,6 +304,7 @@ export function FleetDay() {
     <LorryCard
       key={r.trip?.id ?? `lorry:${platekey(r.plate)}`}
       run={r}
+      routeColor={colorForPlate(platekey(r.plate))}
       visibleDocs={active ? (filteredByCard.get(platekey(r.plate)) ?? []) : r.docs}
       filtersActive={active}
       searchActive={filters.query.trim().length >= 2}
