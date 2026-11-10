@@ -15,11 +15,18 @@
 // uploadSlipBytes → confirmUpload, via uploadSlipFull ← SlipUploadField ←
 // PaymentsTable ← New SO, + the mobile PayCard / MobilePOD callers) calls:
 //   POST /slips/init               { fileSize, contentType, contentHash, purpose? }
-//                                  purpose 'field_photo' holds the session 24h
+//                                  purpose 'field_photo' holds the session 24h;
+//                                  fieldContext names the stop it is for
 //                                  → { uploadSessionId, r2Key }   (NO putUrl)
 //   POST /slips/:session/upload    raw binary body (content-type header)
 //                                  → { ok: true }
 //   POST /slips/:session/confirm   → { ok: true } (frontend only checks res.ok)
+//   GET  /slips/field-photos?context=   the caller's uploaded, not yet claimed
+//                                  field photos for one stop (re-listed after a
+//                                  page reload) → { photos: [...] }
+//   GET  /slips/field-photos/:session/image   one of those photos
+//   POST /slips/field-photos/:session/discard the crew removed it: expire the
+//                                  session now so the reaper deletes it
 //
 // The SO-create + add-payment handlers (mfg-sales-orders.ts) CONSUME the
 // resulting pending_slip_uploads row by upload_session_id, accepting only
@@ -36,16 +43,30 @@
 //   - camelCase??snake_case dual-read on the request body.
 // ---------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { User } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
-import { slipBindings, slipSessionExpiry, parseSlipPurpose, hashesMatch, isExpired } from '../lib/slip';
+import {
+  slipBindings, slipSessionExpiry, parseSlipPurpose, hashesMatch, isExpired,
+  parseFieldPhotoContext, fieldPhotoDraftId, fieldPhotoOwnerPrefix,
+} from '../lib/slip';
 import { buildSlipKey, r2Head, type SlipMime } from '../lib/r2';
 
 export const slips = new Hono<{ Bindings: Env; Variables: Variables }>();
 slips.use('*', supabaseAuth);
+
+// The real caller: `user` is the pinned SCM system staff for everyone.
+function houzsUserIdOf(c: Context<{ Bindings: Env; Variables: Variables }>): number | null {
+  const id = c.get('houzsUser')?.id;
+  return typeof id === 'number' && Number.isFinite(id) ? id : null;
+}
+
+/* At most this many photos come back for one stop. The screens cap a stop at
+   20 (MAX_POD_KEYS), so a longer list means the same person opened the stop
+   in several tabs; they are still shown oldest first. */
+const FIELD_PHOTO_LIST_MAX = 100;
 
 const ALLOWED_MIMES: ReadonlySet<SlipMime> = new Set<SlipMime>([
   'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
@@ -65,6 +86,11 @@ slips.post('/init', async (c) => {
   const contentHash = (body.contentHash ?? body.content_hash) as string | undefined;
   // 'field_photo' = a POD / job-stop photo uploaded on pick; held a day, not an hour.
   const purpose = parseSlipPurpose(body.purpose);
+  const rawContext = body.fieldContext ?? body.field_context;
+  const fieldContext = purpose === 'field_photo' && rawContext != null ? parseFieldPhotoContext(rawContext) : null;
+  if (purpose === 'field_photo' && rawContext != null && !fieldContext) {
+    return c.json({ error: 'invalid_request', reason: 'invalid field_context' }, 400);
+  }
 
   if (!contentType || !ALLOWED_MIMES.has(contentType as SlipMime)) {
     return c.json({ error: 'invalid_request', reason: 'unsupported content_type' }, 400);
@@ -102,6 +128,8 @@ slips.post('/init', async (c) => {
   const sessionId = crypto.randomUUID();
   const r2Key = buildSlipKey(sessionId, contentType as SlipMime);
   const expiresAt = slipSessionExpiry(purpose);
+  const uid = houzsUserIdOf(c);
+  const draftId = fieldContext && uid != null ? fieldPhotoDraftId(uid, fieldContext) : null;
 
   const { error: insertErr } = await sb.from('pending_slip_uploads').insert({
     company_id: activeCompanyId(c),
@@ -115,6 +143,7 @@ slips.post('/init', async (c) => {
     content_size: Math.round(fileSize),
     status: 'pending',
     expires_at: expiresAt,
+    ...(draftId ? { order_draft_id: draftId } : {}),
   });
   if (insertErr) return c.json({ error: 'db_insert_failed', reason: insertErr.message }, 500);
 
@@ -242,6 +271,89 @@ slips.post('/:session/confirm', async (c) => {
     .eq('upload_session_id', sessionId);
   if (updateErr) return c.json({ error: 'db_update_failed', reason: updateErr.message }, 500);
 
+  return c.json({ ok: true });
+});
+
+/* Field photos already uploaded for one stop and not yet claimed by Complete:
+   the screen lists them again when it remounts, so a reload (iOS under the
+   camera) no longer loses them. Only the caller's own (owner prefix) and only
+   the active company's (the company /init stamped). */
+slips.get('/field-photos', async (c) => {
+  const context = parseFieldPhotoContext(c.req.query('context'));
+  if (!context) return c.json({ error: 'invalid_request', reason: 'missing or invalid context' }, 400);
+  const uid = houzsUserIdOf(c);
+  if (uid == null) return c.json({ error: 'Sign in again to see your photos.' }, 401);
+  const sb = c.get('supabase');
+  let q = sb
+    .from('pending_slip_uploads')
+    .select('upload_session_id, r2_key, content_type, created_at')
+    .eq('order_draft_id', fieldPhotoDraftId(uid, context))
+    .eq('status', 'uploaded')
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: true })
+    .limit(FIELD_PHOTO_LIST_MAX);
+  q = scopeToCompany(q, c);
+  const { data, error } = await q;
+  if (error) return c.json({ error: 'db_fetch_failed', reason: error.message }, 500);
+  const rows = data as Array<{ upload_session_id: string; r2_key: string; content_type: string | null; created_at: string }>;
+  return c.json({
+    photos: rows.map((r) => ({ uploadSessionId: r.upload_session_id, r2Key: r.r2_key, contentType: r.content_type, createdAt: r.created_at })),
+  });
+});
+
+async function ownFieldPhoto(c: Context<{ Bindings: Env; Variables: Variables }>, sessionId: string) {
+  const uid = houzsUserIdOf(c);
+  if (uid == null) return { status: 401 as const };
+  let q = c.get('supabase')
+    .from('pending_slip_uploads')
+    .select('id, r2_key, content_type, status, order_draft_id')
+    .eq('upload_session_id', sessionId);
+  q = scopeToCompany(q, c);
+  const { data, error } = await q.maybeSingle();
+  if (error) return { status: 500 as const, reason: error.message };
+  const row = data as { id: string; r2_key: string; content_type: string | null; status: string; order_draft_id: string | null } | null;
+  if (!row?.order_draft_id?.startsWith(fieldPhotoOwnerPrefix(uid))) return { status: 404 as const };
+  return { status: 200 as const, row };
+}
+
+slips.get('/field-photos/:session/image', async (c) => {
+  const own = await ownFieldPhoto(c, c.req.param('session'));
+  if (own.status === 401) return c.json({ error: 'Sign in again to see your photos.' }, 401);
+  if (own.status === 500) return c.json({ error: 'db_fetch_failed', reason: own.reason }, 500);
+  if (own.status === 404 || own.row.status !== 'uploaded') return c.json({ error: 'photo_not_found' }, 404);
+  let bindings;
+  try { bindings = slipBindings(c.env); }
+  catch (e) { return c.json({ error: 'r2_not_configured', reason: (e as Error).message }, 500); }
+  const obj = await bindings.bucket.get(own.row.r2_key);
+  if (!obj) return c.json({ error: 'photo_not_found' }, 404);
+  return new Response(obj.body as unknown as ReadableStream, {
+    headers: { 'content-type': own.row.content_type ?? 'image/jpeg', 'cache-control': 'private, max-age=600' },
+  });
+});
+
+/* Remove on the screen must also remove it from the re-list. Expiring the
+   session hands it to the slip reaper (lease_orphan_slips takes expired
+   'pending' / 'uploaded' rows and deletes the object), the same path every
+   unclaimed upload already ends on. A photo a Complete already claimed is
+   part of a delivery record and is refused. */
+slips.post('/field-photos/:session/discard', async (c) => {
+  const sessionId = c.req.param('session');
+  const own = await ownFieldPhoto(c, sessionId);
+  if (own.status === 401) return c.json({ error: 'Sign in again to remove this photo.' }, 401);
+  if (own.status === 500) return c.json({ error: 'db_fetch_failed', reason: own.reason }, 500);
+  if (own.status === 404) return c.json({ error: 'photo_not_found' }, 404);
+  if (own.row.status === 'promoted') {
+    return c.json({ error: 'This photo is already part of a completed job and cannot be removed here.' }, 409);
+  }
+  if (own.row.status !== 'pending' && own.row.status !== 'uploaded') return c.json({ ok: true });
+  let up = c.get('supabase')
+    .from('pending_slip_uploads')
+    .update({ expires_at: new Date().toISOString() })
+    .eq('id', own.row.id)
+    .in('status', ['pending', 'uploaded']);
+  up = scopeToCompany(up, c);
+  const { error } = await up;
+  if (error) return c.json({ error: 'db_update_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });
 
