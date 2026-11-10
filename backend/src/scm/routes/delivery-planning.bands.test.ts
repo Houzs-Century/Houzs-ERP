@@ -117,6 +117,36 @@ describe('counts_only', () => {
   });
 });
 
+/* Production 2026-11-10: p95 208 s. The parallel band reads of a board open must
+   never write; the Pending Schedule stamp is written by a request without a band. */
+describe('board GETs in bands never write', () => {
+  const stampedIn = (tables: ReturnType<typeof fixtureTables>) =>
+    tables.mfg_sales_orders!.filter((r) => r.delivery_state === 'PENDING_SCHEDULE').map((r) => String(r.doc_no)).sort();
+
+  it('every band and page writes nothing, yet shows the stamp on its rows', async () => {
+    const tables = fixtureTables();
+    const before = stampedIn(tables);
+    const shown: Order[] = [];
+    for (let band = 1; band <= 5; band += 1) {
+      const r = await runBoard(deliveryPlanningBoardHandler, 'office', `?band=${band}&page=0`, null, tables);
+      expect(r.status).toBe(200);
+      shown.push(...(r.body as Body).orders);
+    }
+    expect(stampedIn(tables)).toEqual(before);
+    const ps = shown.filter((o) => o.row_type === 'so' && o.delivery_state === 'PENDING_SCHEDULE');
+    expect(ps.length).toBeGreaterThan(0);
+    for (const o of ps) expect(o.delivery_state_override).toBe('PENDING_SCHEDULE');
+  });
+
+  it('counts_only (fired with band 1) writes the stamp for every band', async () => {
+    const tables = fixtureTables();
+    expect((await runBoard(deliveryPlanningBoardHandler, 'office', '?counts_only=1', null, tables)).status).toBe(200);
+    const expected = old.office_all!.orders
+      .filter((o) => o.row_type === 'so' && o.delivery_state === 'PENDING_SCHEDULE').map((o) => o.so_doc_no).sort();
+    expect(stampedIn(tables)).toEqual(expected);
+  });
+});
+
 describe('parameters', () => {
   it('band needs 1-5 and a page', async () => {
     for (const qs of ['?band=1', '?page=0', '?band=6&page=0', '?band=x&page=0']) {

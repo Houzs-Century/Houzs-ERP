@@ -28,7 +28,8 @@ const read = (rel: string): string =>
   readFileSync(resolve(process.cwd(), rel), 'utf8');
 
 const desktopSource = read('src/pages/scm-v2/SalesOrderNew.tsx');
-const mobileSource = read('src/mobile/MobileNewSO.tsx');
+// The phone New SO is two files: the form, and its payment row (MobileSoPayCard).
+const mobileSource = read('src/mobile/MobileNewSO.tsx') + read('src/mobile/MobileSoPayCard.tsx');
 const sheetSource = read('src/mobile/RecordedPayments.tsx');
 const tableSource = read('src/vendor/scm/components/PaymentsTable.tsx');
 

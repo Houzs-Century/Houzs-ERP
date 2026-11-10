@@ -3,9 +3,27 @@
 import type { CSSProperties } from 'react';
 import { Lock, Truck } from 'lucide-react';
 import { Button } from '../../components/Button';
-import { usePrompt } from '../../vendor/scm/components/PromptDialog';
+import { usePrompt, type PromptOpts } from '../../vendor/scm/components/PromptDialog';
 import { LOCKED_STATUSES } from '../../vendor/scm/lib/so-detail-gates';
 import type { AfterDoMode } from '../../vendor/scm/lib/so-after-do-client';
+
+/** The Override reason ask, the same on the desktop page and the phone editor (#5600). */
+export const SO_OVERRIDE_PROMPT: PromptOpts = {
+  title: 'Reason for override?',
+  body: 'This unlocks editing on a locked SO. The override is tracked in the status timeline.',
+  placeholder: 'At least 10 characters',
+  multiline: true,
+  confirmLabel: 'Override',
+  validate: (v: string) => (v.trim().length < 10 ? 'Override needs a reason ≥ 10 chars.' : null),
+};
+
+/** The DEV-32 notice sentence: where the after-DO changes go, or why the customer details stay shut. */
+export function afterDoNoticeText(afterDo: AfterDoMode): string {
+  const doNumbers = (list: AfterDoMode['targets']) => list.map((t) => t.do_number ?? t.id).join(', ');
+  return afterDo.headerOpen
+    ? `Customer name, phone, email, address and contact, and charge lines (transport, storage, misc), are copied onto ${doNumbers(afterDo.openTargets)} when you save.`
+    : `Charge lines (transport, storage, misc) can be added or changed. Customer details stay locked: ${doNumbers(afterDo.targets.filter((t) => t.locked))} already has an invoice or return.`;
+}
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const INNER: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 8 };
@@ -32,8 +50,6 @@ export function SoLockBanner({
   const askPrompt = usePrompt();
   const migrated = migratedReason != null;
   const showLock = !cancelled && (migrated || LOCKED_STATUSES.includes(status));
-  const doNumbers = (list: AfterDoMode['targets']) => list.map((t) => t.do_number ?? t.id).join(', ');
-  const lockedTargets = afterDo.targets.filter((t) => t.locked);
   return (
     <>
       {showLock && (
@@ -51,14 +67,7 @@ export function SoLockBanner({
           <Button variant={overridden ? 'ghost' : 'primary'} disabled={migrated}
             onClick={async () => {
               if (overridden) { onRelock(); return; }
-              const reason = await askPrompt({
-                title: 'Reason for override?',
-                body: 'This unlocks editing on a locked SO. The override is tracked in the status timeline.',
-                placeholder: 'At least 10 characters',
-                multiline: true,
-                confirmLabel: 'Override',
-                validate: (v) => (v.trim().length < 10 ? 'Override needs a reason ≥ 10 chars.' : null),
-              });
+              const reason = await askPrompt(SO_OVERRIDE_PROMPT);
               if (reason != null) onOverride(reason.trim());
             }}>
             {overridden ? 'Re-lock' : 'Override'}
@@ -71,9 +80,7 @@ export function SoLockBanner({
             <Truck {...ICON} />
             <span>
               <strong>Edit after DO.</strong>{' '}
-              {afterDo.headerOpen
-                ? <>Customer name, phone, email, address and contact, and charge lines (transport, storage, misc), are copied onto {doNumbers(afterDo.openTargets)} when you save.</>
-                : <>Charge lines (transport, storage, misc) can be added or changed. Customer details stay locked: {doNumbers(lockedTargets)} already has an invoice or return.</>}
+              {afterDoNoticeText(afterDo)}
             </span>
           </span>
           {afterDo.openTargets.length > 1 && (

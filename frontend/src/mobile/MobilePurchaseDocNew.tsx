@@ -411,7 +411,7 @@ export function MobilePurchaseDocNew({
         )}
       </div>
 
-      {pickerOpen && <MobileSkuPicker onPick={addSku} onClose={() => setPickerOpen(false)} />}
+      {pickerOpen && <MobileSkuPicker serviceOnly={false} onPick={addSku} onClose={() => setPickerOpen(false)} />}
     </div>
     </FormTouchScope>
   );
