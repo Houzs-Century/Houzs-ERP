@@ -75,7 +75,8 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
-import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { boardSlice, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { parseBand, planBoardSoRows, bandFilter, bandRows, countsByRegion } from '../lib/delivery-board-window';
 import { boardChangesHandler } from './delivery-planning-changes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
@@ -398,9 +399,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
-  // ?docs=A,B: rebuild ONLY these SO rows (the board's after-edit row refresh), see lib/delivery-board-slice.ts.
-  const onlyDocs = parseOnlyDocs(c.req.query('docs'));
+  const onlyDocs = parseOnlyDocs(c.req.query('docs')); // ?docs=A,B: rebuild ONLY these SO rows (after-edit row refresh), lib/delivery-board-slice.ts
   if (onlyDocs?.length === 0) return c.json({ orders: [], counts: emptyCounts(), regions: [] });
+  const band = parseBand(c.req.query('band'), c.req.query('page')); // one date band / counts only: lib/delivery-board-window.ts
+  if (band === 'invalid') return c.json({ error: 'bad_request', reason: 'band must be 1-5, with a page number.' }, 400);
+  const countsOnly = c.req.query('counts_only') === '1' && scope.mode === 'all' && !onlyDocs && !band;
 
   /* 0. CONFIG-DRIVEN region model (migration 0053) — load the owner-maintained
         region master + per-state MULTI mapping once per request. regionList()
@@ -453,7 +456,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
-  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => onlyDocsFilter(
+  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => bandFilter(onlyDocsFilter(
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
@@ -465,7 +468,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .order('customer_delivery_date', { ascending: true, nullsFirst: false })
         .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
-    ).range(from, to), onlyDocs),
+    ).range(from, to), onlyDocs), band, today),
   ); lap('dp-so-headers');
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
@@ -474,33 +477,28 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const datedRows = (soRowsRaw ?? []).filter(
     (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
-  // state=OPEN (office view): a status-DELIVERED order is Delivered whatever else
-  // holds, so it is counted here and skips every per-order read (lib/delivery-board-slice.ts).
-  const { kept: soRows, skipped: skippedDelivered } = splitDeliveredForOpen(datedRows, stateParam === 'OPEN' && scope.mode === 'all');
+  // Which orders get the per-order reads: a band's page, OPEN / counts count delivered ones, a driver builds only their own (lib/delivery-board-window.ts).
+  const plan = await planBoardSoRows(sb, c, { rows: datedRows, stateParam, scope, band, countsOnly }); lap('dp-plan');
+  if ('err' in plan) return c.json(readFailure(plan.stage, plan.err), 500);
+  const { kept: soRows, skipped: skippedDelivered } = plan;
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
-
-  if (docNos.length === 0) {
-    return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
-  }
+  if (docNos.length === 0 && scope.mode === 'all' && skippedDelivered.length === 0 && !band) return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
 
   /* OPEN-TIME (owner 2026-10-20 "开得慢"): kick off the four independent per-SO
      reads (live balance, line readiness, deliverable sums, DOs) together so they
      run concurrently instead of serially; each is still awaited and processed at
      its own site below. Extracted to keep this file from growing (see
      kickOffBoardReads for the why and the deliverable-wrap detail). */
-  const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos);
+  const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos, !countsOnly);
   /* The "PO No." column walks POs per company from soRows. It was the LAST serial
      read before the response; start it here too so it overlaps every read above
      (wrapped, since it is awaited far below — a throw must not float unhandled). */
-  const poNosByDocP = planningPoNosByDoc(sb, soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
+  const poNosByDocP = planningPoNosByDoc(sb, countsOnly ? [] : soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
   /* The three non-SO sub-boards (ASSR / DP / project) are independent of the SO
      reads and of each other; start them here too so they overlap everything above
      instead of tailing the whole SO assembly (see kickOffSubBoardReads). */
-  // A CLOSED service case whose leg date is within the last 90 days surfaces on
-  // the Delivered tab; older done work stays off the board (owner 2026-10-21).
-  // today is YYYY-MM-DD, so the cutoff is too.
-  // Done legs stay on the Delivered tab this many days, then drop off; open cases
-  // are never time-bound (owner 2026-11-06: shortened 90 -> 30, old ones cluttered).
+  // A closed service case's done legs stay on the Delivered tab 30 days, then drop off; open
+  // cases are never time-bound (owner 2026-11-06: 90 -> 30). Separate from the SO 90-day rule.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 30 * 86400000).toISOString().slice(0, 10);
   const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
@@ -821,7 +819,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      request it. ONE batched chain for the whole board (see soPoLockedMany), not
      a per-row query; Houzs doc numbers are filtered out inside it, so a
      Houzs-only board costs nothing. */
-  const poLockedDocs = await soPoLockedMany(sb, docNos); lap('dp-po-locked');
+  const poLockedDocs = await soPoLockedMany(sb, countsOnly ? [] : docNos); lap('dp-po-locked');
   const orders = soRows.map((r) => {
     const docNo = String(r.doc_no ?? '');
     /* Branding — derived 1:1 with the SO list (never the empty header field).
@@ -1468,8 +1466,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
   if ('err' in poNosRes) throw poNosRes.err; lap('dp-po-nos');
   const poNosByDoc = poNosRes.ok;
-  await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
-  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders]; lap('dp-ac-exemption');
+  await attachBoardAcExemptionExpiry(sb, c, countsOnly ? [] : soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
+  const allOrders = bandRows([...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders], band, today); lap('dp-ac-exemption');
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop
@@ -1502,8 +1500,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   counts.ALL = regionFiltered.length;
 
   const slice = boardSlice(regionFiltered, stateParam);
-  addSkippedDelivered(skippedDelivered, (r) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country), regionParam, counts, slice.deliveredByRegion);
-  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
+  const regionsOfRow = (r: { customer_state: string | null; customer_country: string | null }) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country);
+  addSkippedDelivered(skippedDelivered, regionsOfRow, regionParam, counts, slice.deliveredByRegion);
+  if (countsOnly) return c.json({ counts_by_region: countsByRegion(scopedOrders, skippedDelivered, regionCfg.regions.map((r) => r.key), (o, k) => matchesRegion(o, k, regionCfg.validCodes), regionsOfRow, emptyCounts), regions: regionCfg.regions });
+  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}), ...(band ? { band: { band: band.band, page: band.page, page_count: plan.pageCount } } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
 deliveryPlanning.get('/changes', boardChangesHandler);
