@@ -12,6 +12,7 @@
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
 import { lineExportDescription2 } from './line-export-description2';
+import { lineColours } from './grn-scan-colour';
 import { paginateAll } from './paginate-all';
 import { RECEIVABLE_PO_STATUSES } from './source-document-gates';
 import type { OpenPoLine, PoStatusRef, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
@@ -84,6 +85,7 @@ export async function loadOpenPoLines(
       description2: lineExportDescription2(r.item_group, r.variants, r.description2),
       soDocNo: r.so_item_id ? soDocByItem.get(r.so_item_id) ?? null : null,
       itemGroup: r.item_group ?? null,
+      colours: lineColours(r.variants),
     });
   }
   return out;

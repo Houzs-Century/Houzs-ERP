@@ -9,6 +9,7 @@
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { normalizeCode } from './grn-scan-match';
+import { rackSplitError, type RackSplit } from '../shared/rack-split';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped service client every scm route uses (grn-scan-load.ts)
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -41,19 +42,25 @@ export function resolveRack<T extends { rack: string }>(written: string, racks: 
 
 export type ScanRackResult = { written: number; filled: number; unknown: Array<{ written: string; itemCode: string }>; failed: boolean };
 
-/** Put each handwritten rack on its draft line (`racks` is poItemId -> as written). Best-effort. */
+/**
+ * Put each handwritten rack on its draft line. `racks` is poItemId -> rack as
+ * written -> the qty its rows put there. One rack for the whole line sets the
+ * line's rack, as before. Rows of one line written onto several racks (LH6-1,
+ * LV6-1, LH6-1) become that line's rack split (scm.grn_item_racks), each rack
+ * with its own qty, exactly as the GRN page saves a split. Best-effort.
+ */
 export async function applyScanRacks(
   svc: SupabaseClient,
   companyId: number | null,
   grnIds: string[],
-  racks: Record<string, string>,
+  racks: Record<string, Record<string, number>>,
 ): Promise<ScanRackResult> {
   const out: ScanRackResult = { written: 0, filled: 0, unknown: [], failed: false };
   if (grnIds.length === 0 || Object.keys(racks).length === 0) return out;
   const scoped = <Q>(q: Q): Q => scopeToCompanyIdOrOpen(q, companyId);
 
   const { data: grns, error: grnErr } = await scoped(svc.from('grns').select('id, warehouse_id, status').in('id', grnIds));
-  const { data: items, error: itemErr } = await scoped(svc.from('grn_items').select('id, grn_id, purchase_order_item_id, item_code, rack_id').in('grn_id', grnIds));
+  const { data: items, error: itemErr } = await scoped(svc.from('grn_items').select('id, company_id, grn_id, purchase_order_item_id, item_code, rack_id, qty_accepted').in('grn_id', grnIds));
   if (grnErr || itemErr) { console.error('[scan-gr racks] load failed:', grnErr?.message ?? itemErr?.message); return { ...out, failed: true }; }
   const whOf = new Map((grns as Array<{ id: string; warehouse_id: string | null; status: string }>)
     .filter((g) => g.status === 'DRAFT').map((g) => [g.id, g.warehouse_id]));
@@ -64,16 +71,38 @@ export async function applyScanRacks(
   if (rackErr) { console.error('[scan-gr racks] rack list failed:', rackErr.message); return { ...out, failed: true }; }
   const rackList = rackRows as Array<{ id: string; rack: string; warehouse_id: string }>;
 
-  for (const it of items as Array<{ id: string; grn_id: string; purchase_order_item_id: string | null; item_code: string; rack_id: string | null }>) {
-    const written = it.purchase_order_item_id ? racks[it.purchase_order_item_id] : undefined;
+  type Item = { id: string; company_id: number | null; grn_id: string; purchase_order_item_id: string | null; item_code: string; rack_id: string | null; qty_accepted: number | null };
+  for (const it of items as Item[]) {
+    const written = Object.entries((it.purchase_order_item_id ? racks[it.purchase_order_item_id] : undefined) ?? {}).filter(([w, q]) => w.trim() !== '' && q > 0);
     const wh = whOf.get(it.grn_id);
-    if (!written || !wh) continue;
+    if (written.length === 0 || !wh) continue;
     out.written += 1;
-    const rack = resolveRack(written, rackList.filter((r) => r.warehouse_id === wh));
-    if (!rack) { out.unknown.push({ written, itemCode: it.item_code }); continue; }
-    if (it.rack_id) continue;
-    const { error } = await scoped(svc.from('grn_items').update({ rack_id: rack.id }).eq('id', it.id));
-    if (error) { console.error('[scan-gr racks] set failed:', it.id, error.message); out.failed = true; continue; }
+    const shares = new Map<string, number>(); // rack id -> qty
+    let unknown = false;
+    for (const [w, q] of written) {
+      const rack = resolveRack(w, rackList.filter((r) => r.warehouse_id === wh));
+      if (!rack) { out.unknown.push({ written: w, itemCode: it.item_code }); unknown = true; continue; }
+      shares.set(rack.id, (shares.get(rack.id) ?? 0) + q);
+    }
+    if (shares.size === 0 || it.rack_id) continue;
+    if (shares.size === 1 && !unknown) {
+      const { error } = await scoped(svc.from('grn_items').update({ rack_id: [...shares.keys()][0] }).eq('id', it.id));
+      if (error) { console.error('[scan-gr racks] set failed:', it.id, error.message); out.failed = true; continue; }
+      out.filled += 1;
+      continue;
+    }
+    // Never more on the racks than the line received.
+    let left = Number(it.qty_accepted ?? 0);
+    const split: RackSplit[] = [];
+    for (const [rackId, q] of shares) { const take = Math.min(q, left); if (take > 0) split.push({ rackId, qty: take }); left -= take; }
+    const company = it.company_id ?? companyId;
+    if (split.length === 0 || company == null || rackSplitError(Number(it.qty_accepted ?? 0), split)) continue;
+    const { error: insErr } = await svc.from('grn_item_racks').insert(split.map((s) => ({ company_id: company, grn_item_id: it.id, rack_id: s.rackId, qty: s.qty, created_by: null })));
+    if (insErr) { console.error('[scan-gr racks] split failed:', it.id, insErr.message); out.failed = true; continue; }
+    if (split.length === 1) {
+      const { error } = await scoped(svc.from('grn_items').update({ rack_id: split[0].rackId }).eq('id', it.id));
+      if (error) { console.error('[scan-gr racks] set failed:', it.id, error.message); out.failed = true; continue; }
+    }
     out.filled += 1;
   }
   return out;
