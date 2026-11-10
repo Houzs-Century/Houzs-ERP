@@ -38,7 +38,8 @@ const noop: unknown = new Proxy({}, {
   },
 });
 
-const TABLES = ['delivery_orders', 'delivery_order_items', 'mfg_sales_order_items', 'warehouses', 'warehouse_racks', 'warehouse_rack_items', 'warehouse_rack_movements', 'inventory_movements', 'test_fifo_lots'];
+const TABLES = ['delivery_orders', 'delivery_order_items', 'mfg_sales_order_items', 'warehouses', 'warehouse_racks', 'warehouse_rack_items', 'warehouse_rack_movements', 'inventory_movements', 'test_fifo_lots',
+  'mfg_products', 'inventory_balances', 'purchase_order_items', 'purchase_orders', 'inventory_lots'];
 
 const flip = (companyId: number, id: string): DoShipFlip => async (t: StockTxClient) => {
   const { data } = await t.from('delivery_orders').update({ status: 'LOADED', updated_at: new Date().toISOString() })
@@ -49,14 +50,20 @@ const ship = (id: string, companyId: number, withFlip = true) =>
   shipDoAtomically(stockTxOver(sql), noop, id, 'user-1', withFlip ? flip(companyId, id) : null);
 
 const statusOf = async (id: string) => (await sql`SELECT status FROM scm.delivery_orders WHERE id = ${id}`)[0]!.status as string;
-const outs = async () => sql`SELECT movement_type, item_code, qty, source_doc_id, company_id FROM scm.inventory_movements ORDER BY id`;
+const outs = async () => sql`SELECT movement_type, item_code, qty, source_doc_id, company_id, variant_key, batch_no FROM scm.inventory_movements ORDER BY id`;
 const lots = async () => sql`SELECT item_code FROM scm.test_fifo_lots`;
 const rackOuts = async () => sql`SELECT rack_id, quantity, source_doc_no FROM scm.warehouse_rack_movements`;
 const rackQty = async () => Number((await sql`SELECT qty FROM scm.warehouse_rack_items WHERE id = 'ri1'`)[0]?.qty ?? 0);
 
 describePg('a DO first ship is one transaction: flip, stock OUT, rack STOCK_OUT', () => {
   beforeAll(async () => {
-    sql = postgres(url, { max: 1, prepare: false, fetch_types: false, onnotice: () => {} });
+    /* Production's options (src/db/pg.ts), bigint as a number included: company 1
+       is told apart by `companyId === 1`, so a bigint read back as '1' would send
+       a company-1 DO down company 2's variant-key path (#5617). */
+    sql = postgres(url, {
+      max: 1, prepare: false, fetch_types: false, onnotice: () => {},
+      types: { bigint: { to: 20, from: [20], parse: (x: string) => Number(x), serialize: (x: number | string) => String(x) } },
+    });
     await sql`CREATE SCHEMA IF NOT EXISTS scm`;
     for (const t of TABLES) await sql.unsafe(`DROP TABLE IF EXISTS scm.${t} CASCADE`);
     await sql`
@@ -83,9 +90,19 @@ describePg('a DO first ship is one transaction: flip, stock OUT, rack STOCK_OUT'
         id bigserial PRIMARY KEY, company_id bigint, movement_type text NOT NULL, warehouse_id text,
         item_code text, variant_key text, product_name text, qty numeric, unit_cost_sen bigint,
         batch_no text, movement_date date, source_doc_type text, source_doc_id text,
-        source_doc_no text, performed_by text
+        source_doc_no text, performed_by text, notes text, correction_seq integer
       )`;
     await sql`CREATE TABLE scm.test_fifo_lots (item_code text)`;
+    /* What #5619 (company 1: the hard-bound line's own PO lot) and #5617 (company 2:
+       the stocked bucket's own key) read, inside the same transaction. */
+    await sql`CREATE TABLE scm.mfg_products (code text, category text, company_id bigint)`;
+    await sql`CREATE TABLE scm.inventory_balances (warehouse_id text, item_code text, variant_key text, qty numeric, company_id bigint)`;
+    await sql`CREATE TABLE scm.purchase_order_items (id text PRIMARY KEY, so_item_id text, item_code text, purchase_order_id text, received_qty integer)`;
+    await sql`CREATE TABLE scm.purchase_orders (id text PRIMARY KEY, po_number text, status text)`;
+    await sql`
+      CREATE TABLE scm.inventory_lots (
+        id bigserial PRIMARY KEY, company_id bigint, warehouse_id text, item_code text, variant_key text, batch_no text, qty_remaining numeric
+      )`;
     await sql.unsafe(`
       CREATE OR REPLACE FUNCTION scm.test_fifo_out() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
@@ -141,6 +158,36 @@ describePg('a DO first ship is one transaction: flip, stock OUT, rack STOCK_OUT'
     expect(await lots()).toHaveLength(0);
     expect(await rackOuts()).toHaveLength(0);
     expect(await rackQty()).toBe(5);
+  });
+
+  test('#5619 inside the transaction: a company-1 hard-bound line ships from its own PO lot', async () => {
+    await sql`INSERT INTO scm.delivery_orders (id, do_number, company_id, status, warehouse_id) VALUES ('do-hb', 'HC-DO-2611-003', ${CO}, 'DRAFT', 'wh-1')`;
+    await sql`INSERT INTO scm.delivery_order_items (id, delivery_order_id, company_id, so_item_id, item_code, description, qty, item_group) VALUES ('lhb', 'do-hb', ${CO}, 'soi-1', 'SOFA-1', 'Sofa', 1, 'sofa')`;
+    await sql`INSERT INTO scm.mfg_sales_order_items (id, warehouse_id) VALUES ('soi-1', 'wh-1')`;
+    await sql`INSERT INTO scm.purchase_order_items (id, so_item_id, item_code, purchase_order_id, received_qty) VALUES ('poi-1', 'soi-1', 'SOFA-1', 'po-1', 1)`;
+    await sql`INSERT INTO scm.purchase_orders (id, po_number, status) VALUES ('po-1', 'HC-PO-2611-007', 'RECEIVED')`;
+    await sql`INSERT INTO scm.inventory_lots (company_id, warehouse_id, item_code, variant_key, batch_no, qty_remaining) VALUES (${CO}, 'wh-1', 'SOFA-1', '', 'HC-PO-2611-007', 5)`;
+    const res = await ship('do-hb', CO);
+    expect(res.ok).toBe(true);
+    const m = await outs();
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ item_code: 'SOFA-1', batch_no: 'HC-PO-2611-007' });
+  });
+
+  test('#5617 inside the transaction: a company-2 OUT is written under the stocked bucket key', async () => {
+    const stored = 'fabriccode=bf16|gap=4|legheight=2';
+    await sql`INSERT INTO scm.delivery_orders (id, do_number, company_id, status, warehouse_id) VALUES ('do-c2', '2990-DO-2611-002', ${OTHER_CO}, 'DRAFT', 'wh-2')`;
+    await sql`
+      INSERT INTO scm.delivery_order_items (id, delivery_order_id, company_id, item_code, description, qty, item_group, variants)
+      VALUES ('lc2', 'do-c2', ${OTHER_CO}, 'BF-1', 'Bedframe', 1, 'bedframe', ${sql.json({ fabricCode: 'BF-16', gap: '4"', legHeight: '2"', totalHeight: '6"' })})`;
+    await sql`INSERT INTO scm.mfg_products (code, category, company_id) VALUES ('BF-1', 'bedframe', ${OTHER_CO})`;
+    await sql`INSERT INTO scm.inventory_balances (warehouse_id, item_code, variant_key, qty, company_id) VALUES ('wh-2', 'BF-1', ${stored}, 3, ${OTHER_CO})`;
+    const res = await ship('do-c2', OTHER_CO);
+    expect(res.ok).toBe(true);
+    const m = await outs();
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ item_code: 'BF-1', variant_key: stored });
+    expect(Number(m[0]!.company_id)).toBe(OTHER_CO);
   });
 
   test('company scope: another company\'s DO is not flipped and nothing moves', async () => {
