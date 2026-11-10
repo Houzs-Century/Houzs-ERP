@@ -32,3 +32,19 @@ describe("InlineEdit date field Save button", () => {
     expect(screen.getByText("Network down")).toBeTruthy();
   });
 });
+
+describe("InlineEdit with its label hidden", () => {
+  test("shows the save tick on the box's border instead of a row above it", async () => {
+    const onSave = vi.fn(async () => {});
+    const { container } = render(
+      <InlineEdit label="Pending With" isLabelHidden value={null} onSave={onSave} placeholder="Who" />,
+    );
+    const input = screen.getByPlaceholderText("Who");
+    fireEvent.change(input, { target: { value: "Logistic Team" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith("Logistic Team"));
+    const statusRow = container.querySelector("label")?.parentElement;
+    expect(statusRow?.className).toContain("absolute");
+    expect(statusRow?.className).not.toContain("mb-1.5");
+  });
+});
