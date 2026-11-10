@@ -133,31 +133,78 @@ type LotClassRow = {
   batch_no: string | null;
   source_doc_type: string | null;
   source_doc_id: string | null;
+  warehouse_id?: string | null;
+  item_code?: string | null;
+  variant_key?: string | null;
 };
+
+type LotClass = { po: string | null; adjustment: boolean };
+
+/* A lot whose source is a DO is units that DO gave back: a shipped-DO edit whose
+   return to the original lots failed wrote a plain IN, and the FIFO trigger
+   minted this lot (lib/do-resync-return.ts has the story). Its origin is the lot
+   the same DO consumed in the same bucket, newest consumption first (the order
+   the return unwinds in). Returns returnLotId -> originLotId. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST shim every reader in this file takes
+async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ret = rows.filter((l) => !l.batch_no && (l.source_doc_type ?? '').toUpperCase() === 'DO' && l.source_doc_id && l.item_code);
+  if (ret.length === 0) return out;
+  try {
+    const doIds = [...new Set(ret.map((l) => l.source_doc_id as string))];
+    const cons: Array<{ id: string; lot_id: string; source_doc_id: string; warehouse_id: string | null; item_code: string | null; variant_key: string | null; consumed_at: string | null }> = [];
+    for (let i = 0; i < doIds.length; i += CHUNK) {
+      const { data, error } = await sb.from('inventory_lot_consumptions')
+        .select('id, lot_id, source_doc_id, warehouse_id, item_code, variant_key, consumed_at')
+        .eq('source_doc_type', 'DO')
+        .in('source_doc_id', doIds.slice(i, i + CHUNK));
+      // A half-read must not name an origin: leave every return lot unclassified.
+      if (error) return new Map();
+      for (const c of (data ?? []) as typeof cons) cons.push(c);
+    }
+    const newestFirst = (a: typeof cons[number], b: typeof cons[number]) =>
+      String(b.consumed_at ?? '').localeCompare(String(a.consumed_at ?? '')) || String(b.id).localeCompare(String(a.id));
+    for (const l of ret) {
+      const hit = cons
+        .filter((c) => c.source_doc_id === l.source_doc_id && c.item_code === l.item_code
+          && (c.variant_key ?? '') === (l.variant_key ?? '') && (!l.warehouse_id || c.warehouse_id === l.warehouse_id)
+          && c.lot_id !== l.id)
+        .sort(newestFirst);
+      if (hit.length > 0) out.set(l.id, hit[0].lot_id);
+    }
+  } catch { /* consumptions unreadable — the return lot stays unclassified */ }
+  return out;
+}
 
 /* Classify a set of lots for the forward trace: batch_no verbatim where
    present; NULL-batch GRN lots healed via grns→PO; NULL-batch ADJUSTMENT lots
-   flagged. Returns lotId → { po, adjustment }. */
+   flagged; a DO return lot classified as the lot it came back from (at most
+   three hops). Returns lotId → { po, adjustment }. */
 export async function classifyLots(
   sb: any,
   lotIds: string[],
-): Promise<Map<string, { po: string | null; adjustment: boolean }>> {
-  const out = new Map<string, { po: string | null; adjustment: boolean }>();
+  depth = 0,
+): Promise<Map<string, LotClass>> {
+  const out = new Map<string, LotClass>();
   const ids = [...new Set(lotIds.filter(Boolean))];
   if (ids.length === 0) return out;
   const rows: LotClassRow[] = [];
   for (let i = 0; i < ids.length; i += CHUNK) {
     const { data } = await sb.from('inventory_lots')
-      .select('id, batch_no, source_doc_type, source_doc_id')
+      .select('id, batch_no, source_doc_type, source_doc_id, warehouse_id, item_code, variant_key')
       .in('id', ids.slice(i, i + CHUNK));
     for (const l of (data ?? []) as LotClassRow[]) rows.push(l);
   }
+  const origin = depth < 3 ? await originOfDoReturnLots(sb, rows) : new Map<string, string>();
+  const originClass = origin.size > 0 ? await classifyLots(sb, [...origin.values()], depth + 1) : new Map<string, LotClass>();
   const grnIds = rows
     .filter((l) => !l.batch_no && (l.source_doc_type ?? '').toUpperCase() === 'GRN' && l.source_doc_id)
     .map((l) => l.source_doc_id as string);
   const poByGrn = await poNumbersByGrnId(sb, grnIds);
   for (const l of rows) {
     const srcType = (l.source_doc_type ?? '').toUpperCase();
+    const from = origin.get(l.id);
+    if (from && originClass.has(from)) { out.set(l.id, originClass.get(from)!); continue; }
     const po = l.batch_no
       ?? (srcType === 'GRN' && l.source_doc_id ? (poByGrn.get(l.source_doc_id) ?? null) : null);
     out.set(l.id, { po, adjustment: !po && srcType === 'ADJUSTMENT' });

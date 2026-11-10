@@ -27,11 +27,16 @@ export const financeDocHref = (kind: FinanceDocKind, id: string): string => {
   }
 };
 
-export function FinanceDocLink({ to, children, className }: { to: string; children: string; className?: string }) {
+/** `onOpen`: what the page notes before a plain click leaves it (its scroll, its
+    ticks), so the document's Back lands on the page as it was. */
+export function FinanceDocLink({ to, children, className, onOpen }: { to: string; children: string; className?: string; onOpen?: () => void }) {
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     /* A row that opens on a click must not open as well. */
     e.stopPropagation();
-    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) markWorkspaceOpenIntent(true);
+    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      onOpen?.();
+      markWorkspaceOpenIntent(true);
+    }
   };
   return (
     <Link to={to} className={className ? `${css.docLink} ${className}` : css.docLink} title={`Open ${children} in a new tab`}

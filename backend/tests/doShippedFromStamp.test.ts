@@ -4,9 +4,11 @@
 // the real stamp writer against a PostgREST-shaped fake that applies filters.
 import { describe, expect, test } from 'vitest';
 import { makeFakePostgrest, type Row } from './fakePostgrest';
+import { listDosWithOpenLines, retryOpenDoStamps, rotateWindow } from '../src/scm/lib/do-shipped-from-retry';
 import { computeVariantKey } from '../src/scm/shared';
+import { withAfterResponse } from '../src/lib/after-response';
 import {
-  stampDoShippedFrom, markDoShippedFromReturned, withShippedFromStamp,
+  queueDoShippedFromStamp, stampDoShippedFrom, markDoShippedFromReturned, withShippedFromStamp,
 } from '../src/scm/lib/do-shipped-from-stamp';
 
 const VK = computeVariantKey('bedframe', null);
@@ -71,12 +73,12 @@ describe('stamp at the first ship', () => {
     expect(JSON.stringify(line(db, 'l2').shipped_from)).toBe(before);
   });
 
-  test('another company\'s rack rows never reach the stamp', async () => {
+  test('another company\'s rack rows never reach the stamp (no rack of its own: the line stays open)', async () => {
     const t = world();
     t.warehouse_rack_movements.forEach((r) => { r.company_id = 1; });
     const db = makeFakePostgrest(t, []);
     await stampDoShippedFrom(db, 'do-1', 2);
-    expect(line(db, 'l1').shipped_from).toMatchObject({ racks: [] });
+    expect(line(db, 'l1').shipped_from).toBeNull();
   });
 
   test('company 1 hard-bound line locks its own received PO, as the screen named it (BUG-103)', async () => {
@@ -114,7 +116,7 @@ describe('no dispatch rack: the rack comes from PO -> GRN -> GRN line rack (owne
       pos: [{ po: '2990-PO-2610-044', qty: 1 }],
       racks: [{ rack_id: 'r-l82', label: 'Rack L8.2', qty: 1, via: 'grn', po: '2990-PO-2610-044', grn: 'GRN-0101' }],
     });
-    expect(line(db, 'l2').shipped_from).toMatchObject({ racks: [] });
+    expect(line(db, 'l2').shipped_from).toBeNull(); // its POs have no GRN rack: left open
   });
 
   test('a split GRN line reads grn_item_racks, not the single rack_id', async () => {
@@ -132,18 +134,134 @@ describe('no dispatch rack: the rack comes from PO -> GRN -> GRN line rack (owne
     expect(racks.map((r) => [r.label, r.qty, r.via])).toEqual([['Rack L8.2', 1, 'grn'], ['Rack L8.3', 1, 'grn']]);
   });
 
-  test("another company's GRN never reaches the stamp", async () => {
+  test("another company's GRN never reaches the stamp (no rack: left open)", async () => {
     const db = makeFakePostgrest(oldDo(1), []);
     await stampDoShippedFrom(db, 'do-1', 2);
-    expect(line(db, 'l1').shipped_from).toMatchObject({ pos: [{ po: '2990-PO-2610-044', qty: 1 }], racks: [] });
+    expect(line(db, 'l1').shipped_from).toBeNull();
   });
 
-  test('a DRAFT GRN placed nothing, so it names no rack', async () => {
+  test('a DRAFT GRN placed nothing, so it names no rack and the line stays open', async () => {
     const t = oldDo();
     t.grns[t.grns.length - 1].status = 'DRAFT';
     const db = makeFakePostgrest(t, []);
     await stampDoShippedFrom(db, 'do-1', 2);
-    expect(line(db, 'l1').shipped_from).toMatchObject({ racks: [] });
+    expect(line(db, 'l1').shipped_from).toBeNull();
+  });
+
+  /* Owner decision 2026-11-10: an incomplete line is left open and retried every
+     night; it locks once its GRN gets a rack. */
+  const NOW = new Date('2026-11-10T16:05:00.000Z');
+  const REL = [{ child: 'delivery_order_items', childCol: 'delivery_order_id', parent: 'delivery_orders', parentCol: 'id' }];
+  function nightly(): Record<string, Row[]> {
+    const t = oldDo();
+    Object.assign(t.delivery_orders[0], { status: 'LOADED', created_at: '2026-11-02T03:00:00.000Z', migrated_no_stock: false });
+    t.grn_items[0].rack_id = null; // GRN posted before anyone put it on a rack
+    const locked = { v: 1, at: 't0', src: 'ship', item_code: 'AKKA', qty: 1, pos: [{ po: 'PO-OLD', qty: 1 }], adj_qty: 0, racks: [{ rack_id: 'r-x', label: 'Rack X', qty: 1, via: 'dispatch' }] };
+    t.delivery_order_items.push({ id: 'l4', delivery_order_id: 'do-1', company_id: 2, line_no: 4, item_code: 'AKKA', item_group: 'bedframe', variants: null, qty: 1, rack_id: null, so_item_id: null, committed_po_batch_no: null, shipped_from: locked });
+    const other = (id: string, extra: Row, companyId = 2) => {
+      t.delivery_orders.push({ id, do_number: id, company_id: companyId, status: 'LOADED', created_at: '2026-11-01T00:00:00.000Z', migrated_no_stock: false, ...extra });
+      t.delivery_order_items.push({ id: `${id}-l1`, delivery_order_id: id, company_id: companyId, line_no: 1, item_code: 'CODY-(K)', item_group: 'bedframe', variants: null, qty: 1, rack_id: null, so_item_id: null, shipped_from: null });
+    };
+    other('do-old', { created_at: '2026-04-01T00:00:00.000Z' });
+    other('do-draft', { status: 'DRAFT' });
+    other('do-cancelled', { status: 'CANCELLED' });
+    other('do-migrated', { migrated_no_stock: true });
+    other('do-c1', {}, 1);
+    return t;
+  }
+
+  test('the GRN fallback adds a fixed set of reads, still one per table per DO', async () => {
+    const db = makeFakePostgrest(oldDo(), []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(db.totalReads()).toBe(21);
+  });
+
+  test('the nightly pass picks only confirmed, live, recent DOs of the company with an open goods line', async () => {
+    const db = makeFakePostgrest(nightly(), REL);
+    expect(await listDosWithOpenLines(db, 2, '2026-05-14T16:05:00.000Z')).toEqual(['do-1']);
+    expect(await listDosWithOpenLines(db, 1, '2026-05-14T16:05:00.000Z')).toEqual(['do-c1']);
+  });
+
+  test('the nightly pass locks a line once its GRN rack appears, and never touches a stamped line', async () => {
+    const db = makeFakePostgrest(nightly(), REL);
+    const before = JSON.stringify(line(db, 'l4').shipped_from);
+
+    expect(await retryOpenDoStamps(db, [2], NOW)).toEqual([{ companyId: 2, open_dos: 1, tried: 1, written: 0, error: null }]);
+    expect(line(db, 'l1').shipped_from).toBeNull(); // PO known, no rack yet: still open
+
+    db.tables.grn_items[0].rack_id = 'r-l82'; // the GRN line gets its rack
+    expect(await retryOpenDoStamps(db, [2], NOW)).toEqual([{ companyId: 2, open_dos: 1, tried: 1, written: 1, error: null }]);
+    expect(line(db, 'l1').shipped_from).toMatchObject({
+      pos: [{ po: '2990-PO-2610-044', qty: 1 }],
+      racks: [{ rack_id: 'r-l82', label: 'Rack L8.2', qty: 1, via: 'grn', grn: 'GRN-0101' }],
+    });
+    expect(line(db, 'l2').shipped_from).toBeNull();
+    expect(JSON.stringify(line(db, 'l4').shipped_from)).toBe(before);
+
+    const locked = JSON.stringify(line(db, 'l1').shipped_from);
+    db.tables.grn_items[0].rack_id = 'r-l83';
+    await retryOpenDoStamps(db, [2], NOW); // idempotent: a locked line stays as it was
+    expect(JSON.stringify(line(db, 'l1').shipped_from)).toBe(locked);
+  });
+});
+
+describe('only a complete line is locked at the ship (owner decision 2026-11-10)', () => {
+  test('a rack but no PO: the line stays open', async () => {
+    const t = world();
+    t.inventory_lot_consumptions = t.inventory_lot_consumptions.filter((c) => c.item_code !== 'CODY-(K)');
+    const db = makeFakePostgrest(t, []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(line(db, 'l1').shipped_from).toBeNull();
+    expect(line(db, 'l2').shipped_from).not.toBeNull();
+  });
+
+  test('a rack for 2 of 3: the line stays open, nothing partial is written', async () => {
+    const t = world();
+    t.warehouse_rack_movements = t.warehouse_rack_movements.filter((r) => r.rack_id !== 'r-l51');
+    const db = makeFakePostgrest(t, []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(line(db, 'l2').shipped_from).toBeNull();
+    expect(line(db, 'l1').shipped_from).not.toBeNull();
+  });
+});
+
+describe('the request path never waits for the stamp', () => {
+  test('inside a request the stamp is handed to waitUntil and the caller returns first', async () => {
+    const db = makeFakePostgrest(world(), []);
+    const deferred: Array<Promise<unknown>> = [];
+    await withAfterResponse((p) => { deferred.push(p); }, () => queueDoShippedFromStamp(db, 'do-1', 2));
+    expect(deferred).toHaveLength(1);
+    expect(line(db, 'l1').shipped_from).toBeNull(); // not yet: the response went first
+    await Promise.all(deferred);
+    expect(line(db, 'l1').shipped_from).not.toBeNull();
+  });
+
+  test('outside a request (cron, scripts) it runs inline', async () => {
+    const db = makeFakePostgrest(world(), []);
+    await queueDoShippedFromStamp(db, 'do-1', 2);
+    expect(line(db, 'l1').shipped_from).not.toBeNull();
+  });
+
+  test('reads are one query per table per DO, not per line', async () => {
+    const reads = async (t: Record<string, Row[]>) => {
+      const db = makeFakePostgrest(t, []);
+      await stampDoShippedFrom(db, 'do-1', 2);
+      return { total: db.totalReads(), perTable: Math.max(...db.reads.values()) };
+    };
+    const small = await reads(world());
+    const big = world();
+    for (let i = 4; i < 24; i += 1) big.delivery_order_items.push({ ...big.delivery_order_items[1], id: `x${i}`, line_no: i, shipped_from: null });
+    expect((await reads(big)).total).toBe(small.total);
+    expect(small.total).toBe(14);
+  });
+});
+
+describe('rotateWindow', () => {
+  test('a short list is tried whole; a long one moves on each night and wraps', () => {
+    expect(rotateWindow([1, 2, 3], 5, 7)).toEqual([1, 2, 3]);
+    expect(rotateWindow([1, 2, 3, 4, 5], 2, 0)).toEqual([1, 2]);
+    expect(rotateWindow([1, 2, 3, 4, 5], 2, 1)).toEqual([3, 4]);
+    expect(rotateWindow([1, 2, 3, 4, 5], 2, 2)).toEqual([5, 1]);
   });
 });
 

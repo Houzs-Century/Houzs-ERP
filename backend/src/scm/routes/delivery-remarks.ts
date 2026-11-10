@@ -18,6 +18,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { paginateAll } from '../lib/paginate-all';
 
 export const deliveryRemarks = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryRemarks.use('*', supabaseAuth);
@@ -34,15 +35,26 @@ const shape = (r: RemarkRow) => ({
 
 /* Every order that carries at least one remark, with its count — the board uses
    it to show a REMARK pill without the heavy delivery-planning feed carrying it.
-   Registered before '/' (distinct exact path); a day's board is a few hundred
-   orders, so the whole small set is fine to return. */
-deliveryRemarks.get('/flags', async (c) => {
-  const sb = c.get('supabase');
-  const { data, error } = await sb.from('delivery_remarks').select('so_doc_no');
-  if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
+   Registered before '/' (distinct exact path). The table holds every remark ever
+   written, so it is paged: one plain select stopped at 1,000 rows and every order
+   past them silently lost its pill. */
+export async function loadRemarkFlags(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
+  sb: any,
+): Promise<{ ok: true; flags: Array<{ soDocNo: string; count: number }> } | { ok: false; reason: string }> {
+  const { data, error, truncated } = await paginateAll<{ so_doc_no: string }>((from, to) =>
+    sb.from('delivery_remarks').select('so_doc_no').order('id').range(from, to));
+  if (error) return { ok: false, reason: error.message };
+  if (truncated) return { ok: false, reason: 'More remarks than one read can count; the REMARK pills would be incomplete.' };
   const counts = new Map<string, number>();
-  for (const r of data as Array<{ so_doc_no: string }>) counts.set(r.so_doc_no, (counts.get(r.so_doc_no) ?? 0) + 1);
-  return c.json({ flags: [...counts].map(([soDocNo, count]) => ({ soDocNo, count })) });
+  for (const r of data ?? []) counts.set(r.so_doc_no, (counts.get(r.so_doc_no) ?? 0) + 1);
+  return { ok: true, flags: [...counts].map(([soDocNo, count]) => ({ soDocNo, count })) };
+}
+
+deliveryRemarks.get('/flags', async (c) => {
+  const r = await loadRemarkFlags(c.get('supabase'));
+  if (!r.ok) return c.json({ error: 'fetch_failed', reason: r.reason }, 500);
+  return c.json({ flags: r.flags });
 });
 
 deliveryRemarks.get('/', async (c) => {

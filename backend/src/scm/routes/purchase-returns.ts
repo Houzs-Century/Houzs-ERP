@@ -52,6 +52,7 @@ import {
   PURCHASE_RETURN_REASON_CODES,
 } from '../shared/purchase-return-reasons';
 import { chunkIn } from '../lib/paginate-all';
+import { linesUnreadableBody, unreadableMovementError } from '../lib/failed-read-refusal';
 import {
   PR_HEADER_COLS,
   PR_LIST_SELECT,
@@ -452,10 +453,11 @@ async function warehouseCodeMap(
   return out;
 }
 
-async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
+export async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
   // Multi-company: the PR's movements inherit the PR header's company.
-  const { data: prHeader } = await sb.from('purchase_returns')
+  const { data: prHeader, error: prHeaderErr } = await sb.from('purchase_returns')
     .select('company_id, kind, repair_warehouse_id').eq('id', prId).maybeSingle();
+  if (prHeaderErr) return [unreadableMovementError('the purchase return', prHeaderErr)];
   const prHead = prHeader as { company_id?: number | null; kind?: string | null; repair_warehouse_id?: string | null } | null;
   const prCompanyId = prHead?.company_id ?? null;
   /* A REPAIR return does not take the goods off the books: they go to the
@@ -465,10 +467,10 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
      2026-09-28). NULL for a CREDIT return, and the DB CHECK guarantees a REPAIR
      one has it. */
   const repairWarehouseId = prHead?.kind === 'REPAIR' ? (prHead.repair_warehouse_id ?? null) : null;
-  const { data: items } = await sb.from('purchase_return_items')
+  const { data: items, error: itemsErr } = await sb.from('purchase_return_items')
     .select('id, grn_item_id, item_code, material_name, qty_returned, item_group, variants')
     .eq('purchase_return_id', prId);
-  if (!items) return [];
+  if (itemsErr || !items) return itemsErr ? [unreadableMovementError('the purchase return lines', itemsErr)] : [];
   // Per-line warehouse — each line draws OUT of its source GRN line's warehouse,
   // not a single primary-GRN default (a batched PR can span warehouses).
   const lineWh = await resolvePrLineWarehouses(
@@ -1943,9 +1945,12 @@ export const deletePurchaseReturnItemHandler = async (c: any) => {
   // Audit 2026-06-11 M10 — scoped to THIS PR: a mismatched itemId must 404,
   // not delete another PR's line while the GRN release / stock compensation
   // run against this one.
-  const { data: line } = await scopeToCompanyId(sb.from('purchase_return_items')
+  const { data: line, error: lineErr } = await scopeToCompanyId(sb.from('purchase_return_items')
     .select('qty_returned, grn_item_id, item_code, material_name, item_group, variants')
     .eq('id', itemId).eq('purchase_return_id', prId), co.companyId).maybeSingle();
+  // Header read BEFORE the delete: the reversing IN needs it, and an unread one must refuse, not drop the IN.
+  const { data: hdr, error: hdrErr } = await scopeToCompanyId(sb.from('purchase_returns').select('return_number, grn_id').eq('id', prId), co.companyId).maybeSingle();
+  if (lineErr || hdrErr) return c.json(linesUnreadableBody('the purchase return line', 'deleted', lineErr ?? hdrErr), 503);
   if (!line) return c.json(NOT_THIS_COMPANY, 404);
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -1960,8 +1965,6 @@ export const deletePurchaseReturnItemHandler = async (c: any) => {
        standing and stock drifted below the books permanently. */
     const qty = Number(l.qty_returned ?? 0);
     if (qty > 0) {
-      const { data: hdr } = await sb.from('purchase_returns')
-        .select('return_number, grn_id').eq('id', prId).maybeSingle();
       if (hdr) {
         movementErrors = await writePrLineDeltaMovement(sb, {
           prId,

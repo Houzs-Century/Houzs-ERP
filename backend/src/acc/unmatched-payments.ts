@@ -314,7 +314,7 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[], toda
   /* The reports those lines are on: their own lines (what still waits), what
      each pays and the bank credits booked against it. */
   const batchIds = [...new Set([...batchOfLine.values()].filter((n) => Number.isInteger(n)))];
-  const [batchRows, receiptRows, reportLines] = await Promise.all([
+  const [batchRows, receiptRows, reportLines, dayRows] = await Promise.all([
     chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_batches')
       .select('id, file_name, acquirer_code, stated_net_sen, net_sen')
       .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi)),
@@ -324,10 +324,15 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[], toda
     chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_rows')
       .select('id, batch_id, confirmed_at, bucket')
       .eq('company_id', companyId).in('batch_id', batch).order('id').range(lo, hi)),
+    /* What the bank kept off a payout, booked on its advice day (acc/card-in-bank). */
+    chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_payout_batches')
+      .select('id, batch_id, charge_sen, charge_je_no')
+      .eq('company_id', companyId).in('batch_id', batch).order('id').range(lo, hi)),
   ]);
   if (batchRows.error) return { ok: false, reason: `merchant reports: ${batchRows.error.message}` };
   if (receiptRows.error) return { ok: false, reason: `merchant report credits: ${receiptRows.error.message}` };
   if (reportLines.error) return { ok: false, reason: `merchant report lines: ${reportLines.error.message}` };
+  if (dayRows.error) return { ok: false, reason: `merchant advice days: ${dayRows.error.message}` };
   const shares = inBankShares({
     matches: links.data.map((l) => ({ payment_source: String(l.payment_source), payment_id: String(l.payment_id), settlement_row_id: Number(l.settlement_row_id) })),
     rows: lines.data.map((r) => ({ id: Number(r.id), batch_id: Number(r.batch_id), confirmed_at: r.confirmed_at ?? null })),
@@ -339,6 +344,9 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[], toda
     receipts: receiptRows.data.map((r) => ({
       batch_id: Number(r.batch_id), received_on: String(r.received_on ?? ''), amount_sen: Number(r.amount_sen ?? 0),
       charge_sen: r.charge_sen == null ? null : Number(r.charge_sen), je_no: r.je_no ?? null,
+    })),
+    dayCharges: dayRows.data.map((d) => ({
+      batch_id: Number(d.batch_id), charge_sen: d.charge_sen == null ? null : Number(d.charge_sen), charge_je_no: d.charge_je_no ?? null,
     })),
   }, today);
   const waiting = new Map<number, number>();

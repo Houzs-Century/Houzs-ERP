@@ -34,7 +34,7 @@ import { todayMyt } from '../lib/my-time';
 import { cardTotalsOf, parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, loadSettledKeysFor, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
   releaseSettlementRow, notThisOf, turnedDownKeysOf, MAX_TURNED_DOWN,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
@@ -903,50 +903,71 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!Number.isInteger(batchId)) return c.json({ error: 'bad_id' }, 400);
   const sb = c.get('supabase');
 
-  const { data: batch, error: bErr } = await sb.from('acc_settlement_batches')
-    .select(BATCH_COLUMNS)
-    .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
+  /* Reads that do not depend on each other run together. The lines carry the
+     company predicate too, so reading them beside the batch (rather than after
+     it proved to be this company's) can never load another company's rows. */
+  const [batchRes, paid, rowsRes] = await Promise.all([
+    sb.from('acc_settlement_batches')
+      .select(BATCH_COLUMNS)
+      .eq('id', batchId).eq('company_id', co.companyId).maybeSingle(),
+    /* Every credit recorded against this statement, and what is still out. */
+    loadBatchReceipts(sb, co.companyId, batchId),
+    sb.from('acc_settlement_rows')
+      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel')
+      .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no'),
+  ]);
+  const { data: batch, error: bErr } = batchRes;
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
   const b = batch as { acquirer_code: string; period_from: string; period_to: string };
 
-  /* Every credit recorded against this statement, and what is still out. */
-  const paid = await loadBatchReceipts(sb, co.companyId, batchId);
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
-  const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel')
-    .eq('batch_id', batchId).order('line_no');
+  const { data: rowsRaw, error: rErr } = rowsRes;
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
-
-  const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
-  if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
-  const [candidates, settled, online] = await Promise.all([
-    /* The stored lines' own references travel with the request, so a payment
-       carrying an exact reference is found whatever its date — the four PBB
-       lines that read "No payment recorded near …" while their payment sat in
-       the ERP, keyed a week late (docs/bugs/0760). */
-    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
-      stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
-    loadSettledKeys(sb, co.companyId),
-    /* A report's QR lines are matched to Online sales (owner 2026-11-09). */
-    onlinePoolFor(sb, co.companyId, acq.acquirer, b.period_from, b.period_to, stored.some((r) => r.channel === 'QR')),
-  ]);
-  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
-  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
-  if (!online.ok) return c.json({ error: 'load_failed', reason: online.reason }, 500);
-  const everyPayment = [...candidates.payments, ...online.payments];
 
   /* The payments already linked to each line — what the matched pile shows,
      and what a re-opened line starts from. Read BEFORE the recompute, because
      it decides which lines the recompute is even for. THIS report's lines
      only: the whole company's links were read here, one call, and past
      PostgREST's 1000-row ceiling a line's own link could be among the ones
-     silently dropped. */
-  const { data: linkRaw, error: lErr } = await chunkIn<Record<string, any>, number>(stored.map((r) => Number(r.id)), (batch, f, t) => sb
+     silently dropped. Started now, awaited after the candidates. */
+  const linksP = chunkIn<Record<string, any>, number>(stored.map((r) => Number(r.id)), (batch, f, t) => sb
     .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
     .eq('company_id', co.companyId).in('settlement_row_id', batch).order('id').range(f, t));
+  const rolesP = resolveRoles(sb, co.companyId);
+
+  const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
+  if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
+  /* WHICH BANK this merchant pays THIS company (named in the reply below). */
+  const bankP = rolesP.then(async (roles) => {
+    const code = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
+    const { data, error } = await sb.from('accounts')
+      .select('account_code, account_name').eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+    return { code, data, error };
+  });
+  const [candidates, online] = await Promise.all([
+    /* The stored lines' own references travel with the request, so a payment
+       carrying an exact reference is found whatever its date — the four PBB
+       lines that read "No payment recorded near …" while their payment sat in
+       the ERP, keyed a week late (docs/bugs/0760). */
+    loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
+      stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
+    /* A report's QR lines are matched to Online sales (owner 2026-11-09). */
+    onlinePoolFor(sb, co.companyId, acq.acquirer, b.period_from, b.period_to, stored.some((r) => r.channel === 'QR')),
+  ]);
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (!online.ok) return c.json({ error: 'load_failed', reason: online.reason }, 500);
+  const everyPayment = [...candidates.payments, ...online.payments];
+  /* Which of THESE payments another line already claimed. The matcher only
+     asks about the payments it is given, so reading the claims of exactly those
+     gives it the same answer as reading every claim the company ever made —
+     which is what this was: the whole table, paged, on every open. */
+  const settled = await loadSettledKeysFor(sb, co.companyId, everyPayment);
+  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+
+  const { data: linkRaw, error: lErr } = await linksP;
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const linksByRow = new Map<number, Array<Record<string, unknown>>>();
   for (const l of linkRaw) {
@@ -1085,10 +1106,7 @@ export const settlementBatchDetail = guard(async (c) => {
      into different banks and a wrong one is invisible until the bank statement
      disagrees. Unset falls back to the company default (the books never stop),
      but the fallback is reported, never silent. */
-  const roles = await resolveRoles(sb, co.companyId);
-  const bankCode = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
-  const { data: bankRow, error: bankErr } = await sb.from('accounts')
-    .select('account_code, account_name').eq('company_id', co.companyId).eq('account_code', bankCode).maybeSingle();
+  const { code: bankCode, data: bankRow, error: bankErr } = await bankP;
   /* The screen names WHICH BANK before money is recorded against it; a failed
      read must not dress up as "no such account". */
   if (bankErr) return c.json({ error: 'load_failed', reason: bankErr.message }, 500);
@@ -1533,7 +1551,23 @@ export const settlementWatchlist = guard(async (c) => {
   const acquirers = ((acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null }>)
     .filter((a) => !only || a.code === only);
 
-  const settled = await loadSettledKeys(sb, co.companyId);
+  /* Every merchant's pool and the stranded lines are read together — they were
+     read one merchant after another. The pools are then walked in the same
+     order as before, which listOnce depends on. */
+  const [pools, strandedRes] = await Promise.all([
+    Promise.all(acquirers.map((a) => loadPaymentCandidates(sb, co.companyId, a, from, to))),
+    paginateAll<Record<string, any>>((f, t) => sb
+      .from('acc_settlement_rows').select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
+      .eq('company_id', co.companyId).eq('bucket', 'UNMATCHED')
+      .gte('txn_date', from).lte('txn_date', to).order('txn_date').order('id').range(f, t)),
+  ]);
+  const pooled: PaymentCandidate[] = [];
+  for (const got of pools) {
+    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
+    pooled.push(...got.payments);
+  }
+  /* Claimed or not, asked of the pooled payments only (see loadSettledKeysFor). */
+  const settled = await loadSettledKeysFor(sb, co.companyId, pooled);
   if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
 
   /* An untagged payment is in EVERY acquirer's pool — that is how a statement
@@ -1542,16 +1576,12 @@ export const settlementWatchlist = guard(async (c) => {
      PBB, and the header counting it four times). */
   const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string | null }> = [];
   const listedUntagged = new Set<string>();
-  for (const a of acquirers) {
-    const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
-    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
+  acquirers.forEach((a, i) => {
+    const got = pools[i] as { ok: true; payments: PaymentCandidate[] };
     recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
-  }
+  });
 
-  const { data: strandedRaw, error: sErr } = await paginateAll<Record<string, any>>((f, t) => sb
-    .from('acc_settlement_rows').select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
-    .eq('company_id', co.companyId).eq('bucket', 'UNMATCHED')
-    .gte('txn_date', from).lte('txn_date', to).order('txn_date').order('id').range(f, t));
+  const { data: strandedRaw, error: sErr } = strandedRes;
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
   const stranded = ((strandedRaw ?? []) as Array<Record<string, any>>).filter((r) => !only || r.acquirer_code === only);
 

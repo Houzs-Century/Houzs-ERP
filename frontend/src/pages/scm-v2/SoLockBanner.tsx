@@ -22,7 +22,8 @@ export function SoLockBanner({
   /** Non-null = the order is carried over from AutoCount and view-only. */
   migratedReason: string | null;
   overridden: boolean;
-  onOverride: () => void;
+  /** Called with the typed reason; the caller unlocks only once the server has kept it. */
+  onOverride: (reason: string) => void;
   onRelock: () => void;
   afterDo: AfterDoMode;
   afterDoTargetId: string | null;
@@ -58,7 +59,7 @@ export function SoLockBanner({
                 confirmLabel: 'Override',
                 validate: (v) => (v.trim().length < 10 ? 'Override needs a reason ≥ 10 chars.' : null),
               });
-              if (reason != null) onOverride();
+              if (reason != null) onOverride(reason.trim());
             }}>
             {overridden ? 'Re-lock' : 'Override'}
           </Button>

@@ -65,6 +65,66 @@ export function takeReturnScroll(href: string = here()): { main: number; window:
   }
 }
 
+/* ── Return picks ─────────────────────────────────────────────────────────────
+   What a page had ticked when a document was opened from it — the bank
+   reconciliation's movements and entries (owner 2026-11-10: 我希望这里也可以点开
+   so, 点开后也可以返回这里) — kept the way the scroll is: per address, only while
+   fresh, the newest twenty. Read without being used up (React may run a state
+   initializer twice) and dropped by the page once it has them. */
+
+export const RETURN_PICKS_KEY = "houzs.returnPicks.v1"; // gitleaks:allow — a sessionStorage key's name, not a credential
+
+export type ReturnPicks = { lines: number[]; entries: string[] };
+type PicksEntry = ReturnPicks & { at: number };
+
+function readPicks(): Record<string, PicksEntry | undefined> {
+  try {
+    const raw = sessionStorage.getItem(RETURN_PICKS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, PicksEntry | undefined>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Note what this page has ticked, under its address — call as a document link
+    is clicked, before the route changes. */
+export function rememberReturnPicks(picks: ReturnPicks, href: string = here()): void {
+  try {
+    const all = readPicks();
+    all[href] = { lines: [...picks.lines], entries: [...picks.entries], at: Date.now() };
+    const kept = Object.entries(all)
+      .filter((e): e is [string, PicksEntry] => e[1] != null)
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, MAX_ENTRIES);
+    sessionStorage.setItem(RETURN_PICKS_KEY, JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    // storage disabled — the page simply comes back unticked
+  }
+}
+
+/** The ticks remembered for this address, if fresh; null otherwise. Leaves them in place. */
+export function peekReturnPicks(href: string = here()): ReturnPicks | null {
+  const hit = readPicks()[href];
+  if (!hit || !(Date.now() - Number(hit.at) <= FRESH_MS)) return null;
+  const lines = Array.isArray(hit.lines) ? hit.lines.filter((n): n is number => Number.isInteger(n)) : [];
+  const entries = Array.isArray(hit.entries) ? hit.entries.filter((s): s is string => typeof s === "string") : [];
+  return { lines, entries };
+}
+
+/** Forget the ticks remembered for this address — the page has taken them. */
+export function dropReturnPicks(href: string = here()): void {
+  try {
+    const all = readPicks();
+    if (!(href in all)) return;
+    delete all[href];
+    sessionStorage.setItem(RETURN_PICKS_KEY, JSON.stringify(all));
+  } catch {
+    // storage disabled — nothing was kept
+  }
+}
+
 /** Put the page back where it was once its content has arrived (`ready`).
     Content can still be laying out for a frame or two, so the position is
     re-applied until it holds. */

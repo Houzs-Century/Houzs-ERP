@@ -13,6 +13,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { useBookBankReceipt, useMatchBankLine, type BankLine, type LedgerEntry } from './bank-queries';
 import { BookAllMatched, DepWd, DoneLine, OpenLine, certainAllocation, decisionKey } from './BankStatementTab';
 import { useReconcilePick } from './bank-reconcile-pick';
+import { EntryDocument, entryDocText } from './bank-entry-doc';
 import { ICON, fmt, refusalText } from './settlement-ui';
 import { monthShort } from './BankStatementsTop';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
@@ -112,7 +113,7 @@ function ToMatchRow({ line, locked, onNotThis }: { line: BankLine; locked: boole
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
       </td>
       <DepWd amountSen={line.amount_sen} />
-      <td>{report ? <b>{report.fileName ?? `report ${report.id}`}</b> : <b>{entry?.reference ?? ([entry?.sourceType, entry?.sourceDocNo].filter(Boolean).join(' · ') || '—')}</b>}</td>
+      <td>{report ? <b>{report.fileName ?? `report ${report.id}`}</b> : <b>{entry ? <EntryDocument text={entryDocText(entry)} /> : '—'}</b>}</td>
       <td>{report ? `${line.acquirer_code ?? ''} card payout` : entry?.who ?? entry?.partyName ?? '—'}</td>
       <td>{entry ? <>{entry.jeNo}{entry.daysApart > 0 && <span className={grid.sub}> · {entry.daysApart}d apart</span>}</> : <span className={grid.sub}>posted on Money received</span>}</td>
       <td className={look.actionsCell}>
@@ -162,7 +163,7 @@ function NotOnBankYet({ entries, open, chooseAnyway, periodTo }: { entries: Ledg
             <tr key={e.jeNo} className={pick.pickedEntries.includes(e.jeNo) ? look.picked : undefined}>
               <td><input type="checkbox" checked={pick.pickedEntries.includes(e.jeNo)} onChange={() => pick.toggleEntry(e.jeNo)} aria-label={`Entry ${e.jeNo} for the picked movements`} /></td>
               <td className={look.dateCell}>{fmtDateOrDash(e.entryDate)}</td>
-              <td><b>{e.reference ?? ([e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—')}</b></td>
+              <td><b><EntryDocument text={entryDocText(e)} /></b></td>
               <td>{e.who ?? e.partyName ?? e.notes ?? '—'}</td>
               <td className={grid.num}>{e.debitSen > 0 ? fmt(e.debitSen) : ''}</td>
               <td className={grid.num}>{e.creditSen > 0 ? fmt(e.creditSen) : ''}</td>

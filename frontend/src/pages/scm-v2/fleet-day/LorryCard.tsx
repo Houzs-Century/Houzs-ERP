@@ -47,10 +47,17 @@ function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: strin
   );
 }
 
-/** The stop's number, the same one its pin carries on the map. */
-function StopNo({ no, color }: { no: number | null; color: string }) {
+/** The stop's number, the same one its pin carries on the map, in the lorry's colour:
+ *  solid once the stop is done, a light tint while it is still to deliver (owner 2026-11-10). */
+export function StopNo({ no, color, done }: { no: number | null; color: string; done: boolean }) {
   return (
-    <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 text-[10px] font-bold text-ink-secondary" style={{ borderColor: color }}>
+    <span
+      data-done={done ? 'true' : 'false'}
+      className="flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 text-[10px] font-bold"
+      style={done
+        ? { borderColor: color, backgroundColor: color, color: '#fff' }
+        : { borderColor: color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
+    >
       {no ?? '•'}
     </span>
   );
@@ -68,7 +75,7 @@ function UndeliveredRow({ d, no, color, selected, hasRemark, leg, onOpen }: { d:
         d.late && !selected && 'bg-err-bg/40',
       )}
     >
-      <StopNo no={no ?? d.stopNo} color={color} />
+      <StopNo no={no ?? d.stopNo} color={color} done={false} />
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <JobTag label={d.jobLabel} />
@@ -101,7 +108,7 @@ function DeliveredRow({ d, no, color, times, selected, leg, onOpen }: { d: DocRo
       onClick={onOpen}
       className={cn('grid w-full grid-cols-[24px_1fr_auto] items-center gap-3 border-t border-border-subtle px-4 py-2 text-left hover:bg-surface-2', selected && 'bg-primary-soft')}
     >
-      <StopNo no={no} color={color} />
+      <StopNo no={no} color={color} done />
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <JobTag label={d.jobLabel} />
@@ -127,10 +134,12 @@ function DeliveredRow({ d, no, color, times, selected, leg, onOpen }: { d: DocRo
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road, legByRef, mapNoByRef,
+  run, routeColor, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys, road, legByRef, mapNoByRef,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
+  /** The lorry's colour in the lorry list and on the map; the stop numbers wear it. */
+  routeColor: string;
   /** The run by road from the lorry's home and back (Google); null when not worked out. */
   road: string | null;
   /** Each order's drive from the stop before, by sales order number (server-worked). */
@@ -258,7 +267,7 @@ export function LorryCard({
       ) : (
         <>
           {undelivered.map((d) => (
-            <UndeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
+            <UndeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={routeColor} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
           ))}
           {delivered.length > 0 && (
             <>
@@ -271,7 +280,7 @@ export function LorryCard({
                 {delivered.length} delivered
               </button>
               {showDone && delivered.map((d) => (
-                <DeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={run.color} times={times.get(d.key) ?? null} selected={selectedKey === d.key} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
+                <DeliveredRow key={d.key} d={d} no={mapNoByRef.get(d.soDocNo) ?? null} color={routeColor} times={times.get(d.key) ?? null} selected={selectedKey === d.key} leg={legByRef.get(d.soDocNo) ?? null} onOpen={() => onOpenDoc(d)} />
               ))}
             </>
           )}

@@ -2,7 +2,7 @@
 // (open and delivered orders in every date band, both sides of today, band edges,
 // an amended date, an undated order, another company, a driver's own jobs, ASSR, DP
 // and project rows) and a request runner. Today is fixed at 2026-11-10 (Malaysia).
-import { Hono } from 'hono';
+import { Hono, type ExecutionContext } from 'hono';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
@@ -96,8 +96,8 @@ export const fixtureD1 = {
 export type Caller = 'office' | 'driver';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the handler under test, old or new
-export async function runBoard(handler: any, caller: Caller, qs: string): Promise<{ status: number; body: Record<string, unknown> }> {
-  const sb = fakeSb(fixtureTables());
+export async function runBoard(handler: any, caller: Caller, qs: string, source: string | null = null, tables: Record<string, Row[]> = fixtureTables(), executionCtx?: ExecutionContext): Promise<{ status: number; body: Record<string, unknown> }> {
+  const sb = fakeSb(tables);
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('supabase', sb as unknown as Variables['supabase']);
@@ -111,6 +111,6 @@ export async function runBoard(handler: any, caller: Caller, qs: string): Promis
   });
   app.get('/delivery-planning', handler); // company-scope: test harness mounting the real board handler, which scopes itself
   app.onError((e, c) => c.json({ thrown: String((e as Error).stack ?? e).slice(0, 600) }, 500));
-  const res = await app.request(`/delivery-planning${qs}`, undefined, { DB: fixtureD1 } as unknown as Env);
+  const res = await app.request(`/delivery-planning${qs}`, undefined, { DB: fixtureD1, ...(source ? { DP_BOARD_SOURCE: source } : {}) } as unknown as Env, executionCtx);
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }

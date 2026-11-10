@@ -20,6 +20,7 @@ import { absorbsOrderDeposit } from './si-order-deposit';
 import { doLineRemaining, siTransferRefusal } from './do-line-remaining';
 import { createSalesInvoiceFromDoLines } from './si-from-do';
 import { SO_DELIVERED_OR_BEYOND } from '../shared/so-deliverable-states';
+import { chunkIn, inList, paginateAll } from './paginate-all';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the SCM libs */
 type Db = any;
@@ -122,36 +123,43 @@ export async function deliveredUninvoiced(
   sb: Db,
   companyId: number,
 ): Promise<{ ok: true; orders: DeliveredUninvoiced[] } | { ok: false; reason: string }> {
-  const { data: sos, error: soErr } = await sb.from('mfg_sales_orders')
+  /* Every read here is PAGED. `.limit(2000)` was still cut at PostgREST's 1,000
+     rows, so the backlog (and the "N delivered, not invoiced" count) stopped at
+     the first 1,000 delivered orders by number; and an unpaged 200-order batch
+     could drop invoice rows, making an invoiced order look uninvoiced. A
+     truncated read refuses rather than answer with part of the book. */
+  const so = await paginateAll<{ doc_no: string }>((from, to) => sb.from('mfg_sales_orders')
     .select('doc_no, status')
     .eq('company_id', companyId)
     .in('status', [...SO_DELIVERED_OR_BEYOND])
     .order('doc_no')
-    .limit(2000);
-  if (soErr) return { ok: false, reason: `orders: ${soErr.message}` };
-  const docNos = ((sos ?? []) as Array<{ doc_no: string }>).map((r) => String(r.doc_no));
+    .range(from, to));
+  if (so.error) return { ok: false, reason: `orders: ${so.error.message}` };
+  if (so.truncated) return { ok: false, reason: 'orders: more delivered orders than one read can take' };
+  const docNos = (so.data ?? []).map((r) => String(r.doc_no));
   if (docNos.length === 0) return { ok: true, orders: [] };
 
   const invoiced = new Set<string>();
   const deliveredOn = new Map<string, string>();
-  for (let i = 0; i < docNos.length; i += 200) {
-    const chunk = docNos.slice(i, i + 200);
-    const { data: sis, error: siErr } = await sb.from('sales_invoices')
-      .select('so_doc_no, status').eq('company_id', companyId).in('so_doc_no', chunk);
-    if (siErr) return { ok: false, reason: `order invoices: ${siErr.message}` };
-    for (const r of (sis ?? []) as Array<{ so_doc_no: string | null; status?: string | null }>) {
-      if (r.so_doc_no && absorbsOrderDeposit(r.status)) invoiced.add(String(r.so_doc_no));
-    }
-    const { data: dos, error: doErr } = await sb.from('delivery_orders')
-      .select('so_doc_no, status, delivered_at, customer_delivery_date').eq('company_id', companyId).in('so_doc_no', chunk);
-    if (doErr) return { ok: false, reason: `deliveries: ${doErr.message}` };
-    for (const d of (dos ?? []) as Array<{ so_doc_no: string | null; status: string | null; delivered_at?: string | null; customer_delivery_date?: string | null }>) {
-      if (!d.so_doc_no || siTransferRefusal(d.status) != null) continue;
-      const day = String(d.delivered_at ?? d.customer_delivery_date ?? '').slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-      const at = deliveredOn.get(String(d.so_doc_no));
-      if (!at || day > at) deliveredOn.set(String(d.so_doc_no), day);
-    }
+  const sis = await chunkIn<{ so_doc_no: string | null; status?: string | null }>(docNos, (part, from, to) =>
+    sb.from('sales_invoices').select('so_doc_no, status').eq('company_id', companyId)
+      .filter('so_doc_no', 'in', inList(part)).order('id').range(from, to));
+  if (sis.error) return { ok: false, reason: `order invoices: ${sis.error.message}` };
+  if (sis.truncated) return { ok: false, reason: 'order invoices: more rows than one read can take' };
+  for (const r of sis.data) {
+    if (r.so_doc_no && absorbsOrderDeposit(r.status)) invoiced.add(String(r.so_doc_no));
+  }
+  const dos = await chunkIn<{ so_doc_no: string | null; status: string | null; delivered_at?: string | null; customer_delivery_date?: string | null }>(docNos, (part, from, to) =>
+    sb.from('delivery_orders').select('so_doc_no, status, delivered_at, customer_delivery_date').eq('company_id', companyId)
+      .filter('so_doc_no', 'in', inList(part)).order('id').range(from, to));
+  if (dos.error) return { ok: false, reason: `deliveries: ${dos.error.message}` };
+  if (dos.truncated) return { ok: false, reason: 'deliveries: more rows than one read can take' };
+  for (const d of dos.data) {
+    if (!d.so_doc_no || siTransferRefusal(d.status) != null) continue;
+    const day = String(d.delivered_at ?? d.customer_delivery_date ?? '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const at = deliveredOn.get(String(d.so_doc_no));
+    if (!at || day > at) deliveredOn.set(String(d.so_doc_no), day);
   }
   return {
     ok: true,
