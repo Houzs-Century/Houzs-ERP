@@ -112,7 +112,7 @@ scanGrCheck.get('/pending', async (c) => {
     documents,
     suppliers: suppliers.map((s) => ({ id: s.id, code: s.code, name: s.name })),
     poLines: openLines.filter((l) => l.supplierId && supplierIds.has(l.supplierId)).map((l) => ({
-      poItemId: l.poItemId, poNumber: l.poNumber, supplierId: l.supplierId, itemCode: l.itemCode, supplierSku: l.supplierSku, spec: l.description2 ?? null, warehouseId: l.warehouseId ?? null,
+      poItemId: l.poItemId, poNumber: l.poNumber, supplierId: l.supplierId, itemCode: l.itemCode, supplierSku: l.supplierSku, spec: l.description2 ?? null, colour: l.colours?.[0] ?? null, warehouseId: l.warehouseId ?? null,
       name: l.materialName, remaining: l.remaining, warehouse: l.locationCode,
     })),
   } });
@@ -139,7 +139,7 @@ scanGrCheck.get('/po-lines', async (c) => {
   const supplierId = c.req.query('supplierId') ?? '';
   const lines = (await loadOpenPoLines(svcOf(c.env), activeCompanyId(c) ?? null)).filter((l) => l.supplierId === supplierId);
   return c.json({ success: true, data: { poLines: lines.map((l) => ({
-    poItemId: l.poItemId, poNumber: l.poNumber, supplierId: l.supplierId, itemCode: l.itemCode, supplierSku: l.supplierSku, spec: l.description2 ?? null, warehouseId: l.warehouseId ?? null, name: l.materialName, remaining: l.remaining, warehouse: l.locationCode,
+    poItemId: l.poItemId, poNumber: l.poNumber, supplierId: l.supplierId, itemCode: l.itemCode, supplierSku: l.supplierSku, spec: l.description2 ?? null, colour: l.colours?.[0] ?? null, warehouseId: l.warehouseId ?? null, name: l.materialName, remaining: l.remaining, warehouse: l.locationCode,
   })) } });
 });
 

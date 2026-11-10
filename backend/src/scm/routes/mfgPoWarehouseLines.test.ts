@@ -48,7 +48,7 @@ const l = (id: string, company_id: number, warehouse_id: string | null, received
 
 beforeEach(() => {
   sb.tables.purchase_orders = [{
-    id: 'po-1', po_number: 'PO-2611-001', status: 'SUBMITTED', company_id: 1, updated_at: '2026-11-01T02:00:00.123456+00:00',
+    id: 'po-1', po_number: 'PO-2611-001', status: 'SUBMITTED', company_id: 1, updated_at: '2026-11-01T02:00:00.123456+00:00', version: 1,
     po_date: '2026-11-01', expected_at: '2026-11-10', currency: 'MYR', notes: null,
     supplier_id: 'sup-1', purchase_location_id: 'wh-kl',
     supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
