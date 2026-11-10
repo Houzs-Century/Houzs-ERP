@@ -7,6 +7,7 @@ export type MergePairPlan = {
   dropRowId: string | null;
   dropRowStatus: string | null;
   refusals: string[];
+  acknowledged: Array<{ warehouse: string; ledger: number; lots: number; reason: string }>;
   rekey: Array<{ table: string; col: string; rows: number; ids?: string[] }>;
   stay: Array<{ table: string; col: string; rows: number }>;
   unitsMoved: number;
@@ -20,5 +21,7 @@ export function planDuplicateSkuMerge(w: {
   refs: unknown[];
   stock: unknown[];
   stockTakeLines: unknown[];
+  /** Absent = every ledger/lot disagreement refuses (the stricter direction). */
+  stockAcks?: Array<{ code: string; warehouse: string; ledger: number; lots: number; reason: string }>;
 }): MergePlan;
 export function confirmPhrase(totals: MergeTotals): string;
