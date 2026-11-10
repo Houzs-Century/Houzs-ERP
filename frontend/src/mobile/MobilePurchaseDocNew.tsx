@@ -252,9 +252,10 @@ export function MobilePurchaseDocNew({
         await finish({ id: res.id, number: res.poNumber }, asDraft);
       } else if (kind === "grn") {
         const res = await createGrn.mutateAsync({ idempotencyKey: idemKey, ...buildGrnPayload(header, lines, asDraft) });
-        /* POST /grns posts a non-draft receipt itself and answers
-           `movementErrors` in-band when the stock write was refused. */
-        reportInBandFailure("Goods receipt saved, but the stock was not received", res as { movementErrors?: string[] });
+        /* POST /grns posts a non-draft receipt itself and answers in-band:
+           `movementErrors` when the stock write was refused, `recountError`
+           when the PO's received qty was not recounted. */
+        reportInBandFailure("Goods receipt saved, but not everything was recorded", res);
         /* Same second call as desktop GrnNew — an idempotent no-op on an
            already-POSTED receipt, and the commit on a replayed one. */
         if (!asDraft) await postGrn.mutateAsync(res.id);

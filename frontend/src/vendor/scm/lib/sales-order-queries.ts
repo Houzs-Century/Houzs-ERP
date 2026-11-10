@@ -1,7 +1,7 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
 import { appendSoListFilterParams } from './so-list-filter-state';
 import type { SoListFilter } from '../../shared/so-list-filter-model';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
 // use. The full source module (~2000 lines) carries the entire SO/DO/SI/DR
@@ -536,6 +536,34 @@ export const useUpdateMfgSalesOrderStatus = () => {
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-status-changes', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
+    },
+  });
+};
+
+/* EDIT-LOCK OVERRIDE on a locked SO. The page used to fire the status hook
+   with the SO's own status and unlock on the spot, whatever came back — and
+   the reason typed into the prompt was never sent, so a refused or failed
+   override still unlocked editing and the timeline the banner points at had
+   nothing in it. Now the reason is sent, the server writes it to the status
+   timeline (overrideRecorded), and only that answer unlocks: the caller's
+   onSuccess. A server that answers without `overrideRecorded` (one that did
+   not keep the reason) is a failure too. */
+export const useOverrideSoLock = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ docNo, status, reason }: { docNo: string; status: string; reason: string }) => {
+      const version = await resolveLoadedSoVersion(qc, docNo);
+      const res = await authedFetch<{ overrideRecorded?: boolean }>(`/mfg-sales-orders/${docNo}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, version, expectedStatus: status, overrideReason: reason }),
+      });
+      if (res.overrideRecorded !== true) throw new Error('The server did not record the override reason. The SO stays locked.');
+      return res;
+    },
+    onError: writeFailedAs('Override not saved — the SO stays locked'),
+    onSettled: (_data, _err, vars) => {
+      void qc.invalidateQueries({ queryKey: ['mfg-sales-order-status-changes', vars.docNo] });
+      void qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
     },
   });
 };
