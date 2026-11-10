@@ -37,6 +37,15 @@ describe('planDriverInfoGroup', () => {
     });
   });
 
+  // 2026-11-10: a driver typed on the DO form has no fleet record behind it, so no
+  // IC or phone. The send says to pick the real driver, not "add a contact in Fleet".
+  it('blocks a driver only typed on the DO form as not linked', () => {
+    const plan = planDriverInfoGroup([row({ driver_1_name: 'ALI TYPED', lorry_plate: 'WXX 1', driver_1_typed: true })], '10am');
+    expect(plan.block).toBe('not_linked');
+    expect(plan.payload).toBeNull();
+    expect(plan.driver?.driverName).toBe('ALI TYPED');
+  });
+
   it('sends with a blank IC (IC is optional, like the board shows "—")', () => {
     const plan = planDriverInfoGroup(
       [row({ driver_1_name: 'Shamsul', driver_1_contact: '+60111111111' })],

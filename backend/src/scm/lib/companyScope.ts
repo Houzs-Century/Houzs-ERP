@@ -422,6 +422,16 @@ export function scopeToAllowedCompanies<Q>(query: Q, c: CompanyScopeCtx): Q {
   return (query as unknown as { in(col: string, vals: number[]): Q }).in("company_id", ids);
 }
 
+/**
+ * STRICT cross-company, for a WRITE on a shared queue (Delivery Planning lists every
+ * granted company): the caller's granted companies, never wider. Unlike
+ * scopeToAllowedCompanies it never runs open — an unresolved allow-list narrows to
+ * `activeCompanyId` (from requireActiveCompanyId), and `[]` matches nothing.
+ */
+export function scopeToGrantedCompanies<Q>(query: Q, c: CompanyScopeCtx, activeCompanyId: number): Q {
+  return allowedCompanyIds(c) !== undefined ? scopeToAllowedCompanies(query, c) : scopeToCompanyId(query, activeCompanyId);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    CROSS-COMPANY DETAIL MISS — turn a per-company by-id miss into an HONEST answer.
    ═══════════════════════════════════════════════════════════════════════════

@@ -91,7 +91,7 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
-  requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY, scopeToGrantedCompanies } from '../lib/companyScope';
 import { stampSoRefsCamel } from '../lib/so-ref-lookup';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
@@ -3899,14 +3899,14 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so `id`
-     alone was the boundary. 404 not 403 on purpose — "exists, but not yours" leaks. */
+  /* Company gate: the caller's GRANTED companies (the board lists both; active-only 404'd
+     every 2990 crew pick, 2026-11-10), never wider. 404 not 403 — "not yours" leaks. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
-    .select('id, company_id, do_number, status').eq('id', id), co.companyId).maybeSingle();
+  const { data: doRow, error: doErr } = await scopeToGrantedCompanies(sb.from('delivery_orders')
+    .select('id, company_id, do_number, status').eq('id', id), c, co.companyId).maybeSingle();
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-  if (!doRow) return c.json(NOT_THIS_COMPANY, 404); // another company's DO is invisible here
+  if (!doRow) return c.json(NOT_THIS_COMPANY, 404); // a DO outside the caller's companies is invisible here
   // Crew row BEFORE the upsert: this PUT re-assign overwrites who was on the job.
   const { data: crewBeforeRow } = await sb.from('delivery_order_crew')
     .select('driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_id, driver_1_name, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
@@ -3931,7 +3931,7 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   const driverById = new Map<string, DriverRow>();
   const helperById = new Map<string, HelperRow>();
 
-  const [driverRes, helperRes, lorryRes] = await Promise.all([
+  const [driverRes, helperRes, lorryRes] = await Promise.all([ // company-scope: ONE shared fleet master (delivery-tms.md), so a 2990 order reads a Houzs-made driver's IC
     driverIds.length > 0
       ? sb.from('drivers').select('id, name, ic_number, phone, vehicle').in('id', driverIds)
       : Promise.resolve({ data: [] as DriverRow[] }),
@@ -3952,7 +3952,7 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   const h2 = helper2Id ? helperById.get(helper2Id) ?? null : null;
 
   const now = new Date().toISOString();
-  const doCompanyId = (doRow as { company_id?: number | null }).company_id ?? activeCompanyId(c);
+  const doCompanyId = Number((doRow as { company_id?: number | null }).company_id) || co.companyId; // the DO's own company
   const crewRow = {
     // Multi-company: the crew row inherits its DO's company (a cross-company
     // planner may assign crew while a different company is active).
@@ -4000,7 +4000,7 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     driver_name: d1?.name ?? null,
     vehicle: d1?.vehicle ?? lorry?.plate ?? null,
     updated_at: now,
-  }).eq('id', id), co.companyId);
+  }).eq('id', id), doCompanyId);
 
   /* Who was assigned to drive the goods, and who they replaced. The NAMES are
      recorded alongside the ids for the same reason the crew row snapshots them:

@@ -30,7 +30,7 @@ export type DriverInfoPayload = {
 };
 
 /** Why a customer group cannot send a Driver Info message yet, or null = ready. */
-export type DriverGroupBlock = 'no_driver' | 'no_contact' | 'no_time' | null;
+export type DriverGroupBlock = 'no_driver' | 'not_linked' | 'no_contact' | 'no_time' | null;
 
 export type DriverGroupPlan = {
   /** The driver read off the group's orders, or null when none is assigned. */
@@ -69,6 +69,10 @@ export function planDriverInfoGroup(rows: PlanningOrder[], deliveryTime: string)
     carPlate: trimmed(src.lorry_plate),
   };
   const mixedDrivers = distinct.size > 1;
+
+  // Typed on the DO form, not picked from the fleet: there is no record to read
+  // an IC or phone from, so say that instead of "no contact on file".
+  if (src.driver_1_typed) return { driver, mixedDrivers, block: 'not_linked', payload: null };
 
   // The template prints the contact, so a driver with no phone on file cannot send.
   if (!driver.driverContact) return { driver, mixedDrivers, block: 'no_contact', payload: null };

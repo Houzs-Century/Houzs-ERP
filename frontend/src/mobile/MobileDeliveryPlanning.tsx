@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { withSavedCrew } from "../vendor/scm/lib/saved-crew";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
@@ -305,6 +306,7 @@ export function MobileDeliveryPlanning({
     queryKey: ["mobile-delivery-planning", "ALL"],
     queryFn: () =>
       authedFetch<BoardResponse>(`/delivery-planning?region=ALL&state=ALL`),
+    select: (d: BoardResponse) => withSavedCrew(d), // a crew just saved stays shown over a slow / stale reload
     staleTime: 30_000,
   });
 

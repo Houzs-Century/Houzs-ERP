@@ -114,6 +114,7 @@ export const DO_FIELD_COLS: Record<string, string> = {
 export type DeliveryOrderExecRow = {
   id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
   driver_id: string | null; driverId?: string | null;
+  driver_name?: string | null; driverName?: string | null; vehicle?: string | null;
   delivery_state: string | null; customer_delivery_date: string | null; do_date: string | null;
   // POD (proof of delivery) — the real delivered instant + evidence presence.
   // signature_data (the base64 blob) is deliberately NOT read here; the board
@@ -164,3 +165,31 @@ export type DoExecOut = {
   delivered_at: string | null; pod_r2_key: string | null; pod_lat: number | null;
   has_pod: boolean;
 };
+
+/* A driver TYPED on the DO header (the DO form's free-text Driver / Vehicle) with
+   no crew row behind it: it names nobody in the fleet master, so there is no IC
+   or phone to print and the Driver Info message cannot send. Before this the board
+   showed nothing at all for such a DO ("I filled the driver, it is missing"); now
+   it shows the typed name flagged `driver_1_typed`, and the board asks for the
+   real driver to be picked. Keyed by DO id; a DO with a crew row never uses it. */
+export type TypedHeaderCrew = {
+  driver: string; helper: null; lorry: string | null;
+  driver_1_name: string; driver_1_ic: null; driver_1_contact: null;
+  driver_2_name: null; helper_1_name: null; helper_2_name: null;
+  lorry_plate: string | null; driver_1_typed: true;
+};
+export function typedHeaderCrewByDo(rows: ReadonlyArray<DeliveryOrderExecRow>): Map<string, TypedHeaderCrew> {
+  const out = new Map<string, TypedHeaderCrew>();
+  for (const d of rows) {
+    const name = String(d.driverName ?? d.driver_name ?? '').trim();
+    if (!name) continue;
+    const plate = String(d.vehicle ?? '').trim() || null;
+    out.set(d.id, {
+      driver: name, helper: null, lorry: plate,
+      driver_1_name: name, driver_1_ic: null, driver_1_contact: null,
+      driver_2_name: null, helper_1_name: null, helper_2_name: null,
+      lorry_plate: plate, driver_1_typed: true,
+    });
+  }
+  return out;
+}

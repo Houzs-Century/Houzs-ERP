@@ -67,7 +67,7 @@ import { yymmFor } from '../../services/documentRefs';
 import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut, typedHeaderCrewByDo } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -112,7 +112,7 @@ import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/g
 import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
-import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
+import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch, soCompanyWithinGrants } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock } from '../../lib/step-timing';
 
@@ -634,7 +634,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* Latest non-DRAFT/CANCELLED DO's HC exec fields, keyed by SO doc_no — the
      same DO whose crew is shown (the last in doByDoc). null when no DO. */
   const doExecByDoc = new Map<string, DoExecOut>();
-  const doIds: string[] = [];
+  const doIds: string[] = []; const typedCrewByDo = typedHeaderCrewByDo(doRowsRaw); // a DO-form typed driver with no crew row
   for (const d of doRowsRaw) {
     const st = (d.status ?? '').toUpperCase();
     if (st === 'DRAFT' || st === 'CANCELLED') continue;  // exclude uncommitted / voided
@@ -874,7 +874,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const regionSet = new Set<Region>(stateRegions);
 
     const dos = doByDoc.get(docNo) ?? [];
-    const crew = dos.length > 0 ? (crewByDo.get(dos[dos.length - 1]!.id) ?? null) : null;
+    const crew = dos.length > 0 ? (crewByDo.get(dos[dos.length - 1]!.id) ?? typedCrewByDo.get(dos[dos.length - 1]!.id) ?? null) : null;
     const warehouseIds = [...(warehousesByDoc.get(docNo) ?? new Set<string>())];
     const primaryWh = warehouseIds[0] ?? null;
 
@@ -2325,7 +2325,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
-  const coId = activeCompanyId(c) ?? null;
+  const coId = type === 'so' && hasSeatPatch(p) ? await soCompanyWithinGrants(c, id) : (activeCompanyId(c) ?? null);
   const crew = type === 'so' && !wantsTrip && hasSeatPatch(p) && coId != null
     ? await assignSoCrew(c.get('supabase'), coId, id, p, (c.get('user') as { id?: string } | null)?.id ?? null).catch((e: Error) => ({ error: e.message })) : undefined;
   if (crew === null) return c.json({ error: 'no_delivery_order', reason: 'Create a delivery order first, then assign the crew.' }, 409);
@@ -2550,7 +2550,7 @@ async function scheduleOntoTrip(
       if (soRow) {
         const r = soRow as Record<string, unknown>;
         soId = null;
-        doId = await latestLiveDoIdForSo(sb, activeCompanyId(c) ?? null, id);
+        doId = await latestLiveDoIdForSo(sb, (await soCompanyWithinGrants(c, id)) ?? activeCompanyId(c) ?? null, id);
         orderDate = dateOrNull((r.amended_delivery_date ?? r.customer_delivery_date ?? null) as string | null);
         revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;
