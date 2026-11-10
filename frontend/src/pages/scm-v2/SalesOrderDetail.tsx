@@ -170,6 +170,8 @@ import { useDiscardDraftAction } from "./use-discard-draft-action";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -673,6 +675,10 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  const { touched: formTouched, markTouched, resetTouched } = useFormTouched();
+  /* Only an edit session has anything to lose. Cancel and Save both drop
+     `?edit=1` on the same path, which the guard does not count as leaving. */
+  useLeaveGuard(isEditing && formTouched, null);
   /* Print preview — the HOOK must live above the isPending / isError early
      returns (owner 2026-08-07). It arrived at its call site further down
      (#1665), which sits PAST those returns: a cold page's first render bails
@@ -858,7 +864,7 @@ export const SalesOrderDetail = () => {
   const openEditBlockingList = () => {
     void notify({ title: saveProblemsTitle(editBlockingProblems.length), body: <SaveProblemsList problems={editBlockingProblems} />, tone: 'error' });
   };
-  const enterEdit  = () => { clearSaveFeedback(); setIsEditing(true); };
+  const enterEdit  = () => { clearSaveFeedback(); resetTouched(); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
     clearSaveFeedback();
@@ -1828,6 +1834,7 @@ export const SalesOrderDetail = () => {
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
        as dead/inactive. The Cancel/Reopen buttons + banner stay clickable
        (a CSS filter doesn't block pointer events). */
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
       {/* ── Header (shared PageHeader — full-bleed, design-system) ── */}
       <PageHeader back beforeBack={guardUnsavedPayments}
@@ -2686,6 +2693,7 @@ export const SalesOrderDetail = () => {
       />
       {submitDialog.element}
     </div>
+    </FormTouchScope>
   );
 };
 

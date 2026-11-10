@@ -12,6 +12,7 @@ import {
   subscribeWorkspaceTabs,
   workspaceTabLabel,
 } from "../lib/workspaceTabs";
+import { confirmLeaving, leaveGuardActive } from "../lib/leaveGuard";
 
 /**
  * Workspace tab strip — rendered INLINE on the left of TopNavbar's single
@@ -59,7 +60,10 @@ export function WorkspaceTabs() {
     recordWorkspaceVisit(location.pathname, location.search);
   }, [location.pathname, location.search]);
 
-  function close(id: string) {
+  // Asked before the strip changes, not on the navigation after it: a refused
+  // move would otherwise leave the strip pointing at a tab we never went to.
+  async function close(id: string) {
+    if (id === activeId && leaveGuardActive() && !(await confirmLeaving())) return;
     const { navigateTo } = closeWorkspaceTab(id);
     if (navigateTo !== null) navigate(navigateTo);
   }
@@ -131,7 +135,7 @@ export function WorkspaceTabs() {
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
-                close(tab.id);
+                void close(tab.id);
               }
             }}
             className={cn(
@@ -152,6 +156,15 @@ export function WorkspaceTabs() {
                 // nothing. Modified clicks open a real browser window — this
                 // tab never navigates, so it must NOT change active either.
                 if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                  if (leaveGuardActive() && tab.id !== activeId) {
+                    e.preventDefault();
+                    void confirmLeaving().then((leave) => {
+                      if (!leave) return;
+                      activateWorkspaceTab(tab.id);
+                      navigate(tab.href);
+                    });
+                    return;
+                  }
                   activateWorkspaceTab(tab.id);
                 }
               }}
@@ -167,7 +180,7 @@ export function WorkspaceTabs() {
             <button
               type="button"
               tabIndex={-1}
-              onClick={() => close(tab.id)}
+              onClick={() => void close(tab.id)}
               title="Close tab"
               aria-label={`Close ${label}`}
               className={cn(

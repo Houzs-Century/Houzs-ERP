@@ -149,6 +149,9 @@ import {
   toggleCategory,
 } from "../lib/assrProductCategories";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useLeaveGuard } from "../hooks/useLeaveGuard";
+import { confirmLeaving } from "../lib/leaveGuard";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -2458,6 +2461,8 @@ function CreatePanel({
   toast: ReturnType<typeof useToast>;
 }) {
   const { can } = useAuth();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const [docNo, setDocNo] = useState("");
   // Typeahead state: search local SO mirror by partial DocNo /
   // reference / customer name so staff don't have to remember the
@@ -2748,6 +2753,7 @@ function CreatePanel({
         toast.success(`Created ${res.assr_no}`);
       }
 
+      allowLeave();
       onCreated(res.id);
     } catch (e: any) {
       // Duplicate-open-case guard (owner 2026-07-22) — the server returns 409
@@ -2790,7 +2796,9 @@ function CreatePanel({
   }
 
   return (
-    <Panel open onClose={onClose} title="New Service Case" width={560} centered>
+    <FormTouchScope onTouch={markTouched}>
+    <Panel open onClose={onClose} title="New Service Case" width={560} centered
+      dirty={formTouched} onAttemptClose={() => void confirmLeaving().then((leave) => { if (leave) onClose(); })}>
       <PanelSection title="Sales Order">
         <div className="relative flex gap-2">
           <input
@@ -3170,6 +3178,7 @@ function CreatePanel({
         </Button>
       </div>
     </Panel>
+    </FormTouchScope>
   );
 }
 

@@ -68,6 +68,8 @@ import {
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
 
 // The core /api/assr route (NOT scm). The list returns
 // { data, page, per_page, total } with assr_cases.* columns; the detail
@@ -1976,6 +1978,9 @@ function CloseCaseSheet({ busy, onClose, onConfirm }: {
 // supplier are resolved server-side from the SO. The design shows a
 // "SO # / reference / customer" lookup + item; we keep both fields wired.
 function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: number) => void }) {
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const guardedClose = useGuardedBack(onClose);
   const qc = useQueryClient();
   const notify = useNotify();
   // Lookups sourced the SAME way desktop CreatePanel does — from
@@ -2158,6 +2163,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
       // detail page and taps back, or returns to the list directly.
       qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"], refetchType: "all" });
       const id = Number(get(res ?? {}, "id"));
+      allowLeave();
       onClose();
       if (id) onOpen(id);
     },
@@ -2185,7 +2191,8 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   // Create button entirely (owner: "no way to create"). Fixed + 40 lifts
   // the whole sheet above the tab bar, exactly like the Menu sheet.
   return (
-    <div className="hz-m" style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(17,20,15,.4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={onClose}>
+    <FormTouchScope onTouch={markTouched}>
+    <div className="hz-m" style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(17,20,15,.4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={guardedClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--app-bg)", borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: "92%", display: "flex", flexDirection: "column", paddingBottom: "env(safe-area-inset-bottom)" }}>
         {/* header (.hdr) — design: eyebrow "Document" + title, top-right × close */}
         <header className="hdr" style={{ borderTopLeftRadius: 18, borderTopRightRadius: 18 }}>
@@ -2194,7 +2201,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
               <div className="eyebrow">Document</div>
               <div className="scr-title" style={{ marginTop: 2 }}>New Service Case</div>
             </div>
-            <span onClick={onClose} role="button" aria-label="Close" style={{ fontSize: 24, color: MUTED, cursor: "pointer", lineHeight: 1 }}>×</span>
+            <span onClick={guardedClose} role="button" aria-label="Close" style={{ fontSize: 24, color: MUTED, cursor: "pointer", lineHeight: 1 }}>×</span>
           </div>
         </header>
 
@@ -2487,6 +2494,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
         </footer>
       </div>
     </div>
+    </FormTouchScope>
   );
 }
 

@@ -30,6 +30,7 @@ import { registerNativePush } from "./lib/nativePush";
 import { readAuthToken } from "./lib/authToken";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
 import { useAppSurface } from "./routing/appSurface";
+import { LeaveGuardBridge } from "./components/LeaveGuardBridge";
 
 // Canonical-domain guard (owner 2026-07: "我要全部看到 .houzscentury.com").
 // Production also answers on the Cloudflare Pages default host
@@ -296,6 +297,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <ToastProvider>
        <DialogProvider>
         <RootApp />
+        <LeaveGuardBridge />
         <PwaBanners />
        </DialogProvider>
       </ToastProvider>

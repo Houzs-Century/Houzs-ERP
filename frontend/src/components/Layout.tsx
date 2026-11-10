@@ -200,10 +200,9 @@ interface PageHeaderProps {
    *
    *  This exists because react-router 6 can only block in-app navigation through
    *  `useBlocker`, which requires a DATA router; this app mounts a plain
-   *  `BrowserRouter` + `<Routes>`, so there is no generic blocker to hang a
-   *  guard on. Guarding the affordances a page actually owns is the honest
-   *  substitute — it is not the same thing, and the left nav / workspace tabs
-   *  remain unguarded. */
+   *  `BrowserRouter` + `<Routes>`. A form that holds lib/leaveGuard is asked
+   *  about on every exit (left nav and workspace tabs included) by
+   *  LeaveGuardBridge; this gate is for a page's own, more specific question. */
   beforeBack?: () => boolean | Promise<boolean>;
 }
 

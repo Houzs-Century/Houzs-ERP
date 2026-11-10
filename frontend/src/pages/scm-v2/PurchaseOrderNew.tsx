@@ -71,6 +71,8 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 import { useLinkProductRequestPo, useProductRequest } from '../../vendor/scm/lib/product-request-queries';
 import { supplierEmailList } from '../../vendor/shared/supplier-emails';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -142,6 +144,8 @@ const newLine = (): DraftLine => ({
 
 export const PurchaseOrderNew = () => {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const create   = useCreatePurchaseOrder();
   /* One key for the one PO this page is open to raise (lib/idempotency.ts).
      Route-level form, navigates to the PO detail on success, so the MOUNT is
@@ -468,6 +472,8 @@ export const PurchaseOrderNew = () => {
     removeScmHandoff('poNewDraft');
 
     appliedFromSoRef.current = true;
+    // Lines brought back from the picker are work the person did.
+    if (draft || pickedRows) markTouched();
     try {
       // Restore the prior draft (header + lines) FIRST so any picks append.
       if (draft) {
@@ -574,6 +580,7 @@ export const PurchaseOrderNew = () => {
       notify({ title: 'Unable to continue', body: 'This browser could not safely store the current Purchase Order draft. Nothing was discarded; free some browser storage and try again.', tone: 'error' });
       return;
     }
+    allowLeave();
     navigate('/scm/purchase-orders/from-so');
   };
 
@@ -833,6 +840,7 @@ export const PurchaseOrderNew = () => {
                 /* writeFailedAs already said why; the PO stands, unlinked. */
               }
             }
+            allowLeave();
             navigate(`/scm/purchase-orders/${res.id}`);
           },
           onError: async (err) => {
@@ -867,6 +875,7 @@ export const PurchaseOrderNew = () => {
   };
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Procurement"
@@ -1621,5 +1630,6 @@ export const PurchaseOrderNew = () => {
       )}
 
     </div>
+    </FormTouchScope>
   );
 };

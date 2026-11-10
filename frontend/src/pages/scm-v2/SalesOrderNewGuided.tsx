@@ -61,6 +61,8 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
+import { FormTouchScope } from "../../components/FormTouchScope";
+import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -145,6 +147,8 @@ const useSofaSkus = () =>
 
 export function SalesOrderNewGuided() {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const create = useCreateMfgSalesOrder();
   /* One key for the one order this page is open to raise (lib/idempotency.ts).
      This is a route-level form that navigates to the SO detail on success, so
@@ -319,6 +323,7 @@ export function SalesOrderNewGuided() {
 
     try {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
+      allowLeave();
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
       /* A server aggregated refusal (422 validation_failed) shows every reason
@@ -328,6 +333,7 @@ export function SalesOrderNewGuided() {
   };
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4 py-4 sm:py-6">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -452,6 +458,7 @@ export function SalesOrderNewGuided() {
         onOpenBlocked={openBlockingList}
       />
     </div>
+    </FormTouchScope>
   );
 }
 

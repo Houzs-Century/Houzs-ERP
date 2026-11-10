@@ -69,6 +69,8 @@ import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -129,6 +131,8 @@ type DraftLine = {
 
 export const PurchaseInvoiceNew = () => {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const notify = useNotify();
   const [params] = useSearchParams();
   const grnId    = params.get('grnId');
@@ -599,6 +603,7 @@ export const PurchaseInvoiceNew = () => {
          invoice number, which is the one accounts will ask about. Same shared
          frame as every other surface. Never blocks; the liability is booked. */
       await notifyAcNotSent(notify, createRes, 'Purchase invoice');
+      allowLeave();
       setDialog({
         title: `PI ${createRes.invoiceNumber} created`,
         body: asDraft
@@ -614,6 +619,7 @@ export const PurchaseInvoiceNew = () => {
 
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Procurement"
@@ -1088,5 +1094,6 @@ export const PurchaseInvoiceNew = () => {
         />
       )}
     </div>
+    </FormTouchScope>
   );
 };

@@ -124,6 +124,8 @@ import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
 import "./mobile.css";
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
 
 /* ---------------------------------------------------------------------------
  * MobileNewSO — mobile New / Edit Sales Order as ONE single scrolling form
@@ -623,6 +625,9 @@ export function MobileNewSO({
   onSaved?: (docNo: string) => void;
   openAddLine: boolean;
 }) {
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const guardedBack = useGuardedBack(onBack);
   const qc = useQueryClient();
   const notify = useNotify();
   const confirm = useConfirm(); const prompt = usePrompt(); const backdateReasonRef = useRef("");
@@ -2097,6 +2102,7 @@ export function MobileNewSO({
           /* Two-lane rework — the server classifies (and may split) the request:
              product changes wait on Purchasing, delivery changes on Logistics. */
           void notify(amendmentSubmittedNotice(plan, amendCreatedRes));
+          allowLeave();
           if (onSaved) onSaved(docNo);
           else onBack();
           return;
@@ -2162,6 +2168,7 @@ export function MobileNewSO({
         invalidateSoShared(qc);
         await qc.invalidateQueries({ queryKey: ["mfg-sales-order-detail", docNo] });
         await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
+        allowLeave();
         if (onSaved) onSaved(docNo);
         else onBack();
         return;
@@ -2212,6 +2219,7 @@ export function MobileNewSO({
          and lands after it, moving the list's paid / outstanding aggregates. */
       invalidateSoShared(qc);
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
+      allowLeave();
       if (res?.docNo && onSaved) onSaved(res.docNo);
       else onBack();
     } catch (e) {
@@ -2284,12 +2292,13 @@ export function MobileNewSO({
 
   // ---- Render ---------------------------------------------------------------
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       {/* Header — "Cancel" text button, Draft/Editing pill, title. No wizard
           progress bar (single-form). */}
       <header className="hdr">
         <div className="hdr-row">
-          <button type="button" onClick={onBack} style={{ background: "none", border: "none", color: "var(--mut)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>Cancel</button>
+          <button type="button" onClick={guardedBack} style={{ background: "none", border: "none", color: "var(--mut)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>Cancel</button>
           <span className="badge b-grey">{mode === "edit" ? "EDITING" : "DRAFT"}</span>
         </div>
         <div id="nso-title" className="scr-title" style={{ marginTop: 6 }}>{title}</div>
@@ -2905,6 +2914,7 @@ export function MobileNewSO({
       })()}
       {submitDialog.element}
     </div>
+    </FormTouchScope>
   );
 }
 

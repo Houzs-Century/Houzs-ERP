@@ -58,6 +58,8 @@ import {
   readNoteChip, readNoteSegment, type NoteItem,
 } from './notesModel';
 import ui from '../MoneyIn.module.css';
+import { FormTouchScope } from '../../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../../hooks/useLeaveGuard';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 const DIVIDER: MenuItem = { label: '', onClick: () => undefined, divider: true };
@@ -423,6 +425,9 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
   openDoc: (href: string) => void;
 }) {
   const toast = useToastOptional();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  // The form shares the list's path; `?form=` is what addresses it.
+  const { allowLeave } = useLeaveGuard(formTouched, ['form']);
   const detailQ = useCreditNoteDetail(mode === 'new' ? null : id);
   const prefillQ = useCreditNoteFromReturn(mode === 'new' ? fromReturn : null);
   const d = detailQ.data;
@@ -442,6 +447,7 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
   const locked = mode === 'edit' && n != null && n.status !== 'DRAFT';
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <DocFormShell title={mode !== 'new' && !n ? 'Note' : title} backLabel={BACK} onBack={onClose} titleExtra={switches} bare>
       {!initial || locked || blocked
         ? (
@@ -459,6 +465,7 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
               onSaved={(noteId, done) => {
                 onSaved();
                 const no = done?.number ?? n?.note_number ?? '';
+                allowLeave();
                 toast?.success(done?.posted ? `${no} saved and posted` : mode === 'edit' ? `${no} saved` : `${no} saved as Draft`);
                 onClose();
                 if (mode !== 'edit' && noteId) openDoc(`/scm/credit-notes/${encodeURIComponent(noteId)}`);
@@ -466,5 +473,6 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
           </div>
         )}
     </DocFormShell>
+    </FormTouchScope>
   );
 }
