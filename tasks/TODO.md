@@ -37,8 +37,6 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Service case detail: `po_amount` is still visible and editable to anyone who can open a case (the export now hides it from non-cost viewers, #5628) — owner — 2026-11-11
 - Finance: HC-SO-2609-164 (pay 03c0c4b1 + a692fff5, 2.1 s apart) and HC-SO-008674 (112ad71a + 358dea27, 4.1 s apart) look double-recorded; check the bank and who recorded them before deleting either — finance — 2026-11-11
 ## Waiting on others
-- HC-0149 Copy as new: phone entry not built (`MobileNewSO.tsx` at its size ceiling; it already seeds from `convertFrom.copyFrom`). Delivery Order copy dropped (owner 2026-10-23: not needed) — Samuel — 2026-10-23
-- DEV-32 Edit SO after DO is desktop-only: the phone has no Override and `MobileNewSO.tsx` is at its size ceiling; port the after-DO mode (customer details + charge lines + DO pick) when Logistics needs it on the phone — Samuel — 2026-10-02
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
 - Cloudflare account holder: staging Worker needs the staging service_role key (staging rehearsal red) — 2026-09-12

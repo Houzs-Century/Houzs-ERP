@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoHeaderFields, soAfterDoMode,
+  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoHeaderFields, soAfterDoMode, soEditOpensOnOverride,
   type AfterDoSave,
 } from './so-after-do-client';
 
@@ -58,5 +58,20 @@ describe('what each save carries', () => {
     expect(afterDoCopyProblem({ ok: true, doCopyFailed: ['HC-DO-2610-011'] })).toContain('HC-DO-2610-011');
     expect(afterDoCopyProblem({ ok: true, doCopyFailed: [] })).toBeNull();
     expect(afterDoCopyProblem({ ok: true })).toBeNull();
+  });
+});
+
+describe('the phone detail Edit button on a locked order (soEditOpensOnOverride)', () => {
+  test('a DELIVERED order fully on its DO opens for the after-DO permission only', () => {
+    const header = { status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [DO] };
+    expect(soEditOpensOnOverride(header, { can: canAll, migrated: false })).toBe(true);
+    expect(soEditOpensOnOverride(header, { can: () => false, migrated: false })).toBe(false);
+  });
+  test('a status lock with lines still open opens (Override lifts it, as desktop isSoLocked)', () => {
+    expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: () => false, migrated: false })).toBe(true);
+  });
+  test('never a migrated order, never a fully frozen order with every DO invoiced', () => {
+    expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: canAll, migrated: true })).toBe(false);
+    expect(soEditOpensOnOverride({ status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] }, { can: canAll, migrated: false })).toBe(false);
   });
 });

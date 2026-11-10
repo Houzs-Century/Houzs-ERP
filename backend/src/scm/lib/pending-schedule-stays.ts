@@ -8,7 +8,14 @@
    Mechanism: the board stamps the existing manual override (delivery_state =
    PENDING_SCHEDULE) on an order the first time it derives Pending Schedule; the
    override already wins in derivePlanningState, and Delivered still beats it.
-   Leaving is manual only: "Back to Pending Delivery" clears the stamp. */
+   Leaving is manual only: "Back to Pending Delivery" clears the stamp.
+
+   The write never holds a board read: it runs after the response, and only on a
+   request without a band (counts_only, the whole board, a ?docs row refresh). The
+   five band reads of one board open used to each run it inside the GET, where an
+   UPDATE waits on any other writer's row lock with no time limit. The rows a band
+   returns still show the stamp, so the output is the same. */
+import type { Context } from 'hono';
 import { scopeToAllowedCompanies, type CompanyScopeCtx } from './companyScope';
 
 export function docsEnteringPendingSchedule(
@@ -34,4 +41,21 @@ export async function stampPendingSchedule(
     // Best-effort: the board still answers; the next read stamps what this missed.
     if (error) console.warn(`[delivery-planning] pending-schedule stamp skipped: ${String(error.message).slice(0, 120)}`);
   }
+}
+
+/** stampPendingSchedule after the response (waitUntil in a Worker); awaited where
+ *  there is no execution context (tests), so a test can read what was written. */
+export async function stampPendingScheduleAfterResponse(
+  c: Pick<Context, 'executionCtx'> & CompanyScopeCtx,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client
+  sb: any,
+  docNos: string[],
+): Promise<void> {
+  if (docNos.length === 0) return;
+  const run = stampPendingSchedule(sb, c, docNos).catch((e: unknown) => {
+    console.warn(`[delivery-planning] pending-schedule stamp skipped: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+  });
+  let ctx: { waitUntil(p: Promise<unknown>): void } | null = null;
+  try { ctx = c.executionCtx; } catch { /* no execution context (tests) */ }
+  if (ctx) ctx.waitUntil(run); else await run;
 }

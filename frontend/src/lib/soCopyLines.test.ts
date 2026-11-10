@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { copyLinesWithoutPwp, copySeedLines } from './soCopyLines';
+import { copyLinesWithoutPwp, copySeedLines, soCopyHeaderSeed } from './soCopyLines';
 
 const L = (item_code: string, variants: unknown) => ({ item_code, variants });
 const codes = (r: { kept: { item_code: string }[] }) => r.kept.map((i) => i.item_code);
@@ -39,5 +39,18 @@ describe('copySeedLines', () => {
       'CONFIRMED', (n) => calls.push(n.body));
     expect(kept.map((i) => i.id)).toEqual([1]);
     expect(calls).toEqual(['1 PWP line(s) left out - re-add with a new code']);
+  });
+});
+
+describe('soCopyHeaderSeed — the one copy header for desktop and phone (HC-0149)', () => {
+  it('copies customer, address, emergency contact, note; never refs or dates', () => {
+    const seed = soCopyHeaderSeed({
+      debtor_code: 'C1', debtor_name: 'Ada', phone: '+6012', email: null, salesperson_id: 7, customer_type: 'New Customer',
+      building_type: null, note: 'n', address1: 'a1', address2: null, address3: 'Shah Alam', address4: '40000',
+      customer_state: 'Selangor', city: null, postcode: null, emergency_contact_name: 'E', emergency_contact_relationship: null, emergency_contact_phone: null,
+      ...({ customer_so_no: 'PO-1', processing_date: '2026-10-01' } as object),
+    });
+    expect(seed).toMatchObject({ debtorCode: 'C1', debtorName: 'Ada', email: '', salespersonId: '7', city: 'Shah Alam', postcode: '40000', emergencyName: 'E', note: 'n' });
+    expect(Object.keys(seed).some((k) => /ref|soNo|date/i.test(k))).toBe(false);
   });
 });

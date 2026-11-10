@@ -30,3 +30,28 @@ export function copySeedLines<T extends { variants?: unknown; cancelled?: unknow
   if (dropped > 0) notify({ title: 'PWP line left out', body: pwpDroppedNotice(dropped) });
   return kept;
 }
+
+/* The source order's columns a copy reads (the detail payload's snake_case). */
+export type SoCopySource = {
+  debtor_code?: string | null; debtor_name?: string | null; phone?: string | null; email?: string | null;
+  salesperson_id?: string | number | null; customer_type?: string | null; building_type?: string | null; note?: string | null;
+  address1?: string | null; address2?: string | null; address3?: string | null; address4?: string | null;
+  customer_state?: string | null; city?: string | null; postcode?: string | null;
+  emergency_contact_name?: string | null; emergency_contact_relationship?: string | null; emergency_contact_phone?: string | null;
+};
+
+/* The header a copy seeds, ONE rule for the desktop and phone forms (HC-0149): customer,
+   address, emergency contact, note. Never dates, payments, refs, doc no or status — the
+   copy is a clean draft. City / postcode fall back to address3 / address4 the way older
+   orders stored them. */
+export function soCopyHeaderSeed(h: SoCopySource) {
+  return {
+    debtorCode: h.debtor_code ?? '', debtorName: h.debtor_name ?? '', phone: h.phone ?? '', email: h.email ?? '',
+    salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : '',
+    customerType: h.customer_type ?? '', buildingType: h.building_type ?? '', note: h.note ?? '',
+    address1: h.address1 ?? '', address2: h.address2 ?? '', address3: h.address3 ?? '', address4: h.address4 ?? '',
+    state: h.customer_state ?? '', city: h.city ?? h.address3 ?? '', postcode: h.postcode ?? h.address4 ?? '',
+    emergencyName: h.emergency_contact_name ?? '', emergencyRel: h.emergency_contact_relationship ?? '', emergencyPhone: h.emergency_contact_phone ?? '',
+  };
+}
+export type SoCopyHeaderSeed = ReturnType<typeof soCopyHeaderSeed>;
