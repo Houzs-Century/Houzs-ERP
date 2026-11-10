@@ -20,9 +20,6 @@ export const DO_SPEC_LOCKED_MESSAGE =
   + 'cannot be changed. Quantity and remarks can still be edited. To change the spec, return the goods '
   + 'with a Delivery Return, then add a new line or a new delivery order with the right spec.';
 
-/** The request keys that carry a line's spec. */
-export const DO_SPEC_KEYS = ['itemCode', 'itemGroup', 'variants'] as const;
-
 /** True once the DO has moved stock: its lines' spec is locked. */
 export function doSpecLocked(status: string | null): boolean {
   const s = String(status ?? '').trim().toUpperCase();

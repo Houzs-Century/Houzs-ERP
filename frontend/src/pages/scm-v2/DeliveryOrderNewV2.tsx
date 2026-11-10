@@ -27,7 +27,7 @@
 //
 // Route: /scm/delivery-orders/new (App.tsx flips ScmDeliveryOrderNewV2 here).
 
-import { DO_SPEC_KEYS, DO_SPEC_LOCKED_MESSAGE, doSpecLocked } from '../../vendor/shared/do-spec-lock';
+import { DO_SPEC_LOCKED_MESSAGE, doSpecLocked } from '../../vendor/shared/do-spec-lock';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1103,7 +1103,7 @@ export function DeliveryOrderNewV2() {
           const orig = originalLinesRef.current.get(l.itemId);
           if (orig !== JSON.stringify(body)) {
             const send: Record<string, unknown> = { ...body };
-            if (specLockedReason) for (const k of DO_SPEC_KEYS) delete send[k];
+            if (specLockedReason) { delete send.itemCode; delete send.itemGroup; delete send.variants; }
             ops.push(updateItem.mutateAsync({ id: editId, itemId: l.itemId, ...send }));
           }
         } else {
