@@ -64,6 +64,7 @@ import {
   type PdfPhotoImage,
 } from './pdf-item-photos';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 type DoHeader = {
   /* Row id — the photo proxy route is keyed by it. Optional so the
@@ -856,7 +857,7 @@ export async function generateDeliveryOrderPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: DO_PAGE_FORMAT });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: DO_PAGE_FORMAT });
   await renderDeliveryOrderInto(doc, autoTable, header, items, opts);
   deliverPdf(doc, `${header.do_number}-${safeName(header.debtor_name || 'customer')}.pdf`, opts?.action);
 }
@@ -869,7 +870,7 @@ export async function generateCombinedDeliveryOrderPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: DO_PAGE_FORMAT });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: DO_PAGE_FORMAT });
   for (let i = 0; i < docs.length; i += 1) {
     if (i > 0) doc.addPage();
     await renderDeliveryOrderInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);

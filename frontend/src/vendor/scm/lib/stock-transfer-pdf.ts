@@ -22,7 +22,7 @@
 // THE WAREHOUSE PAIR IS THE DOCUMENT. Everything else on a transfer describes
 // the pair, so FROM and TO get their own band under the letterhead rather than
 // a row in the label gutter (same treatment the Purchase Order gives DELIVER TO).
-import {
+import { docPageLabel,
   COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader,
   drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, safeName, fmtDocDate,
   type PdfAction,
@@ -33,6 +33,7 @@ import { variantKeyLabel } from './variant-key-label';
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
+import { PDF_COMPRESS } from './pdf-options';
 
 type StWarehouse = WarehouseLabelSource & { name?: string | null };
 
@@ -268,7 +269,7 @@ export async function renderStockTransferInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.transfer_no, margin, 290);
     doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.transfer_date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -281,7 +282,7 @@ export async function generateStockTransferPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderStockTransferInto(doc, autoTable, header, lines);
   const pair = [
     whLabel(header.from_warehouse, header.from_warehouse_id),

@@ -483,7 +483,7 @@ salesInvoices.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const total = count ?? (data?.length ?? 0);
 
-  /* Status counts mirror the FE filter-pill buckets (sent / partial / paid /
+  /* Status counts mirror the FE filter-pill buckets (draft / sent / partial / paid /
      cancelled) over the SAME scope + company filters but WITHOUT status /
      search / pagination. */
   const countBase = () => {
@@ -492,15 +492,16 @@ salesInvoices.get('/', async (c) => {
     cq = scopeToCompany(cq, c);
     return cq;
   };
-  const [allC, sentC, partialC, paidC, cancelledC] = await Promise.all([
+  const [allC, draftC, sentC, partialC, paidC, cancelledC] = await Promise.all([
     countBase(),
+    countBase().in('status', SI_STATUS_BUCKETS.draft),
     countBase().in('status', SI_STATUS_BUCKETS.sent),
     countBase().in('status', SI_STATUS_BUCKETS.partial),
     countBase().in('status', SI_STATUS_BUCKETS.paid),
     countBase().in('status', SI_STATUS_BUCKETS.cancelled),
   ]);
   // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-  const counted = readStatusCounts({ all: allC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  const counted = readStatusCounts({ all: allC, draft: draftC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 

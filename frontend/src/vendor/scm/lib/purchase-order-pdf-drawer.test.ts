@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { drawerSidesOf, frontDrawerCountOf } from './po-drawer-diagram';
+import { pdfRawText } from './pdf-raw-text';
 
 vi.mock('./sales-order-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -45,7 +46,7 @@ const line = (variants: Record<string, unknown>): PoArgs[1][number] => ({
 const render = async (variants: Record<string, unknown>) => {
   const { purchaseOrderPdfBase64 } = await import('./purchase-order-pdf');
   const pdf = Buffer.from(await purchaseOrderPdfBase64(header, [line(variants)]), 'base64');
-  return { pdf, raw: pdf.toString('latin1') };
+  return { pdf, raw: pdfRawText(pdf) };
 };
 
 describe('drawerSidesOf', () => {

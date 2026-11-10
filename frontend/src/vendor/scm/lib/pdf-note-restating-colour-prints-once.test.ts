@@ -12,6 +12,7 @@ vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: a
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
+import { pdfRawText } from './pdf-raw-text';
 
 type PoHeader = Parameters<typeof purchaseOrderPdfBase64>[0];
 type PoItem = Parameters<typeof purchaseOrderPdfBase64>[1][number];
@@ -33,7 +34,7 @@ const poLine = (itemCode: string, variants: Record<string, unknown>, description
 });
 
 const poText = async (line: PoItem) =>
-  painted(Buffer.from(await purchaseOrderPdfBase64(PO_HEADER, [line]), 'base64').toString('latin1'));
+  painted(pdfRawText(Buffer.from(await purchaseOrderPdfBase64(PO_HEADER, [line]), 'base64')));
 
 afterEach(() => {
   setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');

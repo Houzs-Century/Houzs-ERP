@@ -14,6 +14,7 @@
 import { fmtDateTime } from '@2990s/shared';
 import { blobToSquarePdfImage, type PdfPhotoImage } from './pdf-item-photos';
 import { safeName } from './pdf-common';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type PodPdfPhoto = { image: PdfPhotoImage; storedAt: string | null };
 
@@ -47,7 +48,7 @@ export async function buildPodPhotosPdf(o: {
   skipped: number;
 }): Promise<import('jspdf').jsPDF> {
   const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   doc.setProperties({ title: `${o.title} - POD photos` });
   const total = o.photos.length;
   const pages = pageCount(total);

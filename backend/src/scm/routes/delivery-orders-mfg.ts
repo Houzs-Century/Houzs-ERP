@@ -5030,7 +5030,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     scopeCompanyId = co.companyId;
   }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no, updated_at').eq('id', id), scopeCompanyId,
+    sb.from('delivery_orders').select('status, so_doc_no, updated_at, customer_delivered_date').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5122,6 +5122,13 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (startsRun) ts.departure_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
+  /* The planning board's "Delivered date" column is customer_delivered_date, and
+     only the board's own field editor wrote it, so a delivery the driver closed
+     with POD showed a blank date until someone typed it. Stamped with today's
+     Malaysian day here; a day already typed on the board is kept. */
+  if (toStatus === 'DELIVERED' && !(cur as { customer_delivered_date?: string | null }).customer_delivered_date) {
+    ts.customer_delivered_date = todayMyt();
+  }
   /* POD capture — the mobile app posts the proof-of-delivery signature +
      photo alongside the status flip. Persist them to the existing columns
      (signature_data, pod_r2_key) so a DELIVERED DO keeps its signature +

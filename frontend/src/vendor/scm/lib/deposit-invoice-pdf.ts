@@ -23,7 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import { formatPhone } from '@2990s/shared/phone';
-import {
+import { docPageLabel,
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, drawHeader, drawInfoColumns, drawPaymentDetails, drawSignatureBoxes,
   deliverPdf, deliverPdfBlob, ensurePdfCjkFont, amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
@@ -31,6 +31,7 @@ import { billToBlock } from './pdf-party-blocks';
 import { orderAddressLines, type OrderAddressFields } from './order-address';
 import { getBrandingCache } from '../../../lib/branding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** The order behind a deposit invoice, as GET /deposit-invoices/sheets serves it. */
 export type DepositInvoiceOrder = OrderAddressFields & {
@@ -187,14 +188,14 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
     doc.setPage(p);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(d.di_number, margin, pageH - 7);
-    doc.text(`Page ${p - startPage + 1} of ${pageCount - startPage + 1}`, pageW - margin, pageH - 7, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, pageH - 7, { align: 'right' });
     doc.setTextColor(0);
   }
 }
 
 const tools = async (): Promise<{ doc: JsPdf; autoTable: AutoTable }> => {
   const [{ jsPDF }, autoTable] = await Promise.all([import('jspdf'), import('jspdf-autotable').then((m) => m.default)]);
-  return { doc: new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' }), autoTable };
+  return { doc: new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'portrait' }), autoTable };
 };
 
 const fileNameOf = (d: DepositInvoicePdfData): string => `${d.di_number}-${safeName(d.party_name ?? d.so_doc_no)}.pdf`;

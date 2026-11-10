@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { cancelReversalRetryDue, patchDeliveryOrderStatusHandler } from '../src/scm/routes/delivery-orders-mfg';
 import { patchConsignmentNoteStatusHandler } from '../src/scm/routes/consignment-notes';
+import { todayMyt } from '../src/scm/lib/my-time';
 
 const CO = 1;
 type Row = Record<string, any>;
@@ -98,6 +99,27 @@ describe('DO status PATCH — compare-and-set on the status the guards read', ()
   });
 });
 
+describe('DO Delivered fills the planning board Delivered date (sister-ERP gap review P14)', () => {
+  test('a Delivered flip with no date stamps today\'s Malaysian day', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('IN_TRANSIT'), customer_delivered_date: null }, false);
+    const res = await patch(app, '/delivery-orders/do-1/status', 'DELIVERED');
+    expect(res.status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBe(todayMyt());
+  });
+
+  test('a day already typed on the board is kept', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('IN_TRANSIT'), customer_delivered_date: '2026-11-01' }, false);
+    expect((await patch(app, '/delivery-orders/do-1/status', 'DELIVERED')).status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBe('2026-11-01');
+  });
+
+  test('a move that is not Delivered writes no date', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('DISPATCHED'), customer_delivered_date: null }, false);
+    expect((await patch(app, '/delivery-orders/do-1/status', 'IN_TRANSIT')).status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBeNull();
+  });
+});
+
 describe('DO cancel — a failed stock return can be retried', () => {
   test('re-cancelling a cancelled DO after the retry window re-runs the reversal', async () => {
     const { app, rpcCalls } = harness('delivery_orders', doRow('CANCELLED', new Date(Date.now() - 120_000).toISOString()), false);
@@ -136,5 +158,13 @@ describe('Consignment Note status PATCH — compare-and-set on the status the gu
     const res = await patch(app, '/consignment-notes/cn-1/status', 'SIGNED');
     expect(res.status).toBe(200);
     expect(tables.consignment_delivery_orders![0]!.status).toBe('SIGNED');
+  });
+
+  test('an unknown status is refused before any write (sister-ERP gap review)', async () => {
+    const { app, tables } = harness('consignment_delivery_orders', noteRow('DISPATCHED'), false);
+    const res = await patch(app, '/consignment-notes/cn-1/status', 'SHIPPED-ISH');
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error?: string }).error).toBe('invalid_status');
+    expect(tables.consignment_delivery_orders![0]!.status).toBe('DISPATCHED');
   });
 });
