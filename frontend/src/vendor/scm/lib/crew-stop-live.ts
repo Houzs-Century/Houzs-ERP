@@ -10,6 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { CREW_STOP_POLL_MS } from './crew-stop-photos';
+import { doHasArrived } from '../../shared/do-shipped-states';
 
 export type LiveDoStop = {
   id: string;
@@ -19,7 +20,7 @@ export type LiveDoStop = {
   departure_at: string | null;
 };
 
-const FINISHED = new Set(['DELIVERED', 'INVOICED', 'SIGNED', 'CANCELLED']);
+const finished = (status: string | null | undefined) => doHasArrived(status) || String(status ?? '').toUpperCase() === 'CANCELLED';
 
 export function useLiveDoStop(doNumber: string | null) {
   return useQuery({
@@ -27,7 +28,7 @@ export function useLiveDoStop(doNumber: string | null) {
     queryFn: () => authedFetch<{ deliveryOrder: LiveDoStop }>(`/delivery-planning/do/${encodeURIComponent(doNumber!)}/pod`),
     enabled: !!doNumber,
     staleTime: 10_000,
-    refetchInterval: (query) => (FINISHED.has(String(query.state.data?.deliveryOrder.status ?? '').toUpperCase()) ? false : CREW_STOP_POLL_MS),
+    refetchInterval: (query) => (finished(query.state.data?.deliveryOrder.status) ? false : CREW_STOP_POLL_MS),
   });
 }
 
