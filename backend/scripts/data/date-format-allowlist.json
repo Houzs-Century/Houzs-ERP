@@ -346,6 +346,11 @@
       "file": "backend/src/routes/clientErrors.ts",
       "text": "const day = nowIso.slice(0, 10);",
       "why": "Telemetry STORM-COLLAPSE bucket for client error reports (unique key dedup_hash, day, user_id), never shown as a business date; switching it to the Malaysian day would split the current day's counters at deploy for no reader's benefit."
+    },
+    {
+      "file": "backend/src/scm/routes/delivery-orders-mfg.read-pin.test.ts",
+      "text": "[0, 8].map((h) => new Date(Date.now() + h * 3_600_000).toISOString().slice(0, 10)),",
+      "why": "Test-only snapshot MASK, never displayed: the ISO values today could be minted as (UTC and Malaysia) so the snapshot can replace them with <today>. It must match the stored ISO shape, not the display format."
     }
   ]
 }
