@@ -19,6 +19,7 @@ import {
 import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
 import { hydrateTableLayouts } from "../lib/tableLayouts";
+import { headStartFailed } from "../lib/lazyPage";
 import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
 
 /** Stage 2: store the signed staff pass beside the token when a login response
@@ -122,7 +123,7 @@ export function primeAuthMe(): void {
   if (!token || primedMe) return;
   const request = api.get<{ user: AuthUser }>("/api/auth/me");
   // fetchMe owns the outcome; this only stops an unconsumed rejection surfacing.
-  request.catch(() => {});
+  request.catch(headStartFailed);
   primedMe = { token, request };
 }
 

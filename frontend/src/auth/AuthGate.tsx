@@ -1,6 +1,6 @@
 import { useEffect, useState, lazy, type ReactNode } from "react";
 import { LazySlot } from "../components/LazySlot";
-import { lazyPage } from "../lib/lazyPage";
+import { headStartFailed, lazyPage } from "../lib/lazyPage";
 import { useAuth } from "./AuthContext";
 import {
   HOUZS_COMPANY_CODE,
@@ -27,7 +27,7 @@ export function mobileShellEnabled(isMobile: boolean): boolean {
 /** Start the phone shell's chunk at boot, in parallel with /api/auth/me, rather
  *  than after it (main.tsx, signed-in phone sessions only). */
 export function preloadMobileApp(): void {
-  void MobileApp.preload().catch(() => {});
+  void MobileApp.preload().catch(headStartFailed);
 }
 const MobileLogin = lazy(() =>
   import("../mobile/MobileLogin").then((m) => ({ default: m.MobileLogin })),

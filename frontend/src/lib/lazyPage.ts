@@ -71,6 +71,16 @@ export function whenPageChunksSettled(maxWaitMs = 20_000): Promise<void> {
   });
 }
 
+/** The rejection handler for a head start (a preload, a primed request). The
+ *  failure is not lost: whoever really needs the result awaits the same
+ *  promise and handles it there (React.lazy -> ChunkReloadBoundary, fetchMe's
+ *  retry loop), and a chunk failure is also recorded by staleBuild's
+ *  vite:preloadError listener. This only keeps the speculative copy from
+ *  surfacing as an unhandled rejection. */
+export function headStartFailed(_error: unknown): void {
+  // Intentionally nothing; see above.
+}
+
 type WithPreload = { preload?: unknown };
 
 /**
@@ -92,7 +102,7 @@ export function preloadElementChunks(node: ReactNode, depth = 0): void {
   const preload = typeof type === "object" || typeof type === "function" ? (type as WithPreload | null)?.preload : undefined;
   if (typeof preload === "function") {
     try {
-      void (preload as () => Promise<unknown>)().catch(() => {});
+      void (preload as () => Promise<unknown>)().catch(headStartFailed);
     } catch {
       // A preload is only ever a head start; the render path owns the real load.
     }
