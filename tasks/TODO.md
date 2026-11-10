@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Company 1 cutover no-spec repair (run 42827135058): run `revert-cutover-nospec-repair.mjs` PLAN (COMPANY_ID=1), check every bucket reads "(match)" and 37 DO OUTs go back to uncosted, then APPLY with ALLOW_CLOSED_MONTHS=2026-09,2026-10 on the owner's go — owner — 2026-11-10
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - CODY-(K) at KL WAREHOUSE: run `flatten-spec-buckets.mjs` (plan, then apply) so "Leg 4" (+1) and "Leg 4 + Total 24" (-1) both read 0; the plan lists any order whose readiness changes — lead / owner — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
