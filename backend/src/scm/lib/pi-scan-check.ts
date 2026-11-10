@@ -9,7 +9,7 @@
 
 import { nameFits } from './grn-scan-check';
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
-import { sameSize, type PiLineMatchResult } from './pi-scan-match';
+import { isFreePrice, sameSize, type PiLineMatchResult } from './pi-scan-match';
 import { proposeGrnLines, skuOfRow, type SkuRow } from './pi-scan-sku';
 import { bestLines, familiesPrinted, familyOf, lineSizeOf, printedSize, wordsOf } from './scan-word-match';
 
@@ -52,7 +52,7 @@ export type PiReview = {
 
 export type PiLineTier = 'invoice_po' | 'whole_receipt';
 
-export const PI_REVIEW_VERSION = 5;
+export const PI_REVIEW_VERSION = 6;
 
 /** The invoice as read, rebuilt from a working copy's own rows, for a copy whose
  *  stored read is not kept (no scan sample): it can still take newer matching.
@@ -76,6 +76,11 @@ export function extractOfReview(r: PiReview): PiScanExtract | null {
     poNo: r.poNo, doNo: r.doNo, salesTax: null, totalAmount: null, lines,
   };
 }
+
+/** A row printed at RM 0 (HOOKKA's EX- replacements, INV-2610-097): nothing to bill. */
+export const isFreeRow = (read: PiReviewLine['read']): boolean => read != null && isFreePrice(read.unitPrice, read.lineTotal);
+/** A free row may bill only a receipt line that is free too; a priced row any line. */
+export const mayBill = (read: PiReviewLine['read'], line: { unitPriceSen: number }): boolean => !isFreeRow(read) || line.unitPriceSen === 0;
 
 let seq = 0;
 const lineKey = () => `p${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -104,14 +109,18 @@ export function setPieces(row: PiReviewLine, lines: ReadonlyArray<BillableLine>)
 export function tieToSkus(pending: ReadonlyArray<{ line: PiReviewLine; itemCode: string }>, open: ReadonlyArray<BillableLine>, anchored: ReadonlySet<string>, left: Map<string, number>, ai: boolean): void {
   const rest: Array<{ line: PiReviewLine; itemCode: string }> = [];
   for (const p of pending) {
-    const on = open.filter((o) => o.itemCode === p.itemCode && anchored.has(o.grnNumber) && (left.get(o.grnItemId) ?? 0) > 0);
+    const on = open.filter((o) => o.itemCode === p.itemCode && anchored.has(o.grnNumber) && (left.get(o.grnItemId) ?? 0) > 0 && mayBill(p.line.read, o));
     if (on.length === 0) { rest.push(p); continue; }
     const pick = on.find((o) => (left.get(o.grnItemId) ?? 0) >= p.line.qty) ?? on[0]!;
     Object.assign(p.line, { grnItemId: pick.grnItemId, suggested: true, ai });
     left.set(pick.grnItemId, (left.get(pick.grnItemId) ?? 0) - p.line.qty);
   }
-  const rows: SkuRow[] = rest.map((p) => ({ key: p.line.key, itemCode: p.itemCode, qty: p.line.qty }));
-  const picked = proposeGrnLines(rows, open, left);
+  const rowsOf = (ps: typeof rest): SkuRow[] => ps.map((p) => ({ key: p.line.key, itemCode: p.itemCode, qty: p.line.qty }));
+  const free = rest.filter((p) => isFreeRow(p.line.read));
+  const picked = new Map([
+    ...proposeGrnLines(rowsOf(rest.filter((p) => !isFreeRow(p.line.read))), open, left),
+    ...proposeGrnLines(rowsOf(free), open.filter((o) => o.unitPriceSen === 0), left),
+  ]);
   for (const p of rest) {
     const id = picked.get(p.line.key);
     if (id) Object.assign(p.line, { grnItemId: id, suggested: true, ai });
@@ -143,7 +152,7 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   const pending: Array<{ line: PiReviewLine; itemCode: string }> = [];
   for (const l of [...lines]) {
     if (l.grnItemId || !l.read) continue;
-    const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0);
+    const owing = open.filter((o) => (left.get(o.grnItemId) ?? 0) > 0 && mayBill(l.read, o));
     const sku = skuOfRow(l.read.itemCode, l.read.description, prefixes, [...new Set(owing.map((o) => o.itemCode))]);
     if (sku) { pending.push({ line: l, itemCode: sku }); continue; }
     if (!l.read.description) continue;
@@ -186,7 +195,7 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
      that prints only codes and generic words (NB's SB12-KHB(C)-NH79(A)) still fills. */
   const nameWords = (text: string): string[] => wordsOf(text).filter((w) => /^[A-Z]{4,}$/.test(w));
   for (const [size, rows] of bySize) {
-    const lefts = open.filter((o) => anchored.has(o.grnNumber) && lineSizeOf(o.itemCode) === size && (left.get(o.grnItemId) ?? 0) > 0);
+    const lefts = open.filter((o) => anchored.has(o.grnNumber) && lineSizeOf(o.itemCode) === size && (left.get(o.grnItemId) ?? 0) > 0 && mayBill(rows[0]!.read, o));
     if (rows.length !== 1 || lefts.length !== 1) continue;
     const read = rows[0]!.read;
     const named = nameWords(`${read?.itemCode ?? ''} ${read?.description ?? ''}`);
@@ -272,6 +281,12 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
   if (aiSkus && aiSkus.size > 0) {
     const pending = lines.flatMap((l) => { const sku = l.grnItemId ? undefined : aiSkus.get(readKey(l.read)); return sku ? [{ line: l, itemCode: sku }] : []; });
     tieToSkus(pending, open, anchoredOf(lines, open, anchorGrns), leftAfter(lines, open), true);
+  }
+  // Whatever tied it, a free row never stays on a line that costs money.
+  const openById = new Map(open.map((o) => [o.grnItemId, o]));
+  for (const l of lines) {
+    const on = l.grnItemId ? openById.get(l.grnItemId) : undefined;
+    if (on && !mayBill(l.read, on)) Object.assign(l, { grnItemId: null, grnNumber: null, suggested: false, ai: false });
   }
   const taxNote = addSalesTax(lines, open, parsed?.salesTax ?? null, parsed?.totalAmount ?? null);
   // In the order the invoice prints them, so the card reads down beside the paper.
@@ -395,16 +410,27 @@ export function billCodesToTeach(review: PiReview, itemOf: (grnItemId: string) =
   });
 }
 
+/** A tie the queue undoes and re-matches: a suggested one to a receipt line no
+ *  longer open to bill (another invoice took it), or a free row on a line that
+ *  costs money. `anyTie`: also a tie not marked suggested, for a copy built by an
+ *  older version, whose matcher tied free rows without the mark. A row the
+ *  operator tied in this version is kept. PURE. */
+export function staleTie(l: PiReviewLine, open: ReadonlyMap<string, Pick<BillableLine, 'unitPriceSen'>>, anyTie: boolean): boolean {
+  if (!l.grnItemId || !(l.suggested || anyTie)) return false;
+  const line = open.get(l.grnItemId);
+  if (!line) return l.suggested;
+  return !mayBill(l.read, line);
+}
+
+/** How many of a copy's ties are stale (staleTie). PURE. */
+export function staleSuggestions(review: PiReview, open: ReadonlyMap<string, Pick<BillableLine, 'unitPriceSen'>>): number {
+  return review.lines.filter((l) => staleTie(l, open, review.v < PI_REVIEW_VERSION)).length;
+}
+
 /** A waiting copy rebuilt by newer matching: rows already tied stay as they are
  *  (the operator may have chosen them), a row still untied takes the newer
  *  build's tie for the same printed row, and a row the operator removed is not
  *  brought back. */
-/** Suggested rows tied to a receipt line that is no longer open to bill (another
- *  invoice took it). Those are re-matched; a row the operator tied is not counted. PURE. */
-export function staleSuggestions(review: PiReview, openIds: ReadonlySet<string>): number {
-  return review.lines.filter((l) => l.suggested && l.grnItemId && !openIds.has(l.grnItemId)).length;
-}
-
 export function mergeRebuiltLines(kept: ReadonlyArray<PiReviewLine>, rebuilt: ReadonlyArray<PiReviewLine>): PiReviewLine[] {
   const used = new Set<string>();
   return kept.flatMap((l) => {

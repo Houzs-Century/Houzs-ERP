@@ -35,9 +35,36 @@ export function normalizeDocRef(s: string | null | undefined): string {
 /** Does a scanned reference identify our document number? Exact after
  *  normalization, or one is a suffix of the other (our "HCPO010070" ends with
  *  the supplier's "PO010070"). Empty scanned ref never matches. */
-/** Each D.O. an invoice names: it may print several in one field. */
+/* HOOKKA INV-2610-097 prints "EX-HC-PO-2609-151": an exchange (replacement) for
+   HC-PO-2609-151. The mark goes, so the reference anchors to the order it replaces. */
+const EXCHANGE_MARK = /^(?:EXCH|EX)(?:\s*-\s*|\s+)(?=[A-Z0-9])/i;
+const printedRefs = (printed: string | null | undefined): string[] =>
+  (printed ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+
+/** Each D.O. or PO an invoice names: it may print several in one field. An
+ *  exchange mark ("EX-", "EX ", "EXCH-") is dropped, leaving the order it replaces. */
 export function docRefsOf(printed: string | null | undefined): string[] {
-  return (printed ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  return printedRefs(printed).map((s) => s.replace(EXCHANGE_MARK, '').trim()).filter(Boolean);
+}
+
+/** The references the invoice marks as exchange, without the mark. */
+export function exchangeRefsOf(printed: string | null | undefined): string[] {
+  return printedRefs(printed).filter((s) => EXCHANGE_MARK.test(s)).map((s) => s.replace(EXCHANGE_MARK, '').trim()).filter(Boolean);
+}
+
+/** The PO refs for a sentence, and what the invoice's exchange mark means. */
+export function poRefsNote(poNo: string | null | undefined): { refs: string; exchange: string | null } {
+  const refs = docRefsOf(poNo);
+  const ex = exchangeRefsOf(poNo);
+  return {
+    refs: refs.length > 0 ? refs.join(', ') : (poNo ?? ''),
+    exchange: ex.length > 0 ? `The invoice marks ${ex.join(', ')} as exchange (EX): replacement goods for those orders.` : null,
+  };
+}
+
+/** A row printed at RM 0: a replacement or a free gift, nothing to bill. */
+export function isFreePrice(unitPrice: number | null | undefined, lineTotal: number | null | undefined): boolean {
+  return unitPrice === 0 || (unitPrice == null && lineTotal === 0);
 }
 
 export function docRefMatches(scanned: string | null | undefined, ours: string | null | undefined): boolean {
@@ -170,7 +197,9 @@ export function matchInvoiceLinesToGrnLines(
     const mapped = skuCode ? bindingBySku.get(skuCode) : undefined;
     if (mapped && sameSize(skuCode, mapped)) candidateCodes.add(normalizeCode(mapped));
 
-    const matches = [...candidateCodes].flatMap((c) => byCode.get(c) ?? []);
+    // A row printed at RM 0 never bills a receipt line that costs money (INV-2610-097).
+    const free = isFreePrice(line.unitPrice, line.lineTotal);
+    const matches = [...candidateCodes].flatMap((c) => byCode.get(c) ?? []).filter((g) => !free || g.unitPriceSen === 0);
     if (matches.length === 0) {
       unmatched.push({
         invoiceLineIndex, itemCode: line.itemCode, articleNo: line.articleNo,
