@@ -59,3 +59,22 @@ describe("docCodes keeps each document number on one line", () => {
     expect(docCodes("<b>")).toBe('<span class="doc-code">&lt;b&gt;</span>');
   });
 });
+
+describe("the office and customer copies print no empty placeholders", () => {
+  const src = fs.readFileSync(path.join(REPO_BACKEND, "src/routes/assr_print.ts"), "utf8");
+
+  test("a photo section with no photos is left out, never an Add box", () => {
+    expect(src).not.toMatch(/class="add">＋ Add/);
+    expect(src).toMatch(/\$\{issuePhotos\.length \? `/);
+    expect(src).toMatch(/\$\{qcPhotos\.length \? `/);
+  });
+
+  test("the items table has no blank filler rows", () => {
+    expect(src).not.toMatch(/const blanks = Math\.max\(0, 3 - officeItems\.length\)/);
+  });
+
+  test("a both-entity print adds only the retail entity, on one line", () => {
+    expect(src).toMatch(/<div class="entity-line">/);
+    expect(src).not.toMatch(/\{ cap: "Service Provider", p: houzsProfile \}/);
+  });
+});
