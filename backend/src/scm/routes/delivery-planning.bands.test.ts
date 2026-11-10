@@ -123,3 +123,22 @@ describe('parameters', () => {
     expect(parseBand(undefined, undefined)).toBeNull();
   });
 });
+
+describe('DP_BOARD_SOURCE (lib/delivery-board-source.ts) with no Postgres reachable', () => {
+  // The SQL path runs on real Postgres in tests-pg/deliveryBoardSql.pg.test.ts. Here
+  // there is no database URL, so its statement fails: the board must still answer,
+  // from the PostgREST reads, byte-identical to the board as it was.
+  for (const source of ['sql', 'shadow']) {
+    it(`${source}: whole board, OPEN, driver and counts_only are unchanged`, async () => {
+      const run = async (qs: string, caller: Caller = 'office') => {
+        const r = await runBoard(deliveryPlanningBoardHandler, caller, qs, source);
+        expect(r.status, JSON.stringify(r.body).slice(0, 300)).toBe(200);
+        return r.body as Body;
+      };
+      expect(await run('')).toEqual(old.office_all);
+      expect(await run('?state=OPEN')).toEqual(old.office_open);
+      expect(await run('?region=ALL&state=ALL', 'driver')).toEqual(old.driver_all);
+      expect((await run('?counts_only=1')).counts_by_region?.ALL).toEqual(old.office_all!.counts);
+    });
+  }
+});

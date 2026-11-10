@@ -34,6 +34,13 @@ VELOCITY_CUSTOMER_ID = "23318492750001"
 # This re-opens INBOUND READS only. Write-back stays OFF (separate control
 # AUTOCOUNT_WRITES_DISABLED = true in services/autocount.ts) — no ERP -> AutoCount.
 AUTOCOUNT_SYNC_DISABLED = "false"
+# Delivery Planning board reads (scm/lib/delivery-board-source.ts):
+#   "rest"   = the PostgREST reads, as always (the default; any other value means this too)
+#   "shadow" = serve PostgREST, rebuild the same orders through SQL after the response
+#              and record differences in scm.delivery_board_shadow_runs
+#   "sql"    = serve from two SQL statements (falls back to PostgREST if SQL fails)
+# Flip to "shadow" first; to "sql" only once the shadow table shows no unexplained differences.
+DP_BOARD_SOURCE = "rest"
 # ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
 # settings above, which are the legacy inbound pull). Base URL of AcSyncService,
 # the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
@@ -331,6 +338,8 @@ compatibility_flags = ["nodejs_compat"]
 [env.staging.vars]
 AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 AUTOCOUNT_SYNC_DISABLED = "true"
+# Delivery Planning board reads; see the prod [vars] block. Rehearse "shadow" / "sql" here first.
+DP_BOARD_SOURCE = "rest"
 # Cost/margin DISPLAY switch — ON in staging too (mirrors prod). See the prod
 # [vars] block for what "false" does. Set "false" here to rehearse the hidden
 # state before flipping prod.
