@@ -638,6 +638,7 @@ export function drawInfoColumns(
   const leftW = midX - margin - 6;
   const gutter = 20;
   const rValX = midX + 33;
+  const rValW = pageW - margin - rValX;
   const lh = 4;
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
@@ -670,15 +671,21 @@ export function drawInfoColumns(
       if (!parts.length) continue;
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(110); doc.text(label, midX, ry); doc.setTextColor(0);
-      parts.forEach((p, i) => { doc.text(`${i === 0 ? ':' : ' '} ${p}`, rValX, ry); ry += lh; });
+      parts.forEach((p, i) => {
+        const wrapped = doc.splitTextToSize(`${i === 0 ? ':' : ' '} ${p}`, rValW) as string[];
+        doc.text(wrapped, rValX, ry);
+        ry += Math.max(1, wrapped.length) * lh;
+      });
       continue;
     }
     const v = (value ?? '').toString().trim();
     if (!v) continue;
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(110); doc.text(label, midX, ry); doc.setTextColor(0);
-    doc.text(`: ${v}`, rValX, ry);
-    ry += lh;
+    /* Wrapped inside the right margin: a long project or reference ran past the page edge (Conts #743). */
+    const wrapped = doc.splitTextToSize(`: ${v}`, rValW) as string[];
+    doc.text(wrapped, rValX, ry);
+    ry += Math.max(1, wrapped.length) * lh;
   }
   return Math.max(ly, ry) + 4;
 }
