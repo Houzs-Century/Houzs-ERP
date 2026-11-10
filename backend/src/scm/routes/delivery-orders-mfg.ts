@@ -91,7 +91,7 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
-  requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY, allowedCompanyIds } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY, scopeToGrantedCompanies } from '../lib/companyScope';
 import { stampSoRefsCamel } from '../lib/so-ref-lookup';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
@@ -3899,21 +3899,14 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Company gate (DO header + crew upsert). Service-role bypasses RLS, so `id`
-     alone was the boundary. 404 not 403 on purpose — "exists, but not yours" leaks.
-     The caller's GRANTED companies, not only the active one: Delivery Planning and
-     Last Mile list every granted company's orders, so pinning the active company
-     404'd every crew pick on a 2990 row made while switched to Houzs, and the board
-     silently fell back to "— none —" (2026-11-10; same class as HC-0180 /fields).
-     Never wider than the grants; an unresolved allow-list narrows to the active one. */
+  /* Company gate: the caller's GRANTED companies (the board lists both; active-only 404'd
+     every 2990 crew pick, 2026-11-10), never wider. 404 not 403 — "not yours" leaks. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const doQ = sb.from('delivery_orders').select('id, company_id, do_number, status').eq('id', id);
-  const { data: doRow, error: doErr } = await (allowedCompanyIds(c) !== undefined
-    ? scopeToAllowedCompanies(doQ, c) : scopeToCompanyId(doQ, co.companyId)).maybeSingle();
+  const { data: doRow, error: doErr } = await scopeToGrantedCompanies(sb.from('delivery_orders')
+    .select('id, company_id, do_number, status').eq('id', id), c, co.companyId).maybeSingle();
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
   if (!doRow) return c.json(NOT_THIS_COMPANY, 404); // a DO outside the caller's companies is invisible here
-  const doCompany = Number((doRow as { company_id?: number | null }).company_id);
   // Crew row BEFORE the upsert: this PUT re-assign overwrites who was on the job.
   const { data: crewBeforeRow } = await sb.from('delivery_order_crew')
     .select('driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_id, driver_1_name, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
@@ -3938,10 +3931,7 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   const driverById = new Map<string, DriverRow>();
   const helperById = new Map<string, HelperRow>();
 
-  // company-scope: drivers / helpers / lorries are ONE shared fleet master across
-  // companies (company_id there is a created-by stamp, delivery-tms.md), so a 2990
-  // order resolves a Houzs-created driver's IC / phone the same as an HC order.
-  const [driverRes, helperRes, lorryRes] = await Promise.all([
+  const [driverRes, helperRes, lorryRes] = await Promise.all([ // company-scope: ONE shared fleet master (delivery-tms.md), so a 2990 order reads a Houzs-made driver's IC
     driverIds.length > 0
       ? sb.from('drivers').select('id, name, ic_number, phone, vehicle').in('id', driverIds)
       : Promise.resolve({ data: [] as DriverRow[] }),
@@ -3962,7 +3952,7 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   const h2 = helper2Id ? helperById.get(helper2Id) ?? null : null;
 
   const now = new Date().toISOString();
-  const doCompanyId = Number.isInteger(doCompany) && doCompany > 0 ? doCompany : co.companyId;
+  const doCompanyId = Number((doRow as { company_id?: number | null }).company_id) || co.companyId; // the DO's own company
   const crewRow = {
     // Multi-company: the crew row inherits its DO's company (a cross-company
     // planner may assign crew while a different company is active).
