@@ -592,7 +592,6 @@ export const DeliveryPlanning = () => {
           const region = LAYOUT_PRESET_REGION[id];
           if (region && regionKeys.has(region)) setRegion(region);
         }}
-        initialRowLimit={200}
         defaultSort={orderSort}
         onRowReorder={(keys) => setRowOrder.mutate(mergeShownOrder(rowOrder ?? [], keys, new Set(fetchedOrders.map(rowIdOf))))}
         counts={counts}
