@@ -287,6 +287,8 @@ dataset = "houzs_erp_metrics"
 #            checklist reminders, idempotency-key TTL sweep
 #   5 16   → Month-end stock close sweep (00:05 MYT): posts/heals the
 #            closing-stock pair for the two most recent closed months
+#            + DO lines left open by the source/rack lock gate re-tried,
+#            per company, bounded (do-shipped-from-retry.ts, 2026-11-10)
 crons = [
   "*/5 * * * *",
   "*/15 * * * *",
