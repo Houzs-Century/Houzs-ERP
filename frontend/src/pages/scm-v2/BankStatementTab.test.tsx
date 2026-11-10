@@ -162,7 +162,7 @@ describe('what the books hold that the bank has not shown', () => {
     /* The same words, the order a door to itself (owner 2026-11-10: 我希望这里也可以点开so). */
     const order = screen.getByRole('link', { name: '2990-SO-2608-067' });
     expect(order.getAttribute('href')).toBe('/scm/sales-orders/2990-SO-2608-067');
-    expect(order.parentElement!.textContent).toBe('2990DraftOR-2608-005 · 2990-SO-2608-067 · NG KAH YEE');
+    expect(order.closest('div')!.textContent).toBe('2990DraftOR-2608-005 · 2990-SO-2608-067 · NG KAH YEE');
     lines = [LINE, SPLIT, OTHER];
   });
 });

@@ -14,6 +14,7 @@ import { rememberReturnScroll } from '../../lib/returnScroll';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { ReconcilePickContext } from './bank-reconcile-pick';
 import type { LedgerEntry } from './bank-queries';
+import look from './BankStatements.module.css';
 
 /** A sales order number: HC-SO-2608-001, 2990-SO-2609-016, HC-SO-013512. */
 const ORDER_NO = /^[A-Z0-9]+-SO-\d[\d-]*$/;
@@ -32,11 +33,12 @@ export function EntryDocument({ text }: { text: string }) {
     rememberReturnScroll();
     pick?.keepForReturn();
   };
+  /* In the cell's own type (a bold document stays bold), with the Finance link's dotted underline. */
   return (
-    <>
+    <span className={look.entryDoc}>
       {orderLinkParts(text).map((p, i) => (p.order
         ? <FinanceDocLink key={i} to={`/scm/sales-orders/${encodeURIComponent(p.text)}`} onOpen={onOpen}>{p.text}</FinanceDocLink>
         : <Fragment key={i}>{p.text}</Fragment>))}
-    </>
+    </span>
   );
 }
