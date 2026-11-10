@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { GlobalSearchProvider, GlobalSearchTrigger } from "./GlobalSearch";
+import { GlobalSearchProvider, GlobalSearchTrigger, preloadGlobalSearchPalette } from "./GlobalSearch";
 import { loadSearchStatusVocabulary } from "../lib/globalSearch";
 
 const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
@@ -37,6 +37,7 @@ describe("GlobalSearch", () => {
   // The status words load on first use; have them in hand before the clock is faked.
   beforeAll(async () => {
     await loadSearchStatusVocabulary();
+    await preloadGlobalSearchPalette();
   });
 
   beforeEach(() => {
