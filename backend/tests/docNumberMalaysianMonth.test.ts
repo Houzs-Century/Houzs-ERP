@@ -68,8 +68,12 @@ describe('document minters use the Malaysian month', () => {
   it('a service PO made at 01:30 on 1 Dec gets an APO/2612 number', async () => {
     const binds: unknown[] = [];
     const DB = {
-      prepare: () => ({
-        bind: (...b: unknown[]) => { binds.push(...b); return { first: async () => null }; },
+      prepare: (sql: string) => ({
+        bind: (...b: unknown[]) => {
+          if (sql.includes('next_doc_no_n')) return { first: async () => { throw new Error('function scm.next_doc_no_n does not exist'); } };
+          binds.push(...b);
+          return { all: async () => ({ results: [] }) };
+        },
       }),
     };
     expect(await nextServicePONumber({ DB } as unknown as Env, Date.parse(MYT_0130_1_DEC))).toBe('APO/2612-001');

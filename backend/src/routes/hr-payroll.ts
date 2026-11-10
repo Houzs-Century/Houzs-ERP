@@ -28,6 +28,8 @@ import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { computePeriod, lockedPeriods, payslipRow, periodBounds } from "./lib/hr-payroll-store";
 import { penaltyPeriod, type AllowanceLine } from "./lib/hr-payslip";
+import { mintPenaltyNo } from "./lib/hr-penalty-no";
+import { claimFromCounter } from "../services/documentRefs";
 import type { TripCommission, TripPayLine } from "../scm/shared/hr-trip-pay";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -345,11 +347,9 @@ function parsePenalty(raw: Record<string, unknown>): PenaltyIn | string {
   return { date, reference: s(raw.reference, 120), reason, remarks: s(raw.remarks, 500), lines };
 }
 
-async function nextPenaltyNo(db: Db, companyId: number, date: string): Promise<string> {
-  const prefix = `PN-${date.slice(2, 4)}${date.slice(5, 7)}-`;
+async function nextPenaltyNo(env: Env, db: Db, companyId: number, date: string): Promise<string> {
   const rows = await db.select({ no: hr_penalties.penalty_no }).from(hr_penalties).where(eq(hr_penalties.company_id, companyId));
-  const max = rows.reduce((m, r) => (r.no.startsWith(prefix) ? Math.max(m, Number(r.no.slice(prefix.length)) || 0) : m), 0);
-  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+  return mintPenaltyNo(rows.map((r) => r.no), companyId, date, (series, floor) => claimFromCounter(env, series, floor));
 }
 
 hrPayroll.get("/penalties", async (c) => {
@@ -404,7 +404,7 @@ hrPayroll.post("/penalties", async (c) => {
     .insert(hr_penalties)
     .values({
       company_id: co.companyId,
-      penalty_no: await nextPenaltyNo(db, co.companyId, p.date),
+      penalty_no: await nextPenaltyNo(c.env, db, co.companyId, p.date),
       penalty_date: p.date,
       reference: p.reference,
       reason: p.reason,

@@ -19,6 +19,7 @@ import {
   patchLogistics,
   logActivity,
   nextServicePONumber,
+  nextManualCreditorCode,
   setCaseCreditorManual,
   setItemRemark,
   setItemSupplierRemark,
@@ -1001,10 +1002,7 @@ app.post("/creditors/create", requirePermission("service_cases.write"), async (c
 
   let code = (body.creditor_code || "").trim();
   if (!code) {
-    const row = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM creditors WHERE creditor_code LIKE 'MAN-%'`
-    ).first<{ n: number }>();
-    code = `MAN-${String(Number(row?.n ?? 0) + 1).padStart(4, "0")}`;
+    code = await nextManualCreditorCode(c.env);
   }
 
   const dup = await c.env.DB.prepare(
@@ -2771,11 +2769,19 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   }
 
   const poNo = await nextServicePONumber(c.env);
-  await c.env.DB.prepare(
-    `UPDATE assr_cases SET po_no = ?, updated_at = datetime('now') WHERE id = ?`
+  // po_no IS NULL: a second press racing the first must not overwrite the
+  // number the first one already returned to its caller.
+  const claimed = await c.env.DB.prepare(
+    `UPDATE assr_cases SET po_no = ?, updated_at = datetime('now') WHERE id = ? AND po_no IS NULL`
   )
     .bind(poNo, id)
     .run();
+  if (!claimed.meta.changes) {
+    const now = await c.env.DB.prepare(`SELECT po_no FROM assr_cases WHERE id = ?`)
+      .bind(id)
+      .first<{ po_no: string | null }>();
+    return c.json({ error: `PO already exists: ${now?.po_no ?? ""}`, po_no: now?.po_no ?? null }, 409);
+  }
 
   // Name when the mirror has the creditor, else the raw code — a case can carry
   // a creditor_code the mirror has not synced yet, and the code still tells the
