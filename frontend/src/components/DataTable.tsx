@@ -180,7 +180,7 @@ function DataTableInner<T, L>({
   onExport,
   exportLines,
   exportXlsx,
-  onExportPdf,
+  onExportPdf, onShownColumnsChange,
   toolbarExtra,
   onColFiltersChange,
   onImport,
@@ -857,10 +857,9 @@ function DataTableInner<T, L>({
     return set;
   }, [allColumns, userHidden, userShown, baselineLayout]);
 
-  const visibleColumns = useMemo(
-    () => allColumns.filter((c) => c.alwaysVisible || !effectiveHidden.has(c.key)),
-    [allColumns, effectiveHidden]
-  );
+  const visibleColumns = useMemo(() => allColumns.filter((c) => c.alwaysVisible || !effectiveHidden.has(c.key)), [allColumns, effectiveHidden]);
+  /* Told to a page whose export reaches past this table (Payments not matched yet's Export all). */
+  useEffect(() => { onShownColumnsChange?.(visibleColumns); }, [visibleColumns, onShownColumnsChange]);
 
   const mobileColumns = useMemo(() => {
     const byKey = new Map(visibleColumns.map((column) => [column.key, column]));
