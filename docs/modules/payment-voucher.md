@@ -12,6 +12,7 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - Four layers are marker columns on the row, not new status values: `status`
   stays `DRAFT` until approve posts it. No fast path — every voucher walks all
   layers; check and approve can be the same person.
+- **Approved but still `DRAFT`** means the approval stamped and the posting died. The detail page shows **Retry posting** (approve key) in place of Approve & post; it calls the same `/approve`, which resumes the post without re-stamping (`approvePaymentVoucherHandler`, pinned in `pvApproval.test.ts`).
 - **Prepared can still be edited**; **Checked locks editing** (409
   `not_editable` outside DRAFT).
 - **The words alone stay editable until Approve** (`PATCH /:id/text`, `pvCanEditText`,
