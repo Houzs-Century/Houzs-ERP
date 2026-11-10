@@ -25,7 +25,7 @@
 // mark with a pen.
 // ----------------------------------------------------------------------------
 
-import {
+import { docPageLabel,
   COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader,
   drawSignatureBoxes, ensurePdfCjkFont, fmtDocDate, safeName,
   type PdfAction,
@@ -33,6 +33,7 @@ import {
 import { drawQrIntoPdf } from './pdf-qr';
 import { loadingOrder, fmtM3, formatRacksCompact } from './packing-list-model';
 import type { PackingListRow, PackingStop } from './packing-list-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 const MARGIN = 14;
 /* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能
@@ -157,7 +158,7 @@ export async function renderPackingListInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(list.trip_no ?? 'Packing list', MARGIN, 290);
     doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(list.trip_date ?? opts.date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, rightEdge, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), rightEdge, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -262,7 +263,7 @@ export async function generatePackingListPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   /* The token is fetched here, in the one place that renders a whole sheet, so
      no print call site has to remember to arm it. */
   const { armPackingScanToken } = await import('./packing-scan-token-arm');

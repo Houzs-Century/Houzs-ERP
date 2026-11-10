@@ -114,11 +114,23 @@ export function poReplyTo(sender: { email?: string | null } | null | undefined):
 export interface PoEmailRow {
   id: string;
   po_number: string | null;
+  revision: number | string | null;
   status: string | null;
   total_sen: number | null;
   currency: string | null;
   po_date: string | null;
   supplier?: { name?: string | null; email?: string | null; email2?: string | null; email3?: string | null } | null;
+}
+
+/* The number the supplier sees: `PO-2607-021_R1` after the first approved
+   revision, as printed on the PDF (frontend po-status.ts poDisplayNumber —
+   revision starts at 1, so the suffix is revision - 1). The subject and the
+   attachment name dropped it, so a revised order arrived looking identical to
+   the original. The underlying po_number never changes. */
+export function poEmailDocNo(row: Pick<PoEmailRow, 'id' | 'po_number' | 'revision'>): string {
+  const base = row.po_number ?? row.id;
+  const rev = Number(row.revision ?? 1);
+  return Number.isFinite(rev) && rev > 1 ? `${base}_R${rev - 1}` : base;
 }
 
 /**
@@ -138,7 +150,7 @@ export function buildPurchaseOrderEmail(
   if (!recipients.ok) return null;
   const { to, cc } = recipients;
 
-  const docNo = row.po_number ?? row.id;
+  const docNo = poEmailDocNo(row);
   const total = (Number(row.total_sen ?? 0) / 100).toFixed(2);
   const currency = row.currency ?? 'MYR';
 

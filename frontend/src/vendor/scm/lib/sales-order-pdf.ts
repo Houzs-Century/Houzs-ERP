@@ -9,7 +9,7 @@ import {
   soLineGroupRank,
   type SoPwpCodeRow,
 } from '@2990s/shared/so-line-display';
-import {
+import { docPageLabel,
   COMPANY,
   deliverPdf,
   DOC_TABLE_HEAD_STYLES,
@@ -50,6 +50,7 @@ import {
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
+import { PDF_COMPRESS } from './pdf-options';
 
 // ----------------------------------------------------------------------------
 // Sales Order PDF generator — dynamic jspdf import so it doesn't bloat the
@@ -878,7 +879,7 @@ export async function renderSalesOrderInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.doc_no, margin, 290);
     doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.so_date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -899,7 +900,7 @@ export async function generateSalesOrderPdf(
   // Dynamic import — code-split into a vendor chunk.
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderSalesOrderInto(doc, autoTable, header, items, payments, pwpCodes, opts);
 
   // Filename: SO-009001-DebtorName.pdf
@@ -916,7 +917,7 @@ export async function generateCombinedSalesOrderPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   for (let i = 0; i < docs.length; i += 1) {
     if (i > 0) doc.addPage();
     await renderSalesOrderInto(

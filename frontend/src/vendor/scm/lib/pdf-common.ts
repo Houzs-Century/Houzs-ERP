@@ -731,6 +731,12 @@ export function drawSignatureBoxes(
 // Control characters plus the Windows reserved set. Nothing else is removed.
 // eslint-disable-next-line no-control-regex
 const ILLEGAL_IN_FILENAME = /[\x00-\x1f\x7f<>:"/\\|?*]+/g;
+/* "Page x of y" counted within ONE document. A batch print renders many
+   documents into one file; counting the file's pages made the second invoice's
+   first page read "Page 3 of 7". */
+export const docPageLabel = (page: number, startPage: number, pageCount: number): string =>
+  `Page ${page - startPage + 1} of ${pageCount - startPage + 1}`;
+
 export const safeName = (s: string, maxLen = 32): string => {
   const cleaned = (s || '')
     .replace(ILLEGAL_IN_FILENAME, ' ')

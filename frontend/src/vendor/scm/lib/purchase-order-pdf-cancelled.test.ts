@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
+import { pdfRawText } from './pdf-raw-text';
 
 vi.mock('./sales-order-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -44,7 +45,7 @@ const render = async (status: string, lines: number) => {
   const { purchaseOrderPdfBase64 } = await import('./purchase-order-pdf');
   const items = Array.from({ length: lines }, (_, i) => line(i + 1));
   const pdf = Buffer.from(await purchaseOrderPdfBase64(header(status), items), 'base64');
-  const raw = pdf.toString('latin1');
+  const raw = pdfRawText(pdf);
   return {
     pdf,
     stamps: raw.split('(CANCELLED)').length - 1,

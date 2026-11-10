@@ -23,6 +23,7 @@ import { deliverPdf, ensurePdfCjkFont, safeName, type PdfAction } from './pdf-co
 import { drawQrIntoPdf } from './pdf-qr';
 import { rackQrPayload } from './rack-qr';
 import { compareRackLabels } from './warehouse-floorplan';
+import { PDF_COMPRESS } from './pdf-options';
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -59,7 +60,7 @@ export async function generateRackLabelsPdf(
 ): Promise<void> {
   const ordered = rackLabelsInPrintOrder(labels);
   const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await ensurePdfCjkFont(doc, { ordered, warehouse: opts.warehouseCode });
 
   ordered.forEach((label, i) => {
