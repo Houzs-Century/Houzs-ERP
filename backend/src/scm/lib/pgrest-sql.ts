@@ -175,7 +175,8 @@ export class SqlFilterRecorder {
   lte(col: string, v: unknown) { return this.cmp('lte', col, v); }
   like(col: string, v: string) { return this.push(`${colRef(col)} LIKE ${this.p.add(likePattern(v))}`); }
   ilike(col: string, v: string) { return this.push(`${colRef(col)} ILIKE ${this.p.add(likePattern(v))}`); }
-  is(col: string, v: boolean | null) {
+  /* `unknown`: the list closures are untyped, so a non-boolean can arrive. */
+  is(col: string, v: unknown) {
     if (v === null) return this.push(`${colRef(col)} IS NULL`);
     if (v === true) return this.push(`${colRef(col)} IS TRUE`);
     if (v === false) return this.push(`${colRef(col)} IS FALSE`);
@@ -216,7 +217,7 @@ export function whereOf(apply: (q: SqlFilterRecorder) => unknown, p: SqlParams):
      translate", not a database failure. */
   try { out = apply(rec); } catch (e) {
     if (e instanceof PgrestSqlUnsupported) throw e;
-    throw new PgrestSqlUnsupported(`filter closure: ${(e as Error)?.message ?? String(e)}`);
+    throw new PgrestSqlUnsupported(`filter closure: ${e instanceof Error ? e.message : String(e)}`);
   }
   /* A closure that built a NEW builder instead of chaining would lose filters. */
   if (out !== rec) throw new PgrestSqlUnsupported('filter closure did not return its builder');

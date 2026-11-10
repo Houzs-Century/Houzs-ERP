@@ -37,7 +37,7 @@ export async function trySql<T>(
     if (e instanceof PgrestSqlUnsupported) { recordStep(`sql-${label}-unsupported`, 0); return null; }
     offUntil.set(label, now() + LIST_SQL_OFF_MS);
     recordStep(`sql-${label}-error`, now() - t0);
-    console.warn(`[list-sql] ${label} failed, using the PostgREST path:`, (e as Error)?.message ?? e);
+    console.warn(`[list-sql] ${label} failed, using the PostgREST path:`, e instanceof Error ? e.message : e);
     return null;
   }
 }
