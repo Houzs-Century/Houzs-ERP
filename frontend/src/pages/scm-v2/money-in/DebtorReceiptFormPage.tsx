@@ -24,6 +24,7 @@ import { DocFormShell } from './MoneyInDocPage';
 import { ReceiptForm, blankReceipt, type DebtorSave, type DebtorSubmit } from './ReceiptForm';
 import { useDebtorReceipt } from './moneyInDocQueries';
 import { moneyInDocHref } from './moneyInDocs';
+import { useIdempotencyKey } from '../../../lib/idempotency';
 import ui from '../MoneyIn.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
@@ -43,6 +44,7 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
   const accountsQ = useAccounts();
   const detailQ = useDebtorReceipt(id);
   const create = useCreateDebtorReceipt();
+  const idemKey = useIdempotencyKey(); // one per opened form: a double press books one receipt
   const update = useUpdateDebtorReceipt();
   const step = useDebtorReceiptAction();
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
       });
       return;
     }
-    create.mutate(v, {
+    create.mutate({ ...v, idempotencyKey: idemKey }, {
       onSuccess: (res) => {
         const no = res.receipt.receiptNumber;
         const made = res.receipt.id;

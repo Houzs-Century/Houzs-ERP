@@ -53,6 +53,7 @@ import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { noWriteUntilMarked, writesFromHere } from '../lib/no-write-refusal';
 
 type Row = Record<string, any>;
 
@@ -625,6 +626,8 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
      hand and posts in the same call. */
   const postNow = body.postNow === true;
 
+  /* Every refusal above only read, so it released the form's Idempotency-Key. */
+  writesFromHere(c);
   const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_debtor_receipts').insert({
     company_id: coId,
@@ -983,7 +986,7 @@ otherDebtors.patch('/:id', updateDebtorHandler);
 otherDebtors.post('/:id/bills', createDebtorBillHandler);
 otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
 otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
-otherDebtors.post('/:id/receipts', createDebtorReceiptHandler);
+otherDebtors.post('/:id/receipts', noWriteUntilMarked, createDebtorReceiptHandler);
 otherDebtors.get('/receipts/:receiptId', debtorReceiptDetailHandler);
 otherDebtors.patch('/receipts/:receiptId', updateDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/submit', submitDebtorReceiptHandler);
