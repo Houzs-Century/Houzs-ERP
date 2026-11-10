@@ -56,6 +56,11 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   claim, no PO coverage, no shortage, on every consumer. Unlike
   `includeUndated` this IS a demand filter. Among released orders the
   priority is still the effective delivery date.
+- **An SO on hold is not demand** (sister review P3, 2026-11-10). The hold
+  marker (`on_hold`, or the legacy `ON_HOLD` status) never writes status, so
+  `isDocumentHeld(r.so)` is checked beside `SO_DONE`: a held order claims no
+  stock and asks for no PO, matching `firstUnorderableSo`. Releasing the hold
+  brings it back on the next read.
 - `includeUndated` is **display-only** — it never changes what the allocator
   computes, only which undated rows/sets are shown; a dated line's coverage
   is identical either way (undated demand always sorts last). Default is
