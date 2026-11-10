@@ -795,7 +795,14 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
                     <UndoDone rowId={r.id} />
                   </span>
                 )
-                : <span className={status === 'matched' ? grid.good : status === 'none' ? grid.bad : undefined}>{statusWordsOf(r)}</span>}
+                : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                    <span className={status === 'matched' ? grid.good : status === 'none' ? grid.bad : undefined}>{statusWordsOf(r)}</span>
+                    {/* The sale shown is the machine's — by reference, or its guess — so it can be turned down here. */}
+                    {status === 'matched' && <NotThis rowId={r.id} />}
+                    {status === 'guess' && <NotThis rowId={r.id} guessed={(r.suggested ?? []).map(key)} />}
+                  </span>
+                )}
             </td>
           </tr>
         );
@@ -830,8 +837,11 @@ const UndoDone = ({ rowId }: { rowId: number }) => {
 
 /** "Not this" on a line the machine matched and nobody confirmed (owner
     2026-11-03, batch 3 d2): the match is released, the line goes to To choose,
-    and that payment is not offered to it again. Nothing posts. */
-const NotThis = ({ rowId }: { rowId: number }) => {
+    and that payment is not offered to it again. Nothing posts.
+    `guessed` — the system's GUESS the line shows, when it holds no link (owner
+    2026-11-10: 这个 system guess 的，如果我确定了不是有没有按钮可以按不是了): the
+    line remembers those payments and is not offered them again. */
+const NotThis = ({ rowId, guessed = [] }: { rowId: number; guessed?: readonly string[] }) => {
   const release = useReleaseSettlementRow();
   const [error, setError] = useState<string | null>(null);
   return (
@@ -840,8 +850,13 @@ const NotThis = ({ rowId }: { rowId: number }) => {
         type="button"
         style={{ ...btn(false, release.isPending), marginLeft: 8 }}
         disabled={release.isPending}
-        title="This is not the sale — release the match and choose the right one. Nothing is posted."
-        onClick={() => { setError(null); release.mutate(rowId, { onError: (e) => setError(refusalText(e, 'The match was not released.')) }); }}
+        title={guessed.length > 0
+          ? 'This is not the sale — the system will not suggest it for this line again. Nothing is posted.'
+          : 'This is not the sale — release the match and choose the right one. Nothing is posted.'}
+        onClick={() => {
+          setError(null);
+          release.mutate({ rowId, payments: [...guessed] }, { onError: (e) => setError(refusalText(e, 'The match was not released.')) });
+        }}
       >
         Not this
       </button>
@@ -1225,6 +1240,8 @@ const SettlementLine = ({ row, others = [] }: {
      instead of repeating the search (owner: 尽量根据日期金额去尝试自动匹配后让我
      知道，我 final confirm). Seeded once, so a refetch never undoes his ticks. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set((row.suggested ?? []).map(key)));
+  /* The guess as the server sends it now — what "Not this" turns down (owner 2026-11-10). */
+  const guessed = !row.confirmed_at && row.bucket !== 'IGNORED' && row.linked.length === 0 ? (row.suggested ?? []).map(key) : [];
 
   /* Payments a person found beyond the window, kept by key so a new search
      never drops a tick. */
@@ -1411,6 +1428,7 @@ const SettlementLine = ({ row, others = [] }: {
             </button>
             {findButton}
             {joinButton}
+            {guessed.length > 0 && <NotThis rowId={row.id} guessed={guessed} />}
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
