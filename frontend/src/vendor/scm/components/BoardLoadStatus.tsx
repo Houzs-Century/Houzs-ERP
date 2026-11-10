@@ -1,6 +1,7 @@
 /* One line under a board's header: when its data was last loaded ("Updated
    14:32", Malaysia time) and, while date bands are still arriving, which one is
-   loading; a band that failed says so and offers Retry. Shared by Delivery
+   loading; a band that failed says so and offers Retry. Refresh re-reads every
+   band at once (board-change-poll.ts). Shared by Delivery
    Planning, Last Mile and Logistic Overview (desktop and the phone shell). */
 import { fmtDateTime } from '../../shared/format';
 import type { BandedBoard } from '../lib/delivery-board-bands';
@@ -19,12 +20,13 @@ export function stillLoadingMessage(bands: BandStatus, fallback: string): string
   return fallback;
 }
 
-export function BoardLoadStatus({ updatedAt, bands }: { updatedAt: number; bands: BandStatus }) {
+export function BoardLoadStatus({ updatedAt, bands, onRefresh }: { updatedAt: number; bands: BandStatus; onRefresh: () => void }) {
   const updated = boardUpdatedLabel(updatedAt);
   if (!updated && !bands.loading && !bands.failed) return null;
   return (
     <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-1 text-[12px] text-ink-muted">
       {updated && <span>{updated}</span>}
+      {updated && <button type="button" className="underline hover:text-ink" onClick={onRefresh}>Refresh</button>}
       {bands.loading && <span>Loading orders {bands.loading.label}...</span>}
       {bands.failed && (
         <span className="text-err">

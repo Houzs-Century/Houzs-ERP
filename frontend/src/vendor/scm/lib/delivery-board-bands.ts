@@ -16,9 +16,9 @@
    and the 30 s change poll keep them current like the old single board; a row
    that sits in two caches after a refresh is shown once. */
 import { useMemo } from 'react';
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import type { PlanningCounts, PlanningOrder, PlanningResponse } from './delivery-planning-queries';
+import { planningCountsFrom, type PlanningCounts, type PlanningOrder, type PlanningResponse } from './delivery-planning-queries';
 
 export type BandNo = 1 | 2 | 3 | 4 | 5;
 export const BAND_LABEL: Record<BandNo, string> = {
@@ -74,6 +74,22 @@ export function sumDelivered(parts: ReadonlyArray<PlanningResponse>): { total: n
     for (const [k, v] of Object.entries(p.delivered_by_region ?? {})) byRegion[k] = (byRegion[k] ?? 0) + v;
   }
   return { total, byRegion };
+}
+
+/** Every-region counts of the loaded board, as ?counts_only=1 counts them; null
+    unless all five bands are in and none is being re-read. OPEN bands leave the
+    Delivered rows out, so their own Delivered tallies are added back. */
+export function loadedBoardCounts(qc: QueryClient, state: 'ALL' | 'OPEN'): PlanningCounts | null {
+  const parts: PlanningResponse[] = [];
+  for (const b of [1, 2, 3, 4, 5] as BandNo[]) {
+    const q = qc.getQueryState<PlanningResponse>(['delivery-planning', 'ALL', state, 'band', b]);
+    if (!q?.data || q.fetchStatus !== 'idle') return null;
+    parts.push(q.data);
+  }
+  const c = planningCountsFrom(mergeBands(parts.map((p) => p.orders)));
+  if (state === 'ALL') return c;
+  const delivered = sumDelivered(parts).total;
+  return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
 }
 
 export type BandedBoard = {

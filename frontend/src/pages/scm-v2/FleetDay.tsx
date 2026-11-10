@@ -29,6 +29,7 @@ import {
 } from '../../vendor/scm/lib/delivery-map-model';
 import { type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useBandedBoard, bandOfDay } from '../../vendor/scm/lib/delivery-board-bands';
+import { useBoardRefresh } from '../../vendor/scm/lib/board-change-poll';
 import { BoardLoadStatus } from '../../vendor/scm/components/BoardLoadStatus';
 import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isLastMileJobRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
 import { regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
@@ -93,6 +94,7 @@ export function FleetDay() {
   const trips = useMemo(() => query.data?.trips ?? [], [query.data]);
   // The board in date bands: the band holding this day first, the rest after (delivery-board-bands.ts).
   const board = useBandedBoard({ state: 'ALL', first: bandOfDay(date, todayMY()) });
+  const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
   const boardOrders = useMemo<PlanningOrder[]>(
     () => board.orders.filter(
       (o) => !isEastMalaysiaOrSingaporeStop({ region: o.region, state: o.customer_state, country: o.customer_country }),
@@ -438,7 +440,7 @@ export function FleetDay() {
         />
       )}
 
-      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} />
+      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} onRefresh={boardRefresh.refreshNow} />
       {board.failed && board.parts.length === 0 && (
         <p className="rounded-md border border-err/40 bg-err-bg p-4 text-[13px] text-err">
           Could not load the day's orders. {board.failed.error instanceof Error ? board.failed.error.message : ''}
