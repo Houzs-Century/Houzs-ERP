@@ -125,7 +125,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { resolveDoLineRacks, racksForDoLine, shippedFromRacks } from '../lib/do-line-racks';
+import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -2770,14 +2770,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   /* Storekeeper picking — the rack(s) each line's source PO was received onto
      (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
   const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
-  /* The racks this DO stocked its goods out of (load / dispatch), read back by its own
-     number. Best-effort like the walk above: a failed read leaves the receipt answer. */
-  const doNumber = (h.data as { do_number?: string | null }).do_number ?? null;
-  const shippedFrom = doNumber
-    ? await scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c)
-      .eq('source_doc_no', doNumber).eq('movement_type', 'STOCK_OUT')
-      .then((r: { data: Array<{ item_code: string | null; rack_label: string | null }> | null; error: unknown }) => (r.error ? null : shippedFromRacks(r.data ?? [])))
-    : null;
+  const shippedFrom = await loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null);
   /* Bound-PO fallback — a line whose ledger walk found no batch (not yet
      shipped, negative-stock ship, or un-batched pre-0120 lots) still has a real
      procurement path when a PO was raised against its SO line (per-warehouse

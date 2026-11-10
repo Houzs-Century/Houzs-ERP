@@ -132,6 +132,15 @@ export function shippedFromRacks(rows: ReadonlyArray<{ item_code: string | null;
   return new Map([...out].map(([k, v]) => [k, [...v].sort()]));
 }
 
+/** The racks a DO stocked its goods out of (load / dispatch), read back by its own
+ *  number from a company-scoped `warehouse_rack_movements` select. Best-effort like
+ *  the receipt walk: no number or a failed read answers null. */
+export async function loadShippedFromRacks(scopedSelect: any, doNumber: string | null): Promise<Map<string, string[]> | null> {
+  if (!doNumber) return null;
+  const r = await scopedSelect.eq('source_doc_no', doNumber).eq('movement_type', 'STOCK_OUT');
+  return r.error ? null : shippedFromRacks((r.data ?? []) as Array<{ item_code: string | null; rack_label: string | null }>);
+}
+
 export function racksForDoLine(
   r: DoLineRacks,
   line: { warehouseId: string | null; itemCode: string | null; rackId: string | null; sourcePos: readonly string[] },
