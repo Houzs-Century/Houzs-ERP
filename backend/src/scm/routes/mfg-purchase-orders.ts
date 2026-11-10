@@ -102,6 +102,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { withPoSearchIds } from '../lib/po-item-code-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
+import { grnLineNetReceived } from '../lib/po-net-received';
 import { yymmFor } from '../../services/documentRefs';
 import { mrpPlanStaleRefusal, settleFromSosForMrp } from '../lib/mrp-plan-freshness';
 
@@ -744,8 +745,7 @@ async function loadAllocationsForItems(
    (one entry per GRN line), carrying the GR number + net qty + status. The PO
    counterpart of soLineDeliveries: lets the PO list show a "Received" column
    identical to the SO "Delivered" column. Cancelled GRNs are excluded so the
-   breakdown never shows a voided receipt. Net qty = qty_accepted − returned_qty;
-   zero/negative nets (fully returned) are dropped. Read-only display aid. */
+   breakdown never shows a voided receipt. Net qty = grnLineNetReceived; zero nets dropped. */
 export type PoLineReceipt = { grnNumber: string; qty: number; status: string };
 async function poLineReceipts(
   sb: any,
@@ -755,9 +755,9 @@ async function poLineReceipts(
   if (poItemIds.length === 0) return out;
   const { data: grnLines } = await sb
     .from('grn_items')
-    .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+    .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
     .in('purchase_order_item_id', poItemIds);
-  const rows = (grnLines ?? []) as Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; grn_id: string }>;
+  const rows = (grnLines ?? []) as Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
   const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
   if (grnIds.length === 0) return out;
   const { data: grns } = await sb.from('grns').select('id, grn_number, status').in('id', grnIds);
@@ -770,7 +770,7 @@ async function poLineReceipts(
     if (!r.purchase_order_item_id) continue;
     const meta = grnMeta.get(r.grn_id);
     if (!meta) continue; // cancelled GRN — excluded
-    const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
+    const net = grnLineNetReceived(r);
     if (net <= 0) continue;
     const arr = out.get(r.purchase_order_item_id) ?? [];
     arr.push({ grnNumber: meta.grnNumber, qty: net, status: meta.status });

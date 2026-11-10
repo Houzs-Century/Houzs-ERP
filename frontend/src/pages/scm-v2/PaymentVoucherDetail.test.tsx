@@ -14,7 +14,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 /* Hoisted with the mocks that read them (vi.mock factories run before the
    file's own consts exist). */
-const { updateAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
+const { updateAsync, approveAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
   /* The voucher's stored files, as usePvFiles hands them (empty unless a test fills it). */
   const FILES: Array<Record<string, unknown>> = [];
   const updateAsync = vi.fn(async (_b: Record<string, unknown>) => ({ ok: true }));
@@ -32,7 +32,8 @@ const { updateAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
     lines: [{ id: 'l1', line_no: 1, description: 'Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED', debit_account_code: '405-0000', amount_sen: 1007742 }],
     allocations: [{ id: 'a1', kind: 'API', apInvoiceId: 'api-meta', invoiceNumber: '2990-API-2609-004', supplierInvoiceRef: 'META-SEP', invoiceDate: '2026-09-01', amountSen: 1007742, status: 'POSTED' }],
   };
-  return { updateAsync, idle, DETAIL, FILES };
+  const approveAsync = vi.fn(async (_id: string) => ({ ok: true }));
+  return { updateAsync, approveAsync, idle, DETAIL, FILES };
 });
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
@@ -48,7 +49,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   usePaymentVoucherDetail: () => ({ data: DETAIL, isLoading: false }),
   useUpdatePaymentVoucher: () => ({ mutateAsync: updateAsync, isPending: false }),
   useCancelPaymentVoucher: idle, useSubmitPaymentVoucher: idle, useWithdrawPaymentVoucher: idle,
-  useCheckPaymentVoucher: idle, useApprovePaymentVoucher: idle, useRejectPaymentVoucher: idle,
+  useCheckPaymentVoucher: idle, useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }), useRejectPaymentVoucher: idle,
   useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
   usePvFiles: () => ({ data: { files: FILES }, isLoading: false, refetch: async () => ({ data: { files: FILES } }) }),
@@ -114,6 +115,37 @@ const draw = () => render(
     <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
   </MemoryRouter>,
 );
+
+/* Approved, still a draft: the approval stamped and the posting died. The
+   Approve button hid itself on approved_at, so nothing could finish it. */
+describe('a voucher whose posting failed after approval', () => {
+  const MARK = '2026-11-06T03:00:00Z';
+  const at = (over: Record<string, unknown>) => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: MARK, checked_at: MARK, approved_at: null, ...over });
+    return render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+  afterEach(() => { Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null }); approveAsync.mockClear(); });
+
+  test('offers Retry posting, which resumes the post through the approve call', async () => {
+    at({ approved_at: MARK });
+    expect(screen.queryByRole('button', { name: 'Approve & post' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry posting' }));
+    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith('pv-9'));
+  });
+
+  test('a checked voucher not yet approved shows Approve & post, not Retry; a posted one shows neither', () => {
+    const { unmount } = at({});
+    expect(screen.getByRole('button', { name: 'Approve & post' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry posting' })).toBeNull();
+    unmount();
+    at({ status: 'POSTED', approved_at: MARK });
+    expect(screen.queryByRole('button', { name: 'Retry posting' })).toBeNull();
+  });
+});
 
 /* Owner 2026-11-06: 有时我要改 description — a checked voucher takes its words only;
    2026-11-09: 可以，开放 — and the bank it pays into. */

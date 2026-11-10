@@ -39,6 +39,7 @@ import { dateOrNull } from './date-coerce';
 import { todayMyt } from './my-time';
 import { withPoPriceSnapshot } from './pi-po-price';
 import { recordPiCreate } from './pi-audit-trail';
+import { duplicateBillRefusal, findDuplicateSupplierBill } from './duplicate-supplier-bill';
 
 export type PiFromGrnItemsContext = {
   req: { json(): Promise<unknown> };
@@ -83,6 +84,11 @@ export const RECEIPT_PRICES: ReadonlyMap<string, number> = new Map();
 export async function createDraftPisFromGrnItemsCore(
   c: PiFromGrnItemsContext,
   invoicePriceSen: ReadonlyMap<string, number>,
+  /** 'refuse' when nobody has been told the bill is already booked (the HTTP
+   *  route, the headless scan run); 'allow' only where an operator has seen the
+   *  queue's "Already billed" flag and chose to create anyway. Required: the
+   *  silent default is what let the same bill be booked twice. */
+  duplicateBill: 'refuse' | 'allow',
 ): Promise<CreateDraftPisFromGrnItemsResult> {
   /* company-scope: the only by-id write here is the ROLLBACK of the header this
      core just inserted, so that id is not caller-supplied. */
@@ -215,6 +221,15 @@ export async function createDraftPisFromGrnItemsCore(
       .sort((x, y) => x.no.localeCompare(y.no));
     b.grnIds = order.map((o) => o.id);
     b.grnNumbers = order.map((o) => o.no);
+  }
+
+  const dupCompanyId = activeCompanyId(c);
+  if (duplicateBill === 'refuse' && dupCompanyId != null) {
+    for (const b of buckets.values()) {
+      const dup = await findDuplicateSupplierBill(sb, 'purchase_invoices', { companyId: dupCompanyId, supplierId: b.supplierId, ref: body.supplierInvoiceNumber, excludeId: null, docKind: null });
+      if (!dup.ok) return { ok: false, status: 500, body: { error: 'load_failed', reason: dup.reason } };
+      if (dup.duplicate) return { ok: false, status: 409, body: duplicateBillRefusal(body.supplierInvoiceNumber, dup.duplicate) };
+    }
   }
 
   // Generate PI numbers sequentially within this batch.
@@ -387,6 +402,7 @@ export async function createDraftPiFromGrnItems(
     invoiceDate?: string | null;
     dueDate?: string | null;
     notes?: string | null;
+    duplicateBill: 'refuse' | 'allow';
   },
 ): Promise<CreateDraftPisFromGrnItemsResult> {
   const svc = getSupabaseService(env);
@@ -409,7 +425,7 @@ export async function createDraftPiFromGrnItems(
       notes: opts.notes ?? undefined,
     }) },
     get: syntheticGet as unknown as PiFromGrnItemsContext['get'],
-  }, new Map(opts.picks.flatMap((p) => (p.unitPriceSen == null ? [] : [[p.grnItemId, p.unitPriceSen] as const]))));
+  }, new Map(opts.picks.flatMap((p) => (p.unitPriceSen == null ? [] : [[p.grnItemId, p.unitPriceSen] as const]))), opts.duplicateBill);
   /* Record CREATE per draft, at the moment it becomes final (there is no post
      here — it stays DRAFT). Uses the houzsUser captured at enqueue as the WHO;
      degrades to an unattributed row when absent, like recordPiCreate itself. */

@@ -150,12 +150,14 @@ export async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: 
   const rows = (prLines ?? []) as Array<{ qty_returned: number; purchase_return_id: string }>;
   const prIds = [...new Set(rows.map((r) => r.purchase_return_id).filter(Boolean))];
   const cancelled = new Set<string>();
+  /* HC-0221: a CREDIT return the supplier will not replace keeps the PO received. */
+  const noReplacement = new Set<string>();
   if (prIds.length > 0) {
     /* Same rule, opposite direction: an empty `cancelled` from a FAILED read
        reads as "no return here is cancelled", so a cancelled PR's qty is counted
        as still returned and the GRN line stays consumed against a return that
        was voided. */
-    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status, kind').in('id', prIds);
+    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status, kind, supplier_replaces').in('id', prIds);
     if (prsErr) {
       /* eslint-disable-next-line no-console */
       console.error('[adjustGrnReturnedQty] PR status read failed — returned_qty left unchanged:', grnItemId, prsErr.message);
@@ -166,19 +168,26 @@ export async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: 
        re-opened the PO as unreceived while the unit sat in KL SERVICE
        (2990-PRT-2610-001 / 2990-PO-2607-018). Only a CREDIT return does.
        It still is not returnable again: the return caps subtract repairHeldQty. */
-    for (const p of (prs ?? []) as Array<{ id: string; status: string; kind: string | null }>) {
+    for (const p of (prs ?? []) as Array<{ id: string; status: string; kind: string | null; supplier_replaces: boolean | null }>) {
       if ((p.status ?? '').toUpperCase() === 'CANCELLED' || p.kind === 'REPAIR') cancelled.add(p.id);
+      else if (p.supplier_replaces === false) noReplacement.add(p.id);
     }
   }
   let returned = 0;
-  for (const r of rows) if (!cancelled.has(r.purchase_return_id)) returned += Number(r.qty_returned ?? 0);
+  let closed = 0;
+  for (const r of rows) {
+    if (cancelled.has(r.purchase_return_id)) continue;
+    returned += Number(r.qty_returned ?? 0);
+    if (noReplacement.has(r.purchase_return_id)) closed += Number(r.qty_returned ?? 0);
+  }
 
   const { data: gi } = await sb.from('grn_items')
     .select('qty_accepted, purchase_order_item_id').eq('id', grnItemId).maybeSingle();
   if (!gi) return;
   const accepted = (gi as { qty_accepted: number }).qty_accepted ?? 0;
   const next = Math.min(accepted, Math.max(0, returned)); // clamp [0, accepted]
-  const { error: updErr } = await sb.from('grn_items').update({ returned_qty: next }).eq('id', grnItemId);
+  const nextClosed = Math.min(next, Math.max(0, closed));
+  const { error: updErr } = await sb.from('grn_items').update({ returned_qty: next, returned_closed_qty: nextClosed }).eq('id', grnItemId);
   if (updErr) {
     /* A rejected UPDATE left returned_qty STALE with nothing logged, and it is
        read by two integrity gates (PO re-open + PI over-bill headroom). Do not
@@ -1029,6 +1038,8 @@ purchaseReturns.post('/', async (c) => {
     reason: reasonCode,
     kind,
     repair_warehouse_id: repairWarehouseId,
+    // Only an explicit No closes the PO line; a REPAIR expects its goods back anyway.
+    supplier_replaces: kind === 'REPAIR' || body.supplierReplaces !== false,
     refund_sen: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
     status: 'POSTED',
@@ -1114,7 +1125,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   /* company-scope: both source reads below are SCOPED, so another company's GRN
      is not visible here at all; the by-id write is this handler's own rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
-  let body: { grnIds?: string[]; reason?: string; notes?: string; confirmShortStock?: boolean };
+  let body: { grnIds?: string[]; reason?: string; notes?: string; confirmShortStock?: boolean; supplierReplaces?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnIds = body.grnIds ?? [];
   if (grnIds.length === 0) return c.json({ error: 'grn_ids_required' }, 400);
@@ -1223,6 +1234,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
     supplier_id: supplierId,
     return_date: todayMyt(),
     reason: body.reason ?? `Batch from ${grnList.length} GRNs: ${grnNumbersJoined}`,
+    supplier_replaces: body.supplierReplaces !== false,
     refund_sen: totalRefund,
     notes: body.notes ?? null,
     /* PR-DRAFT-removal — auto-POSTED on create. */
@@ -1280,7 +1292,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
      is not visible here at all; the remaining by-id statements read that same
      GRN's own lines and roll back this handler's own header. */
   const sb = c.get('supabase'); const user = c.get('user');
-  let body: { grnId?: string; reason?: string; notes?: string; confirmShortStock?: boolean };
+  let body: { grnId?: string; reason?: string; notes?: string; confirmShortStock?: boolean; supplierReplaces?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnId = body.grnId;
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
@@ -1361,6 +1373,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     supplier_id: g.supplier_id,
     return_date: todayMyt(),
     reason: body.reason ?? `From ${g.grn_number}`,
+    supplier_replaces: body.supplierReplaces !== false,
     refund_sen: totalRefund,
     notes: body.notes ?? null,
     status: 'POSTED',
@@ -1585,12 +1598,35 @@ purchaseReturns.patch('/:id', async (c) => {
   /* A cleared return date posts "" and this loop wrote it through to the date
      column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
+  if (body.supplierReplaces !== undefined && typeof body.supplierReplaces !== 'boolean') {
+    return c.json({ error: 'supplier_replaces_invalid', message: 'Supplier sends a replacement is Yes or No.' }, 400);
+  }
+  if (typeof body.supplierReplaces === 'boolean') updates.supplier_replaces = body.supplierReplaces;
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* A REPAIR return expects its goods back, so "no replacement" means nothing there. */
+  if (body.supplierReplaces === false) {
+    const { data: cur, error: curErr } = await scopeToCompanyId(sb.from('purchase_returns').select('kind').eq('id', id), co.companyId).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+    if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    if ((cur as { kind: string | null }).kind === 'REPAIR') {
+      return c.json({ error: 'repair_always_replaced', message: 'A repair return expects its goods back — the replacement question does not apply.' }, 409);
+    }
+  }
   const { data, error } = await scopeToCompanyId(sb.from('purchase_returns').update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  /* The answer decides whether the returned units re-open the PO line, so a
+     change re-runs the same recount a cancel does (HC-0221). */
+  if (typeof body.supplierReplaces === 'boolean') {
+    const { data: lines, error: linesErr } = await sb.from('purchase_return_items').select('grn_item_id').eq('purchase_return_id', id);
+    /* The answer is saved but the PO lines were not recounted; say so rather than report success. */
+    if (linesErr) return c.json({ error: 'recount_failed', reason: linesErr.message, purchaseReturn: data }, 500);
+    for (const l of (lines ?? []) as Array<{ grn_item_id: string | null }>) {
+      if (l.grn_item_id) await adjustGrnReturnedQty(sb, l.grn_item_id);
+    }
+  }
   return c.json({ purchaseReturn: data });
 });
 

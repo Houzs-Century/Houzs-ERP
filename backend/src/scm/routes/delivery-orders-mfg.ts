@@ -4947,6 +4947,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let body: {
     status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
+    confirmShortStock?: boolean;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* NORMALISE FIRST, exactly as the Sales Order handler does
@@ -5204,6 +5205,28 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
           return c.json({ ...overDeliveryRefusal, conflicts: overCodes }, 409);
         }
       }
+    }
+  }
+
+  /* A draft's stock was measured when it was saved; by Confirm, where the stock
+     actually leaves, it may have gone to another order. Ask the same "ship
+     anyway?" question again (409 short_stock, replayed with confirmShortStock).
+     A drop-ship DO ships before receipt by choice and a migrated one moves no
+     stock, so neither is asked. Sister fix: Conts-ERP #787. */
+  if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase()) && body.confirmShortStock !== true) {
+    const { data: head, error: headErr } = await scopeToCompanyId(sb.from('delivery_orders')
+      .select('warehouse_id, is_dropship, migrated_no_stock').eq('id', id), scopeCompanyId).maybeSingle();
+    if (headErr) return c.json({ error: 'stock_check_unavailable', reason: headErr.message }, 503);
+    const h = head as { warehouse_id: string | null; is_dropship: boolean | null; migrated_no_stock: boolean | null } | null;
+    if (h && h.is_dropship !== true && !isMigratedNoStock(h)) {
+      const { data: lines, error: linesErr } = await sb.from('delivery_order_items')
+        .select('id, so_item_id, item_code, item_group, description, variants, qty').eq('delivery_order_id', id);
+      if (linesErr) return c.json({ error: 'stock_check_unavailable', reason: linesErr.message }, 503);
+      const shortages = await checkDoStockAvailability(sb, ((lines ?? []) as Array<{ id: string; so_item_id: string | null; item_code: string | null; item_group: string | null; description: string | null; variants: VariantAttrs | null; qty: number | null }>).map((l) => ({
+        lineRef: l.id, soItemId: l.so_item_id, itemCode: l.item_code ?? '', itemGroup: l.item_group, productName: l.description,
+        variantKey: computeVariantKey(l.item_group, l.variants), qty: Number(l.qty ?? 0),
+      })), h.warehouse_id, scopeCompanyId);
+      if (shortages.length > 0) return c.json(shortStockResponse(shortages, []), 409);
     }
   }
 

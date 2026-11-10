@@ -551,6 +551,12 @@ export const PaymentVoucherDetail = () => {
       void notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
+  const onRetryPosting = async () => {
+    if (!(await askConfirm({ title: `Retry posting ${pv.pv_number}?`, body: 'It was approved, but the journal entry was not written. This posts it to the General Ledger now; the approval stays as it is.', confirmLabel: 'Retry posting' }))) return;
+    try { await approve.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Posting failed again', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
   const onRejectConfirm = async () => {
     try {
       await reject.mutateAsync({ id, note: rejectNote ?? '' });
@@ -630,6 +636,15 @@ export const PaymentVoucherDetail = () => {
                 {isDraft && canApprove && isChecked && !isApprovedPv && rejectNote === null && (
                   <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
                     <CheckCircle2 {...ICON} /> Approve & post
+                  </Button>
+                )}
+                {/* Approved but still a draft = the approval stamped and the
+                    posting died. Approving again resumes the post without
+                    re-stamping (approvePaymentVoucherHandler); with the button
+                    hidden there was no way to finish the voucher. */}
+                {isDraft && canApprove && isApprovedPv && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onRetryPosting()} disabled={busy}>
+                    <RotateCcw {...ICON} /> Retry posting
                   </Button>
                 )}
                 {/* Reject opens to EITHER key, at either layer — back to raw
