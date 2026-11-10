@@ -157,7 +157,8 @@ async function planMoves(sql, { pairs, cols }) {
     const total = await sql`
       SELECT ${sql(t.col)}::text AS old, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE ${t.hasCo ? sql`company_id IS DISTINCT FROM ${CO}` : sql`false`})::int AS other_co
         FROM ${sql(t.fq)} WHERE ${sql(t.col)}::text = ANY(${inList(sql, oldIds)}) GROUP BY 1`;
-    const entry = { ...t, perOld: total, moves: [], skips: [], refusal: null };
+    const [all] = await sql`SELECT COUNT(*)::int AS n FROM ${sql(t.fq)} WHERE true ${coPred}`;
+    const entry = { ...t, perOld: total, tableRows: all.n, moves: [], skips: [], refusal: null };
     tables.push(entry);
     const n = total.reduce((s, r) => s + r.n - r.other_co, 0);
     if (n === 0) continue;
@@ -204,12 +205,25 @@ async function main() {
   for (const t of tables) {
     const n = t.perOld.reduce((s, r) => s + r.n, 0);
     const other = t.perOld.reduce((s, r) => s + r.other_co, 0);
-    out(`  ${t.fq}.${t.col}: ${n} row(s) on folded Models${other ? ` (${other} in another company, not moved)` : ""}; unique keys with the Model column: ${t.uniques.map((u) => u.name).join(", ") || "none"}`);
+    out(`  ${t.fq}.${t.col}: ${n} of ${t.tableRows} row(s) on folded Models${other ? ` (${other} in another company, not moved)` : ""}; unique keys with the Model column: ${t.uniques.map((u) => u.name).join(", ") || "none"}`);
     if (n === 0) continue;
     for (const r of t.perOld) out(`      "${codeOf.get(r.old) ?? r.old}": ${r.n}`);
     if (t.refusal) out(`      REFUSED: ${t.refusal}`);
     out(`      move ${t.moves.length}, skip ${t.skips.length} (would duplicate on the kept Model)`);
     for (const s of t.skips) out(`      SKIP row ${s.id}: "${codeOf.get(s.old)}" -> "${codeOf.get(s.kept)}" clashes on ${s.why}`);
+  }
+  out("");
+  out("TEXT-KEYED (by Model code, not id) - REPORTED ONLY, never moved by this script:");
+  const textCols = await sql`
+    SELECT c.table_schema AS schema, c.table_name AS tbl, c.column_name AS col FROM information_schema.columns c
+      JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
+     WHERE c.table_schema IN ('scm', 'public') AND c.column_name IN ('model_code', 'base_model', 'model')
+       AND c.data_type IN ('text', 'character varying') AND c.table_name <> 'product_models'
+     ORDER BY 1, 2, 3`;
+  const oldCodes = pairs.map((p) => p.oldCode);
+  for (const c of textCols) {
+    const [r] = await sql`SELECT COUNT(*)::int AS n FROM ${sql(`${c.schema}.${c.tbl}`)} WHERE ${sql(c.col)} = ANY(${inList(sql, oldCodes)})`;
+    out(`  ${c.schema}.${c.tbl}.${c.col}: ${r.n} row(s) carry a folded Model's code`);
   }
   const moves = tables.reduce((s, t) => s + t.moves.length, 0);
   const skips = tables.reduce((s, t) => s + t.skips.length, 0);
