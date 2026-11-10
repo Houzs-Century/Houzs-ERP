@@ -491,6 +491,7 @@ export const ConsignmentReturnDetail = () => {
                               client-side invention - a red ring and a ` *` for a field the
                               backend never asked for. */
                               variantsRequired={false}
+                              specLockedReason={null}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
                               attachOptions={null}
@@ -505,6 +506,7 @@ export const ConsignmentReturnDetail = () => {
                               onRemove={cancelAddLine}
                               canRemove={true}
                               variantsRequired={false}
+                              specLockedReason={null}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
                               attachOptions={null}

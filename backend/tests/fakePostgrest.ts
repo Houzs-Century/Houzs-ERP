@@ -17,7 +17,7 @@
  * clean run" — CLAUDE.md).
  *
  * Supported: select with one level of embedding (`alias:table!inner(cols)` and
- * `alias:table(cols)`), eq / neq / in / gt / is(col,null) / not(col,'is',null) /
+ * `alias:table(cols)`), eq / neq / in / gt / gte (string order: ISO dates) / is(col,null) / not(col,'is',null) /
  * not(col,'in','("A","B")') on both top-level and embedded (`alias.col`)
  * columns, order, range, update, insert, delete, maybeSingle, and the `.or(...)`
  * form the allocation lock uses.
@@ -78,6 +78,7 @@ function matches(row: Row, f: Filter, col: string): boolean {
     case 'eq':  return v === f.value;
     case 'neq': return v !== f.value;
     case 'gt':  return Number(v ?? 0) > Number(f.value);
+    case 'gte': return v != null && String(v) >= String(f.value); // ISO timestamps / dates
     case 'in':  return (f.value as unknown[]).includes(v as never);
     case 'is':  return f.not ? v !== null && v !== undefined : v === null || v === undefined;
     case 'notin': return !parseInList(f.value).includes(String(v ?? ''));
@@ -212,6 +213,7 @@ export function makeFakePostgrest(
             case 'eq':  filters.push({ op: 'eq',  path: String(args[0]), value: args[1] }); return builder;
             case 'neq': filters.push({ op: 'neq', path: String(args[0]), value: args[1] }); return builder;
             case 'gt':  filters.push({ op: 'gt',  path: String(args[0]), value: args[1] }); return builder;
+            case 'gte': filters.push({ op: 'gte', path: String(args[0]), value: args[1] }); return builder;
             case 'in':  filters.push({ op: 'in',  path: String(args[0]), value: args[1] }); return builder;
             /* `.filter(col, 'in', '("a","b\\"c")')` — the ESCAPED in-list the
                shared readers now build, because supabase-js cannot serialise a

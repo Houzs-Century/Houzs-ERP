@@ -49,6 +49,7 @@ import type { Context } from 'hono';
 import { refuseWithoutWriting } from './no-write-refusal';
 import { isServiceLine } from '../shared/service-sku';
 import { pgrestIn } from './pgrest-in-list';
+import { chunkIn } from './paginate-all';
 
 /** One receipt line, as the guard needs to see it. `unitCostSen` is the LANDED
  *  MYR cost the post path would stamp on the movement — already through the FX
@@ -267,13 +268,19 @@ export async function loadKnownPurchaseCostSen(
   const known = new Map<string, number>();
   if (codes.length === 0) return known;
   try {
-    let q = pgrestIn(sb.from('inventory_lots')
-      .select('item_code, unit_cost_sen, received_at'), 'item_code', codes)
-      .gt('unit_cost_sen', 0)
-      .order('received_at', { ascending: false })
-      .limit(2000);
-    if (companyId != null) q = q.eq('company_id', companyId);
-    const { data, error } = await q;
+    /* chunkIn, not one read capped at 1,000 rows: lots of the busiest codes
+       filled the page and the rest read as "never priced", letting a zero-cost
+       receipt through unchallenged. Newest first within each batch; a code
+       lives in one batch. */
+    const { data, error } = await chunkIn(codes, (part, from, to) => {
+      let q = pgrestIn(sb.from('inventory_lots')
+        .select('item_code, unit_cost_sen, received_at'), 'item_code', part)
+        .gt('unit_cost_sen', 0)
+        .order('received_at', { ascending: false })
+        .order('id');
+      if (companyId != null) q = q.eq('company_id', companyId);
+      return q.range(from, to);
+    });
     if (error) {
       // eslint-disable-next-line no-console
       console.error('[zero-cost-receipt-guard] inventory_lots priced-receipt read failed:', (error as { message?: unknown }).message ?? error);

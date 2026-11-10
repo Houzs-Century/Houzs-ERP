@@ -148,6 +148,8 @@ import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { readAggregate } from '../lib/postgrest-aggregate';
+import { soListKpisSql } from '../lib/so-list-kpis-sql';
+import { SO_CUSTOMER_COLS, soCustomerRowsSql } from '../lib/so-customers-sql';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12; every company since 2026-11-09). See lib/so-po-lock.ts. */
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
@@ -334,6 +336,7 @@ import { registerCustomerCreditRoutes } from './mfg-sales-orders/customer-credit
 import { registerHistoryRoutes } from './mfg-sales-orders/history';
 import { registerPaymentsListRoutes } from './mfg-sales-orders/payments-list';
 import { registerDebtorSearchRoutes } from './mfg-sales-orders/debtor-search';
+import { linesUnreadableBody } from '../lib/failed-read-refusal'; import { readOverrideLineCost } from '../lib/so-override-cost';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -1219,14 +1222,14 @@ mfgSalesOrders.get('/', async (c) => {
        not a status, so the grouped status aggregate above cannot produce it.
        Same scope + company predicates, no status filter, no search, no paging —
        the strip's other numbers are computed the same way. */
-    const heldProm = (async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
+    const heldProm = async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
       const r = await scopedCountQ(
         sb.from(read.countFrom).select('*', { count: 'exact', head: true }),
       ).or(HELD_OR_TERM);
       if (r.error) return { ok: false, reason: `on-hold count failed: ${r.error.message}` };
       return { ok: true, n: r.count ?? 0 };
-    })();
-    const countsProm = (async (): Promise<StatusTally> => {
+    };
+    const countsProm = async (): Promise<StatusTally> => {
       const agg = await readAggregate<{ data: Array<{ status: string | null; cnt: number }> | null; error: { message: string } | null }>(() => scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()')));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
@@ -1235,7 +1238,7 @@ mfgSalesOrders.get('/', async (c) => {
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
       return tallyStatusRows(fb, () => 1);
-    })();
+    };
 
     /* Full-set money KPIs — Revenue / Outstanding / Paid over the SAME scope +
        company + status + search (+ optional so_date window) filters as the page
@@ -1263,14 +1266,18 @@ mfgSalesOrders.get('/', async (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
     const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same builder as applyMoneyFilters
-    const moneyProm = soListMoneyKpis(sb, moneySkipCancelled ? (q: any) => applyMoneyFilters(q).or(NOT_CANCELLED_OR) : applyMoneyFilters);
+    const moneyProm = () => soListMoneyKpis(sb, moneySkipCancelled ? (q: any) => applyMoneyFilters(q).or(NOT_CANCELLED_OR) : applyMoneyFilters);
+    /* Pills + On Hold + money in two SQL statements over Hyperdrive, compiled
+       from the SAME closures (lib/so-list-kpis-sql.ts). Null = take the
+       PostgREST reads above, which page every matching order while production
+       has aggregates off. */
+    const kpiProm = soListKpisSql(c.env, read, moneySkipCancelled).then(async (s) => (s
+      ? [s.counted, { data: s.money, error: null }, s.held] as const
+      : Promise.all([countsProm(), moneyProm(), heldProm()])));
 
-    /* One concurrent wave. The page rows, the grouped status counts and the
-       full-set money KPIs are mutually independent — each keys off scopeIds +
-       the same filter params, none reads the page result — yet they were paying
-       three sequential DB round-trips. Fire them together; only the per-doc
-       enrichment below actually needs the page rows, so it still follows. */
-    const [res, counted, moneyRes, heldCount] = await Promise.all([q, countsProm, moneyProm, heldProm]);
+    /* One concurrent wave. The page rows and the KPIs are mutually independent;
+       only the per-doc enrichment below needs the page rows, so it follows. */
+    const [res, [counted, moneyRes, heldCount]] = await Promise.all([q, kpiProm]);
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
@@ -1404,10 +1411,13 @@ mfgSalesOrders.get('/customers', async (c) => {
      id, NOT the pinned system-staff uuid (the scm.staff-UUID bigint trap). */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  const { data, error } = await paginateAll<CustomerSoRow>((from, to) => {
+  /* ONE statement over Hyperdrive (lib/so-customers-sql.ts) instead of ~11
+     sequential 1,000-row pages; same scope closure, same rows. */
+  const viaSql = await soCustomerRowsSql<CustomerSoRow>(c.env, (q) => scopeToCompany(applySoScope(q, scopeIds), c));
+  const { data, error } = viaSql ? { data: viaSql, error: null } : await paginateAll<CustomerSoRow>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, on_hold, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
+      .select(SO_CUSTOMER_COLS)
       .order('so_date', { ascending: false });
     q = applySoScope(q, scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -5591,6 +5601,13 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     }, 422);
   }
 
+  /* Task #114 — pull current line_cost_sen so the price override
+     recomputes line_margin_sen correctly. Previous code used `- 0`
+     which silently broke margin tracking on every override. Read BEFORE the
+     audit insert: a FAILED read refuses with nothing written (lib/so-override-cost.ts). */
+  const lineCost = await readOverrideLineCost(sb, itemId);
+  if (!lineCost.ok) return c.json(linesUnreadableBody('the line cost', 'changed', lineCost.error), 503);
+
   // Audit first (so we don't lose original even if the update fails)
   const originalPriceSen = i.unit_price_sen;
   const overridePriceSen = newPrice;
@@ -5606,14 +5623,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
   });
 
   const newLineTotal = (i.qty * newPrice) - i.discount_sen;
-  /* Task #114 — pull current line_cost_sen so the price override
-     recomputes line_margin_sen correctly. Previous code used `- 0`
-     which silently broke margin tracking on every override. */
-  const { data: costRow } = await sb.from('mfg_sales_order_items')
-    .select('line_cost_sen')
-    .eq('id', itemId)
-    .maybeSingle();
-  const currentLineCost = Number((costRow as { line_cost_sen?: number } | null)?.line_cost_sen ?? 0);
+  const currentLineCost = lineCost.costSen;
   const { error } = await sb.from('mfg_sales_order_items').update({
     unit_price_sen: newPrice,
     total_sen: newLineTotal,
