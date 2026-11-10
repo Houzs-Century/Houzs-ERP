@@ -19,6 +19,9 @@
  * the rest is handed out in line order. A line with an explicit rack pick takes
  * from that rack before anyone else.
  *
+ * A line short of units in its own bucket takes the rest from the DO's buckets of
+ * the same item that no line holds (its spec was edited after the ship).
+ *
  * planShippedFrom returns CANDIDATES: what is known per line right now, partial
  * or not. ONLY A COMPLETE CANDIDATE IS LOCKED (owner decision 2026-11-10): a rack
  * known for the full line qty AND a source known for the full line qty (POs, plus
@@ -180,6 +183,17 @@ export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, grnRacks
     racksByLine.set(l.id, [...merged.values()].sort((a, b) => numeric(a.label ?? '', b.label ?? '')));
   }
 
+  /* A bucket of this DO that no line holds any more: the line's spec was edited
+     after the ship, so its units now sit in another variant bucket while the lot
+     it consumed at the ship is still booked under the old one
+     (2990-DO-2611-016: shipped as Leg 4", edited to Leg 4" + Total 24", the new
+     bucket consumed nothing). The units that left are still the old bucket's. */
+  const held = new Set(goods.map((l) => bucketOf(l.item_code, l.variant_key)));
+  const orphanOf = (code) => [...poPool.entries()]
+    .filter(([b]) => !held.has(b) && b.startsWith(`${code}::`))
+    .sort(([a], [b2]) => numeric(a, b2))
+    .flatMap(([, arr]) => arr);
+
   const out = new Map();
   for (const l of open) {
     const b = bucketOf(l.item_code, l.variant_key);
@@ -191,7 +205,9 @@ export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, grnRacks
         ? [{ po: override[0], qty: Number(l.qty) }]
         : [...override].sort(numeric).map((po) => ({ po, qty: null }));
     } else {
-      for (const g of take(poPool.get(b) ?? [], null, Number(l.qty))) {
+      const own = take(poPool.get(b) ?? [], null, Number(l.qty));
+      const short = Number(l.qty) - own.reduce((s, g) => s + g.qty, 0);
+      for (const g of [...own, ...(short > 0 ? take(orphanOf(l.item_code), null, short) : [])]) {
         if (g.key === 'adj') adj += g.qty;
         else {
           const cur = pos.find((p) => p.po === g.po);
