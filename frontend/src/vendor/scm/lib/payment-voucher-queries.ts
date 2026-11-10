@@ -546,9 +546,9 @@ export type RefundSource = {
 
 /** `excludeRequestId` — the refund request this voucher answers: its own amount
     is not held against it (owner 2026-10-14). */
-export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null, excludeRequestId: string | null = null) => useQuery({
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null, excludeRequestId: string | null = null, enabled = true) => useQuery({
   queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId, excludeRequestId],
-  enabled: docNo.trim().length > 0,
+  enabled: enabled && docNo.trim().length > 0,
   retry: false,
   queryFn: () => authedFetch<{ source: RefundSource }>(
     `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}${excludeRequestId ? `&excludeRequestId=${encodeURIComponent(excludeRequestId)}` : ''}`,

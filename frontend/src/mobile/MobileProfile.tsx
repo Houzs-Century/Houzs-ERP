@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatPhone } from "../vendor/shared/phone";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers, useScmAreaReadable } from "../auth/endpointAccess";
 // useSystemNoticeUnread was renamed useAnnouncementUnread on main; the body
 // below already calls the new name.
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
@@ -205,9 +206,11 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   // (phone / department / position) and for My Team. Gated by users.read on
   // the backend: a 403 lands in `error`, which every consumer treats as
   // "no team directory available" rather than a crash.
+  const canListTeam = useCanListUsers();
   const teamQ = useQuery({
     queryKey: ["mobile-profile-users"],
     queryFn: () => api.get<{ users: MemberRow[] }>("/api/users"),
+    enabled: canListTeam,
     staleTime: 60_000,
     retry: false,
   });
@@ -229,8 +232,12 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   // sales orders this Malaysia-calendar month, from the SCM backend.
   // Self-scoped server-side (salesperson_id === caller). A non-sales user
   // simply sees 0 / RM 0.00 (honest zero).
+  const salesOrdersReadable = useScmAreaReadable("scm.sales.orders");
   const mtdQ = useQuery({
     queryKey: ["mobile-profile-mtd"],
+    /* Under scmAreaGuard("scm.sales.orders"): without that area the honest zero
+       is already what the tiles show, so do not ask for a 403. */
+    enabled: salesOrdersReadable,
     queryFn: () =>
       api.get<{ mtd_orders?: number; mtd_sales_sen?: number }>(
         "/api/scm/mfg-sales-orders/my-mtd",

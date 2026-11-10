@@ -29,6 +29,19 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useItSupportConnected } from "./useItSupportConnected";
 import { useVisiblePoll } from "../lib/visiblePoll";
+import { SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
+import { approveKeysFor } from "../vendor/scm/lib/document-cancel-queries";
+
+/* Who can have a non-zero count. The endpoints answer 0 to anyone else, and the
+   area guard in front of them answers 403 to a caller without the SO / PO area
+   (production, 7 days: 919 refused po-amendment counts from 18 users), so
+   nobody else is asked. Same keys the handlers count by. */
+const SO_AMENDMENT_COUNT_KEYS = [
+  ...Object.values(SO_AMENDMENT_LANE_APPROVE_PERM),
+  "scm.amendment.approve_so",
+  ...approveKeysFor("so"),
+];
+const PO_AMENDMENT_COUNT_KEY = "scm.po_amendment.approve";
 
 /** Shared keys so every reader hits one fetch, and any writer can invalidate. */
 export const AMENDMENT_APPROVALS_KEY = ["scm", "amendment-approvals"] as const;
@@ -164,8 +177,8 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
 
   /* Who is polled for what. Each gate is the one the count had on its own. */
   const wanted: Record<ApprovalBadgeSource, boolean> = {
-    "amendment-approvals": enabled,
-    "po-amendment-approvals": enabled,
+    "amendment-approvals": enabled && SO_AMENDMENT_COUNT_KEYS.some((k) => can(k)),
+    "po-amendment-approvals": enabled && can(PO_AMENDMENT_COUNT_KEY),
     /* Only an admin can have a non-zero count, so nobody else is polled. */
     "payment-backdate-approvals":
       enabled && (can("scm.payment.backdate") || can("scm.payment.backdate.approve")),
@@ -191,7 +204,13 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       const res = await api.get<BadgeCountsResponse>(`/api/badge-counts?sources=${sourcesParam}`);
       for (const s of sources) {
         const n = res.counts?.[s];
-        if (typeof n !== "number") continue; // that count failed: keep what is shown
+        /* That count failed (its own gate refused, most often). Record "no badge"
+           so the per-count query below does not re-ask the same endpoint directly
+           on every page load and collect the same refusal. */
+        if (typeof n !== "number") {
+          if (qc.getQueryData(SOURCES[s].key) === undefined) qc.setQueryData(SOURCES[s].key, { count: 0 });
+          continue;
+        }
         /* A count re-read on its own after this request left (a writer's
            invalidation) is newer than this answer; do not put the old number back. */
         const own = qc.getQueryState(SOURCES[s].key);

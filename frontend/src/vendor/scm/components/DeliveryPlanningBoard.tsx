@@ -68,6 +68,7 @@ import { crewToCopy, seatsForTarget, type CrewSeats } from "../lib/crew-paste";
 import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-queries";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
+import { useScmAreaReadable } from "../../../auth/endpointAccess";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -937,7 +938,8 @@ export function DeliveryPlanningBoard({
   const assignCrew = useAssignDoCrew();
   const updateTrip = useUpdateTrip();
   const dpCrew = useDpCrew();
-  const helpers = useHelpers().data ?? [];
+  // Fleet master (scm.transportation.drivers): a Last Mile viewer could only 403.
+  const helpers = useHelpers({ enabled: useScmAreaReadable('scm.transportation.drivers') }).data ?? [];
   const localities = useLocalities().data;
   const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
 

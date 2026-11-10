@@ -6,12 +6,17 @@
    read as nothing too: the payments above are the money truth, a failed
    side-read must not stain them. */
 import { useRefundSource } from '../lib/payment-voucher-queries';
+import { useScmAreaReadable } from '../../../auth/endpointAccess';
 
 const fmtRm = (sen: number): string =>
   `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function RefundsLine({ docNo }: { docNo: string }) {
-  const q = useRefundSource('SO', docNo);
+  /* /payment-vouchers/* is scmAreaGuard("scm.finance.accounting"). A Sales
+     Order reader without Finance got a 403 here on every saved order
+     (production, 7 days: 254 from 13 users) and the line rendered nothing. */
+  const financeReadable = useScmAreaReadable('scm.finance.accounting');
+  const q = useRefundSource('SO', docNo, null, null, financeReadable);
   const refunds = q.data?.source.refunds ?? [];
   if (q.isError || refunds.length === 0) return null;
   const totalSen = refunds.reduce((s, r) => s + r.totalSen, 0);

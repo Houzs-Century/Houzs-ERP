@@ -8,6 +8,7 @@ import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { UploadDropZone, clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers } from "../auth/endpointAccess";
 import { isSalesStaff, isSalesNonDirector } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { MobileVirtualList } from "./MobileVirtualList";
@@ -246,8 +247,10 @@ function useLookupSlugs(kind: string, fallback: readonly string[]): string[] {
 // out-of-Operations assignment never silently vanishes from the list).
 type PicUser = { id: number; name: string; department_name?: string };
 function useAssignableUsers(): PicUser[] {
+  const canListTeam = useCanListUsers();
   const { data } = useQuery({
     queryKey: ["mobile-assr-users"],
+    enabled: canListTeam,
     queryFn: () =>
       api
         .get<any>("/api/users")

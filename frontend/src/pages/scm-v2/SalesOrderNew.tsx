@@ -92,6 +92,7 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    Salesperson blank for anyone without a scm.staff row. We read the Houzs
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
+import { useCanListUsers } from '../../auth/endpointAccess';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
 import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from '../../components/FairPicker';
 import { FairFallback } from '../../components/FairFallback';
@@ -899,10 +900,11 @@ export const SalesOrderNew = () => {
      re-pick. Any failure (403 for a user without users.read, offline, etc.)
      falls back to the unfiltered staff list — better to show too many than
      block SO creation. */
+  const canListTeam = useCanListUsers();
   const houzsUsersQ = useTanstackQuery<{ users: TeamMember[] }>({
     queryKey: ['salesperson-dept-filter', 'users'],
     queryFn: () => api.get<{ users: TeamMember[] }>('/api/users'),
-    enabled: canChangeSalesperson,
+    enabled: canChangeSalesperson && canListTeam,
     staleTime: 10 * 60_000,
     retry: false,
   });

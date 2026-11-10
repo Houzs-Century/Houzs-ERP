@@ -106,6 +106,7 @@ const LOOKUP_CACHE = { staleTime: 300_000 } as const;
 const SO_SUGGEST_MAX_H = 288;
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers } from "../auth/endpointAccess";
 import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
 import { downloadAllPagesCSV } from "../lib/csv";
@@ -3236,9 +3237,11 @@ function DetailContent({
       }
     })();
   }, [detail.data]);
+  const canListTeam = useCanListUsers();
   const users = useQuery<{ id: number; name: string; department_name?: string }[]>("/api/users#unwrapped",
     () => api.get<any>("/api/users").then((r: any) => r.users ?? r.data ?? r ?? []),
-    []
+    [],
+    { enabled: canListTeam },
   );
   // Mig 065 — picker values come from the lookup endpoints maintained
   // in Service Maintenance. Each query is small; the four together

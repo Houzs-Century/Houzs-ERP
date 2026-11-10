@@ -20,6 +20,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useAuth } from "../../auth/AuthContext";
+import { useCanListUsers } from "../../auth/endpointAccess";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
 import { useBranding } from "../../hooks/useBranding";
@@ -193,9 +194,11 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
   );
 
   // Users for the Assign dropdown. Envelope is { users: [] } (see routes/users).
+  const canListTeam = useCanListUsers();
   const { data: usersResp } = useQuery<{ users: UserOption[] }>("/api/users",
     () => api.get("/api/users"),
     [],
+    { enabled: canListTeam },
   );
   const users = usersResp?.users ?? [];
   // Label catalogue (name → colour) for chip colours + the add-label menu.

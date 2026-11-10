@@ -8,6 +8,7 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers } from "../auth/endpointAccess";
 import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
 import { deliveryLabel, sentToast, type DeliveryStatus } from "../pages/MailCenter/mail-delivery";
 import {
@@ -692,9 +693,11 @@ function MailThread({
   /* Colleagues for the Assign picker. Same read desktop Thread.tsx makes, same
      envelope ({ users: [] }, see routes/users). A member without `users.read`
      gets nothing back and the picker disables itself, exactly as on desktop. */
+  const canListTeam = useCanListUsers();
   const { data: usersResp } = useQuery<{ users: UserOption[] }>("/api/users",
     () => api.get("/api/users"),
     [],
+    { enabled: canListTeam },
   );
   const users = usersResp?.users ?? [];
 
