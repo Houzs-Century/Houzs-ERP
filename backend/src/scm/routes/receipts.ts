@@ -28,6 +28,7 @@ import { type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 import { readSoRefs } from '../lib/so-ref-lookup';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
+import { noWriteUntilMarked, writesFromHere } from '../lib/no-write-refusal';
 
 type Row = Record<string, any>;
 
@@ -193,6 +194,8 @@ export const createReceiptHandler = async (c: any): Promise<Response> => {
   const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
+  /* Every refusal above only read, so it released the form's Idempotency-Key. */
+  writesFromHere(c);
   const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_receipts').insert({
     company_id: coId,
@@ -420,7 +423,7 @@ export const receipts = new Hono();
    service client. This router shipped without it and GET /receipts answered 500 to everyone. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
 receipts.use('*', supabaseAuth);
 receipts.get('/', listReceiptsHandler);
-receipts.post('/', createReceiptHandler);
+receipts.post('/', noWriteUntilMarked, createReceiptHandler);
 receipts.post('/:id/void', voidReceiptHandler);
 receipts.get('/:id', getReceiptHandler);
 receipts.patch('/:id', updateReceiptHandler);

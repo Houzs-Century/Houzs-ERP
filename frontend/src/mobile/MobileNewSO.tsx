@@ -35,11 +35,8 @@ import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { companyRequiresStockLocation } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
-import {
-  buildAmendmentHeaderChanges,
-  hasAmendmentHeaderChanges,
-  withoutFrozenHeaderFields,
-} from "../vendor/scm/lib/so-amendment-header";
+import { buildAmendmentHeaderChanges, hasAmendmentHeaderChanges, withoutFrozenHeaderFields } from "../vendor/scm/lib/so-amendment-header";
+import { useSubmitLock } from "../lib/submitLock";
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
@@ -929,6 +926,7 @@ export function MobileNewSO({
 
   const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
+  const saveLock = useSubmitLock(); // `submitting` only starts after the validate call; the lock covers the press itself
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
@@ -1940,7 +1938,8 @@ export function MobileNewSO({
   };
 
   // ---- Mutations ------------------------------------------------------------
-  async function save(asDraft = false) {
+  const save = (asDraft = false) => saveLock.run(() => saveOnce(asDraft));
+  async function saveOnce(asDraft: boolean) {
     setTouched(true);
     const pieces = splitMobileSofaPieces(lines, origItems); // one sofa piece = one line
     if (pieces) { setLines(pieces); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
@@ -2753,7 +2752,7 @@ export function MobileNewSO({
       {!loading && (
         <footer id="nso-footer" className="actbar" style={{ display: "flex", gap: 9 }}>
           {mode === "edit" ? (
-            <button className="btn" disabled={submitting || migratedLocked} onClick={() => save(false)} style={{ flex: 1, opacity: submitting || migratedLocked ? 0.6 : 1 }}>
+            <button className="btn" disabled={submitting || saveLock.locked || migratedLocked} onClick={() => save(false)} style={{ flex: 1, opacity: submitting || migratedLocked ? 0.6 : 1 }}>
               {submitting ? (amendmentMode ? "Submitting…" : "Saving…") : migratedLocked ? "View only" : amendmentMode ? "Submit Amendment" : "Save Changes"}
             </button>
           ) : (
@@ -2762,10 +2761,10 @@ export function MobileNewSO({
                   minWidth:0 so both buttons take exactly half the row regardless
                   of label length, and a shared height so the pair reads balanced
                   (.btn sizes via padding, .btn-ghost via height — pin both to 48). */}
-              <button className="btn-ghost" disabled={submitting} onClick={() => save(true)} style={{ flex: "1 1 0", minWidth: 0, height: 48, opacity: submitting ? 0.6 : 1 }}>
+              <button className="btn-ghost" disabled={submitting || saveLock.locked} onClick={() => save(true)} style={{ flex: "1 1 0", minWidth: 0, height: 48, opacity: submitting ? 0.6 : 1 }}>
                 {submitting ? "Saving…" : "Save draft"}
               </button>
-              <button className="btn" disabled={submitting} onClick={() => save(false)} style={{ flex: "1 1 0", minWidth: 0, height: 48, padding: 0, opacity: submitting ? 0.6 : 1 }}>
+              <button className="btn" disabled={submitting || saveLock.locked} onClick={() => save(false)} style={{ flex: "1 1 0", minWidth: 0, height: 48, padding: 0, opacity: submitting ? 0.6 : 1 }}>
                 {submitting ? "Saving…" : "Create Sales Order"}
               </button>
             </>

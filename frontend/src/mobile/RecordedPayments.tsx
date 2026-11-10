@@ -56,6 +56,7 @@ import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackda
 import { BackdateRequestsPanel } from "../vendor/scm/components/BackdateRequestsPanel";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
+import { useSubmitLock } from "../lib/submitLock";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its
    pick, and the body it posts — the phone's pieces of the desktop's rule. */
@@ -301,6 +302,8 @@ export function AddPaymentSheet({
      `editPay` and close it in onSaved, so re-opening always starts a new intent
      with a new key, while every retry of THIS submit reuses this one. */
   const idemKey = useIdempotencyKey();
+  /* `busy` is state, so a second tap in the same tick still saw it false; the lock refuses it outright. */
+  const saveLock = useSubmitLock();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [method, setMethod] = useState<string>(
     () => (editPayment ? CODE_TO_PAY_METHOD[editPayment.method ?? "cash"] ?? "Cash" : "Cash"),
@@ -399,9 +402,9 @@ export function AddPaymentSheet({
      saves — or goes to an admin as a request — only with its slip attached. An
      edit keeps the slip the booked row has; a converted row needs none. */
   const slipMissing = isEdit ? null : slipMissingProblem({ methodLabel: method, slipUploadSessionId: slipSession || null });
-  const canSave = amtOk && !missingSubField && !slipMissing && (!slipProblem || needsRequest) && !busy && slipPhase !== "uploading";
+  const canSave = amtOk && !missingSubField && !slipMissing && (!slipProblem || needsRequest) && !busy && !saveLock.locked && slipPhase !== "uploading";
 
-  const save = async () => {
+  const saveOnce = async () => {
     if (!canSave) return;
     setError(null);
     setBusy(true);
@@ -435,7 +438,7 @@ export function AddPaymentSheet({
       return;
     }
     const reason = reasonWhy ? await askReason(paymentReasonAsk(isEdit ? "edit" : "add", reasonWhy)) : "";
-    if (reason === null) return;
+    if (reason === null) { setBusy(false); return; }
     try {
       /* The shared vendored mutations — mobile shares the desktop payment write
          path (they invalidate the payments ledger key useSalesOrderPayments reads). */
@@ -454,6 +457,7 @@ export function AddPaymentSheet({
       setBusy(false);
     }
   };
+  const save = () => saveLock.run(saveOnce);
 
   return (
     <div className="hz-m sheet-bd" onClick={() => { if (!busy) onClose(); }}>

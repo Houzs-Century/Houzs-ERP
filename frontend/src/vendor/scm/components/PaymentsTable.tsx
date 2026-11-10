@@ -75,6 +75,7 @@ import {
 } from '../lib/so-dropdown-options-queries';
 import { formatDate } from '../../../lib/utils';
 import { newIdempotencyKey } from '../../../lib/idempotency';
+import { settleMutation, useKeyedSubmitLock } from '../../../lib/submitLock';
 import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
 import { useUnsavedWork } from '../../../lib/unsavedWork';
@@ -587,6 +588,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      admin as a request (owner 2026-09-30). Only a NEW row — an edit of a booked
      payment keeps its refusal. */
   const raiseBackdate = useRaiseBackdateRequest();
+  const rowLock = useKeyedSubmitLock(); // one save per draft row: a double press never posts twice (lib/submitLock)
   const needsRequest = (d: PaymentDraft): boolean =>
     !d.editingPersistedId && d.methodLabel !== CONVERT_LABEL && slipDateNeedsRequest(d.paidAt, todayMyt(), mayBackdateSlip);
 
@@ -944,13 +946,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     });
   };
 
-  /* SAVED mode commit — fire POST /:docNo/payments. DRAFT mode has no
-     commit affordance; the parent batches them at SO-create time. */
-  const commitDraft = async (d: PaymentDraft) => {
+  /* SAVED mode commit (POST /:docNo/payments); DRAFT mode's parent batches rows at SO-create. */
+  const commitDraftOnce = async (d: PaymentDraft) => {
     if (!isSaved) return;
     if (d.amountSen <= 0) return;
-    /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
-       persisted row it amends. Route it through PATCH instead of POST. */
+    /* Same-day EDIT (owner 2026-07-13): an edit draft carries its persisted row's id, so it PATCHes. */
     /* commitEdit is async since it may ask for a reason; its failures are
        reported inside it (notify), so nothing is lost by not awaiting here. */
     if (d.editingPersistedId) { void commitEdit(d); return; }
@@ -1005,7 +1005,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     const reason = reasonOnEvery ? await askReason(paymentReasonAsk('add', 'holder')) : '';
     if (reason === null) return;
     if (reason) body.reason = reason;
-    addPayment.mutate(body as { docNo: string } & Record<string, unknown>, {
+    await settleMutation(addPayment.mutate, body as { docNo: string } & Record<string, unknown>, {
       onSuccess: () => {
         removeDraft(d.uid);
         (props as SavedModeProps).onDraftCommitted?.(d);
@@ -1017,6 +1017,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       },
     });
   };
+  const commitDraft = (d: PaymentDraft) => rowLock.run(d.uid, () => commitDraftOnce(d));
 
   /* Send a too-old row to an admin instead of booking it (owner 2026-09-30).
      Same body the payments route takes, plus the reason; the row leaves the
@@ -1090,7 +1091,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
         reason = answer;
       }
       try {
-        await addPayment.mutateAsync({
+        const posted = await rowLock.run(d.uid, () => addPayment.mutateAsync({
           docNo:           (props as SavedModeProps).docNo,
           ...(reason ? { reason } : {}),
           paidAt:          d.paidAt,
@@ -1102,7 +1103,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
           uploadSessionId: d.slipUploadSessionId,
           idempotencyKey:  d.idempotencyKey,
           ...draftMethodFields(method, d),
-        } as { docNo: string } & Record<string, unknown>);
+        } as { docNo: string } & Record<string, unknown>));
+        if (posted === undefined) continue; // its own Save is posting it right now
         removeDraft(d.uid);
         (props as SavedModeProps).onDraftCommitted?.(d);
         committed += 1;
@@ -1908,11 +1910,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           type="button"
                           className={paymentsStyles.saveBtn}
                           onClick={() => commitDraft(d)}
-                          disabled={locked || addPayment.isPending || raiseBackdate.isPending || blocked}
+                          disabled={locked || addPayment.isPending || raiseBackdate.isPending || rowLock.isLocked(d.uid) || blocked}
                           title={title}
                         >
                           <Save size={13} strokeWidth={1.75} />
-                          {addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}
+                          {addPayment.isPending || raiseBackdate.isPending || rowLock.isLocked(d.uid) ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}
                         </button>
                       );
                     })()}
