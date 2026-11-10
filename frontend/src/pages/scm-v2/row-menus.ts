@@ -144,6 +144,14 @@ function printEntries(chain: PrintChain, h: { print: (t: PrintTarget) => void; o
 
 const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
 
+/* The server's answer (backend so-list-rows.ts `reopenable`): a CANCELLED order
+   the status PATCH will take back — only one carried over from AutoCount. A
+   cancel the ERP ran is final, so its Reopen could only ever fail. */
+export const SO_REOPEN_FINAL_HINT = "Cancelled in the ERP: this cancel is final. Use Copy as new instead.";
+export function soOffersReopen(r: { status?: string | null; reopenable?: boolean | null }): boolean {
+  return norm(r.status) === "CANCELLED" && r.reopenable === true;
+}
+
 /* ── Sales Order ────────────────────────────────────────────────────────────
    NOBODY HAND-WRITES A LIFECYCLE STATUS. Only three moves are offered anywhere
    in this file — CONFIRM a draft, HOLD, CANCEL — and every other status is
@@ -200,7 +208,7 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
    Cancel. The list of buttons a human gets is short everywhere, and it is short
    for this reason. */
-export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow & { has_undelivered?: boolean | null }>(h: {
+export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow & { has_undelivered?: boolean | null; reopenable?: boolean | null }>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   /* HC-0149: a new order seeded from this one; any status, migrated included,
@@ -264,7 +272,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },
         ...holdEntries(r, h.setHold),
         live && { label: "Close remaining", onClick: () => h.close(r) },
-        isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
+        soOffersReopen(r) && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
       [
         /* A draft's way out (owner 2026-07-20): delete it, no document number
