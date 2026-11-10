@@ -4,11 +4,11 @@ import {
   confirmLeaving,
   holdLeaveGuard,
   leaveGuardActive,
-  leavesPlace,
   resetLeaveGuardForTests,
   setLeaveGuardAsker,
   shouldBlockUnload,
 } from "./leaveGuard";
+import { leavesPlace } from "./leaveGuardPlace";
 
 afterEach(() => resetLeaveGuardForTests());
 

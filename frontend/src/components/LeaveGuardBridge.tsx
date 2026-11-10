@@ -1,14 +1,8 @@
 import { useContext, useEffect, useLayoutEffect, useRef } from "react";
 import { UNSAFE_NavigationContext, parsePath, useLocation, type Navigator } from "react-router-dom";
 import { useDialog } from "../hooks/useDialog";
-import {
-  confirmLeaving,
-  historyIndex,
-  leaveGuardActive,
-  leavesPlace,
-  setLeaveGuardAsker,
-  shouldBlockUnload,
-} from "../lib/leaveGuard";
+import { confirmLeaving, leaveGuardActive, setLeaveGuardAsker, shouldBlockUnload } from "../lib/leaveGuard";
+import { historyIndex, leavesPlace } from "../lib/leaveGuardPlace";
 
 /**
  * Mounted once, inside the router and the dialog provider. Asks before any way
