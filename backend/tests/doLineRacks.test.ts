@@ -3,7 +3,7 @@
 // was received onto a rack. The RACK column now names only the racks the line's
 // own source PO was received onto by its GRN; a GRN without a rack prints a dash.
 import { describe, expect, test } from 'vitest';
-import { resolveDoLineRacks, racksForDoLine } from '../src/scm/lib/do-line-racks';
+import { resolveDoLineRacks, racksForDoLine, shippedFromRacks } from '../src/scm/lib/do-line-racks';
 
 type Row = Record<string, unknown>;
 
@@ -67,7 +67,7 @@ const tables: Record<string, Row[]> = {
 async function racksFor(sourcePos: string[], rackId: string | null = null) {
   const items = [{ id: 'l1', item_code: CODE }];
   const r = await resolveDoLineRacks(fakeSb(tables), items, new Map([['l1', 'wh-1']]));
-  return racksForDoLine(r, { warehouseId: 'wh-1', itemCode: CODE, rackId, sourcePos });
+  return racksForDoLine(r, { warehouseId: 'wh-1', itemCode: CODE, rackId, sourcePos }, null);
 }
 
 describe('DO line RACK column follows the source PO', () => {
@@ -93,5 +93,22 @@ describe('DO line RACK column follows the source PO', () => {
 
   test("the operator's picked rack wins", async () => {
     expect(await racksFor(['HC-PO-2609-013'], 'r-l9')).toEqual(['L9.2']);
+  });
+});
+
+describe('after the DO took the goods off their rack (owner 2026-11-10, 2990-DO-2611-016)', () => {
+  const empty = { byPo: new Map<string, string[]>(), labelById: new Map<string, string>() };
+  test('the rack the goods left is shown once the placement is gone', () => {
+    const left = shippedFromRacks([{ item_code: 'CODY-(K)', rack_label: 'Rack L8.2' }, { item_code: 'SVC-DELIVERY', rack_label: null }]);
+    expect(racksForDoLine(empty, { warehouseId: 'wh-1', itemCode: 'CODY-(K)', rackId: null, sourcePos: ['2990-PO-2610-028'] }, left)).toEqual(['Rack L8.2']);
+  });
+  test('two racks the same line left are both named, once each', () => {
+    const left = shippedFromRacks([{ item_code: 'X', rack_label: 'B2' }, { item_code: 'X', rack_label: 'A1' }, { item_code: 'X', rack_label: 'A1' }]);
+    expect(left.get('X')).toEqual(['A1', 'B2']);
+  });
+  test('an explicit pick still wins; no stock-out keeps the receipt answer', () => {
+    const r = { byPo: new Map([['wh-1::X::PO-1', ['R1']]]), labelById: new Map([['rk', 'PICKED']]) };
+    expect(racksForDoLine(r, { warehouseId: 'wh-1', itemCode: 'X', rackId: 'rk', sourcePos: ['PO-1'] }, new Map([['X', ['L1']]]))).toEqual(['PICKED']);
+    expect(racksForDoLine(r, { warehouseId: 'wh-1', itemCode: 'X', rackId: null, sourcePos: ['PO-1'] }, null)).toEqual(['R1']);
   });
 });
