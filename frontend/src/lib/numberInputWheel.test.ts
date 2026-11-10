@@ -38,6 +38,6 @@ describe("number input wheel guard", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "../main.tsx"), "utf8");
-    expect(src).toMatch(/^installNumberInputWheelGuard\(\);$/m);
+    expect(src).toMatch(/^void import\("\.\/lib\/numberInputWheel"\)\.then\(\(m\) => m\.installNumberInputWheelGuard\(\)\);$/m);
   });
 });
