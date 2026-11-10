@@ -54,6 +54,14 @@ const excluded = new Set(
     .filter((n) => Number.isInteger(n) && n > 0),
 );
 
+if (!/^[a-z0-9-]{1,80}$/.test(BATCH)) {
+  console.error('BATCH must be lowercase letters, digits and dashes');
+  process.exit(2);
+}
+// Built by hand from a validated BATCH so the same text is written and matched.
+const BATCH_NEEDLE = `"batch":"${BATCH}"`;
+const AUDIT_META = `{${BATCH_NEEDLE},"source":"scripts/require-password-change.mjs"}`;
+
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   console.error(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
@@ -97,7 +105,7 @@ const done = ids.length
   ? new Set((await sql`
       SELECT DISTINCT entity_id FROM audit_events
        WHERE action = ${AUDIT_ACTION} AND entity_type = 'user'
-         AND position(${`"batch":${JSON.stringify(BATCH)}`} in COALESCE(meta, '')) > 0
+         AND position(${BATCH_NEEDLE}::text in COALESCE(meta::text, '')) > 0
          AND entity_id = ANY(${ids.map(String)})`).map((r) => Number(r.entity_id)))
   : new Set();
 const todo = ids.filter((id) => !done.has(id));
@@ -125,6 +133,12 @@ if (!APPLY || todo.length === 0) {
   process.exit(0);
 }
 
+// audit_events.meta is text in migration 0006; read the live type rather than
+// trust the file, and cast the parameter to match.
+const metaIsJsonb = (await sql`
+  SELECT data_type FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'audit_events' AND column_name = 'meta'`)[0]?.data_type === 'jsonb';
+
 const ended = await sql.begin(async (tx) => {
   await tx`UPDATE users SET password_change_required_at = COALESCE(password_change_required_at, now())
             WHERE id = ANY(${todo})`;
@@ -134,7 +148,7 @@ const ended = await sql.begin(async (tx) => {
       INSERT INTO audit_events (actor_id, actor_email, action, entity_type, entity_id, summary, meta)
       VALUES (NULL, 'script:require-password-change', ${AUDIT_ACTION}, 'user', ${String(id)},
               ${`Required a new password at next sign-in (batch ${BATCH})`},
-              ${JSON.stringify({ batch: BATCH, source: 'scripts/require-password-change.mjs' })})`;
+              ${metaIsJsonb ? tx`${AUDIT_META}::text::jsonb` : tx`${AUDIT_META}::text`})`;
   }
   return del.count;
 });
