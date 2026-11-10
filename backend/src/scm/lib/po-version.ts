@@ -18,6 +18,8 @@
  * `poVersionRaced()`. The token stays the client's half because every PO writer
  * bumps `updated_at`, while only this PATCH bumps `version`. */
 
+import { scopeToCompanyId } from './companyScope';
+
 export const PO_VERSION_REQUIRED = {
   error: 'po_version_required',
   message: 'This purchase order was opened with an older screen. Your changes are still here; refresh the order before saving again.',
@@ -48,4 +50,27 @@ export function poVersionRefusal(
  *  save claimed the next version between this one's read and its write. */
 export function poVersionRaced(): typeof PO_VERSION_CONFLICT & { currentUpdatedAt: null } {
   return { ...PO_VERSION_CONFLICT, currentUpdatedAt: null };
+}
+
+/** Claim the next version with a database compare-and-set, before the PATCH's
+ *  first write: of two Saves that both passed `poVersionRefusal` in the same
+ *  instant, exactly one gets the claim. The header write then carries
+ *  `.eq('version', claim.version)` so it lands only under its own claim. */
+export async function claimPoVersion(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST client; schema.pg.ts covers none of the SCM tables (see ci.yml's lint job)
+  sb: any,
+  id: string,
+  companyId: number,
+  loadedVersion: unknown,
+): Promise<
+  | { ok: true; version: number }
+  | { ok: false; status: 409; body: ReturnType<typeof poVersionRaced> }
+  | { ok: false; status: 500; body: { error: 'update_failed'; reason: string } }
+> {
+  const from = Number(loadedVersion ?? 1);
+  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders')
+    .update({ version: from + 1 }).eq('id', id).eq('version', from), companyId).select('id').maybeSingle();
+  if (error) return { ok: false, status: 500, body: { error: 'update_failed', reason: String(error.message) } };
+  if (!data) return { ok: false, status: 409, body: poVersionRaced() };
+  return { ok: true, version: from + 1 };
 }
