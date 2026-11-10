@@ -192,12 +192,20 @@ export const AUTHZ_ENVELOPE_VERSION = 9;
    `undefined` (every non-POS door) stores NULL, which reads as not-POS — the
    pre-migration behaviour, and the safe direction. Keep this a closed union:
    a new origin must be a deliberate edit here, not a string a route invents. */
-export type SessionOrigin = "pos" | "field";
+export type SessionOrigin = "pos" | "field" | "password_change";
 export const SESSION_ORIGIN_POS: SessionOrigin = "pos";
 /* 'field' — minted ONLY at the crew PIN door (routes/fieldPinLogin.ts). The
    auth gate (middleware/auth.ts) holds such a session to the field screens
    (services/fieldPin.ts FIELD_API_PREFIXES), whatever the member's role. */
 export const SESSION_ORIGIN_FIELD: SessionOrigin = "field";
+/* 'password_change' — minted ONLY by a correct email + password sign-in for a
+   member whose users.password_change_required_at is set (an admin or the
+   require-password-change script flagged them). The auth gate refuses every
+   /api path outside /api/auth with it, so the only thing the holder can do is
+   change the password (POST /api/auth/me/password), read /me, or sign out.
+   Short-lived on purpose: it exists for the length of one form. */
+export const SESSION_ORIGIN_PASSWORD_CHANGE: SessionOrigin = "password_change";
+export const PASSWORD_CHANGE_SESSION_TTL_SECONDS = 30 * 60;
 
 export interface AuthUser {
   id: number;

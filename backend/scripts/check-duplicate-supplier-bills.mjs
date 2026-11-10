@@ -28,12 +28,12 @@ async function main() {
   const rows = await sql`
     WITH live AS (
       SELECT 'purchase_invoices' AS tbl, company_id, supplier_id::text AS supplier_id, 'INV' AS kind,
-             upper(regexp_replace(supplier_invoice_ref, '\\s+', '', 'g')) AS k, status
+             upper(regexp_replace(supplier_invoice_ref, '\\s+', '', 'g')) AS k, status::text AS status
         FROM scm.purchase_invoices
        WHERE status <> 'CANCELLED' AND supplier_invoice_ref IS NOT NULL
       UNION ALL
-      SELECT 'ap_invoices', company_id, supplier_id::text, upper(COALESCE(doc_kind, 'INV')),
-             upper(regexp_replace(supplier_invoice_ref, '\\s+', '', 'g')), status
+      SELECT 'ap_invoices', company_id, supplier_id::text, upper(COALESCE(doc_kind::text, 'INV')),
+             upper(regexp_replace(supplier_invoice_ref, '\\s+', '', 'g')), status::text
         FROM scm.ap_invoices
        WHERE status <> 'CANCELLED' AND supplier_invoice_ref IS NOT NULL
     ), groups AS (
