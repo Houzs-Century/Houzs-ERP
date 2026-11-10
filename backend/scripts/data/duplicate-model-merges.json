@@ -125,5 +125,11 @@
           { "code": "DUNLOPILLO RELAX SLEEP LUXURTY MATT (K)", "warehouse": "PG SERVICE", "ledger": -1, "lots": 0, "reason": "owner 2026-11-10: merge anyway, owner corrects stock" }
         ] }
     ]
+  },
+  "OWNER-2026-11-10-TIFANNY": {
+    "ruling": "Owner 2026-11-10 (via the backlog coordinator): TIFFANI folds into TIFANNY, ruled one product although TIFANNY is bound to 400-H004 and TIFFANI to 400-B002. A ticket of its own so this group runs alone: OWNER-2026-11-06 also carries CS2 COOL FRESH (never merged) and AMIRA.",
+    "groups": [
+      { "category": "BEDFRAME", "keep": "TIFANNY", "drops": ["TIFFANI"], "ruledOneProduct": true }
+    ]
   }
 }
