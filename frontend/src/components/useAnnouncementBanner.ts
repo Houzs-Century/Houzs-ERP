@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { identityStorageKey } from "../lib/storageIdentity";
+import { useVisiblePoll } from "../lib/visiblePoll";
 import {
   clearAnnouncementSkip,
   mergeAndWriteAnnouncementAcks,
@@ -215,7 +216,7 @@ export function useAnnouncementBanner(options?: {
   /** Feed slice to pop. Default `human` — machine-generated notices never pop
    *  a banner (owner 2026-08-08); they live in the notification bell. */
   scope?: BannerScope;
-  /** Poll cadence. Default 60s (the desktop banner's original interval). */
+  /** Poll cadence while the tab is visible. Default POLL_MS (3 min). */
   pollMs?: number;
 }): UseAnnouncementBanner {
   const scope = options?.scope ?? "human";
@@ -243,14 +244,12 @@ export function useAnnouncementBanner(options?: {
     queryFn: () =>
       api.get<BannerResponse>(`/api/announcements/banner?scope=${scope}`),
     staleTime: pollMs,
-    refetchInterval: pollMs,
-    // The desktop banner polled with a plain setInterval, which kept ticking
-    // while the tab was hidden; React Query pauses its interval on a hidden tab
-    // unless told otherwise. Keeping it on preserves the old behaviour exactly
-    // (an operator who leaves the ERP tab open all day still gets the notice).
-    refetchIntervalInBackground: true,
     enabled: !!user?.id,
   });
+  // One shared visible-only poll per scope (lib/visiblePoll.ts), not a timer per
+  // reader. A hidden tab is not polled; it refetches once when it is looked at
+  // again, which is when a notice can be seen anyway.
+  useVisiblePoll(announcementFeedKey(scope), pollMs, !!user?.id);
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const serverAcked = useMemo(() => data?.ackedIds ?? [], [data]);

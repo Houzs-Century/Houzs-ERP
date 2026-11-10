@@ -441,6 +441,23 @@ async function handleResponse<T>(
 // how this whole perf campaign started). Pure observability, no behaviour change.
 const SLOW_FETCH_MS = 800;
 
+/* A request that spans time the tab spent hidden is not evidence of a slow
+   server: the browser throttles and freezes background tabs, so its timer reads
+   minutes for an answer that took milliseconds (production logged 600-960 s
+   "requests"). Those are not reported, so a sleeping tab cannot add load. */
+let lastHiddenAt = Number.NEGATIVE_INFINITY;
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") lastHiddenAt = performance.now();
+  });
+}
+
+/** True when the tab has been visible the whole time since `startedAt` (performance.now()). */
+export function visibleThroughout(startedAt: number): boolean {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
+  return lastHiddenAt < startedAt;
+}
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = tokenStore.get();
   const method = (opts?.method || "GET").toUpperCase();
@@ -478,7 +495,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
       });
       const ms = Math.round(performance.now() - startedAt);
       const responseId = requestIdFromResponse(res);
-      if (ms >= SLOW_FETCH_MS) {
+      if (ms >= SLOW_FETCH_MS && visibleThroughout(startedAt)) {
         console.warn(`[perf] slow ${method} ${path} - ${ms}ms id=${responseId}`);
         emitTelemetry({ kind: "slow", method, path, ms });
       }
