@@ -1013,12 +1013,13 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .doc-title h1 { font-size: 20pt; max-width: none; }
     body.sup .doc-title .ref { margin-top: 3mm; }
     body.sup .bar { font-size: 10.5pt; padding: 1.3mm 3mm; margin-top: 3.5mm; }
-    body.sup .mgrid .lc { padding: 1.5mm 2.4mm; font-size: 8.2pt; display: flex; align-items: center; }
-    body.sup .mgrid .vc { padding: 1.5mm 2.4mm; font-size: 9.8pt; line-height: 1.35; }
-    body.sup .mgrid.cols-4 { grid-template-columns: 30mm 1fr 30mm 1fr; }
-    body.sup .mgrid.cols-2 { grid-template-columns: 30mm 1fr; }
+    body.sup .mgrid .lc { padding: 1.9mm 2.8mm; font-size: 8.4pt; display: flex; align-items: center; }
+    body.sup .mgrid .vc { padding: 1.9mm 2.8mm; font-size: 10pt; line-height: 1.4; }
+    body.sup .mgrid.cols-4 { grid-template-columns: 34mm 1fr 34mm 1fr; }
+    body.sup .mgrid.cols-4 .lc { white-space: nowrap; }
+    body.sup .mgrid.cols-2 { grid-template-columns: 38mm 1fr; }
     body.sup .itable .th { padding: 1.4mm 2.4mm; font-size: 8pt; }
-    body.sup .itable .td { padding: 1.8mm 2.4mm; font-size: 9.8pt; line-height: 1.35; }
+    body.sup .itable .td { padding: 2.1mm 2.8mm; font-size: 10pt; line-height: 1.4; }
     body.sup .itable .td.code { font-size: 10pt; }
     body.sup .itable .td.remark { font-size: 9.4pt; }
     body.sup .credit-box { margin-top: 3.5mm; }
@@ -1305,7 +1306,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     <!-- creditor box -->
     <div class="credit-box">
       <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc(trip?.creditor_name || trip?.creditor_code || (cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
-      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(assrMergedPoText(cs) || "—")}</div></div>
+      <div class="cell"><div class="k">PO Number</div><div class="v">${docCodes(assrMergedPoText(cs))}</div></div>
       <div class="cell"><div class="k">Target Completion</div><div class="v">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div></div>
     </div>
 
@@ -1321,8 +1322,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
       <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t?.pickup_at)}</div>
       <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t?.returned_at)}</div>
-      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
-      <div class="lc"></div><div class="vc"></div>
+      <div class="lc">Delivery Date</div><div class="vc mono span3">${fmtDate((cs as any).sched_delivery_date)}</div>
     </div>
 
     <!-- items -->
