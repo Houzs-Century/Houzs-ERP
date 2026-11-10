@@ -1608,7 +1608,8 @@ purchaseReturns.patch('/:id', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   /* A REPAIR return expects its goods back, so "no replacement" means nothing there. */
   if (body.supplierReplaces === false) {
-    const { data: cur } = await scopeToCompanyId(sb.from('purchase_returns').select('kind').eq('id', id), co.companyId).maybeSingle();
+    const { data: cur, error: curErr } = await scopeToCompanyId(sb.from('purchase_returns').select('kind').eq('id', id), co.companyId).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
     if (!cur) return c.json(NOT_THIS_COMPANY, 404);
     if ((cur as { kind: string | null }).kind === 'REPAIR') {
       return c.json({ error: 'repair_always_replaced', message: 'A repair return expects its goods back — the replacement question does not apply.' }, 409);
@@ -1620,7 +1621,9 @@ purchaseReturns.patch('/:id', async (c) => {
   /* The answer decides whether the returned units re-open the PO line, so a
      change re-runs the same recount a cancel does (HC-0221). */
   if (typeof body.supplierReplaces === 'boolean') {
-    const { data: lines } = await sb.from('purchase_return_items').select('grn_item_id').eq('purchase_return_id', id);
+    const { data: lines, error: linesErr } = await sb.from('purchase_return_items').select('grn_item_id').eq('purchase_return_id', id);
+    /* The answer is saved but the PO lines were not recounted; say so rather than report success. */
+    if (linesErr) return c.json({ error: 'recount_failed', reason: linesErr.message, purchaseReturn: data }, 500);
     for (const l of (lines ?? []) as Array<{ grn_item_id: string | null }>) {
       if (l.grn_item_id) await adjustGrnReturnedQty(sb, l.grn_item_id);
     }
