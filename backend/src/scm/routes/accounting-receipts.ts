@@ -10,6 +10,7 @@
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { ensureReceiptForPayment, formaliseReceipt, loadReceiptParties, withReceiptParty } from '../../acc/receipts';
+import { rebankTxFor } from '../../acc/rebank-transaction';
 import { resolveRoles } from '../../acc/rules';
 import { companyCodeById } from '../lib/doc-no';
 import { paginateAll } from '../lib/paginate-all';
@@ -201,7 +202,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   if (!code) return c.json({ error: 'load_failed', reason: `company ${co.companyId} has no code` }, 500);
 
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
-  const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor });
+  const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor, rebankTx: rebankTxFor(c.env) });
   if (!r.ok) {
     return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' || r.status === 'payment_reconciled' ? 409 : r.status === 'not_found' ? 404 : 500);
   }

@@ -44,6 +44,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
+- Receipt rebank: after one clean release of the atomic move, delete `RECEIPT_REBANK_MODE` and the two-step path (`moveOneTwoStep`, acc/receipt-rebank.ts); the payment-edit receipt re-issue (`followPaymentEdit` -> formaliseReceipt, `rebankTx: null`) still moves a transfer two-step until env reaches it — dev — 2026-11-10
 - Last Mile map: draw each lorry's road-shaped line from the kept polyline in scm.lorry_day_routes (today straight lines between stops) — 2026-11-08
 - Fleet Health "Off the road": add and end an out-of-service window from the lorry record (backend has the table; no screen) — 2026-11-08
 - Verify on production: System Health shows "Health report to IT Hub: Last sent" (#5398), and an HC SO with a live PO refuses a direct line edit and offers an amendment (#5444) — 2026-11-09
