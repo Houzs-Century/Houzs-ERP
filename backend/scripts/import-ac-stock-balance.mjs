@@ -13,6 +13,7 @@
 // DRY-RUN by default; APPLY=1 writes.
 //
 // RE-RUN: inert by construction. It writes delta = AutoCount balance MINUS ERP on-hand, so once the two agree the delta is zero and no movement is written.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

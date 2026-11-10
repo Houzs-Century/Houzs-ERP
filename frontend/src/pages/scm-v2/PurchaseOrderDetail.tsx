@@ -602,6 +602,14 @@ export const PurchaseOrderDetail = () => {
     if (k === 'supplierId' && v !== headerView.supplierId) {
       setEditLines((prev) => prev.map((d) => ({ ...d, bindingId: undefined, supplierSku: undefined, priceTouched: false })));
     }
+    /* A new ship-to warehouse takes the lines that were on the old one (the
+       server does the same on the header PATCH), so a line edited in this same
+       save does not send the old warehouse back. A line set to another
+       warehouse keeps it. */
+    if (k === 'purchaseLocationId' && v && v !== headerView.purchaseLocationId) {
+      const prevWh = headerView.purchaseLocationId;
+      if (prevWh) setEditLines((prev) => prev.map((d) => (d.warehouseId === prevWh ? { ...d, warehouseId: v } : d)));
+    }
     // Commander 2026-05-29 — header Expected Delivery cascades to every line's
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").

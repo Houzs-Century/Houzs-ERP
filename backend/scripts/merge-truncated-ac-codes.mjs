@@ -48,6 +48,7 @@
 // re-asserts the value it replaces, so a row a person changed in between is
 // left alone and fails the in-transaction check instead of being overwritten.
 
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

@@ -10,19 +10,26 @@ export function lorryBox(v: { lengthFt?: number | null; widthFt?: number | null;
   return length && width && height ? { length, width, height } : null;
 }
 
-export type OffRoadWindow = { from: string | null; to: string | null; reason: string | null };
+/** Who wrote the window: staff by hand, a lorry service DP job, or Repair Days. */
+export type OffRoadSource = "manual" | "dp_job" | "repair_days";
+export type OffRoadWindow = { id?: string; from: string | null; to: string | null; reason: string | null; source?: OffRoadSource };
 export type OffRoadRow = OffRoadWindow & { state: "now" | "planned" | "ended"; days: number | null };
+
+/** The stored end of a window with no expected return (the column is NOT NULL). */
+export const OPEN_ENDED_TO = "9999-12-31";
 
 const dayMs = 86_400_000;
 const dayNo = (iso: string) => Math.round(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / dayMs);
 
 /** The lorry's off-the-road windows (scm.lorry_maintenance), newest first, each
- *  marked as running today, still to come, or over, with its length in days. */
+ *  marked as running today, still to come, or over, with its length in days.
+ *  A window with no expected return has no end and no length. */
 export function offRoadRows(windows: readonly OffRoadWindow[], today: string): OffRoadRow[] {
   const t = today.slice(0, 10);
   return windows
     .map((w) => {
-      const from = w.from?.slice(0, 10) ?? null, to = w.to?.slice(0, 10) ?? null;
+      const from = w.from?.slice(0, 10) ?? null, stored = w.to?.slice(0, 10) ?? null;
+      const to = stored === OPEN_ENDED_TO ? null : stored;
       const state: OffRoadRow["state"] = from && from > t ? "planned" : to && to < t ? "ended" : "now";
       const days = from && to ? dayNo(to) - dayNo(from) + 1 : null;
       return { ...w, from, to, state, days };

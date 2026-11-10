@@ -34,12 +34,14 @@ import {
   type ReportTile,
 } from './reports/reportParts';
 import css from './reports/Corrections.module.css';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
-/** The last twelve months, this one first, as YYYY-MM. */
-export const recentMonths = (today: Date = new Date(), count = 12): string[] => {
+/** The last twelve months, this one first, as YYYY-MM. `today` is a
+ *  YYYY-MM-DD Malaysian day. */
+export const recentMonths = (today: string = todayMyt(), count = 12): string[] => {
   const out: string[] = [];
-  let y = today.getFullYear();
-  let m = today.getMonth() + 1;
+  let y = Number(today.slice(0, 4));
+  let m = Number(today.slice(5, 7));
   for (let i = 0; i < count; i += 1) {
     out.push(`${y}-${String(m).padStart(2, '0')}`);
     m -= 1;

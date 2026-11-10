@@ -49,6 +49,7 @@
 // into a type with no such member and dies at execution, which is exactly how
 // the sibling probe failed its first dispatch (docs/bugs/0754 in the holders
 // series, run 34334122124). Values are read out and formatted in JS instead.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

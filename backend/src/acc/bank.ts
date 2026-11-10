@@ -15,7 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
-import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
+import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch, QrReportForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
 import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
 import { isReversalPair } from './reversal-pairs';
@@ -173,6 +173,80 @@ export async function loadPayableBatches(
     });
   }
   return { ok: true, batches };
+}
+
+/**
+ * Every merchant report that carries DuitNow QR lines, as the bank side needs
+ * it (owner 2026-11-09: QR 是 direct 去 bank 的，不算卡机的): each QR line,
+ * whether a person has linked it to its sale, and the sales it is linked to —
+ * each with its live journal entry and the accounts that entry debits — so the
+ * bank's QR credit can be matched to those entries (acc/bank-match qrSalesFor).
+ *
+ * A QR line matched together with others (option B) is linked through its lead,
+ * which holds the payments; the lead's report is the line's report. Reads fail
+ * closed, as every read here does.
+ */
+export async function loadQrReports(
+  sb: any, companyId: number,
+): Promise<{ ok: true; reports: QrReportForMatch[] } | Fail> {
+  const rows = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_rows').select('id, batch_id, line_no, txn_date, gross_sen, confirmed_at')
+    .eq('company_id', companyId).eq('channel', 'QR').order('id').range(f, t));
+  if (rows.error) return { ok: false, reason: `QR lines: ${rows.error.message}` };
+  const qrRows = rows.data ?? [];
+  if (qrRows.length === 0) return { ok: true, reports: [] };
+
+  const batchIds = [...new Set(qrRows.map((r) => Number(r.batch_id)))];
+  const batches = await chunkIn<Record<string, any>, number>(batchIds, (ids, f, t) => sb
+    .from('acc_settlement_batches').select('id, acquirer_code, file_name, period_from, period_to')
+    .eq('company_id', companyId).in('id', ids).order('id').range(f, t));
+  if (batches.error) return { ok: false, reason: `QR reports: ${batches.error.message}` };
+
+  const links = await chunkIn<Record<string, any>, number>(qrRows.map((r) => Number(r.id)), (ids, f, t) => sb
+    .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
+    .eq('company_id', companyId).in('settlement_row_id', ids).order('id').range(f, t));
+  if (links.error) return { ok: false, reason: `QR sales: ${links.error.message}` };
+
+  /* Each sale's LIVE entry — a payment corrected since is reversed and booked
+     again, and only the standing one is the money on the bank account. */
+  const paymentIds = [...new Set(links.data.map((l) => String(l.payment_id)))];
+  const jes = paymentIds.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(paymentIds, (ids, f, t) => sb
+    .from('journal_entries').select('id, je_no, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId).in('source_type', ['SOPAY', 'SIPAY']).in('source_doc_no', ids).eq('posted', true)
+    .order('id').range(f, t));
+  if (jes.error) return { ok: false, reason: `QR sales' entries: ${jes.error.message}` };
+  const live = jes.data.filter((e) => e.reversed !== true);
+  const legs = live.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(live.map((e) => String(e.id)), (ids, f, t) => sb
+    .from('journal_entry_lines').select('journal_entry_id, account_code, debit_sen')
+    .in('journal_entry_id', ids).order('journal_entry_id').range(f, t));
+  if (legs.error) return { ok: false, reason: `QR sales' entry lines: ${legs.error.message}` };
+  const debitsOf = new Map<string, string[]>();
+  for (const l of legs.data) {
+    if (Number(l.debit_sen ?? 0) <= 0) continue;
+    const id = String(l.journal_entry_id);
+    debitsOf.set(id, [...new Set([...(debitsOf.get(id) ?? []), String(l.account_code)])]);
+  }
+  const entryOf = new Map<string, { jeNo: string; accounts: string[] }>();
+  for (const e of live) entryOf.set(`${String(e.source_type)}:${String(e.source_doc_no)}`, { jeNo: String(e.je_no), accounts: debitsOf.get(String(e.id)) ?? [] });
+
+  const reports: QrReportForMatch[] = [];
+  for (const b of batches.data) {
+    const mine = qrRows.filter((r) => Number(r.batch_id) === Number(b.id)).sort((x, y) => Number(x.line_no) - Number(y.line_no));
+    const ids = new Set(mine.map((r) => Number(r.id)));
+    reports.push({
+      batchId: Number(b.id),
+      fileName: b.file_name == null ? null : String(b.file_name),
+      acquirerCode: String(b.acquirer_code),
+      periodFrom: String(b.period_from ?? '').slice(0, 10),
+      periodTo: String(b.period_to ?? '').slice(0, 10),
+      lines: mine.map((r) => ({ lineNo: Number(r.line_no), txnDate: String(r.txn_date).slice(0, 10), grossSen: Number(r.gross_sen), linked: r.confirmed_at != null })),
+      sales: links.data.filter((l) => ids.has(Number(l.settlement_row_id))).map((l) => {
+        const entry = entryOf.get(`${String(l.payment_source)}:${String(l.payment_id)}`);
+        return { docNo: l.doc_no == null ? null : String(l.doc_no), amountSen: Number(l.amount_sen), jeNo: entry?.jeNo ?? null, accounts: entry?.accounts ?? [] };
+      }),
+    });
+  }
+  return { ok: true, reports };
 }
 
 /**

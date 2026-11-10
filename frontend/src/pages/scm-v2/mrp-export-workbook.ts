@@ -40,6 +40,7 @@ import { mrpViews, mrpCategoryOf, type MrpView } from './mrp-views';
 import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,
 } from './mrp-model-pipeline';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 /* Column order = the approved v8 layout (A..P), Customer moved to the last
    column (owner 2026-09-18: was F, wanted at the end). */
@@ -361,7 +362,7 @@ export async function exportMrpWorkbook(opts: ExportMrpWorkbookOptions): Promise
     );
 
     const blob = await buildMrpWorkbookBlob(sheets, { asOf, warehouseLabel, filters });
-    const date = new Date().toISOString().slice(0, 10);
+    const date = todayMyt();
     downloadBlob(blob, `mrp-stock-status-${date}.xlsx`);
   } catch (e) {
     onError(e instanceof Error ? e : new Error(String(e)));

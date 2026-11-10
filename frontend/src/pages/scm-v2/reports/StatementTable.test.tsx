@@ -32,7 +32,7 @@ import { linesVisible } from '../../../vendor/scm/lib/report-layout';
 import type { FlatLine } from '../../../vendor/scm/lib/report-monthly';
 import {
   compareRange, monthColumns, periodLabel, pnlColumns, statementLines, yearBack,
-  type StatementColumn,
+  type StatementColumn, type StatementLine,
 } from './statementColumns';
 import { StatementTable, codesUnder, nameOf } from './StatementTable';
 
@@ -188,4 +188,42 @@ describe('the statement table', () => {
     expect(window.localStorage.getItem('fin-reports-colw-v2')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reset column widths' })).toBeNull();
   });
+
+  test('columns under a shared heading: the heading over them on a row of its own; a cell may run across two columns (owner 2026-11-09)', () => {
+    const month = { key: '2026-10', label: 'Oct 2026', sub: 'to 2026/11/09 *' };
+    const cols: StatementColumn[] = [
+      COLS[0]!,
+      { key: '2026-10:S', label: 'Settlement', kind: 'period', from: '2026-10-01', to: '2026-10-31', pct: false, group: month },
+      { key: '2026-10:D', label: 'Deposit', kind: 'period', from: '2026-10-01', to: '2026-10-31', pct: false, group: month },
+    ];
+    const lines: StatementLine[] = [
+      { id: 'in', label: 'Deposit received', kind: 'row' as const, depth: 1, cells: { total: { amountSen: 90_000, pct: 100 }, '2026-10:S': { amountSen: 50_000, pct: null }, '2026-10:D': { amountSen: 40_000, pct: null } } },
+      { id: 'tax', label: 'Taxation', kind: 'row' as const, depth: 1, cells: { total: { amountSen: 5_000, pct: 2.5 }, '2026-10:S': { amountSen: 5_000, pct: null } }, spans: { '2026-10:S': 2 } },
+      { id: 'fin', label: 'Finance cost', kind: 'row' as const, depth: 1, cells: { total: { amountSen: 700, pct: null } }, spans: { '2026-10:S': 2 } },
+    ];
+    render(<Grid columns={cols} lines={lines} />);
+    const [top, parts] = screen.getAllByRole('rowgroup')[0]!.querySelectorAll('tr');
+    expect([...top!.querySelectorAll('th')].map((h) => [h.textContent, h.getAttribute('colspan'), h.getAttribute('rowspan')])).toEqual([
+      ['Account', null, '2'], ['Total2 months%', null, '2'], ['Oct 2026to 2026/11/09 *', '2', null],
+    ]);
+    expect([...parts!.querySelectorAll('th')].map((h) => h.textContent)).toEqual(['Settlement', 'Deposit']);
+    /* A split line: a figure under each; a line not split: one figure across the month, centred. */
+    const cellsOf = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')];
+    expect(cellsOf('Deposit received').map((td) => td.textContent)).toEqual(['900.00100.0%', '500.00', '400.00']);
+    const tax = cellsOf('Taxation');
+    expect(tax.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['50.002.5%', null], ['50.00', '2']]);
+    expect(tax[1]!.className).toMatch(/cellAcross/);
+    expect(cellsOf('Finance cost').map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['7.00—', null], ['-', '2']]);
+    /* No rule between a month's two columns; the month ends with one. */
+    expect(screen.getByRole('columnheader', { name: 'Settlement' }).className).not.toMatch(/colRule/);
+  });
 });
+
+function Grid({ columns, lines }: { columns: StatementColumn[]; lines: StatementLine[] }) {
+  const tree = useReportTree('all');
+  return (
+    <MemoryRouter>
+      <StatementTable widthsKey="cf-split" head="Account" columns={columns} lines={lines} shown={lines} level="all" tree={tree} showPct drillKey="k" ariaLabel="Cash flow" />
+    </MemoryRouter>
+  );
+}

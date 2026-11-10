@@ -22,6 +22,10 @@ name: Go-live wipe — Houzs Century (HC)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       mode:
         description: "plan (default, read-only) or apply (DELETES HC data)"
         type: choice
@@ -64,6 +68,11 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -98,6 +107,14 @@ jobs:
       # afterwards and contains an EMPTY outbox. That is why the seed in
       # migration 0316 has to hardcode the account book's numbers from
       # ac-live-proof.json: nothing else remembers them.
+      - name: Seal the rows to the requester's key before upload
+        if: ${{ always() && github.event.inputs.mode == 'apply' }}
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: golive-backup/
+          name: rows
       - name: Upload HC backup (apply only)
         if: ${{ always() && github.event.inputs.mode == 'apply' }}
         uses: actions/upload-artifact@v4
@@ -106,6 +123,6 @@ jobs:
           # later successful one's — the confusion that made an empty artifact
           # look like the wipe's backup.
           name: golive-hc-backup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: golive-backup/
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7

@@ -22,6 +22,7 @@
 // DRY-RUN by default (reads only; works with a read-only role). APPLY=1 to write.
 //   node scripts/import-ac-outstanding-so.mjs            # dry-run report
 //   APPLY=1 node scripts/import-ac-outstanding-so.mjs    # write
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import zlib from "node:zlib";

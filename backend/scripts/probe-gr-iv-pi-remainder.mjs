@@ -33,6 +33,7 @@
  * what AutoCount says. AutoCount's SQL book is not queried — a hosted runner
  * has no route to it.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

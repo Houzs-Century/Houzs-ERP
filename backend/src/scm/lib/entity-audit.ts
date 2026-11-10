@@ -56,6 +56,9 @@ export const ENTITY_TYPES = [
      its accounts and stock re-posted, a paper added, changed or cancelled, the
      opening locked or unlocked. Write-only so far. */
   'OPENING_BALANCE',
+  /* A lorry taken off the road by hand and put back (Fleet, 2026-11-10), keyed
+     by the scm.lorry_maintenance row id. Write-only so far. */
+  'LORRY_OFF_ROAD',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

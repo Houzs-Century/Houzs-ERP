@@ -917,6 +917,52 @@ describe('the matcher decision survives the round trip', () => {
    for three trading days — and the shape the owner named on the merchant side:
    顾客可能刷一次卡，但是还两个单. Before this the operator was told his credit was
    too big for the statement he picked, and given no way to do the right thing. */
+/* ── A matched customer transfer confirms its receipt ─────────────────────────
+   Owner 2026-11-09 (这个不是我bank recon了就confirm 了？): a movement matched to a
+   customer payment's entry is the money seen in the bank, so the payment's receipt
+   turns formal on this bank — on upload's obvious match, a match by hand, and a
+   group match alike. */
+describe('a matched customer transfer confirms its receipt', () => {
+  const pay = (je: string, paymentId: string, sen: number, party: string) =>
+    ({ company_id: CO, account_code: '330-0000', je_no: je, entry_date: '2026-08-03', source_type: 'SOPAY', source_doc_no: paymentId, debit_sen: sen, credit_sen: 0, party_name: party, notes: null });
+  const draft = (id: number, paymentId: string) =>
+    ({ id, company_id: CO, or_number: `HC-DraftOR-2608-00${id}`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: paymentId, amount_sen: 1, paid_at: '2026-08-03' });
+  const world = (entries: Row[], drafts: Row[]) => harness({
+    v_gl_entries: entries, acc_official_receipts: drafts, acc_numbering: [],
+    acc_bank_letters: [{ company_id: CO, account_code: '330-0000', letter: 'M' }], companies: [{ id: CO, code: 'HOUZS' }],
+  });
+  const formal = (sb: ReturnType<typeof harness>['sb']) =>
+    (sb.tables.acc_official_receipts as Row[]).map((r) => [r.payment_id, r.status, r.status === 'FORMAL' ? r.channel_account_code : null]);
+
+  test('the obvious match on upload turns the transfer\'s receipt formal on this bank', async () => {
+    const { app, sb } = world([pay('JE-2608-0060', 'pay-lau', 171000, 'LAU LEE YEN')], [draft(1, 'pay-lau')]);
+    expect(((await (await upload(app)).json()) as { autoMatched: number }).autoMatched).toBe(1);
+    expect(formal(sb)).toEqual([['pay-lau', 'FORMAL', '330-0000']]);
+    expect(String((sb.tables.acc_official_receipts as Row[])[0]!.or_number)).toMatch(/MOR-2608-001$/);
+  });
+
+  test('a match by hand does it too', async () => {
+    const { app, sb } = world([pay('JE-2608-0061', 'pay-x', 171000, 'SOMEONE ELSE')], [draft(1, 'pay-x')]);
+    await upload(app);
+    const lau = (sb.tables.acc_bank_statement_lines as Row[]).find((l) => String(l.description).includes('LAU LEE YEN'))!;
+    expect(lau.state).toBe('OPEN');
+    expect(formal(sb)).toEqual([['pay-x', 'DRAFT', null]]);
+    expect((await post(app, `/bank/lines/${lau.id}/match`, { jeNo: 'JE-2608-0061' })).status).toBe(200);
+    expect(formal(sb)).toEqual([['pay-x', 'FORMAL', '330-0000']]);
+  });
+
+  test('one movement matched to two payments confirms both', async () => {
+    const { app, sb } = world(
+      [pay('JE-2608-0062', 'pay-a', 100000, 'GAN'), pay('JE-2608-0063', 'pay-b', 71000, 'GAN')],
+      [draft(1, 'pay-a'), draft(2, 'pay-b')],
+    );
+    await upload(app);
+    const lau = (sb.tables.acc_bank_statement_lines as Row[]).find((l) => String(l.description).includes('LAU LEE YEN'))!;
+    expect((await post(app, '/bank/lines/match-group', { lineIds: [lau.id], jeNos: ['JE-2608-0062', 'JE-2608-0063'] })).status).toBe(200);
+    expect(formal(sb)).toEqual([['pay-a', 'FORMAL', '330-0000'], ['pay-b', 'FORMAL', '330-0000']]);
+  });
+});
+
 /* ── The obvious ones are matched without a hand (docs/bugs/0814) ─────────────
    Owner, 2026-09-11: 只要名字金额一样就自动都对，名字不一样不确定我可以 manual 对.
    A movement with exactly one same-amount entry in the books whose payee the

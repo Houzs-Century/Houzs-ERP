@@ -34,6 +34,7 @@
 // Mirrors backend/scripts/check-costless-stock.mjs + check-uncosted-cogs.mjs (the
 // repo's read-only-diagnostic shape) and its workflow
 // .github/workflows/foreign-rate-one-check.yml.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

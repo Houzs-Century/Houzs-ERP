@@ -36,6 +36,7 @@
  * enum and an uncast comparison is what broke the readiness probe (#2299).
  *
  * Writes nothing. SELECTs only. */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });

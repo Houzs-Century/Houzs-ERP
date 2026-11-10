@@ -28,6 +28,10 @@ name: Reshape migrated goods receipts (plan by default)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       target:
         description: "Which DB"
         required: true
@@ -65,6 +69,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -78,11 +87,20 @@ jobs:
           DUMP_DIR: ${{ github.workspace }}/grn-dump
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: grn-dump/
+          name: rows
       - if: always()
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 7
           name: migrated-grns-before-staging
-          path: grn-dump/
+          path: sealed/
           if-no-files-found: warn
 
   run-prod:
@@ -92,6 +110,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -105,9 +128,18 @@ jobs:
           DUMP_DIR: ${{ github.workspace }}/grn-dump
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: grn-dump/
+          name: rows
       - if: always()
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 7
           name: migrated-grns-before-prod
-          path: grn-dump/
+          path: sealed/
           if-no-files-found: warn

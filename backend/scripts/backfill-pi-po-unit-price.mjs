@@ -33,6 +33,7 @@
 //   COMPANY_ID     optional; absent = every company, reported per company
 //   MODE           plan (default) | apply
 //   CONFIRM        required for apply: STAMP THE PO PRICE ON INVOICE LINES
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const CONFIRM_PHRASE = 'STAMP THE PO PRICE ON INVOICE LINES';
@@ -144,7 +145,7 @@ try {
           : [{ n: 0 }];
         if (bad.length || Number(touchedHeld[0].n) > 0) {
           line(`VERIFY FAILED — ${bad.length} stamped line(s) disagree with their PO line; ${touchedHeld[0].n} no-link line(s) were written.`);
-          for (const b of bad.slice(0, 6)) line(`   ${b.item_code}: stored ${b.po_unit_price_sen} (${b.shape}) vs PO ${b.po_price}`);
+          for (const b of bad.slice(0, 6)) line(`   ${b.item_code}: stored po_unit_price_sen=${b.po_unit_price_sen} (${b.shape}) vs PO ${b.po_price}`);
           process.exitCode = 1;
         } else {
           line(`VERIFY OK — ${ids.length} line(s) hold their purchase order's price as an integer; ${heldIds.length} no-link line(s) still NULL.`);

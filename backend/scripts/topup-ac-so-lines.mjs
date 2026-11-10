@@ -59,6 +59,7 @@
 // AutoCount DtlKey, so it matches nothing and writes nothing. The apply path
 // re-reads the document's live keys INSIDE the transaction as well, so even two
 // runs racing each other cannot double a line.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

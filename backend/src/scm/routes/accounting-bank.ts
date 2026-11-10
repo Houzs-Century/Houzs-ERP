@@ -26,18 +26,20 @@ import { REPEAT_KIND, pairRepeats, repeatNote, repeatsAmong } from '../../acc/ba
 import { readPdfContent, pdfDigits, parsePdfStatement } from '../../acc/bank-parse-pdf';
 import { monthWindow } from '../../acc/bank-month';
 import {
-  groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor, bankReversalPairs,
-  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
+  groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor, bankReversalPairs, qrSalesFor,
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, type QrReportForMatch, type QrSales,
 } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadCompanyMatches } from '../../acc/bank';
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadCompanyMatches,
+  loadQrReports } from '../../acc/bank';
 import { paginateAll } from '../lib/paginate-all';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
+import { formaliseReceiptsForBankMatch } from '../../acc/receipts';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
 import { bankName } from '../../acc/finance-todo';
@@ -420,6 +422,8 @@ export const bankUpload = guard(async (c) => {
     ? { ok: true as const, matched: 0, jeNos: [] as string[], contraPairs: 0 }
     : await applyObviousMatches(sb, co.companyId, { id: statementId, account_code: accountCode, period_to: periodTo });
   if (!obvious.ok) return c.json({ error: 'match_failed', reason: obvious.reason, message: `The file was read, but the obvious matches could not be applied: ${obvious.reason}` }, 500);
+  /* A customer transfer matched is its money seen: its receipt turns formal (owner 2026-11-09). */
+  await formaliseReceiptsForBankMatch(sb, co.companyId, accountCode, obvious.jeNos, userName(c));
 
   const counts = decisions.reduce<Record<string, number>>((acc, d, idx) => {
     const kind = alreadyRecorded[idx] ? 'DUPLICATE' : d.kind;
@@ -488,6 +492,28 @@ export function freshDecisions(
     });
   });
   return out;
+}
+
+/* ── The bank's DuitNow QR credit, decided on every read (owner 2026-11-09) ──
+   An OPEN credit that is a day's QR money (acc/bank-match qrSalesFor) is not a
+   card payout: its money is already in the books through the QR sales, so it
+   is shown as QR money with those sales' entries — matched to them with one
+   press of match-group — and offered no report to book a payout against, which
+   would put the money in the bank twice. Nothing is written here. */
+export function withQrSales<T extends Record<string, unknown>>(
+  lines: T[], rules: BankRecognitionRule[], reports: QrReportForMatch[], claimed: ReadonlySet<string>, accountCode: string,
+): T[] {
+  if (reports.length === 0) return lines;
+  return lines.map((l) => {
+    if (String(l.state) !== 'OPEN' || Number(l.amount_sen ?? 0) <= 0) return l;
+    const qr: QrSales | null = qrSalesFor(
+      { amountSen: Number(l.amount_sen), description: String(l.description ?? ''), reference: (l.reference as string | null) ?? null },
+      rules, reports, claimed, accountCode,
+    );
+    if (!qr) return l;
+    /* The line's own row with the QR answer laid over it — `qr_sales` rides along. */
+    return { ...l, kind: 'QR', note: qr.clue, matched_batch_id: null, split: null, qr_sales: qr } as T;
+  });
 }
 
 /* ── The obvious ones, matched without a hand (docs/bugs/0814) ────────────────
@@ -587,6 +613,7 @@ export const bankStatementAutoMatch = guard(async (c) => {
   }
   const r = await applyObviousMatches(sb, co.companyId, statement);
   if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, statement.account_code, r.jeNos, userName(c));
   return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos, contraPairs: r.contraPairs });
 });
 
@@ -735,7 +762,7 @@ export const bankStatementDetail = guard(async (c) => {
   if (!stmt) return c.json({ error: 'not_found' }, 404);
   const statement = stmt as Record<string, any>;
 
-  const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts] = await Promise.all([
+  const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts, qrReports] = await Promise.all([
     paginateAll<Record<string, any>>((lo, hi) => (sb as Parameters<typeof loadAccountLedger>[0]).from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId)
       .order('line_no').order('id').range(lo, hi)),
     loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason'),
@@ -745,6 +772,7 @@ export const bankStatementDetail = guard(async (c) => {
     loadClaimedElsewhere(sb, co.companyId, String(statement.account_code), id, String(statement.period_to).slice(0, 10)),
     loadRecognitionRules(sb),
     loadPayoutAdvices(sb, co.companyId),
+    loadQrReports(sb, co.companyId),
   ]);
   if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
   if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
@@ -753,6 +781,7 @@ export const bankStatementDetail = guard(async (c) => {
   if (!elsewhere.ok) return c.json({ error: 'load_failed', reason: elsewhere.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
+  if (!qrReports.ok) return c.json({ error: 'load_failed', reason: qrReports.reason }, 500);
   /* Every entry named the way a person knows it — the document's number and
      the customer, payee or merchant (docs/bugs/0918) — so the candidates and
      the outstanding list below read the same. */
@@ -811,11 +840,16 @@ export const bankStatementDetail = guard(async (c) => {
     .filter((l) => !claimed.has(l.jeNo))
     .filter((l) => l.entryDate >= String(statement.period_from) || !claimedElsewhere.has(l.jeNo))
     .map((l) => ({ ...l, carried: l.entryDate < String(statement.period_from) }));
+  /* The day's QR money is matched to its sales, not booked as a payout. Only a
+     real claim — a POSTED bank line holding the entry — stands in its way; the
+     books-start rule in claimedSetFor is the reconciliation's, not a match. */
+  const decided = withQrSales(lines, rules.rules, qrReports.reports,
+    new Set<string>([...elsewhere.claimed, ...claimed].filter((n): n is string => typeof n === 'string')), String(statement.account_code));
 
   return c.json({
     statement,
     reconciliation,
-    lines: lines.map((l) => ({
+    lines: decided.map((l) => ({
       ...l,
       matches: liveMatches(l),
       /* Which statements this line COULD settle, recomputed live: a batch that
@@ -1234,6 +1268,7 @@ export const bankLineMatch = guard(async (c) => {
     .update({ state: 'POSTED', posted_je_no: jeNo, updated_at: new Date().toISOString() })
     .eq('id', lineId).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, account.accountCode, [jeNo], userName(c));
 
   return c.json({ ok: true, status: 'matched', jeNo });
 });
@@ -1331,6 +1366,7 @@ export const bankLinesMatchGroup = guard(async (c) => {
     .update({ state: 'POSTED', posted_je_no: jeNos[0]!, updated_at: new Date().toISOString() })
     .in('id', lineIds).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  await formaliseReceiptsForBankMatch(sb, co.companyId, accountCode, jeNos, userName(c));
 
   return c.json({ ok: true, status: 'matched', lines: lineIds.length, entries: jeNos.length, jeNos });
 });

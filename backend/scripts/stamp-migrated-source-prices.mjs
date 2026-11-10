@@ -101,6 +101,7 @@
  * were 0 too: all 320 migrated receipts read 0 before this ran). The apply
  * prints every id it touches for exactly this reason.
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -639,7 +640,7 @@ async function main() {
       const shape = Math.round(Number(r.qty) * Number(r.unit_price_sen)) - Number(r.discount_sen);
       if (shape !== Number(r.line_total_sen)) {
         invariantBroken++;
-        bad(`  ${r.doc_no} ${r.id}: qty*unit - discount = ${shape} but line_total_sen reads ${r.line_total_sen}`);
+        bad(`  ${r.doc_no} ${r.id}: qty*unit - discount = ${shape} but line_total_sen=${r.line_total_sen}`);
       }
       if (Number(r.line_total_sen) !== w.lineTotalSen) {
         notBook++;

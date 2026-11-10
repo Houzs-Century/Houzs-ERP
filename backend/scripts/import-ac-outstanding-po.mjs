@@ -33,6 +33,7 @@
 //  - linked_ac_dtlkey <- PODTL.DtlKey, so the link never has to be re-derived
 //  - qty = ordered; received_qty = ordered - outstanding
 // Idempotent: skips po_numbers already present. DRY-RUN by default; APPLY=1.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

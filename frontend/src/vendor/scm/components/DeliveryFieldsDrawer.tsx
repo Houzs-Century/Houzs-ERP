@@ -36,16 +36,11 @@ import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
 import { DateTimeField } from "./DateTimeField";
+import { instantToMytLocal, mytLocalToInstant } from "../lib/dates";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A TIMESTAMPTZ ISO string → the wall-clock YYYY-MM-DDTHH:mm that DateTimeField
-   reads and writes (the same shape a native datetime-local used, unchanged when
-   Arrival/Departure moved onto DateTimeField on 2026-08-18).
-   Best-effort: slice the ISO; empty when null. */
-const toDtLocal = (iso: string | null): string =>
-  iso ? String(iso).slice(0, 16) : '';
 /* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
@@ -87,8 +82,8 @@ export const DeliveryFieldsDrawer = ({
     // DO-execution
     timeRange: order.time_range ?? '',
     timeConfirmed: order.time_confirmed ?? false,
-    arrivalAt: toDtLocal(order.arrival_at),
-    departureAt: toDtLocal(order.departure_at),
+    arrivalAt: instantToMytLocal(order.arrival_at),
+    departureAt: instantToMytLocal(order.departure_at),
     shipoutDate: toDateInput(order.shipout_date),
     customerDeliveredDate: toDateInput(order.customer_delivered_date),
     etaArrivingPort: order.eta_arriving_port ?? '',
@@ -131,8 +126,8 @@ export const DeliveryFieldsDrawer = ({
       Object.assign(body, {
         timeRange: form.timeRange || null,
         timeConfirmed: form.timeConfirmed,
-        arrivalAt: form.arrivalAt || null,
-        departureAt: form.departureAt || null,
+        arrivalAt: mytLocalToInstant(form.arrivalAt),
+        departureAt: mytLocalToInstant(form.departureAt),
         shipoutDate: form.shipoutDate || null,
         customerDeliveredDate: form.customerDeliveredDate || null,
         etaArrivingPort: form.etaArrivingPort || null,

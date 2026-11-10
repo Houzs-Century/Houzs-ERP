@@ -44,8 +44,8 @@ import {
   type PoChainRow, type GrnChainRow, type PiChainRow, type PrChainRow,
 } from "../../lib/printChain";
 import { transferToLabel } from "../../lib/convertScope";
-import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
-import { DO_STOCK_OUT_STATES } from "../../vendor/shared/do-shipped-states";
+import { soOffersTransferToDo } from "../../lib/so-transfer-to-do";
+import { DO_STOCK_OUT_STATES, doHasArrived } from "../../vendor/shared/do-shipped-states";
 import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 /** What every menu needs from a row: something to identify it, a status, and
@@ -200,7 +200,7 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
    Cancel. The list of buttons a human gets is short everywhere, and it is short
    for this reason. */
-export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow>(h: {
+export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow & { has_undelivered?: boolean | null }>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   /* HC-0149: a new order seeded from this one; any status, migrated included,
@@ -257,7 +257,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
         ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
       ],
       [
-        h.canDeliver && soCanRaiseDo(r.status, r.on_hold ?? null) && !isDraft &&
+        h.canDeliver && soOffersTransferToDo(r) && !isDraft &&
           { label: transferToLabel("do"), onClick: () => h.transferToDo(r) },
       ],
       [
@@ -394,7 +394,10 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
        unable to move it. DRAFT, CANCELLED and any status this file does not
        recognise fall out by not being members — naming a step for an unknown
        state is the COMPLETED mistake, and offering nothing is the cheap answer. */
-    const canMark = h.canSetStatus(r) && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
+    /* A delivered row gets none of them: every one would move it BACK, which is
+       an un-delivery and goes through "Undo delivered" on the detail page (reason
+       + audit + invoice check). The server refuses it here too (`use_revert`). */
+    const canMark = h.canSetStatus(r) && (DO_STOCK_OUT_STATES as readonly string[]).includes(s) && !doHasArrived(s);
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },

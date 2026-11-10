@@ -36,6 +36,7 @@
 //            SOURCE_SERVICE_ROLE_KEY, @supabase/supabase-js — same as the importer.
 //   DEST   = Houzs Postgres via DATABASE_URL, postgres.js. Dest tables live in a
 //            MIX of schemas; each is DISCOVERED across scm+public at runtime.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 import { createClient } from "@supabase/supabase-js";
 

@@ -84,6 +84,7 @@
  * values the plan read, and the second run finds the line already equal to the
  * book's own amount, so it plans zero changes and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -405,7 +406,7 @@ async function main() {
       const lineShape = Math.round(Number(r.qty) * Number(r.unit_price_sen)) - Number(r.discount_sen);
       if (lineShape !== Number(r.line_total_sen)) {
         invariantBroken++;
-        bad(`  ${r.po_number} ${r.id}: qty*unit - discount = ${lineShape} but line_total_sen reads ${r.line_total_sen}`);
+        bad(`  ${r.po_number} ${r.id}: qty*unit - discount = ${lineShape} but line_total_sen=${r.line_total_sen}`);
       }
       if (Number(r.line_total_sen) !== w.lineTotalSen) {
         notBook++;

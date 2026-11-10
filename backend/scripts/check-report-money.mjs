@@ -13,6 +13,7 @@
    answer for that section).
 
    SECTION=all|schema|ratecard|autolines|pnl|aging node scripts/check-report-money.mjs */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

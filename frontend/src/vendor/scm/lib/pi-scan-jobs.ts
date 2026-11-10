@@ -10,6 +10,7 @@
 // ----------------------------------------------------------------------------
 
 import { authedFetch } from "./authed-fetch";
+import { instantToMytLocal, mytDayOf, todayMyt } from "./dates";
 
 export type PiScanJob = {
   id: string;
@@ -48,14 +49,9 @@ export const piJobTs = (s: string | null): number => {
 };
 export const isPiTodayTs = (t: number): boolean => {
   if (t === 0) return false;
-  const d = new Date(t);
-  const n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return mytDayOf(new Date(t).toISOString()) === todayMyt();
 };
-export const piHhmm = (t: number): string => {
-  const d = new Date(t);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
+export const piHhmm = (t: number): string => instantToMytLocal(new Date(t).toISOString()).slice(11, 16);
 /** A job is "active" while the server is still working it (poll keeps running). */
 export const isActivePiJob = (j: PiScanJob): boolean => j.status === "queued" || j.status === "running";
 

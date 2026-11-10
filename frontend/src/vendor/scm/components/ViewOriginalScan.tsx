@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { authedFetch } from '../lib/authed-fetch';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
+import { openLoadedTab } from '../../../lib/openLoadedTab';
 
 export type ScanKind = 'so' | 'payment' | 'pv' | 'workshop';
 
@@ -26,8 +27,7 @@ export function ViewOriginalScan({ kind, documentId }: { kind: ScanKind; documen
   const open = async (id: string) => {
     setErr(null);
     try {
-      const { url } = await fetchDocFileBlobUrl(`/scan-files/${kind}/${id}/content`);
-      window.open(url, '_blank', 'noopener');
+      await openLoadedTab(async () => (await fetchDocFileBlobUrl(`/scan-files/${kind}/${id}/content`)).url, 60_000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'The scan could not be opened.');
     }

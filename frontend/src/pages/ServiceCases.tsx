@@ -158,6 +158,7 @@ import {
   splitCategories,
   toggleCategory,
 } from "../lib/assrProductCategories";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -1620,7 +1621,7 @@ function CaseCard({ c, onOpen }: { c: AssrCase; onOpen: (id: number) => void }) 
 // calendar's visual language (blank adjacent cells, prominent today,
 // wheel-to-navigate).
 
-function CasesCalendarView({
+export function CasesCalendarView({
   filters,
   onOpen,
 }: {
@@ -1648,9 +1649,8 @@ function CasesCalendarView({
     if (/^\d{4}-\d{2}$/.test(monthStr)) {
       return new Date(Number(monthStr.slice(0, 4)), Number(monthStr.slice(5, 7)) - 1, 1);
     }
-    const d = new Date();
-    d.setDate(1);
-    return d;
+    const [y, m] = todayMyt().split("-").map(Number);
+    return new Date(y, m - 1, 1);
   }, [monthStr]);
 
   const setAnchor = (d: Date) =>
@@ -1741,7 +1741,7 @@ function CasesCalendarView({
     d.setDate(gridStart.getDate() + i);
     cells.push({ date: d, iso: isoLocal(d), inMonth: d.getMonth() === anchor.getMonth() });
   }
-  const today = isoLocal(new Date());
+  const today = todayMyt();
   const monthLabel = anchor.toLocaleDateString("en-GB", { month: "2-digit", year: "numeric" });
 
   // Wheel over the grid steps months (throttled, non-passive).

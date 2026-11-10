@@ -22,6 +22,7 @@
 // Tables are SCHEMA-QUALIFIED `scm.*` — a raw postgres connection defaults to the
 // `public` search_path, where a legacy table still carries pre-0305 `_centi`
 // columns (see docs/bugs/0785 and check-orphan-scan-deposits.mjs).
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

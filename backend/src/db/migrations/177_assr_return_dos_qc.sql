@@ -1,4 +1,4 @@
--- D1 test mirror of migrations-pg/20261109T1700_assr_return_dos_and_qc_notes.sql.
+-- D1 test mirror of migrations-pg/20261110T1400_assr_return_dos_and_qc_notes.sql.
 CREATE TABLE IF NOT EXISTS assr_return_dos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   assr_id INTEGER NOT NULL,

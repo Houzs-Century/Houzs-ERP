@@ -23,6 +23,7 @@
    NULL and that every stamped line's company equals its event's.
 
    RE-RUN: inert. Keyed on company_id IS NULL, which the stamp turns non-NULL. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;
@@ -57,7 +58,7 @@ async function main() {
   for (const r of fix) byCo.set(r.project_company, (byCo.get(r.project_company) ?? 0) + 1);
   for (const [co, n] of byCo) note(`  company ${co}: ${n} line(s)`);
   for (const r of rows.slice(0, 200)) {
-    note(`  ${r.project_company == null ? 'REFUSE' : 'stamp '} line ${r.id} · event #${r.project_id} ${r.project_code ?? '(no code)'} · ${r.kind}/${r.category} ${r.amount}${r.archived ? ' (archived)' : ''} · "${String(r.description ?? '').slice(0, 40)}" → company ${r.project_company ?? '—'}`);
+    note(`  ${r.project_company == null ? 'REFUSE' : 'stamp '} line ${r.id} · event #${r.project_id} ${r.project_code ?? '(no code)'} · ${r.kind}/${r.category} amount=${r.amount}${r.archived ? ' (archived)' : ''} · "${String(r.description ?? '').slice(0, 40)}" → company ${r.project_company ?? '—'}`);
   }
   if (rows.length > 200) note(`  … and ${rows.length - 200} more`);
   for (const r of refuse) bad(`  event #${r.project_id} has no company: line ${r.id} left as it is`);

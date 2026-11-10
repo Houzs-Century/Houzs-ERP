@@ -32,6 +32,7 @@ import {
 import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "../vendor/shared/phone";
+import { fmtDateTime } from "../vendor/shared/format";
 import { orderLineIdentity } from "@2990s/shared";
 import {
   CANCELLABLE_STATUSES,
@@ -1514,12 +1515,7 @@ const histVal = (field: string, v: unknown): string => {
   return String(v).replace(/_/g, " ");
 };
 /* Timestamp — desktop-standard numeric DD/MM/YYYY + HH:mm. */
-const histWhen = (iso: string): string => {
-  const d = new Date(iso);
-  if (isNaN(+d)) return "—";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-};
+const histWhen = (iso: string): string => fmtDateTime(iso);
 const histHue = (s: string): number => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;

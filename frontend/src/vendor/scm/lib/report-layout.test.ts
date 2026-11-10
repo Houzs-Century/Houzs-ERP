@@ -5,8 +5,9 @@
 import { describe, expect, test } from 'vitest';
 import {
   accountKey, addCategory, addSubtotal, blockOfKey, categoryIds, flattenLaid, fmtPct, foldsChildren, folderOpen, itemKey, laidDepth, leafKeys, linesVisible, moveWithinSiblings, newCategoryId, newSubtotalId, pctOf, placeItem,
-  removeCategory, removeSubtotal, renameCategory, setAccountFlow, setCategoryFlow, setCategoryTick, setTotalLabel, unplaceAccount, unplacedAccounts,
-  type LaidNode, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutItem,
+  removeCategory, removeSubtotal, renameCategory, setAccountFlow, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart,
+  unplaceAccount, unplacedAccounts,
+  type LaidNode, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutItem,
 } from './report-layout';
 
 const layout = (): Layout => ({
@@ -296,5 +297,37 @@ describe('the Cash Flow tree', () => {
     expect(codesOf(unplacedAccounts(net, cfBlock, cfAccounts, 'in'))).toEqual(['601-0000', '601-0003', '910-0000']);
     /* Without a side, the old reading: placed anywhere counts. */
     expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts))).toEqual(['910-0000']);
+  });
+
+  test('a group takes its Settlement / Deposit parts at any depth; cleared, it follows the group above (owner 2026-11-09)', () => {
+    const before = cashFlow();
+    let l = setCategorySplit(before, 'side:in', { settlement: 0, deposit: 1 });
+    expect((l.blocks.accounts![0] as LayoutCategory).split).toEqual({ settlement: 0, deposit: 1 });
+    expect(before.blocks.accounts![0]).not.toHaveProperty('split');
+    l = setCategorySplit(l, 'out:acc:601-0000', { settlement: 1, deposit: 2 });
+    const nested = (l.blocks.accounts![1] as LayoutCategory).children[1] as LayoutCategory;
+    expect(nested.split).toEqual({ settlement: 1, deposit: 2 });
+    l = setCategorySplit(l, 'side:in', null);
+    expect(l.blocks.accounts![0]).not.toHaveProperty('split');
+    /* Only a category carries parts. */
+    expect(setCategorySplit(before, 'a:in:300-0000', { settlement: 1, deposit: 0 })).toBe(before);
+  });
+
+  test('the parts a split reads as: all Settlement, all Deposit, or parts', () => {
+    expect(splitChoice(undefined)).toBe('');
+    expect(splitChoice({ settlement: 1, deposit: 0 })).toBe('settlement');
+    expect(splitChoice({ settlement: 3, deposit: 0 })).toBe('settlement');
+    expect(splitChoice({ settlement: 0, deposit: 1 })).toBe('deposit');
+    expect(splitChoice({ settlement: 1, deposit: 2 })).toBe('parts');
+    expect(splitOfChoice('settlement')).toEqual({ settlement: 1, deposit: 0 });
+    expect(splitOfChoice('deposit')).toEqual({ settlement: 0, deposit: 1 });
+    expect(splitOfChoice('parts')).toEqual({ settlement: 1, deposit: 2 });
+    expect(splitOfChoice('')).toBeNull();
+    /* A part typed: a whole number 0–99; anything else keeps the part it had. */
+    expect(splitPart('4', 2)).toBe(4);
+    expect(splitPart('150', 2)).toBe(99);
+    expect(splitPart('-3', 2)).toBe(0);
+    expect(splitPart('', 2)).toBe(2);
+    expect(splitPart('1.5', 2)).toBe(1);
   });
 });

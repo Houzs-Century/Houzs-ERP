@@ -31,7 +31,7 @@ import { refreshUnconfirmedLinks, type LinkRow } from '../../acc/settlement';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
-import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
+import { cardTotalsOf, parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
@@ -86,7 +86,17 @@ type StoredRow = {
   matched_with_row_id?: number | null;
   /** The payments a person said this line is NOT ("Not this"), as "SOPAY:<id>" keys. */
   not_this?: unknown;
+  /** 'QR' for a DuitNow QR line (owner 2026-11-09), else null — card. */
+  channel?: string | null;
 };
+
+/** The Online pool a report's QR lines are matched against — read only when it has one. */
+const onlinePoolFor = (
+  sb: Parameters<typeof loadPaymentCandidates>[0], companyId: number, acquirer: Parameters<typeof loadPaymentCandidates>[2],
+  from: string, to: string, hasQr: boolean,
+): ReturnType<typeof loadPaymentCandidates> => (hasQr
+  ? loadPaymentCandidates(sb, companyId, acquirer, from, to, [], { online: true })
+  : Promise.resolve({ ok: true as const, payments: [] }));
 
 /* ════════════════════════════════════════════════════════════════════════
    Acquirer setup — 决定4, entered once, shared by every company
@@ -617,6 +627,12 @@ export const settlementUpload = guard(async (c) => {
     }, 409);
   }
   const stmt = dedupe.kept;
+  /* The head is what the acquirer owes THROUGH ITS CLEARING ACCOUNT: the card
+     lines. A DuitNow QR line's money reached the bank by its sale (owner
+     2026-11-09: 0000PP 是 qr direct 去 bank 的，不算卡机的) — it stays a line of
+     the report, matched to that sale, and never becomes money owed. */
+  const head = cardTotalsOf(stmt);
+  const qrRows = stmt.rows.filter((r) => r.channel === 'QR');
   const { data: batchRow, error: batchErr } = await sb.from('acc_settlement_batches').insert({
     company_id: co.companyId,
     acquirer_code: acquirerCode,
@@ -625,10 +641,10 @@ export const settlementUpload = guard(async (c) => {
     period_from: stmt.periodFrom,
     period_to: stmt.periodTo,
     row_count: stmt.rows.length,
-    gross_sen: stmt.grossSen,
-    fee_sen: stmt.feeSen,
-    net_sen: stmt.netSen,
-    stated_net_sen: stmt.statedNetSen,
+    gross_sen: head.grossSen,
+    fee_sen: head.feeSen,
+    net_sen: head.netSen,
+    stated_net_sen: head.statedNetSen,
     adjustment_sen: stmt.adjustmentSen,
     uploaded_by: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
   }).select('id').single();
@@ -648,19 +664,21 @@ export const settlementUpload = guard(async (c) => {
     await sb.from('acc_settlement_batches').delete().eq('id', batchId).eq('company_id', co.companyId);
   };
 
-  const [candidates, settled] = await Promise.all([
+  const [candidates, settled, online] = await Promise.all([
     /* The file's own references travel with the request: a payment carrying an
        exact reference must be found whatever its date (docs/bugs/0760). */
     loadPaymentCandidates(sb, co.companyId, acq.acquirer, stmt.periodFrom, stmt.periodTo,
       stmt.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
+    onlinePoolFor(sb, co.companyId, acq.acquirer, stmt.periodFrom, stmt.periodTo, qrRows.length > 0),
   ]);
   if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
   if (!settled.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: settled.reason }, 500); }
+  if (!online.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: online.reason }, 500); }
 
   const decisions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
-    stmt.rows, candidates.payments, settled.keys,
+    stmt.rows, candidates.payments, settled.keys, online.payments,
   );
 
   const { data: writtenRaw, error: rowsErr } = await sb.from('acc_settlement_rows').insert(
@@ -677,6 +695,8 @@ export const settlementUpload = guard(async (c) => {
       bucket: d.bucket,
       match_reason: d.matchReason,
       notes: d.clue,
+      /* Written only for a QR line, so a card-only upload's insert is what it always was. */
+      ...(d.row.channel === 'QR' ? { channel: 'QR' } : {}),
     })),
   ).select('id, line_no');
   if (rowsErr) { await abandonBatch(); return c.json({ error: 'save_failed', reason: rowsErr.message }, 500); }
@@ -737,11 +757,14 @@ export const settlementUpload = guard(async (c) => {
        batch, each with the report and line they are on (docs/bugs/0823). */
     alreadyOnReport: dedupe.alreadyOn.length,
     alreadyOnReportDetail: dedupe.alreadyOn,
-    statedNetSen: stmt.statedNetSen,
+    statedNetSen: head.statedNetSen,
     adjustmentSen: stmt.adjustmentSen,
-    grossSen: stmt.grossSen,
-    feeSen: stmt.feeSen,
-    netSen: stmt.netSen,
+    grossSen: head.grossSen,
+    feeSen: head.feeSen,
+    netSen: head.netSen,
+    /* The QR lines the file carried — money already in the bank by its sales. */
+    qrLines: qrRows.length,
+    qrSen: qrRows.reduce((s, r) => s + r.grossSen, 0),
     periodFrom: stmt.periodFrom,
     periodTo: stmt.periodTo,
     buckets: { MATCHED: autoMatched, NEEDS_CONFIRM: count('NEEDS_CONFIRM') + (count('MATCHED') - autoMatched), UNMATCHED: count('UNMATCHED'), IGNORED: 0 },
@@ -805,13 +828,16 @@ export const settlementBatches = guard(async (c) => {
   /* How far the CARD MACHINE side has got. The two steps are two screens, so
      each list has to say where the other one stands: the payouts screen must
      not invite money against a statement nobody has reconciled. */
-  const { data: rowTally, error: rtErr } = await paginateAll<{ batch_id: number; bucket: string; confirmed_at: string | null }>((f, t) => sb
-    .from('acc_settlement_rows').select('batch_id, bucket, confirmed_at')
+  const { data: rowTally, error: rtErr } = await paginateAll<{ batch_id: number; bucket: string; confirmed_at: string | null; channel?: string | null; gross_sen?: number | null }>((f, t) => sb
+    .from('acc_settlement_rows').select('batch_id, bucket, confirmed_at, channel, gross_sen')
     .eq('company_id', co.companyId).order('id').range(f, t));
   if (rtErr) return c.json({ error: 'load_failed', reason: rtErr.message }, 500);
-  const reconciled = new Map<number, { confirmed: number; open: number; toConfirm: number; toChoose: number; noRecord: number }>();
-  for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null }>) {
-    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0 };
+  const reconciled = new Map<number, { confirmed: number; open: number; toConfirm: number; toChoose: number; noRecord: number; qr: number; qrSen: number }>();
+  for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null; channel?: string | null; gross_sen?: number | null }>) {
+    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0, qr: 0, qrSen: 0 };
+    /* The QR money a report carries (owner 2026-11-09) — in the bank by its
+       sales, so not part of what the report is owed; said beside it. */
+    if (r.channel === 'QR') { at.qr += 1; at.qrSen += Number(r.gross_sen ?? 0); }
     if (r.confirmed_at) at.confirmed += 1;
     else if (r.bucket !== 'IGNORED') {
       at.open += 1;
@@ -842,11 +868,13 @@ export const settlementBatches = guard(async (c) => {
 
   const batches = ((data ?? []) as Array<Record<string, any>>).map((b) => {
     const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
-    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0 };
+    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0, qr: 0, qrSen: 0 };
     const payable = payableOf(b);
     const kept = charged.byBatch.get(Number(b.id)) ?? 0;
     return {
       ...b,
+      qr_count: done.qr,
+      qr_gross_sen: done.qrSen,
       confirmed_count: done.confirmed,
       open_count: done.open,
       to_confirm_count: done.toConfirm,
@@ -887,14 +915,14 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel')
     .eq('batch_id', batchId).order('line_no');
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
 
   const acq = await loadAcquirer(sb, co.companyId, b.acquirer_code);
   if (!acq.ok) return c.json({ error: 'acquirer_unavailable', message: acq.reason }, 400);
-  const [candidates, settled] = await Promise.all([
+  const [candidates, settled, online] = await Promise.all([
     /* The stored lines' own references travel with the request, so a payment
        carrying an exact reference is found whatever its date — the four PBB
        lines that read "No payment recorded near …" while their payment sat in
@@ -902,9 +930,13 @@ export const settlementBatchDetail = guard(async (c) => {
     loadPaymentCandidates(sb, co.companyId, acq.acquirer, b.period_from, b.period_to,
       stored.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r !== '')),
     loadSettledKeys(sb, co.companyId),
+    /* A report's QR lines are matched to Online sales (owner 2026-11-09). */
+    onlinePoolFor(sb, co.companyId, acq.acquirer, b.period_from, b.period_to, stored.some((r) => r.channel === 'QR')),
   ]);
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
   if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+  if (!online.ok) return c.json({ error: 'load_failed', reason: online.reason }, 500);
+  const everyPayment = [...candidates.payments, ...online.payments];
 
   /* The payments already linked to each line — what the matched pile shows,
      and what a re-opened line starts from. Read BEFORE the recompute, because
@@ -940,21 +972,26 @@ export const settlementBatchDetail = guard(async (c) => {
   const refresh = await refreshUnconfirmedLinks(sb, {
     companyId: co.companyId,
     links: openLinks,
-    known: new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, { amountSen: Number(p.amountSen), docNo: p.docNo || null }])),
+    known: new Map(everyPayment.map((p) => [`${p.source}:${p.id}`, { amountSen: Number(p.amountSen), docNo: p.docNo || null }])),
   });
   if (!refresh.ok) return c.json({ error: 'load_failed', reason: refresh.reason }, 500);
   const needsAHuman = open.filter((r) => (linksByRow.get(r.id) ?? []).length === 0);
   const suggestions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
-    needsAHuman.map((r) => ({ lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen) })),
+    needsAHuman.map((r) => ({
+      lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen),
+      ...(r.channel === 'QR' ? { channel: 'QR' as const } : {}),
+    })),
     candidates.payments,
     settled.keys,
+    online.payments,
   );
   const byLine = new Map(suggestions.map((d) => [d.row.lineNo, d]));
 
   /* Every payment in the window, by key — the linked ones are in here too:
-     `settled.keys` gates the MATCHER, it does not shrink this list. */
-  const paymentOf = new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, p]));
+     `settled.keys` gates the MATCHER, it does not shrink this list. A QR
+     line's Online sale is in here as well, so a linked one reads in full. */
+  const paymentOf = new Map(everyPayment.map((p) => [`${p.source}:${p.id}`, p]));
 
   /* LINES MATCHED TOGETHER (owner 2026-11-03, option B): the payments are
      linked once, to the group's lead; every line of the group shows them, and

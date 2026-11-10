@@ -19,6 +19,7 @@ import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
+import { piPoNumbers } from './pi-header-pos';
 
 type PiHeader = {
   invoice_number: string; supplier_invoice_ref: string | null; status: string;
@@ -42,6 +43,8 @@ type PiItem = {
   item_group?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
+  /* The line's own PO, resolved per line by the detail endpoint. */
+  source_po_number?: string | null;
 };
 
 /* Draw ONE purchase invoice's content into `doc` (letterhead → info → codes
@@ -87,6 +90,14 @@ export async function renderPurchaseInvoiceInto(
   ].filter(Boolean) as string[];
 
   const statusText = statusLabel('pi', header.status);
+  /* Every PO the lines bill, not only the header's first (owner 2026-11-10). */
+  const poNumbers = piPoNumbers(items.map((it) => it.source_po_number), header.purchase_order?.po_number ?? null);
+  /* Two per printed line: the right-hand rail has ~56mm for a value and does
+     not wrap, and a receipt can span a dozen POs. */
+  const poRefLines: string[] = [];
+  for (let i = 0; i < poNumbers.length; i += 2) {
+    poRefLines.push(poNumbers.slice(i, i + 2).join(', ') + (i + 2 < poNumbers.length ? ',' : ''));
+  }
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block via the shared helper — Company, Code,
        Address, Tel, Fax, Email, Attn, Terms, Note. Previously the PI printed
@@ -107,7 +118,7 @@ export async function renderPurchaseInvoiceInto(
       title: 'INVOICE DETAILS',
       rows: [
         ['Our PI No', header.invoice_number],
-        ['PO Ref', header.purchase_order?.po_number ?? null],
+        [poNumbers.length > 1 ? 'PO Refs' : 'PO Ref', poRefLines],
         ['GRN Ref', header.grn?.grn_number ?? null],
         ['Supplier Ref', header.supplier_invoice_ref],
         ['Date', fmtDocDate(header.invoice_date)],

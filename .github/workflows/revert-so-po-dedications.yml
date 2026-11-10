@@ -27,6 +27,10 @@ name: SO->PO dedications — revert the wrong ones (PLAN by default)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       mode:
         description: "plan writes only the JSON + the table; apply also nulls so_item_id"
         required: true
@@ -64,6 +68,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -75,13 +84,21 @@ jobs:
           COMPANY_ID: ${{ inputs.company_id }}
           OUT: ${{ github.workspace }}/dedication-dump/so-po-dedications.json
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: dedication-dump/
+          name: rows
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: so-po-dedication-dump-${{ inputs.mode }}
-          path: dedication-dump/
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7
 
   run-prod:
     if: ${{ inputs.target == 'prod' }}
@@ -89,6 +106,11 @@ jobs:
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
@@ -101,10 +123,18 @@ jobs:
           OUT: ${{ github.workspace }}/dedication-dump/so-po-dedications.json
           # GitHub-hosted runners have no IPv6 egress.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: dedication-dump/
+          name: rows
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: so-po-dedication-dump-${{ inputs.mode }}
-          path: dedication-dump/
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7

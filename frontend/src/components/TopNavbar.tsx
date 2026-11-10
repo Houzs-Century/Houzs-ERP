@@ -45,8 +45,12 @@ import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 export function TopNavbar() {
   const { user } = useAuth();
 
+  /* z-40, one above the DataTable's sticky thead / tfoot (z-30). The bar is a
+     stacking context, so its dropdowns can never rise above the bar's own
+     layer; at a z-30 tie the later-painted table header won and covered the
+     company / bell / profile menus. TopNavbar.layer.test.ts pins the order. */
   return (
-    <header className="sticky top-0 z-30 hidden h-[52px] items-center border-b border-border bg-surface pl-3.5 pr-2 lg:flex">
+    <header className="sticky top-0 z-40 hidden h-[52px] items-center border-b border-border bg-surface pl-3.5 pr-2 lg:flex">
       {/* Workspace tabs (left; scrolls in place on overflow). */}
       <WorkspaceTabs />
 

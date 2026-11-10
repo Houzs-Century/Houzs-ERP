@@ -49,6 +49,7 @@
 // zero while its own lines carry money, so a second apply finds nothing left,
 // says so, and exits 0 without writing. The UPDATE re-asserts the zero it read,
 // so a header a person set in between is not overwritten.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
@@ -262,7 +263,7 @@ async function main() {
       || Number(l.line_total_sen) !== Number(b.line_total_sen)
       || Number(l.qty) !== Number(b.qty)) {
       lineMoved++;
-      log(`   VERIFY: LINE MOVED ${b.item_code} - qty ${b.qty}->${l.qty}, unit ${b.unit_price_sen}->${l.unit_price_sen}, line total ${b.line_total_sen}->${l.line_total_sen}`);
+      log(`   VERIFY: LINE MOVED ${b.item_code} - qty ${b.qty}->${l.qty}, unit_price_sen ${b.unit_price_sen} -> unit_price_sen ${l.unit_price_sen}, line_total_sen ${b.line_total_sen} -> line_total_sen ${l.line_total_sen}`);
     }
   }
   if (lineAfter.length !== linesBefore.length) {

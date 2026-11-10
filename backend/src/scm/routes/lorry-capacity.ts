@@ -62,6 +62,7 @@ import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jo
 import { flattenProjectCrew } from '../lib/delivery-planning-board-reads';
 import { downDays, loadDownWindows } from '../lib/lorry-down-days';
 import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
+import { todayMyt } from '../lib/my-time';
 
 export const lorryCapacity = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorryCapacity.use('*', supabaseAuth);
@@ -233,9 +234,11 @@ lorryCapacity.get('/', async (c) => {
   const sb = c.get('supabase');
 
   /* Range — default to the current calendar month (1st .. last day) if omitted. */
-  const now = new Date();
-  const defFrom = isoOf(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const defTo = isoOf(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const thisDay = todayMyt();
+  const year = Number(thisDay.slice(0, 4));
+  const month0 = Number(thisDay.slice(5, 7)) - 1;
+  const defFrom = isoOf(Date.UTC(year, month0, 1));
+  const defTo = isoOf(Date.UTC(year, month0 + 1, 0));
   const from = (c.req.query('from') || defFrom).slice(0, 10);
   const to = (c.req.query('to') || defTo).slice(0, 10);
   const fleetParam = (c.req.query('fleet') ?? 'all').toLowerCase();

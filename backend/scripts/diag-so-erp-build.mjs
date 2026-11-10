@@ -34,6 +34,7 @@
  * Usage:  DOCS=HC-SO-013495,HC-SO-013497 COMPANY=1 node scripts/diag-so-erp-build.mjs
  * `DOCS` accepts ERP doc numbers or AutoCount document numbers, either way.
  */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";

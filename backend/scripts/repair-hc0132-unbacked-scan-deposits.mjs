@@ -40,6 +40,7 @@
    shape: each order has exactly one payment row, is_deposit, amount = deposit_sen.
 
    RE-RUN: inert. A booked order has a payment row, so it leaves the scope. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

@@ -26,6 +26,7 @@
 //
 // Writes nothing, opens no transaction, exits 0 for every legitimate answer.
 // RE-RUN: identical output; it is a SELECT-only probe.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;
@@ -66,7 +67,7 @@ async function main() {
                               ORDER BY i.line_no`;
     log(`  sales order: ${soRows.length} sofa line(s)`);
     for (const r of soRows) {
-      log(`    line ${r.line_no}  ${r.item_code}  qty ${r.qty}  unit ${r.unit_price_sen}  total ${r.total_sen}  acKey ${r.linked_ac_dtlkey ?? "-"}`);
+      log(`    line ${r.line_no}  ${r.item_code}  qty ${r.qty}  unit_sen ${r.unit_price_sen}  total_sen ${r.total_sen}  acKey ${r.linked_ac_dtlkey ?? "-"}`);
       log(`        desc2 ${JSON.stringify(r.description2)}`);
     }
 
@@ -89,7 +90,7 @@ async function main() {
           : !ded ? `dedicated to an SO line NOT on ${c.so}`
           : ded.item_code === r.item_code ? `dedicated to SO line ${ded.line_no} (${ded.item_code}) SAME code`
           : `dedicated to SO line ${ded.line_no} (${ded.item_code}) DIFFERENT code`;
-        log(`      ${r.item_code}  qty ${r.qty}  recv ${r.received_qty}  unit ${r.unit_price_sen}  total ${r.line_total_sen}  ${pair}`);
+        log(`      ${r.item_code}  qty ${r.qty}  recv ${r.received_qty}  unit_sen ${r.unit_price_sen}  total_sen ${r.line_total_sen}  ${pair}`);
         log(`          desc2 ${JSON.stringify(r.description2)}`);
       }
       /* The shuffle the applier would perform TODAY, printed rather than

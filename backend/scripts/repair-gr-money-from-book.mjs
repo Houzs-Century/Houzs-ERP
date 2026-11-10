@@ -85,6 +85,7 @@
 //
 // IT ENQUEUES NOTHING. No outbox row, no AutoCount call, no write-back. Owner
 // 2026-09-08: 「写回autocount的你不需要理了」.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

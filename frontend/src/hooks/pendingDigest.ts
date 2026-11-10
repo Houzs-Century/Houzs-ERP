@@ -11,6 +11,8 @@
  *  future lane change updates both for free.
  */
 
+import { mytDayOf } from "../vendor/scm/lib/dates";
+
 /** One row of the My Pending list, narrowed to what the digest needs. */
 export type PendingRow = {
   id: number;
@@ -40,11 +42,10 @@ export type PendingDigest = {
   mustAcknowledge: boolean;
 };
 
-/** Local calendar date (Malaysia for this deployment), never UTC: an event that
- *  ended today must not read as "past" just because the UTC clock rolled. */
+/** The Malaysian calendar date, never UTC and never the device's own zone: an
+ *  event that ended today must not read as "past" because a clock elsewhere rolled. */
 export function localToday(now: Date = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+  return mytDayOf(now.toISOString()) ?? "";
 }
 
 export function addDays(isoDate: string, days: number): string {

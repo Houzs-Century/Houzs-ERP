@@ -18,6 +18,7 @@ import { normalizePlate } from '../lib/plate-normalize';
 import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
 import { costSen, kmFromFixes, myDayWindow, type Fix } from '../lib/lorry-km';
 import { paginateAll } from '../lib/paginate-all';
+import { roadTrack, type ChunkCache, type Point } from '../lib/gps-road-track';
 
 export const lorries = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorries.use('*', supabaseAuth);
@@ -459,6 +460,47 @@ lorries.get('/:id/track', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const fixes = data ?? [];
   return c.json({ date, km: kmFromFixes(fixes), fixes });
+});
+
+// The same day's fixes drawn along the roads (owner 2026-11-10), for the live map and
+// the lorry page. Each chunk's road is kept in the edge cache by its own points, so the
+// 5-min poll asks Google only for a chunk it has not seen. Unified fleet like /:id/track.
+const ROAD_CACHE_DAYS = 30;
+function edgeChunkCache(origin: string): ChunkCache {
+  const url = (key: string) => `${origin}/__gps-road-cache/v1?${encodeURIComponent(key)}`;
+  return {
+    async get(key) {
+      try {
+        const hit = await caches.default.match(url(key));
+        return hit ? ((await hit.json()) as Point[] | null) : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    async put(key, road) {
+      try {
+        await caches.default.put(url(key), new Response(JSON.stringify(road), {
+          headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ROAD_CACHE_DAYS * 86_400}` },
+        }));
+      } catch { /* best effort: a miss only costs one more Directions call */ }
+    },
+  };
+}
+
+lorries.get('/:id/track/road', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /:id/track.
+  const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { data, error } = await paginateAll<Fix>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('lat, lng, recorded_at')
+    .eq('lorry_id', c.req.param('id'))
+    .gte('recorded_at', day.from).lt('recorded_at', day.to)
+    .order('recorded_at').order('id')
+    .range(f, t));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const track = await roadTrack(c.env, data ?? [], edgeChunkCache(new URL(c.req.url).origin));
+  return c.json({ date, ...track });
 });
 
 export default lorries;

@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { AlertTriangle, Info, X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useEscapeLayer } from "../lib/escapeStack";
 
 /**
  * Promise-based confirm/prompt dialogs. Replaces the native
@@ -140,13 +141,12 @@ function DialogShell({
     return () => clearTimeout(t);
   }, [item.kind]);
 
-  // Esc closes (cancel). Enter confirms when not in a textarea.
+  useEscapeLayer(() => onClose(item.kind === "confirm" ? false : null), true);
+
+  // Enter confirms when not in a textarea.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose(item.kind === "confirm" ? false : null);
-      } else if (e.key === "Enter") {
+      if (e.key === "Enter") {
         // Enter inside a textarea adds a newline — let it through.
         const target = e.target as HTMLElement;
         if (target.tagName === "TEXTAREA") return;

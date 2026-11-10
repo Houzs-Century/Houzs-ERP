@@ -98,3 +98,26 @@ describe("MobileConvertWizard step 1 — the Delivery Order arm is unchanged", (
     await expectOffered(["DO-LOADED", "DO-DISPATCHED"], ["DO-DRAFT", "DO-CANCELLED"]);
   });
 });
+
+/* Conts #699: SO -> DO offered an order with nothing left to deliver, and the
+   form it led to was empty. SO -> PO is not gated on delivery. */
+describe("MobileConvertWizard step 1 — SO -> DO needs something left to deliver", () => {
+  const lists = () => authedFetch.mockImplementation(async (url: string) => {
+    if (url.startsWith("/mfg-sales-orders?limit=200")) {
+      return { salesOrders: [{ ...so("SO-OPEN", "CONFIRMED"), has_undelivered: true }, { ...so("SO-DONE", "DELIVERED"), has_undelivered: false }] };
+    }
+    return {};
+  });
+
+  it("SO -> DO hides the fully delivered order", async () => {
+    lists();
+    wrap(<MobileConvertWizard target="do" onBack={() => {}} onCreated={() => {}} />);
+    await expectOffered(["SO-OPEN"], ["SO-DONE"]);
+  });
+
+  it("SO -> PO still offers it", async () => {
+    lists();
+    wrap(<MobileConvertWizard target="po" onBack={() => {}} onCreated={() => {}} />);
+    await expectOffered(["SO-OPEN", "SO-DONE"], []);
+  });
+});

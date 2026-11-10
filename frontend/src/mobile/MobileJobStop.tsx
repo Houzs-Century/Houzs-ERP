@@ -179,7 +179,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
             {(progress?.pod_photo_keys?.length ?? 0) > 0 && (
               <div className="card" style={{ padding: 12, marginBottom: 12 }}>
                 <div className="fld-l" style={{ marginBottom: 6 }}>POD photos</div>
-                <PodPhotoAlbum paths={(progress?.pod_photo_keys ?? []).map((_, n) => `/api/scm${base}/photo/${n}`)} fileStem={`POD-${str(ctx.ref) ?? jobRef.leg}`} />
+                <PodPhotoAlbum paths={(progress?.pod_photo_keys ?? []).map((_, n) => `/api/scm${base}/photo/${n}`)} fileStem={`POD-${str(ctx.ref) ?? jobRef.leg}`} title={str(ctx.ref) ?? jobRef.leg} />
               </div>
             )}
 

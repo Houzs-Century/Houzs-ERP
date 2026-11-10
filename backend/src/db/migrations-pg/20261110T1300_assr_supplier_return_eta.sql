@@ -1,4 +1,4 @@
--- 20261109T1200_assr_supplier_return_eta.sql
+-- 20261110T1300_assr_supplier_return_eta.sql
 -- REVERSAL: ALTER TABLE public.assr_supplier_returns DROP COLUMN IF EXISTS expected_return_at;
 --   The column is new and nullable; dropping it loses only the ETA dates typed
 --   on supplier return trips. GRANTS: none touched.

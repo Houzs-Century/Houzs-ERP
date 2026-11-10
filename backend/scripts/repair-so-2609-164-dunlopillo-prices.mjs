@@ -34,6 +34,7 @@
 
    RE-RUN: convergent. A line already at its old price is "done"; when all three
    are, the run says nothing to do and writes nothing. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { isServiceLine, isDeliveryFeeServiceCode } from '../src/scm/shared/service-sku.ts';
 

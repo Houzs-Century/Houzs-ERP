@@ -30,24 +30,31 @@
     <meta name="apple-mobile-web-app-title" content="Houzs ERP" />
 
     <!-- The brand web fonts, self-hosted — no external font origin on first
-         paint. /fonts/fonts-v2.css declares the same @font-face set the Google
-         Fonts css2 endpoint used to serve here: IBM Plex Sans 400-700,
-         IBM Plex Serif 400-700, IBM Plex Mono 400-600, Noto Sans SC
-         400/500/700/900, Noto Serif SC 400-900, Caveat 400/600, Archivo
-         500-700 — woff2 with unicode-range intact, so a browser still
-         downloads only the small CJK range chunks a page actually renders.
+         paint. Two sheets, split 2026-11-09 so first paint stops waiting on
+         the Chinese faces:
+
+         /fonts/fonts-v3.css (linked here, render-blocking, ~30 KB): IBM Plex
+         Sans 400-800, IBM Plex Serif 400-700, IBM Plex Mono 400-600, Caveat
+         400/600, Archivo 500-700.
+
+         /fonts/fonts-cjk-v1.css (~940 KB, NOT linked here): Noto Sans SC and
+         Noto Serif SC with Google's unicode-range slicing intact, so a browser
+         still downloads only the CJK range chunks a page renders. It is
+         attached after the load event by src/lib/deferredFonts.ts — a
+         script-inserted stylesheet never blocks rendering. It was 97% of the
+         old single fonts-v2.css. Chinese text paints in the system CJK font
+         first and swaps when the sheet lands (font-display: swap). It is not
+         an inline onload= swap because the CSP (functions/_middleware.ts) is
+         script-src 'self', no inline handlers.
 
          Files live in public/fonts/ and are cached immutable for a year
-         (public/_headers), the stylesheet included: any change to the font set
-         must ship under NEW file names and repoint this link — an in-place
-         edit will not reach returning browsers.
-
-         fonts.css -> fonts-v2.css (2026-08-01) is exactly that rule being
-         obeyed. The set gained an 800 face for IBM Plex Sans so the app's 88
-         font-extrabold headings stop synthesising, and the owner asked that it
-         reach EVERY user, not just first-time visitors. Under the immutable
-         year-long header an in-place edit would have reached nobody who had
-         already loaded the old file. Next change: fonts-v3.css, same drill.
+         (public/_headers), the stylesheets included: any change to the font
+         set must ship under NEW file names and repoint this link (or
+         deferredFonts.ts) — an in-place edit will not reach returning
+         browsers. fonts.css -> fonts-v2.css (2026-08-01, the 800 face) ->
+         fonts-v3.css + fonts-cjk-v1.css (2026-11-09) is that rule being
+         obeyed. fonts-v2.css stays in the tree for tabs still open on an
+         older build. Next change: fonts-v4.css / fonts-cjk-v2.css.
 
          Declared here rather than @import'ed in src/index.css for the same
          reason the external link was: a <link> starts fetching during HTML
@@ -58,7 +65,7 @@
          Keep this in sync with tailwind.config.js fontFamily and the
          --font-script / --font-mark tokens in src/vendor/design-system/
          tokens.css, which is what Caveat and Archivo are here for. -->
-    <link rel="stylesheet" href="/fonts/fonts-v2.css" />
+    <link rel="stylesheet" href="/fonts/fonts-v3.css" />
     <title>Houzs Century ERP</title>
   </head>
   <body>

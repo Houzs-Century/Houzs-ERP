@@ -34,6 +34,7 @@
 // scm.trip_stops already exist (migration 0053). Mounted at '/trips'.
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { syncTripCrewToDos } from '../lib/trip-crew-sync';
 import { z } from 'zod';
@@ -60,6 +61,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } fro
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
 import { dateOrNull } from '../lib/date-coerce';
+import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -99,8 +101,7 @@ function dual<T = unknown>(row: Record<string, unknown>, snake: string): T {
 /* Next TRIP-YYMM-NNN. Mirrors the sibling scm minters — max(suffix)+1 via
    mintMonthlyDocNo (self-healing; never count+1). */
 async function nextTripNo(sb: any): Promise<string> {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // TRIP stays CROSS-COMPANY (no companyDocPrefix) — one shared sequence, per
   // lib/companyScope.ts. mintMonthlyDocNo reads the row's single selected value,
   // so it keeps working whichever of trip_no/tripNo the driver hands back.
@@ -612,7 +613,7 @@ trips.get('/packing', async (c) => {
 
    Static segment → Hono matches it before '/:id'.
    ─────────────────────────────────────────────────────────────────────────*/
-const DO_DELIVERED = ['DELIVERED', 'SIGNED', 'INVOICED'];
+const DO_DELIVERED = [...DO_ARRIVED_STATES];
 
 trips.get('/history', async (c) => {
   const from = c.req.query('from');

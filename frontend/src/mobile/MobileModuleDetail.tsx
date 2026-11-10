@@ -10,6 +10,7 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { piPoNumbers } from "../vendor/scm/lib/pi-header-pos";
 import { MobileLineRemark } from "./MobileLineRemark";
 import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost"; import { MobileGrnLineRack } from "./MobileGrnLineRack";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
@@ -18,6 +19,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import { MobileAddLine } from "./MobileAddLine";
+import { FlowDocFilesCard } from "../vendor/scm/components/FlowDocFilesCard"; import { FLOW_DOC_KIND_BY_MODULE } from "../vendor/scm/lib/flow-doc-files";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
@@ -349,7 +351,7 @@ type DocMap = {
   /** status-pill.ts vocabulary for the header pill. REQUIRED - null is a decision (humanise the stored value). */
   statusDoc: StatusDocType | null;
   /** KV grid rows: [label, value]. */
-  meta: (h: any) => Array<[string, string]>;
+  meta: (h: any, items: any[]) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
   line: (it: any) => { name: string; sub?: string; remark?: string | null; qty: unknown; unitSen: unknown; amountSen: unknown };
@@ -543,15 +545,20 @@ const DOC_MODULES: Record<string, DocMap> = {
     ),
     notice: (_h, items) => mobilePiPoPriceNotice(items), // PO price vs PI price, reference only (owner 2026-09-14)
     status: (h) => h.status, statusDoc: "pi",
-    meta: (h) => [
+    meta: (h, items) => {
+      /* Every PO the lines bill, not only the header's first (owner 2026-11-10).
+         The phone has no hover, so the full list is shown and wraps. */
+      const pos = piPoNumbers(items.map((it) => it?.source_po_number), s(nested(h.purchase_order)?.po_number).trim() || null);
+      return [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
       ["Supplier", firstOf(nested(h.supplier)?.code)],
-      ["PO", firstOf(nested(h.purchase_order)?.po_number)],
+      [pos.length > 1 ? `POs (${pos.length})` : "PO", pos.join(", ") || "—"],
       ["GRN", firstOf(nested(h.grn)?.grn_number)],
       ["Currency", firstOf(h.currency)],
       ["Posted", dmy(h.posted_at)],
-    ],
+      ];
+    },
     stats: (h) => {
       const totalSen = Number(h.total_sen ?? 0);
       const paidSen = Number(h.paid_sen ?? 0);
@@ -647,6 +654,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Inspected", dmy(h.inspected_at)],
       ["Refunded", dmy(h.refunded_at)],
       ["Ref No.", firstOf(h.ref)],
+      ["Credit note", returnCreditLabel(h.credit_note_state) || "—"],
     ],
     stats: (h) => [
       ["Total", money(h.local_total_sen), "var(--ink)"],
@@ -1413,6 +1421,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
      docs, the SAME usePoSoCoverage key covQ below already fetched. */
   const [mapOpen, setMapOpen] = useState(false);
   const mapAnchor = flowAnchorForModule(moduleKey);
+  const filesKind = FLOW_DOC_KIND_BY_MODULE[moduleKey];
   // Purchase docs only: the real per-SKU origin SO(s) for each line.
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
@@ -1434,7 +1443,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   // the screen never flashes empty.
   const header = (data?.[map.headerKey] as any) ?? row ?? {};
   const items = (data?.items as any[]) ?? [];
-  const meta = map.meta(header).filter(([, v]) => v && v !== "—");
+  const meta = map.meta(header, items).filter(([, v]) => v && v !== "—");
   const stats = map.stats(header);
 
   const cancelled = isCancelledDoc(map.status(header));
@@ -1618,6 +1627,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}
           </div>
         )}
+        {!!id && filesKind && <div style={{ marginTop: 13 }}><FlowDocFilesCard kind={filesKind} docId={id} status={s(header?.status) || null} /></div>}
       </div>
       {/* Collected on the ORDER — desktop parity (DeliveryOrderDetailV2's aside
           card). Read-only on both surfaces: the order is the one place a
@@ -1902,3 +1912,4 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";
 import { MobileDoDeliveryIssues } from "./DeliveryIssueForm";
 import { poDriftMode } from "../vendor/scm/lib/po-drift";
+import { returnCreditLabel } from "../vendor/scm/lib/return-credit-state";
