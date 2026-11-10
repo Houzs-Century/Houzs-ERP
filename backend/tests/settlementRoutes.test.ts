@@ -585,6 +585,19 @@ describe('POST /settlement/batches/:id/received — the money arrives', () => {
     expect(detail.batch.outstanding_sen).toBe(0);
   });
 
+  /* "3,500.00" through Number() is NaN, and JSON.stringify sends NaN as null.
+     Reading that null as "the rest of it" journaled the whole outstanding. */
+  test.each([null, 'abc', '1750.00', 1750.5])('an amount sent as %j is refused, never read as the whole outstanding', async (amountSen) => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const res = await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05', amountSen });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'bad_amount' });
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEBANK')).toHaveLength(0);
+    expect(sb.tables.acc_settlement_receipts ?? []).toHaveLength(0);
+  });
+
   test('a date it was not given is refused rather than assumed', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };

@@ -157,9 +157,25 @@ describe('the statements waiting for money', () => {
     /* Amount blank = the rest of it; nobody retypes a number the statement
        already knows. */
     expect(receivedMutate).toHaveBeenCalledWith(
-      { batchId: 1, receivedOn: '2026-08-19', amountSen: null },
+      { batchId: 1, receivedOn: '2026-08-19' },
       expect.anything(),
     );
+
+    /* "3,500.00" went through Number() as NaN, reached the server as null and
+       journaled the whole outstanding. A thousands comma is what people type. */
+    fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '3,500.00' } });
+    fireEvent.click(screen.getByText('Money received'));
+    expect(receivedMutate).toHaveBeenLastCalledWith(
+      { batchId: 1, receivedOn: '2026-08-19', amountSen: 350000 },
+      expect.anything(),
+    );
+
+    /* Unreadable is refused on screen, never sent as "the rest of it". */
+    const before = receivedMutate.mock.calls.length;
+    fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '3.500,00' } });
+    fireEvent.click(screen.getByText('Money received'));
+    expect(receivedMutate.mock.calls.length).toBe(before);
+    expect(screen.getByRole('alert')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '2000.00' } });
     fireEvent.click(screen.getByText('Money received'));

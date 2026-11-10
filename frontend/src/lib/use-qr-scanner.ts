@@ -38,6 +38,7 @@
 // ----------------------------------------------------------------------------
 import { useCallback, useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
+import { scanHitFeedback } from './scan-feedback';
 
 /* HOW LONG THE SAME VALUE IS IGNORED FOR. 1500ms is Hookka's, arrived at on a
    real floor: long enough that a paper held steady adds once, short enough that
@@ -79,10 +80,17 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
   const rafRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastHitRef = useRef<{ value: string; at: number }>({ value: '', at: 0 });
+  /* Bumped by stop(). A getUserMedia that resolves after the scanner closed
+     belongs to a session nobody is watching; without this check its stream was
+     kept and the lens stayed on with nothing on screen. */
+  const sessionRef = useRef(0);
+  const startingRef = useRef(false);
   const onDecodedRef = useRef(onDecoded);
   onDecodedRef.current = onDecoded;
 
   const stop = useCallback(() => {
+    sessionRef.current += 1;
+    startingRef.current = false;
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -99,8 +107,10 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
   useEffect(() => stop, [stop]);
 
   const start = useCallback(async () => {
-    if (streamRef.current) return;
+    if (streamRef.current || startingRef.current) return;
     setCameraError(null);
+    const session = sessionRef.current;
+    startingRef.current = true;
     try {
       /* REAR CAMERA, SHARP FEED. The extra pixels are the whole answer to
          「上下左右斜角不敏感」: they let both decode paths resolve a code that is
@@ -114,6 +124,10 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
         },
         audio: false,
       });
+      if (session !== sessionRef.current) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       streamRef.current = stream;
 
       /* Continuous autofocus where the lens has it — a fixed-focus lens leaves
@@ -154,6 +168,8 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
           ? 'Camera blocked. Allow camera access for this site (tap the lock icon in the address bar), then tap Scan again.'
           : 'Could not open the camera. Make sure no other app is using it and that this page is on https.',
       );
+    } finally {
+      if (session === sessionRef.current) startingRef.current = false;
     }
   }, []);
 
@@ -232,6 +248,7 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
         return;
       }
       lastHitRef.current = { value, at: now };
+      scanHitFeedback();
       onDecodedRef.current(value);
     };
 

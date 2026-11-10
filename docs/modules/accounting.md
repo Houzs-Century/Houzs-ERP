@@ -106,6 +106,7 @@ Merchant reconciliation
 - Unconfirmed links refresh from their payment each time a report opens; a confirmed link is changed only by a named migration.
 - Both lists on Merchant reports export from their header's right-click, Excel and PDF, as the screen shows them. "Card payments no merchant report has reported yet" carries the order's Ref No. (`customerRefOf`) and reads about 90 days back; what is older is on neither the list nor its file.
 - Confirm books the fee only; each bank credit books SETTLEBANK separately, and a credit overshooting the report's net refuses.
+- Money received (`POST /settlement/batches/:id/received`): only a MISSING `amountSen` means the whole remaining amount; one that is sent must be an integer of sen, and anything else (null, a string, a fraction) refuses `bad_amount` (400). The screen parses the box with `parseMoneyToSen` (`lib/money.ts`), so "3,500.00" is RM 3,500.00 and an unreadable amount is refused on screen, never sent as "the rest of it". Read-only count of receipts that took the whole remaining amount: Actions › *Settlement receipts that took the whole outstanding (read-only)*.
 - Fee and payout-charge accounts must be ACTIVE EXPENSE LEAVES of the company; a payout charge is dated the settlement day, needs a note, cannot exceed the difference, one per day.
 - An acquirer's clearing account must be a live 326-/327- account of that company; untagged card money stays on generic 326-0000.
 - Bank recognition rules are global; regexes compile at write time and need a capture group; no delete (`is_active = false`).
