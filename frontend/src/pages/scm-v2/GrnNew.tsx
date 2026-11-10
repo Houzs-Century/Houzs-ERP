@@ -58,6 +58,7 @@ import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
+import { grnCreatedOutcome } from '../../vendor/scm/lib/grn-create-outcome';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
@@ -777,10 +778,7 @@ export const GrnNew = () => {
       await notifyAcNotSent(notify, createRes, 'Goods receipt');
       allowLeave();
       setDialog({
-        title: `GRN ${createRes.grnNumber} ${asDraft ? 'saved as draft' : 'created'}`,
-        body: asDraft
-          ? 'Saved as a draft — no stock moved yet. Open it and Confirm to receive the goods.'
-          : 'Received & posted — inventory + PO received qty updated.',
+        ...grnCreatedOutcome(createRes.grnNumber, asDraft, createRes),
         goTo: afterCreatePath(`/scm/grns/${createRes.id}`, backToPo),
         goLabel: backToPo ? 'Back to PO' : undefined,
       });

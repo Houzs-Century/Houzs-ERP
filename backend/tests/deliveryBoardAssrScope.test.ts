@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrLegGuardSql, assrBoardLegs } from "../src/scm/lib/assr-board-scope";
+import { assrBoardUnionSql, assrLegGuardSql, assrBoardLegs, assrLegOpen } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -157,5 +157,43 @@ describe("Delivery Planning board — a board-marked Delivered leg is DELIVERED 
     expect(sql).toContain("actual_delivery_at");
     expect(sql).toContain("pickup_cancelled_at");
     expect(sql).toContain("delivery_cancelled_at");
+  });
+});
+
+/* Regression (owner 2026-11-10): a case can reach Pending Delivery/Service (e.g. a
+   delivery was booked for items taken back) while a NEW inspection is scheduled for
+   the future. The board used to call that inspection done purely from the stage, so
+   it showed Delivered AND the leg could not be given a driver (the write 404'd).
+   An inspection scheduled today-or-later with no actual visit must stay a live,
+   writable PENDING leg. A past-dated / already-visited inspection stays done. */
+describe("Delivery Planning board — an upcoming inspection past the inspection stage is not Delivered/locked", () => {
+  const TODAY = "2026-11-10";
+  const pds = { stage: "pending_delivery_service", inspection_by: "own" as const };
+
+  test("future inspection date at pending_delivery_service stays a PENDING leg", () => {
+    const legs = assrBoardLegs(legCase({ ...pds, sched_inspection_date: "2026-11-11" }), false, TODAY);
+    expect(legs.find((l) => l.jobKind === "inspection")?.state).toBe("PENDING_DELIVERY");
+  });
+
+  test("a PAST inspection date at the same stage is still DELIVERED (no regression)", () => {
+    const legs = assrBoardLegs(legCase({ ...pds, sched_inspection_date: "2026-11-01" }), false, TODAY);
+    expect(legs.find((l) => l.jobKind === "inspection")?.state).toBe("DELIVERED");
+  });
+
+  test("without a board date the legacy stage-only behaviour holds (still DELIVERED)", () => {
+    const legs = assrBoardLegs(legCase({ ...pds, sched_inspection_date: "2026-11-11" }), false);
+    expect(legs.find((l) => l.jobKind === "inspection")?.state).toBe("DELIVERED");
+  });
+
+  test("assrLegOpen: an upcoming inspection is writable; a past / done / dateless one is locked", () => {
+    const base = { stage: "pending_delivery_service", actual_pickup_at: null, closed_at: null, status: "In Progress" };
+    // Scheduled for tomorrow, no actual visit → writable (the fix).
+    expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-11", actual_inspection_at: null }, "inspection", TODAY)).toBe(true);
+    // Scheduled in the past, no actual stamp → done by stage, locked.
+    expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-01", actual_inspection_at: null }, "inspection", TODAY)).toBe(false);
+    // Already visited → locked even if a stale future date lingers.
+    expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-11", actual_inspection_at: "2026-11-09" }, "inspection", TODAY)).toBe(false);
+    // No board date (legacy caller) → stage-only lock.
+    expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-11", actual_inspection_at: null }, "inspection")).toBe(false);
   });
 });

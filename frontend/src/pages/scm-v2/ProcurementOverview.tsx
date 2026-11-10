@@ -22,6 +22,8 @@ import { SupplierScorecard, supplierKey } from "./SupplierScorecard";
 import { api } from "../../api/client";
 import { addDays } from "../../hooks/pendingDigest";
 import { StockHealthList } from "./StockHealthList";
+import { CacheStamp } from "../../components/CacheStamp";
+import { useCacheRefresh, withFresh, oldestCachedAt, cacheStampLabel } from "../../lib/cacheStamp";
 
 type PeriodLine = {
   poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null;
@@ -52,6 +54,8 @@ type Turnover = {
 type Payload = {
   turnover: Turnover;
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
+  /** When these figures were computed (the server's kept copy can be up to 2 h old). */
+  cachedAt?: string;
   stockScope: string; warehouseKinds: Record<string, string>; needSource: { stored: number; estimated: number };
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
@@ -109,20 +113,31 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const stockWh = params.get("swh");
   const pickStock = (k: "scat" | "swh", v: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (v == null || n.get(k) === v) n.delete(k); else n.set(k, v); return n; }, { replace: true });
   const setScope = (v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v === "all") n.delete("loc"); else n.set("loc", v); return n; }, { replace: true });
+  const mainUrl = `/procurement-overview?from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`;
+  const mainKey = ["procurement-overview", period.from, period.to, dueTo, basis, scope];
   const q = useQuery({
-    queryKey: ["procurement-overview", period.from, period.to, dueTo, basis, scope],
-    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`),
+    queryKey: mainKey,
+    queryFn: () => authedFetch<Payload>(mainUrl),
     staleTime: 60_000,
   });
   const d = q.data;
   /* The supplier score always reads the last 90 days to today, whatever period is picked (owner 2026-11-01):
      early in a month "this month" has too few receipts to judge anyone. Same report, same cache. */
   const scoreFrom = addDays(today, -89);
+  const scoreUrl = `/procurement-overview?from=${scoreFrom}&to=${today}&dueTo=${today}&basis=${basis}&scope=${scope}`;
+  const scoreKey = ["procurement-overview", scoreFrom, today, today, basis, scope];
   const scoreQ = useQuery({
-    queryKey: ["procurement-overview", scoreFrom, today, today, basis, scope],
-    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${scoreFrom}&to=${today}&dueTo=${today}&basis=${basis}&scope=${scope}`),
+    queryKey: scoreKey,
+    queryFn: () => authedFetch<Payload>(scoreUrl),
     staleTime: 60_000,
   });
+  /* Served from a copy up to 2 h old: say when it was computed, and offer figures computed now. */
+  const { refresh, refreshing } = useCacheRefresh();
+  const onRefresh = () => void refresh([
+    { queryKey: mainKey, load: () => authedFetch<Payload>(withFresh(mainUrl)) },
+    ...(scoreUrl === mainUrl ? [] : [{ queryKey: scoreKey, load: () => authedFetch<Payload>(withFresh(scoreUrl)) }]),
+  ]);
+  const cachedAt = oldestCachedAt([q.data?.cachedAt, scoreQ.data?.cachedAt]);
   /* Quality cases per 100 received, Quality Overview's own figure for the same 90 days. */
   const quality = useQuery({
     queryKey: ["quality-overview", scoreFrom, today],
@@ -147,7 +162,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   /* "this month" / "this quarter" / "in 2026-08" — the period in plain words. */
   const when = period.key === "month" ? "this month" : period.key === "quarter" ? "this quarter" : period.key === "year" ? "this year" : `in ${period.label}`;
   const When = when.charAt(0).toUpperCase() + when.slice(1);
-  const asOfNote = d ? (d.asOf === today ? "as of today" : `as of ${d.asOf}, the period's last day`) : "";
+  /* "as of today" alone read as live; the figures are the kept copy's, so the note carries its time. */
+  const stamp = cacheStampLabel(cachedAt);
+  const asOfNote = d ? `${d.asOf === today ? "as of today" : `as of ${d.asOf}, the period's last day`}${stamp ? ` (${stamp.toLowerCase()})` : ""}` : "";
 
   const openLines = (title: string, measure: "raised" | "due" | "received" | "open", group: string | null) => {
     const inGroup = (l: PeriodLine) => !group || (by === "category" ? l.category === group : l.supplier === group);
@@ -185,6 +202,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           </select>
         )}
         {q.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+        {d && <CacheStamp cachedAt={cachedAt} onRefresh={onRefresh} refreshing={refreshing} />}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
 

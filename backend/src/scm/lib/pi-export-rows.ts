@@ -19,6 +19,10 @@ import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './company
 import { lookupByIds } from './document-line-export';
 import { pageWithTruncation } from './outstanding-po-lines';
 import { chunkIn } from './paginate-all';
+import { mapBounded } from './concurrency';
+
+/* How many supplier-binding reads one page runs at once. */
+const BINDINGS_CONCURRENCY = 6;
 import { PI_LIST_SELECT, filterPiList, orderPiList, type PiListFilters } from './pi-list-read';
 import { lineExportDescription2 } from './line-export-description2';
 import { warehouseLabel } from './warehouse-label';
@@ -158,32 +162,35 @@ export async function attachPiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<GrnLine>);
   if (grnLines.error) return { error: `goods received lines: ${grnLines.error}` };
 
+  /* Independent lookups run together, in two waves (each wave needs the ids the
+     one before it found); errors are still reported in the old serial order. */
   type Grn = { id: string; grn_number: string | null; warehouse_id: string | null };
-  const grns = await lookupByIds<Grn>([...grnLines.byId.values()].map((g) => g.grn_id), (batch, from, to) =>
-    scopeToCompany(sb.from('grns').select('id, grn_number, warehouse_id'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<Grn>);
-  if (grns.error) return { error: `goods received notes: ${grns.error}` };
-
   type PoLine = { id: string; purchase_order_id: string | null; so_item_id: string | null };
-  const poLines = await lookupByIds<PoLine>([...grnLines.byId.values()].map((g) => g.purchase_order_item_id), (batch, from, to) =>
-    scopeToCompany(sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<PoLine>);
+  const [grns, poLines] = await Promise.all([
+    lookupByIds<Grn>([...grnLines.byId.values()].map((g) => g.grn_id), (batch, from, to) =>
+      scopeToCompany(sb.from('grns').select('id, grn_number, warehouse_id'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<Grn>),
+    lookupByIds<PoLine>([...grnLines.byId.values()].map((g) => g.purchase_order_item_id), (batch, from, to) =>
+      scopeToCompany(sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<PoLine>),
+  ]);
+  if (grns.error) return { error: `goods received notes: ${grns.error}` };
   if (poLines.error) return { error: `purchase order lines: ${poLines.error}` };
 
   type Po = { id: string; po_number: string | null; linked_ac_docno: string | null };
-  const pos = await lookupByIds<Po>([...poLines.byId.values()].map((l) => l.purchase_order_id), (batch, from, to) =>
-    scopeToCompany(sb.from('purchase_orders').select('id, po_number, linked_ac_docno'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<Po>);
+  const [pos, so, wh] = await Promise.all([
+    lookupByIds<Po>([...poLines.byId.values()].map((l) => l.purchase_order_id), (batch, from, to) =>
+      scopeToCompany(sb.from('purchase_orders').select('id, po_number, linked_ac_docno'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<Po>),
+    lookupByIds<{ id: string; doc_no: string | null }>([...poLines.byId.values()].map((l) => l.so_item_id), (batch, from, to) =>
+      scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; doc_no: string | null }>),
+    lookupByIds<{ id: string; code: string | null; name: string | null }>([...grns.byId.values()].map((g) => g.warehouse_id), (batch, from, to) =>
+      sb.from('warehouses').select('id, code, name')
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; code: string | null; name: string | null }>),
+  ]);
   if (pos.error) return { error: `purchase orders: ${pos.error}` };
-
-  const so = await lookupByIds<{ id: string; doc_no: string | null }>([...poLines.byId.values()].map((l) => l.so_item_id), (batch, from, to) =>
-    scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; doc_no: string | null }>);
   if (so.error) return { error: `sales order numbers: ${so.error}` };
-
-  const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>([...grns.byId.values()].map((g) => g.warehouse_id), (batch, from, to) =>
-    sb.from('warehouses').select('id, code, name')
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; code: string | null; name: string | null }>);
   if (wh.error) return { error: `warehouses: ${wh.error}` };
 
   const companyId = activeCompanyId(c) ?? null;
@@ -196,8 +203,14 @@ export async function attachPiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
   }
   const bookItem = new Map<string, BookLineItem>();
   try {
-    for (const [supplierId, group] of bySupplier) {
-      const bindings = await bindingsFor(sb as never, companyId, group.map((l) => l.item_code ?? ''), supplierId || null);
+    /* One bindings read per supplier on the page — run BINDINGS_CONCURRENCY at a
+       time instead of one after another (a 50-invoice page can name 20+
+       suppliers). Same reads, same results; only the waiting overlaps. */
+    const groups = [...bySupplier];
+    const bindingsBySupplier = await mapBounded(groups, BINDINGS_CONCURRENCY, ([supplierId, group]) =>
+      bindingsFor(sb as never, companyId, group.map((l) => l.item_code ?? ''), supplierId || null));
+    for (const [i, [, group]] of groups.entries()) {
+      const bindings = bindingsBySupplier[i]!;
       for (const l of group) {
         const supplierCode = headerOf.get(l.purchase_invoice_id)?.supplier?.code ?? null;
         bookItem.set(l.id, bookLineItem({ itemCode: l.item_code, description: text(l.material_name) ?? text(l.description), category: l.item_group, uom: l.uom }, supplierCode, { bindings }));

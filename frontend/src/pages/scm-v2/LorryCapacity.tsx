@@ -302,6 +302,11 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
         <StatCard label="Revenue/Trip" value={centiOrDash(totals.revenue_per_trip_sen)} />
       </div>
 
+      {/* Running cost is never shown as a number that is too small: the server says why it is missing. */}
+      {data?.km_incomplete && (
+        <p role="status" className="mb-3 text-sm text-amber-700">Running cost not shown: {data.km_incomplete}</p>
+      )}
+
       {/* Per-lorry metric table — the shared DataTable (owner 2026-07-25:
           every table = the SO sample). Sort / funnel filters / Columns drawer /
           CSV export / frozen header all come from the component. */}

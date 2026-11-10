@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 
@@ -189,8 +190,12 @@ export const useCreditNoteDetail = (id: string | null) => useQuery({
 export const useCreateCreditNote = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreditNoteCreate) =>
-      authedFetch<{ ok: boolean; note: CreditNote }>('/credit-notes', { method: 'POST', body: JSON.stringify(body) }),
+    /* `idempotencyKey`: one per form (useIdempotencyKey), so a double press, or
+       Save & post again after the post half failed, answers the SAME note
+       instead of raising a second credit. The route releases the key on every
+       refusal (noWriteUntilMarked), so a corrected Save still goes through. */
+    mutationFn: ({ idempotencyKey, ...body }: CreditNoteCreate & { idempotencyKey: string | null }) =>
+      authedFetch<{ ok: boolean; note: CreditNote }>('/credit-notes', idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => invalidate(qc),
   });
 };

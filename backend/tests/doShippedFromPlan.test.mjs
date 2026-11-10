@@ -287,3 +287,42 @@ describe('readers', () => {
     expect(stampRackLabel(s, 'B')).toBeNull();
   });
 });
+
+/* 2990-DO-2611-016 (CODY-(K), KL WAREHOUSE): shipped as BF-01 Gap 12 Divan 8 Leg 4,
+   consuming the lot of PO 2990-PO-2610-028; then its spec was edited to add Total
+   24. That bucket consumed nothing (no stock carries that spec), the old bucket's
+   consumption is still booked, and the planner said "PO - | rack L8.2". */
+describe('planShippedFrom — a line whose spec was edited after the ship', () => {
+  const LEG4 = 'fabriccode=bf-01|gap=12"|divanheight=8"|legheight=4"';
+  const LEG4_TOTAL24 = `${LEG4}|totalheight=24"`;
+  const rack = [{ item_code: 'CODY-(K)', rack_id: 'r-l82', label: 'L8.2', qty: 1 }];
+
+  test('takes the PO from the DO bucket no line holds any more', () => {
+    const out = planShippedFrom({
+      lines: [line('l016', 'CODY-(K)', 1, { variant_key: LEG4_TOTAL24 })],
+      poUnits: [{ item_code: 'CODY-(K)', variant_key: LEG4, po: '2990-PO-2610-028', adjustment: false, qty: 1 }],
+      rackOuts: rack, at: AT, src: 'backfill',
+    }).get('l016');
+    expect(out.pos).toEqual([{ po: '2990-PO-2610-028', qty: 1 }]);
+    expect(out.racks).toEqual([{ rack_id: 'r-l82', label: 'L8.2', qty: 1, via: 'dispatch' }]);
+  });
+
+  test('a bucket a line still holds is not handed to another line', () => {
+    const out = planShippedFrom({
+      lines: [line('a', 'X', 1, { variant_key: 'v1' }), line('b', 'X', 1, { variant_key: 'v2' })],
+      poUnits: [{ item_code: 'X', variant_key: 'v1', po: 'PO-1', adjustment: false, qty: 1 }],
+      rackOuts: [], at: AT, src: 'backfill',
+    });
+    expect(out.get('a').pos).toEqual([{ po: 'PO-1', qty: 1 }]);
+    expect(out.has('b')).toBe(false);
+  });
+
+  test('another item\'s orphan bucket is never taken', () => {
+    const out = planShippedFrom({
+      lines: [line('l', 'CODY-(K)', 1, { variant_key: LEG4_TOTAL24 })],
+      poUnits: [{ item_code: 'CODY-(Q)', variant_key: LEG4, po: 'PO-Q', adjustment: false, qty: 1 }],
+      rackOuts: [], at: AT, src: 'backfill',
+    });
+    expect(out.has('l')).toBe(false);
+  });
+});

@@ -512,6 +512,8 @@ describe('a payment request answered by a bill (?fromRequest=, owner 2026-09-30 
         notes: 'Payment request HC-PRQ-2609-001 — Booth F1 rental',
         lines: [{ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A001', amountSen: 800_000, projectId: 348 }],
         paymentRequestId: 'prq-1',
+        /* One key per opened form (fix/failed-save-looks-ok). */
+        idempotencyKey: expect.any(String),
       });
     } finally {
       requestDetail = undefined;

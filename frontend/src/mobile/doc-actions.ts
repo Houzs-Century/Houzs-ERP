@@ -11,6 +11,8 @@
    read beside the rest of the screen.
    ---------------------------------------------------------------------------- */
 
+import { inBandFailureText, type InBandFailure } from "../vendor/scm/lib/mutation-error";
+
 export type ActVariant = "solid" | "outline" | "danger";
 
 /** One footer action button descriptor. */
@@ -102,4 +104,18 @@ export async function askActionReason(
   const body = action.request.body;
   const carried = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   return { ...action, request: { ...action.request, body: { ...carried, reason: reason.trim() } } };
+}
+
+/**
+ * What the footer says once an action's request came back 200. It used to be
+ * "Done" every time — including a Delivery Order Confirm whose stock OUT was
+ * refused, or a GRN post whose PO recount failed: the server says so in the body
+ * (`movementErrors` / `cancelErrors` / `reversalErrors` / `recountError`) and the
+ * phone threw the body away. The desktop reads the same fields through
+ * reportInBandFailure; this is the phone's copy of that rule, worded the same.
+ */
+export function actionDoneNotice(label: string, data: unknown): { title: string; body?: string; tone?: "error" } {
+  const text = inBandFailureText((data ?? undefined) as InBandFailure | undefined);
+  if (!text) return { title: "Done" };
+  return { title: `${label} saved, but not everything was recorded`, body: text, tone: "error" };
 }

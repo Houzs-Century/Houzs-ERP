@@ -7,12 +7,14 @@
 // fixture in delivery-planning.bands.fixture.ts, clock fixed at 2026-11-10. It was
 // produced by importing that handler from a temporary copy and calling runBoard()
 // for each key; it is data, not a guess. Regenerate it the same way whenever the
-// fixture changes.
+// fixture changes. Regenerated 2026-11-10 with the current handler for the
+// Overdue-from-the-delivery-day rule: SO-OPEN-2 (due in 2 days) is now
+// PENDING_DELIVERY, nothing else moved.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import before from './__fixtures__/dp-board-before.json';
 import { deliveryPlanningBoardHandler } from './delivery-planning';
-import { FIXED_NOW, runBoard, type Caller } from './delivery-planning.bands.fixture';
+import { FIXED_NOW, fixtureTables, runBoard, type Caller } from './delivery-planning.bands.fixture';
 import { bandHeaderOr, bandOf, parseBand } from '../lib/delivery-board-window';
 
 type Order = { so_doc_no: string; row_type: string; delivery_state: string } & Record<string, unknown>;
@@ -121,5 +123,37 @@ describe('parameters', () => {
       expect((await runBoard(deliveryPlanningBoardHandler, 'office', qs)).status, qs).toBe(400);
     }
     expect(parseBand(undefined, undefined)).toBeNull();
+  });
+});
+
+describe('DP_BOARD_SOURCE (lib/delivery-board-source.ts) with no Postgres reachable', () => {
+  // The SQL path runs on real Postgres in tests-pg/deliveryBoardSql.pg.test.ts. Here
+  // there is no database URL, so its statement fails: the board must still answer,
+  // from the PostgREST reads, byte-identical to the board as it was.
+  for (const source of ['sql', 'shadow']) {
+    it(`${source}: whole board, OPEN, driver and counts_only are unchanged`, async () => {
+      const run = async (qs: string, caller: Caller = 'office') => {
+        const r = await runBoard(deliveryPlanningBoardHandler, caller, qs, source);
+        expect(r.status, JSON.stringify(r.body).slice(0, 300)).toBe(200);
+        return r.body as Body;
+      };
+      expect(await run('')).toEqual(old.office_all);
+      expect(await run('?state=OPEN')).toEqual(old.office_open);
+      expect(await run('?region=ALL&state=ALL', 'driver')).toEqual(old.driver_all);
+      expect((await run('?counts_only=1')).counts_by_region?.ALL).toEqual(old.office_all!.counts);
+    });
+  }
+});
+
+describe('manual DP jobs past 1,000', () => {
+  it('every job reaches the board (the read used to stop at .limit(1000))', async () => {
+    const tables = fixtureTables();
+    const base = tables.dp_orders![0]!;
+    tables.dp_orders = Array.from({ length: 1205 }, (_, i) => ({ ...base, id: i + 1, dp_no: `DP-${i + 1}`, status: i % 2 ? 'DELIVERED' : 'PENDING' }));
+    const r = await runBoard(deliveryPlanningBoardHandler, 'office', '', null, tables);
+    expect(r.status).toBe(200);
+    const dp = (r.body as Body).orders.filter((o) => o.row_type === 'dp');
+    expect(dp).toHaveLength(1205);
+    expect(new Set(dp.map((o) => o.so_doc_no)).size).toBe(1205);
   });
 });

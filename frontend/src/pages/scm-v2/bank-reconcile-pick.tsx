@@ -14,6 +14,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import { useMatchBankGroup, type BankLine, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, refusalText } from './settlement-ui';
+import { dropReturnPicks, peekReturnPicks, rememberReturnPicks } from '../../lib/returnScroll';
 
 export type ReconcilePick = {
   pickedLines: number[];
@@ -21,9 +22,13 @@ export type ReconcilePick = {
   toggleLine: (id: number) => void;
   toggleEntry: (jeNo: string) => void;
   clear: () => void;
+  /** Note the ticks as a document opens from this page, for the way back. */
+  keepForReturn: () => void;
 };
 
 const Ctx = createContext<ReconcilePick | null>(null);
+/** The pick state where there may be none — a link that notes the ticks when there are any. */
+export const ReconcilePickContext = Ctx;
 
 /** The pick state, for a table inside the provider. */
 export const useReconcilePick = (): ReconcilePick => {
@@ -37,9 +42,14 @@ export const useReconcilePick = (): ReconcilePick => {
 export const byDateThenLine = <T extends { booked_on: string; line_no: number }>(lines: T[]): T[] =>
   [...lines].sort((a, b) => String(a.booked_on).localeCompare(String(b.booked_on)) || a.line_no - b.line_no);
 
-export const ReconcilePickProvider = ({ lines, entries, children }: { lines: BankLine[]; entries: LedgerEntry[]; children: React.ReactNode }) => {
-  const [ticked, setTicked] = useState<number[]>([]);
-  const [tickedEntries, setTickedEntries] = useState<string[]>([]);
+/** `ready`: the lists have arrived (a screen that mounts this while it loads says
+    when), so a tick they do not hold may be let go. */
+export const ReconcilePickProvider = ({ lines, entries, ready = true, children }: { lines: BankLine[]; entries: LedgerEntry[]; ready?: boolean; children: React.ReactNode }) => {
+  /* What was ticked when an order was opened from here comes back with the page
+     (owner 2026-11-10: 点开后也可以返回这里), once. */
+  const [ticked, setTicked] = useState<number[]>(() => peekReturnPicks()?.lines ?? []);
+  const [tickedEntries, setTickedEntries] = useState<string[]>(() => peekReturnPicks()?.entries ?? []);
+  useEffect(() => { dropReturnPicks(); }, []);
   /* Only what is still on the screen is ticked (owner 2026-11-10: 这个情况不应该出现啊).
      A movement ticked, then matched another way, left the list but kept its tick —
      unseen, not in the bar's totals, and still sent, so the next match was refused
@@ -51,15 +61,17 @@ export const ReconcilePickProvider = ({ lines, entries, children }: { lines: Ban
   const pickedLines = useMemo(() => ticked.filter((id) => listedLines.has(id)), [ticked, listedLines]);
   const pickedEntries = useMemo(() => tickedEntries.filter((je) => listedEntries.has(je)), [tickedEntries, listedEntries]);
   useEffect(() => {
+    if (!ready) return;
     setTicked((was) => (was.every((id) => listedLines.has(id)) ? was : was.filter((id) => listedLines.has(id))));
     setTickedEntries((was) => (was.every((je) => listedEntries.has(je)) ? was : was.filter((je) => listedEntries.has(je))));
-  }, [listedLines, listedEntries]);
+  }, [ready, listedLines, listedEntries]);
   const value = useMemo<ReconcilePick>(() => ({
     pickedLines,
     pickedEntries,
     toggleLine: (id) => setTicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id])),
     toggleEntry: (je) => setTickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je])),
     clear: () => { setTicked([]); setTickedEntries([]); },
+    keepForReturn: () => rememberReturnPicks({ lines: pickedLines, entries: pickedEntries }),
   }), [pickedLines, pickedEntries]);
   return (
     <Ctx.Provider value={value}>

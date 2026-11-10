@@ -22,6 +22,21 @@ export type SwrEnvelope<T> = { __swr: 1; v: T; soft: number; at: string };
 export type SwrSource = 'fresh' | 'stale' | 'miss' | 'bypass';
 
 const LOCK_SECONDS = 60; // KV's minimum expirationTtl
+/** A Refresh within this many seconds of the stored copy being built is served that copy. */
+export const REFRESH_FLOOR_SECONDS = 60;
+
+/**
+ * When the figures a cached report answered with were computed: the stored
+ * copy's time, or now for a copy computed in this request. Sent IN THE BODY as
+ * `cachedAt` (beside the X-Cache-At header) because the SPA's fetch helpers
+ * hand back the body only, and a page that cannot see the time says "as of
+ * today" over figures up to two hours old.
+ */
+export const cachedAtOf = (at: string | null, now = Date.now()): string => at ?? new Date(now).toISOString();
+
+/** `?fresh=1` — the viewer's Refresh. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono route context; only the query is read
+export const wantsFresh = (c: Context<any>): boolean => c.req.query('fresh') === '1';
 
 function isEnvelope<T>(x: unknown): x is SwrEnvelope<T> {
   return typeof x === 'object' && x !== null && (x as { __swr?: unknown }).__swr === 1
@@ -54,6 +69,8 @@ export async function cachedSwr<R>(opts: {
   compute: () => Promise<R>;
   cacheable: (r: R) => boolean;
   waitUntil: ((p: Promise<unknown>) => void) | null;
+  /** The viewer pressed Refresh: recompute now unless the stored copy is under REFRESH_FLOOR_SECONDS old. */
+  refresh?: boolean;
   now?: () => number;
 }): Promise<{ result: R; source: SwrSource; at: string | null }> {
   const { kv, key, compute, cacheable } = opts;
@@ -74,6 +91,15 @@ export async function cachedSwr<R>(opts: {
 
   let hit: unknown = null;
   try { hit = await kv.get(key, { type: 'json' }); } catch { hit = null; }
+
+  /* A Refresh press recomputes and stores in the request, so the answer it gets
+     is the database's, not the copy it was refreshing. A copy younger than the
+     floor is served as is: a row of impatient clicks costs one report, not one each. */
+  if (opts.refresh && !(isEnvelope<R>(hit) && now() - Date.parse(hit.at) < REFRESH_FLOOR_SECONDS * 1000)) {
+    const fresh = await compute();
+    await storeLogged(fresh);
+    return { result: fresh, source: 'miss', at: null };
+  }
 
   if (isEnvelope<R>(hit)) {
     if (now() < hit.soft) return { result: hit.v, source: 'fresh', at: hit.at };
@@ -128,8 +154,11 @@ export async function serveSwr(c: Context<any>, opts: {
     compute: opts.build,
     cacheable: (r) => r.ok,
     waitUntil,
+    refresh: wantsFresh(c),
   });
   c.header('X-Cache', source);
   if (at) c.header('X-Cache-At', at);
-  return result.ok ? c.json(result.body as object) : c.json(result.body as object, result.status);
+  return result.ok
+    ? c.json({ ...(result.body as object), cachedAt: cachedAtOf(at) })
+    : c.json(result.body as object, result.status);
 }

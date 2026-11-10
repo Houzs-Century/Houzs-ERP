@@ -56,6 +56,7 @@ function Harness({ initial }: { initial: Draft }) {
       isEditing
       variantsRequired
       seedSofaLegDefault
+      specLockedReason={null}
       lineDateLocked={false}
       attachOptions={null}
     />

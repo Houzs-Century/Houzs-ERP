@@ -243,3 +243,16 @@ test('a single-quoted JS SQL string still exposes its placeholders (pms-agent.ts
   const good = "await db.prepare('INSERT INTO b (id, brief) VALUES (?, ?::text::jsonb)').bind(id, JSON.stringify(brief)).run();";
   assert.deepEqual(scanSource('backend/src/services/agents/x.ts', good, { strictBind: true }), []);
 });
+
+// -- .unsafe(CONST, [...]): the statement is a constant in the same file -------
+
+test('reads the funnel off a SQL constant declared in the file (delivery-board-sql.ts shape)', () => {
+  const funnelled = "const Q = `SELECT * FROM t WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))`;\n"
+    + 'await sql.unsafe(Q, [JSON.stringify(ids)]);';
+  assert.deepEqual(scan(funnelled), []);
+  const bare = "const Q = `SELECT * FROM t WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb))`;\n"
+    + 'await sql.unsafe(Q, [JSON.stringify(ids)]);';
+  assert.equal(scan(bare).length, 1);
+  // An identifier the file does not declare still flags: no text, no funnel.
+  assert.equal(scan('await sql.unsafe(IMPORTED_Q, [JSON.stringify(ids)]);').length, 1);
+});
