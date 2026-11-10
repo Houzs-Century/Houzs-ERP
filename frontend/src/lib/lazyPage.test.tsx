@@ -39,7 +39,8 @@ describe("lazyPage", () => {
 
 describe("preloadElementChunks", () => {
   it("starts the shell AND the page nested inside a guard, in the same tick", () => {
-    const shell = vi.fn(() => Promise.resolve({ default: Hello }));
+    const ShellBody = ({ children }: { children: ReactNode }) => <>{children}</>;
+    const shell = vi.fn(() => Promise.resolve({ default: ShellBody }));
     const page = vi.fn(() => Promise.resolve({ default: Hello }));
     const Shell = lazyPage(shell);
     const Page = lazyPage(page);

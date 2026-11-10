@@ -16,6 +16,14 @@ const MobileApp = lazyPage(() =>
   import("../mobile/MobileApp").then((m) => ({ default: m.MobileApp })),
 );
 
+/** Whether a phone gets the mobile shell: the mobile build exists for the base
+ *  company only (owner: 2990 手机关闭). One home, shared with main.tsx's boot
+ *  preload so the two can never pick different shells. */
+export function mobileShellEnabled(isMobile: boolean): boolean {
+  const mobileEnabled = isMobile && hostDefaultCompanyCode() === HOUZS_COMPANY_CODE;
+  return mobileEnabled;
+}
+
 /** Start the phone shell's chunk at boot, in parallel with /api/auth/me, rather
  *  than after it (main.tsx, signed-in phone sessions only). */
 export function preloadMobileApp(): void {
@@ -73,7 +81,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // The mobile build exists ONLY for HOUZS (the owner's phone design). 2990 (and
   // any other company) has no mobile UI, so on the 2990 host we fall back to the
   // desktop app even on phones — "2990 手机关闭".
-  const mobileEnabled = isMobile && hostDefaultCompanyCode() === HOUZS_COMPANY_CODE;
+  const mobileEnabled = mobileShellEnabled(isMobile);
 
   // Track the hash so in-page links (#forgot, back-to-login) re-render
   // the gate without a full navigation. #invite= arrives as a fresh

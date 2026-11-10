@@ -11,9 +11,8 @@ import "./vendor/design-system/tokens.css";
 import { ToastProvider } from "./hooks/useToast";
 import { DialogProvider } from "./hooks/useDialog";
 import { AuthProvider, primeAuthMe } from "./auth/AuthContext";
-import { AuthGate, preloadMobileApp } from "./auth/AuthGate";
+import { AuthGate, mobileShellEnabled, preloadMobileApp } from "./auth/AuthGate";
 import { isMobileViewportNow } from "./mobile/useIsMobile";
-import { HOUZS_COMPANY_CODE, hostDefaultCompanyCode } from "./lib/branding";
 import { PwaBanners } from "./components/PwaBanners";
 import { NewVersionBanner } from "./components/NewVersionBanner";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
@@ -287,7 +286,7 @@ function RootApp() {
    existing ChunkReloadBoundary ladder still handles a stale chunk. */
 if (!canonicalTarget && readAuthToken() && appSurfaceForPath(window.location.pathname) === "staff") {
   primeAuthMe();
-  if (isMobileViewportNow() && hostDefaultCompanyCode() === HOUZS_COMPANY_CODE) preloadMobileApp();
+  if (mobileShellEnabled(isMobileViewportNow())) preloadMobileApp();
   else preloadRouteChunks(window.location.pathname);
 }
 
