@@ -56,8 +56,13 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
   );
 
   return (
-    <div>
-      <div className={cn("flex items-center justify-between", !isLabelHidden && "mb-1.5")}>
+    <div className={cn(isLabelHidden && "relative")}>
+      <div
+        className={cn(
+          "flex items-center justify-between",
+          isLabelHidden ? "pointer-events-none absolute -top-2 right-2 z-10 gap-1 rounded bg-surface px-1" : "mb-1.5",
+        )}
+      >
         <label className={cn("text-[10px] font-semibold uppercase tracking-wider text-ink-muted", isLabelHidden && "sr-only")}>
           {label}
         </label>
