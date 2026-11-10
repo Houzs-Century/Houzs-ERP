@@ -210,6 +210,28 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   priceTouched:   true,
 });
 
+/* Whole-line diff against the loaded row: an existing line is sent only when
+ *  something on it changed. */
+const lineChanged = (d: EditLine, it: PoItemRow | undefined): boolean =>
+  !!it && (
+    d.itemCode !== it.item_code ||
+    (d.materialName || d.itemCode) !== it.material_name ||
+    (d.notes ?? '') !== (it.notes ?? '') ||
+    (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
+    (d.category ?? '') !== (it.item_group ?? '') ||
+    d.qty !== it.qty ||
+    d.unitPriceSen !== it.unit_price_sen ||
+    (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
+    (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
+    (d.deliveryDateOverridden ?? false) !== (it.line_delivery_date_overridden ?? false) ||
+    (d.supplierDeliveryDate2 ?? null) !== (it.supplier_delivery_date_2 ?? null) ||
+    (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
+    (d.supplierDeliveryDate4 ?? null) !== (it.supplier_delivery_date_4 ?? null) ||
+    (d.warehouseId ?? null) !== (it.warehouse_id ?? null) ||
+    (d.soItemId ?? null) !== (it.so_item_id ?? null) ||
+    JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {})
+  );
+
 export const PurchaseOrderDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -731,9 +753,16 @@ export const PurchaseOrderDetail = () => {
     }
     setSavingDraft(true);
     try {
+      const byId = new Map(items.map((it) => [it.id, it]));
+      const lineWork = editLines.some((d) => !d.itemId || lineChanged(d, byId.get(d.itemId)));
+      /* The header PATCH goes first and carries the version this screen loaded
+         (sister review G6), so a buyer whose screen is older than someone
+         else's Save is refused before any line is written. With no header
+         change it sends the version alone. */
       if (headerDraft) {
         await updateHeader.mutateAsync({
           id: po.id,
+          expectedUpdatedAt: po.updated_at,
           ...(headerDraft as Record<string, unknown>),
           /* Only the three OPTIONAL slots are nulled here. `po_date` is
              `date DEFAULT now() NOT NULL` (scm-schema/2990s-full-schema.sql)
@@ -743,8 +772,9 @@ export const PurchaseOrderDetail = () => {
           supplierDeliveryDate3: blankDateToNull(headerDraft.supplierDeliveryDate3),
           supplierDeliveryDate4: blankDateToNull(headerDraft.supplierDeliveryDate4),
         });
+      } else if (lineWork) {
+        await updateHeader.mutateAsync({ id: po.id, expectedUpdatedAt: po.updated_at });
       }
-      const byId = new Map(items.map((it) => [it.id, it]));
       for (const d of editLines) {
         if (!d.itemId) {
           // New line — full insert payload.
@@ -773,25 +803,7 @@ export const PurchaseOrderDetail = () => {
           continue;
         }
         const it = byId.get(d.itemId);
-        if (!it) continue;
-        const changed =
-          d.itemCode !== it.item_code ||
-          (d.materialName || d.itemCode) !== it.material_name ||
-          (d.notes ?? '') !== (it.notes ?? '') ||
-          (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
-          (d.category ?? '') !== (it.item_group ?? '') ||
-          d.qty !== it.qty ||
-          d.unitPriceSen !== it.unit_price_sen ||
-          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
-          (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
-          (d.deliveryDateOverridden ?? false) !== (it.line_delivery_date_overridden ?? false) ||
-          (d.supplierDeliveryDate2 ?? null) !== (it.supplier_delivery_date_2 ?? null) ||
-          (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
-          (d.supplierDeliveryDate4 ?? null) !== (it.supplier_delivery_date_4 ?? null) ||
-          (d.warehouseId ?? null) !== (it.warehouse_id ?? null) ||
-          (d.soItemId ?? null) !== (it.so_item_id ?? null) ||
-          JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
-        if (!changed) continue;
+        if (!it || !lineChanged(d, it)) continue;
         await updateItem.mutateAsync({
           poId: po.id, itemId: d.itemId,
           itemCode:   d.itemCode,

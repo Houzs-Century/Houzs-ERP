@@ -220,31 +220,6 @@ export async function getActiveLeadTimeProfileId(env: Env): Promise<number | nul
 
 // ── PO number generator (internal / service-issued) ───────────
 
-/**
- * Generates the next internal service PO number in format
- * APO/YYMM-NNN (Assr Purchase Order). Sequence resets each month
- * and is based on the highest existing po_no in assr_cases that
- * matches the prefix — no dedicated counter table.
- */
-export async function nextServicePONumber(env: Env, nowMs = Date.now()): Promise<string> {
-  const prefix = `APO/${yymmFor(nowMs)}`;
-
-  const row = await env.DB.prepare(
-    `SELECT po_no FROM assr_cases
-      WHERE po_no LIKE ?
-      ORDER BY po_no DESC LIMIT 1`
-  )
-    .bind(`${prefix}-%`)
-    .first<{ po_no: string }>();
-
-  let next = 1;
-  if (row?.po_no) {
-    const seq = parseInt(row.po_no.split("-")[1] ?? "", 10);
-    if (!isNaN(seq)) next = seq + 1;
-  }
-  return `${prefix}-${String(next).padStart(3, "0")}`;
-}
-
 // ── ASSR number generator ─────────────────────────────────────
 
 // ASSR/YYMM-NNN, month in MYT (07:00 on the 1st is the new month). The number

@@ -7,7 +7,7 @@ import { yymmFor } from '../src/services/documentRefs';
 import { nextDocNo as nextSoDocNo } from '../src/scm/routes/mfg-sales-orders';
 import { nextDocNo as nextCsDocNo } from '../src/scm/routes/consignment-orders';
 import { nextSiNumber } from '../src/scm/lib/si-from-do';
-import { nextServicePONumber } from '../src/services/assr';
+import { nextServicePONumber } from '../src/services/assrNumbers';
 import type { Env } from '../src/types';
 
 /* A document raised at 01:30 Malaysia time on 1 Dec is 17:30 UTC on 30 Nov.
@@ -68,8 +68,12 @@ describe('document minters use the Malaysian month', () => {
   it('a service PO made at 01:30 on 1 Dec gets an APO/2612 number', async () => {
     const binds: unknown[] = [];
     const DB = {
-      prepare: () => ({
-        bind: (...b: unknown[]) => { binds.push(...b); return { first: async () => null }; },
+      prepare: (sql: string) => ({
+        bind: (...b: unknown[]) => {
+          if (sql.includes('next_doc_no_n')) return { first: async () => { throw new Error('function scm.next_doc_no_n does not exist'); } };
+          binds.push(...b);
+          return { all: async () => ({ results: [] }) };
+        },
       }),
     };
     expect(await nextServicePONumber({ DB } as unknown as Env, Date.parse(MYT_0130_1_DEC))).toBe('APO/2612-001');
