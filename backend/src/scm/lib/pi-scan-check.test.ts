@@ -1,6 +1,6 @@
 /* Scan, check, then create, for supplier invoices (owner 2026-11-04): the working copy an invoice scan keeps. */
 import { describe, expect, test } from 'vitest';
-import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, extractOfReview, repeatedPis, setPieces, suggestBills, NO_CODES, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
+import { addSalesTax, billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, extractOfReview, repeatedPis, staleSuggestions, setPieces, suggestBills, NO_CODES, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
 import { familiesByModelWord } from './scan-word-match';
 import type { PiLineMatchResult } from './pi-scan-match';
@@ -217,5 +217,17 @@ describe('a printed size never picks a different model (owner 2026-11-09, HOOKKA
     const lines = [row('1013-(S)', 'JAGER BEDFRAME (3FT) (90X190CM)')];
     suggestBills(lines, [withDesc(bill('j', 'GRN-1', 'JAGER-(S)', 1), 'JAGER BEDFRAME (3FT) (90X190CM)'), withDesc(bill('c', 'GRN-1', 'CODY-(S)', 1), 'CODY BEDFRAME (3FT) (90X190CM)')], ['GRN-1'], new Map(), new Map());
     expect(lines[0]!.grnItemId).toBe('j');
+  });
+});
+
+describe('a suggested tie to a receipt line another invoice billed is stale (owner 2026-11-10, INV-2610-097)', () => {
+  const line = (key: string, grnItemId: string | null, suggested: boolean): PiReviewLine => ({ key, grnItemId, grnNumber: grnItemId ? 'GRN-1' : null, qty: 1, suggested, ai: false, read: { itemCode: key, description: key, qty: 1, unitPrice: 0, lineTotal: 0 } });
+  const review = (lines: PiReviewLine[]): PiReview => ({ v: 5, supplierId: 's1', supplierRead: null, invoiceNumber: 'INV-2610-097', invoiceDate: null, doNo: null, poNo: null, notes: null, taxNote: null, lineTier: null, lines });
+  test('counts only suggested rows whose line is no longer open', () => {
+    const r = review([line('a', 'gone', true), line('b', 'open', true), line('c', 'gone', false), line('d', null, false)]);
+    expect(staleSuggestions(r, new Set(['open']))).toBe(1);
+  });
+  test('nothing stale when every suggested line is still open', () => {
+    expect(staleSuggestions(review([line('a', 'open', true)]), new Set(['open']))).toBe(0);
   });
 });

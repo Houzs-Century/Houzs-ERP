@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { grnRackOptionsWithSiblingStock } from './grn-line-rack';
+import { enterPick, exactPick } from '../components/SearchableSelect';
 
 const OWN = [
   { id: 'own-l5-1', rack: 'Rack L5.1' },
@@ -45,5 +46,17 @@ describe('grnRackOptionsWithSiblingStock — what the other company has on the s
     expect(grnRackOptionsWithSiblingStock(OWN, null, [hc('x', 'Rack L5.1', [1])]).map((o) => o.label))
       .toEqual(['Rack L5.1', 'Rack L5.2', 'Rack R1.1']);
     expect(grnRackOptionsWithSiblingStock(OWN, 'KL WAREHOUSE', [])).toHaveLength(3);
+  });
+});
+
+// 2990-GRN-2611-012 (owner 2026-11-10): a shelf shared with HC carries the hint
+// in its label, and a typed rack must still name it, or the New GRN saves none.
+describe("a typed rack still names a shelf that shows the other company's stock", () => {
+  it('typed L5.1 is Rack L5.1 · HC 6 pcs, not L5.10', () => {
+    const options = grnRackOptionsWithSiblingStock([...OWN, { id: 'own-l5-10', rack: 'Rack L5.10' }], 'KL WAREHOUSE', [hc('hc-l5-1', 'Rack L5.1', [4, 2])]);
+    const typed = options.filter((o) => o.label.toLowerCase().includes('l5.1'));
+    expect(typed).toHaveLength(2);
+    expect(enterPick('L5.1', typed)?.value).toBe('own-l5-1');
+    expect(exactPick('rack l5.1', options)?.value).toBe('own-l5-1');
   });
 });

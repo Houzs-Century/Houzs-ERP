@@ -35,7 +35,7 @@ import { cardTotalsOf, parseStatement, type StatementColumnMap } from '../../acc
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
-  releaseSettlementRow, notThisOf,
+  releaseSettlementRow, notThisOf, turnedDownKeysOf, MAX_TURNED_DOWN,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { rematchOpenLines } from '../../acc/settlement-rematch';
@@ -1013,7 +1013,11 @@ export const settlementBatchDetail = guard(async (c) => {
        it again — not as a candidate, a pair, the pre-tick, or the clue. */
     const notThis = new Set(notThisOf(r.not_this));
     const keep = <P extends { source: string; id: string }>(list: P[]): P[] => list.filter((p) => !notThis.has(`${p.source}:${p.id}`));
-    const turnedDown = (s?.matched ?? []).filter((p) => notThis.has(`${p.source}:${p.id}`));
+    /* Whatever the matcher put forward — its match, its guess (owner 2026-11-10)
+       or the payments it offered — a turned-down one makes the clue say so, not
+       still call it "the only payment of this amount". */
+    const putForward = [...(s?.matched ?? []), ...(s?.suggested ?? []), ...(s?.candidates ?? [])];
+    const turnedDown = [...new Map(putForward.filter((p) => notThis.has(`${p.source}:${p.id}`)).map((p) => [`${p.source}:${p.id}`, p])).values()];
     const turnedDownIds = new Set([...notThis].map((k) => k.slice(k.indexOf(':') + 1)));
     return {
       ...r,
@@ -1432,13 +1436,21 @@ export const settlementRowUnconfirm = guard(async (c) => {
 
 /* POST /rows/:id/release — "Not this" (owner 2026-11-03, batch 3 d2): an
    unconfirmed line's match is released and the line goes back to be chosen;
-   the payments it held are not offered to it again. Posts nothing. */
+   the payments it held are not offered to it again. Posts nothing.
+   Body `{ payments?: ["SOPAY:<id>", …] }`: the system's GUESS the screen showed,
+   for a line that holds no link (owner 2026-11-10). */
 export const settlementReleaseRow = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const rowId = Number(c.req.param('id'));
   if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
-  const r = await releaseSettlementRow(c.get('supabase'), co.companyId, rowId);
+  let body: { payments?: unknown } = {};
+  try { body = (await c.req.json()) ?? {}; } catch { body = {}; }
+  const guessed = turnedDownKeysOf(body.payments);
+  if (guessed === null) {
+    return c.json({ error: 'bad_payments', message: `Name the payments as "SOPAY:<id>" or "SIPAY:<id>", at most ${MAX_TURNED_DOWN}.` }, 400);
+  }
+  const r = await releaseSettlementRow(c.get('supabase'), co.companyId, rowId, guessed);
   if (!r.ok) {
     const status = r.status === 'not_found' ? 404
       : ['already_confirmed', 'ignored', 'nothing_matched'].includes(r.status) ? 409

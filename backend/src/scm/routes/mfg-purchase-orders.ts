@@ -43,6 +43,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { claimPoVersion, poVersionRaced, poVersionRefusal } from '../lib/po-version';
 import { readPoLinkedGrns } from '../lib/po-grn-links';
 import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
@@ -65,6 +66,7 @@ import {
   LEAD_OVERRIDE_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
+import { diningLineNote, diningPoHeaderNotes } from '../lib/po-dining-remark';
 import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender, loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
@@ -1561,14 +1563,14 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     warehouse_id: string | null;
     /* Owner 2026-08-10 (migration 0274) — the SO line's photos ride along to the
        PO line. R2 keys, not bytes: the PO points at the SAME objects. */
-    photo_urls: string[] | null;
-    so: { sales_location: string | null; customer_delivery_date: string | null } | null;
+    photo_urls: string[] | null; remark: string | null; // remark -> PO line; so.note -> PO header (dining; po-dining-remark.ts)
+    so: { sales_location: string | null; customer_delivery_date: string | null; note: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, line_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_sen, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
+    'id, doc_no, line_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_sen, line_delivery_date, warehouse_id, photo_urls, cancelled, remark, ' +
     /* No company_id on this embed: both source reads below are SCOPED, so a
        cross-company line is never returned and there is nothing to compare. */
-    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
+    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date, note )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
   const normSo = (r: { so: unknown }): SoItem['so'] => {
@@ -1654,7 +1656,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
         row: row ?? {
           id: '', doc_no: it.soDocNo, line_no: null, item_code: it.itemCode, description: it.itemName,
           qty: it.qty, po_qty_picked: 0, unit_price_sen: 0,
-          line_delivery_date: null, item_group: null, variants: null,
+          line_delivery_date: null, item_group: null, variants: null, remark: null,
           // No SO line warehouse on the legacy fabricated row → falls back to
           // the SO header sales_location resolution below.
           warehouse_id: null, photo_urls: null, so: null,
@@ -1727,6 +1729,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       soLineNo:  row.line_no ?? null,   // decides its place on the PO
       // Owner 2026-08-10 — the SO line's photo keys, carried to the PO line.
       photoUrls: row.photo_urls ?? [],
+      lineRemark: row.remark ?? null, soNote: row.so?.note ?? null, // dining-carried below (po-dining-remark.ts)
       // Commander 2026-05-31 — per-pick supplier override (MRP), the highest
       // precedence input to effectiveSupplierId below.
       pickSupplierId,
@@ -2054,7 +2057,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
     soItemId: string | null; soDocNo: string | null; soLineNo: number | null;
-    photoUrls: string[];
+    photoUrls: string[]; notes: string | null; soNote: string | null; // notes=PO line remark, soNote=SO header note
   };
   type Bucket = {
     supplierId: string; warehouseId: string | null; currency: string;
@@ -2162,7 +2165,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       variants: it.variants,
       soItemId: it.soItemId,
       soDocNo: it.soDocNo, soLineNo: it.soLineNo,
-      photoUrls: it.photoUrls,
+      // notes/soNote: dining-only carry (po-dining-remark.ts); soNote feeds the PO header below.
+      photoUrls: it.photoUrls, notes: diningLineNote(it.itemGroup, it.lineRemark), soNote: it.soNote,
     });
     bucket.soDocNos.add(it.soDocNo);
     byGroup.set(groupKey, bucket);
@@ -2288,7 +2292,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       subtotal_sen: subtotal,
       tax_sen: 0,
       total_sen: subtotal,
-      notes: provenanceNote('so', [...bucket.soDocNos]), // a STORED CONTRACT, 8 readers: transfer-vocabulary.ts
+      // Owner 2026-11-10 — provenance on line 1 (the stored contract its 8 readers parse) + any DINING SO header notes (po-dining-remark.ts).
+      notes: diningPoHeaderNotes(provenanceNote('so', [...bucket.soDocNos]), bucket.lines, bucket.soDocNos.size),
       created_by: user.id,
       expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
       purchase_location_id: headerPurchaseLocationId,
@@ -2473,10 +2478,12 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
      purchase_location_id, migration 0180 = the supplier-revised dates), kept in
      one place so a field added to the PATCH cannot silently escape the log. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('purchase_orders')
-    .select(PO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+    .select(`${PO_AUDIT_SELECT}, updated_at, version`).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
   const prevExpectedAt = before.expected_at ?? null;
+  const stale = poVersionRefusal(body, before.updated_at); // lib/po-version.ts
+  if (stale) return c.json(stale.body, stale.status);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
@@ -2490,14 +2497,17 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
   if (sdGate.refusal) return c.json(sdGate.refusal, 409);
+  const claim = await claimPoVersion(sb, id, co.companyId, before.version); // before the first write: the database half
+  if (!claim.ok) return c.json(claim.body, claim.status);
   { const m = await movePoLinesToNewWarehouse(sb, id, co.companyId, before, updates); if (m) return c.json(m.body, m.status); } // lib/po-warehouse-move.ts
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
-  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
+  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id).eq('version', claim.version), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
-  {
+  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(poVersionRaced(), 409);
+  const touchOnly = Object.keys(updates).length === 1; // version claim before a lines-only Save: no audit, no AutoCount edit
+  if (!touchOnly) {
     const auditPatch: Record<string, unknown> = {};
     for (const [camel, snake] of PO_AUDIT_FIELDS) {
       if (updates[snake] !== undefined) auditPatch[camel] = updates[snake];
@@ -2551,7 +2561,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
         .update({ delivery_date: updates['expected_at'], line_delivery_date_overridden: false }).in('id', openIds), co.companyId);
     if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
   }
-  await queueAcPoEdit(c, id);
+  if (!touchOnly) await queueAcPoEdit(c, id);
 
   return c.json({ purchaseOrder: data });
 });

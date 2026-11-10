@@ -320,7 +320,9 @@ describe('matching the obvious ones', () => {
     openStatement();
     fireEvent.click(screen.getByText('Match the obvious ones now'));
     expect(autoMatchMutate.mock.calls[0]?.[0]).toBe(1);
-    expect(screen.getByText(/3 matched by amount and name/)).toBeTruthy();
+    /* Matched by the voucher a line names or by amount and name: the count and the entries (owner 2026-11-10). */
+    expect(screen.getByText(/3 matched — JE-1, JE-2, JE-3/)).toBeTruthy();
+    expect(screen.getByText(/carry a voucher's number/)).toBeTruthy();
     /* And the pair the bank reversed (docs/bugs/0817). */
     expect(screen.getByText(/1 pair the bank reversed left out/)).toBeTruthy();
     autoMatchResult = undefined;
@@ -331,6 +333,15 @@ describe('matching the obvious ones', () => {
     openStatement();
     fireEvent.click(screen.getByText('Show'));
     expect(screen.getByText(/matched by amount and name/)).toBeTruthy();
+  });
+
+  /* Owner 2026-11-10: 银行单上写着 PV 号码的，直接配那张 PV，不管差几天. */
+  test('a movement matched to the voucher its line names says so', () => {
+    lines = [{ ...OTHER, state: 'POSTED', posted_je_no: '2990-JE-2610-0362', matches: [{ je_no: '2990-JE-2610-0362', amount_sen: -2500, match_reason: 'amount+document' }] }];
+    openStatement();
+    fireEvent.click(screen.getByText('Show'));
+    expect(screen.getByText(/matched by the voucher number on the bank's line/)).toBeTruthy();
+    expect(screen.queryByText(/matched by amount and name/)).toBeNull();
   });
 });
 

@@ -125,6 +125,34 @@ describe('GoodsReceivedDetail — line Rack', () => {
     expect(h.updateMock).not.toHaveBeenCalled();
   });
 
+  // 2990-GRN-2611-012 (owner 2026-11-10): racks keyed on a GRN were not there.
+  // The rack used to be saved only AFTER the line's field edit, so a refused
+  // field edit dropped it; it is now saved first, on its own.
+  it('a rack keyed on a line whose other edit is refused is still saved', async () => {
+    h.grn = makeGrn();
+    h.updateMock.mockRejectedValue(new Error('locked'));
+    const user = userEvent.setup();
+    renderDetail();
+    await pickRack();
+    const qty = screen.getByLabelText('Received') as HTMLInputElement;
+    await user.clear(qty);
+    await user.type(qty, '2');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(h.rackMock).toHaveBeenCalledWith({ grnId: 'G1', itemId: 'I1', rackId: 'R1' }));
+    expect(h.rackMock.mock.invocationCallOrder[0]).toBeLessThan(h.updateMock.mock.invocationCallOrder[0] ?? Infinity);
+    // The page stays in Edit so the refused edit can be fixed.
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeTruthy();
+  });
+
+  it('From Purchase Order saves the racks keyed so far before leaving', async () => {
+    h.grn = makeGrn();
+    const user = userEvent.setup();
+    renderDetail();
+    await pickRack();
+    await user.click(screen.getByRole('button', { name: /From Purchase Order/i }));
+    await waitFor(() => expect(h.rackMock).toHaveBeenCalledWith({ grnId: 'G1', itemId: 'I1', rackId: 'R1' }));
+  });
+
   it('stays editable when a PI/PR has locked the lines', async () => {
     h.grn = makeGrn({ has_children: true });
     renderDetail();

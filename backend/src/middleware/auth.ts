@@ -3,6 +3,7 @@ import type { Env } from "../types";
 import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPassFor } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
+import { hasScmUmbrella } from "../services/scmUmbrella";
 import { canViewItPages } from "../services/itAccess";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
 import { FIELD_SESSION_REFUSAL, fieldSessionAllowsPath, isFieldPinEligible } from "../services/fieldPin";
@@ -445,17 +446,8 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   const user = c.get("user");
   if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   const granted = user.permissions_set ?? user.permissions;
-  // Legacy pass conditions — kept exactly as before.
-  if (hasPermission(granted, "*") || hasPermission(granted, "scm.access")) {
-    await next();
-    return;
-  }
-  // Additive: any SCM page-access area granted at >= view.
-  const pa = user.page_access ?? {};
-  const hasScmPage = Object.entries(pa).some(
-    ([key, level]) => key.startsWith("scm") && level !== "none",
-  );
-  if (hasScmPage) {
+  // Legacy pass conditions, plus any SCM page-access area granted at >= view.
+  if (hasScmUmbrella(user)) {
     await next();
     return;
   }

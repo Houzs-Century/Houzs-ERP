@@ -125,7 +125,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { resolveDoLineRacks, racksForDoLine } from '../lib/do-line-racks';
+import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -2769,7 +2769,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   (deliveryOrder as Record<string, unknown>).warehouse_name = headerWh ? (whLabels.get(headerWh)?.name ?? null) : null;
   /* Storekeeper picking — the rack(s) each line's source PO was received onto
      (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
-  const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
+  const [doRacks, shippedFrom] = await Promise.all([resolveDoLineRacks(sb, rawItems, lineWh), loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null)]);
   /* Bound-PO fallback — a line whose ledger walk found no batch (not yet
      shipped, negative-stock ship, or un-batched pre-0120 lots) still has a real
      procurement path when a PO was raised against its SO line (per-warehouse
@@ -2839,7 +2839,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       itemCode: (it.item_code as string | null) ?? null,
       rackId: (it.rack_id as string | null) ?? null,
       sourcePos,
-    });
+    }, shippedFrom);
     return {
       ...it,
       warehouse_id: wid,
@@ -5030,7 +5030,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     scopeCompanyId = co.companyId;
   }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no, updated_at').eq('id', id), scopeCompanyId,
+    sb.from('delivery_orders').select('status, so_doc_no, updated_at, customer_delivered_date').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5122,6 +5122,13 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (startsRun) ts.departure_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
+  /* The planning board's "Delivered date" column is customer_delivered_date, and
+     only the board's own field editor wrote it, so a delivery the driver closed
+     with POD showed a blank date until someone typed it. Stamped with today's
+     Malaysian day here; a day already typed on the board is kept. */
+  if (toStatus === 'DELIVERED' && !(cur as { customer_delivered_date?: string | null }).customer_delivered_date) {
+    ts.customer_delivered_date = todayMyt();
+  }
   /* POD capture — the mobile app posts the proof-of-delivery signature +
      photo alongside the status flip. Persist them to the existing columns
      (signature_data, pod_r2_key) so a DELIVERED DO keeps its signature +

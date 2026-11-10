@@ -25,7 +25,7 @@ import type { Env, Variables } from '../env';
 
 const sb = fakeSb({
   purchase_orders: [{
-    id: 'po-1', po_number: 'PO-2608-001', status: 'SUBMITTED', company_id: 1,
+    id: 'po-1', po_number: 'PO-2608-001', status: 'SUBMITTED', company_id: 1, updated_at: '2026-08-01T02:00:00.123456+00:00', version: 1,
     po_date: '2026-08-01', expected_at: '2026-09-01', currency: 'MYR',
     notes: null, supplier_id: 'sup-1', purchase_location_id: 'loc-1',
     supplier_delivery_date_2: null,
@@ -67,6 +67,10 @@ const CALLER = {
    The vi.mock factory above is hoisted over this and only reads `sb` when
    getSupabaseService() is CALLED, which is per-request, so the order holds. */
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
+/* The header PATCH needs the version the editor loaded (sister review G6). */
+const withVersion = (body: Record<string, unknown>) => ({
+  expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
+});
 
 async function patch(body: Record<string, unknown>) {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -79,7 +83,7 @@ async function patch(body: Record<string, unknown>) {
   return app.request('/po-1', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(withVersion(body)),
   });
 }
 

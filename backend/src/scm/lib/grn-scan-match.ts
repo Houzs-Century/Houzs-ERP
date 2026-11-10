@@ -26,6 +26,8 @@
 // is the bridge. Confirmed read-only against prod 2026-09-19.
 // ---------------------------------------------------------------------------
 
+import { byPrintedColour } from './grn-scan-colour';
+
 // One open, receivable PO line the scan can be received against.
 export type OpenPoLine = {
   poItemId: string;
@@ -52,6 +54,9 @@ export type OpenPoLine = {
   // The line's item group ("MATTRESS"). Its words name the product type, not
   // the model, so a row need not print them to match by name.
   itemGroup?: string | null;
+  // The colour / fabric codes in the line's variants ("COVE-13"): a row printing
+  // another colour is never tied to it (grn-scan-colour.ts).
+  colours?: string[] | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -102,7 +107,8 @@ export type UnmatchedScanLine = {
   //                   hit is not trusted next to rows that name their PO.
   //   not_on_po     — the row's PO is known but nothing on it is this item
   //                   (a free gift, or an item ordered on another PO).
-  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po';
+  //   colour_not_on_po — the item is on the PO, but not in the colour printed.
+  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po' | 'colour_not_on_po';
   // When ambiguous, the candidate PO lines we refused to guess between.
   candidatePoItemIds: string[];
 };
@@ -141,6 +147,9 @@ export type GrnMatchResult = {
   // poItemId -> the rack handwritten on the row(s) that line was received from.
   // A line that two rows with different racks fed is left out.
   racks: Record<string, string>;
+  // poItemId -> rack as written -> the qty its rows put on that rack, so split
+  // rows of one line go to their own racks.
+  rackQty: Record<string, Record<string, number>>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
@@ -364,11 +373,19 @@ export function matchGrnScanToPoLines(
   const soMatches: GrnMatchResult['soMatches'] = [];
   // Identical lines (one per customer order) take a row's qty in PO line order.
   const rackOf = new Map<string, string | null>(); // null = rows disagreed
-  const noteRack = (poItemId: string, row: ScannedGrnLine): void => {
+  const rackQty: Record<string, Record<string, number>> = {};
+  const noteRack = (poItemId: string, row: ScannedGrnLine, qty: number): void => {
     const r = (row.rack ?? '').trim();
     if (!r) return;
     const prev = rackOf.get(poItemId);
     rackOf.set(poItemId, prev === undefined || prev === r ? r : null);
+    if (qty > 0) { const m = (rackQty[poItemId] ??= {}); m[r] = (m[r] ?? 0) + qty; }
+  };
+  const rowText = (row: ScannedGrnLine): string => `${row.itemCode ?? ''} ${row.description ?? ''}`;
+  // The open lines of the same items, for knowing which colours a row can print.
+  const sameItems = (lines: OpenPoLine[]): OpenPoLine[] => {
+    const codes = new Set(lines.map((l) => normalizeCode(l.itemCode)));
+    return supplierLines.filter((l) => codes.has(normalizeCode(l.itemCode)));
   };
   const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>, row: ScannedGrnLine): void => {
     let left = qty;
@@ -378,7 +395,7 @@ export function matchGrnScanToPoLines(
       const take = Math.min(left, room);
       target.set(l.poItemId, (target.get(l.poItemId) ?? 0) + take);
       poNumberOf.set(l.poItemId, l.poNumber);
-      noteRack(l.poItemId, row);
+      noteRack(l.poItemId, row, take);
       left -= take;
     }
   };
@@ -424,7 +441,13 @@ export function matchGrnScanToPoLines(
       for (const l of linesBySupplierSku.get(normalizeCode(raw)) ?? []) hits.set(l.poItemId, l);
     }
 
-    const hitList = [...hits.values()].filter((l) => anchorPo === null || l.poNumber === anchorPo);
+    const onAnchor = [...hits.values()].filter((l) => anchorPo === null || l.poNumber === anchorPo);
+    // Same code in two colours (HOK-SQUARE PILLOW in COVE-13 and COVE-09): only the printed colour.
+    const hitList = byPrintedColour(rowText(sl), onAnchor, sameItems(onAnchor));
+    if (onAnchor.length > 0 && hitList.length === 0) {
+      unmatched.push({ line: sl, reason: 'colour_not_on_po', candidatePoItemIds: [] });
+      continue;
+    }
     if (hitList.length === 0) {
       // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
       // our SO number, where our PO has one line per piece: take that SO's pieces.
@@ -446,7 +469,12 @@ export function matchGrnScanToPoLines(
       // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
       const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
       const item = nameMatchItem(sl.description, poLines);
-      const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
+      const owing = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
+      const lines = byPrintedColour(rowText(sl), owing, sameItems(owing));
+      if (owing.length > 0 && lines.length === 0) {
+        unmatched.push({ line: sl, reason: 'colour_not_on_po', candidatePoItemIds: [] });
+        continue;
+      }
       const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
       const into = specs.size > 1 ? [pickBySpec(sl.description, lines)].filter((l): l is OpenPoLine => l !== null) : lines;
       if (item === null) {
@@ -494,8 +522,9 @@ export function matchGrnScanToPoLines(
     // order can never receive more than the PO still owes; the operator adjusts
     // on the draft if the physical delivery differs).
     const into = anchorPo !== null ? anchoredQty : itemOnlyQty;
-    into.set(hit.poItemId, Math.min((into.get(hit.poItemId) ?? 0) + sl.qty, remaining));
-    noteRack(hit.poItemId, sl);
+    const before = into.get(hit.poItemId) ?? 0;
+    into.set(hit.poItemId, Math.min(before + sl.qty, remaining));
+    noteRack(hit.poItemId, sl, (into.get(hit.poItemId) ?? 0) - before);
     poNumberOf.set(hit.poItemId, hit.poNumber);
     if (anchorPo === null) {
       itemOnlyLines.push({ line: sl, poItemId: hit.poItemId });
@@ -567,6 +596,7 @@ export function matchGrnScanToPoLines(
     nameMatches,
     soMatches,
     racks: refused ? {} : Object.fromEntries([...rackOf].filter((e): e is [string, string] => e[1] !== null)),
+    rackQty: refused ? {} : Object.fromEntries(Object.entries(rackQty).filter(([id]) => picks.some((p) => p.poItemId === id))),
     namedPos: [...anchoredPos],
   };
 }
@@ -718,6 +748,7 @@ const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, all
   po_not_open: poNotOpenWhy,
   no_po_number: () => 'no PO printed on the row',
   not_on_po: () => 'not on the PO',
+  colour_not_on_po: () => 'its colour is on no open PO line',
 };
 
 const scanLineLabel = (l: ScannedGrnLine): string =>

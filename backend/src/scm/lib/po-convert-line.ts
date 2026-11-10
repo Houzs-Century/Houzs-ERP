@@ -31,6 +31,11 @@ export interface PoConvertLine {
   variants: Record<string, unknown> | null;
   soItemId: string | null;
   photoUrls: string[];
+  /* Owner 2026-11-10 — the PO line's own remark, printed as "Remark:" on the
+     supplier PO. The converter sets it ONLY for a DINING line (from the source
+     SO line's `remark`); null on every other line. Stored verbatim in
+     `purchase_order_items.notes`. */
+  notes: string | null;
 }
 
 /**
@@ -95,6 +100,10 @@ export function poConvertLineRow(
        carry it or that compartment shows no photo at all. Lines stay 1:1 with
        their SO line, so this is simply each line's own array. */
     photo_urls: l.photoUrls,
+    /* Owner 2026-11-10 — the PO line's remark, printed as "Remark:" on the
+       supplier PO PDF. The converter already applied the DINING-only rule, so
+       this is `l.notes` verbatim (null on every non-dining line). */
+    notes: l.notes,
     // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
     from_mrp: fromMrp,
   };

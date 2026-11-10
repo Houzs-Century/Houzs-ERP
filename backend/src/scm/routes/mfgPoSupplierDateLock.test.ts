@@ -11,7 +11,7 @@ import { cascadePoSupplierDate, supplierDatePatchGate } from '../lib/po-supplier
 
 const sb = fakeSb({
   purchase_orders: [{
-    id: 'po-1', po_number: 'PO-2610-001', status: 'SUBMITTED', company_id: 1,
+    id: 'po-1', po_number: 'PO-2610-001', updated_at: '2026-10-01T02:00:00.123456+00:00', version: 1, status: 'SUBMITTED', company_id: 1,
     po_date: '2026-10-01', expected_at: '2026-10-10', currency: 'MYR', notes: null,
     supplier_id: 'sup-1', purchase_location_id: 'loc-1',
     supplier_delivery_date_2: '2026-10-14', supplier_delivery_date_3: null, supplier_delivery_date_4: null,
@@ -26,13 +26,17 @@ const CALLER = {
   user_metadata: { name: 'Buyer' }, aud: 'authenticated', created_at: '',
 } as unknown as User;
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
+/* The header PATCH needs the version the editor loaded (sister review G6). */
+const withVersion = (body: Record<string, unknown>) => ({
+  expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
+});
 
 async function patch(body: Record<string, unknown>) {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => { c.set('user', CALLER); c.set('companyId', 1); await next(); });
   app.route('/', mfgPurchaseOrders);
   return app.request('/po-1', {
-    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(withVersion(body)),
   });
 }
 

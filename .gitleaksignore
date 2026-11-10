@@ -1,0 +1,40 @@
+# Reviewed false positives from gitleaks' default rules, pinned by fingerprint
+# (commit:file:rule:line). Reviewed 2026-11-10 against the full history of main
+# with gitleaks 8.30.1: all 29 are generic-api-key hits on non-secrets —
+# permission keys (scm.so_cancel.approve_l1), R2 object-key variable names, the
+# token alphabet in do-scan-token.ts, the RFC 6238 test vector, and fixed test
+# tokens. None is a credential.
+#
+# A fingerprint names a COMMIT, so it only fits history that is already on main.
+# A new false positive in a PR cannot go here (the squash merge changes the
+# commit); mark the line with a trailing `gitleaks:allow` comment instead, so the
+# exemption sits next to the code and survives the merge.
+03278f0b81a02e974c10d85225a1e4d822fc0620:frontend/src/lib/roleMatrixModel.test.ts:generic-api-key:53
+0415085f22ad5060d2555131979755d027a1cce8:frontend/src/components/Sidebar.tsx:generic-api-key:511
+0e7bd08b412bf75162ddc8ef39c4066c4899fc8a:frontend/src/pages/ContractorCalendar.test.tsx:generic-api-key:14
+1a5b03ef5af917078624fbaea2534a89b22332a6:src/routes/trips.ts:generic-api-key:282
+224b2db915ae6a5ed1e5a3369740eda2f1554c9a:backend/tests/mailInboundCompanyScope.test.ts:generic-api-key:13
+24fe0b6c1280b68498285abccf1de2e05c0fb89d:backend/src/scm/lib/do-scan-token.ts:generic-api-key:90
+2aaf732ed03e5eae2c41a4e7565db3dd7fa73b2c:backend/tests/publicContractorCalendarFloorplan.test.ts:generic-api-key:26
+31a7c8e658aa37c820ba0e455941e6f3dcd1eac5:backend/src/routes/pettyCash.ts:generic-api-key:270
+55e42e801b173ba0519ff2ba79673aa4f47a141c:frontend/src/components/Sidebar.tsx:generic-api-key:512
+5d384d6d19f7777d2298b141b327141864b3c25d:backend/src/scm/routes/mfg-sales-orders.ts:generic-api-key:6882
+722860e4d1cb6ae7a833e68904494eac7d37fff1:backend/src/routes/systemHealthAcHostBuild.test.ts:generic-api-key:26
+745d4d743b9b7b52c26064b5ae8979fd3b383860:frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx:generic-api-key:699
+7f5cc6d75665d958b3b4e0731f71308025c19c22:backend/src/scm/routes/mfg-sales-orders.ts:generic-api-key:10886
+84763fc34db787bae932725857e999ff9d29cc66:backend/tests/publicBrandCalendar.test.ts:generic-api-key:25
+84763fc34db787bae932725857e999ff9d29cc66:frontend/src/pages/ShareCalendar.test.tsx:generic-api-key:13
+952dac6f2f70b3e34124927020b75f3d4f91d245:backend/src/scm/routes/mfg-sales-orders.ts:generic-api-key:7978
+b6704d4f9f382d4653ddf26cd62eb1e4ff0ad4da:backend/src/services/permissions.ts:generic-api-key:134
+b6704d4f9f382d4653ddf26cd62eb1e4ff0ad4da:backend/src/services/permissions.ts:generic-api-key:135
+b6704d4f9f382d4653ddf26cd62eb1e4ff0ad4da:backend/src/services/permissions.ts:generic-api-key:136
+b6704d4f9f382d4653ddf26cd62eb1e4ff0ad4da:backend/src/services/permissions.ts:generic-api-key:137
+b6704d4f9f382d4653ddf26cd62eb1e4ff0ad4da:frontend/src/components/Sidebar.tsx:generic-api-key:511
+dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/FabricTierEditor.tsx:generic-api-key:51
+dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/FabricTierEditor.tsx:generic-api-key:58
+dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/FabricTierEditor.tsx:generic-api-key:59
+dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/FabricTierEditor.tsx:generic-api-key:60
+dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/FabricTierEditor.tsx:generic-api-key:61
+e535ec8879f3f3bf2bea07d2ded4e20420a19fb6:frontend/src/mobile/mobileProfilePhoto.test.tsx:generic-api-key:116
+e535ec8879f3f3bf2bea07d2ded4e20420a19fb6:frontend/src/mobile/mobileProfilePhoto.test.tsx:generic-api-key:138
+ede25f8139208d18f60e370a9b2c14530bdb034b:backend/tests/totp.test.ts:generic-api-key:18

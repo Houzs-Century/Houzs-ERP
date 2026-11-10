@@ -7,7 +7,7 @@ const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryD
   { itemCode: 'A1', barcode: null, description: 'Mattress Q', qty: 2, poNo: null, rack: null },
   { itemCode: 'ZZ', barcode: null, description: 'Free pillow', qty: 1, poNo: null, rack: null },
 ] };
-const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], racks: { 'pi-1': 'R11-2' }, unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
+const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], racks: { 'pi-1': 'R11-2' }, rackQty: {}, unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
 const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', materialName: null, supplierSku: null, remaining: 2, locationCode: 'KL' }]]);
 
 describe('grn scan check', () => {
@@ -73,11 +73,11 @@ describe('grn scan check', () => {
   });
   test('a rack goes to its PO line, whatever the product; a code confirmed is taught', () => {
     const r = { lines: [
-      { poItemId: 'p1', rack: 'R11-2', read: { itemCode: 'T1', description: null, qty: 1, poNo: null } },
-      { poItemId: 'p2', rack: null, read: null },
-      { poItemId: null, rack: 'L1-1', read: { itemCode: 'T3', description: null, qty: 1, poNo: null } },
+      { poItemId: 'p1', qty: 1, rack: 'R11-2', read: { itemCode: 'T1', description: null, qty: 1, poNo: null } },
+      { poItemId: 'p2', qty: 1, rack: null, read: null },
+      { poItemId: null, qty: 1, rack: 'L1-1', read: { itemCode: 'T3', description: null, qty: 1, poNo: null } },
     ] } as unknown as GrnReview;
-    expect(racksOf(r)).toEqual({ p1: 'R11-2' });
+    expect(racksOf(r)).toEqual({ p1: { 'R11-2': 1 } });
     expect(codesToTeach(r, (id) => (id === 'p1' ? 'SOFA-1' : undefined))).toEqual([{ printedCode: 'T1', itemCode: 'SOFA-1' }]);
   });
   test('a printed code taught as a free gift arrives marked as that product, on no PO', () => {
@@ -123,7 +123,7 @@ describe('a set row on the check screen (DO-2610-01)', () => {
   test('both pieces show the one row that printed them, each on its own PO line', () => {
     const printed = { itemCode: 'DSL 8075(28")-2+1', barcode: null, description: '*2990-SO-2609-045', qty: 1, poNo: null, rack: null };
     const parsed = { supplierName: 'DORSETTLOFT', poNo: 'S/O 1878', doNo: 'DO-2610-01', deliveryDate: '2026-10-05', lines: [printed] };
-    const match = { picks: [{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }], unmatched: [], racks: {}, soMatches: [{ line: printed, soDocNo: '2990-SO-2609-045', poItemIds: ['a2', 'aL'] }] } as unknown as Parameters<typeof buildReview>[2];
+    const match = { picks: [{ poItemId: 'a2', qty: 1 }, { poItemId: 'aL', qty: 1 }], unmatched: [], racks: {}, rackQty: {}, soMatches: [{ line: printed, soDocNo: '2990-SO-2609-045', poItemIds: ['a2', 'aL'] }] } as unknown as Parameters<typeof buildReview>[2];
     const review = buildReview(parsed, 's1', match, [], [], '2026-11-06');
     expect(review.lines.map((l) => [l.poItemId, l.read?.itemCode])).toEqual([['a2', 'DSL 8075(28")-2+1'], ['aL', 'DSL 8075(28")-2+1']]);
   });

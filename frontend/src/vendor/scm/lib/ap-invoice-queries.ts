@@ -79,6 +79,26 @@ export const useApInvoices = (kind: ApListKind = 'ALL', docKind?: ApDocKind) => 
   staleTime: 15_000,
 });
 
+/** A supplier bill number booked on more than one live invoice of the same
+    supplier (server: routes/ap-duplicate-bills.ts). Read-only; Finance cancels
+    the wrong copy on its own page. */
+export type DuplicateBillSettlement = { kind: 'PV' | 'CN'; id: string; number: string; status: string; amountSen: number };
+export type DuplicateBillCopy = {
+  id: string; invoiceNumber: string; supplierInvoiceRef: string | null; invoiceDate: string | null;
+  currency: string; totalSen: number; paidSen: number; status: string; settlements: DuplicateBillSettlement[];
+};
+export type DuplicateBillGroup = {
+  kind: 'API' | 'PI'; docKind: ApDocKind; supplierId: string; supplierCode: string | null; supplierName: string | null;
+  billKey: string; paidMoreThanOnce: boolean; copies: DuplicateBillCopy[];
+};
+
+export const useDuplicateSupplierBills = () => useQuery({
+  queryKey: ['ap-invoices', 'duplicate-bills'],
+  queryFn: () => authedFetch<{ groups: DuplicateBillGroup[] }>('/ap-invoices/duplicate-bills'),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+});
+
 /** Plan a bill's payment date, or clear the plan (null) — an AP bill or a purchase invoice; posts nothing. */
 export const usePlanBill = () => {
   const qc = useQueryClient();

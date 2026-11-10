@@ -27,6 +27,7 @@ import { readPdfContent, pdfDigits, parsePdfStatement } from '../../acc/bank-par
 import { monthWindow } from '../../acc/bank-month';
 import {
   groupBankMovements, matchBankMovements, entryCandidatesFor, obviousEntryFor, bankReversalPairs, qrSalesFor,
+  voucherEntryFor, voucherNumbersIn, withoutCompanyPrefix, type EntryCandidateSource,
   type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, type QrReportForMatch, type QrSales,
 } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
@@ -525,6 +526,14 @@ export function withQrSales<T extends Record<string, unknown>>(
    existed. Reads fail closed: a ledger or claim read that fails matches
    nothing and says so.
 
+   THE VOUCHER THE LINE NAMES COMES FIRST (owner 2026-11-10: 银行单上写着 PV
+   号码的，直接配那张 PV，不管差几天). A payment printing its voucher's number —
+   or the Draft number it went out under, read through the audit trail to the
+   number the voucher took at Checked — with the voucher's amount is that
+   voucher, however many days after it the bank paid: reason "amount+document"
+   (acc/bank-match voucherEntryFor). `only` narrows the matching to some lines —
+   a voucher just posted asks for its own (matchBankLinesNamingVoucher).
+
    THE BANK'S OWN CONTRAS COME FIRST (docs/bugs/0817). A transfer the bank
    reversed under the same reference is not looking for an entry — the entry
    belongs to the retry, if there was one — and the rule below would have
@@ -534,6 +543,7 @@ export function withQrSales<T extends Record<string, unknown>>(
    until that match is undone. */
 async function applyObviousMatches(
   sb: Parameters<typeof loadAccountLedger>[0], companyId: number, statement: { id: number; account_code: string; period_to: string },
+  only: ReadonlySet<number> | null = null,
 ): Promise<{ ok: true; matched: number; jeNos: string[]; contraPairs: number } | { ok: false; reason: string }> {
   const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
     .select('id, line_no, booked_on, description, reference, amount_sen, state, kind')
@@ -560,7 +570,7 @@ async function applyObviousMatches(
     }
   }
 
-  const open = lines.filter((l) => String(l.kind) === 'OTHER' && !paired.has(Number(l.id)));
+  const open = lines.filter((l) => String(l.kind) === 'OTHER' && !paired.has(Number(l.id)) && (only == null || only.has(Number(l.id))));
   if (open.length === 0) return { ok: true, matched: 0, jeNos: [], contraPairs: pairs.length };
 
   const [ledger, elsewhere] = await Promise.all([
@@ -571,17 +581,18 @@ async function applyObviousMatches(
   if (!ledger.ok) return { ok: false, reason: ledger.reason };
   if (!elsewhere.ok) return { ok: false, reason: elsewhere.reason };
   const claimed = claimedSetFor(elsewhere, ledger.movements);
+  const former = await loadDraftVoucherNumbers(sb, open, ledger.movements, claimed);
+  if (!former.ok) return { ok: false, reason: former.reason };
 
   const jeNos: string[] = [];
   for (const l of open) {
-    const hit = obviousEntryFor(
-      { bookedOn: String(l.booked_on).slice(0, 10), amountSen: Number(l.amount_sen), description: String(l.description ?? ''), reference: l.reference ?? null },
-      ledger.movements,
-      claimed,
-    );
+    const movement = { bookedOn: String(l.booked_on).slice(0, 10), amountSen: Number(l.amount_sen), description: String(l.description ?? ''), reference: l.reference ?? null };
+    const byVoucher = voucherEntryFor(movement, ledger.movements, claimed, former.numbers);
+    const hit = byVoucher ?? obviousEntryFor(movement, ledger.movements, claimed);
     if (!hit) continue;
     const { error: insErr } = await sb.from('acc_bank_statement_matches').insert({
-      bank_line_id: Number(l.id), company_id: companyId, je_no: hit.jeNo, amount_sen: Number(l.amount_sen), match_reason: 'amount+name',
+      bank_line_id: Number(l.id), company_id: companyId, je_no: hit.jeNo, amount_sen: Number(l.amount_sen),
+      match_reason: byVoucher ? 'amount+document' : 'amount+name',
     });
     if (insErr) return { ok: false, reason: insErr.message };
     const { error: upErr } = await sb.from('acc_bank_statement_lines')
@@ -592,6 +603,98 @@ async function applyObviousMatches(
     jeNos.push(hit.jeNo);
   }
   return { ok: true, matched: jeNos.length, jeNos, contraPairs: pairs.length };
+}
+
+/** The Draft numbers the open lines name, read through to the formal number
+    each voucher took at Checked — the voucher's CHECK row in the audit trail
+    (scm.entity_audit_log, field_changes pv_number Draft → formal). Asked only
+    of the vouchers the books could pay those lines with: unheld, of a line's
+    amount. Keyed with and without the company prefix. */
+async function loadDraftVoucherNumbers(
+  sb: Parameters<typeof loadAccountLedger>[0],
+  open: ReadonlyArray<{ amount_sen: number; description: string | null; reference: string | null }>,
+  ledger: readonly EntryCandidateSource[],
+  claimed: ReadonlySet<string>,
+): Promise<{ ok: true; numbers: Map<string, string[]> } | { ok: false; reason: string }> {
+  const numbers = new Map<string, string[]>();
+  const amounts = new Set(open
+    .filter((l) => voucherNumbersIn(`${l.description ?? ''} ${l.reference ?? ''}`).some((n) => /(^|-)DRAFT-/.test(n)))
+    .map((l) => Number(l.amount_sen)));
+  if (amounts.size === 0) return { ok: true, numbers };
+  const formals = [...new Set(ledger
+    .filter((e) => e.sourceType === 'PV' && e.sourceDocNo != null && !claimed.has(e.jeNo) && amounts.has(e.debitSen - e.creditSen))
+    .map((e) => String(e.sourceDocNo)))];
+  if (formals.length === 0) return { ok: true, numbers };
+  const { data, error } = await sb.from('entity_audit_log')
+    .select('entity_doc_no, field_changes')
+    .eq('entity_type', 'PAYMENT_VOUCHER')
+    .in('entity_doc_no', formals);
+  if (error) return { ok: false, reason: error.message };
+  for (const r of (Array.isArray(data) ? data : []) as Array<{ entity_doc_no: string | null; field_changes: unknown }>) {
+    const changes = Array.isArray(r.field_changes) ? r.field_changes as Array<{ field?: string; from?: unknown; to?: unknown }> : [];
+    for (const ch of changes) {
+      const from = String(ch.from ?? '').toUpperCase();
+      if (ch.field !== 'pv_number' || !/(^|-)DRAFT-/.test(from)) continue;
+      const formal = String(ch.to ?? r.entity_doc_no ?? '');
+      if (!formal) continue;
+      for (const key of new Set([from, withoutCompanyPrefix(from)])) numbers.set(key, [...new Set([...(numbers.get(key) ?? []), formal])]);
+    }
+  }
+  return { ok: true, numbers };
+}
+
+/**
+ * A voucher just posted looks for its payment on the bank: an OPEN line of a
+ * statement of the account it paid from whose words name it — its number, or
+ * a Draft number it carried before Checked — goes through the same pass as an
+ * upload, narrowed to those lines (owner 2026-11-10: 直接配那张 PV，不管差几天).
+ * A line in a closed month is never OPEN, so a closed month is never touched.
+ * Reads fail closed: nothing is matched and the reason is returned.
+ */
+export async function matchBankLinesNamingVoucher(
+  sb: Parameters<typeof loadAccountLedger>[0], companyId: number,
+  voucher: { pvNumber: string | null; creditAccountCode: string | null }, actor: string | null,
+): Promise<{ ok: true; matched: number; jeNos: string[] } | { ok: false; reason: string }> {
+  const pvNumber = String(voucher.pvNumber ?? '').trim();
+  const accountCode = String(voucher.creditAccountCode ?? '').trim();
+  if (!pvNumber || !accountCode) return { ok: true, matched: 0, jeNos: [] };
+  const stmtRes = await paginateAll<Record<string, unknown>>((lo, hi) => sb.from('acc_bank_statements')
+    .select('id, account_code, period_to').eq('company_id', companyId).eq('account_code', accountCode).order('id').range(lo, hi));
+  if (stmtRes.error) return { ok: false, reason: stmtRes.error.message };
+  const statements = (stmtRes.data ?? []) as Array<{ id: number; account_code: string; period_to: string }>;
+  if (statements.length === 0) return { ok: true, matched: 0, jeNos: [] };
+
+  /* The numbers it answers to: its own, and each Draft number it carried. */
+  const { data: audit, error: auditErr } = await sb.from('entity_audit_log')
+    .select('field_changes').eq('entity_type', 'PAYMENT_VOUCHER').eq('entity_doc_no', pvNumber);
+  if (auditErr) return { ok: false, reason: auditErr.message };
+  const names = new Set([pvNumber.toUpperCase(), withoutCompanyPrefix(pvNumber)]);
+  for (const r of (Array.isArray(audit) ? audit : []) as Array<{ field_changes: unknown }>) {
+    for (const ch of (Array.isArray(r.field_changes) ? r.field_changes : []) as Array<{ field?: string; from?: unknown }>) {
+      const from = String(ch.from ?? '').toUpperCase();
+      if (ch.field === 'pv_number' && from) { names.add(from); names.add(withoutCompanyPrefix(from)); }
+    }
+  }
+
+  const lineRes = await paginateAll<Record<string, unknown>>((lo, hi) => sb.from('acc_bank_statement_lines')
+    .select('id, statement_id, description, reference')
+    .eq('company_id', companyId).eq('state', 'OPEN').eq('kind', 'OTHER')
+    .in('statement_id', statements.map((st) => Number(st.id)))
+    .order('id').range(lo, hi));
+  if (lineRes.error) return { ok: false, reason: lineRes.error.message };
+  const naming = ((lineRes.data ?? []) as Array<{ id: number; statement_id: number; description: string | null; reference: string | null }>)
+    .filter((l) => voucherNumbersIn(`${l.description ?? ''} ${l.reference ?? ''}`).some((n) => names.has(n) || names.has(withoutCompanyPrefix(n))));
+  if (naming.length === 0) return { ok: true, matched: 0, jeNos: [] };
+
+  const only = new Set(naming.map((l) => Number(l.id)));
+  const jeNos: string[] = [];
+  for (const statement of statements.filter((st) => naming.some((l) => Number(l.statement_id) === Number(st.id)))) {
+    const r = await applyObviousMatches(sb, companyId, statement, only);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    jeNos.push(...r.jeNos);
+  }
+  await formaliseReceiptsForBankMatch(sb, companyId, accountCode, jeNos, actor);
+  return { ok: true, matched: jeNos.length, jeNos };
 }
 
 /* POST /bank/statements/:id/auto-match — the same rule, for a statement

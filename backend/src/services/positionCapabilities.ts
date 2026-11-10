@@ -66,6 +66,13 @@ export const POSITION_CAPABILITY_DEFS: readonly PositionCapabilityDef[] = [
     description:
       "Confirm a goods receipt so the stock goes in. Without it, Goods Receipt edit can only save drafts and set racks.",
   },
+  {
+    key: "pos.sales.teamTotal",
+    label: "See team sales",
+    group: "Sales",
+    description:
+      "POS My orders shows a Team card: the total sales of everyone in the same Team Directory team.",
+  },
 ] as const;
 
 const VALID_KEYS: ReadonlySet<string> = new Set(

@@ -24,6 +24,7 @@ import { auth, requirePermission } from "../middleware/auth";
 import { companyContext } from "../middleware/companyContext";
 import { hasPermission } from "../services/permissions";
 import { isDirectorUser } from "../services/pmsAccess";
+import { hasPositionCapability, type PositionCapabilityCaller } from "../services/positionCapabilities";
 import {
   createSession,
   verifyPassword,
@@ -296,6 +297,11 @@ export function canTargetSalesperson(
 /** The caller's Team Directory team (`users.division`, free text) as the key
  *  the Team card matches on: trimmed + lowercased, the AudiencePicker rule.
  *  null = no team, so no Team card. Exported so the test runs it. */
+/** The Roles & Permissions capability that turns the Team card on (ticket
+ *  2990-0045, Lim 2026-11-10: sales may not see colleagues' figures without
+ *  approval). Per Title; granted to Sales Director only, by SQL. */
+export const TEAM_TOTAL_CAPABILITY = "pos.sales.teamTotal";
+
 export function salesTeamKey(division: string | null | undefined): { name: string; key: string } | null {
   const name = (division ?? "").trim();
   return name ? { name, key: name.toLowerCase() } : null;
@@ -402,12 +408,19 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   }
 
   /* Team scope (ticket 2990-0045): everyone in the caller's Team Directory team
-     (same department, same `users.division`). Every member sees it, not only
-     the leader (YH 2026-11-09). Not keyed on showroom: 5 of Kris Team's 9 have
-     none. Always the CALLER's team, like the Showroom card. */
-  const meUser = await DB.prepare(`SELECT department_id, division FROM public.users WHERE id = ?`)
-    .bind(uid).first<{ department_id: number | null; division: string | null }>();
-  const team = meUser?.department_id == null ? null : salesTeamKey(meUser.division);
+     (same department, same `users.division`). Only for a Title holding the
+     "See team sales" capability (or `*`); everyone else gets no team fields.
+     Not keyed on showroom: 5 of Kris Team's 9 have none. Always the CALLER's
+     team, like the Showroom card. */
+  const mayTeam = hasPositionCapability(
+    c.get("user") as PositionCapabilityCaller | undefined,
+    TEAM_TOTAL_CAPABILITY,
+  );
+  const meUser = mayTeam
+    ? await DB.prepare(`SELECT department_id, division FROM public.users WHERE id = ?`)
+        .bind(uid).first<{ department_id: number | null; division: string | null }>()
+    : null;
+  const team = mayTeam && meUser?.department_id != null ? salesTeamKey(meUser.division) : null;
   let teamIds: string[] = [];
   if (team) {
     const rows = await DB.prepare(

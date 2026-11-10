@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { cancelReversalRetryDue, patchDeliveryOrderStatusHandler } from '../src/scm/routes/delivery-orders-mfg';
 import { patchConsignmentNoteStatusHandler } from '../src/scm/routes/consignment-notes';
+import { todayMyt } from '../src/scm/lib/my-time';
 
 const CO = 1;
 type Row = Record<string, any>;
@@ -95,6 +96,27 @@ describe('DO status PATCH — compare-and-set on the status the guards read', ()
     const res = await patch(app, '/delivery-orders/do-1/status', 'IN_TRANSIT');
     expect(res.status).toBe(200);
     expect(tables.delivery_orders![0]!.status).toBe('IN_TRANSIT');
+  });
+});
+
+describe('DO Delivered fills the planning board Delivered date (sister-ERP gap review P14)', () => {
+  test('a Delivered flip with no date stamps today\'s Malaysian day', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('IN_TRANSIT'), customer_delivered_date: null }, false);
+    const res = await patch(app, '/delivery-orders/do-1/status', 'DELIVERED');
+    expect(res.status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBe(todayMyt());
+  });
+
+  test('a day already typed on the board is kept', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('IN_TRANSIT'), customer_delivered_date: '2026-11-01' }, false);
+    expect((await patch(app, '/delivery-orders/do-1/status', 'DELIVERED')).status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBe('2026-11-01');
+  });
+
+  test('a move that is not Delivered writes no date', async () => {
+    const { app, tables } = harness('delivery_orders', { ...doRow('DISPATCHED'), customer_delivered_date: null }, false);
+    expect((await patch(app, '/delivery-orders/do-1/status', 'IN_TRANSIT')).status).toBe(200);
+    expect(tables.delivery_orders![0]!.customer_delivered_date).toBeNull();
   });
 });
 

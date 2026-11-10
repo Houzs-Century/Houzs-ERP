@@ -77,6 +77,27 @@
 .headCell.colTotal { background: #eceee9; }
 .colTotal.colRule { border-right: 1.5px solid var(--fin-line); }
 
+/* ── Columns under a shared heading (the Cash Flow's Settlement | Deposit; owner
+   2026-11-10: 做好看一点, on the mock) ── */
+/* Every other month on a faint band: a wash laid over whatever the row wears. */
+.band { background-image: linear-gradient(var(--fin-band), var(--fin-band)); }
+/* A firm rule where a month ends, a faint dashed one between its two columns. */
+.groupRule { border-right-color: var(--fin-line); }
+.partRule { border-right: 1px dashed var(--fin-rule); }
+/* The month's name underlined across its two columns. */
+.tableGrouped .headGroup::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 1px; background: var(--fin-petrol);
+}
+/* Which column is which, before its name: Settlement petrol, Deposit gold. */
+.mark { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; vertical-align: 1px; }
+.mark[data-mark='petrol'] { background: var(--fin-petrol); }
+.mark[data-mark='gold'] { background: var(--fin-gold); }
+/* A little narrower than a column of its own, so more months fit on the screen. */
+.tableGrouped .headPart, .tableGrouped .cellPart { padding-left: 6px; padding-right: 6px; }
+/* A block title reads as a band across the table, not a row of empty cells. */
+.tableGrouped .rowBlock > * { background: var(--fin-paper); border-bottom-color: var(--fin-rule); }
+.tableGrouped .rowBlock > .colRule, .tableGrouped .rowBlock > .partRule { border-right-color: transparent; }
+
 /* ── Row dresses ── */
 .table tbody tr { background: var(--fin-surface); }
 .table tbody tr > * { border-bottom: 1px solid var(--fin-rule-soft); }
