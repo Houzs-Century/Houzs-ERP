@@ -37,9 +37,10 @@
 // Sales Invoice or Delivery Return stands on the DO (a payment or credit note
 // can only reach a delivery through its invoice), or while the crew reported a
 // delivery issue on it (a Service Case was opened for that delivery). The
-// delivered / signed stamps are cleared; the POD signature and photos are KEPT
-// on the row and listed in the audit note, and the sales order steps back from
-// DELIVERED when no other delivery of it is delivered (so-undeliver-sync.ts).
+// delivered / signed stamps are cleared; the POD signature, photos and GPS move
+// into a prior-attempt row (lib/do-pod-attempts.ts, owner 2026-11-10) so the
+// driver's real POD later cannot overwrite them, and the sales order steps back
+// from DELIVERED when no other delivery of it is delivered (so-undeliver-sync.ts).
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { reverseInventoryForDo, returnDoRacksOnCancel } from './delivery-orders-mfg';
@@ -49,6 +50,7 @@ import { recordEntityAudit, compactChanges, fieldChange } from '../lib/entity-au
 import { hasPositionCapability } from '../../services/positionCapabilities';
 import { requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { stepSoBackFromDelivered, type SoUndeliverOutcome } from '../lib/so-undeliver-sync';
+import { POD_SET_COLUMNS, CLEARED_POD_SET, archivePodAttempt, dropPodAttempt, type PodSet } from '../lib/do-pod-attempts';
 
 // The only two states a revert may START from, and the lifecycle rank used to
 // prove the target is strictly earlier. DRAFT=0 is the pre-ship floor.
@@ -108,7 +110,7 @@ export const revertDeliveryOrderHandler = async (
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: doRow, error: doErr } = await scopeToCompanyId(
     sb.from('delivery_orders')
-      .select('id, do_number, status, company_id, so_doc_no, delivered_at, signed_at, signature_data, pod_r2_key, pod_photo_keys')
+      .select(`id, do_number, status, company_id, so_doc_no, delivered_at, signed_at, ${POD_SET_COLUMNS}`)
       .eq('id', id),
     co.companyId,
   ).maybeSingle();
@@ -118,9 +120,8 @@ export const revertDeliveryOrderHandler = async (
   if (!doRow) return c.json(NOT_THIS_COMPANY, 404);
   const row = doRow as {
     do_number?: string | null; status?: string | null; company_id?: number | null; so_doc_no?: string | null;
-    delivered_at?: string | null; signed_at?: string | null; signature_data?: string | null;
-    pod_r2_key?: string | null; pod_photo_keys?: unknown;
-  };
+    delivered_at?: string | null; signed_at?: string | null;
+  } & PodSet;
   const from = String(row.status ?? '').toUpperCase();
   const doNo = row.do_number ?? id;
   const companyId = row.company_id ?? co.companyId;
@@ -173,11 +174,21 @@ export const revertDeliveryOrderHandler = async (
   //    branch). dispatched_at is cleared on any revert out of DISPATCHED so a
   //    re-dispatch stamps a fresh time.
   const now = new Date().toISOString();
-  const patch: Record<string, string | null> = { status: toStatus, updated_at: now };
+  const patch: Record<string, unknown> = { status: toStatus, updated_at: now };
   if (from === 'DISPATCHED') patch.dispatched_at = null;
+  // The POD set is copied into an attempt row BEFORE the order forgets it, so a
+  // failed copy refuses the undo with nothing changed; the order is then
+  // cleared so the driver's real POD starts empty instead of mixing with it.
+  let attemptId: string | null = null;
   if (undeliver) {
     patch.delivered_at = null;
     patch.signed_at = null;
+    Object.assign(patch, CLEARED_POD_SET);
+    const archived = await archivePodAttempt(sb, {
+      doId: id, companyId, from, reason, now, caller, row,
+    });
+    if (!archived.ok) return c.json({ error: 'archive_failed', reason: `Could not keep the earlier POD: ${archived.reason}` }, 500);
+    attemptId = archived.id;
   }
   const { data: updated, error: updErr } = await scopeToCompanyId(
     sb.from('delivery_orders').update(patch).eq('id', id),
@@ -186,6 +197,7 @@ export const revertDeliveryOrderHandler = async (
     .eq('status', from)
     .select('id, status')
     .maybeSingle();
+  if ((updErr || !updated) && attemptId) await dropPodAttempt(sb, attemptId, companyId);
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) {
     // Lost the race — the DO moved status under us. Do NOT reverse anything.
@@ -252,7 +264,7 @@ export const revertDeliveryOrderHandler = async (
   //    after the write, like every other audit in this module.
   const podPhotos = Array.isArray(row.pod_photo_keys) ? row.pod_photo_keys.length : row.pod_r2_key ? 1 : 0;
   const podKept = undeliver
-    ? ` POD kept on the order: ${row.signature_data ? 'signature, ' : 'no signature, '}${podPhotos} photo(s).`
+    ? ` Earlier POD kept as a prior attempt: ${row.signature_data ? 'signature, ' : 'no signature, '}${podPhotos} photo(s).`
     : '';
   await recordEntityAudit(sb, {
     entityType: 'DELIVERY_ORDER',
