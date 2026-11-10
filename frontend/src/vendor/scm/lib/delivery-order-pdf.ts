@@ -138,6 +138,9 @@ type DoItem = {
      stored on. Both optional / possibly empty → the cell shows a dash. */
   source_pos?: string[] | null;
   racks?: string[] | null;
+  /* 'locked' = the PO / rack this line was stamped with when it shipped;
+     'worked_out' = re-derived from stock records (an unstamped, older DO). */
+  source_state?: 'locked' | 'worked_out' | null;
   /* Line reference photos (R2 keys, delivery_order_items.photo_urls — carried
      from the SO line, mig 20260828T0746). Optional so the Consignment Note
      reuse stays valid. When present the row's first description line gains
@@ -147,6 +150,16 @@ type DoItem = {
 };
 
 type Doc = import('jspdf').jsPDF;
+
+/** Printed under the table when any Source PO / Rack cell was worked out. */
+export const WORKED_OUT_NOTE = '* Source PO / Rack worked out from stock records, not locked at dispatch.';
+
+/** A Source PO or Rack cell: one value per line, a dash when empty, and a
+ *  trailing " *" when the value was worked out rather than locked at dispatch. */
+export function pickingCell(vals: string[] | null | undefined, state: DoItem['source_state']): string {
+  if (!vals || vals.length === 0) return '—';
+  return state === 'worked_out' ? `${vals.join('\n')} *` : vals.join('\n');
+}
 
 // ── Page geometry ────────────────────────────────────────────────────────────
 /* jsPDF 'letter': 8.5 x 11 in. The 9.5 x 11 continuous form is 8.5 in between
@@ -693,8 +706,6 @@ export async function renderDeliveryOrderInto(
   const fabric = await loadCustomerFabricMaps(items);
   // DO is QUANTITY-only (Owner 2026-06-26) — a delivery doc shows quantity /
   // volume, not money. The unit_price_sen still flows to the Sales Invoice.
-  const listCell = (vals?: string[] | null): string =>
-    vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
   const descOf = (it: DoItem): string => {
     const composed = [it.description, docVariantLine(it, fabric.ext, fabric.desc)]
       .filter((s): s is string => Boolean(s));
@@ -712,7 +723,7 @@ export async function renderDeliveryOrderInto(
     // rail rather than jittering at the tenth row.
     const seq = String(idx + 1).padStart(2, '0');
     return showPicking
-      ? [seq, it.item_code, descOf(it), listCell(it.source_pos), listCell(it.racks), String(it.qty), m3Of(it)]
+      ? [seq, it.item_code, descOf(it), pickingCell(it.source_pos, it.source_state), pickingCell(it.racks, it.source_state), String(it.qty), m3Of(it)]
       : [seq, it.item_code, descOf(it), String(it.qty), m3Of(it)];
   });
 
@@ -822,6 +833,12 @@ export async function renderDeliveryOrderInto(
      block draws in jsPDF's built-in helvetica, the same face as the rest of
      this sheet. Absent entirely when no photo actually fetched. */
   let finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
+  if (showPicking && rows.some((r) => String(r[3]).endsWith(' *') || String(r[4]).endsWith(' *'))) {
+    font(doc, S.body, 'normal');
+    setInk(doc, T.ink);
+    doc.text(WORKED_OUT_NOTE, M, baselineOf(finalY + 2, S.body));
+    finalY += 6;
+  }
   if (photoImages.size > 0) {
     const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
       margin: M,

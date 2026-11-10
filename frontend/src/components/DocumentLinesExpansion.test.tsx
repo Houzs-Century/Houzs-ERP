@@ -546,3 +546,23 @@ describe("Committed batch — the hard-from-DO anchor (mig 0230, Decision 2026-0
     expect(absent.container.firstChild).toBeNull();
   });
 });
+
+/* Owner rule 2026-11-10: a confirmed DO locks each line's PO and rack at the
+   first ship. An older, unstamped DO still shows the worked-out answer, and the
+   screen must say it is worked out so staff know which is locked. */
+describe("Source PO: locked vs worked out", () => {
+  it("tags a worked-out line and leaves a locked line untagged", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        coverage="ready"
+        showSourcePo
+        lines={[
+          line({ code: "A", sourcePos: ["2990-PO-2610-044"], sourceState: "locked" }),
+          line({ code: "B", sourcePos: ["2990-PO-2610-050"], sourceState: "worked_out" }),
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("worked out")).toHaveLength(1);
+  });
+});

@@ -225,7 +225,7 @@ export const revertDeliveryOrderHandler = async (
     }
     // Physical rack stock back (best-effort — never blocks the revert).
     try {
-      await returnDoRacksOnCancel(sb, id, doNo, performedBy, companyId);
+      await returnDoRacksOnCancel(sb, id, doNo, performedBy, companyId, 'revert');
     } catch (e) {
       /* eslint-disable-next-line no-console */
       console.error('[do-revert] rack return failed:', e);

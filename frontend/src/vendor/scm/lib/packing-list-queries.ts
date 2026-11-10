@@ -21,8 +21,11 @@ export type PackingItem = {
   item_code: string;
   description: string | null;
   qty: number;
-  /** The rack this LINE leaves from, or null when no explicit pick was made. */
+  /** The rack(s) this LINE left from as locked when it shipped; before that the
+   *  explicit pick, or null when no pick was made. */
   rack: string | null;
+  /** True when `rack` is the rack(s) stamped at dispatch, not a pick. */
+  rack_locked?: boolean;
 };
 
 export type PackingStop = {

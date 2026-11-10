@@ -194,7 +194,7 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch, substituted, poRef }: {
+function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, racks, sourceState, delivered, committedBatch, substituted, poRef }: {
   name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
@@ -212,6 +212,10 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
   // data on every surface).
   sourcePos?: string[];
   sourceAdj?: boolean;
+  // DO lines only: the rack(s) the goods left, and whether PO / rack were locked
+  // when the line shipped or worked out (older DO) — desktop "Source racks" twin.
+  racks?: string[];
+  sourceState?: "locked" | "worked_out" | null;
   // DO lines only (mig 0230): the incoming PO batch this line committed to at
   // DO creation — the hard-from-DO anchor. Rendered as an anchored solid chip
   // (CommittedBatchRowMobile); absent → nothing. Display-only.
@@ -263,6 +267,12 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
       )}
       {sourcePos !== undefined && (
         <SourcePosRowMobile pos={sourcePos} adj={sourceAdj} showEmpty />
+      )}
+      {sourceState != null && ((racks?.length ?? 0) > 0 || sourceState === "worked_out") && (
+        <div style={{ flexBasis: "100%", fontSize: 10.5, color: "#7d8476", marginTop: 3 }}>
+          {(racks?.length ?? 0) > 0 ? `Rack: ${racks!.join(", ")}` : "Rack: —"}
+          {sourceState === "locked" ? " · locked at dispatch" : <i> · worked out</i>}
+        </div>
       )}
       <CommittedBatchRowMobile poNo={committedBatch} />
 
@@ -1612,6 +1622,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   ? (((it?.source_pos as string[] | null | undefined) ?? []) as string[])
                   : undefined;
                 const sourceAdj = isSalesDoc ? Boolean(it?.source_adj) : undefined;
+                const isDo = moduleKey === "delivery-orders-mfg";
                 /* DO lines only (mig 0230): the committed batch — the
                    hard-from-DO anchor the detail GET already returns
                    (committed_po_batch_no). Same field the desktop detail's
@@ -1621,7 +1632,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<><MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />{id && <MobileGrnLineRack moduleKey={moduleKey} grnId={id} header={header} line={it ?? {}} onSaved={invalidate} />}</>} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} racks={isDo ? ((it?.racks as string[] | undefined) ?? []) : undefined} sourceState={isDo ? ((it?.source_state as "locked" | "worked_out" | null | undefined) ?? null) : undefined} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<><MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />{id && <MobileGrnLineRack moduleKey={moduleKey} grnId={id} header={header} line={it ?? {}} onSaved={invalidate} />}</>} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}

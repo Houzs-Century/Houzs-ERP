@@ -201,6 +201,8 @@ type DoItem = {
      rack_id = the operator's explicit pick). */
   rack_id?: string | null;
   racks?: string[];
+  /* 'locked' = PO / rack stamped when the line shipped; 'worked_out' = re-derived. */
+  source_state?: 'locked' | 'worked_out' | null;
   warehouse_id?: string | null;
   /* Mig 0230 — the incoming PO batch this line committed to at DO creation
      (ship-before-arrival). The hard-from-DO anchor (Decision, docs/modules/
@@ -433,6 +435,8 @@ function SourceRackCard({
               </div>
               <div className="mb-1.5 text-[11px] text-ink-muted">
                 {(l.racks?.length ?? 0) > 0 ? `On rack: ${l.racks!.join(", ")}` : "Not yet placed on a rack"}
+                {(l.racks?.length ?? 0) > 0 && l.source_state === "locked" && " · locked at dispatch"}
+                {(l.racks?.length ?? 0) > 0 && l.source_state === "worked_out" && " · worked out"}
               </div>
               <select
                 className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[12.5px] text-ink disabled:opacity-60"

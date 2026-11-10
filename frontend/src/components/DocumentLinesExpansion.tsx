@@ -56,6 +56,9 @@ export type DocumentDrillLine = {
   // ADJUSTMENT lot (free gift / add-back). Renders a "STOCK ADJ" chip so the
   // cell is explained rather than blank.
   sourceAdj?: boolean;
+  // DO: 'worked_out' when the Source PO above was re-derived from stock records
+  // (an older DO with no stamp) rather than locked when the line shipped.
+  sourceState?: 'locked' | 'worked_out' | null;
   // PURCHASE docs (PO / GRN / PI): the Delivery Order(s) that have shipped this
   // line's goods (batch_no = this PO) with the qty shipped per DO. Empty / absent
   // → the Delivered cell shows a dash (nothing delivered against this line yet).
@@ -191,6 +194,20 @@ export function StockAdjChip() {
       className="rounded border border-border-subtle bg-surface-dim px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary"
     >
       STOCK ADJ
+    </span>
+  );
+}
+
+/* An unstamped (older) DO line: its Source PO / Rack was worked out from the
+   stock records at read time, not locked when it shipped, so a later stock
+   repair can change it. Locked lines carry no tag. */
+export function WorkedOutTag() {
+  return (
+    <span
+      title="Worked out from stock records — this delivery order was confirmed before PO and rack were locked at dispatch, so a later stock repair can change it."
+      className="text-[10.5px] italic text-ink-muted"
+    >
+      worked out
     </span>
   );
 }
@@ -799,6 +816,7 @@ export function DocumentLinesExpansion({
                         </span>
                       ))}
                       {l.sourceAdj && <StockAdjChip />}
+                      {l.sourceState === 'worked_out' && <WorkedOutTag />}
                     </>
                   ) : (
                     <span className="text-[11px] text-ink-muted">—</span>
