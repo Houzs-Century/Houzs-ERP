@@ -35,6 +35,11 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+import { activeCompanyTracksVariants } from '../lib/binding-mode';
+
+/** divan|leg|gap as typed — the inputs a Total Height is derived from. */
+const totalHeightPartsSig = (v: Record<string, unknown>): string =>
+  [v.divanHeight, v.legHeight, v.gap].map((x) => String(x ?? '')).join('|');
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen, normalizeCompartmentCode } from '@2990s/shared';
@@ -439,6 +444,11 @@ const SoLineCardInner = ({
      reserved for it. Edit-mode only — a read-only view still RENDERS the
      configurator (driven by `category` above) but must not mutate. */
   const specLocked = specLockedReason !== null;
+  /* Variant-tracked company (lib/binding-mode.ts): the leg default is seeded only
+     for a product PICKED in this card, never for a saved line merely opened
+     (PR #5609 follow-up). Company 1 seeds on open as it always has. */
+  const variantTracked = activeCompanyTracksVariants();
+  const itemCodeAtOpen = useRef(draft.itemCode);
   useEffect(() => {
     if (!isEditing || specLocked || !draft.itemCode) return;
     const patch: Partial<SoLineDraft> = {};
@@ -447,6 +457,7 @@ const SoLineCardInner = ({
       patch.itemGroup = category;
     }
     if (seedSofaLegDefault && category === 'sofa' && maint
+        && (!variantTracked || draft.itemCode !== itemCodeAtOpen.current)
         && isBlankVariant(draft.variants.legHeight)
         && isBlankVariant(draft.variants.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
@@ -571,8 +582,20 @@ const SoLineCardInner = ({
      the stored value already equals the computed one — never merely because the
      computed one is empty. That is deliberately not a guard a caller can get
      wrong here again, and it is pinned by total-height.canonical.test.ts. */
+  /* NOT ON OPEN, for a variant-tracked company only (PR #5609 follow-up;
+     lib/binding-mode.ts). There the writer runs only once divan, leg or gap has
+     changed in this card: opening a saved line must not rewrite its variants,
+     which is how a delivery line grew a `totalHeight` the received goods lacked
+     and keyed a different stock bucket. Company 1 (PO hard binding) keeps the
+     behaviour it has always had: the total is reconciled on open as well. */
+  const partsAtOpen = useRef(totalHeightPartsSig(draft.variants));
   useEffect(() => {
     if (specLocked) return;
+    if (variantTracked) {
+      const sig = totalHeightPartsSig(draft.variants);
+      if (sig === partsAtOpen.current) return;
+      partsAtOpen.current = sig;
+    }
     const patch = totalHeightPatch(category, draft.variants);
     if (!patch) return;
     onChange({ variants: { ...draft.variants, ...patch } });

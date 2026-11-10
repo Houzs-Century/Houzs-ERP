@@ -46,6 +46,7 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { foldTargetsIntoOwnBuckets, stockBucketKeyResolver } from '../lib/stock-bucket-key';
 
 export const consignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentReturns.use('*', supabaseAuth);
@@ -301,12 +302,16 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     const batchByWh = new Map<string, Map<string, string | null>>();
     const costByWh = new Map<string, Map<string, number>>();
     for (const wh of distinctWh) { batchByWh.set(wh, await resolveWarehouseLotBatches(sb, wh)); costByWh.set(wh, await resolveWarehouseLotCosts(sb, wh)); }
+    /* SKU category + canonical key, written as the stocked bucket's own string
+       when canonically equal (lib/stock-bucket-key.ts). */
+    const keyOf = await stockBucketKeyResolver(sb, (header as { company_id?: number | null }).company_id ?? null,
+      ((items ?? []) as Array<{ id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>).map((it) => ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null })));
     for (const it of ((items ?? []) as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; unit_cost_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>)) {
       const qty = Number(it.qty_returned ?? 0);
       if (qty <= 0) continue;
       const wh = lineWh.get(it.id) ?? null;
       if (!wh) continue;
-      const vk = computeVariantKey(it.item_group ?? null, it.variants ?? null);
+      const vk = keyOf({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null });
       const batch = batchByWh.get(wh)?.get(`${it.item_code}::${vk}`) ?? null;
       // Cost = the return line's snapshot; if it's 0 (free-entry return with no
       // cost), fall back to the SKU's current on-hand avg cost so we don't open a
@@ -341,6 +346,8 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
   const csDrEmitted = new Set<string>(); // product::variant given a CS_DR this run (avoid 2nd-warehouse collision)
+  /* A target canonically equal to a bucket this document already moved IS that bucket. */
+  foldTargetsIntoOwnBuckets(targetByBucket, aggByBucket.keys(), (header as { company_id?: number | null }).company_id ?? null);
   for (const k of new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()])) {
     const t = targetByBucket.get(k);
     const a = aggByBucket.get(k) ?? { in_qty: 0, out_qty: 0, in_total_cost: 0, product_name: null };

@@ -64,8 +64,9 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = [], n
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { shippedDoSpecRefusal } from '../lib/do-spec-lock-check';
+import { doSpecLocked } from '../shared/do-spec-lock';
 import { returnDoUnitsAtCost, returnedAsInRow, describeFailedReturns, type DoUnitReturn } from '../lib/do-resync-return';
-import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
+import { canonicalVariantKey, computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
@@ -101,6 +102,9 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
+import { foldTargetsIntoOwnBuckets, stockBucketKeyResolver } from '../lib/stock-bucket-key';
+import { adoptSoLineSpecs } from '../lib/do-so-spec';
+import { variantTrackedCompany } from '../lib/binding-mode';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
 import { recomputeDoTotals as recomputeTotals } from '../lib/do-totals';
 import { isSoLineOverDelivered, soRemainingByItemId } from '../lib/so-remaining-by-item';
@@ -893,11 +897,15 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
       .eq('source_doc_id', deliveryOrderId);
     type Agg = { net_qty: number; net_cost: number };
     const aggByBucket = new Map<string, Agg>();
+    /* A variant-tracked company compares canonically on both sides (the OUT may
+       carry the stocked bucket's older spelling); company 1 keeps the exact string. */
+    const costVk = (vk: string | null): string =>
+      variantTrackedCompany((doHeader as { company_id?: number | null }).company_id ?? null) ? canonicalVariantKey(vk) : (vk ?? '');
     for (const m of (movs ?? []) as Array<{
       movement_type: string; warehouse_id: string; item_code: string;
       variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null;
     }>) {
-      const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+      const k = `${m.warehouse_id}::${m.item_code}::${costVk(m.variant_key)}::${m.batch_no ?? ''}`;
       let agg = aggByBucket.get(k);
       if (!agg) { agg = { net_qty: 0, net_cost: 0 }; aggByBucket.set(k, agg); }
       const q = Number(m.qty ?? 0);
@@ -910,7 +918,7 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
        derived from it, never the reverse. Was `round(cost/qty) * line_qty`,
        which invents money when the per-unit figure is sub-sen — ledger B5. */
     const allocByLine = allocateAcrossBuckets(items as Array<{ id: string; qty: number }>, aggByBucket,
-      (it: any) => `${lineWh.get(it.id) ?? ''}::${it.item_code}::${computeVariantKey(it.item_group ?? null, it.variants ?? null)}::${it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? '') : ''}`);
+      (it: any) => `${lineWh.get(it.id) ?? ''}::${it.item_code}::${costVk(computeVariantKey(it.item_group ?? null, it.variants ?? null))}::${it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? '') : ''}`);
     for (const it of items as Array<{
       id: string; so_item_id?: string | null; item_code: string; qty: number;
       item_group?: string | null; variants?: VariantAttrs | null; line_total_sen: number | null;
@@ -1179,6 +1187,13 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
     warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null;
     notes: CostBatchNote[];
   }>();
+  /* The key is the SKU category's canonical key, written as the stocked
+     bucket's own string when one is canonically equal (lib/stock-bucket-key.ts):
+     the FIFO trigger matches the string exactly. */
+  const shipKeyLine = (it: { id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }) =>
+    ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null });
+  const shipKeyOf = await stockBucketKeyResolver(sb, (doHeader as { company_id?: number | null } | null)?.company_id ?? null,
+    (items as Array<{ id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>).map(shipKeyLine));
   for (const it of (items as Array<{ id: string; so_item_id?: string | null; item_code: string; description: string | null; qty: number; item_group?: string | null; variants?: VariantAttrs | null }>)) {
     /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
        the DO for invoicing + driver visibility (D2 final) but are not goods:
@@ -1188,7 +1203,7 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
     if (qty <= 0) continue;
     const warehouseId = lineWh.get(it.id) ?? null;
     if (!warehouseId) continue; // no resolvable warehouse — skip rather than guess
-    const variantKey = computeVariantKey(it.item_group ?? null, it.variants ?? null);
+    const variantKey = shipKeyOf(shipKeyLine(it));
     const batchNo = it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? null) : null;
     const k = `${warehouseId}::${it.item_code}::${variantKey}::${batchNo ?? ''}`;
     const lineNotes = it.so_item_id ? costNotes.filter((n) => n.soItemId === it.so_item_id) : [];
@@ -1549,6 +1564,11 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
 
   type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
+  /* Same key rule as the first ship (lib/stock-bucket-key.ts). */
+  const resyncKeyLine = (it: { id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }) =>
+    ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null });
+  const resyncKeyOf = await stockBucketKeyResolver(sb, (doHeader as { company_id?: number | null }).company_id ?? null,
+    ((items ?? []) as Array<{ id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>).map(resyncKeyLine));
   for (const it of (items as Array<{ id: string; so_item_id?: string | null; item_code: string; description: string | null; qty: number; item_group?: string | null; variants?: VariantAttrs | null }> ?? [])) {
     /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote OUT on first ship, so
        they must stay out of the resync TARGET too, or the delta walk would
@@ -1558,7 +1578,7 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     if (qty <= 0) continue;
     const warehouseId = lineWh.get(it.id) ?? null;
     if (!warehouseId) continue; // no resolvable warehouse — skip rather than guess
-    const variant_key = computeVariantKey(it.item_group ?? null, it.variants ?? null);
+    const variant_key = resyncKeyOf(resyncKeyLine(it));
     const batch_no = it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? null) : null;
     const k = `${warehouseId}::${it.item_code}::${variant_key}::${batch_no ?? ''}`;
     const cur = targetByBucket.get(k);
@@ -1616,6 +1636,12 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     agg.max_seq = Math.max(agg.max_seq, Number(m.correction_seq ?? 0));
     if (!agg.product_name) agg.product_name = m.product_name;
   }
+
+  /* 2b. A target bucket canonically equal to one this DO already moved stock in
+         IS that bucket. Without this, the first edit after this release on a
+         DO shipped under an older spelling (`|totalheight=24"`) would return
+         the units to the old bucket and take them again from the new one. */
+  foldTargetsIntoOwnBuckets(targetByBucket, aggByBucket.keys(), (doHeader as { company_id?: number | null }).company_id ?? null);
 
   // 3. Per-bucket delta = target − current_net_out. Positive → need more OUT;
   //    negative → need more IN (return some stock). Bucket key is
@@ -2734,6 +2760,15 @@ deliveryOrdersMfg.post('/', async (c) => {
        the service/sofa guards and buildItemRow all read these same objects, so
        the answer they get cannot differ. #2660 closed the inbound half. */
     items = await resolveItemGroups(sb, linked.items, activeCompanyId(c) ?? null);
+    /* A variant-tracked company's SO-linked line ships the SO line's spec, read
+       here on the server like /from-sos (lib/do-so-spec.ts): the client card must
+       not choose the stock bucket by what it added on open. Company 1 binds by
+       PO and keeps the line as sent (binding-mode.ts). */
+    if (variantTrackedCompany(activeCompanyId(c) ?? null)) {
+      try { items = await adoptSoLineSpecs(sb, items, activeCompanyId(c) ?? null); } catch (e) {
+        return c.json({ error: 'lookup_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+      }
+    }
   }
 
   /* PERF — ONE WAVE for the gate reads below (items are final from here). Each needs only the
@@ -4123,6 +4158,12 @@ const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Va
        path: the stock check below, the commitment planner and buildItemRow all
        read this one object. */
     it = (await resolveItemGroups(sb, [linked.items[0] as typeof it], activeCompanyId(c) ?? null))[0]!;
+    // The SO line's spec, as on create (lib/do-so-spec.ts); variant-tracked companies only.
+    if (variantTrackedCompany(activeCompanyId(c) ?? null)) {
+      try { it = (await adoptSoLineSpecs(sb, [it], activeCompanyId(c) ?? null))[0]!; } catch (e) {
+        return c.json({ error: 'lookup_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+      }
+    }
   }
 
   /* A DO ships to ONE customer — the /from-sos rule. Edit-mode "Pull from SO"
@@ -4393,6 +4434,18 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_sen, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  /* An SO-linked line's spec is the SO line's (lib/do-so-spec.ts), on an edit as
+     on create. Not once shipped: the spec lock below decides those, against the
+     spec the line actually shipped as. */
+  if (it.variants !== undefined && prev.so_item_id && variantTrackedCompany(co.companyId)
+    && !doSpecLocked((own as { status: string | null }).status)) {
+    try {
+      const [adopted] = await adoptSoLineSpecs(sb, [{ soItemId: prev.so_item_id, itemCode: it.itemCode ?? prev.item_code, variants: it.variants }], co.companyId);
+      it.variants = adopted?.variants ?? it.variants;
+    } catch (e) {
+      return c.json({ error: 'lookup_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  }
   // Owner 2026-11-10: a shipped line keeps its product and spec (shared/do-spec-lock.ts).
   const specLock = shippedDoSpecRefusal((own as { status: string | null }).status, prev, it);
   if (specLock) return c.json(specLock, 409);

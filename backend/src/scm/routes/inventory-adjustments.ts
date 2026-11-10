@@ -41,6 +41,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, requireActiveCompanyId, companyDocPrefix, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { resolveIncreaseKeys } from '../lib/stock-bucket-key';
 import { assertWarehouseInCompany } from '../lib/ref-in-company';
 import { recordEntityAudit, compactChanges, fieldChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { resolveCallerStaffId } from '../lib/salesScope';
@@ -227,6 +228,10 @@ inventoryAdjustments.post('/', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const whCheck = await assertWarehouseInCompany(c.get('supabase'), warehouseId, co.companyId);
   if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
+  /* Found stock joins the canonically equal bucket already on the shelf, keyed by
+     the SKU's category (lib/stock-bucket-key.ts). Create only: an edit sends the
+     keys its lines were stored under, and the ledger diff compares those. */
+  await resolveIncreaseKeys(c.get('supabase'), co.companyId, warehouseId, lines);
 
   const deltas = bucketDeltas([], lines);
   try {

@@ -36,6 +36,7 @@ import { doLineRemaining, returnableRemainingFrom, resolveCandidateDoIds, custKe
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
+import { foldTargetsIntoOwnBuckets, stockBucketKeyResolver } from '../lib/stock-bucket-key';
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
@@ -384,6 +385,13 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
   const byKey = new Map<string, {
     warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
   }>();
+  /* Returned goods go back into the bucket they left: the SKU category's
+     canonical key, as the stocked bucket's own string when canonically equal
+     (lib/stock-bucket-key.ts). */
+  const drKeyLine = (it: { id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }) =>
+    ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null });
+  const drKeyOf = await stockBucketKeyResolver(sb, (drHeader as { company_id?: number | null } | null)?.company_id ?? null,
+    (items as Array<{ id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>).map(drKeyLine));
   for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>)) {
     /* P1 SO-SKU spec §4.6 — depth guard: a SERVICE line must never write stock
        IN. The route guards reject them at create/edit; this keeps any line
@@ -393,7 +401,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     if (qty <= 0) continue;
     const warehouseId = lineWh.get(it.id) ?? null;
     if (!warehouseId) continue; // no resolvable warehouse — skip rather than guess
-    const variantKey = computeVariantKey(it.item_group ?? null, it.variants ?? null);
+    const variantKey = drKeyOf(drKeyLine(it));
     const batchNo = lineBatch.get(it.id) ?? null;
     const k = `${warehouseId}::${it.item_code}::${variantKey}::${batchNo ?? ''}`;
     const cur = byKey.get(k);
@@ -550,6 +558,8 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   };
   for (const m of await readDrMovs('DR')) addMov(m);
   for (const m of await readDrMovs('ADJUSTMENT')) addMov(m);
+  /* A target canonically equal to a bucket this DR already booked IS that bucket (lib/stock-bucket-key.ts). */
+  foldTargetsIntoOwnBuckets(targetByBucket, aggByBucket.keys(), (drHeader as { company_id?: number | null }).company_id ?? null);
 
   // 3. Per-bucket delta = target − current_net. delta > 0 adds stock back (a line
   //    qty was raised); delta < 0 removes over-booked stock (line reduced /

@@ -16,9 +16,10 @@
 // line just keeps reading the worked-out answer.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { canonicalVariantKey, computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { classifyLots, traceDoShipmentSources } from './source-po-trace';
+import { variantTrackedCompany } from './binding-mode';
 import { loadGrnRacksForPos } from './do-shipped-from-grn';
 import { resolveDoLineWarehouses } from './do-line-warehouses';
 import { afterResponse } from '../../lib/after-response';
@@ -83,9 +84,13 @@ export async function planDoShippedFrom(
   if (consErr) return null;
   const cons = (consData ?? []) as Array<{ lot_id: string; item_code: string | null; variant_key: string | null; qty_consumed: number | null }>;
   const lotClass = await classifyLots(sb, cons.map((r) => r.lot_id));
+  /* A variant-tracked company (binding-mode.ts) matches lines to ledger rows
+     canonically: the OUT may carry the stocked bucket's older spelling of the
+     spec. Company 1 keeps the exact string. */
+  const idOf = (vk: string | null): string => (variantTrackedCompany(companyId) ? canonicalVariantKey(vk) : (vk ?? ''));
   const poUnits = cons.map((r) => {
     const cls = lotClass.get(r.lot_id);
-    return { item_code: r.item_code, variant_key: r.variant_key ?? '', po: cls?.po ?? null, adjustment: cls?.adjustment ?? false, qty: Number(r.qty_consumed ?? 0) };
+    return { item_code: r.item_code, variant_key: idOf(r.variant_key), po: cls?.po ?? null, adjustment: cls?.adjustment ?? false, qty: Number(r.qty_consumed ?? 0) };
   });
   /* A batched OUT with no consumption (drop-ship shipped before its receipt)
      still names its PO: the batch is the expected PO number. */
@@ -96,8 +101,8 @@ export async function planDoShippedFrom(
       .not('batch_no', 'is', null), companyId);
   if (movErr) return null;
   for (const m of (movData ?? []) as Array<{ item_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>) {
-    if (!m.item_code || consumed.has(`${m.item_code}::${m.variant_key ?? ''}`)) continue;
-    poUnits.push({ item_code: m.item_code, variant_key: m.variant_key ?? '', po: m.batch_no, adjustment: false, qty: Math.abs(Number(m.qty ?? 0)) });
+    if (!m.item_code || consumed.has(`${m.item_code}::${idOf(m.variant_key)}`)) continue;
+    poUnits.push({ item_code: m.item_code, variant_key: idOf(m.variant_key), po: m.batch_no, adjustment: false, qty: Math.abs(Number(m.qty ?? 0)) });
   }
   /* The forward trace (what the DO detail showed until now) overrides the raw
      lots for company-1 hard-bound lines (BUG-103): the stamp must lock the same
@@ -110,7 +115,9 @@ export async function planDoShippedFrom(
     const prefix = `${deliveryOrderId}::`;
     for (const [k, t] of byBucket) {
       if (!k.startsWith(prefix) || t.pos.length === 0) continue;
-      const b = k.slice(prefix.length);
+      const rest = k.slice(prefix.length);
+      const sep = rest.indexOf('::');
+      const b = sep < 0 || !variantTrackedCompany(companyId) ? rest : `${rest.slice(0, sep)}::${idOf(rest.slice(sep + 2))}`;
       const mine = ledger.get(b) ?? new Set<string>();
       if (t.pos.length !== mine.size || t.pos.some((p) => !mine.has(p))) poOverride.set(b, t.pos);
     }
@@ -128,7 +135,7 @@ export async function planDoShippedFrom(
 
   const at = new Date().toISOString();
   const planLines = (lineWh: Map<string, string | null> | null) => lines.map((l) => ({
-    id: l.id, item_code: l.item_code, variant_key: vkOf(l), qty: Number(l.qty ?? 0), rack_id: l.rack_id,
+    id: l.id, item_code: l.item_code, variant_key: idOf(vkOf(l)), qty: Number(l.qty ?? 0), rack_id: l.rack_id,
     warehouse_id: lineWh?.get(l.id) ?? null,
     goods: !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code ?? '' }), shipped_from: l.shipped_from,
   }));
