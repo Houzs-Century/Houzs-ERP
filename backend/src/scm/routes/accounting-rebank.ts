@@ -10,6 +10,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { MAX_REBANK_PER_CALL, rebankCandidates, rebankReceipts } from '../../acc/receipt-rebank';
+import { rebankTxFor } from '../../acc/rebank-transaction';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -49,7 +50,8 @@ export const rebankMoveHandler = async (c: Ctx): Promise<Response> => {
   if (items.length > MAX_REBANK_PER_CALL) {
     return c.json({ error: 'too_many', message: `At most ${MAX_REBANK_PER_CALL} receipts per move.` }, 400);
   }
-  const r = await rebankReceipts(c.get('supabase'), co.companyId, items);
+  /* Each receipt moves in its own transaction (RECEIPT_REBANK_MODE, acc/rebank-transaction.ts). */
+  const r = await rebankReceipts(c.get('supabase'), co.companyId, items, rebankTxFor(c.env));
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json({ target: r.target, results: r.results });
 };

@@ -18,12 +18,19 @@
 // Refused, by name: a receipt already matched on a bank statement (the money
 // was claimed on that bank), a receipt in a closed bank month on either bank,
 // and anything whose reads fail — every check fails closed.
+//
+// ALL OR NOTHING, per receipt (owner-approved root fix): the contra and the new
+// entry are written in ONE database transaction (acc/rebank-transaction.ts), so
+// a receipt either moves whole or is left exactly where it was. Each receipt is
+// its own transaction — one failure never undoes the receipts before it. The
+// old two-step path stays behind RECEIPT_REBANK_MODE=two-step for one release.
 // ----------------------------------------------------------------------------
 
 import { reverseJournal } from './engine';
 import { postSiPayment, postSoPayment, type SiPaymentRow, type SoPaymentRow } from './payments';
 import { resolveRoles } from './rules';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
+import type { RebankTx } from './rebank-transaction';
 
 type Db = Parameters<typeof postSoPayment>[0];
 type Rec = Record<string, unknown>;
@@ -47,7 +54,9 @@ export type RebankList = { ok: true; target: string; rows: RebankCandidate[] } |
 /** At most this many receipts per move call — each one is several writes. */
 export const MAX_REBANK_PER_CALL = 25;
 
-const dayOf = (v: unknown): string => String(v ?? '').slice(0, 10);
+/* Date-safe: inside the transaction (postgres.js) a DATE comes back as a JS Date. */
+const dayOf = (v: unknown): string =>
+  v instanceof Date ? (Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10)) : String(v ?? '').slice(0, 10);
 const nextDay = (ymd: string): string => {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);
@@ -207,13 +216,14 @@ export type RebankOutcome = {
 };
 
 /** Move the named receipts, each checked again first. A receipt that cannot
-    move is skipped with its reason; one whose reversal landed but whose new
-    entry did not is `failed` — it then has no live entry, which the Self-check
-    unbooked card reports and the backfill heals. */
+    move is skipped with its reason. With `tx` (the default path) a receipt
+    whose move fails is `failed` with NOTHING written — its old entry is still
+    live. With `tx` null (RECEIPT_REBANK_MODE=two-step) the old path runs: a
+    `failed` there can mean the reversal landed and the new entry did not. */
 export async function rebankReceipts(
-  sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>,
+  sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>, tx: RebankTx | null,
 ): Promise<{ ok: true; target: string; results: RebankOutcome[] } | { ok: false; reason: string }> {
-  return moveReceipts(sb, companyId, items, null);
+  return moveReceipts(sb, companyId, items, null, tx);
 }
 
 /**
@@ -229,43 +239,112 @@ export async function transferMoveFor(
   return { ok: true, move: r.rows[0] ?? null };
 }
 
-/** Move the named receipts onto `bank` (null = BANK_DEFAULT). */
+/** Move the named receipts onto `bank` (null = BANK_DEFAULT). One at a time:
+    the Worker holds ONE database connection per request (db/pg.ts max:1), so
+    parallel transactions would only queue on it. */
 export async function moveReceipts(
-  sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>, bank: string | null,
+  sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>, bank: string | null, tx: RebankTx | null,
 ): Promise<{ ok: true; target: string; results: RebankOutcome[] } | { ok: false; reason: string }> {
   const fresh = await listFor(sb, companyId, null, items, bank);
   if (!fresh.ok) return fresh;
   const byKey = new Map(fresh.rows.map((r) => [`${r.source}:${r.paymentId}`, r]));
   const results: RebankOutcome[] = [];
+  const seen = new Set<string>();
   for (const it of items) {
     const key = `${it.source}:${it.paymentId}`;
     const c = byKey.get(key);
     const base = { source: it.source, paymentId: it.paymentId, fromJeNo: c?.jeNo ?? null, jeNo: null };
+    /* The same receipt twice in one call is one journal moved twice: the second is refused. */
+    if (seen.has(key)) { results.push({ ...base, status: 'skipped', reason: 'listed twice in this move' }); continue; }
+    seen.add(key);
     if (!c) { results.push({ ...base, status: 'skipped', reason: `not a transfer receipt on another bank than ${fresh.target}` }); continue; }
     if (c.blocked) { results.push({ ...base, status: 'skipped', reason: c.blocked }); continue; }
-
-    const undone = await reverseJournal(sb, {
-      sourceType: it.source, sourceDocNo: it.paymentId, companyId, onOriginalDate: true,
-      narration: (orig) => `Reversal of ${orig.je_no} — receipt on ${c.docNo} moved from ${c.fromAccount} to ${fresh.target}`,
-    });
-    if (!undone.ok) { results.push({ ...base, status: 'skipped', reason: `reverse: ${undone.status}${undone.reason ? ` (${undone.reason})` : ''}` }); continue; }
-
-    const row = fresh.payments!.get(key)!.row;
-    const onto = { bankAccountCode: fresh.target };
-    const posted = it.source === 'SOPAY' ? await postSoPayment(sb, row as SoPaymentRow, onto) : await postSiPayment(sb, row as SiPaymentRow, onto);
-    if (!posted.ok || (posted.status !== 'posted' && posted.status !== 'already_posted')) {
-      const why = posted.ok ? posted.status : `${posted.status}${posted.reason ? ` (${posted.reason})` : ''}`;
-      results.push({ ...base, status: 'failed', reason: `reversed, but the new entry did not post: ${why}` });
-      continue;
-    }
-    /* Read back: the new entry's money leg must be the target bank. */
-    const after = await liveEntries(sb, companyId, [fresh.payments!.get(key)!]);
-    const leg = after.ok ? after.byPayment.get(key) : null;
-    if (!leg || leg.account !== fresh.target) {
-      results.push({ ...base, status: 'failed', jeNo: posted.jeNo, reason: `the new entry ${posted.jeNo} debits ${leg?.account ?? 'nothing readable'}, not ${fresh.target}` });
-      continue;
-    }
-    results.push({ ...base, status: 'moved', reason: null, jeNo: posted.jeNo });
+    const payment = fresh.payments!.get(key)!;
+    results.push(tx
+      ? await moveOneAtomic(tx, companyId, it, c, payment, fresh.target)
+      : await moveOneTwoStep(sb, companyId, it, c, payment, fresh.target));
   }
   return { ok: true, target: fresh.target, results };
+}
+
+/** Why the transaction is rolled back; `status` is what the receipt reports. */
+class RebankRollback extends Error {
+  constructor(readonly status: 'skipped' | 'failed', readonly why: string) { super(why); }
+}
+
+const contraNarration = (c: RebankCandidate, target: string) => (orig: { je_no: string }) =>
+  `Reversal of ${orig.je_no} — receipt on ${c.docNo} moved from ${c.fromAccount} to ${target}`;
+
+const postOnto = (db: Db, source: Source, payment: PaymentRead, target: string) => {
+  const onto = { bankAccountCode: target };
+  return source === 'SOPAY' ? postSoPayment(db, payment.row as SoPaymentRow, onto) : postSiPayment(db, payment.row as SiPaymentRow, onto);
+};
+
+/** Contra + new entry + read-back in ONE transaction: any refusal or error
+    rolls all of it back, and the receipt stays on the bank it was on. */
+async function moveOneAtomic(
+  tx: RebankTx, companyId: number, it: { source: Source; paymentId: string }, c: RebankCandidate, payment: PaymentRead, target: string,
+): Promise<RebankOutcome> {
+  const base = { source: it.source, paymentId: it.paymentId, fromJeNo: c.jeNo };
+  try {
+    const jeNo = await tx(async (db) => {
+      /* Checked again inside the transaction: a statement match made since the list. */
+      const claim = await db.from('acc_bank_statement_matches').select('je_no')
+        .eq('company_id', companyId).eq('je_no', c.jeNo).limit(1);
+      if (claim.error) throw new RebankRollback('failed', `bank matches: ${claim.error.message}`);
+      if ((claim.data ?? []).length > 0) throw new RebankRollback('skipped', `already matched on the ${c.fromAccount} statement`);
+
+      const undone = await reverseJournal(db, {
+        sourceType: it.source, sourceDocNo: it.paymentId, companyId, onOriginalDate: true, narration: contraNarration(c, target),
+      });
+      if (!undone.ok) throw new RebankRollback('failed', `reverse: ${undone.status}${undone.reason ? ` (${undone.reason})` : ''}`);
+      /* The entry reversed must be the one listed — anything else changed under us. */
+      if (undone.status !== 'reversed' || undone.originalJeNo !== c.jeNo) {
+        throw new RebankRollback('skipped', `its entry changed since the list (expected ${c.jeNo}) — list again`);
+      }
+
+      const posted = await postOnto(db, it.source, payment, target);
+      if (!posted.ok || posted.status !== 'posted') {
+        const why = posted.ok ? posted.status : `${posted.status}${posted.reason ? ` (${posted.reason})` : ''}`;
+        throw new RebankRollback('failed', `the new entry did not post: ${why}`);
+      }
+      /* Read back: the new entry's money leg must be the target bank. */
+      const after = await liveEntries(db, companyId, [payment]);
+      const leg = after.ok ? after.byPayment.get(`${it.source}:${it.paymentId}`) : null;
+      if (!leg || leg.account !== target) {
+        throw new RebankRollback('failed', `the new entry ${posted.jeNo} debits ${leg?.account ?? 'nothing readable'}, not ${target}`);
+      }
+      return posted.jeNo;
+    });
+    return { ...base, status: 'moved', reason: null, jeNo };
+  } catch (e) {
+    const status = e instanceof RebankRollback ? e.status : 'failed';
+    const why = e instanceof RebankRollback ? e.why : (e instanceof Error ? e.message : String(e));
+    return { ...base, status, jeNo: null, reason: status === 'failed' ? `nothing changed, still on ${c.fromAccount}: ${why}` : why };
+  }
+}
+
+/** THE OLD PATH (RECEIPT_REBANK_MODE=two-step), unchanged: the reversal commits
+    before the new entry is written. Remove after one clean release. */
+async function moveOneTwoStep(
+  sb: Db, companyId: number, it: { source: Source; paymentId: string }, c: RebankCandidate, payment: PaymentRead, target: string,
+): Promise<RebankOutcome> {
+  const key = `${it.source}:${it.paymentId}`;
+  const base = { source: it.source, paymentId: it.paymentId, fromJeNo: c.jeNo, jeNo: null };
+  const undone = await reverseJournal(sb, {
+    sourceType: it.source, sourceDocNo: it.paymentId, companyId, onOriginalDate: true, narration: contraNarration(c, target),
+  });
+  if (!undone.ok) return { ...base, status: 'skipped', reason: `reverse: ${undone.status}${undone.reason ? ` (${undone.reason})` : ''}` };
+
+  const posted = await postOnto(sb, it.source, payment, target);
+  if (!posted.ok || (posted.status !== 'posted' && posted.status !== 'already_posted')) {
+    const why = posted.ok ? posted.status : `${posted.status}${posted.reason ? ` (${posted.reason})` : ''}`;
+    return { ...base, status: 'failed', reason: `reversed, but the new entry did not post: ${why}` };
+  }
+  const after = await liveEntries(sb, companyId, [payment]);
+  const leg = after.ok ? after.byPayment.get(key) : null;
+  if (!leg || leg.account !== target) {
+    return { ...base, status: 'failed', jeNo: posted.jeNo, reason: `the new entry ${posted.jeNo} debits ${leg?.account ?? 'nothing readable'}, not ${target}` };
+  }
+  return { ...base, status: 'moved', reason: null, jeNo: posted.jeNo };
 }

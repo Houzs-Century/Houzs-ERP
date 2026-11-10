@@ -343,6 +343,12 @@ export type ReverseJournalResult =
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
   | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_post_failed' | 'reversal_flag_failed'; reason?: string };
 
+/* A stored DATE as YYYY-MM-DD. PostgREST answers '2026-10-05'; the PostgreSQL
+   transaction client (pg-supabase-transaction.ts, postgres.js) answers a JS Date,
+   whose String() is 'Mon Oct 05 2026 …' — sliced, a date no column accepts. */
+const storedDay = (v: unknown): string =>
+  v instanceof Date ? (Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10)) : String(v ?? '').slice(0, 10);
+
 export async function reverseJournal(sb: any, input: ReverseJournalInput): Promise<ReverseJournalResult> {
   const revType = REVERSAL_SOURCE[input.sourceType] ?? `${input.sourceType}_REVERSAL`;
 
@@ -427,7 +433,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
   // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
   const contraEntryDate = dateOrNull(input.entryDate)
-    ?? (input.onOriginalDate ? dateOrNull(String(orig.entry_date ?? '').slice(0, 10)) : null)
+    ?? (input.onOriginalDate ? dateOrNull(storedDay(orig.entry_date)) : null)
     ?? todayMyt();
 
   let revJe: { id: string; je_no: string } | null = null;
