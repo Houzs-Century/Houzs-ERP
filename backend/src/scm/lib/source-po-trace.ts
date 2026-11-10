@@ -138,7 +138,7 @@ type LotClassRow = {
 /* Classify a set of lots for the forward trace: batch_no verbatim where
    present; NULL-batch GRN lots healed via grns→PO; NULL-batch ADJUSTMENT lots
    flagged. Returns lotId → { po, adjustment }. */
-async function classifyLots(
+export async function classifyLots(
   sb: any,
   lotIds: string[],
 ): Promise<Map<string, { po: string | null; adjustment: boolean }>> {

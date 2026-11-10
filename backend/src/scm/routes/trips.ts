@@ -544,7 +544,7 @@ trips.get('/packing', async (c) => {
       const { data: itemData, error: itemErr } = await chunkIn<Record<string, unknown>>(readableDoIds, (batch, lo, hi) =>
         scopeToAllowedCompanies(
           sb.from('delivery_order_items')
-            .select('delivery_order_id, line_no, item_code, description, qty, rack_id')
+            .select('delivery_order_id, line_no, item_code, description, qty, rack_id, shipped_from')
             .in('delivery_order_id', batch).range(lo, hi),
           c,
         ));
@@ -556,6 +556,7 @@ trips.get('/packing', async (c) => {
         description: dual<string | null>(it, 'description'),
         qty: toNumericOrNull(dual(it, 'qty')),
         rack_id: dual<string | null>(it, 'rack_id'),
+        shipped_from: dual<unknown>(it, 'shipped_from') ?? null,
       }));
     }
   }

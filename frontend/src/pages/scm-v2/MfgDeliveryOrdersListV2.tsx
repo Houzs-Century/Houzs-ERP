@@ -754,6 +754,8 @@ type DoDrillItem = {
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
+  /* 'locked' = stamped when the line shipped; 'worked_out' = re-derived (older DO). */
+  source_state?: 'locked' | 'worked_out' | null;
 };
 
 function DoLinesExpansion({ doId }: { doId: string }) {
@@ -772,6 +774,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     amountSen: l.amount_sen ?? l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0),
     sourcePos: l.source_pos ?? [],
     sourceAdj: l.source_adj ?? false,
+    sourceState: l.source_state ?? null,
   }));
   return (
     <div className="flex flex-col gap-2">

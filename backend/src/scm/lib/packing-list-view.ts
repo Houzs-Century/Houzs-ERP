@@ -28,6 +28,9 @@
 // an empty lorry.
 // ----------------------------------------------------------------------------
 
+// @ts-expect-error - plain .mjs, the one stamp rule shared with the DO detail and scripts/stamp-do-shipped-from.mjs
+import { stampRackLabel } from '../../../scripts/lib/do-shipped-from.mjs';
+
 export type PackTripRow = {
   id: string;
   trip_no: string | null;
@@ -62,6 +65,8 @@ export type PackItemRow = {
   description: string | null;
   qty: number | null;
   rack_id: string | null;
+  /** The PO / rack stamp locked at the first ship (mig 20261110T2300), or null. */
+  shipped_from: unknown;
 };
 
 /** id -> printable label, for the two masters that only lend a name. */
@@ -74,8 +79,10 @@ export type PackingItem = {
   qty: number;
   /** The rack the LINE leaves from (scm.delivery_order_items.rack_id, mig 0118).
    *  Null when the line carries no explicit pick — dispatch auto-picks then, and
-   *  a sheet that printed a rack anyway would be inventing one. */
+   *  a sheet that printed a rack anyway would be inventing one. A shipped line
+   *  prints the rack(s) it was locked to when it left instead (`rack_locked`). */
   rack: string | null;
+  rack_locked: boolean;
 };
 
 export type PackingStop = {
@@ -134,6 +141,13 @@ export type AssembleInput = {
   warehouses: readonly PackLabelRow[];
 };
 
+/** The stamped rack(s) first; only an unstamped line falls back to its explicit pick. */
+function packRack(it: PackItemRow, rackById: Map<string, string>): { rack: string | null; rack_locked: boolean } {
+  const locked: string | null = stampRackLabel(it.shipped_from, it.item_code ?? null);
+  if (locked) return { rack: locked, rack_locked: true };
+  return { rack: it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null, rack_locked: false };
+}
+
 export function assemblePackingLists(input: AssembleInput): PackingList[] {
   const rackById = labelMap(input.racks);
   const lorryById = labelMap(input.lorries);
@@ -153,7 +167,7 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       item_code: (it.item_code ?? '').trim() || '—',
       description: it.description ?? null,
       qty: num(it.qty),
-      rack: it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null,
+      ...packRack(it, rackById),
     });
     itemsByDo.set(key, arr);
   }
