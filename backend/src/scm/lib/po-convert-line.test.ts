@@ -22,6 +22,7 @@ const line: PoConvertLine = {
   variants: { fabricCode: 'EZ-003' },
   soItemId: 'si-1',
   photoUrls: ['so-items/HC-SO-013503/si-1/build.jpg'],
+  notes: null,
 };
 
 describe('poConvertLineRow', () => {
@@ -32,7 +33,7 @@ describe('poConvertLineRow', () => {
        after the caller has ordered the payload (lib/po-line-order.ts). */
     expect(Object.keys(poConvertLineRow('po-1', line, false, line.itemGroup)).sort()).toEqual([
       'delivery_date', 'description2', 'from_mrp', 'item_code', 'item_group',
-      'line_total_sen', 'material_kind', 'material_name', 'photo_urls',
+      'line_total_sen', 'material_kind', 'material_name', 'notes', 'photo_urls',
       'purchase_order_id', 'qty', 'so_item_id', 'supplier_sku', 'unit_price_sen',
       'variants', 'warehouse_id',
     ]);
@@ -89,5 +90,14 @@ describe('poConvertLineRow', () => {
     const row = poConvertLineRow('po-1', { ...line, itemGroup: 'others' }, false, 'sofa');
     expect(row.item_group).toBe('sofa');
     expect(row.description2).toBe(buildVariantSummary('sofa', line.variants) || null);
+  });
+
+  /* Owner 2026-11-10 — a DINING line carries the source order's remark to the
+     supplier PO. The DINING-only rule is applied by the converter; here the row
+     stores `l.notes` verbatim, so the column is written whatever the group. */
+  test('the line remark rides through to purchase_order_items.notes', () => {
+    expect(poConvertLineRow('po-1', { ...line, notes: 'Wrap legs in foam' }, false, line.itemGroup).notes)
+      .toBe('Wrap legs in foam');
+    expect(poConvertLineRow('po-1', line, false, line.itemGroup).notes).toBeNull();
   });
 });

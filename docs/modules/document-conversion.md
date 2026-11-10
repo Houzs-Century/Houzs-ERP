@@ -46,8 +46,8 @@ Vocabulary (`backend/src/scm/shared/transfer-vocabulary.ts` = `frontend/src/vend
 - "Source PO" columns (from stock `batch_no`) are inventory facts, not lineage; keep that title.
 
 Provenance note (a stored data contract)
-- `POST /mfg-purchase-orders/from-sos` (incl. MRP Proceed PO) writes `purchase_orders.notes = provenanceNote('so', docNos)` -> `Transfer from Sales Order: SO-..., SO-...`.
-- Readers: `document-flow.ts`, `po-so-coverage.ts`, `po-relationship-map.ts`, `purchase-order-pdf.ts` ("Your Ref No." / "For SO"), and backfill/repair scripts. All parse via `parseProvenanceNote` / `provenanceNoteRe`.
+- `POST /mfg-purchase-orders/from-sos` (incl. MRP Proceed PO) writes `purchase_orders.notes` with `provenanceNote('so', docNos)` -> `Transfer from Sales Order: SO-..., SO-...` ON LINE 1. For a DINING bucket the source SOs' header notes are appended BELOW it (`lib/po-dining-remark.ts`, both companies) — the provenance stays line 1 so every reader is unchanged. The DINING line's own `remark` rides to its PO line's `notes` ("Remark:" on the PO PDF).
+- Readers: `document-flow.ts`, `po-so-coverage.ts`, `po-relationship-map.ts`, `purchase-order-pdf.ts` ("Your Ref No." / "For SO"), and backfill/repair scripts. All parse via `parseProvenanceNote` / `provenanceNoteRe` (line-anchored, `m` flag — the FIRST label line wins, so appended notes never shadow it).
 - `PROVENANCE_NOTE_LABELS` keeps legacy `From SOs` and `From SO` forever. SQL candidate filters must be built with `provenanceNoteSqlPattern()`, never typed. Parsers share `backend/tests/fixtures/provenance-note-corpus.json`.
 
 Consumption and caps (application code only; no DB constraint except the PO allocation triggers)
