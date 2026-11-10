@@ -82,7 +82,7 @@ class FakeQuery {
 
 function harness(
   tables: Record<string, Row[]>,
-  opts?: { allowed?: number[]; rpcError?: string; rpcCalls?: Array<{ fn: string; args: Row }> },
+  opts?: { allowed?: number[]; rpcError?: string; rpcCalls?: Array<{ fn: string; args: Row }>; auditDown?: boolean },
 ) {
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -90,6 +90,7 @@ function harness(
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
       rpc(fn: string, args: Row) {
+        if (fn === 'entity_audit_writable') return Promise.resolve({ data: opts?.auditDown !== true, error: null });
         opts?.rpcCalls?.push({ fn, args });
         return Promise.resolve(opts?.rpcError
           ? { data: null, error: { message: opts.rpcError } }
@@ -737,5 +738,59 @@ describe('sections — the AutoCount account-type tree', () => {
     });
     expect(tick.status).toBe(200);
     expect(tables.accounts.find((a) => a.company_id === 2 && a.account_code === '201-0000')!.section).toBe('FIXED ASSETS');
+  });
+});
+
+/* The audit rule on the chart (sister-ERP gap review BE6, 2026-11-10): every
+   chart edit leaves who / when / from -> to in scm.entity_audit_log, one row per
+   company touched, and a sink that cannot take the row refuses the edit BEFORE
+   anything changes. Before this, none of these handlers wrote a history row. */
+describe('chart edits write the audit trail', () => {
+  const audit = (tables: Record<string, Row[]>) => tables.entity_audit_log ?? [];
+
+  test('PUT /update records each company\'s before and after', async () => {
+    const tables: Record<string, Row[]> = { accounts: [acct(1, '310-0010', { account_name: 'Old' }), acct(2, '310-0010', { account_name: 'Old' })] };
+    const res = await harness(tables).request('/chart/update', { method: 'PUT', body: JSON.stringify({ code: '310-0010', name: 'New' }) });
+    expect(res.status).toBe(200);
+    const rows = audit(tables);
+    expect(rows.map((r) => [r.entity_type, r.entity_id, r.company_id, r.action, r.actor_name_snapshot])).toEqual([
+      ['GL_ACCOUNT', '310-0010', 1, 'UPDATE', 'Tester'],
+      ['GL_ACCOUNT', '310-0010', 2, 'UPDATE', 'Tester'],
+    ]);
+    expect(rows[0]!.field_changes).toEqual([{ field: 'account_name', from: 'Old', to: 'New' }]);
+  });
+
+  test('DELETE records what the account was', async () => {
+    const tables: Record<string, Row[]> = { accounts: [acct(1, '999-0001', { account_name: 'Gone' })] };
+    const res = await harness(tables).request('/chart/account?code=999-0001', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    const [row] = audit(tables);
+    expect(row).toMatchObject({ entity_type: 'GL_ACCOUNT', entity_id: '999-0001', company_id: 1, action: 'DELETE' });
+    expect(row!.field_changes).toContainEqual({ field: 'account_name', from: 'Gone', to: null });
+  });
+
+  test('PUT /tick off records only the rows it really turned off', async () => {
+    const tables: Record<string, Row[]> = { accounts: [acct(1, '300-0000'), acct(1, '300-0001', { parent_code: '300-0000' }), acct(1, '300-0002', { parent_code: '300-0000', is_active: false })] };
+    const res = await harness(tables).request('/chart/tick', { method: 'PUT', body: JSON.stringify({ companyId: 1, code: '300-0000', active: false }) });
+    expect(res.status).toBe(200);
+    expect(audit(tables).map((r) => [r.entity_id, r.field_changes])).toEqual([
+      ['300-0000', [{ field: 'is_active', from: true, to: false }]],
+      ['300-0001', [{ field: 'is_active', from: true, to: false }]],
+    ]);
+  });
+
+  test('PUT /rename records old code -> new code', async () => {
+    const tables: Record<string, Row[]> = { accounts: [] };
+    const res = await harness(tables).request('/chart/rename', { method: 'PUT', body: JSON.stringify({ oldCode: '310-0010', newCode: '310-0011' }) });
+    expect(res.status).toBe(200);
+    expect(audit(tables)[0]).toMatchObject({ entity_id: '310-0011', action: 'UPDATE', field_changes: [{ field: 'account_code', from: '310-0010', to: '310-0011' }] });
+  });
+
+  test('an audit sink that cannot take the row refuses the edit and changes nothing', async () => {
+    const tables: Record<string, Row[]> = { accounts: [acct(1, '310-0010', { account_name: 'Old' })] };
+    const res = await harness(tables, { auditDown: true }).request('/chart/update', { method: 'PUT', body: JSON.stringify({ code: '310-0010', name: 'New' }) });
+    expect(res.status).toBe(409);
+    expect(tables.accounts[0]!.account_name).toBe('Old');
+    expect(audit(tables)).toEqual([]);
   });
 });
