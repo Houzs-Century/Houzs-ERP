@@ -17,6 +17,8 @@
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { classifyLots, traceDoShipmentSources } from './source-po-trace';
+import { loadGrnRacksForPos } from './do-shipped-from-grn';
+import { resolveDoLineWarehouses } from './do-line-warehouses';
 // @ts-expect-error - plain .mjs, shared with scripts/stamp-do-shipped-from.mjs so the ship and the backlog stamp hold one rule
 import { planShippedFrom, stampFitsLine, withReturn, withReship } from '../../../scripts/lib/do-shipped-from.mjs';
 
@@ -31,13 +33,14 @@ export type ShippedFromStamp = {
   qty: number;
   pos: Array<{ po: string; qty: number | null }>;
   adj_qty: number;
-  racks: Array<{ rack_id: string; label: string | null; qty: number }>;
+  /** via 'dispatch': the DO's own STOCK_OUT; via 'grn': PO -> GRN line rack. */
+  racks: Array<{ rack_id: string; label: string | null; qty: number; via?: 'dispatch' | 'grn'; po?: string; grn?: string }>;
   returns?: Array<{ at: string; why: string; reshipped_at?: string }>;
 };
 
 type LineRow = {
   id: string; item_code: string | null; item_group: string | null; variants: VariantAttrs | null;
-  qty: number | null; rack_id: string | null; shipped_from: ShippedFromStamp | null;
+  qty: number | null; rack_id: string | null; so_item_id: string | null; shipped_from: ShippedFromStamp | null;
 };
 
 const vkOf = (l: { item_group: string | null; variants: VariantAttrs | null }) =>
@@ -55,12 +58,13 @@ export async function planDoShippedFrom(
   /* Every read below refuses on error rather than reading "nothing": a stamp
      planned from a half-read ledger would lock a wrong or empty answer for good. */
   const { data: hdr, error: hdrErr } = await scopeToCompanyIdOrOpen(
-    sb.from('delivery_orders').select('do_number').eq('id', deliveryOrderId), companyId).maybeSingle();
+    sb.from('delivery_orders').select('do_number, warehouse_id').eq('id', deliveryOrderId), companyId).maybeSingle();
   if (hdrErr) return null;
   const doNo = (hdr as { do_number?: string | null } | null)?.do_number ?? null;
+  const headerWh = (hdr as { warehouse_id?: string | null } | null)?.warehouse_id ?? null;
   const { data: lineData, error: lineErr } = await scopeToCompanyIdOrOpen(
     sb.from('delivery_order_items')
-      .select('id, item_code, item_group, variants, qty, rack_id, shipped_from')
+      .select('id, item_code, item_group, variants, qty, rack_id, so_item_id, shipped_from')
       .eq('delivery_order_id', deliveryOrderId), companyId).order('line_no', { ascending: true });
   if (lineErr || !lineData) return null;
   const lines = lineData as LineRow[];
@@ -115,14 +119,32 @@ export async function planDoShippedFrom(
       .map((r) => ({ item_code: r.item_code, rack_id: r.rack_id, label: r.rack_label, qty: Number(r.quantity ?? 0) }));
   }
 
-  const plan = planShippedFrom({
+  const at = new Date().toISOString();
+  const plan = (lineWh: Map<string, string | null> | null, grnRacks: unknown[]) => planShippedFrom({
     lines: lines.map((l) => ({
       id: l.id, item_code: l.item_code, variant_key: vkOf(l), qty: Number(l.qty ?? 0), rack_id: l.rack_id,
+      warehouse_id: lineWh?.get(l.id) ?? null,
       goods: !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code ?? '' }), shipped_from: l.shipped_from,
     })),
-    poUnits, poOverride, rackOuts, at: new Date().toISOString(), src,
+    poUnits, poOverride, rackOuts, grnRacks, at, src,
   }) as Map<string, ShippedFromStamp>;
-  return { lines, stamps: plan };
+  const first = plan(null, []);
+  /* A line that left no dispatch rack follows its PO(s) to the GRN rack(s)
+     (owner rule 2026-11-10). Read only when such a line exists; the second plan
+     is the same pure rule with the chain added, so the POs cannot move. */
+  const rackless = lines.filter((l) => first.get(l.id)?.racks.length === 0 && first.get(l.id)!.pos.length > 0);
+  if (rackless.length === 0) return { lines, stamps: first };
+  try {
+    const lineWh = await resolveDoLineWarehouses(sb, lines, headerWh, companyId ?? undefined);
+    const grnRacks = await loadGrnRacksForPos(sb,
+      [...new Set(rackless.flatMap((l) => first.get(l.id)!.pos.map((p) => p.po)))],
+      [...new Set(rackless.map((l) => l.item_code as string))],
+      [...new Set(rackless.map((l) => lineWh.get(l.id)).filter((w): w is string => !!w))],
+      companyId);
+    return { lines, stamps: plan(lineWh, grnRacks) };
+  } catch {
+    return null; // a half-read GRN chain must not lock "no rack" for good
+  }
 }
 
 /** Stamp every unstamped goods line of a shipped DO (write-once: the UPDATE only

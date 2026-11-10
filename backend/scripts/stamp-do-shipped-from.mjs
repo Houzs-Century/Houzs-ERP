@@ -15,6 +15,11 @@
    via grns -> PO, adjustment lots counted as STOCK ADJ), batched OUT movements
    with no consumption (drop-ship), the forward trace's hard-bound PO for company
    1 (BUG-103), and the DO's own 'Delivery order dispatch' STOCK_OUT rack rows.
+   A line with no such rack row (DOs before the rack stock-out) takes its rack
+   from the chain PO -> that PO's POSTED GRN line(s) for the item in the line's
+   ship-from warehouse -> the rack(s) the GRN line recorded (grn_item_racks split,
+   else grn_items.rack_id), oldest GRN first, capped at the line qty (owner rule
+   2026-11-10). A PO whose GRN recorded no rack gets no rack.
    A line about which nothing is known stays NULL and keeps the worked-out answer.
 
    MODE=plan (default) prints, per DO, what each line would lock and writes nothing.
@@ -52,8 +57,10 @@ const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
 const describe = (s) => {
   const pos = s.pos.map((p) => `${p.po}${p.qty == null ? "" : ` x${p.qty}`}`);
   if (s.adj_qty > 0) pos.push(`STOCK ADJ x${s.adj_qty}`);
-  const racks = s.racks.map((r) => `${r.label ?? r.rack_id} x${r.qty}`);
-  return `PO ${pos.join(", ") || "-"} | rack ${racks.join(", ") || "-"}`;
+  const racks = s.racks.map((r) => (r.via === "grn"
+    ? `PO ${r.po} -> GRN ${r.grn} -> rack ${r.label ?? r.rack_id} x${r.qty} (via grn)`
+    : `rack ${r.label ?? r.rack_id} x${r.qty} (via dispatch)`));
+  return `PO ${pos.join(", ") || "-"} | ${racks.join("; ") || "rack -"}`;
 };
 
 async function main() {

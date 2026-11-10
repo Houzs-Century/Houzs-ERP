@@ -90,6 +90,63 @@ describe('stamp at the first ship', () => {
   });
 });
 
+describe('no dispatch rack: the rack comes from PO -> GRN -> GRN line rack (owner rule 2026-11-10)', () => {
+  /* An older DO: lots consumed, but no 'Delivery order dispatch' STOCK_OUT rows. */
+  function oldDo(grnCompany = 2): Record<string, Row[]> {
+    const t = world();
+    t.delivery_orders[0].warehouse_id = 'wh-kl';
+    t.warehouse_rack_movements = [];
+    t.purchase_orders.push({ id: 'po-44', po_number: '2990-PO-2610-044', company_id: grnCompany });
+    t.purchase_order_items.push({ id: 'poi-44', purchase_order_id: 'po-44', company_id: grnCompany, item_code: 'CODY-(K)' });
+    t.grns.push({ id: 'grn-44', grn_number: 'GRN-0101', warehouse_id: 'wh-kl', status: 'POSTED', received_at: '2026-10-20', purchase_order_id: 'po-44', company_id: grnCompany });
+    t.grn_items = [{ id: 'gi-44', grn_id: 'grn-44', purchase_order_item_id: 'poi-44', item_code: 'CODY-(K)', item_group: 'bedframe', variants: null, rack_id: 'r-l82', qty_accepted: 2, company_id: grnCompany }];
+    t.grn_item_racks = [];
+    t.warehouse_racks = [{ id: 'r-l82', rack: 'Rack L8.2', warehouse_id: 'wh-kl' }, { id: 'r-l83', rack: 'Rack L8.3', warehouse_id: 'wh-kl' }];
+    t.mfg_sales_order_items = [];
+    t.warehouses = [];
+    return t;
+  }
+
+  test("the line locks the rack its PO's GRN recorded, marked via grn", async () => {
+    const db = makeFakePostgrest(oldDo(), []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(line(db, 'l1').shipped_from).toMatchObject({
+      pos: [{ po: '2990-PO-2610-044', qty: 1 }],
+      racks: [{ rack_id: 'r-l82', label: 'Rack L8.2', qty: 1, via: 'grn', po: '2990-PO-2610-044', grn: 'GRN-0101' }],
+    });
+    expect(line(db, 'l2').shipped_from).toMatchObject({ racks: [] });
+  });
+
+  test('a split GRN line reads grn_item_racks, not the single rack_id', async () => {
+    const t = oldDo();
+    t.delivery_order_items[0].qty = 2;
+    t.inventory_lot_consumptions[0].qty_consumed = 2;
+    t.grn_items[0].rack_id = null;
+    t.grn_item_racks = [
+      { grn_item_id: 'gi-44', rack_id: 'r-l82', qty: 1, company_id: 2 },
+      { grn_item_id: 'gi-44', rack_id: 'r-l83', qty: 1, company_id: 2 },
+    ];
+    const db = makeFakePostgrest(t, []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    const racks = (line(db, 'l1').shipped_from!.racks as Array<{ label: string; qty: number; via: string }>);
+    expect(racks.map((r) => [r.label, r.qty, r.via])).toEqual([['Rack L8.2', 1, 'grn'], ['Rack L8.3', 1, 'grn']]);
+  });
+
+  test("another company's GRN never reaches the stamp", async () => {
+    const db = makeFakePostgrest(oldDo(1), []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(line(db, 'l1').shipped_from).toMatchObject({ pos: [{ po: '2990-PO-2610-044', qty: 1 }], racks: [] });
+  });
+
+  test('a DRAFT GRN placed nothing, so it names no rack', async () => {
+    const t = oldDo();
+    t.grns[t.grns.length - 1].status = 'DRAFT';
+    const db = makeFakePostgrest(t, []);
+    await stampDoShippedFrom(db, 'do-1', 2);
+    expect(line(db, 'l1').shipped_from).toMatchObject({ racks: [] });
+  });
+});
+
 describe('reversal keeps the history coherent', () => {
   test('a revert notes the return once; the re-ship closes it and re-stamps nothing', async () => {
     const db = makeFakePostgrest(world(), []);
