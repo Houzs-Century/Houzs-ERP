@@ -38,7 +38,8 @@ const handlerBody = (method: string, path: string): string => {
   /* A route registered by NAME — `mfgSalesOrders.post(path, someHandler)`,
      the exported-handler shape the contract tests drive (docs/bugs/0927) —
      has its body under `export const someHandler = async`, not here. */
-  const named = /^[^\n]*',\s*([A-Za-z0-9_]+)\);/.exec(registration);
+  /* Middleware such as noWriteUntilMarked may sit between the path and the handler. */
+  const named = /^[^\n]*',\s*(?:[A-Za-z0-9_]+,\s*)*([A-Za-z0-9_]+)\);/.exec(registration);
   if (named) {
     const at = routeSource.indexOf(`export const ${named[1]} = async`);
     expect(at, `${method.toUpperCase()} ${path}: handler ${named[1]} is not defined in the route file`).toBeGreaterThan(-1);
