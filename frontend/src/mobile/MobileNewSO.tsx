@@ -117,7 +117,7 @@ import { MFG_CATEGORY_LABELS } from "../vendor/shared/product-categories";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
-import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
+import { computeTotalHeight, isTotalHeightCategory, parseInches, TOTAL_HEIGHT_PARTS } from "../vendor/shared/total-height";
 import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
 import { Field, SpecSel } from "./mobile-fields";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -410,7 +410,13 @@ function buildVariants(l: LineItem): Record<string, unknown> {
   const variants: Record<string, unknown> = { ...(l.variants ?? {}) };
   if (l.remark.trim()) variants.remark = l.remark.trim();
   else delete variants.remark;
-  if (isTotalHeightCategory(l.cat)) variants.totalHeight = computeTotalHeight(l.cat, variants);
+  /* Only when the line has parts to derive it from (a part key present, even
+     cleared). A saved line that carries a total and no parts keeps it: that
+     total is its stock identity (shared/variant-key.ts), and re-saving the line
+     must not change which bucket it ships from (PR #5609 follow-up). */
+  if (isTotalHeightCategory(l.cat) && TOTAL_HEIGHT_PARTS.some((k) => k in variants)) {
+    variants.totalHeight = computeTotalHeight(l.cat, variants);
+  }
   return variants;
 }
 
@@ -3065,6 +3071,9 @@ function LineCard({
      For sofa, also default Leg Height to the "Default" option (RM 0.00) when
      unset, so it is never an empty required field. */
   const skuCategoryQ = useSkuCategoryByCode(line.itemCode || undefined);
+  /* The leg default is seeded only for a product PICKED here, never for a saved
+     line that is merely opened (PR #5609 follow-up; same rule as SoLineCard). */
+  const itemCodeAtOpen = useRef(line.itemCode);
   useEffect(() => {
     if (!picked) return;
     const resolved = String(skuCategoryQ.data ?? "").toLowerCase();
@@ -3075,7 +3084,7 @@ function LineCard({
       patch.itemGroup = resolved;
     }
     const effCat = patch.cat ?? line.cat;
-    if (effCat === "sofa" && maint
+    if (effCat === "sofa" && maint && line.itemCode !== itemCodeAtOpen.current
         && isBlankVar(v.legHeight) && isBlankVar(v.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
       if (def) patch.variants = { ...line.variants, ...(patch.variants ?? {}), legHeight: def };

@@ -35,6 +35,10 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+
+/** divan|leg|gap as typed — the inputs a Total Height is derived from. */
+const totalHeightPartsSig = (v: Record<string, unknown>): string =>
+  [v.divanHeight, v.legHeight, v.gap].map((x) => String(x ?? '')).join('|');
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen, normalizeCompartmentCode } from '@2990s/shared';
@@ -439,6 +443,9 @@ const SoLineCardInner = ({
      reserved for it. Edit-mode only — a read-only view still RENDERS the
      configurator (driven by `category` above) but must not mutate. */
   const specLocked = specLockedReason !== null;
+  /* The leg default is seeded only for a product PICKED in this card, never for
+     a saved line that is merely opened (PR #5609 follow-up). */
+  const itemCodeAtOpen = useRef(draft.itemCode);
   useEffect(() => {
     if (!isEditing || specLocked || !draft.itemCode) return;
     const patch: Partial<SoLineDraft> = {};
@@ -447,6 +454,7 @@ const SoLineCardInner = ({
       patch.itemGroup = category;
     }
     if (seedSofaLegDefault && category === 'sofa' && maint
+        && draft.itemCode !== itemCodeAtOpen.current
         && isBlankVariant(draft.variants.legHeight)
         && isBlankVariant(draft.variants.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
@@ -571,13 +579,22 @@ const SoLineCardInner = ({
      the stored value already equals the computed one — never merely because the
      computed one is empty. That is deliberately not a guard a caller can get
      wrong here again, and it is pinned by total-height.canonical.test.ts. */
+  /* NOT ON OPEN (PR #5609 follow-up). The writer runs only once divan, leg or gap
+     has changed in this card. Opening a saved line must not rewrite its
+     variants: on a delivery order that is how a line grew a `totalHeight` the
+     received goods lacked and keyed a different stock bucket. A fresh line still
+     gets its total the moment a part is picked. */
+  const partsAtOpen = useRef(totalHeightPartsSig(draft.variants));
   useEffect(() => {
     if (specLocked) return;
+    const sig = totalHeightPartsSig(draft.variants);
+    if (sig === partsAtOpen.current) return;
+    partsAtOpen.current = sig;
     const patch = totalHeightPatch(category, draft.variants);
     if (!patch) return;
     onChange({ variants: { ...draft.variants, ...patch } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [computedTotalHeight, category]);
+  }, [computedTotalHeight, category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap]);
 
   /* PR #147 — Variant edits add the key to overriddenKeys so cascade
      leaves this line alone when LINE 1 changes.

@@ -25,7 +25,9 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { warehouseLabel } from '../lib/warehouse-label';
-import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
+import { buildVariantSummary, canonicalVariantKey, computeVariantKey, type VariantAttrs } from '../shared';
+import { loadOwnBucketKeys, ownBucketKey, stockBucketKeyResolver } from '../lib/stock-bucket-key';
+import { variantTrackedCompany } from '../lib/binding-mode';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -504,6 +506,9 @@ export async function writePurchaseReturnMovements(sb: any, prId: string, return
   }
   // Read the IN movements of every source GRN, keyed `grnId::warehouse::code::variant` → batch_no.
   const batchByBucket = new Map<string, string>();
+  const grnKeyByBucket = new Map<string, string>();
+  /* Variant-tracked company: canonical bucket identity; company 1 keeps the exact string (binding-mode.ts). */
+  const prIdOf = (vk: string | null): string => (variantTrackedCompany(prCompanyId) ? canonicalVariantKey(vk) : (vk ?? ''));
   {
     const srcGrnIds = [...new Set([...lineGrnId.values()].filter((x): x is string => !!x))];
     if (srcGrnIds.length > 0) {
@@ -514,20 +519,32 @@ export async function writePurchaseReturnMovements(sb: any, prId: string, return
         inRes = { data: [], error: null } as typeof inRes;
       }
       for (const m of (inRes.data ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; warehouse_id: string; batch_no?: string | null }>) {
+        /* Keyed canonically, and remembering the GRN's own stored string: the
+           return OUT must leave the exact bucket the receipt opened, even when
+           it was written under an older spelling of the spec. */
+        const bk = `${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${prIdOf(m.variant_key)}`;
+        if (variantTrackedCompany(prCompanyId)) grnKeyByBucket.set(bk, m.variant_key ?? '');
         if (m.batch_no == null) continue;
-        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}`, m.batch_no);
+        batchByBucket.set(bk, m.batch_no);
       }
     }
   }
 
+  const prKeyOf = await stockBucketKeyResolver(sb, prCompanyId ?? null, itemList.map((it) => ({
+    item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null,
+  })));
   const movements = itemList
     .filter((it) => it.qty_returned > 0)
     .map((it) => {
       const warehouseId = lineWh.get(it.id) ?? null;
       if (!warehouseId) return null;
-      const variantKey = computeVariantKey(it.item_group, it.variants ?? null);
+      const keyLine = { item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: warehouseId };
       const srcGrn = lineGrnId.get(it.id) ?? null;
-      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.item_code}::${variantKey}`) ?? null) : null;
+      const bk = srcGrn ? `${srcGrn}::${warehouseId}::${it.item_code}::${prIdOf(computeVariantKey(it.item_group, it.variants ?? null))}` : null;
+      /* The source GRN's own bucket string when there is one, else the stocked
+         bucket the key resolves to (lib/stock-bucket-key.ts). */
+      const variantKey = (bk ? grnKeyByBucket.get(bk) : undefined) ?? prKeyOf(keyLine);
+      const batchNo = bk ? (batchByBucket.get(bk) ?? null) : null;
       return {
         movement_type: 'OUT' as const,
         warehouse_id: warehouseId,
@@ -670,7 +687,14 @@ async function writePrLineDeltaMovement(
        and reports nothing). Same concept, same shape: do not invent a second
        error class here. */
     if (!warehouseId) return [];
-    const variantKey = computeVariantKey(args.line.item_group, args.line.variants ?? null);
+    /* More OUT goes to the stocked bucket the key resolves to; a reversing IN
+       goes back to the exact bucket this PR's OUT left (lib/stock-bucket-key.ts). */
+    const deltaKeyLine = { item_code: args.line.item_code, item_group: args.line.item_group ?? null, variants: args.line.variants ?? null, warehouse_id: warehouseId };
+    const variantKey = isOut
+      ? (await stockBucketKeyResolver(sb, args.companyId ?? null, [deltaKeyLine]))(deltaKeyLine)
+      : ownBucketKey(
+        await loadOwnBucketKeys(sb, 'PURCHASE_RETURN', args.prId, 'OUT', args.companyId ?? null),
+        args.line.item_code, computeVariantKey(args.line.item_group, args.line.variants ?? null));
     // Batch: resolve THIS line's OWN dye-lot deterministically from its source GRN
     // line's PO (grn_item_id → purchase_order_item_id → PO number). Not a .limit(1)
     // bucket lookup, which could grab a sibling line's batch when two lines of the
