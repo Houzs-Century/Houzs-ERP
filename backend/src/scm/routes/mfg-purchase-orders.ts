@@ -43,7 +43,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { poVersionRefusal } from '../lib/po-version';
+import { poVersionRaced, poVersionRefusal } from '../lib/po-version';
 import { readPoLinkedGrns } from '../lib/po-grn-links';
 import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
@@ -2474,7 +2474,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
      purchase_location_id, migration 0180 = the supplier-revised dates), kept in
      one place so a field added to the PATCH cannot silently escape the log. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('purchase_orders')
-    .select(`${PO_AUDIT_SELECT}, updated_at`).eq('id', id), co.companyId).maybeSingle();
+    .select(`${PO_AUDIT_SELECT}, updated_at, version`).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
   const prevExpectedAt = before.expected_at ?? null;
@@ -2493,13 +2493,21 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
   if (sdGate.refusal) return c.json(sdGate.refusal, 409);
+  /* The database half of the version check (lib/po-version.ts): claim the next
+     version BEFORE the first write, so of two Saves that both passed the token
+     check above within the same instant, exactly one goes on. */
+  const claimedVersion = Number(before.version ?? 1) + 1;
+  const { data: claimed, error: claimErr } = await scopeToCompanyId(sb.from('purchase_orders')
+    .update({ version: claimedVersion }).eq('id', id).eq('version', claimedVersion - 1), co.companyId).select('id').maybeSingle();
+  if (claimErr) return c.json({ error: 'update_failed', reason: claimErr.message }, 500);
+  if (!claimed) return c.json(poVersionRaced(), 409);
   { const m = await movePoLinesToNewWarehouse(sb, id, co.companyId, before, updates); if (m) return c.json(m.body, m.status); } // lib/po-warehouse-move.ts
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
-  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
+  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id).eq('version', claimedVersion), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
+  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(poVersionRaced(), 409);
   const touchOnly = Object.keys(updates).length === 1; // version claim before a lines-only Save: no audit, no AutoCount edit
   if (!touchOnly) {
     const auditPatch: Record<string, unknown> = {};

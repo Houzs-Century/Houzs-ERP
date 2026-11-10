@@ -10,11 +10,13 @@
  * (428), never treated as last-writer-wins: the only client that sends this
  * PATCH is the desktop editor, which always has the loaded row.
  *
- * Compared at millisecond precision in JS against the row read just before the
- * write. That closes the reported case (two screens, minutes apart). Two saves
- * landing inside the same few milliseconds are not separated; an integer
- * version column with a SQL compare-and-set, as the SO has, would close that
- * too and needs a migration. */
+ * The token is compared in JS against the row read just before the write, which
+ * alone cannot separate two saves landing inside the same few milliseconds:
+ * both read the same row and both pass. So the PATCH also claims
+ * `purchase_orders.version` (mig 20261110T2000, the SO's 0153 shape) with a
+ * database compare-and-set before its first write; the loser gets
+ * `poVersionRaced()`. The token stays the client's half because every PO writer
+ * bumps `updated_at`, while only this PATCH bumps `version`. */
 
 export const PO_VERSION_REQUIRED = {
   error: 'po_version_required',
@@ -40,4 +42,10 @@ export function poVersionRefusal(
   const b = ms(currentUpdatedAt);
   if (Number.isFinite(a) && Number.isFinite(b) && a === b) return null;
   return { status: 409, body: { ...PO_VERSION_CONFLICT, currentUpdatedAt: typeof currentUpdatedAt === 'string' ? currentUpdatedAt : null } };
+}
+
+/** The refusal for the save that lost the database compare-and-set: another
+ *  save claimed the next version between this one's read and its write. */
+export function poVersionRaced(): typeof PO_VERSION_CONFLICT & { currentUpdatedAt: null } {
+  return { ...PO_VERSION_CONFLICT, currentUpdatedAt: null };
 }
