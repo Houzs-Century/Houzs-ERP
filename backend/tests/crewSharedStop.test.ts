@@ -198,7 +198,7 @@ describe('Complete claims the whole stop, once', () => {
     expect(second.status).toBe(409);
     const b = await body(second);
     expect(b.error).toBe('already_completed');
-    expect(b.reason).toMatch(/already marked delivered at 14:05/);
+    expect(b.reason).toMatch(/already marked delivered at 2026\/11\/10 14:05/);
     expect(tables.delivery_orders![0]!.pod_photo_keys).toEqual(['slips/2026/11/drv-a.jpg']);
     expect(tables.pending_slip_uploads!.find((r) => r.id === 'hlp-b')!.status).toBe('uploaded');
   });

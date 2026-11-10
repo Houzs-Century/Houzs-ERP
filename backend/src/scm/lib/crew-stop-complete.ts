@@ -1,13 +1,12 @@
 /* What the second crew member to press Complete is told. The crew share one
    stop (owner, 2026-11-10), so a second Complete is not an error to retry: the
    stop is done, by someone, at a time, and the screen should say so. */
+import { fmtDateTime } from '../shared/format';
 
-/** HH:MM in Malaysia time, or null for an unreadable timestamp. */
+/** The app's one date+time format (Malaysia time), or null for an unreadable timestamp. */
 export function mytClock(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit', hour12: false });
+  const out = iso ? fmtDateTime(iso) : null;
+  return out && out !== '—' ? out : null;
 }
 
 /** The DO stores no completer, so a delivery order's refusal names only when. */

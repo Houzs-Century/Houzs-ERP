@@ -277,7 +277,7 @@ describe('review fixes (2026-10-08)', () => {
     expect([r1.status, r2.status].sort()).toEqual([200, 409]);
     const b = await json(lost);
     expect(b.error).toBe('already_completed');
-    expect(b.reason).toMatch(/already completed by Faslie at \d\d:\d\d/);
+    expect(b.reason).toMatch(/already completed by Faslie at \d{4}\/\d\d\/\d\d \d\d:\d\d/);
     expect(tables.job_progress.filter((r) => r.completed_at)).toHaveLength(1);
   });
 

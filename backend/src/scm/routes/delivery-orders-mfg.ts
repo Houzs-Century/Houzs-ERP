@@ -5052,7 +5052,8 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      a second delivery over the first (new photos, delivered time, SO sync). */
   const prevUp = (prevStatus ?? '').toUpperCase();
   if (toStatus !== 'CANCELLED' && doHasArrived(prevUp) && doHasArrived(toStatus) && (prevUp === toStatus || bypassPod)) {
-    const { data: doneRow } = await scopeToCompanyId(sb.from('delivery_orders').select('delivered_at').eq('id', id), scopeCompanyId).maybeSingle();
+    const { data: doneRow, error: doneErr } = await scopeToCompanyId(sb.from('delivery_orders').select('delivered_at').eq('id', id), scopeCompanyId).maybeSingle();
+    if (doneErr) return c.json({ error: 'load_failed', reason: doneErr.message }, 500);
     return c.json(alreadyDeliveredRefusal((doneRow as { delivered_at?: string | null } | null)?.delivered_at ?? null), 409);
   }
 
