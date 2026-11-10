@@ -139,6 +139,8 @@ import { loadComboModulesById, loadMasterSofaCombos, loadSellingSofaCombos } fro
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
+import { soLineRemark } from '../lib/so-line-remark';
+import { moneySkipsCancelled, NOT_CANCELLED_OR } from '../lib/list-money-cancelled';
 import { fromSoList, orderSoList, prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { buildSoListRows } from '../lib/so-list-rows';
 import { attachSoLines } from '../lib/so-list-lines';
@@ -1256,9 +1258,12 @@ mfgSalesOrders.get('/', async (c) => {
        the mobile SO list and delivery-planning.ts already read, and both are
        view-COMPUTED columns, so this stays VIEW-TRAP safe (see
        backend/docs/scm-view-trap-coe.md). */
+    // G16: a cancelled order is no revenue — out of the money tiles except on the Cancelled tab.
+    const moneySkipCancelled = moneySkipsCancelled(effectiveStatusFilter(c.req.query('status')));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
     const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0);
-    const moneyProm = soListMoneyKpis(sb, applyMoneyFilters);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same builder as applyMoneyFilters
+    const moneyProm = soListMoneyKpis(sb, moneySkipCancelled ? (q: any) => applyMoneyFilters(q).or(NOT_CANCELLED_OR) : applyMoneyFilters);
 
     /* One concurrent wave. The page rows, the grouped status counts and the
        full-set money KPIs are mutually independent — each keys off scopeIds +
@@ -3385,12 +3390,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
          summary (the long attribute string). Server-generated from the line's
          variants so it stays the single source of truth. */
       description2: buildVariantSummary((productRowByCode.get(String(it.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase() || String(it.itemGroup ?? '').trim() || 'others', (it.variants as Record<string, unknown> | null) ?? null) || null,
-      /* Spec 2026-06-06 — per-line operator remark from the POS product page.
-         Same column SoLineCard edits (mfg_sales_order_items.remark). */
-      remark: (() => {
-        const r = (it.variants as { remark?: unknown } | null)?.remark;
-        return typeof r === 'string' && r.trim() !== '' ? r.trim() : null;
-      })(),
+      /* Per-line operator remark: desktop sends `remark`, phone / POS send
+         `variants.remark`. Same column SoLineCard edits. lib/so-line-remark.ts. */
+      remark: soLineRemark(it),
       uom: (it.uom as string) ?? 'UNIT',
       qty,
       unit_price_sen: unit,

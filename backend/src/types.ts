@@ -1,3 +1,8 @@
+/** A SCAN_QUEUE message: a scan job to run, or a confirmed correction to learn from. */
+export type ScanQueueMessage =
+  | { jobId: string }
+  | { distill: { rep: string | null; companyId: number | null; userId: number | null } };
+
 export type Env = {
   // During the D1 -> Supabase cutover, `DB` is injected per request/cron with
   // a D1-compatible shim over Postgres (see middleware/db.ts). The legacy D1
@@ -85,7 +90,10 @@ export type Env = {
   // sends ONLY the job id; the consumer (index.ts `queue()` handler) rebuilds
   // everything from the scan_jobs row + R2 photos. Optional so tests / older
   // deploys without the binding compile and fall back to the waitUntil path.
-  SCAN_QUEUE?: Queue<{ jobId: string }>;
+  // A confirmed scan-so correction also rides it ({ distill }): the rule
+  // re-distill is three Claude calls, too long for waitUntil's 30 s after the
+  // response (scan-so.ts runConfirmDistills).
+  SCAN_QUEUE?: Queue<ScanQueueMessage>;
   // R2 S3-API credentials for presigned SO-item-photo GET URLs ONLY (the slip
   // flow no longer uses them). Optional — those endpoints fail at runtime
   // until set.

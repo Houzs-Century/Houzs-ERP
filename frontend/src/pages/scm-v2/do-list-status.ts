@@ -19,6 +19,8 @@
    why an unknown status shows up looking plain rather than blank.
    ---------------------------------------------------------------------------- */
 
+import { isCancelledDocStatus } from "../../lib/scm";
+
 // 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
 //
 // `on_hold` IS THE ONE TAB THAT IS NOT A STATUS (mig 0324, owner 2026-08-21:
@@ -90,4 +92,19 @@ export const statusFor = (
 export const doCancellableStatus = (status: string | null | undefined): boolean => {
   const s = String(status ?? "").toUpperCase();
   return s !== "CANCELLED" && s !== "INVOICED";
+};
+
+/* The Revenue card's sum over the rows on screen (gap review G16): a cancelled
+   delivery is no revenue, so it counts only on the Cancelled tab, where the
+   operator asked for exactly those. */
+export const doRevenueSen = (
+  rows: ReadonlyArray<{ status: string | null; local_total_sen?: number | null }>,
+  tab: StatusTab,
+): number => {
+  let sum = 0;
+  for (const r of rows) {
+    if (tab !== "cancelled" && isCancelledDocStatus(r.status)) continue;
+    sum += r.local_total_sen ?? 0;
+  }
+  return sum;
 };
