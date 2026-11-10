@@ -244,9 +244,9 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
  */
 export function scmAreaReadable(user: AuthUser | null, area: string): boolean {
   if (user === null) return false;
-  if (user.permissions_set?.has("*") || user.permissions?.includes("*")) return true;
+  if (user.permissions_set.has("*")) return true;
   if (!hasScmUmbrella(user)) return false;
   if (salesJdDenial(user, area)) return false;
   if (!user.scm_l2_configured) return true;
-  return meetsLevel((user.page_access?.[area] ?? "none") as AccessLevel, "view");
+  return area in user.page_access && meetsLevel(user.page_access[area], "view");
 }
