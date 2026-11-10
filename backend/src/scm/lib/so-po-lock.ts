@@ -54,6 +54,7 @@
 // ----------------------------------------------------------------------------
 
 import { poAwaitingSupplier } from '../shared/so-po-date-rule';
+import { chunkIn } from './paginate-all';
 
 /** PostgREST `.in()` caps out on URL length. An SO's line count is small (the
  *  widest live order is a handful of rows), but chunk anyway so a pathological
@@ -190,48 +191,37 @@ export async function soPoLockedMany(
   if (docs.length === 0) return locked;
 
   try {
+    /* chunkIn, not a 200-doc loop: 200 orders x their lines passes PostgREST's
+       1,000-row page, and the rows past it were dropped without an error, so an
+       order with a live PO showed as unlocked on the board. chunkIn sizes each
+       batch by URL bytes and pages every batch. */
+    const lines = await chunkIn<{ id: string | null; doc_no: string | null }>(docs, (part, from, to) =>
+      sb.from('mfg_sales_order_items').select('id, doc_no').in('doc_no', part).order('id').range(from, to));
+    if (lines.error || lines.truncated) return locked;
     const docByItemId = new Map<string, string>();
-    for (const part of chunk(docs, IN_CHUNK)) {
-      const { data, error } = await sb
-        .from('mfg_sales_order_items')
-        .select('id, doc_no')
-        .in('doc_no', part);
-      if (error) return locked;
-      for (const r of (data ?? []) as Array<{ id: string | null; doc_no: string | null }>) {
-        if (r.id && r.doc_no) docByItemId.set(r.id, r.doc_no);
-      }
-    }
+    for (const r of lines.data) if (r.id && r.doc_no) docByItemId.set(r.id, r.doc_no);
     const itemIds = [...docByItemId.keys()];
     if (itemIds.length === 0) return locked;
 
+    const links = await chunkIn<{ so_item_id: string | null; purchase_order_id: string | null }>(itemIds, (part, from, to) =>
+      sb.from('purchase_order_items').select('so_item_id, purchase_order_id')
+        .in('so_item_id', part).not('purchase_order_id', 'is', null).order('id').range(from, to));
+    if (links.error || links.truncated) return locked;
     const docsByPoId = new Map<string, Set<string>>();
-    for (const part of chunk(itemIds, IN_CHUNK)) {
-      const { data, error } = await sb
-        .from('purchase_order_items')
-        .select('so_item_id, purchase_order_id')
-        .in('so_item_id', part)
-        .not('purchase_order_id', 'is', null);
-      if (error) return locked;
-      for (const r of (data ?? []) as Array<{ so_item_id: string | null; purchase_order_id: string | null }>) {
-        const doc = r.so_item_id ? docByItemId.get(r.so_item_id) : undefined;
-        if (!doc || !r.purchase_order_id) continue;
-        let s = docsByPoId.get(r.purchase_order_id);
-        if (!s) { s = new Set(); docsByPoId.set(r.purchase_order_id, s); }
-        s.add(doc);
-      }
+    for (const r of links.data) {
+      const doc = r.so_item_id ? docByItemId.get(r.so_item_id) : undefined;
+      if (!doc || !r.purchase_order_id) continue;
+      let s = docsByPoId.get(r.purchase_order_id);
+      if (!s) { s = new Set(); docsByPoId.set(r.purchase_order_id, s); }
+      s.add(doc);
     }
     if (docsByPoId.size === 0) return locked;
 
-    for (const part of chunk([...docsByPoId.keys()], IN_CHUNK)) {
-      const { data, error } = await sb
-        .from('purchase_orders')
-        .select('id, status')
-        .in('id', part);
-      if (error) return locked;
-      for (const p of (data ?? []) as Array<{ id: string; status: string | null }>) {
-        if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
-        for (const doc of docsByPoId.get(p.id) ?? []) locked.add(doc);
-      }
+    const pos = await chunkIn<{ id: string; status: string | null }>([...docsByPoId.keys()], (part, from, to) =>
+      sb.from('purchase_orders').select('id, status').in('id', part).order('id').range(from, to));
+    for (const p of pos.data) {
+      if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
+      for (const doc of docsByPoId.get(p.id) ?? []) locked.add(doc);
     }
     return locked;
   } catch {

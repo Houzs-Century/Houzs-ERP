@@ -16,8 +16,7 @@
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { pgrestIn } from './pgrest-in-list';
-
-const CHUNK = 200;
+import { chunkIn } from './paginate-all';
 
 export type GrnRackRow = {
   po: string; grn: string; grn_at: string; item_code: string; variant_key: string;
@@ -28,15 +27,17 @@ async function readIn<T>(
   sb: any, table: string, cols: string, column: string, values: string[], companyId: number | null,
   extra?: (q: any) => any,
 ): Promise<T[]> {
-  const out: T[] = [];
-  for (let i = 0; i < values.length; i += CHUNK) {
-    let q = pgrestIn(scopeToCompanyIdOrOpen(sb.from(table).select(cols), companyId), column, values.slice(i, i + CHUNK));
+  /* Each batch is PAGED (chunkIn): the GRN lines of a busy PO set pass
+     PostgREST's 1,000-row page, and the rows past it were dropped without an
+     error, so the DO's "shipped from" racks came out short. */
+  const { data, error, truncated } = await chunkIn<T>(values, (part, from, to) => {
+    let q = pgrestIn(scopeToCompanyIdOrOpen(sb.from(table).select(cols), companyId), column, part);
     if (extra) q = extra(q);
-    const { data, error } = await q;
-    if (error) throw new Error(`${table}: ${error.message}`);
-    out.push(...((data ?? []) as T[]));
-  }
-  return out;
+    return q.order('id').range(from, to);
+  });
+  if (error) throw new Error(`${table}: ${error.message}`);
+  if (truncated) throw new Error(`${table}: too many rows to read in full`);
+  return data;
 }
 
 type GrnLine = {
