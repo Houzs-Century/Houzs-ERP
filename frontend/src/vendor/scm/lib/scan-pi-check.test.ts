@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { piAmounts, piAmountsDiffer, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
+import { lineTierNote, piAmounts, piAmountsDiffer, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
 
 const bill = (grnItemId: string, unitPriceSen: number): BillLine => ({ supplierSku: null, grnItemId, grnNumber: 'GRN-1', supplierId: 's', poNumber: 'PO-1', itemCode: 'X', description: null, remaining: 9, unitPriceSen });
 const row = (key: string, grnItemId: string | null, qty: number, read: PiReviewLine['read']): PiReviewLine => ({ key, grnItemId, grnNumber: null, qty, suggested: false, read });
@@ -48,5 +48,18 @@ describe('piQtyTotals', () => {
   it('adds the pieces on the paper and what is left on the GRN lines chosen', () => {
     const r = review([row('1', 'a', 2, read(830, 1660)), row('2', 'b', 1, null), row('3', null, 4, read(10, 40))]);
     expect(piQtyTotals(r, lines)).toEqual({ qty: 7, left: 18 });
+  });
+});
+
+describe('lineTierNote', () => {
+  it('says the printed PO\'s lines were used', () => {
+    expect(lineTierNote({ lineTier: 'invoice_po', poNo: 'HC-PO-2610-202' })).toBe('Matched to the lines of HC-PO-2610-202 printed on the invoice.');
+  });
+  it('warns when it fell back to the whole receipt', () => {
+    expect(lineTierNote({ lineTier: 'whole_receipt', poNo: 'HC-PO-2610-202' })).toMatch(/No line of HC-PO-2610-202 .* every unbilled line of the receipt/);
+  });
+  it('says nothing when the invoice printed no PO, or the copy predates the tier', () => {
+    expect(lineTierNote({ lineTier: null, poNo: null })).toBeNull();
+    expect(lineTierNote({ poNo: 'HC-PO-1' })).toBeNull();
   });
 });

@@ -13,7 +13,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
-import { billSkuOptions, grnOptions, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
+import { billSkuOptions, grnOptions, lineTierNote, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
 import { openLoadedTab } from '../../../lib/openLoadedTab';
@@ -52,6 +52,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
   const { invoiceSen, oursSen, unmatched } = amounts;
   const qtyTotals = piQtyTotals(review, byId);
   const amountsDiffer = piAmountsDiffer(amounts);
+  const tierNote = lineTierNote(review);
   const notMatched = unmatched > 0 && oursSen != null ? ` (${unmatched} ${unmatched === 1 ? 'line' : 'lines'} not matched)` : '';
 
   const set = (patch: Partial<PiReview>) => onChange({ ...review, ...patch });
@@ -106,6 +107,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
         <span>PO Amount <strong className={amountsDiffer ? styles.priceOff : ''}>{oursSen == null ? '—' : fmtSen(oursSen)}</strong>{notMatched}</span>
       </div>
       {review.taxNote && <div className={styles.hint}>{review.taxNote}</div>}
+      {tierNote && <div className={styles.hint}>{tierNote}</div>}
 
       {repeat && (
         <div className={styles.banner}>

@@ -27,8 +27,19 @@ export type PiReview = {
   poNo: string | null;
   notes: string | null;
   taxNote: string | null;
+  // Copies read before 2026-11-10 carry no tier.
+  lineTier?: 'invoice_po' | 'whole_receipt' | null;
   lines: PiReviewLine[];
 };
+
+/** Which receipt lines the scan matched against, for the operator: the PO
+ *  printed on the invoice, or every unbilled line of the receipt when none of
+ *  that PO's lines matched. null when the invoice printed no PO. */
+export function lineTierNote(review: Pick<PiReview, 'lineTier' | 'poNo'>): string | null {
+  if (review.lineTier === 'invoice_po') return `Matched to the lines of ${review.poNo} printed on the invoice.`;
+  if (review.lineTier === 'whole_receipt') return `No line of ${review.poNo} printed on the invoice matched, so the scan matched against every unbilled line of the receipt. Check which PO each line bills.`;
+  return null;
+}
 export type PiCheckDoc = {
   id: string;
   batchId: string | null;

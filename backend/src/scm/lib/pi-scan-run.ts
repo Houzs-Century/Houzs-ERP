@@ -28,7 +28,7 @@ import { loadScanCodes } from './grn-scan-codes';
 import { createDraftPiFromGrnItems } from './pi-from-grn-core';
 import { matchSupplier } from '../../acc/bill-extract';
 import { loadSuppliers } from './grn-scan-load';
-import { buildPiReview, readKey, NO_CODES, type BillableLine, type PiReview, type SupplierCodes } from './pi-scan-check';
+import { buildPiReview, readKey, NO_CODES, type BillableLine, type PiLineTier, type PiReview, type SupplierCodes } from './pi-scan-check';
 import { aiSkuMatcher, rowSize, type AiSkuMatcher } from './pi-scan-ai-match';
 import { modelPrefixes } from './pi-scan-sku';
 import { loadOutstandingGrnLines, loadPoByPoItem, remainingToBill } from './outstanding-grn-lines';
@@ -75,7 +75,7 @@ export type PiScanJob = {
 };
 
 /** A grns row we may anchor the invoice to. */
-type AnchorGrn = {
+export type AnchorGrn = {
   id: string;
   grn_number: string;
   delivery_note_ref: string | null;
@@ -149,12 +149,10 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     const anchors = await findAnchorGrns(svc, parsed, job.companyId);
     if (anchors.length === 0) return await needsReview(MSG.noAnchor);
 
-    // 4) Load the anchored GRNs' outstanding lines + the supplier Article-No map.
-    const grnLines = await loadGrnLinesForAnchors(svc, anchors, job.companyId);
+    // 4) Load the anchored GRNs' outstanding lines + the supplier Article-No map,
+    // 5) and MATCH invoice lines -> GRN lines, the printed PO's lines first.
     const bindingBySku = await loadSupplierBindings(svc, anchors, job.companyId);
-
-    // 5) MATCH invoice lines -> GRN lines (pure). Never over-bills a line.
-    const match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
+    const { match, tier } = await matchAnchoredLines(svc, parsed, anchors, job.companyId, bindingBySku);
     if (match.picks.length === 0) return await needsReview(MSG.noLines);
 
     // 6) CONVERT the matched picks into a DRAFT PI (draft-only, always linked to
@@ -202,6 +200,7 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     const body = [
       `Draft supplier invoice ${docNos.join(', ')} was created from Goods Receipt ${grnNumbers.join(', ')}. `
       + 'Open it to review and confirm — nothing is posted until you do.',
+      tierNote(tier, parsed.poNo),
       reviewNote,
     ].filter(Boolean).join(' ');
     await notice(match.unmatched.length > 0 ? 'WARNING' : 'GENERAL', `Invoice saved as a draft — ${docNos.join(', ')}`, body);
@@ -234,15 +233,15 @@ export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | nu
   const anchorNumbers = anchors.map((a) => a.grn_number);
   const codes = await loadSupplierCodes(svc, supplierId, companyId, open);
   let match: ReturnType<typeof matchInvoiceLinesToGrnLines> | null = null;
+  let tier: PiLineTier | null = null;
   if (anchors.length > 0) {
-    const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
     const bindingBySku = await loadSupplierBindings(svc, anchors, companyId);
     if (supplierId) for (const t of await loadScanCodes(svc, companyId, supplierId)) bindingBySku.set(normalizeCode(t.supplierSku), t.itemCode);
-    match = matchInvoiceLinesToGrnLines(parsed.lines, grnLines, bindingBySku);
+    ({ match, tier } = await matchAnchoredLines(svc, parsed, anchors, companyId, bindingBySku));
   }
-  const first = buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, null);
+  const first = { ...buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, null), lineTier: tier };
   const aiSkus = await askAi(ai, first, open);
-  const review = aiSkus.size > 0 ? buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, aiSkus) : first;
+  const review = aiSkus.size > 0 ? { ...buildPiReview(parsed, supplierId, match, open, anchorNumbers, codes, aiSkus), lineTier: tier } : first;
   const note = review.lines.some((l) => l.grnItemId) ? null : anchors.length === 0 ? MSG.noAnchor : MSG.noLines;
   return { review, note };
 }
@@ -262,6 +261,12 @@ async function askAi(ai: AiSkuMatcher | null, review: PiReview, open: ReadonlyAr
   const out = new Map<string, string>();
   for (const [n, sku] of picked) { const l = untied.at(n - 1); if (n >= 1 && l) out.set(readKey(l.read), sku); }
   return out;
+}
+
+function tierNote(tier: PiLineTier | null, poNo: string | null): string | null {
+  if (tier === 'invoice_po') return `Billed from the lines of ${poNo} printed on the invoice.`;
+  if (tier === 'whole_receipt') return `No line of ${poNo} printed on the invoice matched, so the scan matched against every unbilled line of the receipt — check which PO each line bills.`;
+  return null;
 }
 
 function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | null {
@@ -406,16 +411,42 @@ async function resolveSupplierId(
   }
 }
 
-/** The anchored GRNs' outstanding lines (remaining-to-bill > 0). */
+/* Owner 2026-11-10: one receipt can take the same item code from two POs, and
+   the item-code matcher alone would bill whichever line it meets first. So when
+   the invoice prints a PO, its lines are offered first; only when none of them
+   matches does the scan fall back to every unbilled line of the receipt(s).
+   tier says which happened (null: the invoice names no PO, matching unchanged). */
+export async function matchAnchoredLines(
+  svc: SupabaseClient,
+  parsed: PiScanExtract,
+  anchors: AnchorGrn[],
+  companyId: number | null,
+  bindingBySku: Map<string, string>,
+): Promise<{ match: ReturnType<typeof matchInvoiceLinesToGrnLines>; tier: PiLineTier | null }> {
+  const grnLines = await loadGrnLinesForAnchors(svc, anchors, companyId);
+  const all = grnLines.map((l) => l.line);
+  const poNo = parsed.poNo;
+  if (!poNo) return { match: matchInvoiceLinesToGrnLines(parsed.lines, all, bindingBySku), tier: null };
+  const named = grnLines.filter((l) => docRefMatches(poNo, l.poNumber)).map((l) => l.line);
+  if (named.length > 0) {
+    const match = matchInvoiceLinesToGrnLines(parsed.lines, named, bindingBySku);
+    if (match.picks.length > 0) return { match, tier: 'invoice_po' };
+  }
+  return { match: matchInvoiceLinesToGrnLines(parsed.lines, all, bindingBySku), tier: 'whole_receipt' };
+}
+
+/** The anchored GRNs' outstanding lines (remaining-to-bill > 0), each with its
+ *  own PO (the receipt header's PO for a line with no PO link; null when the
+ *  PO read failed, so no line counts as the printed PO's). */
 async function loadGrnLinesForAnchors(
   svc: SupabaseClient,
   anchors: AnchorGrn[],
   companyId: number | null,
-): Promise<PiMatchGrnLine[]> {
-  const grnById = new Map(anchors.map((a) => [a.id, a.grn_number]));
+): Promise<Array<{ line: PiMatchGrnLine; poNumber: string | null }>> {
+  const grnById = new Map(anchors.map((a) => [a.id, a]));
   let q = svc
     .from('grn_items')
-    .select('id, grn_id, item_code, qty_accepted, invoiced_qty, returned_qty, unit_price_sen')
+    .select('id, grn_id, item_code, qty_accepted, invoiced_qty, returned_qty, unit_price_sen, purchase_order_item_id')
     .in('grn_id', anchors.map((a) => a.id));
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
@@ -423,20 +454,35 @@ async function loadGrnLinesForAnchors(
     console.warn('[pi-scan-job] GRN line read failed:', error.message);
     return [];
   }
-  const out: PiMatchGrnLine[] = [];
-  for (const r of (data as Array<Record<string, unknown>> | null) ?? []) {
+  const rows = (data as Array<Record<string, unknown>> | null) ?? [];
+  const po = await loadPoByPoItem({
+    sb: svc,
+    scopeQuery: (q2) => scopeToCompanyIdOrOpen(q2, companyId),
+    poItemIds: rows.map((r) => (r.purchase_order_item_id as string | null) ?? null),
+  });
+  if (po.error !== null) console.warn('[pi-scan-job] GRN line PO read failed:', po.error);
+  const out: Array<{ line: PiMatchGrnLine; poNumber: string | null }> = [];
+  for (const r of rows) {
     const remaining = remainingToBill({
       qty_accepted: r.qty_accepted as number | null,
       invoiced_qty: r.invoiced_qty as number | null,
       returned_qty: r.returned_qty as number | null,
     });
     if (remaining <= 0) continue;
+    const grn = grnById.get(String(r.grn_id));
+    const poItemId = (r.purchase_order_item_id as string | null) ?? null;
+    const poNumber = po.error !== null ? null
+      : poItemId ? po.byPoItem.get(poItemId)?.poDocNo ?? null
+      : grn?.po_number ?? null;
     out.push({
-      grnItemId: String(r.id),
-      grnNumber: grnById.get(String(r.grn_id)) ?? '',
-      itemCode: String(r.item_code ?? ''),
-      remaining,
-      unitPriceSen: Number(r.unit_price_sen ?? 0),
+      line: {
+        grnItemId: String(r.id),
+        grnNumber: grn?.grn_number ?? '',
+        itemCode: String(r.item_code ?? ''),
+        remaining,
+        unitPriceSen: Number(r.unit_price_sen ?? 0),
+      },
+      poNumber,
     });
   }
   return out;

@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { fakeSb, type Row } from './fake-postgrest';
-import { findAnchorGrns } from './pi-scan-run';
+import { findAnchorGrns, matchAnchoredLines, reviewOfPiRead } from './pi-scan-run';
 import type { PiScanExtract } from './pi-scan-extract';
 
 const scan = (poNo: string | null, doNo: string | null = null) =>
@@ -87,5 +87,51 @@ describe('findAnchorGrns — PO fallback reads the PO of each receipt line', () 
   it('a failed line-PO read anchors nothing rather than a header-only subset', async () => {
     const sb = fakeSb(tables(), { purchase_order_items: ['purchase_order_id'] });
     expect(await anchorNumbers(sb, 'HC-PO-2610-125')).toEqual([]);
+  });
+});
+
+/* Owner 2026-11-10: once a multi-PO receipt is matched, the lines of the PO
+ * printed on the invoice are offered to the item-code matcher first; only when
+ * none of them matches does it fall back to every unbilled line of the receipt.
+ * Same item code on two POs of one receipt must bill the printed PO's line. */
+describe('matchAnchoredLines — the printed PO\'s lines first, then the whole receipt', () => {
+  const line = (id: string, poi: string | null, item_code: string) => ({
+    id, grn_id: 'grn-52', purchase_order_item_id: poi, company_id: 1, item_code,
+    qty_accepted: 2, invoiced_qty: 0, returned_qty: 0, unit_price_sen: 10000,
+  });
+  const receipt = () => {
+    const t = tables();
+    t.grn_items = [line('gi-125', 'poi-125', 'MAT-Q'), line('gi-202', 'poi-202', 'MAT-Q'), line('gi-bed', 'poi-125', 'BED-K')];
+    return fakeSb(t);
+  };
+  const invoice = (poNo: string | null, doNo: string | null, itemCode: string) =>
+    ({ ...scan(poNo, doNo), lines: [{ itemCode, description: itemCode, qty: 2, unitPrice: 100, lineTotal: 200 }] }) as unknown as PiScanExtract;
+  const run = async (parsed: PiScanExtract) => {
+    const sb = receipt();
+    const anchors = await findAnchorGrns(sb as never, parsed, 1);
+    const { match, tier } = await matchAnchoredLines(sb as never, parsed, anchors, 1, new Map());
+    return { billed: match.picks.map((p) => p.grnItemId), tier };
+  };
+
+  it('bills the printed PO\'s line when the same item code sits on two POs of one receipt', async () => {
+    expect(await run(invoice('HC-PO-2610-202', null, 'MAT-Q'))).toEqual({ billed: ['gi-202'], tier: 'invoice_po' });
+  });
+
+  it('prefers the printed PO\'s line on a receipt anchored by its D.O. too', async () => {
+    expect(await run(invoice('HC-PO-2610-202', 'DO-9', 'MAT-Q'))).toEqual({ billed: ['gi-202'], tier: 'invoice_po' });
+  });
+
+  it('falls back to the whole receipt when no line of the printed PO matches', async () => {
+    expect(await run(invoice('HC-PO-2610-202', null, 'BED-K'))).toEqual({ billed: ['gi-bed'], tier: 'whole_receipt' });
+  });
+
+  it('an invoice with no PO matches exactly as before, over every unbilled line', async () => {
+    expect(await run(invoice(null, 'DO-9', 'MAT-Q'))).toEqual({ billed: ['gi-125'], tier: null });
+  });
+
+  it('records the tier on the check-first copy for review staff', async () => {
+    const { review } = await reviewOfPiRead(receipt() as never, 1, invoice('HC-PO-2610-202', null, 'MAT-Q'), null);
+    expect(review.lineTier).toBe('invoice_po');
+    expect(review.lines.map((l) => l.grnItemId)).toEqual(['gi-202']);
   });
 });
