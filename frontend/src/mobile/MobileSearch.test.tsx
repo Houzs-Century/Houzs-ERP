@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 /* MobileSearch — the phone's global search palette.
  *
@@ -18,6 +18,7 @@ type Hit = {
   title: string;
   subtitle: string;
   date: string;
+  status?: string;
 };
 
 const { searchResult } = vi.hoisted(() => ({
@@ -32,7 +33,8 @@ const { searchResult } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../lib/globalSearch", () => ({
+vi.mock("../lib/globalSearch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/globalSearch")>()),
   GLOBAL_SEARCH_MIN_LENGTH: 2,
   useGlobalSearchResults: () => searchResult.current,
 }));
@@ -126,3 +128,31 @@ describe("MobileSearch accounts for every hit", () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: "sales_order", docNo: "SO-2608-001" });
   });
 });
+
+describe("the finance and master sources (2026-11-10)", () => {
+  beforeAll(async () => {
+    const { loadSearchStatusVocabulary } = await import("../lib/globalSearch");
+    await loadSearchStatusVocabulary();
+  });
+
+  it("lists each read-only with its status in the list's own words", () => {
+    show([
+      { ...hit("payment_voucher", "p1", "PV-2611-001"), status: "POSTED" },
+      { ...hit("credit_note", "n1", "CN-2611-001"), status: "DRAFT" },
+      { ...hit("supplier", "s1", "OHANA · Ohana Furniture"), status: "ACTIVE" },
+      hit("receipt", "r1", "RCT-001"),
+      hit("delivery_return", "x1", "DR-001"),
+      hit("customer", "d1", "OD-001 · Tan"),
+    ], "tan");
+    for (const t of ["PV-2611-001", "CN-2611-001", "OHANA · Ohana Furniture", "RCT-001", "DR-001", "OD-001 · Tan"]) {
+      expect(title(t).closest("button"), t).toBeNull();
+    }
+    expect(screen.getAllByText("Open on desktop")).toHaveLength(6);
+    expect(screen.getByText("Approved")).toBeTruthy();
+    expect(screen.getByText("Draft")).toBeTruthy();
+    expect(screen.getByText("Active")).toBeTruthy();
+    expect(screen.getByText("Payment Vouchers")).toBeTruthy();
+    expect(screen.getByText("Customers")).toBeTruthy();
+  });
+});
+

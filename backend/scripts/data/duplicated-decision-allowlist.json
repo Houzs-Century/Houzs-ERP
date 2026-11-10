@@ -7,6 +7,11 @@
     },
     {
       "check": "D2",
+      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER ~ CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER",
+      "why": "TWO DIFFERENT QUESTIONS about the global-search hit types, differing by ASSR_CASE / PROJECT / USER on purpose: routes/search.ts SCM_SOURCE_TYPES is the subset read through the SCM PostgREST client (marked degraded together when that client cannot be built); the three public-schema sources run through env.DB and fail the request instead. The frontend maps are the PRESENTATION of every hit type. Divergence costs a missing name in the degraded notice, never a wrong result."
+    },
+    {
+      "check": "D2",
       "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
       "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
     },
@@ -187,8 +192,8 @@
     },
     {
       "check": "D1",
-      "key": "ASSR_CASE,DELIVERY_ORDER,GRN,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER,USER|frontend/src/components/GlobalSearch.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number."
+      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER|frontend/src/components/GlobalSearchPalette.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number. Grew from ten to sixteen hit types 2026-11-10 (suppliers, customers, credit notes, receipts, delivery returns, payment vouchers); every map is typed Record<SearchHitType, ...>, so a type missing from one fails to compile. The desktop order moved with the overlay from GlobalSearch.tsx to GlobalSearchPalette.tsx the same day."
     },
     {
       "check": "D1",
