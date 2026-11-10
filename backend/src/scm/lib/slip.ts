@@ -51,3 +51,31 @@ export function slipSessionExpiry(purpose: SlipPurpose | null, now = new Date())
   if (purpose === 'field_photo') return new Date(now.getTime() + FIELD_PHOTO_HOLD_HOURS * 60 * 60 * 1000).toISOString();
   return expiresInOneHour(now);
 }
+
+/* Which stop a field photo belongs to, so the photos already uploaded can be
+   listed again after the page reloads (iOS often reloads it under the camera).
+   Stored in pending_slip_uploads.order_draft_id - "the draft this upload is
+   for", a nullable text column nothing else in this codebase reads or writes
+   (checked against the prod schema dump, run 42635335025) - so no migration.
+   The REAL Houzs user id is part of it because staff_id on this table is the
+   pinned SCM system staff for every caller (scm/middleware/auth.ts), so it
+   cannot tell two users apart; the prefix is what keeps a list to the
+   caller's own photos. */
+export const FIELD_PHOTO_CONTEXT_MAX = 200;
+
+export function parseFieldPhotoContext(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s.length > FIELD_PHOTO_CONTEXT_MAX) return null;
+  // eslint-disable-next-line no-control-regex -- refusing control characters is the point
+  if (/[\u0000-\u001f\u007f]/.test(s)) return null;
+  return s;
+}
+
+export function fieldPhotoOwnerPrefix(houzsUserId: number): string {
+  return `field:u${houzsUserId}:`;
+}
+
+export function fieldPhotoDraftId(houzsUserId: number, context: string): string {
+  return `${fieldPhotoOwnerPrefix(houzsUserId)}${context}`;
+}

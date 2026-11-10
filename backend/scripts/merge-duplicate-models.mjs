@@ -83,7 +83,9 @@ async function main() {
   const allPairs = groups.flatMap((g) => g.plan.pairs.map(({ drop, keep }) => ({ drop, keep })));
   const skuWorld = await readMergeWorld(sql, { co: CO, pairs: allPairs, cascade: PRODUCT_CODE_CASCADE, cols });
   for (const m of skuWorld.missing) log(`   cascade column ${m} is not on this database - skipped`);
-  const skuPlan = planDuplicateSkuMerge({ pairs: allPairs, products: skuWorld.products, refs: skuWorld.refs, stock: skuWorld.stock, stockTakeLines: skuWorld.stockTakeLines });
+  // An acknowledgement counts only for a code its own group is merging away.
+  const stockAcks = groups.flatMap((g) => (g.group.ackStockDivergence ?? []).filter((a) => g.plan.pairs.some((p) => p.drop === a.code)));
+  const skuPlan = planDuplicateSkuMerge({ pairs: allPairs, products: skuWorld.products, refs: skuWorld.refs, stock: skuWorld.stock, stockTakeLines: skuWorld.stockTakeLines, stockAcks });
   const pairPlan = new Map(skuPlan.pairs.map((p) => [p.drop, p]));
   for (const g of groups) {
     const bad = g.plan.pairs.map((p) => pairPlan.get(p.drop)).filter((p) => p.refusals.length > 0);
@@ -113,7 +115,10 @@ async function main() {
     if (plan.refusals.length) return;
     if (plan.createModel) log(`     create Model "${plan.createModel.code}" (pool copied from "${plan.createModel.template?.model_code ?? "-"}")`);
     if (plan.activateKept) log("     switch the kept Model on (it is off today)");
-    for (const p of plan.pairs) log(`     size ${p.size}: merge "${p.drop}" (${useTxt(p.drop)}) INTO "${p.keep}" (${useTxt(p.keep)})`);
+    for (const p of plan.pairs) {
+      log(`     size ${p.size}: merge "${p.drop}" (${useTxt(p.drop)}) INTO "${p.keep}" (${useTxt(p.keep)})`);
+      for (const a of pairPlan.get(p.drop)?.acknowledged ?? []) log(`       ACKNOWLEDGED stock split carried onto "${p.keep}": ${a.warehouse} ledger ${a.ledger} / open lots ${a.lots} - ${a.reason}`);
+    }
     for (const m of plan.moves) log(`     size ${m.size}: move "${m.code}" under the kept Model`);
     for (const f of plan.fills) log(`     "${f.code}": take ${f.field}${f.supplier ? ` ${f.supplier} ${sup.get(f.supplier) ?? ""}` : ""} from "${f.from}"`);
     if (plan.addSizes.length) log(`     size pool + ${plan.addSizes.join("/")}`);
@@ -152,6 +157,7 @@ async function main() {
   log("");
   log("UNDO (before any write)");
   for (const p of actingPairs) {
+    for (const a of p.acknowledged ?? []) log(`   acknowledged "${p.drop}" ${a.warehouse}: ledger ${a.ledger} / open lots ${a.lots} - ${a.reason}`);
     for (const r of p.rekey) log(`   undo pair "${p.drop}" scm.${r.table}.${r.col} = '${p.drop}' WHERE id IN ${JSON.stringify(rekeyIds(skuWorld, p, r))}`);
     if (p.retire) log(`   undo pair "${p.drop}" scm.mfg_products ${p.dropRowId} status ACTIVE`);
   }

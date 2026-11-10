@@ -27,6 +27,12 @@
 //
 // A PAIR IS ALL OR NOTHING. Any refusal empties that pair's plan.
 //
+// A STOCK ACKNOWLEDGEMENT (owner, 2026-11-10, RELAX SLEEP LUXURTY K) lets one
+// named code merge while one named warehouse's movement ledger and open lots
+// disagree, at exactly the numbers the owner was shown: the split is carried
+// onto the kept code as it is and the owner corrects it. It lifts only that
+// warehouse's stock refusal for that code; every other refusal still blocks.
+//
 // NO SHEBANG: tests/duplicateSkuMergePlan.test.mjs imports this module.
 
 import { normCode } from "./ac-mapping-csv.mjs";
@@ -54,6 +60,10 @@ const sum = (rows, f) => rows.reduce((s, r) => s + Number(f(r) ?? 0), 0);
  *   per dropped code and warehouse: the movement-ledger balance and the open lots
  * @param {Array<{id: string, code: string, takeStatus: string, collides: boolean, systemQty: number|null, countedQty: number|null}>} w.stockTakeLines
  *   every stock take line on a DROP code; `collides` = the kept code has a line in the same take and variant
+ * @param {Array<{code: string, warehouse: string, ledger: number, lots: number, reason: string}>} [w.stockAcks]
+ *   owner acknowledgements that ONE dropped code may merge while ONE warehouse's ledgers disagree, written
+ *   with the exact numbers measured. A bucket that no longer reads exactly those numbers refuses again.
+ *   Optional because absent is the stricter direction: every disagreement refuses.
  */
 export function planDuplicateSkuMerge(w) {
   const productByCode = new Map(w.products.map((p) => [normCode(p.code), p]));
@@ -101,8 +111,13 @@ export function planDuplicateSkuMerge(w) {
     }
 
     const stock = w.stock.filter((s) => normCode(s.code) === dk);
+    const acknowledged = [];
     for (const s of stock) {
-      if (s.ledgerQty !== s.lotQty) {
+      const ack = (w.stockAcks ?? []).find((a) => normCode(a.code) === dk && a.warehouse === s.warehouseCode
+        && Number(a.ledger) === Number(s.ledgerQty) && Number(a.lots) === Number(s.lotQty));
+      if (ack) {
+        acknowledged.push({ warehouse: s.warehouseCode, ledger: Number(s.ledgerQty), lots: Number(s.lotQty), reason: ack.reason });
+      } else if (s.ledgerQty !== s.lotQty) {
         refusals.push(`${s.warehouseCode}: the movement ledger says ${s.ledgerQty} and the open lots say ${s.lotQty} - reconcile "${drop}" first`);
       } else if (s.ledgerQty < 0) {
         refusals.push(`${s.warehouseCode}: "${drop}" is at ${s.ledgerQty}`);
@@ -116,6 +131,7 @@ export function planDuplicateSkuMerge(w) {
       dropRowId: dropRow?.id ?? null,
       dropRowStatus: dropRow?.status ?? null,
       refusals,
+      acknowledged: refused ? [] : acknowledged,
       rekey: refused ? [] : rekey.map((r) => ({ table: r.table, col: r.col, rows: Number(r.rows), ...(r.ids ? { ids: r.ids } : {}) })),
       stay: stay.map((r) => ({ table: r.table, col: r.col, rows: Number(r.rows) })),
       unitsMoved: refused ? 0 : sum(stock, (s) => s.ledgerQty),

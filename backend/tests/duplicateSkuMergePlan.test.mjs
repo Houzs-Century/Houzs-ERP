@@ -226,3 +226,34 @@ describe('planDuplicateSkuMerge', () => {
     for (const t of STAYS_ON_DROP) expect(cascadeTables.has(t)).toBe(true);
   });
 });
+
+describe('owner stock acknowledgement (2026-11-10)', () => {
+  const split = [
+    { code: DROP, warehouseCode: 'PG SERVICE', ledgerQty: -1, lotQty: 0 },
+    { code: DROP, warehouseCode: 'PG WAREHOUSE', ledgerQty: 1, lotQty: 1 },
+  ];
+  const ack = { code: DROP, warehouse: 'PG SERVICE', ledger: -1, lots: 0, reason: 'owner: merge anyway' };
+
+  it('refuses the disagreeing warehouse without one', () => {
+    expect(plan({ stock: split }).pairs[0].refusals).toHaveLength(1);
+  });
+
+  it('merges that code when the acknowledgement names its warehouse and exact numbers, and records it', () => {
+    const p = plan({ stock: split, stockAcks: [ack] }).pairs[0];
+    expect(p.refusals).toEqual([]);
+    expect(p.acknowledged).toEqual([{ warehouse: 'PG SERVICE', ledger: -1, lots: 0, reason: 'owner: merge anyway' }]);
+    expect(p.unitsMoved).toBe(0);
+  });
+
+  it('refuses again once the numbers move, or for another warehouse or code', () => {
+    expect(plan({ stock: [{ ...split[0], ledgerQty: -2 }], stockAcks: [ack] }).pairs[0].refusals).toHaveLength(1);
+    expect(plan({ stock: [{ ...split[0], warehouseCode: 'KL WAREHOUSE' }], stockAcks: [ack] }).pairs[0].refusals).toHaveLength(1);
+    expect(plan({ stock: split, stockAcks: [{ ...ack, code: 'OTHER (Q)' }] }).pairs[0].refusals).toHaveLength(1);
+  });
+
+  it('never lifts any other refusal', () => {
+    const p = plan({ stock: split, stockAcks: [ack], products: [product(DROP), product(KEEP, { status: 'INACTIVE' })] }).pairs[0];
+    expect(p.refusals).toEqual([`the kept code "${KEEP}" is INACTIVE, not ACTIVE`]);
+    expect(p.acknowledged).toEqual([]);
+  });
+});

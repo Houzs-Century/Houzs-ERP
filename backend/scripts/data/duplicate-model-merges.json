@@ -116,5 +116,20 @@
       { "category": "MATTRESS", "keep": "CS2 COOL FRESH", "drops": ["FRESH COOL"], "skip": "owner 2026-11-10: different main suppliers (Dunlopillo 400-D001 / Happi Sleep 400-E001), never merged" },
       { "category": "MATTRESS", "keep": "AMIRA PREMIUM", "drops": ["AMIRA PREMUIM"] }
     ]
+  },
+  "OWNER-2026-11-10-RELAX": {
+    "ruling": "Owner 2026-11-10: merge RELAX SLEEP LUXURT and RELAX SLEEP LUXURTY into RELAX SLEEP LUXURY now. DUNLOPILLO RELAX SLEEP LUXURTY MATT (K) reads PG SERVICE -1 (open lots 0) and PG WAREHOUSE +1, total 0; the owner accepts that split moving onto the LUXURY K code and corrects the stock himself. Its own ticket because applying HC-0202 whole would undo the AMIRA ruling of 2026-11-06.",
+    "groups": [
+      { "category": "MATTRESS", "keep": "RELAX SLEEP LUXURY", "drops": ["RELAX SLEEP LUXURT", "RELAX SLEEP LUXURTY"],
+        "ackStockDivergence": [
+          { "code": "DUNLOPILLO RELAX SLEEP LUXURTY MATT (K)", "warehouse": "PG SERVICE", "ledger": -1, "lots": 0, "reason": "owner 2026-11-10: merge anyway, owner corrects stock" }
+        ] }
+    ]
+  },
+  "OWNER-2026-11-10-TIFANNY": {
+    "ruling": "Owner 2026-11-10 (via the backlog coordinator): TIFFANI folds into TIFANNY, ruled one product although TIFANNY is bound to 400-H004 and TIFFANI to 400-B002. A ticket of its own so this group runs alone: OWNER-2026-11-06 also carries CS2 COOL FRESH (never merged) and AMIRA.",
+    "groups": [
+      { "category": "BEDFRAME", "keep": "TIFANNY", "drops": ["TIFFANI"], "ruledOneProduct": true }
+    ]
   }
 }

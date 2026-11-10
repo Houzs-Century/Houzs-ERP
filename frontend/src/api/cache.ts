@@ -76,7 +76,9 @@ export function getInflight<T>(path: string): Promise<T> | undefined {
 
 export function setInflight(path: string, p: Promise<unknown>): void {
   inflight.set(path, p);
-  p.finally(() => inflight.delete(path)).catch(() => {});
+  /* Only our own entry: an invalidation may already have replaced it with a newer
+     read, and deleting that one sent every later caller to the network again (Hookka #890). */
+  p.finally(() => { if (inflight.get(path) === p) inflight.delete(path); }).catch(() => {});
 }
 
 function invalidateLocal(prefix: string): void {

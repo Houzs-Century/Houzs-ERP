@@ -41,7 +41,7 @@ import { fireEvent } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { authedFetch } = vi.hoisted(() => ({ authedFetch: vi.fn() }));
+const { authedFetch, listFieldPhotos } = vi.hoisted(() => ({ authedFetch: vi.fn(), listFieldPhotos: vi.fn() }));
 vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
 vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
 /* Every delivery closes with a photo (2026-10-07), so each case attaches one;
@@ -50,6 +50,9 @@ vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
 vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadFieldPhoto: vi.fn(async () => ({ r2Key: "slips/2026/10/pod-test.jpg" })),
+
+  // No photos uploaded earlier for this stop (the re-list after a reload).
+  listFieldPhotos: (context: string) => listFieldPhotos(context),
 }));
 /* No network for the stamp's server clock in a unit test. */
 vi.mock("../lib/photoStamp", async (importOriginal) => ({
@@ -131,6 +134,8 @@ const ctx2d = {
 
 beforeEach(() => {
   authedFetch.mockReset();
+  listFieldPhotos.mockReset();
+  listFieldPhotos.mockResolvedValue([]);
   authedFetch.mockResolvedValue({ deliveryOrder: { id: "do-uuid-1", status: "DELIVERED" } });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     ctx2d as unknown as CanvasRenderingContext2D,
@@ -248,10 +253,25 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     /* The paper delivery note is signed by hand for now; its photo is the POD.
        A delivery confirmed with no photo would leave the DO with no evidence. */
     wrap();
+    // The re-list of photos uploaded before a reload finds none.
+    await waitFor(() => expect(screen.queryByText(/Checking for photos you already uploaded/)).toBeNull());
     fireEvent.click(screen.getByText("Confirm delivered →"));
     expect(await screen.findByText(/Take a POD photo first/)).toBeTruthy();
     // Nothing WRITTEN (the screen's reads, e.g. the DO's reported issues, may run).
     const writes = (authedFetch.mock.calls as Array<[string, RequestInit | undefined]>).filter(([, init]) => init?.method && init.method !== "GET");
     expect(writes).toEqual([]);
+  });
+
+  it("after a page reload, the photo uploaded before it comes back and goes with the delivery", async () => {
+    /* iOS often reloads the page when the camera opens. The photo had already
+       uploaded, so the server lists it for this DO and the driver does not
+       have to take it again. */
+    listFieldPhotos.mockResolvedValue([{ uploadSessionId: "s-old", r2Key: "slips/2026/11/before-reload.jpg", contentType: "image/jpeg", createdAt: "2026-11-10T01:00:00Z" }]);
+    wrap();
+    expect(await screen.findByText("Uploaded")).toBeTruthy();
+    expect(listFieldPhotos).toHaveBeenCalledWith("do:do-uuid-1");
+    fireEvent.click(screen.getByText("Confirm delivered →"));
+    await waitFor(() => expect(authedFetch).toHaveBeenCalled());
+    expect(sentBody().podKey).toBe("slips/2026/11/before-reload.jpg");
   });
 });

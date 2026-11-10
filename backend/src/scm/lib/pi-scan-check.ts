@@ -44,8 +44,13 @@ export type PiReview = {
   notes: string | null;
   // What the sales tax did to the rows, or why the rows do not reach the invoice total.
   taxNote: string | null;
+  // Which receipt lines the matcher was offered: the PO printed on the invoice,
+  // or (none of those matched) every unbilled line of the receipt. null: no PO printed.
+  lineTier: PiLineTier | null;
   lines: PiReviewLine[];
 };
+
+export type PiLineTier = 'invoice_po' | 'whole_receipt';
 
 export const PI_REVIEW_VERSION = 5;
 
@@ -282,6 +287,7 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
     poNo: parsed?.poNo ?? null,
     notes: null,
     taxNote,
+    lineTier: null,
     lines: [...lines].sort((a, b) => order(a) - order(b)),
   };
 }
@@ -321,6 +327,7 @@ export function cleanPiReview(input: unknown): PiReview | null {
     poNo: str(r.poNo),
     notes: str(r.notes),
     taxNote: str(r.taxNote),
+    lineTier: r.lineTier === 'invoice_po' || r.lineTier === 'whole_receipt' ? r.lineTier : null,
     lines,
   };
 }

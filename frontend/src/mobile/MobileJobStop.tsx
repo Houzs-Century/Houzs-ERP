@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { uploadFieldPhoto } from "../vendor/scm/lib/slip";
-import { useFieldPhotos } from "../lib/fieldPhotos";
+import { fieldPhotoContext, uploadFieldPhoto } from "../vendor/scm/lib/slip";
+import { serverFieldPhotoRestore, useFieldPhotos } from "../lib/fieldPhotos";
 import { FieldPhotos } from "../components/FieldPhotos";
 import {
   deliveryIssueDraftError, invalidateDeliveryIssues, reportJobDeliveryIssue, useRunDeliveryIssues,
@@ -46,7 +46,14 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const ctx = q.data?.context;
   const done = !!progress?.completed_at;
   // The backend takes at most 10 photos when a job is completed (delivery-job-progress.ts MAX_PHOTOS).
-  const photos = useFieldPhotos({ stampLabel: str(ctx?.ref) ?? (LEG_LABEL[jobRef.leg] ?? jobRef.leg), max: 10, upload: (file) => uploadFieldPhoto({ file }) });
+  // After a page reload the photos already uploaded for this stop come back from the server.
+  const photoContext = fieldPhotoContext({ kind: "job", key: jobKey(jobRef) });
+  const photos = useFieldPhotos({
+    stampLabel: str(ctx?.ref) ?? (LEG_LABEL[jobRef.leg] ?? jobRef.leg),
+    max: 10,
+    upload: (file) => uploadFieldPhoto({ file, context: photoContext }),
+    restore: ctx && !done ? serverFieldPhotoRestore(photoContext) : null,
+  });
 
   const refresh = async () => {
     await Promise.all([
