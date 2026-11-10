@@ -109,7 +109,14 @@ async function loadConsumers(db, wh, lock) {
            m.source_doc_no, m.unit_cost_sen, m.total_cost_sen, m.batch_no, m.product_name,
            COALESCE((SELECT SUM(c.qty_consumed) FROM scm.inventory_lot_consumptions c
                       WHERE c.movement_id = m.id), 0)::int AS consumed,
-           d.do_number, d.status::text AS do_status, COALESCE(d.is_dropship, FALSE) AS do_dropship
+           d.do_number, d.status::text AS do_status, COALESCE(d.is_dropship, FALSE) AS do_dropship,
+           (m.source_doc_type = 'DO' AND m.batch_no IS NOT NULL AND EXISTS (
+              SELECT 1 FROM scm.delivery_order_items di
+               WHERE di.delivery_order_id = m.source_doc_id
+                 AND di.committed_po_batch_no = m.batch_no
+                 AND di.item_code = m.item_code
+                 AND COALESCE(di.committed_variant_key, '') = COALESCE(m.variant_key, '')
+                 AND di.committed_batch_strict = TRUE)) AS strict_batch
       FROM scm.inventory_movements m
       LEFT JOIN scm.delivery_orders d ON m.source_doc_type = 'DO' AND d.id = m.source_doc_id
      WHERE m.company_id = $1 AND m.warehouse_id::text = $2 AND m.item_code = $3

@@ -32,6 +32,9 @@ export function refusalFor(m) {
   if (m.do_status == null) return "names a DO that no longer exists";
   if (String(m.do_status).toUpperCase() === "CANCELLED") return "its DO is CANCELLED (the reversal nets it; costing it would book COGS on a cancelled sale)";
   if (m.do_dropship) return "its DO is drop-ship (fn_reconcile_dropship_batch owns that cost)";
+  // 0230: a committed strict-batch line (sofa dye lot) belongs to the batched
+  // reconcile; costing it from an arbitrary lot means another dye lot.
+  if (m.strict_batch) return "it is a committed strict-batch line (0230: the batched reconcile owns it)";
   return null;
 }
 
@@ -47,7 +50,7 @@ const byTimeThenId = (ta, tb) => (a, b) => {
  * @param {object} p
  * @param {Array}  p.consumers  consuming movements of the bucket:
  *                 {id, movement_type, qty, consumed, created_at, source_doc_type,
- *                  source_doc_no, total_cost_sen, do_status, do_dropship}
+ *                  source_doc_no, total_cost_sen, do_status, do_dropship, strict_batch}
  * @param {Array}  p.openLots   lots with qty_remaining > 0: {id, qty_remaining, unit_cost_sen, received_at}
  * @param {number} p.onHandQty  the bucket's qty as inventory_balances shows it
  * @param {object|null} p.basis pickCostBasis() result, or null when not looked up

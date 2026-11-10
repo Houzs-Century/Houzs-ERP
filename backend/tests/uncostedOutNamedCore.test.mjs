@@ -47,6 +47,7 @@ describe("movement classification", () => {
     expect(refusalFor(out({ source_doc_type: "DO", do_status: "CANCELLED" }))).toMatch(/CANCELLED/);
     expect(refusalFor(out({ source_doc_type: "DO", do_status: "DELIVERED", do_dropship: true }))).toMatch(/drop-ship/);
     expect(refusalFor(out({ source_doc_type: "DO", do_status: null }))).toMatch(/no longer exists/);
+    expect(refusalFor(out({ source_doc_type: "DO", do_status: "DELIVERED", strict_batch: true }))).toMatch(/strict-batch/);
   });
 });
 
