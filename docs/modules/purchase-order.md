@@ -34,6 +34,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 
 Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
+- A GRN belongs to a PO by its header `purchase_order_id` OR by any of its lines (`grn_items.purchase_order_item_id`): a receipt converted from several POs names only the first in its header. The lock (`poHasDownstream`), the detail's `has_children` and `GET /:id/linked` all read both (`lib/po-grn-links.ts`), as the list's `stampPoListGrns` already did. A failed read locks.
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
