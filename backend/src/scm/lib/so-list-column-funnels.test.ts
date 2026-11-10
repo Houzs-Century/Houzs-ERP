@@ -11,7 +11,7 @@ const so = (over: Row): Row => ({ doc_no: 'X', company_id: 1, status: 'CONFIRMED
 
 async function values(rows: Row[], more: Record<string, Row[]> = {}, canFinance = false) {
   const sb = fakeSb({ mfg_sales_orders_with_payment_totals: rows, mfg_sales_orders: [], staff: [], warehouses: [], ...more });
-  const out = await buildSoFunnelValues(sb, c, null, canFinance);
+  const out = await buildSoFunnelValues(sb, c, null, canFinance, null);
   if (out.error !== null) throw new Error(out.error);
   return out.values;
 }

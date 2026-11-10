@@ -183,7 +183,9 @@ function fakeSb(lots: Array<Record<string, unknown>>, opts: { throwOnRead?: bool
     gt(col: string, v: number) { this.rows = this.rows.filter((r) => Number(r[col]) > v); return this; }
     eq(col: string, v: unknown) { this.rows = this.rows.filter((r) => r[col] === v); return this; }
     limit() { return this; }
-    order(col: string, o: { ascending: boolean }) {
+    range(from: number, to: number) { this.rows = this.rows.slice(from, to + 1); return this; }
+    order(col: string, o?: { ascending: boolean }) {
+      if (!o) return this; // the id tie-break; these fixtures never tie on received_at
       this.rows.sort((a, b) => (String(a[col]) < String(b[col]) ? 1 : -1) * (o.ascending ? -1 : 1));
       return this;
     }

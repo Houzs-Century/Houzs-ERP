@@ -207,3 +207,7 @@
 .sheetSectionHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .sheetSectionHead > b { font-size: 12px; }
 .sheetSectionHead > span { font-size: 10.5px; color: #767b6e; }
+
+/* An order number inside an entry's document (bank-entry-doc, owner 2026-11-10): the cell's
+   own type, so a bold document stays bold; the Finance link keeps its dotted underline. */
+.entryDoc a { font: inherit; }

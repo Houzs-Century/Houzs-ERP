@@ -49,6 +49,7 @@ import {
   type ConnectCompanyProfile,
 } from '../../services/connect';
 import { buildContactSyncEvent, SYNC_SO_SELECT } from '../lib/connect-contact-sync';
+import { chunkIn, inList } from '../lib/paginate-all';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -517,13 +518,20 @@ deliveryMessages.post('/statuses', async (c) => {
   // send they answer. Without this predicate the "first hit per doc" below
   // would hand the board the customer's reply as if it were the send status,
   // i.e. every answered message would report itself as freshly sent.
-  const { data, error } = await sb.from('wa_message_log')
-    .select('doc_no, success, http_code, created_at')
-    .eq('source', 'delivery-planning')
-    .in('doc_no', docNos)
-    .order('created_at', { ascending: false })
-    .limit(2000);
+  /* chunkIn: up to 1,000 docs, each with every send it ever had. One read capped
+     at 1,000 rows kept only the newest sends, and a doc whose last send was older
+     showed as never sent. Batches are URL-sized and paged; within a batch the
+     order is newest first, and a doc lives in one batch only. */
+  const { data, error, truncated } = await chunkIn<{ doc_no: string; success: boolean; http_code: number | null; created_at: string }>(docNos, (part, from, to) =>
+    sb.from('wa_message_log')
+      .select('doc_no, success, http_code, created_at')
+      .eq('source', 'delivery-planning')
+      .filter('doc_no', 'in', inList(part))
+      .order('created_at', { ascending: false })
+      .order('id')
+      .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (truncated) return c.json({ error: 'load_failed', reason: 'Too many message log rows to read in full.' }, 500);
 
   // First hit per doc = the latest (ordered DESC above).
   const statuses: Record<string, { success: boolean; http_code: number | null; created_at: string }> = {};

@@ -44,6 +44,7 @@ import { soBookHeaderOf } from './so-book-header';
 import { SO_FINANCE_KEYS } from './finance-keys';
 import { AC_DEBTOR_CODE } from '../../services/autocount-writeback';
 import { AGENT_MAP, VENUE_MAP } from '../../services/autocount-master-maps';
+import { soFunnelRowsSql, type SqlEnv } from './so-funnel-values-sql';
 
 /** The blank-cell key the grid uses (dataTableRows.filterKeyOf). */
 export const BLANK = '—';
@@ -277,17 +278,24 @@ export type SoFunnelValues =
  * warehouse gives the cell. Currency rides along (pushed down since
  * 2026-09-16, previously seeded from the loaded page only).
  */
-export async function buildSoFunnelValues(sb: Sb, c: CompanyScopeCtx, scopeIds: string[] | null, canFinance: boolean): Promise<SoFunnelValues> {
+export async function buildSoFunnelValues(sb: Sb, c: CompanyScopeCtx, scopeIds: string[] | null, canFinance: boolean, env: SqlEnv | null): Promise<SoFunnelValues> {
   const keys = Object.keys(SO_COLUMN_FUNNELS).filter((k) => canFinance || !FINANCE.has(k));
-  const cols = [...VIEW_COLS, ...(canFinance ? SO_FINANCE_KEYS : [])].join(', ');
+  const colList = [...VIEW_COLS, ...(canFinance ? SO_FINANCE_KEYS : [])];
+  const cols = colList.join(', ');
+  const scope = <Q>(q: Q): Q => scopeToCompany(applySoScope(q, scopeIds), c);
+  /* Warehouses start now (a PostgREST builder is lazy until awaited) so they
+     overlap the SQL. The two value reads are two SQL statements (no 1,000-row
+     paging); null = page through PostgREST exactly as before. */
+  const whProm = Promise.resolve(scopeToCompany(sb.from('warehouses').select('id, code, name'), c) as PromiseLike<{ data: unknown[] | null; error: QueryError }>);
+  const viaSql = env ? await soFunnelRowsSql<ValueRow, { doc_no: string; linked_ac_docno: string | null }>(env, colList, scope) : null;
   const [view, base, wh] = await Promise.all([
-    pageWithTruncation<ValueRow>((from, to) =>
-      scopeToCompany(applySoScope(sb.from('mfg_sales_orders_with_payment_totals').select(cols), scopeIds), c)
+    viaSql ? viaSql.view : pageWithTruncation<ValueRow>((from, to) =>
+      scope(sb.from('mfg_sales_orders_with_payment_totals').select(cols))
         .order('doc_no', { ascending: true }).range(from, to)),
-    pageWithTruncation<{ doc_no: string; linked_ac_docno: string | null }>((from, to) =>
-      scopeToCompany(applySoScope(sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno'), scopeIds), c)
+    viaSql ? viaSql.base : pageWithTruncation<{ doc_no: string; linked_ac_docno: string | null }>((from, to) =>
+      scope(sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno'))
         .not('linked_ac_docno', 'is', null).order('doc_no', { ascending: true }).range(from, to)),
-    scopeToCompany(sb.from('warehouses').select('id, code, name'), c) as PromiseLike<{ data: unknown[] | null; error: QueryError }>,
+    whProm,
   ]);
   if (view.error) return { error: `orders: ${view.error.message}` };
   if (base.error) return { error: `book numbers: ${base.error.message}` };

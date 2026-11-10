@@ -293,10 +293,6 @@
       "reads": 9,
       "catches": 0
     },
-    "backend/src/scm/routes/lorry-capacity.ts": {
-      "reads": 2,
-      "catches": 0
-    },
     "backend/src/scm/routes/lorry-service-records.ts": {
       "reads": 3,
       "catches": 3
