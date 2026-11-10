@@ -14,7 +14,7 @@ vi.mock('../../services/assr', () => ({
 }));
 vi.mock('../../services/assrNotify', () => ({ notifyServiceCaseResponsible: vi.fn(async () => undefined) }));
 const claimPodPhotos = vi.fn();
-vi.mock('./pod-photo-claim', () => ({ claimPodPhotos: (...a: unknown[]) => claimPodPhotos(...a) }));
+vi.mock('./pod-photo-claim', async (orig) => ({ ...(await orig<Record<string, unknown>>()), claimPodPhotos: (...a: unknown[]) => claimPodPhotos(...a) }));
 
 import {
   parseDeliveryIssueBody, deliveryIssueComplaint, reportDeliveryIssue, listDeliveryIssues,

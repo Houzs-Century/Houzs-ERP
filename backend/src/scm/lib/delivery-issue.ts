@@ -10,7 +10,7 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, activeCompanyId } from './companyScope';
-import { claimPodPhotos } from './pod-photo-claim';
+import { claimPodPhotos, doStopContext, jobStopContext } from './pod-photo-claim';
 import { createAssrCase, saveAttachment, logActivity } from '../../services/assr';
 import { notifyServiceCaseResponsible } from '../../services/assrNotify';
 import { JOB_SOURCE_TYPES } from '../routes/delivery-job-progress';
@@ -88,10 +88,6 @@ export type DeliveryIssueRow = {
   reported_at: string;
 };
 
-const staffIdOf = (c: Ctx): string | null => {
-  const id = (c.get('user') as { id?: unknown } | undefined)?.id;
-  return id == null ? null : String(id);
-};
 
 /* Records the issue and opens the Service Case. Order matters so a failure is
    retryable without a duplicate case: the issue row goes in first (no case yet);
@@ -101,7 +97,9 @@ export async function reportDeliveryIssue(c: Ctx, target: DeliveryIssueTarget, i
   const sb = c.get('supabase');
   const me = Number(c.get('houzsUser')?.id) || null;
 
-  const claim = await claimPodPhotos(sb, c, staffIdOf(c), issue.photoKeys);
+  // The route admitted the caller to this stop, so a crew member's photo for it is accepted too.
+  const stopContext = target.job ? jobStopContext(target.job) : target.deliveryOrderId ? doStopContext(target.deliveryOrderId) : null;
+  const claim = await claimPodPhotos(sb, c, { houzsUserId: me, stopContext }, issue.photoKeys);
   if (!claim.ok) return { ok: false, status: 400, error: 'photo_not_accepted', reason: claim.reason };
   const photoKeys = claim.keys;
   // A project / case with no company still gets one (the caller's), so the
