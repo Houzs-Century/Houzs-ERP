@@ -1,0 +1,21 @@
+-- 20261110T2100_users_totp_last_step.sql
+-- REVERSAL: ALTER TABLE public.users DROP COLUMN IF EXISTS totp_last_step;
+--   Revert the code first: services/totpCheck.ts (read by routes/auth.ts
+--   /totp/login and routes/totp.ts /enable, /disable) writes it, and
+--   routes/totp.ts /setup and /disable reset it. Dropping it only brings back
+--   the old behaviour (a code may be used again inside its ~90 s window).
+--   Sealed secrets (users.totp_secret starting `enc:v1:`) are NOT undone by
+--   this; they need the TOTP_ENCRYPTION_KEY Worker secret to open, with or
+--   without this column.
+--   GRANTS: none to restore (a column add/drop does not touch the table ACL).
+--
+-- WHAT THIS CHANGES: one new nullable column on users. Every existing row reads
+-- NULL = "no code accepted yet", so the next valid code is accepted as today.
+--
+-- WHY (sister-ERP gap review BE7, 2026-11-10): a two-step sign-in code stayed
+-- usable for its whole drift window after it had been accepted once. The
+-- column holds the 30-second step of the last accepted code; a code is
+-- accepted only when its step is later.
+-- Houzs conventions: additive, IF NOT EXISTS, re-runnable; no inner BEGIN/COMMIT.
+
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS totp_last_step bigint;

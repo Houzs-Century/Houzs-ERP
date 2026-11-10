@@ -83,6 +83,10 @@ export default defineConfig(async () => {
             TEST_SCHEMA_SNAPSHOT: schemaSnapshot,
             TEST_SCHEMA_SEED: schemaSeed,
             DASHBOARD_API_KEY: "test-dashboard-key",
+            // Two-step secrets are sealed in tests the way production runs
+            // once the key is set (services/totpSecret.ts). Built, not typed,
+            // so it is visibly not a credential.
+            TOTP_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
             // Never inherit a live database URL into the test runtime.
             DATABASE_URL: "",
           },
