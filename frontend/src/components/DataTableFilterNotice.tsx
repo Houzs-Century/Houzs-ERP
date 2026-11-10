@@ -14,14 +14,14 @@ import { isConditionToken, parseCondition, DATE_PRESETS } from "./dataTableCondi
 
 export type ActiveFilter = { key: string; label: string; detail: string };
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_SHORT = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 
 /** "2026-11-06" -> "6 Nov" (year added only when it is not this year). */
 function shortDay(iso: string, thisYear: number): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
   const [, y, mo, d] = m;
-  const day = `${Number(d)} ${MONTHS[Number(mo) - 1] ?? mo}`;
+  const day = `${Number(d)} ${MONTH_SHORT.format(Date.UTC(Number(y), Number(mo) - 1, 1))}`;
   return Number(y) === thisYear ? day : `${day} ${y}`;
 }
 
