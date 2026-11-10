@@ -5,6 +5,11 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MobileFieldPin } from "./MobileFieldPin";
+import {
+  requirePasswordChange,
+  requirePasswordChangeConfirmText,
+  requirePasswordChangeDoneText,
+} from "../lib/requirePasswordChange";
 
 /* Member account actions (Team -> Members). The desktop member profile exposes
    Set password / Send reset link / Resend invitation; this mirrors them 1:1 on
@@ -37,7 +42,7 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
   const notify = useNotify();
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const [busy, setBusy] = useState<null | "reset" | "resend" | "setpw">(null);
+  const [busy, setBusy] = useState<null | "reset" | "resend" | "setpw" | "require">(null);
   const id = str(row?.id);
   const email = str(row?.email);
   const status = String(row?.status ?? "").toLowerCase();
@@ -126,6 +131,19 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
     }
   };
 
+  const requireNewPassword = async () => {
+    if (!(await confirm({ title: "Require password change?", body: requirePasswordChangeConfirmText(email), confirmLabel: "Require change" }))) return;
+    setBusy("require");
+    try {
+      const ended = await requirePasswordChange(id);
+      await notify({ title: "Password change required", body: requirePasswordChangeDoneText(email, ended) });
+    } catch (e) {
+      await notify({ title: "Couldn't require a change", body: e instanceof Error ? e.message : "Please try again." });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const isInvited = status === "invited";
   return (
     <>
@@ -142,6 +160,9 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
             </button>
             <button className="btn" disabled={busy !== null} onClick={resetPassword} style={{ opacity: busy !== null ? 0.6 : 1 }}>
               {busy === "reset" ? "Working…" : "Send reset link"}
+            </button>
+            <button className="btn" disabled={busy !== null} onClick={requireNewPassword} style={{ opacity: busy !== null ? 0.6 : 1 }}>
+              {busy === "require" ? "Working…" : "Require password change"}
             </button>
           </>
         )}

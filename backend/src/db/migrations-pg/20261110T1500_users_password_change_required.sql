@@ -1,0 +1,22 @@
+-- 20261110T1500_users_password_change_required.sql
+-- REVERSAL: ALTER TABLE public.users DROP COLUMN IF EXISTS password_change_required_at;
+--   Revert the code first: routes/auth.ts (/login, /totp/login, /me/password,
+--   /reset/:token) and routes/users.ts (/:id/require-password-change) read and
+--   write it. Dropping the column ends every pending "change your password"
+--   prompt. Sessions minted while a member was flagged carry
+--   sessions.origin = 'password_change' and are already restricted to the
+--   change-password screen; to end them too:
+--   DELETE FROM sessions WHERE origin = 'password_change'.
+--   GRANTS: none to restore (a column add/drop does not touch the table ACL).
+--
+-- WHAT THIS CHANGES: one new nullable column on users; every existing row reads
+-- NULL, which is "no change required" -- today's behaviour for everybody.
+--
+-- WHY (docs/staging-dump-artifact-exposure-coe.md). Staff password hashes were
+-- exposed in public CI artifacts. The owner approved (2026-11-10) requiring
+-- admins and finance staff to choose a new password. When this column is set, a
+-- correct password at sign-in opens a short session that can reach only the
+-- change-password screen; a successful change clears it.
+-- Houzs conventions: additive, IF NOT EXISTS, re-runnable; no inner BEGIN/COMMIT.
+
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_change_required_at timestamptz;

@@ -494,6 +494,101 @@ export function ForgotPasswordScreen() {
 }
 
 // ──────────────────────────────────────────────────────────
+// Required password change — the only screen a flagged member's session
+// reaches (desktop and phone alike; AuthGate shows it for both). The server
+// refuses every other request until this succeeds.
+// ──────────────────────────────────────────────────────────
+export function ForcedPasswordChangeScreen() {
+  const { user, completePasswordChange, logout } = useAuth();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirmNext, setConfirmNext] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const email = user?.email ?? "";
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    if (next !== confirmNext) {
+      setErr("The two new passwords don't match.");
+      return;
+    }
+    if (next === current) {
+      setErr("Choose a password different from your current one.");
+      return;
+    }
+    const strength = validatePasswordStrength(next, email);
+    if (!strength.ok) {
+      setErr(strength.error || "Password is too weak");
+      return;
+    }
+    setBusy(true);
+    try {
+      await completePasswordChange(current, next);
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? e.message : "We couldn't change your password. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <AuthShell
+      eyebrow="Security"
+      title="Choose a new password"
+      subtitle="Your administrator has asked you to set a new password before continuing. Enter your current password once more, then choose a new one."
+    >
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <FieldLabel>Current password</FieldLabel>
+          <PasswordInput
+            autoComplete="current-password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            required
+            autoFocus
+          />
+        </div>
+        <div>
+          <FieldLabel>New password (min 12 chars)</FieldLabel>
+          <PasswordInput
+            autoComplete="new-password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            placeholder="Choose a strong password"
+            required
+          />
+          <PasswordStrengthMeter password={next} email={email} />
+        </div>
+        <div>
+          <FieldLabel>Confirm new password</FieldLabel>
+          <PasswordInput
+            autoComplete="new-password"
+            value={confirmNext}
+            onChange={(e) => setConfirmNext(e.target.value)}
+            required
+          />
+        </div>
+        {err && <div className="text-[11px] text-err">{err}</div>}
+        <Button variant="brass" className="w-full" disabled={busy}>
+          {busy ? "Saving…" : "Save new password"}
+        </Button>
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="text-[11px] text-ink-muted underline-offset-2 hover:text-accent hover:underline"
+          >
+            Sign out
+          </button>
+        </div>
+      </form>
+    </AuthShell>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
 // Bootstrap (first owner)
 // ──────────────────────────────────────────────────────────
 export function BootstrapScreen() {
