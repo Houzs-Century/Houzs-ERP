@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
+import { isServiceCategory } from "../vendor/shared/service-sku";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -56,6 +57,7 @@ export type PickedSku = {
 
 export function MobileSkuPicker({
   initialCat,
+  serviceOnly,
   onPick,
   onPickMany,
   onClose,
@@ -64,6 +66,9 @@ export function MobileSkuPicker({
      line opens pre-filtered to bedframes — but the operator can switch to
      "All" or any other chip, so it never BLOCKS selecting another category. */
   initialCat?: SkuPickerCat;
+  /* Only SERVICE SKUs (DEV-32: after a Delivery Order a Sales Order takes charge
+     lines only, desktop SoLineCard chargeOnly). The catalog lists them at once. */
+  serviceOnly: boolean;
   onPick: (sku: PickedSku) => void;
   /* Optional multi-select. When provided, rows become toggleable and a footer
      "Add N products" button hands back every selected SKU at once. When absent,
@@ -100,7 +105,7 @@ export function MobileSkuPicker({
   // no category chip we prompt instead of listing arbitrary rows, and RENDER_CAP
   // still bounds the DOM so a wide match can't freeze the sheet.
   const trimmedSearch = search.trim();
-  const gateOpen = trimmedSearch.length >= 2 || cat !== "";
+  const gateOpen = serviceOnly || trimmedSearch.length >= 2 || cat !== "";
   const productsQ = useMfgProducts({ enabled: true });
 
   const rows = useMemo<MfgProductRow[]>(() => {
@@ -108,10 +113,11 @@ export function MobileSkuPicker({
     return (productsQ.data ?? []).filter(
       (p) =>
         p.status !== "INACTIVE" &&
-        (!cat || p.category === cat) &&
+        (!cat || serviceOnly || p.category === cat) &&
+        (!serviceOnly || isServiceCategory(p.category)) &&
         (trimmedSearch.length < 2 || matchesProductQuery(p, trimmedSearch)),
     );
-  }, [productsQ.data, gateOpen, cat, trimmedSearch]);
+  }, [productsQ.data, gateOpen, cat, trimmedSearch, serviceOnly]);
   // Cap the DOM to RENDER_CAP rows so an "All / no search" set can't freeze the
   // sheet; the hint below tells the operator to narrow when rows are hidden.
   const shown = useMemo(() => rows.slice(0, RENDER_CAP), [rows]);
@@ -141,7 +147,7 @@ export function MobileSkuPicker({
               autoFocus
             />
           </div>
-          <div className="chips">
+          {!serviceOnly && <div className="chips">
             {CAT_CHIPS.map((c) => (
               <button
                 key={c.value || "all"}
@@ -151,7 +157,7 @@ export function MobileSkuPicker({
                 {c.label}
               </button>
             ))}
-          </div>
+          </div>}
         </div>
 
         <div className="sheet-scroll" style={{ gap: 7 }}>

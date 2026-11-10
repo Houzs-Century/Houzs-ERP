@@ -39,8 +39,6 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Finance: HC-SO-2609-164 (pay 03c0c4b1 + a692fff5, 2.1 s apart) and HC-SO-008674 (112ad71a + 358dea27, 4.1 s apart) look double-recorded; check the bank and who recorded them before deleting either — finance — 2026-11-11
 ## Waiting on others
 - PR #5448 (service case Operation Dept): staging already ran its `20261110T1300` / `T1400` files; if they merge under new numbers, add the two old names to `backend/scripts/lib/migration-retirements.mjs` — Laphii1206 — 2026-11-11
-- HC-0149 Copy as new: phone entry not built (`MobileNewSO.tsx` at its size ceiling; it already seeds from `convertFrom.copyFrom`). Delivery Order copy dropped (owner 2026-10-23: not needed) — Samuel — 2026-10-23
-- DEV-32 Edit SO after DO is desktop-only: the phone has no Override and `MobileNewSO.tsx` is at its size ceiling; port the after-DO mode (customer details + charge lines + DO pick) when Logistics needs it on the phone — Samuel — 2026-10-02
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
 - Warehouse: 239 SQUARE + 14 LONG custom pillows have no colour (stock-take by colour) — 2026-09-14
