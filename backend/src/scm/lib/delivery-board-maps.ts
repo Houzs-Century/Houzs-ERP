@@ -274,7 +274,7 @@ export async function loadSoBoardMapsRest(
   {
     const { data: balRows, error: balErr } = await reads.liveBalanceReadP; lap('dp-balances');
     noteDegradedRead('live_balance', balErr);
-    for (const b of (balRows ?? [])) {
+    for (const b of balRows) {
       if (b.doc_no != null && b.balance_sen_live != null) liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
     }
   }

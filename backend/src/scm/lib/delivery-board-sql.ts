@@ -202,7 +202,14 @@ const byRank = <T>(rows: T[], rank: Map<string, number>, key: (r: T) => string |
    attributeUnlinkedDoLines fills a (doc, item code) bucket greedily, so a bucket
    takes min(Σ unlinked, Σ open) whatever the order, and a return nets inside the
    same order either way. */
-export function foldDeliverable(d: Pick<DataRow, 'items' | 'dos' | 'linked' | 'unlinked' | 'rets'>) {
+export type DeliverableRows = {
+  items: Array<{ id: string; doc_no: string; item_code: string | null; qty: number | null }>;
+  dos: Array<{ id: string; so_doc_no: string | null; status: string | null }>;
+  linked: DataRow['linked'];
+  unlinked: DataRow['unlinked'];
+  rets: DataRow['rets'];
+};
+export function foldDeliverable(d: DeliverableRows) {
   const deliveredByDoc = new Map<string, number>();
   const remainingByDoc = new Map<string, number>();
   const lines = d.items.map((l) => ({ id: l.id, docNo: l.doc_no, itemCode: l.item_code, qty: Number(l.qty ?? 0) }));

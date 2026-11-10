@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import before from './__fixtures__/dp-board-before.json';
 import { deliveryPlanningBoardHandler } from './delivery-planning';
-import { FIXED_NOW, runBoard, type Caller } from './delivery-planning.bands.fixture';
+import { FIXED_NOW, fixtureTables, runBoard, type Caller } from './delivery-planning.bands.fixture';
 import { bandHeaderOr, bandOf, parseBand } from '../lib/delivery-board-window';
 
 type Order = { so_doc_no: string; row_type: string; delivery_state: string } & Record<string, unknown>;
@@ -141,4 +141,17 @@ describe('DP_BOARD_SOURCE (lib/delivery-board-source.ts) with no Postgres reacha
       expect((await run('?counts_only=1')).counts_by_region?.ALL).toEqual(old.office_all!.counts);
     });
   }
+});
+
+describe('manual DP jobs past 1,000', () => {
+  it('every job reaches the board (the read used to stop at .limit(1000))', async () => {
+    const tables = fixtureTables();
+    const base = tables.dp_orders![0]!;
+    tables.dp_orders = Array.from({ length: 1205 }, (_, i) => ({ ...base, id: i + 1, dp_no: `DP-${i + 1}`, status: i % 2 ? 'DELIVERED' : 'PENDING' }));
+    const r = await runBoard(deliveryPlanningBoardHandler, 'office', '', null, tables);
+    expect(r.status).toBe(200);
+    const dp = (r.body as Body).orders.filter((o) => o.row_type === 'dp');
+    expect(dp).toHaveLength(1205);
+    expect(new Set(dp.map((o) => o.so_doc_no)).size).toBe(1205);
+  });
 });

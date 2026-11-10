@@ -38,7 +38,9 @@ export function parseBoardSource(raw: string | null): BoardSource {
 
 /** The switch as this request's env sets it (a harness with no env is the old path). */
 export function boardSourceOf(c: BoardCtx): BoardSource {
-  return parseBoardSource((c.env as Partial<Env> | undefined)?.DP_BOARD_SOURCE ?? null);
+  const env: unknown = c.env;
+  const raw = env && typeof env === 'object' ? (env as { DP_BOARD_SOURCE?: unknown }).DP_BOARD_SOURCE : undefined;
+  return parseBoardSource(typeof raw === 'string' ? raw : null);
 }
 
 /** postgres.js over Hyperdrive, one per request (db/pg.ts rules: no .end()). */
@@ -46,8 +48,9 @@ export function boardSql(env: Env): Sql {
   return getSql(resolveDatabaseUrl(env));
 }
 
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const warnSql = (stage: string, e: unknown) =>
-  console.warn(`[delivery-planning] SQL ${stage} failed, served from PostgREST: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
+  console.warn(`[delivery-planning] SQL ${stage} failed, served from PostgREST: ${errText(e).slice(0, 160)}`);
 
 export type BoardHeadOut = { regionCfg: RegionConfig; whRows: Array<{ id: string; code: string | null; name: string | null }>; soRowsRaw: SoHeaderRow[] };
 
@@ -193,7 +196,7 @@ export async function runBoardShadow(sql: Sql, c: BoardCtx, s: ShadowInput): Pro
       .map((o) => ({ ...o, ac_sales_exemption_expiry: maps.acExpiryByDoc.get(o.so_doc_no) ?? null, po_nos: maps.poNosByDoc.get(o.so_doc_no) ?? [] }));
     diffs = diffBoardRows(s.served, rebuilt as unknown as Array<Record<string, unknown>>);
   } catch (e) {
-    error = String((e as Error)?.message ?? e).slice(0, 300);
+    error = errText(e).slice(0, 300);
   }
   const sqlMs = Date.now() - t0;
   try {
@@ -202,7 +205,7 @@ export async function runBoardShadow(sql: Sql, c: BoardCtx, s: ShadowInput): Pro
       [s.query, s.served.length, diffs.length, s.restMs, sqlMs, error, JSON.stringify(diffs.slice(0, MAX_DIFFS))] as never[],
     );
   } catch (e) {
-    console.warn(`[delivery-planning] shadow result not recorded: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
+    console.warn(`[delivery-planning] shadow result not recorded: ${errText(e).slice(0, 160)}`);
   }
   return { compared: s.served.length, diffs, error };
 }
@@ -211,7 +214,7 @@ export async function runBoardShadow(sql: Sql, c: BoardCtx, s: ShadowInput): Pro
 export function scheduleBoardShadow(c: BoardCtx, s: ShadowInput): void {
   const run = (async () => {
     try { await runBoardShadow(boardSql(c.env), c, s); } catch (e) {
-      console.warn(`[delivery-planning] shadow skipped: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
+      console.warn(`[delivery-planning] shadow skipped: ${errText(e).slice(0, 160)}`);
     }
   })();
   try { c.executionCtx.waitUntil(run); } catch { /* no execution context (tests): the promise still runs */ }

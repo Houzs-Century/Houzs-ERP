@@ -53,14 +53,16 @@ describe('foldDeliverable = soDeliverableRemaining summed per order', () => {
     });
     const engine = await boardDeliverableByDoc(sb, ['A', 'B']);
 
+    const str = (v: unknown): string => String(v);
     const live = items.filter((i) => !i.cancelled);
     const folded = foldDeliverable({
-      items: live as never,
-      dos: dos as never,
+      items: live.map((i) => ({ id: str(i.id), doc_no: str(i.doc_no), item_code: str(i.item_code), qty: Number(i.qty) })),
+      dos: dos.map((d) => ({ id: str(d.id), so_doc_no: str(d.so_doc_no), status: str(d.status) })),
       linked: doItems.filter((l) => live.some((i) => i.id === l.so_item_id))
-        .map((l) => ({ id: l.id, so_item_id: l.so_item_id, qty: l.qty, parent_status: doStatus.get(l.delivery_order_id) ?? null, has_parent: true })),
-      unlinked: doItems.filter((l) => l.so_item_id == null),
-      rets: returns.map((r) => ({ do_item_id: r.do_item_id, qty_returned: r.qty_returned, parent_status: drStatus[r.delivery_return_id] ?? null, has_parent: true })),
+        .map((l) => ({ id: str(l.id), so_item_id: str(l.so_item_id), qty: Number(l.qty), parent_status: str(doStatus.get(l.delivery_order_id)), has_parent: true })),
+      unlinked: doItems.filter((l) => l.so_item_id == null)
+        .map((l) => ({ id: str(l.id), delivery_order_id: str(l.delivery_order_id), item_code: str(l.item_code), qty: Number(l.qty) })),
+      rets: returns.map((r) => ({ do_item_id: str(r.do_item_id), qty_returned: Number(r.qty_returned), parent_status: str(drStatus[str(r.delivery_return_id)]), has_parent: true })),
     });
     expect(Object.fromEntries(folded.deliveredByDoc)).toEqual(Object.fromEntries(engine.deliveredByDoc));
     expect(Object.fromEntries(folded.remainingByDoc)).toEqual(Object.fromEntries(engine.remainingByDoc));
@@ -71,7 +73,7 @@ describe('foldDeliverable = soDeliverableRemaining summed per order', () => {
 
   it('an orphan DO line (no parent) and an orphan return count nothing', () => {
     const r = foldDeliverable({
-      items: [{ id: 'x1', doc_no: 'X', item_code: 'S', qty: 2 }] as never,
+      items: [{ id: 'x1', doc_no: 'X', item_code: 'S', qty: 2 }],
       dos: [],
       linked: [{ id: 'o1', so_item_id: 'x1', qty: 2, parent_status: null, has_parent: false }],
       unlinked: [],
