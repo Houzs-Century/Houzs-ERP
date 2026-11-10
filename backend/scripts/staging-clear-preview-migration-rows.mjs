@@ -35,14 +35,12 @@ const PROD_REF = 'anogrigyjbduyzclzjgn';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 
 /* The HC-0125 / HC-0157 rows (2026-10-28) were cleared and their files have
-   since merged; only rows still drifting stay here. */
-const ROWS = [
-  /* 2026-11-09: branches staging-preview/supplier-order-two-pages and
-     staging-preview/timeline-plus-pickup deployed these to staging. Both files
-     are IF NOT EXISTS throughout, so they re-run cleanly when they merge. */
-  ['20261109T1200_assr_supplier_return_eta.sql', 'sha256:2463fe0f8200c0404d0626ba420d178cf79c1b6795fd9a560dca12415b10bf35'],
-  ['20261109T1300_assr_return_dos_qc.sql', 'sha256:8cd225842a7df2c6449c765cb3fd1142279d38ce03f410479061dc131a072267'],
-];
+   since merged. The 2026-11-09 service-case rows were cleared once (run
+   42572320471), re-applied by the next preview deploy, and are now reviewed
+   retirements in lib/migration-retirements.mjs instead: a renamed cut never
+   comes back, so deleting its row only invites the next preview to re-add it.
+   Only rows whose file is still expected to merge belong here. */
+const ROWS = [];
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
