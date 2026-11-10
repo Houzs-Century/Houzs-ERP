@@ -10,7 +10,7 @@
 // Shared by the statement view and the month view.
 // ----------------------------------------------------------------------------
 
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import { useMatchBankGroup, type BankLine, type LedgerEntry } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, refusalText } from './settlement-ui';
@@ -38,14 +38,28 @@ export const byDateThenLine = <T extends { booked_on: string; line_no: number }>
   [...lines].sort((a, b) => String(a.booked_on).localeCompare(String(b.booked_on)) || a.line_no - b.line_no);
 
 export const ReconcilePickProvider = ({ lines, entries, children }: { lines: BankLine[]; entries: LedgerEntry[]; children: React.ReactNode }) => {
-  const [pickedLines, setPickedLines] = useState<number[]>([]);
-  const [pickedEntries, setPickedEntries] = useState<string[]>([]);
+  const [ticked, setTicked] = useState<number[]>([]);
+  const [tickedEntries, setTickedEntries] = useState<string[]>([]);
+  /* Only what is still on the screen is ticked (owner 2026-11-10: 这个情况不应该出现啊).
+     A movement ticked, then matched another way, left the list but kept its tick —
+     unseen, not in the bar's totals, and still sent, so the next match was refused
+     over a line nobody could see ("Movement 1197 is already posted"). A tick whose
+     row has gone is dropped, and forgotten, so a row that comes back (an undo) comes
+     back unticked. */
+  const listedLines = useMemo(() => new Set(lines.map((l) => l.id)), [lines]);
+  const listedEntries = useMemo(() => new Set(entries.map((e) => e.jeNo)), [entries]);
+  const pickedLines = useMemo(() => ticked.filter((id) => listedLines.has(id)), [ticked, listedLines]);
+  const pickedEntries = useMemo(() => tickedEntries.filter((je) => listedEntries.has(je)), [tickedEntries, listedEntries]);
+  useEffect(() => {
+    setTicked((was) => (was.every((id) => listedLines.has(id)) ? was : was.filter((id) => listedLines.has(id))));
+    setTickedEntries((was) => (was.every((je) => listedEntries.has(je)) ? was : was.filter((je) => listedEntries.has(je))));
+  }, [listedLines, listedEntries]);
   const value = useMemo<ReconcilePick>(() => ({
     pickedLines,
     pickedEntries,
-    toggleLine: (id) => setPickedLines((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id])),
-    toggleEntry: (je) => setPickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je])),
-    clear: () => { setPickedLines([]); setPickedEntries([]); },
+    toggleLine: (id) => setTicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id])),
+    toggleEntry: (je) => setTickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je])),
+    clear: () => { setTicked([]); setTickedEntries([]); },
   }), [pickedLines, pickedEntries]);
   return (
     <Ctx.Provider value={value}>
@@ -60,6 +74,10 @@ export const ReconcilePickProvider = ({ lines, entries, children }: { lines: Ban
 const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
   const pick = useReconcilePick();
   const group = useMatchBankGroup();
+  /* A refusal answers the ticks it was sent with; once they change it is old news
+     (the owner's next pair still carried the first one's red line, 2026-11-10). */
+  const ticks = `${pick.pickedLines.join(',')}|${pick.pickedEntries.join(',')}`;
+  const [sentWith, setSentWith] = useState<string | null>(null);
   if (pick.pickedLines.length === 0 && pick.pickedEntries.length === 0) return null;
 
   const chosenLines = lines.filter((l) => pick.pickedLines.includes(l.id));
@@ -98,11 +116,14 @@ const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[
       </span>
       <span style={{ flex: 1 }} />
       <button type="button" style={btn(true, !agrees || group.isPending)} disabled={!agrees || group.isPending}
-        onClick={() => group.mutate({ lineIds: pick.pickedLines, jeNos: pick.pickedEntries }, { onSuccess: () => pick.clear() })}>
+        onClick={() => {
+          setSentWith(ticks);
+          group.mutate({ lineIds: pick.pickedLines, jeNos: pick.pickedEntries }, { onSuccess: () => pick.clear() });
+        }}>
         <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are that entry'}
       </button>
       <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={pick.clear}>Clear</button>
-      {group.isError && <span style={{ ...softText, color: danger, width: '100%' }}>{refusalText(group.error, 'That was not accepted.')}</span>}
+      {group.isError && sentWith === ticks && <span style={{ ...softText, color: danger, width: '100%' }}>{refusalText(group.error, 'That was not accepted.')}</span>}
     </div>
   );
 };
