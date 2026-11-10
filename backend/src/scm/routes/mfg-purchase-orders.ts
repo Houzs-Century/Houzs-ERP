@@ -78,7 +78,7 @@ import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 import {
-  buildPurchaseOrderEmail, poReplyTo,
+  buildPurchaseOrderEmail, poEmailDocNo, poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
   PO_RESEND_WINDOW_MS,
@@ -4086,7 +4086,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
 
   const { data: po, error } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, po_number, status, total_sen, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email, email2, email3)')
+    .select('id, po_number, revision, status, total_sen, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email, email2, email3)')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -4118,7 +4118,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
 
   /* Attachment, validated BEFORE anything is claimed or sent: absent is legal
      (summary-only), present-but-wrong is refused with a readable reason. */
-  const poNo = row.po_number ?? id;
+  const poNo = poEmailDocNo(row);
   const attachmentCheck = validatePoAttachment(body.pdfBase64, poNo);
   if (!attachmentCheck.ok) {
     return c.json({ error: 'bad_attachment', message: attachmentCheck.message }, 400);

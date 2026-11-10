@@ -15,6 +15,7 @@ vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: a
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 import { layoutDepth, motionMark } from './sofa-layout-pdf';
+import { pdfRawText } from './pdf-raw-text';
 
 /* One cast for every test's line array, instead of one per call site: the
    generator takes the rich PoItem[]; these fixtures carry only the fields each
@@ -64,7 +65,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       asItems([sofaLine('2A(LHF)'), sofaLine('L(RHF)')]),
     );
     const pdf = Buffer.from(b64, 'base64');
-    const raw = pdf.toString('latin1');
+    const raw = pdfRawText(pdf);
     // Section title + the TV marker label are literal text ops in the stream.
     expect(raw).toContain('Sofa layout');
     /* Reworded 2026-08-28 — the heading used to end "(orientation / LHF·RHF)",
@@ -106,7 +107,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       header,
       asItems([geoLine('L(LHF)', 0, 0), geoLine('1NA', 95, 1), geoLine('1A(P)(RHF)', 170, 2)]),
     );
-    const raw = Buffer.from(b64, 'base64').toString('latin1');
+    const raw = pdfRawText(Buffer.from(b64, 'base64'));
     expect(raw).toContain('Sofa layout');
     // The real modules appear in the caption; the stale "2A(RHF)" must not.
     expect(raw).toContain('1NA');
@@ -125,7 +126,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       asItems([line('1A(LHF)'), line('2NA'), line('1NA'), line('CNR', 2), line('1A(RHF)')]),
     );
     const pdf = Buffer.from(b64, 'base64');
-    const raw = pdf.toString('latin1');
+    const raw = pdfRawText(pdf);
     expect(raw).toContain('Sofa layout');
     expect(raw.match(/CNR/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-u.pdf'), pdf);
@@ -141,7 +142,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       asItems([line('1A(P)(LHF)'), line('1A(P)(RHF)'), line('Console')]),
     );
     const pdf = Buffer.from(b64, 'base64');
-    const raw = pdf.toString('latin1');
+    const raw = pdfRawText(pdf);
     expect(raw).toContain('Sofa layout');
     expect(raw.match(/\(P\) Tj/g)?.length ?? 0).toBe(2);
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-p.pdf'), pdf);
@@ -164,7 +165,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       asItems([line('1A(LHF)'), line('STOOL'), line('CNR'), line('2NA'), line('CONSOLE WOODEN')]),
     );
     const pdf = Buffer.from(b64, 'base64');
-    const raw = pdf.toString('latin1');
+    const raw = pdfRawText(pdf);
     expect(raw).toMatch(/Console[^)]*\) Tj/);
     // The caption runs in drawing order: the stool, drawn apart, comes last.
     expect(raw).not.toContain('STOOL +');
@@ -208,7 +209,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       so_doc_no: null,
       variants: {},
     }]));
-    const raw = Buffer.from(b64, 'base64').toString('latin1');
+    const raw = pdfRawText(Buffer.from(b64, 'base64'));
     expect(raw).not.toContain('Sofa layout');
   });
 });

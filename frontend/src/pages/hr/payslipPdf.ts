@@ -14,6 +14,7 @@ import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawIn
 import { pcbHasFigure } from "../../vendor/shared/hr-pcb";
 import { tripMonthBounds } from "../../vendor/shared/hr-trip-pay";
 import type { Payslip } from "./hrApi";
+import { PDF_COMPRESS } from "../../vendor/scm/lib/pdf-options";
 
 type JsPdf = import("jspdf").jsPDF;
 type AutoTable = (doc: JsPdf, options: Record<string, unknown>) => void;
@@ -163,7 +164,7 @@ export async function generatePayslipPdf(slips: Payslip[], opts?: { action?: Pdf
   if (!slips.length) return;
   const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   const autoTable = autoTableModule.default as unknown as AutoTable;
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: "mm", format: "a4", orientation: "portrait" });
   for (let i = 0; i < slips.length; i++) {
     if (i > 0) doc.addPage();
     await renderPayslipInto(doc, autoTable, slips[i]);

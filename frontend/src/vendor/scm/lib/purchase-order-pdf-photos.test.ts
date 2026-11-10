@@ -28,6 +28,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 /* jsdom's Blob has no `arrayBuffer()`; Node's does, and every real browser's
    does. Using the platform one keeps the decode path un-stubbed. */
 import { Blob as NodeBlob } from 'node:buffer';
+import { pdfRawText } from './pdf-raw-text';
 
 /* A 1x1 JPEG — enough to be a real image the encoder accepts. Swapped for a
    real sofa sketch when PHOTO_PDF_SRC is set. */
@@ -107,7 +108,7 @@ const line = (photos: string[]): PoArgs[1][number] => ({
 const render = async (photos: string[]) => {
   const { purchaseOrderPdfBase64 } = await import('./purchase-order-pdf');
   const pdf = Buffer.from(await purchaseOrderPdfBase64(header, [line(photos)]), 'base64');
-  return { pdf, raw: pdf.toString('latin1') };
+  return { pdf, raw: pdfRawText(pdf) };
 };
 
 describe('purchase-order-pdf — a line that carries a photo prints it', () => {

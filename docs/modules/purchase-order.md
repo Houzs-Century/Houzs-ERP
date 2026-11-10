@@ -42,6 +42,8 @@ Locks and required fields
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
 - Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
 - Send-to-supplier sets Reply-To to the user who pressed Send (`poReplyTo` in `scm/lib/po-email.ts`), so a supplier's reply goes to that purchaser, not the shared no-reply sender. No valid address on the user: the default Reply-To (`EMAIL_REPLY_TO`) applies. The PO stores no purchaser of its own.
+- The email subject, body and attachment name carry the printed revision mark (`PO-2607-021_R1`, `poEmailDocNo` in `scm/lib/po-email.ts`, same rule as the PDF's `poDisplayNumber`); the audit row keeps the underlying `po_number`.
+- A combined PO print numbers each PO's own pages, header and footer (`finalizePoPdf`). Every PDF the app builds is compressed (`PDF_COMPRESS`, `frontend/src/vendor/scm/lib/pdf-options.ts`).
 - A GRN may not receive against a held PO: receive gates read the ROW via `isReceivablePo` (status + `on_hold`), never status alone.
 
 Linking PO lines to SO lines

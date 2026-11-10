@@ -24,6 +24,7 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from '@2990s/shared/payment-methods';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type ReceiptPdfData = {
   or_number: string;
@@ -165,7 +166,7 @@ function renderReceiptInto(doc: JsPdf, autoTable: AutoTable, r: ReceiptPdfData):
 
 const tools = async (): Promise<{ doc: JsPdf; autoTable: AutoTable }> => {
   const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
-  return { doc: new jsPDF({ unit: 'mm', format: 'a5', orientation: 'landscape' }), autoTable: autoTableModule.default as unknown as AutoTable };
+  return { doc: new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a5', orientation: 'landscape' }), autoTable: autoTableModule.default as unknown as AutoTable };
 };
 
 export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: PdfAction }): Promise<void> {
