@@ -292,8 +292,13 @@ export async function moveNumbers(sb: Db, companyId: number, moves: KnockOffMove
   const out = new Map<string, string>();
   for (const kind of [...new Set(moves.map((m) => m.kind))]) {
     const t = TABLE[kind];
-    const { data } = await sb.from(t.table).select(`id, ${t.number}`).eq('company_id', companyId)
+    const { data, error } = await sb.from(t.table).select(`id, ${t.number}`).eq('company_id', companyId)
       .in('id', moves.filter((m) => m.kind === kind).map((m) => m.id));
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error('[credit-note audit] document numbers unreadable, labelling by id:', error.message);
+      continue;
+    }
     for (const d of (data ?? []) as Row[]) out.set(String(d.id), String(d[t.number] ?? d.id));
   }
   return out;
