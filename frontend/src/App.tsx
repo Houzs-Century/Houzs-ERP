@@ -1,6 +1,7 @@
-import { lazy, Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { BACKDATE_DECIDER_PERMS } from "./vendor/scm/lib/payment-backdate-perms";
-import { Routes, Route, Navigate, useParams } from "react-router-dom";
+import { Routes, Route, Navigate, useParams, createRoutesFromChildren, matchRoutes } from "react-router-dom";
+import { lazyPage, preloadElementChunks } from "./lib/lazyPage";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./auth/AuthContext";
 import { canUseAssistant } from "./auth/assistantAccess";
@@ -41,7 +42,7 @@ import { LineGridNav } from "./components/LineGridNav";
    for its own: there is no navigation above a global reminder to clear a crash
    with, so keying on anything would be theatre. What the boundary buys here is
    containment — a failed chunk takes the reminder, not the whole app. */
-const PendingTasksReminder = lazy(() =>
+const PendingTasksReminder = lazyPage(() =>
   import("./components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
 // Route-level code splitting: every page becomes its own chunk, fetched on
@@ -49,220 +50,229 @@ const PendingTasksReminder = lazy(() =>
 // indirection adapts our named exports to React.lazy's default-export shape
 // without touching the page files. Multi-page modules (ServiceCases, Projects)
 // share one chunk.
-const ServiceCases = lazy(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCases })));
-const ServiceCaseDetail = lazy(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCaseDetail })));
-const MyCases = lazy(() => import("./pages/MyCases").then((m) => ({ default: m.MyCases })));
-const MyCaseDetail = lazy(() => import("./pages/MyCases").then((m) => ({ default: m.MyCaseDetail })));
-const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
-const ProjectDetail = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetail })));
-const FairReportFill = lazy(() => import("./pages/FairReportFill").then((m) => ({ default: m.FairReportFill })));
-const ScheduleReconcile = lazy(() => import("./pages/ScheduleReconcile").then((m) => ({ default: m.ScheduleReconcile })));
-const SetupInvoiceFill = lazy(() => import("./pages/SetupInvoiceFill").then((m) => ({ default: m.SetupInvoiceFill })));
+const ServiceCases = lazyPage(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCases })));
+const ServiceCaseDetail = lazyPage(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCaseDetail })));
+const MyCases = lazyPage(() => import("./pages/MyCases").then((m) => ({ default: m.MyCases })));
+const MyCaseDetail = lazyPage(() => import("./pages/MyCases").then((m) => ({ default: m.MyCaseDetail })));
+const Projects = lazyPage(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
+const ProjectDetail = lazyPage(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetail })));
+const FairReportFill = lazyPage(() => import("./pages/FairReportFill").then((m) => ({ default: m.FairReportFill })));
+const ScheduleReconcile = lazyPage(() => import("./pages/ScheduleReconcile").then((m) => ({ default: m.ScheduleReconcile })));
+const SetupInvoiceFill = lazyPage(() => import("./pages/SetupInvoiceFill").then((m) => ({ default: m.SetupInvoiceFill })));
 // Sales Entries — rep-entered sales log + Director approval queue.
 // Restored to the menu 2026-07-06 (stripped in the core-slim pass).
-const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales })));
-const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
-const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
-const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
-const ItSupport = lazy(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
-const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
-const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
-const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
-const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
-const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
-const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
-const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
-const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
-const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
-const FleetHealth = lazy(() => import("./pages/fleet/FleetHealthDashboard").then((m) => ({ default: m.FleetHealth })));
-const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
-const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
-const Assistant = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
+const Sales = lazyPage(() => import("./pages/Sales").then((m) => ({ default: m.Sales })));
+const Profile = lazyPage(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
+const Notifications = lazyPage(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
+const Announcements = lazyPage(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
+const ItSupport = lazyPage(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
+const Settings = lazyPage(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const PosAdmin = lazyPage(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
+const Team = lazyPage(() => import("./pages/Team").then((m) => ({ default: m.Team })));
+const SystemHealth = lazyPage(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AiUsage = lazyPage(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
+const OcrDashboard = lazyPage(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
+const AutoCountSync = lazyPage(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
+const VenturePortalFeed = lazyPage(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
+const ChangeLog = lazyPage(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
+const FleetHealth = lazyPage(() => import("./pages/fleet/FleetHealthDashboard").then((m) => ({ default: m.FleetHealth })));
+const LorryRecord = lazyPage(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
+const Agents = lazyPage(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
+const Assistant = lazyPage(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
 // Mail Center — in-ERP shared inbox (ported from Hookka). Inbox + thread detail;
 // Compose is a modal opened from the inbox (no standalone route).
-const MailInbox = lazy(() => import("./pages/MailCenter/Inbox").then((m) => ({ default: m.MailInbox })));
-const MailThread = lazy(() => import("./pages/MailCenter/Thread").then((m) => ({ default: m.MailThread })));
+const MailInbox = lazyPage(() => import("./pages/MailCenter/Inbox").then((m) => ({ default: m.MailInbox })));
+const MailThread = lazyPage(() => import("./pages/MailCenter/Thread").then((m) => ({ default: m.MailThread })));
 // Ported 2990's SCM (furniture supply chain) — owner-gated under /scm/*.
 // These are the VENDORED (wholesale-copied) 2990 pages, now the canonical /scm/*
 // surface. The native pages/scm/* set was retired in the cutover.
-const ScmSuppliersV2 = lazy(() => import("./pages/scm-v2/SuppliersV2Route"));
+const ScmSuppliersV2 = lazyPage(() => import("./pages/scm-v2/SuppliersV2Route"));
 // Each list/detail page is a NAMED export wrapped at the route in <Scm2990Shell>
 // (the Notify/Confirm/dialog-service providers).
-const Scm2990Shell = lazy(() => import("./pages/scm-v2/Scm2990Shell"));
-const ScmLogisticOverview = lazy(() => import("./pages/scm-v2/LogisticOverview").then((m) => ({ default: m.LogisticOverview })));
-const ScmProcurementOverview = lazy(() => import("./pages/scm-v2/ProcurementOverview").then((m) => ({ default: m.ProcurementOverview })));
-const ScmPurchaseOrdersV2 = lazy(() => import("./pages/scm-v2/PurchaseOrdersListV2").then((m) => ({ default: m.PurchaseOrdersListV2 })));
-const ScmPurchaseOrderNewV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderNew").then((m) => ({ default: m.PurchaseOrderNew })));
-const ScmPurchaseOrderFromSoV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderFromSo").then((m) => ({ default: m.PurchaseOrderFromSo })));
-const ScmPurchaseOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderDetailV2").then((m) => ({ default: m.PurchaseOrderDetailV2 })));
+const Scm2990ShellChunk = lazyPage(() => import("./pages/scm-v2/Scm2990Shell"));
+/* Starts the page chunk in the SAME tick as the shell chunk. While the lazy
+   shell suspends React never renders its children, so a bare
+   <Scm2990ShellChunk><Page/></Scm2990ShellChunk> fetched the page only after
+   the shell arrived: two chunk waves in series on every cold /scm/* load. */
+function Scm2990Shell({ children }: { children: ReactNode }) {
+  preloadElementChunks(children);
+  return <Scm2990ShellChunk>{children}</Scm2990ShellChunk>;
+}
+Scm2990Shell.preload = Scm2990ShellChunk.preload;
+const ScmLogisticOverview = lazyPage(() => import("./pages/scm-v2/LogisticOverview").then((m) => ({ default: m.LogisticOverview })));
+const ScmProcurementOverview = lazyPage(() => import("./pages/scm-v2/ProcurementOverview").then((m) => ({ default: m.ProcurementOverview })));
+const ScmPurchaseOrdersV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrdersListV2").then((m) => ({ default: m.PurchaseOrdersListV2 })));
+const ScmPurchaseOrderNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderNew").then((m) => ({ default: m.PurchaseOrderNew })));
+const ScmPurchaseOrderFromSoV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderFromSo").then((m) => ({ default: m.PurchaseOrderFromSo })));
+const ScmPurchaseOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderDetailV2").then((m) => ({ default: m.PurchaseOrderDetailV2 })));
 // TEMP — vendored 2990's MRP + read/list pages (wave 2), parallel to native.
-const ScmMrpV2 = lazy(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
-const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
-const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
-const ScmMerchantRecon = lazy(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
-const ScmBankRecon = lazy(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
-const ScmUnmatchedPayments = lazy(() => import("./pages/scm-v2/UnmatchedPayments").then((m) => ({ default: m.UnmatchedPayments })));
-const ScmSettlementSetup = lazy(() => import("./pages/scm-v2/SettlementSetup").then((m) => ({ default: m.SettlementSetup })));
-const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
-const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
-const ScmFabricTrackingV2 = lazy(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
-const ScmWarehousesV2 = lazy(() => import("./pages/scm-v2/Warehouses").then((m) => ({ default: m.Warehouses })));
-const ScmWarehouseRacksV2 = lazy(() => import("./pages/scm-v2/WarehouseRacks").then((m) => ({ default: m.WarehouseRacks })));
-const ScmCurrenciesV2 = lazy(() => import("./pages/scm-v2/Currencies").then((m) => ({ default: m.Currencies })));
-const ScmProductsV2 = lazy(() => import("./pages/scm-v2/Products").then((m) => ({ default: m.Products })));
-const ScmProductModelsV2 = lazy(() => import("./pages/scm-v2/ProductModels").then((m) => ({ default: m.ProductModels })));
-const ScmProductModelDetailV2 = lazy(() => import("./pages/scm-v2/ProductModelDetail").then((m) => ({ default: m.ProductModelDetail })));
-const ScmGoodsReceivedV2 = lazy(() => import("./pages/scm-v2/GoodsReceivedListV2").then((m) => ({ default: m.GoodsReceivedListV2 })));
-const ScmGrnNewV2 = lazy(() => import("./pages/scm-v2/GrnNew").then((m) => ({ default: m.GrnNew })));
-const ScmGrnFromPoV2 = lazy(() => import("./pages/scm-v2/GrnFromPo").then((m) => ({ default: m.GrnFromPo })));
-const ScmGoodsReceivedDetailV2 = lazy(() => import("./pages/scm-v2/GoodsReceivedDetailV2").then((m) => ({ default: m.GoodsReceivedDetailV2 })));
-const ScmPurchaseInvoicesV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoicesListV2").then((m) => ({ default: m.PurchaseInvoicesListV2 })));
-const ScmPurchaseInvoiceNewV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoiceNew").then((m) => ({ default: m.PurchaseInvoiceNew })));
-const ScmPurchaseInvoiceFromGrnV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoiceFromGrn").then((m) => ({ default: m.PurchaseInvoiceFromGrn })));
-const ScmPurchaseInvoiceDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoiceDetailV2").then((m) => ({ default: m.PurchaseInvoiceDetailV2 })));
-const ScmPaymentVouchersV2 = lazy(() => import("./pages/scm-v2/PaymentVouchers").then((m) => ({ default: m.PaymentVouchers })));
-const ScmPaymentVoucherNewV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
-const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
-const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
-const ScmOpeningBalanceV2 = lazy(() => import("./pages/scm-v2/OpeningBalance").then((m) => ({ default: m.OpeningBalance })));
-const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
-const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
-const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
-const ScmDuplicateSupplierBills = lazy(() => import("./pages/scm-v2/DuplicateSupplierBills").then((m) => ({ default: m.DuplicateSupplierBills })));
+const ScmMrpV2 = lazyPage(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
+const ScmAccountingV2 = lazyPage(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
+const ScmDailyBank = lazyPage(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
+const ScmMerchantRecon = lazyPage(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
+const ScmBankRecon = lazyPage(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
+const ScmUnmatchedPayments = lazyPage(() => import("./pages/scm-v2/UnmatchedPayments").then((m) => ({ default: m.UnmatchedPayments })));
+const ScmSettlementSetup = lazyPage(() => import("./pages/scm-v2/SettlementSetup").then((m) => ({ default: m.SettlementSetup })));
+const ScmOutstandingV2 = lazyPage(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
+const ScmUnbilledDeliveriesV2 = lazyPage(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
+const ScmFabricTrackingV2 = lazyPage(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
+const ScmWarehousesV2 = lazyPage(() => import("./pages/scm-v2/Warehouses").then((m) => ({ default: m.Warehouses })));
+const ScmWarehouseRacksV2 = lazyPage(() => import("./pages/scm-v2/WarehouseRacks").then((m) => ({ default: m.WarehouseRacks })));
+const ScmCurrenciesV2 = lazyPage(() => import("./pages/scm-v2/Currencies").then((m) => ({ default: m.Currencies })));
+const ScmProductsV2 = lazyPage(() => import("./pages/scm-v2/Products").then((m) => ({ default: m.Products })));
+const ScmProductModelsV2 = lazyPage(() => import("./pages/scm-v2/ProductModels").then((m) => ({ default: m.ProductModels })));
+const ScmProductModelDetailV2 = lazyPage(() => import("./pages/scm-v2/ProductModelDetail").then((m) => ({ default: m.ProductModelDetail })));
+const ScmGoodsReceivedV2 = lazyPage(() => import("./pages/scm-v2/GoodsReceivedListV2").then((m) => ({ default: m.GoodsReceivedListV2 })));
+const ScmGrnNewV2 = lazyPage(() => import("./pages/scm-v2/GrnNew").then((m) => ({ default: m.GrnNew })));
+const ScmGrnFromPoV2 = lazyPage(() => import("./pages/scm-v2/GrnFromPo").then((m) => ({ default: m.GrnFromPo })));
+const ScmGoodsReceivedDetailV2 = lazyPage(() => import("./pages/scm-v2/GoodsReceivedDetailV2").then((m) => ({ default: m.GoodsReceivedDetailV2 })));
+const ScmPurchaseInvoicesV2 = lazyPage(() => import("./pages/scm-v2/PurchaseInvoicesListV2").then((m) => ({ default: m.PurchaseInvoicesListV2 })));
+const ScmPurchaseInvoiceNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseInvoiceNew").then((m) => ({ default: m.PurchaseInvoiceNew })));
+const ScmPurchaseInvoiceFromGrnV2 = lazyPage(() => import("./pages/scm-v2/PurchaseInvoiceFromGrn").then((m) => ({ default: m.PurchaseInvoiceFromGrn })));
+const ScmPurchaseInvoiceDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseInvoiceDetailV2").then((m) => ({ default: m.PurchaseInvoiceDetailV2 })));
+const ScmPaymentVouchersV2 = lazyPage(() => import("./pages/scm-v2/PaymentVouchers").then((m) => ({ default: m.PaymentVouchers })));
+const ScmPaymentVoucherNewV2 = lazyPage(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
+const ScmPaymentVoucherScanV2 = lazyPage(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
+const ScmChartOfAccountsV2 = lazyPage(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
+const ScmOpeningBalanceV2 = lazyPage(() => import("./pages/scm-v2/OpeningBalance").then((m) => ({ default: m.OpeningBalance })));
+const ScmOtherDebtorsV2 = lazyPage(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
+const ScmReceiptsV2 = lazyPage(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
+const ScmApInvoicesV2 = lazyPage(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
+const ScmDuplicateSupplierBills = lazyPage(() => import("./pages/scm-v2/DuplicateSupplierBills").then((m) => ({ default: m.DuplicateSupplierBills })));
 /* A bill and a note as their own pages (the Finance redesign, batch 4 step 6). */
-const ScmApBillPage = lazy(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
-const ScmNotePage = lazy(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
-const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
+const ScmApBillPage = lazyPage(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
+const ScmNotePage = lazyPage(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
+const ScmArInvoicesV2 = lazyPage(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
 /* Money in's invoice documents, each a page of its own (owner's Claude Design, batch 5 §8). */
-const ScmDepositInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/DepositInvoiceDoc").then((m) => ({ default: m.DepositInvoiceDoc })));
-const ScmDebtorBillDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorBillDoc").then((m) => ({ default: m.DebtorBillDoc })));
-const ScmSalesInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/SalesInvoiceDoc").then((m) => ({ default: m.SalesInvoiceDoc })));
-const ScmOfficialReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/OfficialReceiptDoc").then((m) => ({ default: m.OfficialReceiptDoc })));
-const ScmDebtorReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorReceiptDoc").then((m) => ({ default: m.DebtorReceiptDoc })));
-const ScmSundryReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/SundryReceiptDoc").then((m) => ({ default: m.SundryReceiptDoc })));
-const ScmOtherDebtorDocV2 = lazy(() => import("./pages/scm-v2/money-in/OtherDebtorDoc").then((m) => ({ default: m.OtherDebtorDoc })));
-const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
-const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
-const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
-const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
-const ScmPaymentListingV2 = lazy(() => import("./pages/scm-v2/PaymentListing").then((m) => ({ default: m.PaymentListing })));
-const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
+const ScmDepositInvoiceDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/DepositInvoiceDoc").then((m) => ({ default: m.DepositInvoiceDoc })));
+const ScmDebtorBillDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/DebtorBillDoc").then((m) => ({ default: m.DebtorBillDoc })));
+const ScmSalesInvoiceDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/SalesInvoiceDoc").then((m) => ({ default: m.SalesInvoiceDoc })));
+const ScmOfficialReceiptDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/OfficialReceiptDoc").then((m) => ({ default: m.OfficialReceiptDoc })));
+const ScmDebtorReceiptDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/DebtorReceiptDoc").then((m) => ({ default: m.DebtorReceiptDoc })));
+const ScmSundryReceiptDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/SundryReceiptDoc").then((m) => ({ default: m.SundryReceiptDoc })));
+const ScmOtherDebtorDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/OtherDebtorDoc").then((m) => ({ default: m.OtherDebtorDoc })));
+const ScmPaymentRequestsV2 = lazyPage(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
+const ScmProductRequestsV2 = lazyPage(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
+const ScmOfficialDocsV2 = lazyPage(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
+const ScmSupplierMaintenanceV2 = lazyPage(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
+const ScmPaymentListingV2 = lazyPage(() => import("./pages/scm-v2/PaymentListing").then((m) => ({ default: m.PaymentListing })));
+const ScmCreditNotesV2 = lazyPage(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
 /* Money in › Credit / debit notes — its own list since the owner's Claude Design (batch 5 step 7); Money out keeps CreditNotes. */
-const ScmMoneyInNotesV2 = lazy(() => import("./pages/scm-v2/money-in/MoneyInNotes").then((m) => ({ default: m.MoneyInNotes })));
-const ScmForecastPnlV2 = lazy(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
-const ScmFinanceDashboardV2 = lazy(() => import("./pages/scm-v2/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })));
-const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
-const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
-const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
-const ScmStockAdjustmentEditV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentEdit })));
-const ScmStockAdjustmentDetailV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentDetail").then((m) => ({ default: m.StockAdjustmentDetail })));
-const ScmStockTransfersV2 = lazy(() => import("./pages/scm-v2/StockTransfersListV2").then((m) => ({ default: m.StockTransfersListV2 })));
-const ScmStockTransferNewV2 = lazy(() => import("./pages/scm-v2/StockTransferNew").then((m) => ({ default: m.StockTransferNew })));
-const ScmStockTransferDetailV2 = lazy(() => import("./pages/scm-v2/StockTransferDetail").then((m) => ({ default: m.StockTransferDetail })));
-const ScmStockTakesV2 = lazy(() => import("./pages/scm-v2/StockTakesListV2").then((m) => ({ default: m.StockTakesListV2 })));
-const ScmStockTakeNewV2 = lazy(() => import("./pages/scm-v2/StockTakeNew").then((m) => ({ default: m.StockTakeNew })));
-const ScmStockTakeDetailV2 = lazy(() => import("./pages/scm-v2/StockTakeDetail").then((m) => ({ default: m.StockTakeDetail })));
+const ScmMoneyInNotesV2 = lazyPage(() => import("./pages/scm-v2/money-in/MoneyInNotes").then((m) => ({ default: m.MoneyInNotes })));
+const ScmForecastPnlV2 = lazyPage(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
+const ScmFinanceDashboardV2 = lazyPage(() => import("./pages/scm-v2/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })));
+const ScmPaymentVoucherDetailV2 = lazyPage(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
+const ScmStockAdjustmentsV2 = lazyPage(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
+const ScmStockAdjustmentNewV2 = lazyPage(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
+const ScmStockAdjustmentEditV2 = lazyPage(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentEdit })));
+const ScmStockAdjustmentDetailV2 = lazyPage(() => import("./pages/scm-v2/StockAdjustmentDetail").then((m) => ({ default: m.StockAdjustmentDetail })));
+const ScmStockTransfersV2 = lazyPage(() => import("./pages/scm-v2/StockTransfersListV2").then((m) => ({ default: m.StockTransfersListV2 })));
+const ScmStockTransferNewV2 = lazyPage(() => import("./pages/scm-v2/StockTransferNew").then((m) => ({ default: m.StockTransferNew })));
+const ScmStockTransferDetailV2 = lazyPage(() => import("./pages/scm-v2/StockTransferDetail").then((m) => ({ default: m.StockTransferDetail })));
+const ScmStockTakesV2 = lazyPage(() => import("./pages/scm-v2/StockTakesListV2").then((m) => ({ default: m.StockTakesListV2 })));
+const ScmStockTakeNewV2 = lazyPage(() => import("./pages/scm-v2/StockTakeNew").then((m) => ({ default: m.StockTakeNew })));
+const ScmStockTakeDetailV2 = lazyPage(() => import("./pages/scm-v2/StockTakeDetail").then((m) => ({ default: m.StockTakeDetail })));
 // HR / Commission — the payroll surface over /api/scm/hr.
-const ScmHrCommission = lazy(() => import("./pages/scm-v2/HrCommission").then((m) => ({ default: m.HrCommission })));
-const ScmHrSettings = lazy(() => import("./pages/scm-v2/HrSettings").then((m) => ({ default: m.HrSettings })));
+const ScmHrCommission = lazyPage(() => import("./pages/scm-v2/HrCommission").then((m) => ({ default: m.HrCommission })));
+const ScmHrSettings = lazyPage(() => import("./pages/scm-v2/HrSettings").then((m) => ({ default: m.HrSettings })));
 // HR / Employees & Attendance (HC-0125), over /api/hr.
-const HrEmployees = lazy(() => import("./pages/HrEmployees").then((m) => ({ default: m.HrEmployees })));
+const HrEmployees = lazyPage(() => import("./pages/HrEmployees").then((m) => ({ default: m.HrEmployees })));
 // TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail / Drivers
 // pages (this wave), parallel to the native /scm/* routes below.
-const ScmPurchaseReturnsV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnsListV2").then((m) => ({ default: m.PurchaseReturnsListV2 })));
-const ScmPurchaseReturnNewV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnNew").then((m) => ({ default: m.PurchaseReturnNew })));
-const ScmPurchaseReturnDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnDetailV2").then((m) => ({ default: m.PurchaseReturnDetailV2 })));
-const ScmInventoryV2 = lazy(() => import("./pages/scm-v2/Inventory").then((m) => ({ default: m.Inventory })));
-const ScmStockCardV2 = lazy(() => import("./pages/scm-v2/StockCard").then((m) => ({ default: m.StockCard })));
-const ScmSupplierDetailV2 = lazy(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
+const ScmPurchaseReturnsV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnsListV2").then((m) => ({ default: m.PurchaseReturnsListV2 })));
+const ScmPurchaseReturnNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnNew").then((m) => ({ default: m.PurchaseReturnNew })));
+const ScmPurchaseReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnDetailV2").then((m) => ({ default: m.PurchaseReturnDetailV2 })));
+const ScmInventoryV2 = lazyPage(() => import("./pages/scm-v2/Inventory").then((m) => ({ default: m.Inventory })));
+const ScmStockCardV2 = lazyPage(() => import("./pages/scm-v2/StockCard").then((m) => ({ default: m.StockCard })));
+const ScmSupplierDetailV2 = lazyPage(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
 // Delivery Planning + TMS (Stage 3 — ported 2026-06-28 from 2990).
-const ScmDeliveryPlanningV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
-const ScmDeliveryPlanningDriverV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningDriver").then((m) => ({ default: m.DeliveryPlanningDriver })));
-const ScmDpOrdersV2 = lazy(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
-const ScmTrips = lazy(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
-const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
-const ScmDeliveryResidenceRulesV2 = lazy(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
+const ScmDeliveryPlanningV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
+const ScmDeliveryPlanningDriverV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanningDriver").then((m) => ({ default: m.DeliveryPlanningDriver })));
+const ScmDpOrdersV2 = lazyPage(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
+const ScmTrips = lazyPage(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
+const ScmDeliveryPlanningRegionsV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
+const ScmDeliveryResidenceRulesV2 = lazyPage(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
 // Fleet Module A1 — postcode->zone map admin + auto-propose delivery-date + lock.
-const ScmDeliveryZonesV2 = lazy(() => import("./pages/scm-v2/DeliveryZones").then((m) => ({ default: m.DeliveryZones })));
+const ScmDeliveryZonesV2 = lazyPage(() => import("./pages/scm-v2/DeliveryZones").then((m) => ({ default: m.DeliveryZones })));
 // Fleet Module C — delivery rate-card config + cost calculator + 3PL reconciliation.
-const ScmDeliveryRateCardsV2 = lazy(() => import("./pages/scm-v2/DeliveryRateCards").then((m) => ({ default: m.DeliveryRateCards })));
-const ScmAutoScheduleV2 = lazy(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
-const ScmDriverLeaveV2 = lazy(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
-const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies").then((m) => ({ default: m.ThreePLCompanies })));
-const ScmSavedLocationsV2 = lazy(() => import("./pages/scm-v2/SavedLocations").then((m) => ({ default: m.SavedLocations })));
-const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
-const ScmDeliveryMaintenanceV2 = lazy(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
+const ScmDeliveryRateCardsV2 = lazyPage(() => import("./pages/scm-v2/DeliveryRateCards").then((m) => ({ default: m.DeliveryRateCards })));
+const ScmAutoScheduleV2 = lazyPage(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
+const ScmDriverLeaveV2 = lazyPage(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
+const ScmThreePLCompaniesV2 = lazyPage(() => import("./pages/scm-v2/ThreePLCompanies").then((m) => ({ default: m.ThreePLCompanies })));
+const ScmSavedLocationsV2 = lazyPage(() => import("./pages/scm-v2/SavedLocations").then((m) => ({ default: m.SavedLocations })));
+const ScmFleetV2 = lazyPage(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
+const ScmDeliveryMaintenanceV2 = lazyPage(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
 // Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
-const ScmFleetDayV2 = lazy(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
-const ScmFleetRunSheetV2 = lazy(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
+const ScmFleetDayV2 = lazyPage(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
+const ScmFleetRunSheetV2 = lazyPage(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
 // Sales Order READ side (vendored 2990 list + detail + maintenance). New-SO
 // configurator + SoFromProducts come in a later wave. NOTE: 2990 uses :docNo
 // (not :id) for SO detail, and the literal /maintenance route MUST precede
 // /:docNo so 'maintenance' isn't read as a doc number.
 // Overview — Workspace home (P1 task-first dashboard).
-const Overview = lazy(() => import("./pages/Overview").then((m) => ({ default: m.Overview })));
+const Overview = lazyPage(() => import("./pages/Overview").then((m) => ({ default: m.Overview })));
 // Supply Chain Hub — section landing page (flattens the 3-level SCM nesting).
-const ScmHub = lazy(() => import("./pages/ScmHub").then((m) => ({ default: m.ScmHub })));
-const ScmSubgroupHub = lazy(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
-const FinanceTodoPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
-const FinanceTodoRulesPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodoRules").then((m) => ({ default: m.FinanceTodoRulesPage })));
-const FinanceDepositInvoiceSetup = lazy(() => import("./pages/scm-v2/finance/DepositInvoiceSetup").then((m) => ({ default: m.DepositInvoiceSetup })));
-const ScmSalesOrdersV2 = lazy(() => import("./pages/scm-v2/MfgSalesOrdersListV2").then((m) => ({ default: m.MfgSalesOrdersListV2 })));
-const ScmSalesOrderMaintenanceV2 = lazy(() => import("./pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
-const ScmSalesOrderNewV2 = lazy(() => import("./pages/scm-v2/SalesOrderNew").then((m) => ({ default: m.SalesOrderNew })));
-const ScmSalesOrderNewGuidedV2 = lazy(() => import("./pages/scm-v2/SalesOrderNewGuided").then((m) => ({ default: m.SalesOrderNewGuided })));
-const ScmSalesOrderNewFromProductsV2 = lazy(() => import("./pages/scm-v2/SalesOrderNewFromProducts").then((m) => ({ default: m.SalesOrderNewFromProducts })));
-const ScmCategoriesV2 = lazy(() => import("./pages/scm-v2/Categories").then((m) => ({ default: m.Categories })));
-const ScmSoFromProductsV2 = lazy(() => import("./pages/scm-v2/SoFromProducts").then((m) => ({ default: m.SoFromProducts })));
-const ScmSalesOrderDetailV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailV2").then((m) => ({ default: m.SalesOrderDetailV2 })));
-const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
-const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
-const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
-const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
-const ScmPaymentBackdateRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentBackdateRequests").then((m) => ({ default: m.PaymentBackdateRequests })));
-const ScmFairPending = lazy(() => import("./pages/scm-v2/FairPending").then((m) => ({ default: m.FairPending })));
-const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
-const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
-const ScmDoDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
-const ScmSiDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceDetailListing").then((m) => ({ default: m.SalesInvoiceDetailListing })));
-const ScmDrDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryReturnDetailListing").then((m) => ({ default: m.DeliveryReturnDetailListing })));
-const FairReportV2 = lazy(() => import("./pages/scm-v2/FairReport").then((m) => ({ default: m.FairReport })));
-const ScmDeliveryOrdersV2 = lazy(() => import("./pages/scm-v2/MfgDeliveryOrdersListV2").then((m) => ({ default: m.MfgDeliveryOrdersListV2 })));
-const ScmDeliveryOrderNewV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderNewV2").then((m) => ({ default: m.DeliveryOrderNewV2 })));
-const ScmDeliveryOrderFromSoV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
-const ScmDeliveryOrderDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
-const ScmDoLoadScan = lazy(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
-const ScmLoadingList = lazy(() => import("./pages/scm-v2/LoadingList").then((m) => ({ default: m.LoadingList })));
-const ScmSalesInvoicesV2 = lazy(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
-const ScmSalesInvoiceNewV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
-const ScmSalesInvoiceFromDoV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
-const ScmSalesInvoiceDetailV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceDetailV2").then((m) => ({ default: m.SalesInvoiceDetailV2 })));
-const ScmDeliveryReturnsV2 = lazy(() => import("./pages/scm-v2/DeliveryReturnsListV2").then((m) => ({ default: m.DeliveryReturnsListV2 })));
-const ScmDeliveryReturnNewV2 = lazy(() => import("./pages/scm-v2/DeliveryReturnNew").then((m) => ({ default: m.DeliveryReturnNew })));
-const ScmDeliveryReturnFromDoV2 = lazy(() => import("./pages/scm-v2/DeliveryReturnFromDo").then((m) => ({ default: m.DeliveryReturnFromDo })));
-const ScmDeliveryReturnDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryReturnDetailV2").then((m) => ({ default: m.DeliveryReturnDetailV2 })));
-const ScmConsignmentOrdersV2 = lazy(() => import("./pages/scm-v2/ConsignmentOrders").then((m) => ({ default: m.ConsignmentOrders })));
-const ScmConsignmentOrderNewV2 = lazy(() => import("./pages/scm-v2/ConsignmentOrderNew").then((m) => ({ default: m.ConsignmentOrderNew })));
-const ScmConsignmentOrderDetailV2 = lazy(() => import("./pages/scm-v2/ConsignmentOrderDetail").then((m) => ({ default: m.ConsignmentOrderDetail })));
-const ScmConsignmentNotesV2 = lazy(() => import("./pages/scm-v2/ConsignmentNotes").then((m) => ({ default: m.ConsignmentNotes })));
-const ScmConsignmentNoteNewV2 = lazy(() => import("./pages/scm-v2/ConsignmentNoteNew").then((m) => ({ default: m.ConsignmentNoteNew })));
-const ScmConsignmentNoteFromOrderV2 = lazy(() => import("./pages/scm-v2/ConsignmentNoteFromOrder").then((m) => ({ default: m.ConsignmentNoteFromOrder })));
-const ScmConsignmentNoteDetailV2 = lazy(() => import("./pages/scm-v2/ConsignmentNoteDetail").then((m) => ({ default: m.ConsignmentNoteDetail })));
-const ScmConsignmentReturnsV2 = lazy(() => import("./pages/scm-v2/ConsignmentReturns").then((m) => ({ default: m.ConsignmentReturns })));
-const ScmConsignmentReturnNewV2 = lazy(() => import("./pages/scm-v2/ConsignmentReturnNew").then((m) => ({ default: m.ConsignmentReturnNew })));
-const ScmConsignmentReturnFromNoteV2 = lazy(() => import("./pages/scm-v2/ConsignmentReturnFromNote").then((m) => ({ default: m.ConsignmentReturnFromNote })));
-const ScmConsignmentReturnDetailV2 = lazy(() => import("./pages/scm-v2/ConsignmentReturnDetail").then((m) => ({ default: m.ConsignmentReturnDetail })));
-const ScmPurchaseConsignmentOrdersV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentOrders").then((m) => ({ default: m.PurchaseConsignmentOrders })));
-const ScmPurchaseConsignmentOrderNewV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentOrderNew").then((m) => ({ default: m.PurchaseConsignmentOrderNew })));
-const ScmPurchaseConsignmentOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentOrderDetail").then((m) => ({ default: m.PurchaseConsignmentOrderDetail })));
-const ScmPurchaseConsignmentReceivesV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReceives").then((m) => ({ default: m.PurchaseConsignmentReceives })));
-const ScmPurchaseConsignmentReceiveNewV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReceiveNew").then((m) => ({ default: m.PurchaseConsignmentReceiveNew })));
-const ScmPurchaseConsignmentReceiveFromOrderV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReceiveFromOrder").then((m) => ({ default: m.PurchaseConsignmentReceiveFromOrder })));
-const ScmPurchaseConsignmentReceiveDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReceiveDetail").then((m) => ({ default: m.PurchaseConsignmentReceiveDetail })));
-const ScmPurchaseConsignmentReturnsV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReturns").then((m) => ({ default: m.PurchaseConsignmentReturns })));
-const ScmPurchaseConsignmentReturnNewV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReturnNew").then((m) => ({ default: m.PurchaseConsignmentReturnNew })));
-const ScmPurchaseConsignmentReturnFromReceiveV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReturnFromReceive").then((m) => ({ default: m.PurchaseConsignmentReturnFromReceive })));
-const ScmPurchaseConsignmentReturnDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseConsignmentReturnDetail").then((m) => ({ default: m.PurchaseConsignmentReturnDetail })));
+const ScmHub = lazyPage(() => import("./pages/ScmHub").then((m) => ({ default: m.ScmHub })));
+const ScmSubgroupHub = lazyPage(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
+const FinanceTodoPage = lazyPage(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
+const FinanceTodoRulesPage = lazyPage(() => import("./pages/scm-v2/finance/FinanceTodoRules").then((m) => ({ default: m.FinanceTodoRulesPage })));
+const FinanceDepositInvoiceSetup = lazyPage(() => import("./pages/scm-v2/finance/DepositInvoiceSetup").then((m) => ({ default: m.DepositInvoiceSetup })));
+const ScmSalesOrdersV2 = lazyPage(() => import("./pages/scm-v2/MfgSalesOrdersListV2").then((m) => ({ default: m.MfgSalesOrdersListV2 })));
+const ScmSalesOrderMaintenanceV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
+const ScmSalesOrderNewV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderNew").then((m) => ({ default: m.SalesOrderNew })));
+const ScmSalesOrderNewGuidedV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderNewGuided").then((m) => ({ default: m.SalesOrderNewGuided })));
+const ScmSalesOrderNewFromProductsV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderNewFromProducts").then((m) => ({ default: m.SalesOrderNewFromProducts })));
+const ScmCategoriesV2 = lazyPage(() => import("./pages/scm-v2/Categories").then((m) => ({ default: m.Categories })));
+const ScmSoFromProductsV2 = lazyPage(() => import("./pages/scm-v2/SoFromProducts").then((m) => ({ default: m.SoFromProducts })));
+const ScmSalesOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderDetailV2").then((m) => ({ default: m.SalesOrderDetailV2 })));
+const ScmAmendmentsV2 = lazyPage(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
+const ScmAmendmentDetailV2 = lazyPage(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
+const ScmPoAmendmentsV2 = lazyPage(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
+const ScmCancelRequestsV2 = lazyPage(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
+const ScmPaymentBackdateRequestsV2 = lazyPage(() => import("./pages/scm-v2/PaymentBackdateRequests").then((m) => ({ default: m.PaymentBackdateRequests })));
+const ScmFairPending = lazyPage(() => import("./pages/scm-v2/FairPending").then((m) => ({ default: m.FairPending })));
+const ScmPoAmendmentDetailV2 = lazyPage(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
+const ScmSoDetailListingV2 = lazyPage(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
+const ScmDoDetailListingV2 = lazyPage(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
+const ScmSiDetailListingV2 = lazyPage(() => import("./pages/scm-v2/SalesInvoiceDetailListing").then((m) => ({ default: m.SalesInvoiceDetailListing })));
+const ScmDrDetailListingV2 = lazyPage(() => import("./pages/scm-v2/DeliveryReturnDetailListing").then((m) => ({ default: m.DeliveryReturnDetailListing })));
+const FairReportV2 = lazyPage(() => import("./pages/scm-v2/FairReport").then((m) => ({ default: m.FairReport })));
+const ScmDeliveryOrdersV2 = lazyPage(() => import("./pages/scm-v2/MfgDeliveryOrdersListV2").then((m) => ({ default: m.MfgDeliveryOrdersListV2 })));
+const ScmDeliveryOrderNewV2 = lazyPage(() => import("./pages/scm-v2/DeliveryOrderNewV2").then((m) => ({ default: m.DeliveryOrderNewV2 })));
+const ScmDeliveryOrderFromSoV2 = lazyPage(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
+const ScmDeliveryOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
+const ScmDoLoadScan = lazyPage(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
+const ScmLoadingList = lazyPage(() => import("./pages/scm-v2/LoadingList").then((m) => ({ default: m.LoadingList })));
+const ScmSalesInvoicesV2 = lazyPage(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
+const ScmSalesInvoiceNewV2 = lazyPage(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
+const ScmSalesInvoiceFromDoV2 = lazyPage(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
+const ScmSalesInvoiceDetailV2 = lazyPage(() => import("./pages/scm-v2/SalesInvoiceDetailV2").then((m) => ({ default: m.SalesInvoiceDetailV2 })));
+const ScmDeliveryReturnsV2 = lazyPage(() => import("./pages/scm-v2/DeliveryReturnsListV2").then((m) => ({ default: m.DeliveryReturnsListV2 })));
+const ScmDeliveryReturnNewV2 = lazyPage(() => import("./pages/scm-v2/DeliveryReturnNew").then((m) => ({ default: m.DeliveryReturnNew })));
+const ScmDeliveryReturnFromDoV2 = lazyPage(() => import("./pages/scm-v2/DeliveryReturnFromDo").then((m) => ({ default: m.DeliveryReturnFromDo })));
+const ScmDeliveryReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/DeliveryReturnDetailV2").then((m) => ({ default: m.DeliveryReturnDetailV2 })));
+const ScmConsignmentOrdersV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentOrders").then((m) => ({ default: m.ConsignmentOrders })));
+const ScmConsignmentOrderNewV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentOrderNew").then((m) => ({ default: m.ConsignmentOrderNew })));
+const ScmConsignmentOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentOrderDetail").then((m) => ({ default: m.ConsignmentOrderDetail })));
+const ScmConsignmentNotesV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentNotes").then((m) => ({ default: m.ConsignmentNotes })));
+const ScmConsignmentNoteNewV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentNoteNew").then((m) => ({ default: m.ConsignmentNoteNew })));
+const ScmConsignmentNoteFromOrderV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentNoteFromOrder").then((m) => ({ default: m.ConsignmentNoteFromOrder })));
+const ScmConsignmentNoteDetailV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentNoteDetail").then((m) => ({ default: m.ConsignmentNoteDetail })));
+const ScmConsignmentReturnsV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentReturns").then((m) => ({ default: m.ConsignmentReturns })));
+const ScmConsignmentReturnNewV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentReturnNew").then((m) => ({ default: m.ConsignmentReturnNew })));
+const ScmConsignmentReturnFromNoteV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentReturnFromNote").then((m) => ({ default: m.ConsignmentReturnFromNote })));
+const ScmConsignmentReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/ConsignmentReturnDetail").then((m) => ({ default: m.ConsignmentReturnDetail })));
+const ScmPurchaseConsignmentOrdersV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentOrders").then((m) => ({ default: m.PurchaseConsignmentOrders })));
+const ScmPurchaseConsignmentOrderNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentOrderNew").then((m) => ({ default: m.PurchaseConsignmentOrderNew })));
+const ScmPurchaseConsignmentOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentOrderDetail").then((m) => ({ default: m.PurchaseConsignmentOrderDetail })));
+const ScmPurchaseConsignmentReceivesV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReceives").then((m) => ({ default: m.PurchaseConsignmentReceives })));
+const ScmPurchaseConsignmentReceiveNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReceiveNew").then((m) => ({ default: m.PurchaseConsignmentReceiveNew })));
+const ScmPurchaseConsignmentReceiveFromOrderV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReceiveFromOrder").then((m) => ({ default: m.PurchaseConsignmentReceiveFromOrder })));
+const ScmPurchaseConsignmentReceiveDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReceiveDetail").then((m) => ({ default: m.PurchaseConsignmentReceiveDetail })));
+const ScmPurchaseConsignmentReturnsV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturns").then((m) => ({ default: m.PurchaseConsignmentReturns })));
+const ScmPurchaseConsignmentReturnNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturnNew").then((m) => ({ default: m.PurchaseConsignmentReturnNew })));
+const ScmPurchaseConsignmentReturnFromReceiveV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturnFromReceive").then((m) => ({ default: m.PurchaseConsignmentReturnFromReceive })));
+const ScmPurchaseConsignmentReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturnDetail").then((m) => ({ default: m.PurchaseConsignmentReturnDetail })));
 
 /**
  * Wraps a route element in a permission check. Failures render the
@@ -526,7 +536,23 @@ export default function App() {
       <Layout>
         <RouteCrashBoundary>
         <Suspense fallback={<PageSkeleton />}>
-        <Routes>
+        <Routes>{APP_ROUTES}</Routes>
+        </Suspense>
+        </RouteCrashBoundary>
+      </Layout>
+      </BreadcrumbsProvider>
+      </NotificationsProvider>
+    </GlobalSearchProvider>
+  );
+}
+
+/* The route table, built once at module level rather than inside App(): the
+   same elements serve <Routes> on every render AND preloadRouteChunks() below,
+   which matches the landing URL before App has rendered (main.tsx calls it
+   while /api/auth/me is still in flight). Nothing here reads App state; every
+   guard reads auth through its own hook when it renders. */
+const APP_ROUTES = (
+  <>
         {/* Landing → Overview workspace home (P1). */}
         <Route path="/" element={<Overview />} />
         <Route
@@ -1072,12 +1098,26 @@ export default function App() {
           <Route key={a.from} path={a.from} element={<AliasRedirect to={a.to} />} />
         ))}
         <Route path="*" element={<Forbidden kind="not-found" />} />
-        </Routes>
-        </Suspense>
-        </RouteCrashBoundary>
-      </Layout>
-      </BreadcrumbsProvider>
-      </NotificationsProvider>
-    </GlobalSearchProvider>
-  );
+  </>
+);
+
+let routeObjects: ReturnType<typeof createRoutesFromChildren> | null = null;
+
+/**
+ * Start downloading the chunks the route at `pathname` will render: the page,
+ * and the SCM shell around it. Called once at boot for a signed-in desktop
+ * session so the landing page loads IN PARALLEL with /api/auth/me instead of
+ * after it. One route only, never a list (Hookka: warming every route on boot
+ * starved the page the user was actually opening). Pure head start: a miss, a
+ * guard that refuses, or a failed fetch changes nothing about what renders.
+ */
+export function preloadRouteChunks(pathname: string): void {
+  try {
+    routeObjects ??= createRoutesFromChildren(APP_ROUTES);
+    for (const match of matchRoutes(routeObjects, pathname) ?? []) {
+      preloadElementChunks(match.route.element);
+    }
+  } catch {
+    // Never let a head start break the boot.
+  }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, lazy, type ReactNode } from "react";
 import { LazySlot } from "../components/LazySlot";
+import { lazyPage } from "../lib/lazyPage";
 import { useAuth } from "./AuthContext";
 import {
   HOUZS_COMPANY_CODE,
@@ -11,9 +12,15 @@ import { useIsMobile } from "../mobile/useIsMobile";
 
 // Code-split the mobile app: desktop users never download it, and it stays out
 // of the initial JS bundle (keeps the bundle-budget CI gate green).
-const MobileApp = lazy(() =>
+const MobileApp = lazyPage(() =>
   import("../mobile/MobileApp").then((m) => ({ default: m.MobileApp })),
 );
+
+/** Start the phone shell's chunk at boot, in parallel with /api/auth/me, rather
+ *  than after it (main.tsx, signed-in phone sessions only). */
+export function preloadMobileApp(): void {
+  void MobileApp.preload().catch(() => {});
+}
 const MobileLogin = lazy(() =>
   import("../mobile/MobileLogin").then((m) => ({ default: m.MobileLogin })),
 );
