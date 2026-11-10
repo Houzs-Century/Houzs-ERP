@@ -24,7 +24,10 @@
 
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { assemblePvBatchPdf, type PdfAttachment } from '../lib/pdf-attach';
-import { decodeBase64, loadDocAttachments, makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
+import { mapBounded } from '../lib/concurrency';
+import {
+  decodeBase64, fetchDocAttachment, listDocAttachmentRefs, makeDocFileHandlers, type DocAttachmentRef, type DocFilesSpec,
+} from '../lib/doc-files';
 import { AP_INVOICE_FILES } from './ap-invoice-files';
 
 type Row = Record<string, any>;
@@ -73,9 +76,25 @@ export const deletePvFileHandler = handlers.remove;
    cannot be loaded fails the WHOLE request by pv — a bundle quietly missing
    a voucher is the dishonest branch. A stored file whose R2 object is gone
    becomes a notice page (the index said it existed; paper must say it
-   didn't print). Reading rides the voucher (area guard). */
+   didn't print). Reading rides the voucher (area guard).
+
+   Loading is two bounded waves, not one voucher after another (p95 was 10 s
+   when every read waited for the one before it): first each voucher's rows
+   and file index, BUNDLE_DOC_CONCURRENCY vouchers at a time; then every
+   stored file's bytes from R2, BUNDLE_FILE_CONCURRENCY at a time. mapBounded
+   returns input order, so the paper order is the sequential one, and the
+   first failing voucher in PART order still decides the error. The caps stay
+   under the Worker's 6 simultaneous open connections; parallelism does not
+   change the subrequest COUNT (per voucher: 3 reads, +1 invoice read and +1
+   index read per AP invoice it pays, +1 R2 read per file). */
 const MAX_BUNDLE_PARTS = 30;
 const MAX_VOUCHER_BYTES = 10 * 1024 * 1024;
+export const BUNDLE_DOC_CONCURRENCY = 4;
+export const BUNDLE_FILE_CONCURRENCY = 6;
+
+type LoadedPart =
+  | { ok: true; pvNumber: string; voucher: ArrayBuffer; refs: DocAttachmentRef[] }
+  | { ok: false; resp: Response };
 
 export const printPvBundleHandler = async (c: any): Promise<Response> => {
   const bucket = (c.env as { SLIPS?: { get: (k: string) => Promise<any> } }).SLIPS;
@@ -92,28 +111,26 @@ export const printPvBundleHandler = async (c: any): Promise<Response> => {
     return c.json({ error: 'too_many_parts', message: `A bundle is capped at ${MAX_BUNDLE_PARTS} vouchers.` }, 400);
   }
 
-  const assembled: Array<{ voucher: ArrayBuffer; files: PdfAttachment[] }> = [];
-  let firstPvNumber = '';
-  for (const part of parts as Array<{ pvId?: unknown; voucherBase64?: unknown }>) {
+  const loadPart = async (part: { pvId?: unknown; voucherBase64?: unknown }): Promise<LoadedPart> => {
+    const fail = (resp: Response): LoadedPart => ({ ok: false, resp });
     const pvId = String(part.pvId ?? '');
     const { data: pv, error: pvErr } = await scopeToCompany(
       sb.from('payment_vouchers').select('id, pv_number, company_id').eq('id', pvId), c,
     ).maybeSingle();
-    if (pvErr) return c.json({ error: 'load_failed', reason: pvErr.message }, 500);
-    if (!pv) return c.json({ error: 'not_found', message: `Voucher ${pvId} could not be loaded — nothing was printed.` }, 404);
-    firstPvNumber ||= String((pv as Row).pv_number ?? '');
+    if (pvErr) return fail(c.json({ error: 'load_failed', reason: pvErr.message }, 500));
+    if (!pv) return fail(c.json({ error: 'not_found', message: `Voucher ${pvId} could not be loaded — nothing was printed.` }, 404));
 
     const voucherBytes = decodeBase64(String(part.voucherBase64 ?? ''));
     if (!voucherBytes || voucherBytes.byteLength === 0) {
-      return c.json({ error: 'bad_voucher_page', message: `${(pv as Row).pv_number}'s rendered page did not arrive intact.` }, 400);
+      return fail(c.json({ error: 'bad_voucher_page', message: `${(pv as Row).pv_number}'s rendered page did not arrive intact.` }, 400));
     }
     if (voucherBytes.byteLength > MAX_VOUCHER_BYTES) {
-      return c.json({ error: 'voucher_page_too_large' }, 400);
+      return fail(c.json({ error: 'voucher_page_too_large' }, 400));
     }
 
-    const own = await loadDocAttachments(c, bucket, PV_FILES, String((pv as Row).id));
-    if ('error' in own) return c.json({ error: 'load_failed', reason: own.error }, 500);
-    const files: PdfAttachment[] = [...own.files];
+    const own = await listDocAttachmentRefs(c, PV_FILES, String((pv as Row).id), '');
+    if ('error' in own) return fail(c.json({ error: 'load_failed', reason: own.error }, 500));
+    const refs: DocAttachmentRef[] = [...own.refs];
 
     /* The bills this voucher PAYS: every AP invoice it allocates to lends its
        own stored files, allocation order. A purchase-invoice allocation adds
@@ -121,21 +138,38 @@ export const printPvBundleHandler = async (c: any): Promise<Response> => {
     const { data: allocRows, error: allocErr } = await scopeToCompany(
       sb.from('pv_allocations').select('ap_invoice_id, created_at').eq('pv_id', (pv as Row).id), c,
     ).order('created_at');
-    if (allocErr) return c.json({ error: 'load_failed', reason: allocErr.message }, 500);
+    if (allocErr) return fail(c.json({ error: 'load_failed', reason: allocErr.message }, 500));
     const apIds = [...new Set(((allocRows ?? []) as Row[]).map((a) => a.ap_invoice_id).filter((id): id is string => typeof id === 'string' && id.length > 0))];
     if (apIds.length > 0) {
       const { data: invRows, error: invErr } = await scopeToCompany(
         sb.from('ap_invoices').select('id, invoice_number').in('id', apIds), c,
       );
-      if (invErr) return c.json({ error: 'load_failed', reason: invErr.message }, 500);
+      if (invErr) return fail(c.json({ error: 'load_failed', reason: invErr.message }, 500));
       const numberOf = new Map(((invRows ?? []) as Row[]).map((r) => [String(r.id), String(r.invoice_number ?? '')]));
       for (const apId of apIds) {
-        const theirs = await loadDocAttachments(c, bucket, AP_INVOICE_FILES, apId, numberOf.get(apId) || 'AP invoice');
-        if ('error' in theirs) return c.json({ error: 'load_failed', reason: theirs.error }, 500);
-        files.push(...theirs.files);
+        const theirs = await listDocAttachmentRefs(c, AP_INVOICE_FILES, apId, numberOf.get(apId) || 'AP invoice');
+        if ('error' in theirs) return fail(c.json({ error: 'load_failed', reason: theirs.error }, 500));
+        refs.push(...theirs.refs);
       }
     }
-    assembled.push({ voucher: voucherBytes.buffer as ArrayBuffer, files });
+    return { ok: true, pvNumber: String((pv as Row).pv_number ?? ''), voucher: voucherBytes.buffer as ArrayBuffer, refs };
+  };
+
+  const loaded = await mapBounded(parts as Array<{ pvId?: unknown; voucherBase64?: unknown }>, BUNDLE_DOC_CONCURRENCY, loadPart);
+  const ready: Array<Extract<LoadedPart, { ok: true }>> = [];
+  for (const l of loaded) {
+    if (!l.ok) return l.resp;
+    ready.push(l);
+  }
+  const firstPvNumber = ready[0]?.pvNumber ?? '';
+
+  const flat = ready.flatMap((r) => r.refs);
+  const fetched = await mapBounded(flat, BUNDLE_FILE_CONCURRENCY, (ref) => fetchDocAttachment(bucket, ref));
+  const assembled: Array<{ voucher: ArrayBuffer; files: PdfAttachment[] }> = [];
+  let at = 0;
+  for (const r of ready) {
+    assembled.push({ voucher: r.voucher, files: fetched.slice(at, at + r.refs.length) });
+    at += r.refs.length;
   }
 
   const merged = await assemblePvBatchPdf(assembled);
