@@ -31,6 +31,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliverySco
 import { fieldPhotoOwnerPrefix, parseFieldPhotoContext, parseFieldPhotoDraftId, slipBindings } from '../lib/slip';
 import { fetchDoCrewAssignment } from './delivery-pod-context';
 import { loadJob, parseJobParts, userNamesById } from './delivery-job-progress';
+import { houzsUserIdOf } from '../lib/crew-stop-complete';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -58,10 +59,6 @@ export function parseStopContext(raw: unknown): StopRef | null {
   return 'error' in job ? null : { kind: 'job', ...job };
 }
 
-const houzsUserIdOf = (c: Ctx): number | null => {
-  const id = Number(c.get('houzsUser')?.id);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-};
 
 type Access = { ok: true; lead: boolean } | { ok: false; status: 403 | 404 | 500; error: string; reason: string };
 

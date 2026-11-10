@@ -1633,6 +1633,9 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
           card). Read-only on both surfaces: the order is the one place a
           payment is taken. */}
       {moduleKey === "delivery-orders-mfg" && id && <MobileDoDeliveryIssues doId={id} />}
+      {moduleKey === "delivery-orders-mfg" && id && (
+        <DoEarlierPodAttempts doId={id} docNo={s(header?.do_number) || `DO ${id.slice(0, 8)}`} />
+      )}
       {moduleKey === "delivery-orders-mfg" && s(header?.so_doc_no) && (
         <MobileCollectedOnOrder soDocNo={s(header?.so_doc_no)} currency={s(header?.currency) || "MYR"} />
       )}
@@ -1911,5 +1914,6 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
 import { DateField } from "../vendor/scm/components/DateField";
 import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";
 import { MobileDoDeliveryIssues } from "./DeliveryIssueForm";
+import { DoEarlierPodAttempts } from "../components/scm-v2/DoEarlierPodAttempts";
 import { poDriftMode } from "../vendor/scm/lib/po-drift";
 import { returnCreditLabel } from "../vendor/scm/lib/return-credit-state";

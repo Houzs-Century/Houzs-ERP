@@ -22,6 +22,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, allowedCompaniesSql, allowedCompanyIds } from '../lib/companyScope';
 import { claimPodPhotos, jobStopContext } from '../lib/pod-photo-claim';
+import { houzsUserIdOf, mytClock } from '../lib/crew-stop-complete';
 import { ASSR_LEG_BY_STOP, podPhotoResponse } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
@@ -54,10 +55,6 @@ export function parseJobParts(rawType: string, sourceId: string, leg: string): {
   return { sourceType, sourceId, leg };
 }
 
-const houzsUserIdOf = (c: Ctx): number | null => {
-  const id = Number(c.get('houzsUser')?.id);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-};
 
 /* The crew share one stop, so the second person to finish is told who finished
    it and when, not just "already completed". */
@@ -69,12 +66,6 @@ async function alreadyCompleted(c: Ctx, cur: Record<string, unknown> | null) {
     reason: `This job was already completed${by ? ` by ${by}` : ''}${at ? ` at ${at}` : ''}.`,
     completedBy: by, completedAt: cur?.completed_at ?? null, progress: cur,
   }, 409);
-}
-
-export function mytClock(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 const tripCrew = (t: Record<string, unknown> | null | undefined): CrewAssignment => ({

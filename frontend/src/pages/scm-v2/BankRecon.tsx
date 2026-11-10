@@ -41,6 +41,7 @@ import look from './BankStatements.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
 import { fmtDate } from '../../vendor/shared/format';
+import { parseMoneyToSen } from '../../lib/money';
 
 /* The redesign (owner's Claude Design, batch 3): the page is "Bank statements"
    — a card per account, its months, one month at a time — and the card-money
@@ -309,6 +310,7 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
   const undo = useUndoReceipt();
   const [on, setOn] = useState('');
   const [amount, setAmount] = useState('');
+  const [amountError, setAmountError] = useState<string | null>(null);
 
   const batch = q.data?.batch ?? null;
   if (q.isLoading || !batch) return <div style={{ fontSize: 'var(--fs-13)' }}>Loading the statement…</div>;
@@ -324,8 +326,10 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
   const send = () => {
     /* Blank = the rest of it. The ordinary payout is one credit for the whole
        statement, and nobody should retype a number the statement knows. */
-    const typed = amount.trim() ? Math.round(Number(amount) * 100) : null;
-    receive.mutate({ batchId, receivedOn: on, amountSen: typed }, {
+    const parsed = parseMoneyToSen(amount, 'The amount of this credit', { allowNegative: true });
+    if (!parsed.ok) { setAmountError(parsed.message); return; }
+    setAmountError(null);
+    receive.mutate({ batchId, receivedOn: on, ...(parsed.empty ? {} : { amountSen: parsed.sen }) }, {
       onSuccess: () => { setOn(''); setAmount(''); },
     });
   };
@@ -393,7 +397,7 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
           <DateField id={`recv-${batchId}`} value={on} aria-label="Money arrived in the bank on"
             onChange={(iso) => setOn(iso)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
           <input id={`amt-${batchId}`} value={amount} aria-label="Amount of this credit"
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => { setAmount(e.target.value); setAmountError(null); }}
             placeholder={`Amount (blank = ${fmt(outstanding)})`}
             style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', width: 200 }} />
           <button type="button" style={btn(true, !on || receive.isPending)} disabled={!on || receive.isPending}
@@ -410,6 +414,13 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {openLines} line(s) on this report are back to undecided. Finish{' '}
           <Link to="/scm/merchant-recon">merchant reconciliation</Link> before recording money against it.
+        </div>
+      )}
+
+      {amountError && (
+        <div role="alert" style={{ color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span>{amountError}</span>
         </div>
       )}
 

@@ -27,6 +27,7 @@ The consignment chain has no invoice document — there is no fact an `INVOICED`
 
 ## Gotchas
 
+- The CN status PATCH writes a non-cancel status only over the status it read (compare-and-set); a note that changed in between answers 409 `status_changed`, so a late write cannot revive a cancelled note.
 - The status PATCH endpoints (CO, CN, CR) accept any string the Postgres enum allows, uppercased, with no legal-value whitelist or transition table — a status with no UI button (e.g. CO's `ON_HOLD`) can still be set through the API alone.
 - `purchase-consignment-receives.ts`'s `recomputePcoReceived` only excludes `CANCELLED` POs from its recompute, not `ON_HOLD` — putting a PCO on hold and then receiving against it silently clears the hold. Treat PCO Hold as unsafe to rely on until this is fixed.
 - CO cancellation is not final (the list has a "Reopen SO" action that revives a cancelled CO) — unlike the Sales Order, where cancellation is final. Do not assume a cancelled CO is permanently closed.
