@@ -36,11 +36,11 @@ try {
 
     /* Every line of that account, that day and that amount. */
     const twins = await tx`SELECT l.id, l.statement_id, l.line_no, l.state, l.kind, l.posted_je_no IS NOT NULL AS has_entry,
-        l.description = ${base.description} AS same_text, coalesce(l.reference, '') = ${base.ref} AS same_ref
+        l.description = ${base.description} AS same_text, to_jsonb(l)->>'updated_at' AS updated_at, coalesce(l.note, '') LIKE 'This movement is already recorded%' AS repeat_note, coalesce(l.reference, '') = ${base.ref} AS same_ref
       FROM scm.acc_bank_statement_lines l JOIN scm.acc_bank_statements s ON s.id = l.statement_id
       WHERE l.company_id = ${CO} AND s.account_code = ${base.account_code} AND l.booked_on = ${base.d} AND l.amount_sen = ${base.amount_sen}
       ORDER BY l.statement_id, l.line_no`;
-    for (const t of twins) row('SAME_DAY_AMOUNT', `line ${t.id}`, `st${t.statement_id} #${t.line_no}`, t.state, `kind ${t.kind}`, `same text ${yn(t.same_text)}`, `same ref ${yn(t.same_ref)}`, `has entry ${yn(t.has_entry)}`);
+    for (const t of twins) row('SAME_DAY_AMOUNT', `line ${t.id}`, `st${t.statement_id} #${t.line_no}`, t.state, `kind ${t.kind}`, `same text ${yn(t.same_text)}`, `same ref ${yn(t.same_ref)}`, `has entry ${yn(t.has_entry)}`, `changed ${String(t.updated_at ?? '-').slice(0, 16)}`, `repeat note ${yn(t.repeat_note)}`);
     row('IN_ONE_FILE', yn(new Set(twins.map((t) => Number(t.statement_id))).size === 1), `lines ${twins.length}`);
 
     /* The files they came from: what each covers, when it came, and how much of it another file of the account also holds. */
