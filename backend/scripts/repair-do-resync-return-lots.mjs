@@ -34,6 +34,7 @@
 
    RE-RUN: inert. Keyed on the exact fallback notes and an open, untouched minted
    lot; a repaired IN carries the marker and a closed lot, so it is never picked again. */
+import './lib/public-log-guard.mjs';
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { FALLBACK_NOTES, REPAIR_MARK, skipReason, unwindPlan } from './lib/do-return-lot-repair.mjs';
@@ -121,7 +122,7 @@ async function main() {
   }
   note(`\n=== FALLBACK RETURN INs: ${rows.length} (fallback notes "${FALLBACK_NOTES}") ===`);
   for (const { r, plan } of fix) {
-    note(`  REPAIR ${label(r)}: close lot ${String(r.lot_id).slice(0, 8)} (left ${r.qty_remaining}, cost ${r.unit_cost_sen}); `
+    note(`  REPAIR ${label(r)}: close lot ${String(r.lot_id).slice(0, 8)} (left ${r.qty_remaining}); `
       + `give ${plan.restored} unit(s) back to ${plan.steps.map((s) => `${String(s.lot_id).slice(0, 8)}+${s.take}`).join(', ') || 'no lot'}`
       + (plan.uncosted ? `; ${plan.uncosted} unit(s) had no consumption (shipped uncosted), nothing to give back` : ''));
   }
@@ -191,7 +192,7 @@ async function main() {
       const ok = Number(lot?.qty_remaining) === 0 && Number(mov?.unit_cost_sen) === 0 && Number(mov?.total_cost_sen) === 0
         && String(mov?.notes ?? '').endsWith(REPAIR_MARK) && consumed <= Math.max(0, net);
       if (!ok) wrong += 1;
-      (ok ? note : bad)(`  ${ok ? 'OK ' : 'BAD'} ${label(r)}: minted lot left ${lot?.qty_remaining}, IN cost ${mov?.unit_cost_sen}/${mov?.total_cost_sen}, bucket consumed ${consumed} vs net shipped ${net}`);
+      (ok ? note : bad)(`  ${ok ? 'OK ' : 'BAD'} ${label(r)}: minted lot left ${lot?.qty_remaining}, IN cost zeroed ${Number(mov?.total_cost_sen) === 0 ? 'yes' : 'NO'}, bucket consumed ${consumed} vs net shipped ${net}`);
     }
     note(`  ${done.length - wrong} of ${done.length} verified`);
     if (wrong > 0) process.exitCode = 1;

@@ -9,6 +9,7 @@
 //
 // SELECTs only. Exits 0 for every real answer (an empty ledger is an answer);
 // only a missing input, an unreachable database or a query error exits non-zero.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -59,7 +60,7 @@ try {
   for (const m of movs) {
     console.log([iso(m.created_at), m.movement_type, `qty=${m.qty}`, whOf(m.warehouse_id), `vk=${m.variant_key ?? ""}`,
       `batch=${m.batch_no ?? ""}`, `${m.source_doc_type}:${m.source_doc_no ?? ""}`, `seq=${m.correction_seq ?? ""}`,
-      `cost=${m.unit_cost_sen ?? ""}/${m.total_cost_sen ?? ""}`, `mov=${String(m.id).slice(0, 8)}`, cut(m.notes, 110)].join(" | "));
+      `costed=${Number(m.total_cost_sen ?? 0) > 0 ? "yes" : "no"}`, `mov=${String(m.id).slice(0, 8)}`, cut(m.notes, 110)].join(" | "));
   }
 
   const net = new Map();
@@ -82,7 +83,7 @@ try {
     const k = `${whOf(l.warehouse_id)} vk=${l.variant_key ?? ""}`;
     lotSum.set(k, (lotSum.get(k) ?? 0) + Number(l.qty_remaining ?? 0));
     console.log([iso(l.received_at), `lot=${String(l.id).slice(0, 8)}`, whOf(l.warehouse_id), `vk=${l.variant_key ?? ""}`,
-      `batch=${l.batch_no ?? ""}`, `recv=${l.qty_received}`, `left=${l.qty_remaining}`, `cost=${l.unit_cost_sen}`,
+      `batch=${l.batch_no ?? ""}`, `recv=${l.qty_received}`, `left=${l.qty_remaining}`, `costed=${Number(l.unit_cost_sen ?? 0) > 0 ? "yes" : "no"}`,
       `${l.source_doc_type}:${l.source_doc_no ?? ""}`, `mov=${String(l.movement_id ?? "").slice(0, 8)}`].join(" | "));
   }
 
@@ -95,7 +96,7 @@ try {
   console.log(`\n== CONSUMPTIONS: ${cons.length}`);
   for (const c of cons) {
     console.log([`lot=${String(c.lot_id).slice(0, 8)}`, `mov=${String(c.movement_id ?? "").slice(0, 8)}`,
-      `qty=${c.qty_consumed}`, `cost=${c.unit_cost_sen}`, `${c.source_doc_type}:${c.source_doc_no ?? ""}`, `vk=${c.variant_key ?? ""}`].join(" | "));
+      `qty=${c.qty_consumed}`, `${c.source_doc_type}:${c.source_doc_no ?? ""}`, `vk=${c.variant_key ?? ""}`].join(" | "));
   }
 
   console.log(`\n== ON-HAND PER BUCKET: movements net vs open lots`);
