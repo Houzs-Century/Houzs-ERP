@@ -4,10 +4,39 @@
 //   1. validatePing        — range-check a driver's {lat,lng,accuracy,recorded_at}
 //   2. shouldAcceptPing    — the server-side rate cap (ignore pings too close together)
 //   3. latestPerDriver     — collapse a ping log slice to the newest row per driver/trip
+//   4. isTripLocationPing / pingCallerAllowed — who may post a ping (see below)
 //
 // The endpoints in trips.ts do the IO (auth, trip-status gate, insert, select);
 // everything a test would want to pin lives here.
 // ----------------------------------------------------------------------------
+
+import { scopeMatchesAssignment, type CrewAssignment, type DeliveryScope } from './deliveryScope';
+
+/* WHO MAY PING. A ping is "my phone is here, on this lorry", so the only caller
+   it is true for is someone CREWED on the trip. The Transportation area guard
+   asked for `edit` on scm.transportation.drivers instead, and a Driver / Helper
+   holds `view` (enough for GET /trips, which shows them their own trip), so
+   every ping from a driver's phone came back 403 and the Lorry Live Map lost
+   them (production, 7 days: 415 refused pings from 7 users).
+
+   So the guard lets exactly this request through without the area level
+   (writeBypass in scm/index.ts, keyed on isTripLocationPing), and the handler
+   decides with pingCallerAllowed: a caller who got in on the bypass must be a
+   self-scoped crew member of THIS trip. A caller without the area level who is
+   not crew (office staff on the whole-board scope) is refused exactly as
+   before; a caller WITH edit keeps today's behaviour. */
+export function isTripLocationPing(method: string, path: string): boolean {
+  return method === 'POST' && /\/trips\/[^/]+\/location$/.test(path);
+}
+
+export function pingCallerAllowed(
+  scope: DeliveryScope,
+  assignment: CrewAssignment,
+  bypassed: boolean,
+): boolean {
+  if (bypassed) return scope.mode === 'self' && scopeMatchesAssignment(scope, assignment);
+  return scopeMatchesAssignment(scope, assignment);
+}
 
 /* A validated ping, in the column shape the insert uses. */
 export type ValidPing = {

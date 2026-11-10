@@ -123,6 +123,7 @@ export type Env = {
   AUTOCOUNT_SYNC_DISABLED?: string;
   // Stock posts: atomic (default) | two-step (the old non-atomic path, rollback only). scm/lib/stock-post-tx.ts. Set in wrangler.toml [vars].
   GRN_POST_MODE?: string;
+  DO_SHIP_MODE?: string;
   // Delivery Planning board reads: rest | shadow | sql (scm/lib/delivery-board-source.ts). Set in wrangler.toml [vars].
   DP_BOARD_SOURCE?: string;
   // Receipt bank move: atomic (default) | two-step (the old non-atomic path, rollback only). acc/rebank-transaction.ts. Set in wrangler.toml [vars].

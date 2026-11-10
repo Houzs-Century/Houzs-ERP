@@ -46,7 +46,7 @@ vi.mock("../../vendor/scm/lib/purchase-invoice-queries", async (importOriginal) 
     isPlaceholderData: false,
     error: null,
   }),
-  useEnrichedPiListRows: (rows: unknown[]) => rows,
+  useEnrichedPiListRows: (rows: unknown[]) => ({ rows, mrp: { meta: null, refresh: () => {}, refreshing: false } }),
   usePurchaseInvoiceDetail: () => ({ data: undefined, isLoading: false, error: null }),
   useCancelPurchaseInvoice: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePostPurchaseInvoice: () => ({ mutateAsync: vi.fn(), isPending: false }),

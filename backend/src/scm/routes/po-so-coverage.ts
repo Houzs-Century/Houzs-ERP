@@ -84,6 +84,7 @@ import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { tracePoDeliveredLedger } from '../lib/source-po-trace';
 import { sharedLiveMrp } from '../lib/live-mrp-memo';
+import { listMrpResult, type ListMrp } from '../lib/list-mrp-source';
 import { chunkIn, UUID_CHUNK } from '../lib/paginate-all';
 import { eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
@@ -676,8 +677,9 @@ export async function resolvePoSoCoverageForPos(
   sb: any,
   c: Context<any>,
   poIds: Array<string | null | undefined>,
+  listMrp: Promise<ListMrp> | null,
 ): Promise<Map<string, PoAssignedSummary>> {
-  const perSku = await resolvePoSoCoveragePerSkuForPos(sb, c, poIds);
+  const perSku = await resolvePoSoCoveragePerSkuForPos(sb, c, poIds, listMrp);
   const out = new Map<string, PoAssignedSummary>();
   for (const [id, origins] of perSku.entries()) out.set(id, summarizeOrigins(origins));
   return out;
@@ -685,11 +687,14 @@ export async function resolvePoSoCoverageForPos(
 
 /* The per-SKU half of the list rollup above — Map<poId, SkuOrigin[]>. The GRN /
    PI lists consume THIS and roll up only the SKUs their own lines carry, so
-   their header cells stay ≡ the union of their drill lines. */
+   their header cells stay ≡ the union of their drill lines.
+   `listMrp`: the bulk list enrichments pass their resolveListMrp run (the
+   15-min list snapshot, lib/list-mrp-source.ts); null = the live shared run. */
 export async function resolvePoSoCoveragePerSkuForPos(
   sb: any,
   c: Context<any>,
   poIds: Array<string | null | undefined>,
+  listMrp: Promise<ListMrp> | null,
 ): Promise<Map<string, SkuOrigin[]>> {
   const out = new Map<string, SkuOrigin[]>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
@@ -742,7 +747,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
      the SO list and SO detail — the identical options (no filters, undated
      included, active company, stored lead buffers) — so the PO / GRN / PI lists
      no longer pay for their own. A failed run still rejects into the same catch. */
-  const mrpProm = eager(sharedLiveMrp(sb, c.env.DB, activeCompanyId(c)).result);
+  const mrpProm = eager(listMrp ? listMrpResult(listMrp) : sharedLiveMrp(sb, c.env.DB, activeCompanyId(c)).result);
   const ledgerProm = eager(tracePoDeliveredLedger(sb, poNumbers));
 
   type PoLineLinkRow = { id: string; purchase_order_id: string; item_code: string | null; so_item_id: string | null };

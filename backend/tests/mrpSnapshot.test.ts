@@ -34,20 +34,24 @@ describe('deferMrpSnapshotRefresh', () => {
   function ctx() {
     const waited: Promise<unknown>[] = [];
     const upserts: Array<Record<string, unknown>> = [];
-    const sb = { from: () => ({ upsert: async (row: Record<string, unknown>) => { upserts.push(row); return { error: null }; } }) };
+    const tables: string[] = [];
+    const sb = { from: (t: string) => ({ upsert: async (row: Record<string, unknown>) => { tables.push(t); upserts.push(row); return { error: null }; } }) };
     const c = { env: { DB: {} }, executionCtx: { waitUntil: (p: Promise<unknown>) => waited.push(p) } };
-    return { c, sb, waited, upserts };
+    return { c, sb, waited, upserts, tables };
   }
 
-  it('recomputes and stores the default view for a cron-refreshed company', async () => {
+  it('recomputes and stores the page view and the list view for a cron-refreshed company', async () => {
     computeMrp.mockReset().mockResolvedValue({ skus: [], sofaSets: [] });
-    const { c, sb, waited, upserts } = ctx();
+    const { c, sb, waited, upserts, tables } = ctx();
     deferMrpSnapshotRefresh(c, sb, 2, 'po-cancel');
     expect(waited).toHaveLength(1);
     await waited[0];
     expect(computeMrp.mock.calls[0][1]).toMatchObject({ catFilter: null, whFilter: null, includeUndated: false, companyId: 2 });
-    expect(upserts).toHaveLength(1);
+    expect(computeMrp.mock.calls[1][1]).toMatchObject({ catFilter: null, whFilter: null, includeUndated: true, companyId: 2 });
+    expect(upserts).toHaveLength(2);
+    expect(tables).toEqual(['mrp_snapshots', 'mrp_list_snapshots']);
     expect(upserts[0]).toMatchObject({ company_id: 2, result: { skus: [], sofaSets: [] } });
+    expect(upserts[1]).toMatchObject({ company_id: 2, result: { skus: [], sofaSets: [] } });
   });
 
   it('never seeds a snapshot for a company the cron does not keep fresh', () => {

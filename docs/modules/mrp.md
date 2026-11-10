@@ -73,6 +73,11 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   view, or a company with no snapshot row yet, computes live. A
   category/warehouse filter changes the allocation inputs, not just the
   displayed rows, so a stored result can never be safely post-filtered.
+- The PO / GRN / PI / SO **list** enrichments read a second stored run,
+  `scm.mrp_list_snapshots` (undated included), refreshed by the same cron and
+  writes (`lib/list-mrp-source.ts`). Older than 30 min or missing = live, and
+  the list says so; **Refresh** recomputes at most once a minute. Each list
+  shows "MRP as of hh:mm". SO detail `/:docNo/coverage` stays live.
 - **Proceed PO refuses a stale plan.** The page sends the plan's
   `computedAt` as `planAsOf`; `POST /from-sos` with `fromMrp` answers 409
   `mrp_plan_stale` (no write, idempotency claim released) when a PO line on any
