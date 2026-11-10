@@ -9,7 +9,7 @@ import { resetInVisitColFilters } from "./dataTableColFilterMemory";
    hiding all 37. When rows exist and the funnels / search hide them, the empty
    state must say so and name the filters. */
 
-const Y = new Date().getFullYear();
+const Y = 2026;
 type Row = { id: string; doc: string; due: string };
 const rows: Row[] = [
   { id: "a", doc: "SO-1", due: `${Y}-10-01` },
@@ -48,13 +48,13 @@ afterEach(cleanup);
 
 describe("filter summary text", () => {
   it("spells out a date range, a preset, a number range and ticked values", () => {
-    expect(describeFilterValues(["\u0001dateRange:2026-11-06..2026-11-10"], 2026)).toBe("6 Nov – 10 Nov");
-    expect(describeFilterValues(["\u0001dateRange:2025-12-30..2026-01-02"], 2026)).toBe("30 Dec 2025 – 2 Jan");
-    expect(describeFilterValues(["\u0001dateRange:2026-11-06.."], 2026)).toBe("from 6 Nov");
-    expect(describeFilterValues(["\u0001preset:thisWeek"], 2026)).toBe("This Week");
-    expect(describeFilterValues(["\u0001numRange:10.."], 2026)).toBe("at least 10");
-    expect(describeFilterValues(["Open", "—"], 2026)).toBe("Open, (blank)");
-    expect(describeFilterValues(["A", "B", "C"], 2026)).toBe("3 values");
+    expect(describeFilterValues(["\u0001dateRange:2026-11-06..2026-11-10"])).toBe("2026/11/06 – 2026/11/10");
+    expect(describeFilterValues(["\u0001dateRange:..2026-11-10"])).toBe("until 2026/11/10");
+    expect(describeFilterValues(["\u0001dateRange:2026-11-06.."])).toBe("from 2026/11/06");
+    expect(describeFilterValues(["\u0001preset:thisWeek"])).toBe("This Week");
+    expect(describeFilterValues(["\u0001numRange:10.."])).toBe("at least 10");
+    expect(describeFilterValues(["Open", "—"])).toBe("Open, (blank)");
+    expect(describeFilterValues(["A", "B", "C"])).toBe("3 values");
   });
 
   it("names each set funnel by its header label and skips a column that is gone", () => {
@@ -69,7 +69,7 @@ describe("DataTable empty state when filters hide every row", () => {
     openWithFunnel("fe-funnel");
     render(<DataTable tableId="fe-funnel" columns={columns} rows={rows} getRowKey={(r) => r.id} emptyLabel="No orders need delivering in this view." />);
     const notice = await screen.findByTestId("filtered-empty");
-    expect(notice.textContent).toContain("3 rows hidden by your filters: Delivery Date (6 Nov – 10 Nov).");
+    expect(notice.textContent).toContain("3 rows hidden by your filters: Delivery Date (2026/11/06 – 2026/11/10).");
     expect(screen.queryByText("No orders need delivering in this view.")).toBeNull();
 
     fireEvent.click(within(notice).getByRole("button", { name: "Clear filters" }));
@@ -83,7 +83,7 @@ describe("DataTable empty state when filters hide every row", () => {
     openWithFunnel("fe-mobile");
     render(<DataTable tableId="fe-mobile" columns={columns} rows={rows} getRowKey={(r) => r.id} emptyLabel="Nothing here" />);
     const notice = await screen.findByTestId("filtered-empty");
-    expect(notice.textContent).toContain("3 rows hidden by your filters: Delivery Date (6 Nov – 10 Nov).");
+    expect(notice.textContent).toContain("3 rows hidden by your filters: Delivery Date (2026/11/06 – 2026/11/10).");
     expect(screen.queryByText("Nothing here")).toBeNull();
   });
 

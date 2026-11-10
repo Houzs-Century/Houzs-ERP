@@ -10,28 +10,18 @@
  */
 import { FilterX } from "lucide-react";
 import { headerLabel } from "../lib/columnHeaderLabel";
+import { fmtDate } from "../vendor/shared/format";
 import { isConditionToken, parseCondition, DATE_PRESETS } from "./dataTableConditionFilters";
 
 export type ActiveFilter = { key: string; label: string; detail: string };
 
-const MONTH_SHORT = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
-
-/** "2026-11-06" -> "6 Nov" (year added only when it is not this year). */
-function shortDay(iso: string, thisYear: number): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  const [, y, mo, d] = m;
-  const day = `${Number(d)} ${MONTH_SHORT.format(Date.UTC(Number(y), Number(mo) - 1, 1))}`;
-  return Number(y) === thisYear ? day : `${day} ${y}`;
-}
-
-function describeToken(token: string, thisYear: number): string {
+function describeToken(token: string): string {
   const c = parseCondition(token);
   if (!c) return token;
   if (c.kind === "preset") return DATE_PRESETS.find((p) => p.key === c.preset)?.label ?? c.preset;
   if (c.kind === "dateRange") {
-    const from = c.from ? shortDay(c.from, thisYear) : null;
-    const to = c.to ? shortDay(c.to, thisYear) : null;
+    const from = c.from ? fmtDate(c.from) : null;
+    const to = c.to ? fmtDate(c.to) : null;
     if (from && to) return from === to ? from : `${from} – ${to}`;
     return from ? `from ${from}` : to ? `until ${to}` : "any date";
   }
@@ -41,8 +31,8 @@ function describeToken(token: string, thisYear: number): string {
 
 /** One funnel's allow-list in a few words: conditions spelled out, ticked
  *  values listed up to two, then counted. */
-export function describeFilterValues(values: readonly string[], thisYear = new Date().getFullYear()): string {
-  const conditions = values.filter(isConditionToken).map((t) => describeToken(t, thisYear));
+export function describeFilterValues(values: readonly string[]): string {
+  const conditions = values.filter(isConditionToken).map(describeToken);
   const plain = values.filter((v) => !isConditionToken(v)).map((v) => (v === "—" ? "(blank)" : v));
   const ticked = plain.length === 0 ? [] : plain.length <= 2 ? [plain.join(", ")] : [`${plain.length} values`];
   return [...conditions, ...ticked].join("; ");
