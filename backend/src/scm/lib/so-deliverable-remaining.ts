@@ -174,6 +174,9 @@ export type DeliverableLine = {
   lineSeq: number;
 };
 
+const isEmbeddedDoLine = (d: unknown): boolean =>
+  typeof d === 'object' && d !== null && typeof (d as { id?: unknown }).id === 'string' && 'parent' in d;
+
 type SoLineRow = Record<string, unknown> & {
   id: string; doc_no: string; item_code: string; qty: number | null;
   do_lines?: Array<{ id: string; qty: number | null; parent: One<{ status: string | null }> }> | null;
@@ -214,7 +217,11 @@ export async function soDeliverableRemaining(
     .order('id')
     .range(from, to));
   const embedded = await readLines(`${SO_LINE_SELECT}, ${SO_LINE_DO_LINES_EMBED}`);
-  const embeddedOk = !embedded.error;
+  /* Only trust the embed when it came back in the shape asked for: every row an
+     ARRAY of DO lines, each carrying its id and its `parent` key (null for an
+     orphan). Anything else — an error, a client or proxy that dropped the embed —
+     runs the old two-step read, never a silent "nothing delivered". */
+  const embeddedOk = !embedded.error && embedded.data.every((r) => Array.isArray(r.do_lines) && r.do_lines.every(isEmbeddedDoLine));
   const plain = embeddedOk ? null : await readLines(SO_LINE_SELECT);
   if (plain?.error) readFailed('sales-order line', plain.error);
   const rawLines = plain ? plain.data : embedded.data;

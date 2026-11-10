@@ -267,8 +267,9 @@ describe('soDeliverableRemaining — pinned', () => {
   it('many shipped lines: the whole-table return read answers what the chunked read answers', async () => {
     const big = (): Record<string, Row[]> => {
       const t = world();
-      for (let i = 0; i < 600; i++) {
-        const id = `big-${String(i).padStart(4, '0')}`;
+      // uuid-width ids, as in production: 76 to a chunked request, so 1,000 lines take ~14 requests.
+      for (let i = 0; i < 1000; i++) {
+        const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
         t.mfg_sales_order_items!.push({ ...t.mfg_sales_order_items![0]!, id, doc_no: 'SO-A', line_no: 100 + i, qty: 3 });
         t.delivery_order_items!.push({ id: `bdl-${id}`, delivery_order_id: i % 7 === 0 ? 'do-2' : 'do-1', so_item_id: id, item_code: 'PIL-1', qty: 2, company_id: 1 });
         if (i % 3 === 0) t.delivery_return_items!.push({ id: `bri-${id}`, do_item_id: `bdl-${id}`, qty_returned: 1, delivery_return_id: i % 2 ? 'dr-1' : 'dr-2', company_id: 1 });
@@ -278,15 +279,20 @@ describe('soDeliverableRemaining — pinned', () => {
     const run = async (opts: FakeOpts) => {
       const calls: string[] = [];
       const out = await soDeliverableRemaining(fakeSb(big(), [], { ...opts, calls }), ['SO-A', 'SO-B']);
-      return { out: [...out.entries()].sort(([a], [b]) => a.localeCompare(b)), returnReads: calls.filter((c) => c.startsWith('delivery_return_items')).length };
+      return { out: [...out.entries()].sort(([a], [b]) => a.localeCompare(b)), returnReads: calls.filter((c) => c.startsWith('delivery_return_items')).length, doLineReads: calls.filter((c) => c === 'delivery_order_items').length };
     };
     const scan = await run({});
     const chunked = await run({ failCount: true });
     const capped = await run({ capReturns: 100 });
     expect(scan.out).toEqual(chunked.out);
     expect(capped.out).toEqual(chunked.out);
-    expect(scan.returnReads).toBe(2);           // the count + one keyset page
+    expect(scan.returnReads).toBe(3);           // the count + one keyset page + the one unlinked line's read
     expect(chunked.returnReads).toBeGreaterThan(6);
+    // Linked DO lines ride the SO-line read: only the unlinked lookup touches delivery_order_items.
+    expect(scan.doLineReads).toBe(1);
+    const fallback = await run({ failEmbed: true });
+    expect(fallback.out).toEqual(chunked.out);
+    expect(fallback.doLineReads).toBeGreaterThan(6);
     // The fixture really exercises returns: some lines re-opened, cancelled returns ignored.
     expect(scan.out.filter(([, l]) => l.returned > 0).length).toBeGreaterThan(50);
   });
