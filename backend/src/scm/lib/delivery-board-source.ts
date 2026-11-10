@@ -201,7 +201,7 @@ export async function runBoardShadow(sql: Sql, c: BoardCtx, s: ShadowInput): Pro
   const sqlMs = Date.now() - t0;
   try {
     await sql.unsafe(
-      'INSERT INTO scm.delivery_board_shadow_runs (query, compared, differing, rest_ms, sql_ms, error, diffs) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)',
+      'INSERT INTO scm.delivery_board_shadow_runs (query, compared, differing, rest_ms, sql_ms, error, diffs) VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb)',
       [s.query, s.served.length, diffs.length, s.restMs, sqlMs, error, JSON.stringify(diffs.slice(0, MAX_DIFFS))] as never[],
     );
   } catch (e) {

@@ -47,17 +47,20 @@ type BoardCtx = Context<{ Bindings: Env; Variables: Variables }>;
 const SO_COLS = 'doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno';
 const DO_COLS = 'id, do_number, so_doc_no, status, driver_id, driver_name, vehicle, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date, created_at';
 const EFF = 'coalesce(amended_delivery_date, customer_delivery_date)';
-/* $1 allowed companies (jsonb array, null = unresolved: no predicate), $2 ?docs (jsonb, null = all),
+/* JSON and date parameters go in as TEXT ($n::text::jsonb): postgres.js serialises a
+   parameter Postgres describes as jsonb with JSON.stringify, so a JSON string would be
+   encoded twice and arrive as a jsonb scalar.
+   $1 allowed companies (jsonb array, null = unresolved: no predicate), $2 ?docs (jsonb, null = all),
    $3 band ranges inside (jsonb [[lo,hi],...]), $4/$5 band 5 outside lo/hi. */
 export const BOARD_HEAD_SQL = `
 WITH so AS (
   SELECT ${SO_COLS}
     FROM scm.mfg_sales_orders
    WHERE status::text <> 'DRAFT' AND status::text <> 'CANCELLED'
-     AND ($1::jsonb IS NULL OR company_id IN (SELECT jsonb_array_elements_text($1::jsonb)::bigint))
-     AND ($2::jsonb IS NULL OR doc_no IN (SELECT jsonb_array_elements_text($2::jsonb)))
-     AND ($3::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($3::jsonb) r WHERE ${EFF} BETWEEN (r->>0)::date AND (r->>1)::date))
-     AND ($4::date IS NULL OR ${EFF} IS NULL OR ${EFF} < $4::date OR ${EFF} > $5::date)
+     AND ($1::text::jsonb IS NULL OR company_id IN (SELECT jsonb_array_elements_text($1::text::jsonb)::bigint))
+     AND ($2::text::jsonb IS NULL OR doc_no IN (SELECT jsonb_array_elements_text($2::text::jsonb)))
+     AND ($3::text::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($3::text::jsonb) r WHERE ${EFF} BETWEEN (r->>0)::date AND (r->>1)::date))
+     AND ($4::text::date IS NULL OR ${EFF} IS NULL OR ${EFF} < $4::text::date OR ${EFF} > $5::text::date)
 )
 SELECT
   (SELECT coalesce(json_agg(r ORDER BY r.sort_order, r.code), '[]'::json) FROM (SELECT id, code, name, sort_order, active FROM scm.delivery_planning_regions) r) AS regions,
@@ -71,7 +74,7 @@ SELECT
    [doc, company] pairs (jsonb), $6 AutoCount book doc numbers (jsonb), $7 allowed
    companies (jsonb, null = unresolved). */
 export const BOARD_DATA_SQL = `
-WITH docs AS (SELECT DISTINCT d AS doc_no FROM jsonb_array_elements_text($1::jsonb) d),
+WITH docs AS (SELECT DISTINCT d AS doc_no FROM jsonb_array_elements_text($1::text::jsonb) d),
 -- kickOffBoardReads itemRowsReadP + soDeliverableRemaining's lines: non-cancelled lines.
 items AS (
   SELECT id, doc_no, item_group, item_code, stock_status, cancelled, warehouse_id, branding, created_at, line_no, qty
@@ -108,7 +111,7 @@ po_lock AS (
    WHERE $2::boolean AND i.doc_no IN (SELECT doc_no FROM docs)
 ),
 -- planningPoNosByDoc -> soConvertedPos: per company, company_id on all three tables.
-pairs AS (SELECT p->>0 AS doc_no, (p->>1)::bigint AS cid FROM jsonb_array_elements($5::jsonb) p),
+pairs AS (SELECT p->>0 AS doc_no, (p->>1)::bigint AS cid FROM jsonb_array_elements($5::text::jsonb) p),
 po_nos AS (
   SELECT pairs.cid, i.doc_no, po.id AS po_id, po.po_number, po.status
     FROM pairs
@@ -138,8 +141,8 @@ SELECT
   (SELECT coalesce(json_agg(t), '[]'::json) FROM po_nos t) AS po_nos,
   (SELECT coalesce(json_agg(t ORDER BY t.doc_no), '[]'::json) FROM (
      SELECT doc_no, expiry_date FROM public.sales_orders
-      WHERE $2::boolean AND doc_no IN (SELECT jsonb_array_elements_text($6::jsonb))
-        AND ($7::jsonb IS NULL OR company_id IN (SELECT jsonb_array_elements_text($7::jsonb)::bigint))) t) AS ac`;
+      WHERE $2::boolean AND doc_no IN (SELECT jsonb_array_elements_text($6::text::jsonb))
+        AND ($7::text::jsonb IS NULL OR company_id IN (SELECT jsonb_array_elements_text($7::text::jsonb)::bigint))) t) AS ac`;
 
 export type BoardHead = {
   regionCfg: RegionConfig;
