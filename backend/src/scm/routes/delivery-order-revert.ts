@@ -110,7 +110,7 @@ export const revertDeliveryOrderHandler = async (
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: doRow, error: doErr } = await scopeToCompanyId(
     sb.from('delivery_orders')
-      .select(`id, do_number, status, company_id, so_doc_no, delivered_at, signed_at, ${POD_SET_COLUMNS}`)
+      .select(`id, do_number, status, company_id, so_doc_no, delivered_at, signed_at, customer_delivered_date, ${POD_SET_COLUMNS}`)
       .eq('id', id),
     co.companyId,
   ).maybeSingle();
@@ -120,7 +120,7 @@ export const revertDeliveryOrderHandler = async (
   if (!doRow) return c.json(NOT_THIS_COMPANY, 404);
   const row = doRow as {
     do_number?: string | null; status?: string | null; company_id?: number | null; so_doc_no?: string | null;
-    delivered_at?: string | null; signed_at?: string | null;
+    delivered_at?: string | null; signed_at?: string | null; customer_delivered_date?: string | null;
   } & PodSet;
   const from = String(row.status ?? '').toUpperCase();
   const doNo = row.do_number ?? id;
@@ -183,6 +183,10 @@ export const revertDeliveryOrderHandler = async (
   if (undeliver) {
     patch.delivered_at = null;
     patch.signed_at = null;
+    /* Delivering now stamps the board's Delivered date, so undoing it clears the
+       date too: an undelivered DO carrying a delivered date would keep its SO
+       counted as delivered (so-undeliver-sync reads this column). */
+    patch.customer_delivered_date = null;
     Object.assign(patch, CLEARED_POD_SET);
     const archived = await archivePodAttempt(sb, {
       doId: id, companyId, from, reason, now, caller, row,
@@ -278,7 +282,11 @@ export const revertDeliveryOrderHandler = async (
     fieldChanges: compactChanges([
       fieldChange('status', from, toStatus),
       ...(undeliver
-        ? [fieldChange('delivered_at', row.delivered_at ?? null, null), fieldChange('signed_at', row.signed_at ?? null, null)]
+        ? [
+            fieldChange('delivered_at', row.delivered_at ?? null, null),
+            fieldChange('signed_at', row.signed_at ?? null, null),
+            fieldChange('customer_delivered_date', row.customer_delivered_date ?? null, null),
+          ]
         : []),
     ]),
   });
