@@ -21,6 +21,19 @@ export function orderComparator(orderedKeys: readonly string[]): (a: string, b: 
   };
 }
 
+/** The shared order after a drag in a filtered view: the shown rows take their
+ *  new order in the slots they already held, so rows hidden by a tab, region or
+ *  funnel keep their places (a plain replace wiped them). Saved keys no longer
+ *  loaded (`liveKeys`) are dropped so the array cannot grow without bound. */
+export function mergeShownOrder(saved: readonly string[], shownNew: readonly string[], liveKeys: ReadonlySet<string>): string[] {
+  const shown = new Set(shownNew);
+  const kept = [...new Set(saved)].filter((k) => liveKeys.has(k));
+  const keptSet = new Set(kept);
+  const base = [...kept, ...shownNew.filter((k) => !keptSet.has(k))];
+  let i = 0;
+  return base.map((k) => (shown.has(k) ? shownNew[i++] : k));
+}
+
 type OrderResponse = { orderedKeys: string[] };
 
 /** The shared manual order (array of row ids). Its own query key, so the board's

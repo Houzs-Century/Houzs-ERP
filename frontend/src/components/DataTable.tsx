@@ -1846,8 +1846,7 @@ function DataTableInner<T, L>({
     [sortedRows, selection?.selectedIds]);
   const footerTotals = actionRows?.rows.length && displayColumns.some((c) => c.total) ? actionRows : null;
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
-
-  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort; a drop reports the whole new order, persisted by the caller via `defaultSort`. */
+  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort (the toolbar offers to clear one); a drop reports the new order of the shown rows, persisted by the caller via `defaultSort`. */
   const rowReorderable = !!onRowReorder && sort == null;
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
@@ -2225,6 +2224,7 @@ function DataTableInner<T, L>({
                 <span className="font-mono text-ink">{visibleColumns.length}</span>
                 <span className="ml-1 text-ink-muted">of {allColumns.length} cols</span>
                 {copiedNote && <span role="status" className="ml-2 text-primary">{copiedNote}</span>}
+                {onRowReorder && sort && <button type="button" className="ml-2 text-primary underline" onClick={() => { setSort(null); reportServerSort(null); }}>Clear sort to drag rows</button>}
               </span>
             ) : (
               <span className="text-ink-muted">Loading…</span>
