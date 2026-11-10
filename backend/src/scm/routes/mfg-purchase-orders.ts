@@ -522,10 +522,9 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
      all three of the filters that decide the answer running after it in JS, so
      the picker offered at most 500 of the company's 15,050 live SO lines
      (measured 2026-09-08, docs/bugs/0677) chosen by document number. */
-  const { data: items, error } = await loadOutstandingSoLines(
-    supabase,
-    (q) => scopeToCompany(q, c),
-  );
+  /* The pooled MRP shortage below needs nothing from this read, so it STARTS here and is awaited where it stood (eager keeps its error for that site). */
+  const mrpProm = eager(loadLeadBuffers(c.env.DB).then((leadBuffers) => computeMrp(supabase, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers })));
+  const { data: items, error } = await loadOutstandingSoLines(supabase, (q) => scopeToCompany(q, c));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   type Row = {
@@ -577,7 +576,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   const shortageBySoItem = new Map<string, number>();
   let pooledOk = true;
   try {
-    const mrpRes = await computeMrp(supabase, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const mrpRes = (await mrpProm)();
     for (const sku of mrpRes.skus) {
       for (const l of sku.lines) shortageBySoItem.set(l.soItemId, l.shortageQty);
     }
