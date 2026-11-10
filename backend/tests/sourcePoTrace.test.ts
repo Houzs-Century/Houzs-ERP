@@ -246,7 +246,7 @@ describe("unionSoLineChips — the SO list PO No. union (defect 2026-08-02-A)", 
 // unit of HC-PO-2609-187 (raised for HC-SO-010769) plus 2 un-numbered AutoCount
 // cutover units, so the DO printed 2609-187 while the warehouse had the goods
 // under HC-PO-009812, the PO raised for this SO line.
-import { preferReceivedBoundPo, traceDoShipmentSources } from "../src/scm/lib/source-po-trace";
+import { classifyLots, preferReceivedBoundPo, traceDoShipmentSources } from "../src/scm/lib/source-po-trace";
 
 describe("preferReceivedBoundPo", () => {
   const received = new Map([
@@ -427,5 +427,44 @@ describe("traceDoShipmentSources — only company-1 hard-bound lines switch", ()
   test("a sofa accessory (fabric_accessory) is hard-bound and switches", async () => {
     const out = await traceDoShipmentSources(base({ item_group: "fabric_accessory" }), ["do-1"]);
     expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-OWN"]));
+  });
+});
+
+/* A lot sourced from a DO is units a shipped-DO edit gave back while the return
+   to the original lot was failing (production lots 4fd703ae / 60d356b9, CODY-(K),
+   2026-11-10). Read on its own it has no GRN and no PO. Its origin is the lot the
+   same DO consumed in the same bucket. */
+describe("classifyLots — a DO return lot follows its DO back to the paying lot", () => {
+  const LEG4 = 'fabriccode=bf-01|gap=12"|divanheight=8"|legheight=4"';
+  const tables = () => ({
+    inventory_lots: [
+      { id: "lot-4fd7", batch_no: null, source_doc_type: "DO", source_doc_id: "do-016", warehouse_id: "wh-kl", item_code: "CODY-(K)", variant_key: LEG4 },
+      { id: "lot-a4d7", batch_no: "2990-PO-2610-028", source_doc_type: "GRN", source_doc_id: "grn-2611-010", warehouse_id: "wh-kl", item_code: "CODY-(K)", variant_key: LEG4 },
+      { id: "lot-other", batch_no: "PO-ELSEWHERE", source_doc_type: "GRN", source_doc_id: "grn-x", warehouse_id: "wh-pj", item_code: "CODY-(K)", variant_key: LEG4 },
+    ],
+    inventory_lot_consumptions: [
+      { id: "c1", source_doc_type: "DO", source_doc_id: "do-016", lot_id: "lot-a4d7", warehouse_id: "wh-kl", item_code: "CODY-(K)", variant_key: LEG4, qty_consumed: 1, consumed_at: "2026-11-10T02:28:26Z" },
+      { id: "c2", source_doc_type: "DO", source_doc_id: "do-016", lot_id: "lot-other", warehouse_id: "wh-pj", item_code: "CODY-(K)", variant_key: LEG4, qty_consumed: 1, consumed_at: "2026-11-10T03:00:00Z" },
+    ],
+    inventory_movements: [],
+  });
+
+  test("the return lot classifies as the PO of the lot its DO consumed in that warehouse and bucket", async () => {
+    const out = await classifyLots(fakeSb(tables()), ["lot-4fd7"]);
+    expect(out.get("lot-4fd7")).toEqual({ po: "2990-PO-2610-028", adjustment: false });
+  });
+
+  test("a later DO that consumed the return lot traces to that PO", async () => {
+    const t = tables();
+    t.inventory_lot_consumptions.push({ id: "c3", source_doc_type: "DO", source_doc_id: "do-next", lot_id: "lot-4fd7", warehouse_id: "wh-kl", item_code: "CODY-(K)", variant_key: LEG4, qty_consumed: 1, consumed_at: "2026-11-11T01:00:00Z" });
+    const out = await traceDoShipmentSources(fakeSb({ ...t, delivery_orders: [{ id: "do-next", company_id: 2 }], delivery_order_items: [] }), ["do-next"]);
+    expect(out.byBucket.get(`do-next::CODY-(K)::${LEG4}`)).toEqual(bt(["2990-PO-2610-028"]));
+  });
+
+  test("with nothing consumed behind it, the return lot stays without a PO", async () => {
+    const t = tables();
+    t.inventory_lot_consumptions = [];
+    const out = await classifyLots(fakeSb(t), ["lot-4fd7"]);
+    expect(out.get("lot-4fd7")).toEqual({ po: null, adjustment: false });
   });
 });
