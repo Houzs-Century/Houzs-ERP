@@ -6,7 +6,7 @@
    screen offers.
    -------------------------------------------------------------------------- */
 
-import { LOCKED_STATUSES, soItemFrozen } from './so-detail-gates';
+import { LOCKED_STATUSES, soDownstreamHardLocked, soItemFrozen } from './so-detail-gates';
 import {
   SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, afterDoHeaderRefusal, afterDoLineAllowed, type AfterDoTarget,
 } from '../../shared/so-after-do-edit';
@@ -74,4 +74,17 @@ export function afterDoCopyProblem(result: unknown): string | null {
   const failed = (result as { doCopyFailed?: unknown } | null)?.doCopyFailed;
   if (!Array.isArray(failed) || failed.length === 0) return null;
   return `The Sales Order saved, but ${failed.join(', ')} was not updated. Open the Delivery Order and change it there too.`;
+}
+
+/** The phone detail's Edit button on a locked order (DEV-32): it opens when the
+ *  editor's Override would unlock something — a status lock with no order-wide
+ *  DO/SI freeze (desktop isSoLocked), or the after-DO mode. A migrated order
+ *  never opens. The editor still decides what each field and line allows. */
+export function soEditOpensOnOverride(
+  header: AfterDoHeader & { downstream_fully_frozen?: boolean | null; has_children?: boolean | null },
+  p: { can: (key: string) => boolean; migrated: boolean },
+): boolean {
+  if (p.migrated) return false;
+  const statusOnly = LOCKED_STATUSES.includes(String(header.status ?? '').toUpperCase()) && !soDownstreamHardLocked(header);
+  return statusOnly || soAfterDoMode(header, { can: p.can, override: true, migrated: false }).on;
 }

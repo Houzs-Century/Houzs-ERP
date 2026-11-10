@@ -285,7 +285,7 @@ function MobileStockTransferForm({
       </div>
 
       {pickerOpen && (
-        <MobileSkuPicker onPick={addSku} onClose={() => setPickerOpen(false)} />
+        <MobileSkuPicker serviceOnly={false} onPick={addSku} onClose={() => setPickerOpen(false)} />
       )}
     </div>
   );
