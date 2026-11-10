@@ -1,8 +1,9 @@
 /* The Cash Flow's Settlement / Deposit view (owner 2026-11-09, his Receipt & Payment
    workbook: 「就是一行settlement一行deposit」). Pinned: Total stays whole with its %, each
-   month becomes Settlement | Deposit under the month's name; a split line fills both, a
-   line not split prints one figure across the month (a month without it, one dash across);
-   a split running subtotal gets its two figures added up on a line under it. */
+   month becomes Settlement | Deposit under the month's name, each with its mark (owner
+   2026-11-10: 做好看一点 — Settlement petrol, Deposit gold); a split line fills both, a line not
+   split prints one figure across the month (a month without it, one empty cell across); a
+   split running subtotal gets its two figures added up on a line under it. */
 
 import { describe, expect, test } from 'vitest';
 import { SPLIT_SUM_LABEL, splitColumns, splitKey, splitLines } from './cashFlowSplit';
@@ -14,15 +15,16 @@ const sep: StatementColumn = { key: '2026-09', label: 'Sep 2026', kind: 'period'
 const sd = (settlementSen: number, depositSen: number) => ({ settlementSen, depositSen });
 
 describe('the columns', () => {
-  test('Total as it is; each month as Settlement then Deposit under the month, newest first, no % of their own', () => {
+  test('Total as it is; each month as Settlement then Deposit under the month, newest first, no % of their own, each with its mark', () => {
     const cols = splitColumns([total, oct, sep]);
     expect(cols.map((c) => c.key)).toEqual(['total', '2026-10:S', '2026-10:D', '2026-09:S', '2026-09:D']);
     expect(cols[0]).toBe(total);
     expect(cols[1]).toEqual({
       key: '2026-10:S', label: 'Settlement', kind: 'period', from: '2026-10-01', to: '2026-10-31', pct: false,
-      group: { key: '2026-10', label: 'Oct 2026', sub: 'to 09/11/2026 *' },
+      group: { key: '2026-10', label: 'Oct 2026', sub: 'to 09/11/2026 *' }, mark: 'petrol',
     });
-    expect(cols[4]).toMatchObject({ label: 'Deposit', group: { key: '2026-09', label: 'Sep 2026' } });
+    expect(cols[4]).toMatchObject({ label: 'Deposit', group: { key: '2026-09', label: 'Sep 2026' }, mark: 'gold' });
+    expect(cols[0]).not.toHaveProperty('mark');
     expect(cols[4]!.group).not.toHaveProperty('sub');
     expect(splitKey('2026-10', 'D')).toBe('2026-10:D');
   });
@@ -32,7 +34,7 @@ describe('the lines', () => {
   const months = [total, oct, sep];
   const line = (id: string, kind: StatementLine['kind'], cells: StatementLine['cells'], depth = 1): StatementLine => ({ id, label: id, kind, depth, cells });
 
-  test('a split line fills Settlement and Deposit in each month it has, a nil share a dash; Total stays whole with its %', () => {
+  test('a split line fills Settlement and Deposit in each month it has, a nil share no figure; Total stays whole with its %', () => {
     const [l] = splitLines([line('in:acc:300-0000', 'row', {
       total: { amountSen: 140_000, pct: 100 },
       '2026-10': { amountSen: 90_000, pct: 100, sd: sd(50_000, 40_000) },
@@ -46,13 +48,13 @@ describe('the lines', () => {
     expect(l!.spans).toBeUndefined();
   });
 
-  test('a line not split prints one figure across each month; a month without it, one dash across', () => {
+  test('a line not split prints one figure across each month; a month without it, one empty cell across', () => {
     const [l] = splitLines([line('out:acc:910-0000', 'row', { total: { amountSen: 5_000, pct: 2.5 }, '2026-10': { amountSen: 5_000, pct: 2.5 } })], months);
     expect(l!.cells).toEqual({ total: { amountSen: 5_000, pct: 2.5 }, '2026-10:S': { amountSen: 5_000, pct: null } });
     expect(l!.spans).toEqual({ '2026-10:S': 2, '2026-09:S': 2 });
   });
 
-  test('a split line missing a month leaves that month\'s two columns to a dash each; a block title stays bare', () => {
+  test('a split line missing a month leaves that month\'s two columns empty each; a block title stays bare', () => {
     const out = splitLines([
       line('blk:cf:in', 'block', {}, 0),
       line('in:acc:300-0000', 'row', { total: { amountSen: 9, pct: null }, '2026-10': { amountSen: 9, pct: null, sd: sd(9, 0) } }),

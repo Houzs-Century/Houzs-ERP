@@ -279,9 +279,10 @@ describe('Settlement / Deposit on the Cash Flow', () => {
   test('each month as Settlement | Deposit under the month; Total whole with its %; one read per month', async () => {
     await openSplit();
     expect(columnPaths.some((p) => p.includes('from=2026-06-01&to=2026-06-30'))).toBe(true);
-    /* The customer's deposit: nothing under Settlement, the money under Deposit. (Total is
-       its own read of the three months; this mock answers every read with the one report.) */
-    expect(cells('ACCOUNT RECEIVEABLE')).toEqual([['500.0071.4%', null], ...Array(3).fill(['-', null]).flatMap((dash) => [dash, ['500.00', null]])]);
+    /* The customer's deposit: nothing under Settlement (an empty cell, owner 2026-11-10), the money
+       under Deposit. (Total is its own read of the three months; this mock answers every read with
+       the one report.) */
+    expect(cells('ACCOUNT RECEIVEABLE')).toEqual([['500.0071.4%', null], ...Array(3).fill(['', null]).flatMap((empty) => [empty, ['500.00', null]])]);
     expect(cells('UTILITIES').slice(1, 3)).toEqual([['20.00', null], ['40.00', null]]);
     /* Not split: one figure across each month, centred. */
     expect(cells('Supplier advances (预付)')).toEqual([['300.0039.5%', null], ['300.00', '2'], ['300.00', '2'], ['300.00', '2']]);
