@@ -56,6 +56,7 @@ import {
 } from '../lib/companyScope';
 import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { dateOrNull } from '../lib/date-coerce';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
 
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
 poAmendments.use('*', supabaseAuth);
@@ -198,7 +199,7 @@ poAmendments.post('/', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.po_amendment.create')) {
-    return c.json({ error: 'po_amendment_create_forbidden', message: 'You do not have permission to raise a Purchase Order amendment.' }, 403);
+    return refuseWithoutWriting(c, { error: 'po_amendment_create_forbidden', message: 'You do not have permission to raise a Purchase Order amendment.' }, 403);
   }
 
   let body: {
@@ -217,10 +218,10 @@ poAmendments.post('/', async (c) => {
       oldSnapshot?: unknown;
     }>;
   };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
 
   const poId = typeof body.poId === 'string' ? body.poId.trim() : '';
-  if (!poId) return c.json({ error: 'po_required', reason: 'A purchase order id is required.' }, 400);
+  if (!poId) return refuseWithoutWriting(c, { error: 'po_required', reason: 'A purchase order id is required.' }, 400);
 
   const rawHeaderChanges = (body.headerChanges ?? null) as Record<string, unknown> | null;
   // Trust boundary — only these header columns may be requested (an unlisted key
@@ -230,10 +231,10 @@ poAmendments.post('/', async (c) => {
   if (rawHeaderChanges && typeof rawHeaderChanges === 'object') {
     const unknownKeys = Object.keys(rawHeaderChanges).filter((k) => !Object.prototype.hasOwnProperty.call(AMENDABLE_HEADER, k));
     if (unknownKeys.length > 0) {
-      return c.json({ error: 'header_field_not_amendable', reason: `These fields cannot be changed by an amendment: ${unknownKeys.join(', ')}.` }, 400);
+      return refuseWithoutWriting(c, { error: 'header_field_not_amendable', reason: `These fields cannot be changed by an amendment: ${unknownKeys.join(', ')}.` }, 400);
     }
     for (const [k, v] of Object.entries(rawHeaderChanges)) {
-      if (v !== null && typeof v !== 'string') return c.json({ error: 'header_field_invalid', reason: `The requested value for ${k} is not valid.` }, 400);
+      if (v !== null && typeof v !== 'string') return refuseWithoutWriting(c, { error: 'header_field_invalid', reason: `The requested value for ${k} is not valid.` }, 400);
       const val = v === null ? null : String(v).trim();
       headerChanges[k] = val === '' ? null : val;
     }
@@ -241,17 +242,17 @@ poAmendments.post('/', async (c) => {
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;
   const submittedLines = Array.isArray(body.lines) ? body.lines : [];
   if (!hasHeaderChanges && submittedLines.length === 0) {
-    return c.json({ error: 'amendment_empty', reason: 'There are no changes to request — change a line, a cost or the delivery date first, then submit the amendment.' }, 400);
+    return refuseWithoutWriting(c, { error: 'amendment_empty', reason: 'There are no changes to request — change a line, a cost or the delivery date first, then submit the amendment.' }, 400);
   }
 
   // Guard 2/3 — PO exists (company-scoped) and is not cancelled.
   const { data: poRow } = await scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, status, supplier_id, expected_at, notes')
     .eq('id', poId), c).maybeSingle();
-  if (!poRow) return c.json({ error: 'not_found' }, 404);
+  if (!poRow) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   const po = poRow as { id: string; po_number: string; status: string; supplier_id: string; expected_at: string | null; notes: string | null };
   if (String(po.status).toUpperCase() === 'CANCELLED') {
-    return c.json({ error: 'po_cancelled', reason: 'This Purchase Order is cancelled — it cannot be amended.' }, 409);
+    return refuseWithoutWriting(c, { error: 'po_cancelled', reason: 'This Purchase Order is cancelled — it cannot be amended.' }, 409);
   }
 
   // Guard 4 — one OPEN (REQUESTED) amendment per PO. The partial unique index is
@@ -260,7 +261,7 @@ poAmendments.post('/', async (c) => {
     .select('id, status').eq('po_id', poId), c);
   const prior = (priorRows ?? []) as Array<{ id: string; status: string }>;
   if (prior.some((a) => a.status === 'REQUESTED')) {
-    return c.json({ error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order — resolve it before raising another.' }, 409);
+    return refuseWithoutWriting(c, { error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order — resolve it before raising another.' }, 409);
   }
 
   // HC-0153: an ADD of a deactivated SKU is refused up front (approve re-checks).
@@ -269,7 +270,7 @@ poAmendments.post('/', async (c) => {
       change_type: l.changeType, new_item_code: l.newMaterialCode, new_variants: l.newVariants as Record<string, unknown> | null,
     })), activeCompanyId(c) ?? null);
   } catch (e) {
-    if (e instanceof InactiveSkuError) return c.json(e.body, 409);
+    if (e instanceof InactiveSkuError) return refuseWithoutWriting(c, e.body, 409);
     throw e;
   }
 
@@ -302,9 +303,9 @@ poAmendments.post('/', async (c) => {
   if (insErr) {
     // The partial unique index raced us — a clean 409, not a 500.
     if (/uq_po_amendment_open|duplicate key/i.test(insErr.message)) {
-      return c.json({ error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order.' }, 409);
+      return refuseWithoutWriting(c, { error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order.' }, 409);
     }
-    return c.json({ error: 'create_failed', reason: insErr.message }, 500);
+    return refuseWithoutWriting(c, { error: 'create_failed', reason: insErr.message }, 500);
   }
   const amendment = created as { id: string; po_number: string; amendment_no: string };
 

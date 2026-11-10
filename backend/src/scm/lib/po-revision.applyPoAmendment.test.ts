@@ -296,6 +296,31 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
    supplier's code for the new item, from the same binding the convert path
    reads, or the purchase order goes on telling the factory to build the old
    piece (HC-PO-2609-064: `5536-L(LHF)` left under `9058-1A(LHF)`). */
+/* Sister review P5: approving an amendment on a PO whose lines carry no dates
+   wiped the PO's expected arrival date, so it dropped out of the expected
+   lists and MRP timing. */
+describe('applyPoAmendment — the PO expected date survives undated lines', () => {
+  it('keeps expected_at when no line carries a delivery date', async () => {
+    const store = baseStore();
+    store.purchase_orders[0].expected_at = '2026-12-15';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 3, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_orders[0].expected_at).toBe('2026-12-15');
+  });
+
+  it('still follows the earliest line date when a line has one', async () => {
+    const store = baseStore();
+    store.purchase_orders[0].expected_at = '2026-12-15';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'DELIVERY', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: '2026-11-20', old_snapshot: {} },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_orders[0].expected_at).toBe('2026-11-20');
+  });
+});
+
 describe('applyPoAmendment — the supplier code follows a changed item code', () => {
   const bind = (item_code: string, supplier_id: string, supplier_sku: string): Row => ({
     item_code, supplier_id, supplier_sku, is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,

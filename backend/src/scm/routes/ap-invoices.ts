@@ -61,6 +61,8 @@ import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-requ
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { eventAccountRefusal } from '../lib/event-accounts';
 import { openingDocumentRefusal } from '../../acc/books-opening';
+import { paginateAll } from '../lib/paginate-all';
+import { duplicateBillRefusal, findDuplicateSupplierBill } from '../lib/duplicate-supplier-bill';
 
 type Row = Record<string, any>;
 
@@ -127,9 +129,13 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
-    let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
-    if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
-    const { data, error } = await q.order('invoice_date', { ascending: false }).limit(500);
+    /* Every bill, paged: the voucher pickers read this list, and a newest-500
+       cap made an older unpaid bill impossible to pay, with nothing said. */
+    const { data, error } = await paginateAll<Row>((from, to) => {
+      let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
+      if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
+      return q.order('invoice_date', { ascending: false }).order('id', { ascending: true }).range(from, to);
+    });
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
@@ -137,11 +143,11 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     /* The operational invoices, read-only here: the Procurement page raises
        and edits them; this list only SHOWS them beside the AP invoices so
        the Finance side sees a supplier's whole debt. */
-    const { data, error } = await scopeToCompany(
+    const { data, error } = await paginateAll<Row>((from, to) => scopeToCompany(
       sb.from('purchase_invoices')
         .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
-    ).order('invoice_date', { ascending: false }).limit(500);
+    ).order('invoice_date', { ascending: false }).order('id', { ascending: true }).range(from, to));
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
@@ -254,6 +260,11 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');
+  {
+    const dup = await findDuplicateSupplierBill(sb, 'ap_invoices', { companyId: co.companyId, supplierId: String(sup.supplier.id), ref: body.supplierInvoiceRef, excludeId: null, docKind });
+    if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
+    if (dup.duplicate) return c.json(duplicateBillRefusal(body.supplierInvoiceRef, dup.duplicate), 409);
+  }
   const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'SDN' : 'API'}-${docMonthTag(invoiceDate)}`);
   const { data: inv, error: insErr } = await sb.from('ap_invoices').insert({
     company_id: co.companyId,
@@ -351,6 +362,13 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     patch.supplier_id = sup.supplier.id;
   }
   if (body.supplierInvoiceRef !== undefined) patch.supplier_invoice_ref = body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null;
+  if (patch.supplier_id !== undefined || patch.supplier_invoice_ref !== undefined) {
+    const ref = patch.supplier_invoice_ref !== undefined ? patch.supplier_invoice_ref : inv.supplier_invoice_ref;
+    const docKind = String(inv.doc_kind ?? 'INV').toUpperCase() === 'DN' ? 'DN' : 'INV';
+    const dup = await findDuplicateSupplierBill(sb, 'ap_invoices', { companyId: co.companyId, supplierId: String(patch.supplier_id ?? inv.supplier_id), ref, excludeId: String(inv.id), docKind });
+    if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
+    if (dup.duplicate) return c.json(duplicateBillRefusal(ref, dup.duplicate), 409);
+  }
   Object.assign(patch, officialOwedUpdates(body, officialActor(c), inv));
   if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? inv.invoice_date;
   if (body.dueDate !== undefined) patch.due_date = dateOrNull(body.dueDate);

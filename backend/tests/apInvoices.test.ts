@@ -120,9 +120,37 @@ describe('raising an AP invoice', () => {
     });
     expect(String(sb.tables.acc_vendor_memory[0]!.vendor_key)).not.toBe('');
     /* The habit is last-saved-wins; times_seen only grows. */
-    await json(app, '/ap-invoices', 'POST', { ...BILL, lines: [{ debitAccountCode: '900-A002', amountSen: 5_000 }] });
+    await json(app, '/ap-invoices', 'POST', { ...BILL, supplierInvoiceRef: 'HVH-1012', lines: [{ debitAccountCode: '900-A002', amountSen: 5_000 }] });
     expect(sb.tables.acc_vendor_memory).toHaveLength(1);
     expect(sb.tables.acc_vendor_memory[0]).toMatchObject({ debit_account_code: '900-A002', times_seen: 2 });
+  });
+});
+
+describe('one supplier bill is owed once', () => {
+  test('a second live AP invoice with the same supplier + bill number is a 409 naming the first; cancelled, another supplier and a DN do not block', async () => {
+    const { app, sb } = harness();
+    expect((await json(app, '/ap-invoices', 'POST', BILL)).status).toBe(201);
+    const again = await json(app, '/ap-invoices', 'POST', { ...BILL, supplierInvoiceRef: ' hvh-0912 ' });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: 'duplicate_supplier_bill', existing: { invoiceNumber: `2990-API-${yymm}-001` } });
+    expect(sb.tables.ap_invoices).toHaveLength(1);
+
+    expect((await json(app, '/ap-invoices', 'POST', { ...BILL, supplierId: 'sup-t' })).status).toBe(201);
+    expect((await json(app, '/ap-invoices', 'POST', { ...BILL, docKind: 'DN' })).status).toBe(201);
+
+    sb.tables.ap_invoices[0]!.status = 'CANCELLED';
+    expect((await json(app, '/ap-invoices', 'POST', BILL)).status).toBe(201);
+  });
+
+  test('editing a bill onto a number that bill\'s supplier already has is refused; keeping its own number is not', async () => {
+    const { app, sb } = harness();
+    await json(app, '/ap-invoices', 'POST', BILL);
+    await json(app, '/ap-invoices', 'POST', { ...BILL, supplierInvoiceRef: 'HVH-0913' });
+    const second = sb.tables.ap_invoices[1]!;
+    const clash = await json(app, `/ap-invoices/${second.id}`, 'PATCH', { supplierInvoiceRef: 'HVH-0912' });
+    expect(clash.status).toBe(409);
+    expect(await clash.json()).toMatchObject({ error: 'duplicate_supplier_bill' });
+    expect((await json(app, `/ap-invoices/${second.id}`, 'PATCH', { supplierInvoiceRef: 'HVH-0913', notes: 'x' })).status).toBe(200);
   });
 });
 
@@ -188,6 +216,26 @@ describe('the Finance list — both kinds', () => {
     /* Filtered to one kind on request. */
     const only = await (await app.request('/ap-invoices?kind=PI')).json() as { rows: Array<Row> };
     expect(only.rows.map((r) => r.kind)).toEqual(['PI']);
+  });
+
+  /* The list fed the voucher pickers capped at the newest 500 with nothing
+     said, so an older unpaid bill could not be chosen to pay. */
+  test('every bill is listed, past one page: no silent newest-500 cap on either kind', async () => {
+    const day = (i: number) => `2026-0${1 + (i % 9)}-${String(1 + (i % 28)).padStart(2, '0')}`;
+    const ap = Array.from({ length: 1203 }, (_, i): Row => ({
+      id: `api-${i}`, company_id: CO, invoice_number: `2990-API-X-${i}`, supplier_id: 'sup-h', supplier_invoice_ref: null,
+      invoice_date: day(i), due_date: null, currency: 'MYR', exchange_rate: 1, total_sen: 100, paid_sen: 0, status: 'POSTED', doc_kind: 'INV',
+    }));
+    const pi = Array.from({ length: 1101 }, (_, i): Row => ({
+      id: `pi-${i}`, company_id: CO, invoice_number: `2990-PI-X-${i}`, supplier_invoice_ref: null, supplier_id: 'sup-t',
+      invoice_date: day(i), due_date: null, currency: 'MYR', total_sen: 100, paid_sen: 0, status: 'POSTED',
+    }));
+    const { app } = harness({ ap_invoices: ap, purchase_invoices: pi });
+    const apOnly = await (await app.request('/ap-invoices?kind=API')).json() as { rows: Array<Row> };
+    expect(apOnly.rows).toHaveLength(1203);
+    expect(new Set(apOnly.rows.map((r) => r.id)).size).toBe(1203);
+    const all = await (await app.request('/ap-invoices')).json() as { rows: Array<Row> };
+    expect(all.rows.filter((r) => r.kind === 'PI')).toHaveLength(1101);
   });
 
   test('a cancelled AP invoice shows nothing outstanding (it used to show its full amount)', async () => {

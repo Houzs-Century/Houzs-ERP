@@ -326,8 +326,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const openBill = (
     extraction: BillExtraction,
     supplierId: string | null,
+    files: PvFilePayload[],
     lines?: Array<{ description: string | null; amountSen: number | null }>,
   ) => {
+    /* The bill's pages ride the same stash as the voucher and AP invoice; the
+       New Purchase Invoice attaches them once it saves. */
+    stashPvFiles(files);
     navigate('/scm/purchase-invoices/new', { state: { scanBill: { extraction, supplierId, ...(lines ? { lines } : {}) } } });
   };
 
@@ -538,7 +542,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                             <Button variant="secondary" size="sm" disabled={busy} onClick={() => { markOpened([b.index]); openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] }); }}>
                               Open as voucher
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => { markOpened([b.index]); openBill(b.extraction, g.supplierId); }} disabled={busy}>
+                            <Button variant="ghost" size="sm" onClick={() => { markOpened([b.index]); openBill(b.extraction, g.supplierId, billFiles[b.index] ?? []); }} disabled={busy}>
                               Open as bill
                             </Button>
                           </span>
@@ -583,6 +587,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           openBill(
                             { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
                             g.supplierId,
+                            g.bills.flatMap((b) => billFiles[b.index] ?? []),
                             g.bills.map((b) => ({
                               description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
                               amountSen: b.extraction.totalSen,

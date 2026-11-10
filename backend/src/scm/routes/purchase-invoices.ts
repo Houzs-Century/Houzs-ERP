@@ -55,6 +55,7 @@ import { PI_AUDIT_FIELDS, loadPiAuditMeta, recordPiCreate } from '../lib/pi-audi
 import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
 import { getSupabaseService } from '../../db/supabase';
 import { notePiScanAccepted } from '../lib/scan-sample-review';
+import { duplicateBillRefusal, findDuplicateSupplierBill } from '../lib/duplicate-supplier-bill';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
@@ -761,6 +762,14 @@ purchaseInvoices.post('/', async (c) => {
     const rateGuard = await assertForeignRatePostable(sb, { currency: piCurrency, operatorRate: body.exchangeRate, docLabel: 'purchase invoice' });
     if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
+  {
+    const companyId = activeCompanyId(c);
+    if (companyId != null) {
+      const dup = await findDuplicateSupplierBill(sb, 'purchase_invoices', { companyId, supplierId: String(body.supplierId), ref: body.supplierInvoiceRef, excludeId: null, docKind: null });
+      if (!dup.ok) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: dup.reason }, 500);
+      if (dup.duplicate) return refuseWithoutWriting(c, duplicateBillRefusal(body.supplierInvoiceRef, dup.duplicate), 409);
+    }
+  }
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
     (invoiceNumber) => sb.from('purchase_invoices').insert({
@@ -1285,7 +1294,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     req: { json: () => c.req.json() },
     get: ((key: 'supabase' | 'user' | 'companyId' | 'allowedCompanyIds' | 'companyCode') =>
       c.get(key as 'supabase')) as unknown as PiFromGrnItemsContext['get'],
-  }, RECEIPT_PRICES);
+  }, RECEIPT_PRICES, 'refuse');
   /* Every core refusal (invalid_json, picks_required, load_failed, the migrated
      refusal, item_not_found, qty_must_be_positive, qty_exceeds_remaining and the
      not-billable gate) is emitted BEFORE the core's first write, and the original
@@ -1586,6 +1595,18 @@ purchaseInvoices.patch('/:id', async (c) => {
   // currency is normalised to upper-case like POST does.
   if (updates.currency !== undefined) updates.currency = normalizeCurrency(updates.currency);
   const sb = c.get('supabase');
+  if (updates.supplier_invoice_ref !== undefined || updates.supplier_id !== undefined) {
+    const { data: cur, error: curErr } = await scopeToCompany(sb.from('purchase_invoices').select('supplier_id, supplier_invoice_ref, company_id').eq('id', id), c).maybeSingle();
+    if (curErr) return c.json({ error: 'lookup_failed', reason: curErr.message }, 500);
+    const row = (cur ?? {}) as { supplier_id?: string | null; supplier_invoice_ref?: string | null; company_id?: number | null };
+    const ref = updates.supplier_invoice_ref !== undefined ? updates.supplier_invoice_ref : row.supplier_invoice_ref;
+    const supplierId = String((updates.supplier_id !== undefined ? updates.supplier_id : row.supplier_id) ?? '');
+    if (row.company_id != null) {
+      const dup = await findDuplicateSupplierBill(sb, 'purchase_invoices', { companyId: row.company_id, supplierId, ref, excludeId: id, docKind: null });
+      if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
+      if (dup.duplicate) return c.json(duplicateBillRefusal(ref, dup.duplicate), 409);
+    }
+  }
 
   /* The BEFORE half of every from->to pair. Also supplies the invoice number and
      company for the audit row, which the update's RETURNING gives us only after

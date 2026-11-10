@@ -148,6 +148,27 @@ export function fieldSessionRefusal(
   return null;
 }
 
+export const PASSWORD_CHANGE_REQUIRED_MESSAGE =
+  "Please choose a new password before continuing.";
+
+/**
+ * A session minted for a member who must change their password (origin
+ * 'password_change', services/auth.ts) reaches nothing behind this gate. The
+ * change-password, /me and logout endpoints live under /api/auth, which is a
+ * PUBLIC prefix above and so never arrives here. Every other session returns
+ * null and is untouched — including crew PIN and POS PIN sessions, which never
+ * carry this origin.
+ */
+export function passwordChangeSessionRefusal(
+  user: Pick<AuthUser, "session_origin">,
+): { status: 403; body: { error: string; code: string } } | null {
+  if (user.session_origin !== "password_change") return null;
+  return {
+    status: 403,
+    body: { error: PASSWORD_CHANGE_REQUIRED_MESSAGE, code: "password_change_required" },
+  };
+}
+
 export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (PUBLIC_API_PREFIXES.some((p) => path === p || path.startsWith(p + "/"))) {
@@ -186,7 +207,7 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   // every request takes the DB path exactly as before.
   const passUser = await tryPassAuth(c.env, c.req.header("X-Session-Pass") || "", token, Date.now());
   if (passUser) {
-    const refused = fieldSessionRefusal(passUser, path);
+    const refused = fieldSessionRefusal(passUser, path) ?? passwordChangeSessionRefusal(passUser);
     if (refused) return c.json(refused.body, refused.status);
     c.set("authPath", "pass");
     c.set("user", passUser);
@@ -201,7 +222,7 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (!user) {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   }
-  const refused = fieldSessionRefusal(user, path);
+  const refused = fieldSessionRefusal(user, path) ?? passwordChangeSessionRefusal(user);
   if (refused) return c.json(refused.body, refused.status);
   /* RE-ISSUE THE PASS HERE, because reaching this line means the caller has no
      usable one — and until now the only way to get one was to LOG IN AGAIN.

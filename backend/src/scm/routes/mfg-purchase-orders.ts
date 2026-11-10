@@ -43,6 +43,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { readPoLinkedGrns } from '../lib/po-grn-links';
 import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -102,6 +103,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { withPoSearchIds } from '../lib/po-item-code-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
+import { grnLineNetReceived } from '../lib/po-net-received';
 import { yymmFor } from '../../services/documentRefs';
 import { mrpPlanStaleRefusal, settleFromSosForMrp } from '../lib/mrp-plan-freshness';
 
@@ -744,8 +746,7 @@ async function loadAllocationsForItems(
    (one entry per GRN line), carrying the GR number + net qty + status. The PO
    counterpart of soLineDeliveries: lets the PO list show a "Received" column
    identical to the SO "Delivered" column. Cancelled GRNs are excluded so the
-   breakdown never shows a voided receipt. Net qty = qty_accepted − returned_qty;
-   zero/negative nets (fully returned) are dropped. Read-only display aid. */
+   breakdown never shows a voided receipt. Net qty = grnLineNetReceived; zero nets dropped. */
 export type PoLineReceipt = { grnNumber: string; qty: number; status: string };
 async function poLineReceipts(
   sb: any,
@@ -755,9 +756,9 @@ async function poLineReceipts(
   if (poItemIds.length === 0) return out;
   const { data: grnLines } = await sb
     .from('grn_items')
-    .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+    .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
     .in('purchase_order_item_id', poItemIds);
-  const rows = (grnLines ?? []) as Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; grn_id: string }>;
+  const rows = (grnLines ?? []) as Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
   const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
   if (grnIds.length === 0) return out;
   const { data: grns } = await sb.from('grns').select('id, grn_number, status').in('id', grnIds);
@@ -770,7 +771,7 @@ async function poLineReceipts(
     if (!r.purchase_order_item_id) continue;
     const meta = grnMeta.get(r.grn_id);
     if (!meta) continue; // cancelled GRN — excluded
-    const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
+    const net = grnLineNetReceived(r);
     if (net <= 0) continue;
     const arr = out.get(r.purchase_order_item_id) ?? [];
     arr.push({ grnNumber: meta.grnNumber, qty: net, status: meta.status });
@@ -787,17 +788,14 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   /* Perf (go-live) — the downstream-lock GRN count is independent of the
      header + items load, so fold it into the same parallel batch instead of a
      third sequential round-trip. */
-  const [headerRes, itemsRes, childCountRes] = await Promise.all([
+  const [headerRes, itemsRes, childLock] = await Promise.all([
     scopeToCompany(supabase
       .from('purchase_orders')
       .select(`${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address)`)
       .eq('id', id), c)
       .maybeSingle(),
     inPoLineOrder(supabase.from('purchase_order_items').select(ITEM_COLS).eq('purchase_order_id', id)),
-    supabase.from('grns')
-      .select('id', { head: true, count: 'exact' })
-      .eq('purchase_order_id', id)
-      .neq('status', 'CANCELLED'),
+    poHasDownstream(supabase, id), // header OR line link; a failed read locks
   ]);
 
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
@@ -805,10 +803,9 @@ mfgPurchaseOrders.get('/:id', async (c) => {
 
   /* Tier 2 downstream-lock — stamp has_children on the detail header so the
      PO Detail page can lock once any non-cancelled GRN exists. */
-  const childCount = childCountRes.count;
   const purchaseOrder = {
     ...(headerRes.data as Record<string, unknown>),
-    has_children: (childCount ?? 0) > 0,
+    has_children: childLock !== null,
     // Stamped below once the source SO is resolved (SO-amendment workflow).
     has_open_amendment: false,
     open_amendment: null as { id: string; status: string; amendment_no: string } | null,
@@ -968,10 +965,7 @@ mfgPurchaseOrders.get('/:id/linked', async (c) => {
   if (!owner.data) return c.json({ error: 'not_found' }, 404);
 
   const [grnRes, piRes, prRes] = await Promise.all([
-    sb.from('grns')
-      .select('id, grn_number, status, received_at')
-      .eq('purchase_order_id', id)
-      .order('received_at', { ascending: false }),
+    readPoLinkedGrns(sb, id), // header OR line link: a multi-PO receipt names only its first PO
     sb.from('purchase_invoices')
       .select('id, invoice_number, status, invoice_date')
       .eq('purchase_order_id', id)
@@ -982,12 +976,12 @@ mfgPurchaseOrders.get('/:id/linked', async (c) => {
       .order('return_date', { ascending: false }),
   ]);
 
-  if (grnRes.error) return c.json({ error: 'load_failed', reason: grnRes.error.message }, 500);
+  if (!grnRes.ok) return c.json({ error: 'load_failed', reason: grnRes.reason }, 500);
   if (piRes.error)  return c.json({ error: 'load_failed', reason: piRes.error.message  }, 500);
   if (prRes.error)  return c.json({ error: 'load_failed', reason: prRes.error.message  }, 500);
 
   return c.json({
-    grns:     grnRes.data ?? [],
+    grns:     grnRes.grns,
     invoices: piRes.data  ?? [],
     returns:  prRes.data  ?? [],
   });
