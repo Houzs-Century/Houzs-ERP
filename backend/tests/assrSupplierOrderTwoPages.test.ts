@@ -45,7 +45,8 @@ describe('Supplier Service Order layout', () => {
 describe('Supplier Service Order alignment', () => {
   test('the Next Action row starts its value where the rows above it do', () => {
     expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-2 \{ grid-template-columns: 38mm 1fr; \}/);
-    expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-split \{ grid-template-columns: 38mm 1fr 30mm 1fr; \}/);
+    expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-split \{ grid-template-columns: 38mm 1fr 34mm 1fr; \}/);
+    expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-4 \{ grid-template-columns: 38mm 1fr 34mm 1fr; \}/);
     expect(supplierBlock).toMatch(/<div class="mgrid cols-split">\s*<div class="lc">Next Action<\/div>/);
   });
 
