@@ -26,6 +26,7 @@ import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
+import * as bk from '../lib/stock-bucket-key'; // variant-tracked companies only; company 1 keys exactly as before
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -515,19 +516,20 @@ export async function writePurchaseReturnMovements(sb: any, prId: string, return
       }
       for (const m of (inRes.data ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; warehouse_id: string; batch_no?: string | null }>) {
         if (m.batch_no == null) continue;
-        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}`, m.batch_no);
+        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${bk.bucketIdFor(prCompanyId, m.variant_key)}`, m.batch_no);
       }
     }
   }
 
+  const prKeyOf = await bk.stockBucketKeyResolver(sb, prCompanyId, itemList.map((it) => bk.stockKeyLine(it, lineWh.get(it.id) ?? null)));
   const movements = itemList
     .filter((it) => it.qty_returned > 0)
     .map((it) => {
       const warehouseId = lineWh.get(it.id) ?? null;
       if (!warehouseId) return null;
-      const variantKey = computeVariantKey(it.item_group, it.variants ?? null);
+      const variantKey = prKeyOf(bk.stockKeyLine(it, warehouseId));
       const srcGrn = lineGrnId.get(it.id) ?? null;
-      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.item_code}::${variantKey}`) ?? null) : null;
+      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.item_code}::${bk.bucketIdFor(prCompanyId, variantKey)}`) ?? null) : null;
       return {
         movement_type: 'OUT' as const,
         warehouse_id: warehouseId,
@@ -670,7 +672,7 @@ async function writePrLineDeltaMovement(
        and reports nothing). Same concept, same shape: do not invent a second
        error class here. */
     if (!warehouseId) return [];
-    const variantKey = computeVariantKey(args.line.item_group, args.line.variants ?? null);
+    const variantKey = isOut ? await bk.stockBucketKeyOne(sb, args.companyId ?? null, bk.stockKeyLine(args.line, warehouseId)) : await bk.ownDocBucketKey(sb, { type: 'PURCHASE_RETURN', id: args.prId, movement: 'OUT', companyId: args.companyId ?? null }, args.line.item_code, computeVariantKey(args.line.item_group, args.line.variants ?? null));
     // Batch: resolve THIS line's OWN dye-lot deterministically from its source GRN
     // line's PO (grn_item_id → purchase_order_item_id → PO number). Not a .limit(1)
     // bucket lookup, which could grab a sibling line's batch when two lines of the

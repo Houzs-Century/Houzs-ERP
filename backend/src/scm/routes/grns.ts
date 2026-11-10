@@ -81,6 +81,7 @@ import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audi
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
+import * as bk from '../lib/stock-bucket-key'; // variant-tracked companies only; company 1 keys exactly as before
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { setGrnLineRackHandler } from '../lib/grn-line-rack';
 import { grnLineNetReceived } from '../lib/po-net-received';
@@ -567,6 +568,7 @@ async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: stri
       sb,
       itemRows.map((it) => it.purchase_order_item_id),
     );
+    const grnKeyOf = await bk.stockBucketKeyResolver(sb, companyId, itemRows.map((it) => bk.stockKeyLine(it, warehouseId)));
     const movements = itemRows
       // SERVICE lines (freight) never enter inventory — skip them here. Their
       // amount has already been allocated INTO the goods lines' lot cost above.
@@ -575,7 +577,7 @@ async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: stri
       .map((it) => ({
         movement_type: 'IN' as const,
         warehouse_id: warehouseId, item_code: it.item_code,
-        variant_key: keyedVariantWithWarning(grnNo, it, computeVariantKey), // mig 0095; warns when the group ignores them
+        variant_key: (keyedVariantWithWarning(grnNo, it, computeVariantKey), grnKeyOf(bk.stockKeyLine(it, warehouseId))), // mig 0095; warns when the group ignores them
         product_name: it.material_name,
         qty: it.qty_accepted,
         // Landed MYR lot cost = base (rate→MYR) + per-unit allocated freight.
@@ -2358,7 +2360,7 @@ export const cancelGrnCommand = async (
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
       const movements = buildGrnCancelReversals(lineList, batchByItem, {
         warehouseId, grnId: id, grnNumber: head.grn_number, performedBy: user.id,
-      });
+      }, await bk.loadOwnBucketKeys(sb, 'GRN', id, 'IN', activeCompanyId(c) ?? null));
       if (movements.length > 0) {
         /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
            — so the enclosing best-effort catch caught nothing, and discarding the
@@ -2536,7 +2538,7 @@ grns.patch('/:id', async (c) => {
         .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
-          const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
+          const variant_key = bk.ownBucketKey(bk.ownBucketKeyMapFor(activeCompanyId(c) ?? null, (priorIns ?? []) as Array<{ item_code: string; variant_key: string | null }>), it.item_code, computeVariantKey(it.item_group, it.variants ?? null));
           const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
           const base = {
             item_code: it.item_code, variant_key, product_name: it.material_name,
@@ -2896,11 +2898,12 @@ grns.post('/:id/items', async (c) => {
         // Migration 0120 — stamp this added line's IN with its source PO batch.
         const addedPoItemId = (it.purchaseOrderItemId as string) ?? null;
         const batchByItem = await resolvePoBatchByItem(sb, [addedPoItemId]);
+        const addedKey = await bk.stockBucketKeyOne(sb, activeCompanyId(c) ?? null, { item_code: String(it.itemCode), item_group: (it.itemGroup as string) ?? null, variants: it.variants ?? null, warehouse_id: warehouseId });
         await writeMovements(sb, [{
           movement_type: 'IN' as const,
           warehouse_id: warehouseId,
           item_code: String(it.itemCode),
-          variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
+          variant_key: addedKey,
           product_name: String(it.materialName),
           qty: qtyReceived,
           unit_cost_sen: toMyrSen(unitPriceSen, addLineRate),
@@ -2918,7 +2921,7 @@ grns.post('/:id/items', async (c) => {
           movement_type: 'IN',
           warehouse_id: warehouseId,
           item_code: String(it.itemCode),
-          variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
+          variant_key: addedKey,
           qty: qtyReceived,
         }], user.id);
         /* New stock landed → re-walk SO allocation. */
@@ -3092,7 +3095,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const newKey = computeVariantKey(effGroup, effVariants);
   const matCode = (updates.item_code as string | undefined) ?? (prev as { item_code: string }).item_code;
   const matName = (updates.material_name as string | undefined) ?? (prev as { material_name: string | null }).material_name;
-  const bucketChanged = oldKey !== newKey;
+  const bucketChanged = !bk.sameBucketFor(activeCompanyId(c) ?? null, oldKey, newKey);
   const qtyChanged = newAccepted !== prevAccepted;
   /* LEAK GUARD: a DRAFT GRN has no committed stock, so editing a line writes NO
      inventory delta (and runs no on-hand guard) — the row + header money update,
@@ -3175,17 +3178,19 @@ grns.patch('/:id/items/:itemId', async (c) => {
       ? ((await resolvePoBatchByItem(sb, [editPoItemId])).get(editPoItemId) ?? null)
       : null;
     const batchTag = editBatch ? { batch_no: editBatch } : {};
+    const oldStoredKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, matCode, oldKey);
+    const newStoredKey = bucketChanged ? await bk.stockBucketKeyOne(sb, activeCompanyId(c) ?? null, { item_code: matCode, item_group: effGroup, variants: effVariants, warehouse_id: warehouseId }) : oldStoredKey;
     const movements: Array<Parameters<typeof writeMovements>[1][number]> = [];
     if (bucketChanged) {
       if (prevAccepted > 0) movements.push({
         movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
-        variant_key: oldKey, product_name: matName, qty: prevAccepted,
+        variant_key: oldStoredKey, product_name: matName, qty: prevAccepted,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, reversing old bucket', ...batchTag,
       });
       if (newAccepted > 0) movements.push({
         movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
-        variant_key: newKey, product_name: matName, qty: newAccepted, unit_cost_sen: toMyrSen(unit, editRate),
+        variant_key: newStoredKey, product_name: matName, qty: newAccepted, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, re-adding new bucket', ...batchTag,
       });
@@ -3193,13 +3198,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
       const delta = newAccepted - prevAccepted;
       if (delta > 0) movements.push({
         movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
-        variant_key: newKey, product_name: matName, qty: delta, unit_cost_sen: toMyrSen(unit, editRate),
+        variant_key: newStoredKey, product_name: matName, qty: delta, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — receiving delta', ...batchTag,
       });
       else if (delta < 0) movements.push({
         movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
-        variant_key: newKey, product_name: matName, qty: -delta,
+        variant_key: newStoredKey, product_name: matName, qty: -delta,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — reversing delta', ...batchTag,
       });
@@ -3394,7 +3399,7 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
           ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
-          const variantKey = computeVariantKey(l.item_group, l.variants ?? null);
+          const variantKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, l.item_code, computeVariantKey(l.item_group, l.variants ?? null));
           // Carry THIS line's own dye-lot batch (= its source PO number) so the
           // reversing OUT depletes the EXACT lot the receipt created. Resolved
           // deterministically from the line's purchase_order_item_id — not a

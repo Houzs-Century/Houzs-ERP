@@ -27,7 +27,7 @@ const line = (over: Partial<GrnCancelLine> = {}): GrnCancelLine => ({
 
 describe('buildGrnCancelReversals', () => {
   test('a stock line becomes one reversing OUT on the GRN document', () => {
-    const rows = buildGrnCancelReversals([line()], new Map([['poi-1', 'PO-2607-009']]), CTX);
+    const rows = buildGrnCancelReversals([line()], new Map([['poi-1', 'PO-2607-009']]), CTX, null);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       movement_type: 'OUT',
@@ -48,7 +48,7 @@ describe('buildGrnCancelReversals', () => {
     const rows = buildGrnCancelReversals(
       [line({ item_code: 'FREIGHT', item_group: 'SERVICE' })],
       new Map(),
-      CTX,
+      CTX, null,
     );
     expect(rows).toEqual([]);
   });
@@ -60,7 +60,7 @@ describe('buildGrnCancelReversals', () => {
     const rows = buildGrnCancelReversals(
       [line({ purchase_order_item_id: 'poi-a' }), line({ purchase_order_item_id: 'poi-b' })],
       new Map([['poi-a', 'PO-A'], ['poi-b', 'PO-B']]),
-      CTX,
+      CTX, null,
     );
     expect(rows.map((r) => (r as { batch_no?: string }).batch_no)).toEqual(['PO-A', 'PO-B']);
   });
@@ -68,14 +68,14 @@ describe('buildGrnCancelReversals', () => {
   test('a manual line with no PO link carries NO batch_no, so it falls back to FIFO', () => {
     // Omitted, not null: writeMovements must not send an explicit null batch.
     const rows = buildGrnCancelReversals(
-      [line({ purchase_order_item_id: null })], new Map(), CTX,
+      [line({ purchase_order_item_id: null })], new Map(), CTX, null,
     );
     expect(rows[0]).not.toHaveProperty('batch_no');
   });
 
   test('a zero / null qty line writes nothing', () => {
     const rows = buildGrnCancelReversals(
-      [line({ qty_accepted: 0 }), line({ qty_accepted: null })], new Map(), CTX,
+      [line({ qty_accepted: 0 }), line({ qty_accepted: null })], new Map(), CTX, null,
     );
     expect(rows).toEqual([]);
   });

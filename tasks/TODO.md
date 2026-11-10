@@ -46,6 +46,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Dev
 - Receipt rebank: after one clean release of the atomic move, delete `RECEIPT_REBANK_MODE` and the two-step path (`moveOneTwoStep`, acc/receipt-rebank.ts); the payment-edit receipt re-issue (`followPaymentEdit` -> formaliseReceipt, `rebankTx: null`) still moves a transfer two-step until env reaches it — dev — 2026-11-10
+- All-or-nothing stock writes: GRN post is atomic (`GRN_POST_MODE`). Left: DO ship / confirm (`DO_SHIP_MODE`, next PR), then delivery returns and purchase returns. Delete the `two-step` path and the switch after one clean release — 2026-11-10
 - All-or-nothing stock writes: GRN post (`GRN_POST_MODE`) and DO first ship (`DO_SHIP_MODE`) are atomic. Left: delivery returns and purchase returns; a create-as-confirmed DO still inserts LOADED before its ship transaction (a crash in between = LOADED, no OUT; `check-half-done-documents` finds it). Delete the `two-step` paths and switches after one clean release — 2026-11-10
 - Last Mile map: draw each lorry's road-shaped line from the kept polyline in scm.lorry_day_routes (today straight lines between stops) — 2026-11-08
 - Fleet Health "Off the road": add and end an out-of-service window from the lorry record (backend has the table; no screen) — 2026-11-08
@@ -126,6 +127,7 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 
 - Delivery Planning, done 2026-10-26/27 (#4958 #4961 #4962 #4963): working tabs read `state=OPEN` (1.5 MB, ~2.3 s, was 5.4 MB / 5-12 s); an edit re-reads only its order (0.4-1.0 s); a trigger-fed change log refreshes others' changes every 30 s (poll 84 ms). Left: All / Delivered still read every row (3.8 s, 5.4 MB); scroll renders ~10 ms per new row (inline editors) — 2026-10-27
 - Staging migrations fail since 2026-10-26 02:31 (`Staging Migrations` workflow): staging holds 5 applied HR migrations not on main (`20261021T0300_hr_employees` … `20261022T1500_hr_trip_pay`), so pg-migrate stops on drift and staging gets no new migration. Production is unaffected (it applied #4963). Waiting on the owner of the HR branch: merge it, or retire those rows on staging — 2026-10-27
+- Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
 
 ## Recurring
 - Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev
