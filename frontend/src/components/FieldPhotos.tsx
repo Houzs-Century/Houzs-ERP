@@ -13,7 +13,9 @@ import { ACCEPTED_PHOTO_TYPES, type FieldPhoto, type FieldPhotosApi } from "../l
    fallbacks so the block looks right inside the phone shell (.hz-m) and on the
    desktop page. After a page reload the photos already uploaded come back
    (lib/fieldPhotos.ts restore); while they are being looked up, or when that
-   failed, the block says so. */
+   failed, the block says so. The crew share the stop: a photo another crew
+   member took is labelled with their name, and its Remove shows only when the
+   server says this person may remove it. */
 
 const C = {
   brand: "var(--brand, #16695f)",
@@ -73,8 +75,9 @@ export function FieldPhotos({ api, disabled, title }: {
               : <div style={{ display: "grid", placeItems: "center", height: "100%", fontSize: 11, color: C.mut }}>Photo {i + 1}</div>}
             <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "3px 5px", background: "rgba(0,0,0,.55)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", justifyContent: "space-between", gap: 4 }}>
               <span style={{ color: p.status === "failed" ? "#ffb3b3" : p.status === "done" ? "#b7f0cf" : "#fff" }}>{STATUS_TEXT[p.status]}</span>
+              {p.uploadedBy && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.uploadedBy}</span>}
             </div>
-            {!disabled && (
+            {!disabled && p.canRemove && (
               <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => api.remove(p.id)}
                 style={{ position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: 12, border: "none", background: "rgba(0,0,0,.6)", color: "#fff", fontSize: 14, lineHeight: "24px", padding: 0, cursor: "pointer" }}>×</button>
             )}
@@ -105,12 +108,13 @@ export function FieldPhotos({ api, disabled, title }: {
         <div key={p.id} style={{ fontSize: 11, color: C.red, marginTop: 3 }}>Photo {photos.indexOf(p) + 1}: {p.error}</div>
       ))}
       {api.notice && <div style={{ fontSize: 11, color: C.red, marginTop: 6 }}>{api.notice}</div>}
+      {api.syncError && <div style={{ fontSize: 11, color: C.mut, marginTop: 6 }}>Could not refresh the crew's photos ({api.syncError}). Trying again.</div>}
       {api.restore.phase === "loading" && (
-        <div style={{ fontSize: 11.5, color: C.mut, marginTop: 6 }}>Checking for photos you already uploaded for this job…</div>
+        <div style={{ fontSize: 11.5, color: C.mut, marginTop: 6 }}>Checking for photos already uploaded for this job…</div>
       )}
       {api.restore.phase === "failed" && (
         <div role="alert" style={{ fontSize: 11.5, color: C.red, marginTop: 6 }}>
-          Could not check for photos you already uploaded for this job ({api.restore.error}).
+          Could not check for photos already uploaded for this job ({api.restore.error}).
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             <button type="button" onClick={api.retryRestore} disabled={disabled}
               style={{ border: `1px solid ${C.brand}`, borderRadius: 8, background: C.card, color: C.brand, fontFamily: "inherit", fontSize: 12, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>Check again</button>

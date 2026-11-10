@@ -4,6 +4,7 @@ import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { fieldPhotoContext, uploadFieldPhoto } from "../vendor/scm/lib/slip";
 import { serverFieldPhotoRestore, useFieldPhotos } from "../lib/fieldPhotos";
+import { CREW_STOP_POLL_MS } from "../vendor/scm/lib/crew-stop-photos";
 import { FieldPhotos } from "../components/FieldPhotos";
 import {
   deliveryIssueDraftError, invalidateDeliveryIssues, reportJobDeliveryIssue, useRunDeliveryIssues,
@@ -30,7 +31,12 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
 }) {
   const qc = useQueryClient();
   const base = `/delivery-jobs/${jobRef.sourceType}/${encodeURIComponent(jobRef.sourceId)}/${encodeURIComponent(jobRef.leg)}`;
-  const q = useQuery({ queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000 });
+  /* The crew share the stop: while it is open and not completed, ask again so
+     the other crew member's On the way / Arrived / Complete shows here too. */
+  const q = useQuery({
+    queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000,
+    refetchInterval: (query) => (query.state.data?.progress?.completed_at ? false : CREW_STOP_POLL_MS),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
@@ -40,9 +46,11 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
      blocks the job (A2). */
   const [issueOn, setIssueOn] = useState(false);
   const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
-  const issuesQ = useRunDeliveryIssues({ jobs: [jobKey(jobRef)] });
+  const issuesQ = useRunDeliveryIssues({ jobs: [jobKey(jobRef)] }, true, CREW_STOP_POLL_MS);
 
   const progress = q.data?.progress ?? null;
+  const people = q.data?.people ?? {};
+  const who = (id: unknown) => (id == null ? null : people[String(id)] || null);
   const ctx = q.data?.context;
   const done = !!progress?.completed_at;
   // The backend takes at most 10 photos when a job is completed (delivery-job-progress.ts MAX_PHOTOS).
@@ -69,6 +77,8 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
       return true;
     } catch (e) {
       setError((e as Error).message || "Could not save. Check your connection and try again.");
+      // The other crew member may have just done it: show the stop as it is now.
+      void refresh();
       return false;
     } finally { setBusy(false); }
   };
@@ -99,6 +109,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
       await refresh();
     } catch (e) {
       setError((e as Error).message || "Could not complete the job. Your photos are uploaded; try Complete again.");
+      void refresh();
       setBusy(false);
       return;
     }
@@ -176,11 +187,14 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
 
             <div className="card" style={{ padding: 12, marginBottom: 12 }}>
               <div className="fld-l" style={{ marginBottom: 6 }}>Tracking</div>
-              {([["On the way", progress?.departed_at], ["Arrived", progress?.arrived_at], ["Completed — POD uploaded", progress?.completed_at]] as const).map(([k, v]) => (
+              {([["On the way", progress?.departed_at, progress?.departed_by], ["Arrived", progress?.arrived_at, progress?.arrived_by], ["Completed — POD uploaded", progress?.completed_at, progress?.completed_by]] as const).map(([k, v, by]) => (
                 <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0", color: v ? "var(--ink)" : "var(--mut2)" }}>
-                  <span>{k}</span><span className="tnum">{hm(v ?? null) ?? "—"}</span>
+                  <span>{k}</span><span className="tnum">{hm(v ?? null) ?? "—"}{v && who(by) ? ` · ${who(by)}` : ""}</span>
                 </div>
               ))}
+              {done && str(progress.pod_notes) && (
+                <div style={{ fontSize: 12.5, marginTop: 6 }}><span className="fld-l">Notes</span> {str(progress.pod_notes)}</div>
+              )}
             </div>
 
             {(progress?.pod_photo_keys?.length ?? 0) > 0 && (

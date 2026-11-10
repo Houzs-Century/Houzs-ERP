@@ -98,7 +98,9 @@ describe('field photo re-list after a reload', () => {
     expect(db.table[0]).toMatchObject({ company_id: CO, order_draft_id: 'field:u9:do:do-1', status: 'pending' });
   });
 
-  test('/init without a context stores none, and a payment slip never carries one', async () => {
+  // Every upload records its real uploader since the crew share a stop (a POD
+  // claim tells a crew member's photo from anyone else's by it), but no stop.
+  test('/init without a context stores no stop, and a payment slip never carries one; both name the uploader', async () => {
     for (const body of [
       { fileSize: 8, contentType: 'image/jpeg', contentHash: 'ab'.repeat(32), purpose: 'field_photo' },
       { fileSize: 8, contentType: 'image/jpeg', contentHash: 'ab'.repeat(32), fieldContext: 'do:do-1' },
@@ -106,7 +108,7 @@ describe('field photo re-list after a reload', () => {
       const res = await app(9).request('/slips/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { SLIPS: bucket() });
       expect(res.status).toBe(200);
     }
-    expect(db.table.map((r) => r.order_draft_id)).toEqual([undefined, undefined]);
+    expect(db.table.map((r) => r.order_draft_id)).toEqual(['field:u9:', 'field:u9:']);
   });
 
   test('/init refuses a context with control characters', async () => {
