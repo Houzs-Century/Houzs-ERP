@@ -63,7 +63,8 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
 - Fields in `CARRIED_NOT_INVERTED` must never be reverse-mapped into
   `corrected` — they are lossy, derived, or overwritten downstream, and
   re-stamping them manufactures a fake diff that teaches a wrong rule.
-- Duplicate rule **A** (same image SHA within 30 days, already minted an SO)
+- Duplicate rule **A** (same image SHA within 30 days, already minted an SO
+  that still exists and is not CANCELLED — both rules skip a cancelled SO)
   is a synchronous hard `409` at `/enqueue` unless `force=1`; duplicate rule
   **B** (same phone + ref, or same phone + slip date + total) only stamps
   `duplicate_of` and still creates the draft. Do not swap which one blocks.

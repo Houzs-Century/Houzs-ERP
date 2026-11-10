@@ -18,7 +18,7 @@
 // ONE file; generatePaymentVoucherPdf finalizes a single voucher, merging its
 // attachments when given any.
 
-import {
+import { docPageLabel,
   COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr,
   deliverPdf, deliverPdfBlob, drawHeader, drawInfoColumns, ensurePdfCjkFont,
   fmtDocDate, fmtRm, safeName, type PdfAction,
@@ -27,6 +27,7 @@ import {
    the four-layer vocabulary, docs/modules/document-status-vocabulary.md). */
 import { statusLabel } from './status-pill';
 import { fetchPvPrintBundle } from './payment-voucher-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type PvPdfHeader = {
   pv_number: string; status: string; voucher_date: string | null;
@@ -248,7 +249,7 @@ export async function renderPaymentVoucherInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.pv_number, margin, 290);
     doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.voucher_date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -278,7 +279,7 @@ export async function generatePaymentVoucherPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderPaymentVoucherInto(doc, autoTable, header, lines, allocations, accountName);
   const fileName = `${header.pv_number}-${safeName(header.payee_name)}.pdf`;
   if (!opts?.withFilesOf) {

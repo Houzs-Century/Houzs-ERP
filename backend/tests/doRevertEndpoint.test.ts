@@ -237,6 +237,14 @@ describe('DO revert — undo a wrong Delivered', () => {
     expect(tables.inventory_movements).toHaveLength(0);
   });
 
+  test('undoing Delivered also clears the board\'s Delivered date (sister-ERP gap review P14)', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED' });
+    tables.delivery_orders[0].customer_delivered_date = '2026-08-27';
+    expect((await revert(app, 'DISPATCHED', 'wrong order')).status).toBe(200);
+    expect(tables.delivery_orders[0].customer_delivered_date).toBeNull();
+    expect(tables.mfg_sales_orders[0].status).toBe('SHIPPED');
+  });
+
   test('SIGNED → DISPATCHED is allowed too (SIGNED reads Delivered)', async () => {
     const { app, tables } = revertApp({ doStatus: 'SIGNED' });
     expect((await revert(app, 'DISPATCHED')).status).toBe(200);

@@ -20,6 +20,7 @@ import {
 } from './pdf-common';
 import { fmtSenPlain } from '../../shared/format';
 import { sheetText, sheetWithTotalsBelow, type ReportSheet, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** A printed column: which sheet columns it carries (an amount and the % beside it), whether
     a rule follows it, and the heading it shares with the columns beside it. */
@@ -131,7 +132,7 @@ const BASELINE = 2 - 1.15;
 export async function generateReportPdf(given: ReportSheet, opts: { fileName: string; action?: PdfAction }): Promise<void> {
   const sheet = sheetWithTotalsBelow(given);
   const page = pageFor(sheet);
-  const doc = new jsPDF({ unit: 'mm', format: page.format, orientation: page.orientation });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: page.format, orientation: page.orientation });
   await ensurePdfCjkFont(doc, { title: sheet.title, subtitle: sheet.subtitle, meta: sheet.meta, tables: sheet.tables, notes: sheet.notes ?? [] });
   const fmt = sheet.fmt ?? fmtSenPlain;
   const pageW = doc.internal.pageSize.getWidth();

@@ -1242,7 +1242,9 @@ export function useUpdatePurchaseOrderHeader() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; poDate?: string; expectedAt?: string;
+      /** The PO's updated_at as this screen loaded it (sister review G6). The
+       *  server refuses a stale one (409) and a missing one (428). */
+      id: string; expectedUpdatedAt: string | null; poDate?: string; expectedAt?: string;
       currency?: Currency; notes?: string; supplierId?: string;
       /** Mig 0026 — supplier-revised header delivery dates. */
       supplierDeliveryDate2?: string | null;

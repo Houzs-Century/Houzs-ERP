@@ -61,4 +61,13 @@ describe('findRecentSoForSlipSha (HC-0117)', () => {
     });
     expect(await findRecentSoForSlipSha(svc, SHA, null)).toBe('HC-SO-2610-219');
   });
+
+  test('a cancelled SO is not reported as the original (sister-ERP G17)', async () => {
+    const svc = fakeSvc({
+      so_scan_samples: [{ id: 's1', image_sha256: SHA }],
+      scan_jobs: [{ sample_id: 's1', so_doc_no: 'HC-SO-2610-230' }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-2610-230', status: 'CANCELLED' }],
+    });
+    expect(await findRecentSoForSlipSha(svc, SHA, null)).toBeNull();
+  });
 });

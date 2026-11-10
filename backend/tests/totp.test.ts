@@ -71,6 +71,9 @@ describe("totp crypto (RFC 6238 vectors)", () => {
 // ── HTTP enroll + login flow ──────────────────────────────────
 
 const PW = "Sup3r-Secret-Pw!";
+/* A code is accepted once (services/totpCheck.ts), so a step after the one the
+   enable spent is what the next screen in the same test must use. */
+const nextCode = (secret: string) => currentTotp(secret, Date.now() + 30_000);
 let bearer: string;
 let userEmail: string;
 
@@ -167,7 +170,7 @@ describe("totp enroll + 2-step login", () => {
     // 6. correct code completes the login
     const good = await postJson("/api/auth/totp/login", {
       challenge,
-      code: await currentTotp(secret),
+      code: await nextCode(secret),
     });
     expect(good.status).toBe(200);
     expect(good.json.token).toBeTruthy();
@@ -194,10 +197,10 @@ describe("totp enroll + 2-step login", () => {
     const login = await postJson("/api/auth/login", { email: userEmail, password: PW });
     const challenge: string = login.json.challenge;
     // First use succeeds.
-    const first = await postJson("/api/auth/totp/login", { challenge, code: await currentTotp(secret) });
+    const first = await postJson("/api/auth/totp/login", { challenge, code: await nextCode(secret) });
     expect(first.status).toBe(200);
     // Replay with the same (now-deleted) challenge → 401.
-    const replay = await postJson("/api/auth/totp/login", { challenge, code: await currentTotp(secret) });
+    const replay = await postJson("/api/auth/totp/login", { challenge, code: await nextCode(secret) });
     expect(replay.status).toBe(401);
   });
 
@@ -211,12 +214,53 @@ describe("totp enroll + 2-step login", () => {
     expect(bad.status).toBe(400);
 
     // Correct code disables it.
-    const ok = await postJson("/api/totp/disable", { code: await currentTotp(secret) }, bearer);
+    const ok = await postJson("/api/totp/disable", { code: await nextCode(secret) }, bearer);
     expect(ok.status).toBe(200);
 
     // Login now returns a session directly (no 2FA).
     const login = await postJson("/api/auth/login", { email: userEmail, password: PW });
     expect(login.json.token).toBeTruthy();
     expect(login.json.totp_required).toBeUndefined();
+  });
+});
+
+/* Sister-ERP gap review BE7 (2026-11-10). Before this, the secret sat in
+   users.totp_secret as plain base32 and an accepted code stayed usable for its
+   whole ~90 s drift window. */
+describe("two-step codes are single-use and secrets are sealed at rest", () => {
+  const storedSecret = async () =>
+    (await env.DB.prepare(`SELECT totp_secret FROM users WHERE email = ?`).bind(userEmail).first<{ totp_secret: string }>())!.totp_secret;
+  const signIn = async (code: string) => {
+    const login = await postJson("/api/auth/login", { email: userEmail, password: PW });
+    return postJson("/api/auth/totp/login", { challenge: login.json.challenge, code });
+  };
+
+  test("a code that signed someone in is refused the second time, the next code works", async () => {
+    const setup = await postJson("/api/totp/setup", {}, bearer);
+    const secret: string = setup.json.secret;
+    const enrolCode = await currentTotp(secret);
+    expect((await postJson("/api/totp/enable", { code: enrolCode }, bearer)).status).toBe(200);
+    expect((await signIn(enrolCode)).status).toBe(401);
+    const next = await nextCode(secret);
+    expect((await signIn(next)).status).toBe(200);
+    expect((await signIn(next)).status).toBe(401);
+  });
+
+  test("setup stores the secret sealed, never as the base32 the user was shown", async () => {
+    const setup = await postJson("/api/totp/setup", {}, bearer);
+    const secret: string = setup.json.secret;
+    const stored = await storedSecret();
+    expect(stored.startsWith("enc:v1:")).toBe(true);
+    expect(stored).not.toContain(secret);
+    expect((await postJson("/api/totp/enable", { code: await currentTotp(secret) }, bearer)).status).toBe(200);
+  });
+
+  test("an old plain secret still signs in, and is sealed by that sign-in", async () => {
+    const secret = generateSecret();
+    await env.DB.prepare(`UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE email = ?`).bind(secret, userEmail).run();
+    expect((await signIn(await currentTotp(secret))).status).toBe(200);
+    const stored = await storedSecret();
+    expect(stored.startsWith("enc:v1:")).toBe(true);
+    expect((await signIn(await nextCode(secret))).status).toBe(200);
   });
 });

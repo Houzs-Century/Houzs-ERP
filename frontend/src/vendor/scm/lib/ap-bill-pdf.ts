@@ -17,7 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { fmtDateTime } from '@2990s/shared';
-import {
+import { docPageLabel,
   COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtRm,
 } from './pdf-common';
@@ -253,7 +253,7 @@ export async function renderApBillInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(d.invoice.invoice_number, margin, 290);
     doc.text(`${COMPANY.portalLabel} · ${s.footerDate}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p - startPage + 1} of ${pageCount - startPage + 1}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
   doc.setPage(pageCount);

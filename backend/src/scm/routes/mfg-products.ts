@@ -470,6 +470,15 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
       });
       continue;
     }
+    /* The column is the enum mfg_product_status (ACTIVE / INACTIVE). A sheet
+       typed "Active" used to reach the database as-is and fail the row with
+       Postgres's own enum message, which staff cannot read. */
+    const statusCell = hasVal(r.status) ? String(r.status).trim() : '';
+    const status = statusCell.toUpperCase();
+    if (statusCell && status !== 'ACTIVE' && status !== 'INACTIVE') {
+      failures.push({ code, reason: `status "${statusCell}" is not a status — use Active or Inactive.` });
+      continue;
+    }
     const conflict = category ? plan.conflicts.get(code) : undefined;
     if (conflict) {
       failures.push({ code, reason: conflict });
@@ -490,7 +499,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     if (category) row.category = category;
 
     // String fields — include only when the cell actually has a value.
-    if (hasVal(r.status))      row.status = String(r.status);
+    if (statusCell)            row.status = status;
     if (hasVal(r.description)) row.description = String(r.description);
     if (hasVal(r.base_model))  row.base_model = String(r.base_model);
     if (hasVal(r.size_label))  row.size_label = String(r.size_label);

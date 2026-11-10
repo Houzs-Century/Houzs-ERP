@@ -852,7 +852,7 @@ export function MfgDeliveryOrdersListV2() {
   // cancelled = CANCELLED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
-  const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgDeliveryOrdersPaged({
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useMfgDeliveryOrdersPaged({
     enabled: true,
     page,
     pageSize,
@@ -877,6 +877,7 @@ export function MfgDeliveryOrdersListV2() {
   // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
   // (or the PREVIOUS term's money under a placeholder page) would outlive the
   // rows it describes. Same flag SearchScopeHint already uses for its count.
+  const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
@@ -1648,7 +1649,7 @@ export function MfgDeliveryOrdersListV2() {
                 until a client-side funnel hides part of the page, at which
                 point they contradict the table beneath them. */}
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Total DOs"
               value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
               subtitle={visible.filtered ? "Filtered · shown below" : "All matching orders"}
@@ -1656,14 +1657,14 @@ export function MfgDeliveryOrdersListV2() {
               active
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Revenue"
               value={fmtRm(revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="In transit"
               value={(visible.filtered
                 ? visibleBucketCounts.inTransit
@@ -1674,7 +1675,7 @@ export function MfgDeliveryOrdersListV2() {
               rail="bg-accent-bright"
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Delivered"
               value={(visible.filtered
                 ? visibleBucketCounts.delivered

@@ -960,8 +960,8 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/services/assr.ts": {
-      "@typescript-eslint/no-explicit-any": 17,
-      "@typescript-eslint/no-unnecessary-condition": 28
+      "@typescript-eslint/no-explicit-any": 16,
+      "@typescript-eslint/no-unnecessary-condition": 27
     },
     "src/services/assrAlerts.ts": {
       "@typescript-eslint/no-unnecessary-condition": 6

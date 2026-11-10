@@ -21,6 +21,7 @@ import {
    other Finance page — pdf-common's fmtRm spells the ISO code ('MYR'), which
    is right on a document a supplier abroad may read and wrong here. */
 import { fmtSen as fmtRm } from '../../shared/format';
+import { PDF_COMPRESS } from './pdf-options';
 
 /* What the report endpoint hands over, structurally — named here so the
    document can be built and tested without the page's query module. */
@@ -175,7 +176,7 @@ export async function generatePaymentCorrectionsPdf(
   input: CorrectionsInput, opts?: { action?: PdfAction },
 ): Promise<void> {
   const report = correctionsDocument(input);
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'landscape' });
   await ensurePdfCjkFont(doc, report.lines.flat());
 
   let y = drawHeader(doc, {

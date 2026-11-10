@@ -33,6 +33,7 @@ import { correlatedFetch } from "../lib/requestCorrelation";
 import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { PDF_COMPRESS } from "../vendor/scm/lib/pdf-options";
 
 export type ShareMode = "contractor" | "brand";
 
@@ -475,7 +476,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       }
       const orient = (p: PlanPage) => (p.size && p.size.h > p.size.w ? "portrait" : "landscape");
       const { jsPDF } = await import("jspdf");
-      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: orient(pages[0]) });
+      const doc = new jsPDF({ ...PDF_COMPRESS, unit: "mm", format: "a4", orientation: orient(pages[0]) });
       pages.forEach((p, i) => {
         if (i > 0) doc.addPage("a4", orient(p));
         drawPlanPage(doc, p);

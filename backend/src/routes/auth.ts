@@ -26,7 +26,8 @@ import { sendEmail, publicUrl, resetEmailHtml, inviteEmailHtml, erpProductName }
 import { getBrandingForCompany } from "../services/branding";
 import { defaultCompanyCodeForHost } from "../middleware/companyContext";
 import { validatePasswordStrength } from "../services/passwordStrength";
-import { verifyTotp, consumeBackupCode } from "../services/totp";
+import { consumeBackupCode } from "../services/totp";
+import { acceptTotpCode } from "../services/totpCheck";
 import { checkRateLimit, clearRateLimit, clientIp } from "../middleware/rateLimit";
 import { recordFailedLogin, recordRateLimitedOnce } from "../services/failedLogins";
 import { provisionPersonalMailbox } from "../lib/mail-provision";
@@ -307,12 +308,13 @@ app.post("/totp/login", async (c) => {
   const fieldDoor = doorPart === "field";
 
   const row = await c.env.DB.prepare(
-    `SELECT totp_secret, totp_enabled, totp_backup_codes, status, password_change_required_at FROM users WHERE id = ?`,
+    `SELECT totp_secret, totp_enabled, totp_backup_codes, totp_last_step, status, password_change_required_at FROM users WHERE id = ?`,
   )
     .bind(userId)
     .first<{
       password_change_required_at: string | null;
       totp_secret: string | null;
+      totp_last_step: number | string | null;
       totp_enabled: number;
       totp_backup_codes: string | null;
       status: string;
@@ -322,7 +324,7 @@ app.post("/totp/login", async (c) => {
     return c.json({ error: "Two-factor is not available for this account." }, 401);
   }
 
-  let ok = await verifyTotp(row.totp_secret, code);
+  let ok = await acceptTotpCode(c.env, userId, row, code);
   if (!ok && row.totp_backup_codes) {
     try {
       const remaining = await consumeBackupCode(code, JSON.parse(row.totp_backup_codes));

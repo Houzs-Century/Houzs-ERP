@@ -842,7 +842,7 @@ export function PurchaseOrdersListV2() {
   // PARTIALLY_RECEIVED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
-  const { data, isLoading, isFetching, isPlaceholderData, error } = usePurchaseOrdersPaged({
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = usePurchaseOrdersPaged({
     page,
     pageSize,
     status: apiStatus,
@@ -866,6 +866,7 @@ export function PurchaseOrdersListV2() {
   // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
   // (or the PREVIOUS term's money under a placeholder page) would outlive the
   // rows it describes. Same flag SearchScopeHint already uses for its count.
+  const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const { cancelPo } = usePoCancelAction();
@@ -1534,7 +1535,7 @@ export function PurchaseOrdersListV2() {
               match count and is right until a client-side funnel hides part of
               the page, at which point it contradicts the table underneath. */}
           <StatCard
-            pending={statsPending}
+            pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
             label="Total POs"
             value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
             subtitle={visible.filtered ? "Filtered · shown below" : "All matching POs"}
@@ -1542,14 +1543,14 @@ export function PurchaseOrdersListV2() {
             active
           />
           <StatCard
-            pending={statsPending}
+            pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
             label="Committed"
             value={fmtRm(money.committed)}
             subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
             rail="bg-accent"
           />
           <StatCard
-            pending={statsPending}
+            pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
             label="Outstanding"
             value={fmtRm(money.outstanding)}
             subtitle={
@@ -1561,7 +1562,7 @@ export function PurchaseOrdersListV2() {
             rail="bg-accent-bright"
           />
           <StatCard
-            pending={statsPending}
+            pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
             label="Received"
             value={fmtRm(money.received)}
             subtitle={

@@ -34,6 +34,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 
 Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
+- Header `PATCH /:id` requires `expectedUpdatedAt` = the `updated_at` the editor loaded (`lib/po-version.ts`): missing -> 428 `po_version_required`, stale -> 409 `po_version_conflict`, nothing written. The desktop Save sends it first, before any line write; with no header change it sends the token alone, which bumps `updated_at` without an audit row or AutoCount edit. Compared at millisecond precision before the write, not a SQL compare-and-set (an integer `version` column like the SO's would close the same-millisecond race; needs a migration).
 - A GRN belongs to a PO by its header `purchase_order_id` OR by any of its lines (`grn_items.purchase_order_item_id`): a receipt converted from several POs names only the first in its header. The lock (`poHasDownstream`), the detail's `has_children` and `GET /:id/linked` all read both (`lib/po-grn-links.ts`), as the list's `stampPoListGrns` already did. A failed read locks.
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
@@ -44,6 +45,8 @@ Locks and required fields
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
 - Send-to-supplier goes To = supplier Email, Cc = Email 2 / Email 3 (valid only, once each; Email blank -> first valid of the others is To); an invalid main Email refuses. Rule: `shared/supplier-emails.ts`, mirrored in the frontend.
 - Send-to-supplier sets Reply-To to the user who pressed Send (`poReplyTo` in `scm/lib/po-email.ts`), so a supplier's reply goes to that purchaser, not the shared no-reply sender. No valid address on the user: the default Reply-To (`EMAIL_REPLY_TO`) applies. The PO stores no purchaser of its own.
+- The email subject, body and attachment name carry the printed revision mark (`PO-2607-021_R1`, `poEmailDocNo` in `scm/lib/po-email.ts`, same rule as the PDF's `poDisplayNumber`); the audit row keeps the underlying `po_number`.
+- A combined PO print numbers each PO's own pages, header and footer (`finalizePoPdf`). Every PDF the app builds is compressed (`PDF_COMPRESS`, `frontend/src/vendor/scm/lib/pdf-options.ts`).
 - A GRN may not receive against a held PO: receive gates read the ROW via `isReceivablePo` (status + `on_hold`), never status alone.
 
 Linking PO lines to SO lines

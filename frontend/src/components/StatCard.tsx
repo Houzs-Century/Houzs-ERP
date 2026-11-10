@@ -24,6 +24,15 @@ interface Props {
    * never be rendered as a figure — least of all a money one.
    */
   pending?: boolean;
+  /**
+   * The read behind the number FAILED. Wins over `pending`: a failed read is not
+   * "loading", and a tile that says "Loading…" after its request has died keeps
+   * staff waiting instead of retrying. Absent = not failed, which still never
+   * shows a figure while `pending` is set — the safe direction.
+   */
+  failed?: boolean;
+  /** Offered as a Retry link while `failed`. */
+  onRetry?: () => void;
 }
 
 /**
@@ -35,8 +44,9 @@ interface Props {
  * type switches to <button> so it's keyboard-accessible; we also bump
  * hover affordance to make it read as clickable.
  */
-export function StatCard({ label, value, subtitle, tone = "default", onClick, active, rail, pending }: Props) {
+export function StatCard({ label, value, subtitle, tone = "default", onClick, active, rail, pending, failed, onRetry }: Props) {
   const Tag = onClick ? "button" : "div";
+  const unknown = pending || failed;
   return (
     <Tag
       onClick={onClick}
@@ -68,18 +78,40 @@ export function StatCard({ label, value, subtitle, tone = "default", onClick, ac
       <div
         className={cn(
           "mt-2 font-display text-[22px] font-extrabold leading-none tracking-tight sm:mt-3 sm:text-[26px]",
-          pending && "text-ink-muted",
-          !pending && tone === "default" && "text-ink",
-          !pending && tone === "success" && "text-synced",
-          !pending && tone === "warning" && "text-warning-text",
-          !pending && tone === "error" && "text-err"
+          unknown && "text-ink-muted",
+          !unknown && tone === "default" && "text-ink",
+          !unknown && tone === "success" && "text-synced",
+          !unknown && tone === "warning" && "text-warning-text",
+          !unknown && tone === "error" && "text-err"
         )}
-        aria-busy={pending || undefined}
-        data-pending={pending ? "true" : undefined}
+        aria-busy={(pending && !failed) || undefined}
+        data-pending={pending && !failed ? "true" : undefined}
+        data-failed={failed ? "true" : undefined}
       >
-        {pending ? <span title="Not loaded yet">&mdash;</span> : value}
+        {failed ? <span title="Couldn't load">&mdash;</span> : pending ? <span title="Not loaded yet">&mdash;</span> : value}
       </div>
-      {subtitle && (
+      {failed ? (
+        <div className="mt-2 text-[11px] font-medium text-err" role="alert">
+          Couldn't load
+          {onRetry && (
+            <>
+              {" · "}
+              {/* A span, not a button: the card itself may be a <button>. */}
+              <span
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer underline"
+                onClick={(e) => { e.stopPropagation(); onRetry(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onRetry(); }
+                }}
+              >
+                Retry
+              </span>
+            </>
+          )}
+        </div>
+      ) : subtitle && (
         <div className="mt-2 text-[11px] font-medium text-ink-secondary">
           {pending ? "Loading…" : subtitle}
         </div>

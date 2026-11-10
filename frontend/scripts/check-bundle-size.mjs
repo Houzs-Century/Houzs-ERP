@@ -290,7 +290,11 @@ const CEILINGS = {
   // PO fix (PR #5496) adds no eager module (PurchaseInvoiceFromGrn and its
   // search helper are lazy) and crossed it by bytes in the merge queue, the
   // renamed lazy-chunk hashes in the entry's map. Same mechanism as above.
-  INITIAL_JS_GZIP: 180 * KB,
+  // 180 -> 181 on 2026-11-10: main sat AT 180.0 again; the mouse-wheel guard
+  // for number inputs (PR #5553) is loaded by a dynamic import from main.tsx,
+  // so its code is not in the entry, but the import stub and the renamed
+  // lazy-chunk hashes crossed it by bytes in the merge queue (180.0 -> 180.1).
+  INITIAL_JS_GZIP: 181 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

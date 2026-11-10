@@ -47,7 +47,7 @@ vi.mock("../../hooks/useStaffLookup", () => ({ useStaffLookup: () => ({ nameOf: 
 vi.mock("../../vendor/scm/lib/sales-invoice-queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../vendor/scm/lib/sales-invoice-queries")>()),
   useSalesInvoicesPaged: () => ({
-    data: { salesInvoices: h.rows, total: 2, page: 0, pageSize: 1, statusCounts: { all: 2, sent: 2, partial: 0, paid: 0, cancelled: 0 } },
+    data: { salesInvoices: h.rows, total: 2, page: 0, pageSize: 1, statusCounts: { all: 2, draft: 1, sent: 1, partial: 0, paid: 0, cancelled: 0 } },
     isLoading: false,
     isFetching: false,
     isPlaceholderData: false,
@@ -163,5 +163,13 @@ describe("Sales Invoices list: the one Export", () => {
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(h.notify).toHaveBeenCalled());
     expect(h.written).toHaveLength(0);
+  });
+});
+
+describe("Sales Invoices list: status tabs", () => {
+  it("drafts have their own tab and are not counted under Sent", () => {
+    mount("/scm/sales-invoices");
+    expect(screen.getAllByText("Draft · 1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sent · 1").length).toBeGreaterThan(0);
   });
 });

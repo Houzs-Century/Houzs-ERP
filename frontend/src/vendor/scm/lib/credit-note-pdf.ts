@@ -27,6 +27,7 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, DOC_TABLE_STYLES, DOC_TABLE_HEAD_STYLES, type PdfAction,
 } from './pdf-common';
 import type { CreditNoteDetail } from './credit-note-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type CreditNotePdfHeader = {
   note_number: string;
@@ -295,7 +296,7 @@ export async function generateCreditNotePdf(
   opts?: { action?: PdfAction; knockedOff?: CreditNoteKnockedOff | null },
 ): Promise<void> {
   const { jsPDF, autoTable } = await load();
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   renderCreditNoteInto(doc, autoTable, h, lines, accountName, opts?.knockedOff ?? null);
   deliverPdf(doc, `${h.note_number}-${safeName(h.party_name ?? h.kind)}.pdf`, opts?.action);
 }
@@ -308,7 +309,7 @@ export async function generateCreditNotesPdf(
 ): Promise<void> {
   if (items.length === 0) return;
   const { jsPDF, autoTable } = await load();
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   items.forEach((it, i) => {
     if (i > 0) doc.addPage();
     renderCreditNoteInto(doc, autoTable, it.header, it.lines, accountName, it.knockedOff ?? null);

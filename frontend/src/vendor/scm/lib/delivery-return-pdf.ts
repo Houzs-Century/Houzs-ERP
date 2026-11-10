@@ -15,7 +15,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { docPageLabel, COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { stripBookText } from './book-text';
@@ -23,6 +23,7 @@ import { stripBookText } from './book-text';
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
+import { PDF_COMPRESS } from './pdf-options';
 
 type DrHeader = {
   return_number: string; status: string; return_date: string;
@@ -180,7 +181,7 @@ export async function renderDeliveryReturnInto(
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.return_number, margin, 290);
     doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.return_date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -193,7 +194,7 @@ export async function generateDeliveryReturnPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderDeliveryReturnInto(doc, autoTable, header, items, opts);
   deliverPdf(doc, `${header.return_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
 }
@@ -206,7 +207,7 @@ export async function generateCombinedDeliveryReturnPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   for (let i = 0; i < docs.length; i += 1) {
     if (i > 0) doc.addPage();
     await renderDeliveryReturnInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);
