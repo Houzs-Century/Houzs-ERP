@@ -490,6 +490,7 @@ POST,/api/projects/brands/:id/logo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth
 GET,/api/projects/brands/logo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/projects.ts
 PUT,/api/projects/brands/reorder,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/calendar/events,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.calendar"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
+GET,/api/projects/calendar/search,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.calendar"")",,NO,DECLARED_GATE,backend/src/routes/projectsCalendarSearch.ts
 GET,/api/projects/checklist-templates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.list"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/checklist-templates/:id/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.list"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/checklist-templates/:id/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
