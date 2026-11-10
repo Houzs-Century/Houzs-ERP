@@ -1235,9 +1235,14 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
     if (!updated) return c.json({ consignmentNote: { id, status: 'CANCELLED' } });
     data = updated as { id: string; status: string };
   } else {
+    /* Written only over the status the guards above read: a cancel landing in
+       between must not be overwritten, or the cancelled note revives and its
+       stock is shipped out again by the resync below. */
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-      .update({ status: toStatus, ...ts }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts }).eq('id', id), co.companyId)
+      .eq('status', prevStatus).select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json({ error: 'status_changed', message: 'This consignment note just changed. Reload it and try again.' }, 409);
     data = updated as { id: string; status: string };
   }
 

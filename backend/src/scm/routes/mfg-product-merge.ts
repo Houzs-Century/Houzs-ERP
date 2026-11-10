@@ -164,7 +164,7 @@ async function planModels(sql: any, co: number, keep: string, drops: string[]) {
   if (bad.length > 0) plan = refuse(bad.flatMap((p: any) => p.refusals.map((r: string) => `SKU merge "${p.drop}" -> "${p.keep}": ${r}`)));
   const acting = plan.refusals.length === 0;
   const totals = {
-    groups: acting ? 1 : 0, pairs: plan.pairs.length, moves: plan.moves.length, fills: plan.fills.length,
+    groups: acting ? 1 : 0, pairs: plan.pairs.length, moves: plan.moves.length, inactive: plan.inactiveMoves.length, fills: plan.fills.length,
     folds: plan.foldModels.length, idleModels: 0, idleSkus: 0,
   };
   return { world, plan, skuWorld, skuPlan, totals, confirm: modelConfirmPhrase(totals) };

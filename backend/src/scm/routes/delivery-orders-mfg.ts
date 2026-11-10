@@ -4935,11 +4935,19 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
    docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md. */
 
 // ── Status transition + inventory deduction / reversal ────────────────────
+/* A cancel whose stock reversal failed stays CANCELLED; pressing Cancel again
+   later re-runs the (idempotent) reversal. Within a minute it is a double press,
+   and two reversals in flight could both pass the reversal's existence check. */
+const CANCEL_RETRY_AFTER_MS = 60_000;
+export const cancelReversalRetryDue = (updatedAt: string | null | undefined, nowMs: number): boolean =>
+  Boolean(updatedAt) && nowMs - Date.parse(String(updatedAt)) >= CANCEL_RETRY_AFTER_MS;
+
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let body: {
     status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
+    confirmShortStock?: boolean;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* NORMALISE FIRST, exactly as the Sales Order handler does
@@ -5021,7 +5029,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     scopeCompanyId = co.companyId;
   }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), scopeCompanyId,
+    sb.from('delivery_orders').select('status, so_doc_no, updated_at').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5039,9 +5047,12 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
   }
 
-  // Already cancelled → echo back without re-reversing (would double-credit).
+  // Already cancelled → echo back; past the retry window, re-run the idempotent reversal.
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
-    return c.json({ deliveryOrder: { id, status: 'CANCELLED' } });
+    const retried = cancelReversalRetryDue((cur as { updated_at?: string | null }).updated_at, Date.now())
+      ? await reverseInventoryForDo(sb, id, user.id).catch((e: unknown) => [`DO reversal threw: ${e instanceof Error ? e.message : 'unknown'}`])
+      : [];
+    return c.json({ deliveryOrder: { id, status: 'CANCELLED' }, movementErrors: retried.length ? retried : undefined });
   }
   /* Audit 2026-06-10 #1 (CRITICAL) — a CANCELLED DO is FINAL. Un-cancelling
      re-shipped goods with ZERO net stock deduction: the cancel's add-back
@@ -5197,6 +5208,28 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
   }
 
+  /* A draft's stock was measured when it was saved; by Confirm, where the stock
+     actually leaves, it may have gone to another order. Ask the same "ship
+     anyway?" question again (409 short_stock, replayed with confirmShortStock).
+     A drop-ship DO ships before receipt by choice and a migrated one moves no
+     stock, so neither is asked. Sister fix: Conts-ERP #787. */
+  if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase()) && body.confirmShortStock !== true) {
+    const { data: head, error: headErr } = await scopeToCompanyId(sb.from('delivery_orders')
+      .select('warehouse_id, is_dropship, migrated_no_stock').eq('id', id), scopeCompanyId).maybeSingle();
+    if (headErr) return c.json({ error: 'stock_check_unavailable', reason: headErr.message }, 503);
+    const h = head as { warehouse_id: string | null; is_dropship: boolean | null; migrated_no_stock: boolean | null } | null;
+    if (h && h.is_dropship !== true && !isMigratedNoStock(h)) {
+      const { data: lines, error: linesErr } = await sb.from('delivery_order_items')
+        .select('id, so_item_id, item_code, item_group, description, variants, qty').eq('delivery_order_id', id);
+      if (linesErr) return c.json({ error: 'stock_check_unavailable', reason: linesErr.message }, 503);
+      const shortages = await checkDoStockAvailability(sb, ((lines ?? []) as Array<{ id: string; so_item_id: string | null; item_code: string | null; item_group: string | null; description: string | null; variants: VariantAttrs | null; qty: number | null }>).map((l) => ({
+        lineRef: l.id, soItemId: l.so_item_id, itemCode: l.item_code ?? '', itemGroup: l.item_group, productName: l.description,
+        variantKey: computeVariantKey(l.item_group, l.variants), qty: Number(l.qty ?? 0),
+      })), h.warehouse_id, scopeCompanyId);
+      if (shortages.length > 0) return c.json(shortStockResponse(shortages, []), 409);
+    }
+  }
+
   /* Bug #3/#11 — ATOMIC cancel guard. Two concurrent cancels can both read a
      non-cancelled status and both reverse inventory (double-reverse). For CANCELLED
      the write is conditional on status != CANCELLED; "no row returned" = someone
@@ -5218,10 +5251,15 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
     data = updated as { id: string; status: string };
   } else {
+    /* Written only over the status every guard above read: a cancel landing in
+       between must not be overwritten, or a cancelled DO reads shipped with its
+       stock already back on the shelf. */
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId)
+      .eq('status', prevStatus).select('id, status').maybeSingle();
     if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json({ error: 'status_changed', reason: 'This delivery order just changed. Reload it and try again.' }, 409);
     data = updated as { id: string; status: string };
   }
 

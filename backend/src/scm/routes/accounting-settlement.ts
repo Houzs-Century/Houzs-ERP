@@ -1323,13 +1323,18 @@ export const settlementBatchReceived = guard(async (c) => {
   if (!DAY.test(receivedOn)) {
     return c.json({ error: 'bad_date', message: 'Give the date the money reached the bank, as it reads on the bank statement.' }, 400);
   }
-  if (body.amountSen != null && !Number.isFinite(Number(body.amountSen))) {
-    return c.json({ error: 'bad_amount', message: 'Give the amount of this credit, as it reads on the bank statement.' }, 400);
+  /* Only a MISSING amount means "the rest of it". A null that was sent is what
+     JSON.stringify makes of NaN, i.e. an amount the screen could not read
+     ("3,500.00" through Number()), and taking the full outstanding for it
+     journaled money nobody typed. */
+  const amountGiven = body.amountSen !== undefined;
+  if (amountGiven && (typeof body.amountSen !== 'number' || !Number.isInteger(body.amountSen))) {
+    return c.json({ error: 'bad_amount', message: 'Could not read the amount of this credit. Type it as it reads on the bank statement, or leave it blank for the whole remaining amount.' }, 400);
   }
 
   const r = await postBatchReceipt(c.get('supabase'), co.companyId, batchId, {
     receivedOn,
-    amountSen: body.amountSen == null ? null : Number(body.amountSen),
+    amountSen: amountGiven ? body.amountSen : null,
     bankRef: body.bankRef == null ? null : String(body.bankRef),
     note: body.note == null ? null : String(body.note),
     userName: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,

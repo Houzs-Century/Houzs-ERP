@@ -1,0 +1,39 @@
+name: Duplicate supplier bill numbers (read-only)
+
+# fix/sister-g2 refuses a second live purchase invoice / AP invoice carrying the
+# same supplier bill number. This counts, per company, the duplicates already
+# in production (whitespace and case ignored, CANCELLED left out), which decides
+# whether a unique index can be built.
+#
+# One SELECT, no writes. The verdict is the output; exit 0 for every answer.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-duplicate-supplier-bills
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-duplicate-supplier-bills.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
