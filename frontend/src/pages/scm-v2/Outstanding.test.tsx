@@ -6,9 +6,19 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { fmtDate } from '../../vendor/shared/format';
+
+/* One fixed instant, midday in Malaysia, set before the module-level dates below
+   are worked out: TODAY / TEN_DAYS_AGO were read once at import while the page
+   reads todayMyt() at render, so a run that crossed MYT midnight compared two
+   different days and failed. */
+vi.hoisted(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-10T04:00:00Z'));
+});
+afterAll(() => { vi.useRealTimers(); });
 
 const state = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
