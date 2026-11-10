@@ -144,7 +144,7 @@ follows the new SLA at once.
 - **Service PO number** `APO/YYMM-NNN` (`POST /api/assr/:id/generate-po`) and the
   **hand-added supplier code** `MAN-NNNN` (`POST /api/assr/creditors/create`)
   use the same counter floored at the live numeric max (`nextServicePONumber`,
-  `nextManualCreditorCode`). Generating a PO only fills an EMPTY `po_no`; a
+  `nextManualCreditorCode`, `services/assrNumbers.ts`). Generating a PO only fills an EMPTY `po_no`; a
   second press gets 409 with the number already stored.
 - **Reopen for a DIFFERENT complaint** (`POST /api/assr/:id/reopen`,
   `service_cases.write`): a completed/voided case that comes back with a new

@@ -18,8 +18,6 @@ import {
   createLogistics,
   patchLogistics,
   logActivity,
-  nextServicePONumber,
-  nextManualCreditorCode,
   setCaseCreditorManual,
   setItemRemark,
   setItemSupplierRemark,
@@ -27,6 +25,7 @@ import {
   setItemCartonQty,
 } from "../services/assr";
 import { normalizeSlaHours } from "../services/assrSla";
+import { assignServicePoNumber, nextManualCreditorCode } from "../services/assrNumbers";
 import { assrWindow } from "./lib/assr-window";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
 import { reopenCaseRoute } from "../services/assrReopen";
@@ -2768,20 +2767,9 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
     return c.json({ error: `PO already exists: ${existing.po_no}`, po_no: existing.po_no }, 409);
   }
 
-  const poNo = await nextServicePONumber(c.env);
-  // po_no IS NULL: a second press racing the first must not overwrite the
-  // number the first one already returned to its caller.
-  const claimed = await c.env.DB.prepare(
-    `UPDATE assr_cases SET po_no = ?, updated_at = datetime('now') WHERE id = ? AND po_no IS NULL`
-  )
-    .bind(poNo, id)
-    .run();
-  if (!claimed.meta.changes) {
-    const now = await c.env.DB.prepare(`SELECT po_no FROM assr_cases WHERE id = ?`)
-      .bind(id)
-      .first<{ po_no: string | null }>();
-    return c.json({ error: `PO already exists: ${now?.po_no ?? ""}`, po_no: now?.po_no ?? null }, 409);
-  }
+  const claim = await assignServicePoNumber(c.env, id);
+  if (!claim.ok) return c.json({ error: `PO already exists: ${claim.poNo ?? ""}`, po_no: claim.poNo }, 409);
+  const poNo = claim.poNo;
 
   // Name when the mirror has the creditor, else the raw code — a case can carry
   // a creditor_code the mirror has not synced yet, and the code still tells the

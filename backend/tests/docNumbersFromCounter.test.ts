@@ -3,7 +3,7 @@
 // They used to be "highest + 1" (or COUNT + 1), so two saves at the same moment
 // read the same max and got the same number.
 import { describe, expect, test } from "vitest";
-import { nextManualCreditorCode, nextServicePONumber } from "../src/services/assr";
+import { nextManualCreditorCode, nextServicePONumber } from "../src/services/assrNumbers";
 import { mintPenaltyNo } from "../src/routes/lib/hr-penalty-no";
 
 type Counter = { series: string; floor: number }[];

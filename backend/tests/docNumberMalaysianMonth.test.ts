@@ -7,7 +7,7 @@ import { yymmFor } from '../src/services/documentRefs';
 import { nextDocNo as nextSoDocNo } from '../src/scm/routes/mfg-sales-orders';
 import { nextDocNo as nextCsDocNo } from '../src/scm/routes/consignment-orders';
 import { nextSiNumber } from '../src/scm/lib/si-from-do';
-import { nextServicePONumber } from '../src/services/assr';
+import { nextServicePONumber } from '../src/services/assrNumbers';
 import type { Env } from '../src/types';
 
 /* A document raised at 01:30 Malaysia time on 1 Dec is 17:30 UTC on 30 Nov.
