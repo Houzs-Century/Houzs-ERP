@@ -7,6 +7,14 @@
 type AudioCtor = typeof AudioContext;
 let audio: AudioContext | null = null;
 
+async function wake(ctx: AudioContext): Promise<void> {
+  try {
+    await ctx.resume();
+  } catch {
+    /* a refused resume only loses the tone; the buzz still confirms the read */
+  }
+}
+
 function beep(): void {
   const Ctor: AudioCtor | undefined =
     (window as unknown as { AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor }).AudioContext
@@ -14,7 +22,7 @@ function beep(): void {
   if (!Ctor) return;
   audio ??= new Ctor();
   const ctx = audio;
-  if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+  if (ctx.state === 'suspended') void wake(ctx);
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sine';
