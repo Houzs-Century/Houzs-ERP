@@ -7,15 +7,16 @@
 // fields, and the client calls THIS endpoint once, for the page it just
 // rendered, to heal them a beat later:
 //
-//   GET /mfg-sales-orders/list-mrp-enrichment?docNos=A,B,C
+//   GET /mfg-sales-orders/list-mrp-enrichment?docNos=A,B,C[&refresh=1]
 //     → { enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark,
-//                                  isMainReady, planningState } } }
+//                                  isMainReady, planningState } },
+//         mrp: ListMrpMeta }
 //
-// It runs the SAME company-wide `computeMrp` the list used to run (the engine is
-// global by design and cannot be narrowed to the requested docs — see the note
-// in mfg-sales-orders.ts soCoverage) and then derives only the requested docs'
-// fields, through the SAME shared helpers, so the values are byte-identical to
-// the old inline path.
+// It reads the SAME company-wide MRP result the list used to compute (the
+// engine is global by design and cannot be narrowed to the requested docs), from
+// the 15-min list snapshot unless that is missing / stale / Refresh was asked
+// (lib/list-mrp-source.ts), and derives only the requested docs' fields through
+// the SAME shared helpers. GET /:docNo/coverage below stays LIVE.
 //
 // Its own thin router, mounted at the same `/mfg-sales-orders` prefix (Hono
 // resolves this static path ahead of the main router's `/:docNo`), because
@@ -34,8 +35,8 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
-import { mrpLineCoverage, type MrpResult } from './mrp';
-import { sharedLiveMrp } from '../lib/live-mrp-memo';
+import { mrpLineCoverage } from './mrp';
+import { resolveListMrp, wantsListMrpRefresh } from '../lib/list-mrp-source';
 import { eager } from '../lib/concurrency';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
 import { soCoverage } from './mfg-sales-orders';
@@ -74,10 +75,10 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (docNos.length === 0) return c.json({ enrichment: {} });
 
   const companyId = activeCompanyId(c) ?? null;
-  /* HC-0002: the global MRP run needs nothing read below, so it starts first and
-     overlaps them, and it is the run /:docNo/coverage shares (lib/live-mrp-memo.ts).
-     Same fail-soft as before: a failed run reads as null at step 5. */
-  const mrpProm = eager(sharedLiveMrp(sb, c.env.DB, companyId).result);
+  /* The list snapshot (or its live fallback) needs nothing read below, so it
+     starts first and overlaps them. Never rejects: a failed live run reads as
+     a null result at step 5, the same fail-soft as before. */
+  const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
   const nonSellingProm = eager(loadNonSellingWarehouses(sb));
   // Same row-level visibility the list applies (self + downline, or all for a
   // view-all caller). The docs come from a page the client already received, so
@@ -122,7 +123,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
   const visibleDocNos = [...headers.keys()];
-  if (visibleDocNos.length === 0) return c.json({ enrichment: {} });
+  if (visibleDocNos.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
 
   /* 2. The page's SO lines — the exact columns readiness + the chip union read,
      scoped to the company (the tenant boundary; the list's own items read is
@@ -172,8 +173,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   }
 
   // 5. READY-arm source-PO chips (fail-soft internally), once the MRP run lands.
-  let mrp: MrpResult | null = null;
-  try { mrp = (await mrpProm)(); } catch { mrp = null; }
+  const { result: mrp, meta: mrpMeta } = await listMrp;
   const readyByItem = await soLineReadySourcePos(sb, companyId, mrp, readyItems);
 
   /* 6. Delivered/remaining per line → fully-shipped ids (suppress READY chips
@@ -214,7 +214,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     nonSellingWarehouseIds,
   });
 
-  return c.json({ enrichment: Object.fromEntries(enrichment) });
+  return c.json({ enrichment: Object.fromEntries(enrichment), mrp: mrpMeta });
 });
 
 /* GET /:docNo/coverage — the DEFERRED live Stock column for the SO DETAIL page
@@ -319,8 +319,8 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
         type: lineNonSelling.type,
         notice: nonSellingWarehouseNotice(lineNonSelling),
       },
-      coverage_po: covered ? lineCov?.po ?? null : null,
-      coverage_eta: covered ? lineCov?.eta ?? null : null,
+      coverage_po: covered ? lineCov.po ?? null : null,
+      coverage_eta: covered ? lineCov.eta ?? null : null,
       ready_source_pos: readyPosMap.get(it.id) ?? [],
     };
   });

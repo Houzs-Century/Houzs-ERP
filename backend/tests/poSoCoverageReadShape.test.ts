@@ -201,7 +201,7 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
   it('merges all three precedence layers, and the delivered lock wins', async () => {
     const db = makeFakePostgrest(fixture(), RELATIONSHIPS);
     const inst = instrument(db);
-    const out = await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID]);
+    const out = await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID], null);
 
     const origins = out.get(PO_ID);
     expect(origins).toBeDefined();
@@ -254,7 +254,7 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
 
     const db = makeFakePostgrest(f, RELATIONSHIPS);
     const inst = instrument(db);
-    const out = await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID]);
+    const out = await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID], null);
 
     const origins = out.get(PO_ID)!;
     /* Dropping out of the list entirely and surviving with an empty assignment
@@ -269,7 +269,7 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
   it('reads each table exactly as many times as it did before the reads were re-ordered', async () => {
     const db = makeFakePostgrest(fixture(), RELATIONSHIPS);
     const inst = instrument(db);
-    await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID]);
+    await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID], null);
 
     /* A PIN, not a budget. Every number here is a round trip an operator waits
        for. Raising one is a decision that belongs in a diff with a reason;
@@ -307,7 +307,7 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
   it('has the delivered ledger and the MRP engine in flight before the stored-origin chain validates its SOs', async () => {
     const db = makeFakePostgrest(fixture(), RELATIONSHIPS);
     const inst = instrument(db);
-    await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID]);
+    await resolvePoSoCoveragePerSkuForPos(inst.sb, ctx(), [PO_ID], null);
 
     const first = (t: string) => inst.issued.indexOf(t);
     /* `mfg_sales_orders` is first touched by the stored-origin chain's candidate

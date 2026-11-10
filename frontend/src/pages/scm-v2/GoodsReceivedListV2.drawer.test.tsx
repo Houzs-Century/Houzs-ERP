@@ -37,7 +37,7 @@ vi.mock("../../vendor/scm/lib/grn-queries", async (importOriginal) => ({
     isPlaceholderData: false,
     error: null,
   }),
-  useEnrichedGrnListRows: (rows: unknown[]) => rows,
+  useEnrichedGrnListRows: (rows: unknown[]) => ({ rows, mrp: { meta: null, refresh: () => {}, refreshing: false } }),
   useGrnDetail: () => ({ data: undefined, isLoading: false, error: null }),
   usePostGrn: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCancelGrn: () => ({ mutateAsync: vi.fn(), isPending: false }),

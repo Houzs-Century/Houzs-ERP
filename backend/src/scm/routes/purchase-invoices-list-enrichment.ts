@@ -34,6 +34,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
 import { attachPiAssignedSos, pickPiListMrpEnrichment } from '../lib/pi-assigned-sos';
+import { resolveListMrp, wantsListMrpRefresh } from '../lib/list-mrp-source';
 import { attachGrnLineFacts, piPoNumbersByInvoice, piPoPriceSummaryByInvoice, type PiPoPriceSummary } from '../lib/pi-po-price';
 
 export const purchaseInvoicesListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -51,6 +52,8 @@ purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const raw = (c.req.query('piIds') ?? '').trim();
   const piIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (piIds.length === 0) return c.json({ enrichment: {} });
+  /* The 15-min list snapshot, not a live run (lib/list-mrp-source.ts). */
+  const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
   /* Re-read (id, grn_id) under the company predicate — the tenant boundary. The
      ids come from a page the client already received, so this is also defence
@@ -61,16 +64,16 @@ purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
 
   const rows = (data ?? []) as Array<{ id: string; grn_id: string | null }>;
-  if (rows.length === 0) return c.json({ enrichment: {} });
+  if (rows.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
 
-  const enriched = await attachPiAssignedSos(sb, c, rows);
+  const enriched = await attachPiAssignedSos(sb, c, rows, listMrp);
 
   const enrichment: Record<string, Record<string, unknown>> = {};
   for (const r of enriched) {
     const id = r.id as string;
     if (id) enrichment[id] = pickPiListMrpEnrichment(r);
   }
-  return c.json({ enrichment });
+  return c.json({ enrichment, mrp: (await listMrp).meta });
 });
 
 /* ── PO price vs invoice price, per invoice (owner 2026-09-14) ─────────────

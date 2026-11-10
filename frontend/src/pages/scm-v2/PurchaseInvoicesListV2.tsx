@@ -29,6 +29,7 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
+import { MrpAsOf } from "../../components/MrpAsOf";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -681,7 +682,7 @@ export function PurchaseInvoicesListV2() {
   // enrichment endpoint a beat later and are merged in here, so opening the list
   // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
   const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
-  const rows = useEnrichedPiListRows(serverRows, !listLoading);
+  const { rows, mrp: mrpStatus } = useEnrichedPiListRows(serverRows, !listLoading);
   /* PO price vs invoice price, per invoice (owner 2026-09-14) — a quiet marker,
      fetched a beat after the page renders, never gating anything. */
   const poPriceById = usePiListPoPriceMap(useMemo(() => serverRows.map((r) => r.id).filter(Boolean) as string[], [serverRows]), !listLoading);
@@ -1234,6 +1235,8 @@ export function PurchaseInvoicesListV2() {
             ]}
           />
         </div>
+
+        <MrpAsOf status={mrpStatus} className="mb-2" />
 
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
           {/* Every tile describes the rows ON SCREEN and says so while a column

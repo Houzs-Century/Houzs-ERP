@@ -32,6 +32,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import { ScanGrnModal } from "../../vendor/scm/components/ScanGrnModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
+import { MrpAsOf } from "../../components/MrpAsOf";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -620,7 +621,7 @@ export function GoodsReceivedListV2() {
   // a beat later and are merged in here, so opening the list no longer waits on a
   // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
   const serverRows = (data?.grns ?? []) as GrnRow[];
-  const rows = useEnrichedGrnListRows(serverRows, !listLoading);
+  const { rows, mrp: mrpStatus } = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0, on_hold: 0 };
 
@@ -1039,6 +1040,8 @@ export function GoodsReceivedListV2() {
             ]}
           />
         </div>
+
+        <MrpAsOf status={mrpStatus} className="mb-2" />
 
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
           <StatCard pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} label="Total GRNs" value={total.toLocaleString("en-MY")} subtitle="All matching GRNs" rail="bg-primary" active />

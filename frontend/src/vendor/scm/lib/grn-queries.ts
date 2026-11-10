@@ -16,6 +16,8 @@
 // useOutstandingPoItems from there.
 
 import { useMemo } from 'react';
+import { useListMrpEnrichmentChunks } from './list-mrp-enrichment-chunks';
+import type { ListMrpStatus } from '../../../lib/listMrpStatus';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { grnListParams } from './grn-list-export';
@@ -120,49 +122,22 @@ export function useGrnsPaged(params: { from?: string; to?: string; page: number;
    Delivered) the list no longer computes on its critical path (see
    listMrpEnrichment.ts). Fired AFTER the list renders, for the GRNs it just
    showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
-   request stays bounded; each chunk is cached independently. The backend runs
-   ONE company-wide computeMrp per request regardless of chunk size. */
+   request stays bounded; each chunk is cached independently. The backend answers from the 15-min stored MRP snapshot
+   (list-mrp-enrichment-chunks.ts). */
 const GRN_ENRICH_CHUNK = 100;
 
 export function useGrnListMrpEnrichmentMap(
   grnIds: string[],
   enabled: boolean,
-): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean } {
-  const chunks = useMemo(() => {
-    const uniq = [...new Set(grnIds.filter(Boolean))].sort();
-    const out: string[][] = [];
-    for (let i = 0; i < uniq.length; i += GRN_ENRICH_CHUNK) out.push(uniq.slice(i, i + GRN_ENRICH_CHUNK));
-    return out;
-  }, [grnIds]);
-
-  const results = useQueries({
-    queries: chunks.map((chunk) => ({
-      enabled: enabled && chunk.length > 0,
-      queryKey: ['grns-list-mrp-enrichment', chunk.join(',')],
-      queryFn: ({ signal }: { signal?: AbortSignal }) =>
-        authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
-          `/grns/list-mrp-enrichment?grnIds=${encodeURIComponent(chunk.join(','))}`,
-          { signal },
-        ),
-      staleTime: 30_000,
-      retry: retryUnlessClientError,
-      retryDelay: 800,
-    })),
+): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean; mrp: ListMrpStatus } {
+  const { byId, isFetching, mrp } = useListMrpEnrichmentChunks<ListMrpEnrichment>({
+    ids: grnIds,
+    enabled,
+    queryKeyPrefix: 'grns-list-mrp-enrichment',
+    urlPrefix: '/grns/list-mrp-enrichment?grnIds=',
+    chunkSize: GRN_ENRICH_CHUNK,
   });
-
-  const sig = results.map((r) => r.dataUpdatedAt).join('|');
-  const isFetching = results.some((r) => r.isFetching);
-  const byId = useMemo(() => {
-    const map = new Map<string, ListMrpEnrichment>();
-    for (const r of results) {
-      const e = r.data?.enrichment;
-      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
-    }
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
-  }, [sig]);
-
-  return { byId, isFetching };
+  return { byId, isFetching, mrp };
 }
 
 /* The overlay the GRN list applies: take the rows the list endpoint returned
@@ -171,16 +146,17 @@ export function useGrnListMrpEnrichmentMap(
 export function useEnrichedGrnListRows<T extends EnrichableMrpRow>(
   rows: T[],
   enabled: boolean,
-): T[] {
-  const grnIds = useMemo(
+): { rows: T[]; mrp: ListMrpStatus } {
+  const ids = useMemo(
     () => rows.map((r) => r.id).filter((x): x is string => !!x),
     [rows],
   );
-  const { byId } = useGrnListMrpEnrichmentMap(grnIds, enabled);
-  return useMemo(
+  const { byId, mrp } = useGrnListMrpEnrichmentMap(ids, enabled);
+  const healed = useMemo(
     () => rows.map((r) => applyListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
     [rows, byId],
   );
+  return { rows: healed, mrp };
 }
 export const useGrnDetail = (id: string | null) => useQuery({
   queryKey: ['grn-detail', id],
