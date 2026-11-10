@@ -73,6 +73,7 @@ import { SaveBlockedIndicator } from '../../vendor/scm/components/SaveBlockedInd
 import { useSoValidate } from '../../vendor/scm/lib/use-so-validate';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { settleMutation, useSubmitLock } from '../../lib/submitLock';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
@@ -176,6 +177,8 @@ export const SalesOrderNew = () => {
      that REPLAYS the first docNo instead of raising a second order, and the
      payment drafts carry their own per-draft keys so they don't double either. */
   const idemKey  = useIdempotencyKey();
+  /* Held from the press until the payments and photos after the create have settled (lib/submitLock). */
+  const saveLock = useSubmitLock();
   const addPayment = useAddSalesOrderPayment();
   const uploadPhoto = useUploadSoItemPhoto();
   // onlySales=true — owner 2026-07-22: the salesperson dropdown was showing
@@ -1488,7 +1491,7 @@ export const SalesOrderNew = () => {
      The two header buttons both call onSave; only the flag differs. When the
      form was opened from a scan (fromScan), "Save as Draft" is the primary
      button so scanned orders default to draft for operator review. */
-  const onSave = async (asDraft = false) => {
+  const runSave = async (asDraft: boolean) => {
     if (createdDocNo) {
       const intents = paymentIntents();
       if (intents.length === 0) {
@@ -1597,7 +1600,7 @@ export const SalesOrderNew = () => {
     const pendingDepositSen = paymentIntents()
       .reduce((sum, d) => sum + d.amountSen, 0);
 
-    create.mutate(
+    await settleMutation(create.mutate,
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
@@ -1747,6 +1750,7 @@ export const SalesOrderNew = () => {
       },
     );
   };
+  const onSave = (asDraft = false) => saveLock.run(() => runSave(asDraft));
 
   return (
     <FormTouchScope onTouch={markTouched}>
@@ -1787,10 +1791,10 @@ export const SalesOrderNew = () => {
             <Button
               variant={fromScan ? 'secondary' : 'primary'}
               onClick={() => { void onSave(false); }}
-              disabled={create.isPending}
+              disabled={create.isPending || saveLock.locked}
             >
               <Save {...ICON} />
-              {create.isPending
+              {create.isPending || saveLock.locked
                 ? 'Saving…'
                 : createdDocNo
                   ? (paymentIntents().length > 0 ? 'Continue payment retry' : 'Open created order')
@@ -1799,10 +1803,10 @@ export const SalesOrderNew = () => {
             <Button
               variant={fromScan ? 'primary' : 'secondary'}
               onClick={() => { void onSave(true); }}
-              disabled={create.isPending || !!createdDocNo}
+              disabled={create.isPending || saveLock.locked || !!createdDocNo}
             >
               <Save {...ICON} />
-              {create.isPending ? 'Saving…' : 'Save as Draft'}
+              {create.isPending || saveLock.locked ? 'Saving…' : 'Save as Draft'}
             </Button>
           </>
         }
