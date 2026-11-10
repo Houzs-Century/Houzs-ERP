@@ -1027,6 +1027,7 @@ export const ConsignmentOrderNew = () => {
                  server would have accepted. Same conditional rule as
                  SalesOrderNew; the CO is an ORDER, not a downstream document. */
               variantsRequired={!!processingDate}
+              specLockedReason={null}
               lineDateLocked={false}
               seedSofaLegDefault={true}
               attachOptions={null}

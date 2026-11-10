@@ -62,6 +62,7 @@ function renderArmRest(isEditing: boolean, lineDateLocked = false) {
       itemId="line-ar01"
       isEditing={isEditing}
       variantsRequired
+      specLockedReason={null}
       lineDateLocked={lineDateLocked}
       seedSofaLegDefault
       attachOptions={null}

@@ -2247,6 +2247,7 @@ export const SalesOrderNew = () => {
                      ` *` marker + red ring stay off while the order is still a
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
+                  specLockedReason={null}
                   lineDateLocked={!processingDate}
                   seedSofaLegDefault={true} attachOptions={consoleAttachOptions(lines, idx)}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an

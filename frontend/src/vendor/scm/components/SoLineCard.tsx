@@ -200,6 +200,7 @@ const SoLineCardInner = ({
   isEditing = true,
   variantsRequired,
   lineDateLocked,
+  specLockedReason,
   seedSofaLegDefault,
   searchHint,
   attachOptions,
@@ -249,6 +250,12 @@ const SoLineCardInner = ({
      SO New/Detail -> !processingDate; every other document -> false. Mandatory
      for the same reason as variantsRequired. */
   lineDateLocked: boolean;
+  /* Owner 2026-11-10 (shared/do-spec-lock.ts): a shipped DO line keeps its
+     product and spec. Non-null = the product picker, variants and specials are
+     read-only, this text says why, and nothing auto-fills a variant (the
+     computed Total Height re-bucketed 2990-DO-2611-016). Qty, price, remark
+     and date are unaffected. Mandatory: every other document passes null. */
+  specLockedReason: string | null;
   /* Whether this document may AUTO-FILL a blank sofa Leg Height with the
      maintenance "Default" option (owner 2026-07-13).
 
@@ -431,8 +438,9 @@ const SoLineCardInner = ({
      fulfilment document that seeds it re-buckets the line away from the stock
      reserved for it. Edit-mode only — a read-only view still RENDERS the
      configurator (driven by `category` above) but must not mutate. */
+  const specLocked = specLockedReason !== null;
   useEffect(() => {
-    if (!isEditing || !draft.itemCode) return;
+    if (!isEditing || specLocked || !draft.itemCode) return;
     const patch: Partial<SoLineDraft> = {};
     if ((category === 'sofa' || category === 'bedframe' || category === 'fabric_accessory')
         && draft.itemGroup.toLowerCase() !== category) {
@@ -564,6 +572,7 @@ const SoLineCardInner = ({
      computed one is empty. That is deliberately not a guard a caller can get
      wrong here again, and it is pinned by total-height.canonical.test.ts. */
   useEffect(() => {
+    if (specLocked) return;
     const patch = totalHeightPatch(category, draft.variants);
     if (!patch) return;
     onChange({ variants: { ...draft.variants, ...patch } });
@@ -842,7 +851,7 @@ const SoLineCardInner = ({
               type="button"
               className={styles.input}
               style={{ textAlign: 'left', cursor: isEditing ? 'pointer' : 'not-allowed', padding: '2px 8px', height: 'auto', minHeight: 28 }}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               /* Owner 2026-08-09 — opening the picker must NOT lose the
                  current SKU: keep the description visible (select-all so
                  typing replaces it), and blur-without-pick restores it. */
@@ -873,7 +882,7 @@ const SoLineCardInner = ({
                    picking a real SKU, without it being committed as a value. */
                 placeholder={searchHint ? `Slip: ${searchHint} — pick a SKU` : 'Click to pick or type to filter…'}
                 value={search}
-                disabled={!isEditing}
+                disabled={!isEditing || specLocked}
                 /* Owner 2026-08-08 ("square pillow") — typed text that matches
                    NO catalog product can never become a line; the red ring +
                    the note below say so while KEEPING the text for correction.
@@ -1146,6 +1155,11 @@ const SoLineCardInner = ({
       {(picked || hasVariants || hasSpecialOrder || canShowPhotos) && (
       <div className={styles.body}>
         {(hasVariants || hasSpecialOrder) && <div className={styles.bodyLeft}>
+      {specLockedReason && (
+        <p role="note" className="mb-2 rounded-md border border-warning-text/25 bg-warning-bg px-3 py-2 text-[12px] text-warning-text">
+          {specLockedReason}
+        </p>
+      )}
       {hasVariants && category === 'bedframe' && (
         <div className={styles.variants}>
           <div className={styles.variantsHead}>BEDFRAME VARIANTS</div>
@@ -1155,7 +1169,7 @@ const SoLineCardInner = ({
               value={String(draft.variants.fabricCode ?? '')}
               colourLabel={String(draft.variants.colourLabel ?? '')}
               fabricSeries={fabricSeries}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
               itemCode={draft.itemCode || null}
@@ -1164,21 +1178,21 @@ const SoLineCardInner = ({
             <VariantSelect
               label="Gaps" required={variantsRequired}
               value={String(draft.variants.gap ?? '')}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               options={sortByNumeric(restrictS(maintPickerValues(maint!.gaps, String(draft.variants.gap ?? '')), allowOpts?.gaps).map((g) => ({ value: g, priceSen: 0 })))}
               onChange={(v) => setVariant('gap', v)}
             />
             <VariantSelect
               label="Divan Heights" required={variantsRequired}
               value={String(draft.variants.divanHeight ?? '')}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               options={sortByNumeric(restrictP(activeOptions(maint!.divanHeights, String(draft.variants.divanHeight ?? '')), allowOpts?.divan_heights))}
               onChange={(v) => setVariant('divanHeight', v)}
             />
             <VariantSelect
               label="Leg Heights" required={variantsRequired}
               value={String(draft.variants.legHeight ?? '')}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               options={sortByNumeric(restrictP(activeOptions(maint!.legHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights))}
               onChange={(v) => setVariant('legHeight', v)}
             />
@@ -1205,7 +1219,7 @@ const SoLineCardInner = ({
             options={specialOptions}
             variants={draft.variants}
             onPatch={setVariants}
-            disabled={!isEditing}
+            disabled={!isEditing || specLocked}
             showPrices={showPrices}
           />
         </div>
@@ -1220,7 +1234,7 @@ const SoLineCardInner = ({
               value={String(draft.variants.fabricCode ?? '')}
               colourLabel={String(draft.variants.colourLabel ?? '')}
               fabricSeries={fabricSeries}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
               itemCode={draft.itemCode || null}
@@ -1238,7 +1252,7 @@ const SoLineCardInner = ({
               value={String(draft.variants.fabricCode ?? '')}
               colourLabel={String(draft.variants.colourLabel ?? '')}
               fabricSeries={fabricSeries}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
               itemCode={draft.itemCode || null}
@@ -1252,7 +1266,7 @@ const SoLineCardInner = ({
                  pluralised it. */
               label="Seat Size" required={variantsRequired}
               value={String(draft.variants.seatHeight ?? '')}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               options={sortByNumeric(restrictS(maintPickerValues(maint!.sofaSizes, String(draft.variants.seatHeight ?? '')), allowOpts?.sizes).map((s) => {
                 const sh = picked?.seat_height_prices && Array.isArray(picked.seat_height_prices)
                   ? (picked.seat_height_prices as Array<{ height: string; tier: string; priceSen: number }>)
@@ -1268,7 +1282,7 @@ const SoLineCardInner = ({
             <VariantSelect
               label="Leg Heights"
               value={String(draft.variants.legHeight ?? '')}
-              disabled={!isEditing}
+              disabled={!isEditing || specLocked}
               options={sortByNumeric(restrictPricedToPool(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights, defaultSofaLegValue(maint)))}
               onChange={(v) => setVariant('legHeight', v)}
             />
@@ -1276,7 +1290,7 @@ const SoLineCardInner = ({
               <VariantSelect
                 label="Attached to"
                 value={String(draft.variants[CONSOLE_ATTACH_KEY] ?? '')}
-                disabled={!isEditing}
+                disabled={!isEditing || specLocked}
                 options={attachOptions.map((id) => ({ value: id, priceSen: 0 }))}
                 onChange={(v) => setVariant(CONSOLE_ATTACH_KEY, v)}
               />
@@ -1296,7 +1310,7 @@ const SoLineCardInner = ({
             options={specialOptions}
             variants={draft.variants}
             onPatch={setVariants}
-            disabled={!isEditing}
+            disabled={!isEditing || specLocked}
             showPrices={showPrices}
           />
         </div>
@@ -1313,7 +1327,7 @@ const SoLineCardInner = ({
             options={specialSurface.optionPicker ? specialOptions : []}
             variants={draft.variants}
             onPatch={setVariants}
-            disabled={!isEditing}
+            disabled={!isEditing || specLocked}
             showPrices={showPrices}
           />
         </div>
