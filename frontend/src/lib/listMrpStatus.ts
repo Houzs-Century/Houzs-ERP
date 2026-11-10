@@ -6,6 +6,8 @@
    chunks' answers are combined here into the one line the page shows. Pure, so
    desktop and mobile render the same words. */
 
+import { fmtTime } from "../vendor/shared/format";
+
 export type ListMrpFallback = "missing" | "stale" | "refresh";
 
 /** Twin of ListMrpMeta in backend/src/scm/lib/list-mrp-source.ts. */
@@ -45,16 +47,10 @@ export function combineListMrpMeta(metas: ReadonlyArray<ListMrpMeta | null | und
   };
 }
 
-function hhmm(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
 /** The words the page shows, and whether they are a warning. */
 export function listMrpLabel(meta: ListMrpMeta): { text: string; warn: boolean } {
   if (meta.failed || !meta.asOf) return { text: "MRP unavailable, Assigned SO may be blank", warn: true };
-  const at = hhmm(meta.asOf);
+  const at = fmtTime(meta.asOf);
   if (meta.fallback === "stale") return { text: `MRP live at ${at} (stored plan over 30 min old)`, warn: true };
   if (meta.fallback === "missing") return { text: `MRP live at ${at} (no stored plan)`, warn: true };
   return { text: `MRP as of ${at}`, warn: false };

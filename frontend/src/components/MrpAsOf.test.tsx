@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { fmtTime } from "../vendor/shared/format";
 import { describe, expect, it, vi } from "vitest";
 import { MrpAsOf } from "./MrpAsOf";
 import type { ListMrpMeta } from "../lib/listMrpStatus";
@@ -6,7 +7,7 @@ import type { ListMrpMeta } from "../lib/listMrpStatus";
 /* The line above the PO / GRN / PI / SO lists: how old the stored MRP plan is,
    a warning when the list had to compute live, and Refresh. */
 
-const at = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const at = (iso: string) => fmtTime(iso);
 const snap: ListMrpMeta = { asOf: "2026-11-10T06:05:00.000Z", source: "snapshot", fallback: null, failed: false };
 
 describe("MrpAsOf", () => {
