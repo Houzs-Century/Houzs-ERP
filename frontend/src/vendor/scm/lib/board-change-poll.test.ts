@@ -4,6 +4,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlanningCounts } from './delivery-planning-queries';
+import type { BoardChanges } from './board-change-poll';
 
 const rowRefresh = vi.fn();
 vi.mock('./board-row-refresh', () => ({ scheduleRowRefresh: (_qc: unknown, docs: string[]) => rowRefresh(docs) }));
@@ -21,7 +22,7 @@ function rig(o: { feed?: boolean; poll?: boolean; server?: PlanningCounts; loade
   let visible = true;
   let today = '2026-11-10';
   const fullReread = vi.fn();
-  const fetchChanges = vi.fn(async (after: number | null) => ({ cursor: (after ?? 1000) + 1, docs: [], others: false, full: false }));
+  const fetchChanges = vi.fn(async (after: number | null): Promise<BoardChanges> => ({ cursor: (after ?? 1000) + 1, docs: [], others: false, full: false }));
   const fetchCounts = vi.fn(async () => o.server ?? counts(5));
   const r = createBoardRefresher({
     now: () => Date.now(),
