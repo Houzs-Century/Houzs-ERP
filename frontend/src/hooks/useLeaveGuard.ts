@@ -61,3 +61,18 @@ export function useGuardedBack(onBack: () => void): () => void {
     });
   }, []);
 }
+
+/** The three above in one call, for a form left by its own Back / close. */
+export function useFormGuard(onBack: () => void): {
+  touched: boolean;
+  markTouched: () => void;
+  allowLeave: () => void;
+  guardedBack: () => void;
+} {
+  const { touched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(touched, null);
+  const guardedBack = useGuardedBack(onBack);
+  return { touched, markTouched, allowLeave, guardedBack };
+}
+
+export { FormTouchScope } from "../components/FormTouchScope";

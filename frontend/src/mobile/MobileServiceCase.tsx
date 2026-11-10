@@ -68,8 +68,7 @@ import {
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
-import { FormTouchScope } from "../components/FormTouchScope";
-import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
+import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
 
 // The core /api/assr route (NOT scm). The list returns
 // { data, page, per_page, total } with assr_cases.* columns; the detail
@@ -257,7 +256,6 @@ function useAssignableUsers(): PicUser[] {
   });
   return Array.isArray(data) ? data : [];
 }
-
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
  *  (Overview / Stage / Info / Timeline) + new-case sheet, all wired to
@@ -760,7 +758,6 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
     runWrite(async () => {
       await api.patch(`/api/assr/${id}`, body);
     }, failTitle);
-
 
   const addNote = useMutation({
     mutationFn: (payload: { note: string; category: NoteAudience }) =>
@@ -1978,9 +1975,7 @@ function CloseCaseSheet({ busy, onClose, onConfirm }: {
 // supplier are resolved server-side from the SO. The design shows a
 // "SO # / reference / customer" lookup + item; we keep both fields wired.
 function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: number) => void }) {
-  const { touched: formTouched, markTouched } = useFormTouched();
-  const { allowLeave } = useLeaveGuard(formTouched, null);
-  const guardedClose = useGuardedBack(onClose);
+  const { markTouched, allowLeave, guardedBack: guardedClose } = useFormGuard(onClose);
   const qc = useQueryClient();
   const notify = useNotify();
   // Lookups sourced the SAME way desktop CreatePanel does — from
@@ -2163,8 +2158,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
       // detail page and taps back, or returns to the list directly.
       qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"], refetchType: "all" });
       const id = Number(get(res ?? {}, "id"));
-      allowLeave();
-      onClose();
+      allowLeave(); onClose();
       if (id) onOpen(id);
     },
     onError: async (e: any) => {
@@ -2191,8 +2185,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   // Create button entirely (owner: "no way to create"). Fixed + 40 lifts
   // the whole sheet above the tab bar, exactly like the Menu sheet.
   return (
-    <FormTouchScope onTouch={markTouched}>
-    <div className="hz-m" style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(17,20,15,.4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={guardedClose}>
+    <FormTouchScope onTouch={markTouched}><div className="hz-m" style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(17,20,15,.4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={guardedClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--app-bg)", borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: "92%", display: "flex", flexDirection: "column", paddingBottom: "env(safe-area-inset-bottom)" }}>
         {/* header (.hdr) — design: eyebrow "Document" + title, top-right × close */}
         <header className="hdr" style={{ borderTopLeftRadius: 18, borderTopRightRadius: 18 }}>
@@ -2493,8 +2486,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
           </button>
         </footer>
       </div>
-    </div>
-    </FormTouchScope>
+    </div></FormTouchScope>
   );
 }
 

@@ -123,9 +123,7 @@ import { Field, SpecSel } from "./mobile-fields";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
-import "./mobile.css";
-import { FormTouchScope } from "../components/FormTouchScope";
-import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
+import "./mobile.css"; import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
 
 /* ---------------------------------------------------------------------------
  * MobileNewSO — mobile New / Edit Sales Order as ONE single scrolling form
@@ -625,10 +623,7 @@ export function MobileNewSO({
   onSaved?: (docNo: string) => void;
   openAddLine: boolean;
 }) {
-  const { touched: formTouched, markTouched } = useFormTouched();
-  const { allowLeave } = useLeaveGuard(formTouched, null);
-  const guardedBack = useGuardedBack(onBack);
-  const qc = useQueryClient();
+  const qc = useQueryClient(); const { markTouched, allowLeave, guardedBack } = useFormGuard(onBack);
   const notify = useNotify();
   const confirm = useConfirm(); const prompt = usePrompt(); const backdateReasonRef = useRef("");
   const submitDialog = useAmendmentSubmitDialog();
@@ -2102,8 +2097,7 @@ export function MobileNewSO({
           /* Two-lane rework — the server classifies (and may split) the request:
              product changes wait on Purchasing, delivery changes on Logistics. */
           void notify(amendmentSubmittedNotice(plan, amendCreatedRes));
-          allowLeave();
-          if (onSaved) onSaved(docNo);
+          allowLeave(); if (onSaved) onSaved(docNo);
           else onBack();
           return;
         }
@@ -2168,8 +2162,7 @@ export function MobileNewSO({
         invalidateSoShared(qc);
         await qc.invalidateQueries({ queryKey: ["mfg-sales-order-detail", docNo] });
         await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
-        allowLeave();
-        if (onSaved) onSaved(docNo);
+        allowLeave(); if (onSaved) onSaved(docNo);
         else onBack();
         return;
       }
@@ -2219,8 +2212,7 @@ export function MobileNewSO({
          and lands after it, moving the list's paid / outstanding aggregates. */
       invalidateSoShared(qc);
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
-      allowLeave();
-      if (res?.docNo && onSaved) onSaved(res.docNo);
+      allowLeave(); if (res?.docNo && onSaved) onSaved(res.docNo);
       else onBack();
     } catch (e) {
       const heldLease = activeLineLeaseRef.current;
@@ -2292,8 +2284,7 @@ export function MobileNewSO({
 
   // ---- Render ---------------------------------------------------------------
   return (
-    <FormTouchScope onTouch={markTouched}>
-    <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
+    <FormTouchScope onTouch={markTouched}><div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       {/* Header — "Cancel" text button, Draft/Editing pill, title. No wizard
           progress bar (single-form). */}
       <header className="hdr">
@@ -2913,8 +2904,7 @@ export function MobileNewSO({
         );
       })()}
       {submitDialog.element}
-    </div>
-    </FormTouchScope>
+    </div></FormTouchScope>
   );
 }
 

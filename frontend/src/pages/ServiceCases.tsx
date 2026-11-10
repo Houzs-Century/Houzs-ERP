@@ -149,9 +149,7 @@ import {
   toggleCategory,
 } from "../lib/assrProductCategories";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { FormTouchScope } from "../components/FormTouchScope";
-import { useFormTouched, useLeaveGuard } from "../hooks/useLeaveGuard";
-import { confirmLeaving } from "../lib/leaveGuard";
+import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -179,7 +177,6 @@ const RESOLUTION_OPTIONS = [
 ] as const;
 
 const PRIORITY_OPTIONS = ["low", "normal", "high", "urgent"] as const;
-
 
 const NCR_OPTIONS = [
   "material_defect",
@@ -2461,8 +2458,7 @@ function CreatePanel({
   toast: ReturnType<typeof useToast>;
 }) {
   const { can } = useAuth();
-  const { touched: formTouched, markTouched } = useFormTouched();
-  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const { touched: formTouched, markTouched, allowLeave, guardedBack: guardedClose } = useFormGuard(onClose);
   const [docNo, setDocNo] = useState("");
   // Typeahead state: search local SO mirror by partial DocNo /
   // reference / customer name so staff don't have to remember the
@@ -2538,7 +2534,6 @@ function CreatePanel({
   );
   const productCategoryOptions =
     productCategoriesQ.data?.data.map((r) => r.name) ?? [];
-
 
   const MAX_FILES = 5;
   const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -2753,8 +2748,7 @@ function CreatePanel({
         toast.success(`Created ${res.assr_no}`);
       }
 
-      allowLeave();
-      onCreated(res.id);
+      allowLeave(); onCreated(res.id);
     } catch (e: any) {
       // Duplicate-open-case guard (owner 2026-07-22) — the server returns 409
       // with { error: 'duplicate_open_case', message, existing:[{id, items,
@@ -2796,9 +2790,7 @@ function CreatePanel({
   }
 
   return (
-    <FormTouchScope onTouch={markTouched}>
-    <Panel open onClose={onClose} title="New Service Case" width={560} centered
-      dirty={formTouched} onAttemptClose={() => void confirmLeaving().then((leave) => { if (leave) onClose(); })}>
+    <FormTouchScope onTouch={markTouched}><Panel open onClose={onClose} title="New Service Case" width={560} centered dirty={formTouched} onAttemptClose={guardedClose}>
       <PanelSection title="Sales Order">
         <div className="relative flex gap-2">
           <input
@@ -3177,8 +3169,7 @@ function CreatePanel({
             : "Create Case"}
         </Button>
       </div>
-    </Panel>
-    </FormTouchScope>
+    </Panel></FormTouchScope>
   );
 }
 
@@ -6858,7 +6849,6 @@ const PRINT_ENTITIES = {
   both: "Both",
 } as const;
 type PrintEntity = keyof typeof PRINT_ENTITIES;
-
 
 function PrintMenu({
   caseId,
