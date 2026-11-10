@@ -99,3 +99,50 @@ export async function refuseForeignProject(
     .first<{ ok: number }>();
   return row ? null : c.json({ error: "Not found" }, 404);
 }
+
+/* ── THE ATTACHMENT-KEY GATE (GET /api/projects/attachments/:key) ──────────
+   That route streams a POD_BUCKET object by its key, and POD_BUCKET is shared:
+   outbound email attachments (mail-outbox/<outboxId>/<n>, every part of it a
+   counter), inbound mail, HR punch selfies, service-case photos, memos, staff
+   files, fleet papers. Before this gate any signed-in user of either company
+   could read any of them by naming the key, past the ownership rule the
+   service-case route enforces on its own copy (assr.ts /attachments). Same bug
+   class Conts fixed in #166 ("any signed-in account could download any stored
+   file by its id").
+
+   A key another module writes is refused outright. A key that names its
+   project (or its checklist item) must be in the caller's company. Any other
+   key is served as before, because project rows written by older code may carry
+   a layout this file has never seen, and refusing those would hide a project's
+   own files. */
+export const FOREIGN_ATTACHMENT_PREFIXES = [
+  "mail-outbox/", "mail/", "hr-punch/", "user/", "memos/", "assr/",
+  "announcements/", "fleet/", "branding/",
+] as const;
+
+export type AttachmentKeyClass =
+  | { kind: "foreign" }
+  | { kind: "project"; projectId: number }
+  | { kind: "checklist"; itemId: number }
+  | { kind: "other" };
+
+export function classifyAttachmentKey(key: string): AttachmentKeyClass {
+  if (key.includes("..") || FOREIGN_ATTACHMENT_PREFIXES.some((p) => key.startsWith(p))) return { kind: "foreign" };
+  const project = /^(?:projects|project-phase-photos)\/(\d+)\//.exec(key);
+  if (project) return { kind: "project", projectId: Number(project[1]) };
+  const task = /^task-attach\/(\d+)\//.exec(key);
+  if (task) return { kind: "checklist", itemId: Number(task[1]) };
+  return { kind: "other" };
+}
+
+/** 404 Response when the key is another module's object or another company's project file; null to serve it. */
+export async function refuseForeignAttachmentKey(
+  c: { env: Env; get(key: string): unknown; json: Context["json"] },
+  key: string,
+): Promise<Response | null> {
+  const k = classifyAttachmentKey(key);
+  if (k.kind === "foreign") return c.json({ error: "Not found" }, 404);
+  if (k.kind === "project") return refuseForeignProject(c, k.projectId);
+  if (k.kind === "checklist") return refuseForeignChild(c, "project_checklist", k.itemId);
+  return null;
+}

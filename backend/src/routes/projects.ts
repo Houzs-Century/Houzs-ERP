@@ -73,7 +73,7 @@ import {
 } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
-import { refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
+import { refuseForeignAttachmentKey, refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -4777,10 +4777,10 @@ app.put("/:id/attachments", requirePermission("projects.write"), async (c) => {
   return c.json({ id: r.meta.last_row_id, key }, 201);
 });
 
-// Stream the asset. Auth middleware already gated the request. {.+}
-// captures the slash-containing key.
+// Stream the asset. {.+} captures the slash-containing key; the key gate refuses other modules' objects and other companies' projects.
 app.get("/attachments/:key{.+}", async (c) => {
   const key = c.req.param("key");
+  { const foreign = await refuseForeignAttachmentKey(c, key); if (foreign) return foreign; }
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: "Not found" }, 404);
   return new Response(obj.body as ReadableStream, {
