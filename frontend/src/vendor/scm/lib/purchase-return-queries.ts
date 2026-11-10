@@ -170,7 +170,7 @@ export const useUpdatePurchaseReturnHeader = () => {
   return useMutation({
     mutationFn: ({ id, ...body }: {
       id: string; supplierId?: string; returnDate?: string; reason?: string;
-      creditNoteRef?: string; notes?: string;
+      creditNoteRef?: string; notes?: string; supplierReplaces?: boolean;
     }) => authedFetch<{ purchaseReturn: any }>(`/purchase-returns/${id}`, {
       method: 'PATCH', body: JSON.stringify(body),
     }),
