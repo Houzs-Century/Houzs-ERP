@@ -9,6 +9,7 @@
    code (any code the owner adds), not a fixed union. An unmapped state falls back
    to the default bucket (KL). */
 import { paginateAll } from './paginate-all';
+import { noteDegradedRead } from './read-failure';
 
 export type Region = string;
 
@@ -95,21 +96,23 @@ export function regionConfigFromRows(regRows: RegionRow[], mapRows: StateRegionR
 export async function loadRegionConfig(sb: any): Promise<RegionConfig> {
   let regRows: RegionRow[] = [];
   try {
-    const { data } = await paginateAll<RegionRow & { sort_order?: number | null }>((from, to) =>
+    const { data, error } = await paginateAll<RegionRow & { sort_order?: number | null }>((from, to) =>
       sb.from('delivery_planning_regions')
         .select('id, code, name, sort_order, active')
         .order('sort_order', { ascending: true })
         .order('code', { ascending: true })
         .range(from, to),
     );
+    noteDegradedRead('delivery_planning_regions', error);
     regRows = data ?? [];
   } catch { /* fall through to the fallback */ }
   let mapRows: StateRegionRow[] = [];
   if (regRows.some((r) => (r.code ?? '') !== '')) {
     try {
-      const { data } = await paginateAll<StateRegionRow>((from, to) =>
+      const { data, error } = await paginateAll<StateRegionRow>((from, to) =>
         sb.from('state_delivery_regions').select('state_key, country, region_id').range(from, to),
       );
+      noteDegradedRead('state_delivery_regions', error);
       mapRows = data ?? [];
     } catch { /* mapping stays empty -> fallback default applies per-order */ }
   }

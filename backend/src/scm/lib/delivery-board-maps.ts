@@ -288,9 +288,10 @@ export async function loadSoBoardMapsRest(
     for (let i = 0; i < codeList.length; i += 300) {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
-      const { data: prodRows } = await paginateAll<BoardProductRow>((from, to) =>
+      const { data: prodRows, error: prodErr } = await paginateAll<BoardProductRow>((from, to) =>
         scopeToCompany(pgrestIn(sb.from('mfg_products').select('code, category, branding'), 'code', chunk), c).range(from, to),
       ); lap('dp-products');
+      noteDegradedRead('products', prodErr);
       prodAll.push(...(prodRows ?? []));
     }
   }
@@ -308,14 +309,17 @@ export async function loadSoBoardMapsRest(
   let stops: ReturnType<typeof foldStops> = { dpNoByDoc: new Map(), tripByDoc: new Map() };
   try {
     if (dos.doIds.length) {
-      const { data: stopRows } = await chunkIn<BoardStopRow>(dos.doIds, (batch, from, to) => sb.from('trip_stops')
+      const { data: stopRows, error: stopErr } = await chunkIn<BoardStopRow>(dos.doIds, (batch, from, to) => sb.from('trip_stops')
         .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
         .order('do_id').range(from, to)); lap('dp-trip-stops');
+      noteDegradedRead('trip_stops', stopErr);
       const tripIds = stopTripIds(stopRows);
       let tripRows: BoardTripRow[] = [];
       if (tripIds.length) {
-        ({ data: tripRows } = await chunkIn<BoardTripRow>(tripIds, (batch, from, to) => sb.from('trips')
-          .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to))); lap('dp-trips');
+        const trips = await chunkIn<BoardTripRow>(tripIds, (batch, from, to) => sb.from('trips')
+          .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to)); lap('dp-trips');
+        noteDegradedRead('trips', trips.error);
+        tripRows = trips.data;
       }
       stops = foldStops(dos.doByDoc, stopRows, tripRows);
     }
@@ -323,11 +327,12 @@ export async function loadSoBoardMapsRest(
 
   let crew: ReturnType<typeof foldCrew> = { crewByDo: new Map(), crewIdsByDo: new Map() };
   if (dos.doIds.length > 0) {
-    const { data: crewRows } = await chunkIn<BoardCrewRow>(dos.doIds, (batch, from, to) =>
+    const { data: crewRows, error: crewErr } = await chunkIn<BoardCrewRow>(dos.doIds, (batch, from, to) =>
       sb.from('delivery_order_crew')
         .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
         .in('do_id', batch).order('do_id').range(from, to),
     ); lap('dp-crew');
+    noteDegradedRead('do_crew', crewErr);
     crew = foldCrew(crewRows);
   }
   /* PO lock per row: ONE batched chain for the whole board (soPoLockedMany). */
