@@ -41,3 +41,15 @@ describe('Supplier Service Order layout', () => {
     expect(supplierBlock).toMatch(/notes\?\.next_action/);
   });
 });
+
+describe('Supplier Service Order alignment', () => {
+  test('the Next Action row starts its value where the rows above it do', () => {
+    expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-2 \{ grid-template-columns: 38mm 1fr; \}/);
+    expect(printRaw).toMatch(/body\.sup \.mgrid\.cols-split \{ grid-template-columns: 38mm 1fr 30mm 1fr; \}/);
+    expect(supplierBlock).toMatch(/<div class="mgrid cols-split">\s*<div class="lc">Next Action<\/div>/);
+  });
+
+  test('NO, SET and CTN are centred in the items table', () => {
+    expect(printRaw).toMatch(/\.itable > :nth-child\(1\), \.itable > :nth-child\(3\), \.itable > :nth-child\(4\) \{ text-align: center; \}/);
+  });
+});

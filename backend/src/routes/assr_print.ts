@@ -934,6 +934,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .sbox .row.lead .val { font-size: 11pt; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
+    /* NO, SET and CTN are short numbers: centred in their narrow columns. */
+    .itable > :nth-child(1), .itable > :nth-child(3), .itable > :nth-child(4) { text-align: center; }
     .itable .th {
       padding: 2mm 2.8mm; background: #f3f3f1;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
@@ -1024,6 +1026,9 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .mgrid.cols-4 { grid-template-columns: 34mm 1fr 34mm 1fr; }
     body.sup .mgrid.cols-4 .lc { white-space: nowrap; }
     body.sup .mgrid.cols-2 { grid-template-columns: 38mm 1fr; }
+    /* Next Action + Target Date share a row; the first column matches cols-2 above it. */
+    body.sup .mgrid.cols-split { grid-template-columns: 38mm 1fr 30mm 1fr; }
+    body.sup .mgrid.cols-split .lc { white-space: nowrap; }
     body.sup .itable .th { padding: 1.4mm 2.4mm; font-size: 8pt; }
     body.sup .itable .td { padding: 2.1mm 2.8mm; font-size: 10pt; line-height: 1.4; }
     body.sup .itable .td.code { font-size: 10pt; }
@@ -1351,7 +1356,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Inspection Findings / Action Taken</div><div class="vc" style="white-space: pre-line;">${esc(notes?.inspection_findings || "—")}</div>
       <div class="lc">Resolution Plan</div><div class="vc">${esc(methodText)}</div>
     </div>
-    <div class="mgrid cols-4">
+    <div class="mgrid cols-split">
       <div class="lc">Next Action</div><div class="vc" style="white-space: pre-line;">${esc(notes?.next_action || "—")}</div>
       <div class="lc">Target Date</div><div class="vc mono">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div>
     </div>
