@@ -27,7 +27,7 @@
 import {
   requireActiveCompanyId, scopeToCompanyId, allowedCompanyIds, activeCompanySql, companyCodeMap,
 } from '../lib/companyScope';
-import { chunkIn } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { BILL_MODEL } from '../../acc/bill-extract';
 import { requestAiTag } from '../../services/aiUsage';
@@ -246,11 +246,16 @@ export const listBillLinesHandler = async (c: any) => {
   const sb = c.get('supabase');
   const apInvoiceId = str(c.req.query('apInvoiceId'));
   const onlyOpen = c.req.query('open') === '1';
-  let q = scopeToCompanyId(sb.from('threepl_bill_lines')
-    .select('id, ap_invoice_id, threepl_company_id, line_no, text, line_date, kind, amount_sen, printed, read_status, assign, do_ids, service_ref, project_id, assigned_by, assigned_at'), co.companyId);
-  if (apInvoiceId) q = q.eq('ap_invoice_id', apInvoiceId);
-  const { data, error } = await q.order('ap_invoice_id').order('line_no').limit(2000);
+  /* PAGED: `.limit(2000)` was still cut at PostgREST's 1,000 rows, so past
+     1,000 bill lines the later bills' lines (and their open charges) vanished. */
+  const { data, error, truncated } = await paginateAll<Row>((from, to) => {
+    let q = scopeToCompanyId(sb.from('threepl_bill_lines')
+      .select('id, ap_invoice_id, threepl_company_id, line_no, text, line_date, kind, amount_sen, printed, read_status, assign, do_ids, service_ref, project_id, assigned_by, assigned_at'), co.companyId);
+    if (apInvoiceId) q = q.eq('ap_invoice_id', apInvoiceId);
+    return q.order('ap_invoice_id').order('line_no').order('id').range(from, to);
+  });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (truncated) return c.json({ error: 'load_failed', reason: 'Too many bill lines to read in full; open one bill.' }, 500);
   type LineRow = Row & { doIds: string[]; projectId: number | null };
   const rows = ((data ?? []) as Row[]).map((l): LineRow => ({
     ...l, doIds: Array.isArray(l.do_ids) ? (l.do_ids as unknown[]).map(String) : [],

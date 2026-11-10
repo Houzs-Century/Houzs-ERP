@@ -50,6 +50,7 @@ import { scmDb, companyScope, companyIdScope, CENTRALISED,
   type ScmClient, type ScopedDb } from '../lib/scopedDb';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { unreadableMovementError } from '../lib/failed-read-refusal';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 
 export const stockTransfers = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -396,7 +397,7 @@ stockTransfers.patch('/:id', async (c) => {
    failure rolls the WHOLE transfer back — stock can never be half-moved.
    Returns [] on success, or a one-element error list so the POST handler
    auto-cancels the header and returns a non-201. */
-async function writeTransferMovements(
+export async function writeTransferMovements(
   db: ScopedDb,
   header: { id: string; transfer_no: string; from_warehouse_id: string; to_warehouse_id: string },
   userId: string,
@@ -410,12 +411,14 @@ async function writeTransferMovements(
   c: CompanyScopeCtx,
 ): Promise<string[]> {
   const movementErrors: string[] = [];
-  const { data: lines } = await db
+  const { data: lines, error: linesErr } = await db
     .from('stock_transfer_lines', CENTRALISED(
       'header.id was minted by the company-scoped insert in the caller moments ago, so these lines are that document\'s by construction',
     ))
     .select('item_code, product_name, variant_key, qty')
     .eq('stock_transfer_id', header.id);
+  // Not "no lines" (lib/failed-read-refusal.ts): the callers cancel / refuse on any movementError.
+  if (linesErr) return [unreadableMovementError(`the lines of transfer ${header.transfer_no}`, linesErr)];
   const lineList = (lines as Array<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
 
   /* Resolve the dye-lot batch each line moves so a batched (sofa) lot keeps its

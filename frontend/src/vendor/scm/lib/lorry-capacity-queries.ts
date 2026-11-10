@@ -37,7 +37,7 @@ export type LorryCapacityRow = {
   delivery_revenue_sen: number;
   revenue_per_order_sen: number | null;
   revenue_per_trip_sen: number | null;
-  km: number;                          // GPS km in range (Velocity fixes)
+  km: number | null;                   // GPS km in range (Velocity fixes); null when km_incomplete
   running_cost_sen: number | null;     // km x RM/km; null when no rate set
 };
 
@@ -57,6 +57,8 @@ export type LorryCapacityResponse = {
   totals: LorryCapacityTotals;
   workingDays: number;
   range: { from: string; to: string; fleet: FleetFilter };
+  /** Why km and running cost are not given (range too long, or too many GPS fixes), else null. */
+  km_incomplete: string | null;
 };
 
 /* The dashboard. from/to are YYYY-MM-DD; fleet = all | internal | outsourced. */

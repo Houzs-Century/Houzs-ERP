@@ -183,6 +183,8 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { retryOpenDoStamps } from "./scm/lib/do-shipped-from-retry";
+import { withAfterResponse } from "./lib/after-response";
 import { computeDayRoutes } from "./scm/lib/lorry-day-runs";
 import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
@@ -221,6 +223,13 @@ const inboxBustAfterWrite: MiddlewareHandler<{ Bindings: Env }> = async (c, next
 
 // Outermost: one structured access-log line + X-Request-Id per request.
 app.use("*", requestLog);
+// Best-effort work deep in a helper (afterResponse in lib/after-response.ts) runs
+// on the request's waitUntil instead of delaying the response.
+app.use("*", async (c, next) => {
+  let waitUntil: ((p: Promise<unknown>) => void) | null = null;
+  try { waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx); } catch { /* no execution context (tests) */ }
+  return waitUntil ? withAfterResponse(waitUntil, () => next()) : next();
+});
 
 // Allow-listed CORS origins (audit M3). The SPA calls the API SAME-ORIGIN, so it
 // needs no CORS at all; the only legitimate CROSS-origin BROWSER callers are the
@@ -1355,6 +1364,21 @@ export default {
             );
           }
         }).catch((e) => console.error("[cron lorry-day-routes]", e)),
+      );
+      // DO lines left open by the lock gate (owner 2026-11-10: a line whose rack or
+      // PO is not known for its full qty is not locked; it is retried at the ship
+      // and every night until its GRN gets a rack). Per company, bounded, write-once.
+      ctx.waitUntil(
+        track("do-stamp-retry", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data as Array<{ id: number }> | null) ?? []).map((r) => Number(r.id));
+          const runs = await retryOpenDoStamps(sb, ids, new Date(event.scheduledTime));
+          console.log(`[cron do-stamp-retry] ${runs.map((r) => `${r.companyId}: ${r.error ?? `${r.written} written, ${r.tried} of ${r.open_dos} DO(s) tried`}`).join("; ")}`);
+          const failed = runs.filter((r) => r.error);
+          if (failed.length) throw new Error(failed.map((r) => `${r.companyId}: ${r.error}`).join("; "));
+        }).catch((e) => console.error("[cron do-stamp-retry]", e)),
       );
       // Books › Self-check summed for To do (batch 6 c3): the control check is
       // too heavy for every To do read, so each night leaves one row per

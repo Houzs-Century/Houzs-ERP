@@ -7,9 +7,11 @@
 // script: scripts/lib/do-shipped-from.mjs.
 //
 // Written once per line, only where the column is still NULL (the predicate on
-// the UPDATE, plus a DB trigger that refuses changing a set stamp's core). Called
-// from the DO's ship chokepoint after the FIFO OUT and the rack stock-out, and
-// after an edit-after-ship resync so a line added to a shipped DO is stamped too.
+// the UPDATE, plus a DB trigger that refuses changing a set stamp's core), and
+// only when the line is COMPLETE: rack and PO known for its full qty (owner
+// decision 2026-11-10). Called from the DO's ship chokepoint after the FIFO OUT
+// and the rack stock-out, after an edit-after-ship resync, and nightly by
+// do-shipped-from-retry.ts, so a line left open locks once its GRN gets a rack.
 // Best-effort like the rack ledger: a failed stamp never blocks the ship, the
 // line just keeps reading the worked-out answer.
 
@@ -19,8 +21,9 @@ import { scopeToCompanyIdOrOpen } from './companyScope';
 import { classifyLots, traceDoShipmentSources } from './source-po-trace';
 import { loadGrnRacksForPos } from './do-shipped-from-grn';
 import { resolveDoLineWarehouses } from './do-line-warehouses';
+import { afterResponse } from '../../lib/after-response';
 // @ts-expect-error - plain .mjs, shared with scripts/stamp-do-shipped-from.mjs so the ship and the backlog stamp hold one rule
-import { planShippedFrom, stampFitsLine, withReturn, withReship } from '../../../scripts/lib/do-shipped-from.mjs';
+import { planShippedFrom, splitCompleteStamps, stampFitsLine, withReturn, withReship } from '../../../scripts/lib/do-shipped-from.mjs';
 
 /** The rack-ledger reason the dispatch stock-out writes (do-rack-stock.ts). */
 export const DO_RACK_OUT_REASON = 'Delivery order dispatch';
@@ -46,10 +49,14 @@ type LineRow = {
 const vkOf = (l: { item_group: string | null; variants: VariantAttrs | null }) =>
   computeVariantKey(l.item_group ?? null, l.variants ?? null);
 
-export type DoShippedFromPlan = { lines: LineRow[]; stamps: Map<string, ShippedFromStamp> };
+/** stamps: only COMPLETE lines (rack and PO known for the full qty), the only
+ *  ones ever written. open: every other unstamped line -> why it stays open
+ *  ("no rack for 1 of 2; no PO for 2 of 2", "service line"). */
+export type DoShippedFromPlan = { lines: LineRow[]; stamps: Map<string, ShippedFromStamp>; open: Map<string, string> };
 
 /** READ-ONLY: the stamps the DO's unstamped goods lines would get from what the
- *  ledger and the rack ledger say right now. Null when the lines are unreadable.
+ *  ledger and the rack ledger say right now; an incomplete line is left open
+ *  (owner decision 2026-11-10). Null when the lines are unreadable.
  *  Shared by the ship chokepoint below and scripts/stamp-do-shipped-from.mjs
  *  (which reads through the pgrest shim and writes with its own checks). */
 export async function planDoShippedFrom(
@@ -68,7 +75,7 @@ export async function planDoShippedFrom(
       .eq('delivery_order_id', deliveryOrderId), companyId).order('line_no', { ascending: true });
   if (lineErr || !lineData) return null;
   const lines = lineData as LineRow[];
-  if (!lines.some((l) => !l.shipped_from)) return { lines, stamps: new Map() };
+  if (!lines.some((l) => !l.shipped_from)) return { lines, stamps: new Map(), open: new Map() };
 
   const { data: consData, error: consErr } = await scopeToCompanyIdOrOpen(
     sb.from('inventory_lot_consumptions').select('lot_id, item_code, variant_key, qty_consumed')
@@ -120,20 +127,24 @@ export async function planDoShippedFrom(
   }
 
   const at = new Date().toISOString();
+  const planLines = (lineWh: Map<string, string | null> | null) => lines.map((l) => ({
+    id: l.id, item_code: l.item_code, variant_key: vkOf(l), qty: Number(l.qty ?? 0), rack_id: l.rack_id,
+    warehouse_id: lineWh?.get(l.id) ?? null,
+    goods: !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code ?? '' }), shipped_from: l.shipped_from,
+  }));
   const plan = (lineWh: Map<string, string | null> | null, grnRacks: unknown[]) => planShippedFrom({
-    lines: lines.map((l) => ({
-      id: l.id, item_code: l.item_code, variant_key: vkOf(l), qty: Number(l.qty ?? 0), rack_id: l.rack_id,
-      warehouse_id: lineWh?.get(l.id) ?? null,
-      goods: !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code ?? '' }), shipped_from: l.shipped_from,
-    })),
-    poUnits, poOverride, rackOuts, grnRacks, at, src,
+    lines: planLines(lineWh), poUnits, poOverride, rackOuts, grnRacks, at, src,
   }) as Map<string, ShippedFromStamp>;
+  const gate = (candidates: Map<string, ShippedFromStamp>): DoShippedFromPlan => {
+    const { stamps, open } = splitCompleteStamps(planLines(null), candidates) as { stamps: Map<string, ShippedFromStamp>; open: Map<string, string> };
+    return { lines, stamps, open };
+  };
   const first = plan(null, []);
   /* A line that left no dispatch rack follows its PO(s) to the GRN rack(s)
      (owner rule 2026-11-10). Read only when such a line exists; the second plan
      is the same pure rule with the chain added, so the POs cannot move. */
   const rackless = lines.filter((l) => first.get(l.id)?.racks.length === 0 && first.get(l.id)!.pos.length > 0);
-  if (rackless.length === 0) return { lines, stamps: first };
+  if (rackless.length === 0) return gate(first);
   try {
     const lineWh = await resolveDoLineWarehouses(sb, lines, headerWh, companyId ?? undefined);
     const grnRacks = await loadGrnRacksForPos(sb,
@@ -141,14 +152,15 @@ export async function planDoShippedFrom(
       [...new Set(rackless.map((l) => l.item_code as string))],
       [...new Set(rackless.map((l) => lineWh.get(l.id)).filter((w): w is string => !!w))],
       companyId);
-    return { lines, stamps: plan(lineWh, grnRacks) };
+    return gate(plan(lineWh, grnRacks));
   } catch {
     return null; // a half-read GRN chain must not lock "no rack" for good
   }
 }
 
-/** Stamp every unstamped goods line of a shipped DO (write-once: the UPDATE only
- *  matches a NULL column). Returns how many lines changed. Never throws. */
+/** Stamp every COMPLETE unstamped goods line of a shipped DO (write-once: the
+ *  UPDATE only matches a NULL column); an incomplete line stays NULL for the
+ *  next ship / resync / nightly retry. Returns how many lines changed. Never throws. */
 export async function stampDoShippedFrom(sb: any, deliveryOrderId: string, companyId: number | null): Promise<number> {
   try {
     const planned = await planDoShippedFrom(sb, deliveryOrderId, companyId, 'ship');
@@ -167,6 +179,14 @@ export async function stampDoShippedFrom(sb: any, deliveryOrderId: string, compa
     console.error('[do-shipped-from] stamp failed:', e);
     return 0;
   }
+}
+
+/** The request-path entry: the stamp runs AFTER the response (afterResponse ->
+ *  waitUntil), never awaited by the ship / resync, so confirming a DO is not
+ *  slower. Lost or failed: the lines stay open and the nightly pass retries them.
+ *  Outside a request (tests, scripts) it runs inline. */
+export function queueDoShippedFromStamp(sb: any, deliveryOrderId: string, companyId: number | null): Promise<void> {
+  return afterResponse('do-shipped-from stamp', () => stampDoShippedFrom(sb, deliveryOrderId, companyId));
 }
 
 async function markReshipped(sb: any, lines: LineRow[], companyId: number | null): Promise<number> {
