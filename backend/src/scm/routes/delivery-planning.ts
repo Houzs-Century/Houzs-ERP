@@ -305,9 +305,8 @@ export function derivePlanningState(input: {
      parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
-  // NOT ready. OVERDUE once the EFFECTIVE delivery date (amended ?? original) is
-  // today or past and the goods still aren't ready (owner 2026-11-10).
-  // The SQL board path must mirror `daysLeft <= 0`.
+  // NOT ready. OVERDUE once the EFFECTIVE delivery date (amended ?? original) is today
+  // or past (owner 2026-11-10). The SQL board path must mirror `daysLeft <= 0`.
   const daysLeft = daysBetween(today, effectiveDD ?? null);
   return daysLeft != null && daysLeft <= 0 ? 'OVERDUE' : 'PENDING_DELIVERY';
 }
