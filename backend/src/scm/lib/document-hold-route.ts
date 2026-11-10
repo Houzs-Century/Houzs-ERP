@@ -46,6 +46,11 @@ export type HoldRouteConfig = {
   responseKey: string;
   /** Extra columns to return beside the marker, e.g. `doc_no, status`. */
   echoColumns: string;
+  /** What must follow a successful hold or release, or `null` for nothing.
+   *  REQUIRED so a document whose hold feeds another engine cannot forget it:
+   *  the Sales Order's hold decides whether it may keep allocated stock. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Hono context and PostgREST client are untyped through this whole module (see makeHoldHandler)
+  afterWrite: ((c: any, sb: any, key: string) => Promise<void>) | null;
 };
 
 /**
@@ -89,6 +94,7 @@ export function makeHoldHandler(cfg: HoldRouteConfig) {
     if (error) return c.json({ error: 'hold_update_failed', reason: error.message }, 500);
     if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
+    if (cfg.afterWrite) await cfg.afterWrite(c, sb, key);
     return c.json({ [cfg.responseKey]: data });
   };
 }

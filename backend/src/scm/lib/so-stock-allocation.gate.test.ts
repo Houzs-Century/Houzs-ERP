@@ -202,3 +202,82 @@ describe('stock allocation gate — Processing Date', () => {
     expect(lineOf(sb).stock_qty_ready).toBe(0);
   });
 });
+
+/* A HELD ORDER CLAIMS NO STOCK (sister review P3 follow-up). MRP stopped giving
+   a held order demand in #5538; this allocator kept handing it shelf stock,
+   so the SO detail could show stock reserved for an order nobody may ship,
+   ahead of the live order behind it. Hold is a marker that never writes status,
+   so the terminal-state lens cannot see it; the gate reads `isDocumentHeld`,
+   the same reader MRP uses. */
+describe('stock allocation gate — an order on hold', () => {
+  /* One unit on the shelf; SO-1 promises the earlier date, so it wins the unit
+     whenever it is live. */
+  const twoOrders = (first: Row) => {
+    const sb = world({ doc_no: 'SO-1', version: 1, processing_date: '2026-08-15', customer_delivery_date: '2026-09-01', ...first });
+    sb.tables.mfg_sales_orders.push({
+      doc_no: 'SO-2', version: 1, status: 'CONFIRMED', on_hold: false, created_at: '2026-08-02T00:00:00Z',
+      customer_delivery_date: '2026-10-01', company_id: 1, processing_date: '2026-08-15',
+    });
+    const [line1] = sb.tables.mfg_sales_order_items;
+    line1.doc_no = 'SO-1';
+    sb.tables.mfg_sales_order_items.push({ ...line1, id: 'line-2', doc_no: 'SO-2' });
+    sb.tables.inventory_balances[0].qty = 1;
+    return sb;
+  };
+  const line = (sb: any, id: string) => sb.tables.mfg_sales_order_items.find((l: Row) => l.id === id);
+
+  test('control: a live earlier order takes the only unit', async () => {
+    const sb = twoOrders({ on_hold: false });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('READY');
+    expect(line(sb, 'line-2').stock_status).toBe('PENDING');
+  });
+
+  test('a held earlier order takes nothing; the live order behind it gets the unit', async () => {
+    const sb = twoOrders({ on_hold: true });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('PENDING');
+    expect(line(sb, 'line-1').stock_qty_ready).toBe(0);
+    expect(line(sb, 'line-2').stock_status).toBe('READY');
+  });
+
+  test('stock already allocated to an order that goes on hold is released on the next sweep', async () => {
+    const sb = twoOrders({ on_hold: false });
+    await recomputeSoStockAllocation(sb);
+    expect(line(sb, 'line-1').stock_status).toBe('READY');
+
+    sb.tables.mfg_sales_orders.find((o: Row) => o.doc_no === 'SO-1').on_hold = true;
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('PENDING');
+    expect(line(sb, 'line-2').stock_status).toBe('READY');
+  });
+
+  /* The hold never moves status (document-hold.ts), so the header waits for
+     the release; the control proves the same shape DOES move when not held. */
+  test('control: a READY_TO_SHIP order that loses its stock moves back', async () => {
+    const sb = twoOrders({ on_hold: false, status: 'READY_TO_SHIP', customer_delivery_date: '2026-11-01' });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('PENDING');
+    expect(sb.tables.mfg_sales_orders.find((o: Row) => o.doc_no === 'SO-1').status).not.toBe('READY_TO_SHIP');
+  });
+
+  test('a held READY_TO_SHIP order gives its stock back but keeps its status', async () => {
+    const sb = twoOrders({ on_hold: true, status: 'READY_TO_SHIP' });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('PENDING');
+    expect(sb.tables.mfg_sales_orders.find((o: Row) => o.doc_no === 'SO-1').status).toBe('READY_TO_SHIP');
+  });
+
+  test('a legacy ON_HOLD status is held too', async () => {
+    const sb = twoOrders({ status: 'ON_HOLD', on_hold: false });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.reason).toBeUndefined();
+    expect(line(sb, 'line-1').stock_status).toBe('PENDING');
+    expect(line(sb, 'line-2').stock_status).toBe('READY');
+  });
+});

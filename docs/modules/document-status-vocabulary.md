@@ -68,6 +68,9 @@ document's own guide, e.g. `payment-voucher.md`, `service-case.md`).
 - A hold write must never touch `status`; a status write (a real progress
   re-derivation, e.g. `recomputePoReceived`, `DELIVERABLE_FROM`) must never
   read or clear `on_hold`. The two columns are orthogonal by design.
+  The SO stock allocator (`lib/so-stock-allocation.ts`) reads `on_hold` for
+  ONE purpose: a held order's LINES claim no stock. It skips the held order's
+  header readiness move entirely, so the hold still never moves status.
 - Every "may somebody ACT on this document" guard must read
   `isDocumentHeld` (flag OR legacy `ON_HOLD` label) explicitly — since hold
   stopped overwriting status, a receivable/billable read that used to get
