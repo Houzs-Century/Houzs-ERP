@@ -23,6 +23,13 @@ export function parseAcDoc(notes) {
   return { src: m[1], doc: m[2] };
 }
 
+/* A migrated GRN mirrors one AutoCount GR and is numbered after it:
+   HC-GR-005313-PO-010005 or HC-GR-005233 (its linked_ac_docno holds the AC PO). */
+export function acGrOfMigratedGrn(grnNumber) {
+  const m = /^HC-(GR-\d+)(?:-|$)/.exec(String(grnNumber ?? ''));
+  return m ? m[1] : null;
+}
+
 /* The repair opened one lot per source lot it moved, at the source lot's cost,
    with received_at = source received_at + i microseconds (i = its order within
    the fix). The pairing is not stored, so it is re-derived from that shape:
@@ -43,7 +50,7 @@ export function originCandidates(minted, fromSide) {
    - a GRN lot: its batch_no (= the source PO number since migration 0120), else
      the GRN header's PO;
    - an AutoCount cutover layer: the PO of the migrated GRN that mirrors the AC
-     document its note names (grns.linked_ac_docno);
+     GR its note names (acGrOfMigratedGrn);
    - anything else (stock-take adjustment, return): no PO. */
 export function lotPos(lot, poByGrnId, poByAcDoc) {
   const pos = new Set();

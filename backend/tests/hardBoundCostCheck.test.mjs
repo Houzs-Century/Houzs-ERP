@@ -3,7 +3,7 @@
 // PO, costed by the uncosted-OUT reconcile from a cutover layer of another PO.
 import { describe, expect, test } from 'vitest';
 import {
-  parseAcDoc, originCandidates, lotPos, classifyLine, expectedUnitCost, costRatio, sameCost, parseDocNos,
+  parseAcDoc, originCandidates, lotPos, classifyLine, expectedUnitCost, costRatio, sameCost, parseDocNos, acGrOfMigratedGrn,
 } from '../scripts/lib/hard-bound-cost-check.mjs';
 import { isHardBoundLine } from '../src/scm/lib/so-stock-allocation.ts';
 import { redactMoney } from '../scripts/lib/public-log-redact.mjs';
@@ -18,6 +18,13 @@ describe('parseAcDoc', () => {
     expect(parseAcDoc('Cutover no-spec stock moved to the shipped spec')).toBeNull();
     expect(parseAcDoc(null)).toBeNull();
   });
+});
+
+test('acGrOfMigratedGrn reads the AutoCount GR a migrated GRN is numbered after', () => {
+  expect(acGrOfMigratedGrn('HC-GR-005313-PO-010005')).toBe('GR-005313');
+  expect(acGrOfMigratedGrn('HC-GR-005233')).toBe('GR-005233');
+  expect(acGrOfMigratedGrn('HC-GRN-2609-078')).toBeNull();
+  expect(acGrOfMigratedGrn(null)).toBeNull();
 });
 
 describe('originCandidates', () => {

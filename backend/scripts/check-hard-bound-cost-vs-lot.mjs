@@ -27,7 +27,8 @@
 //
 // Expected unit cost = the bound PO's own GRN lots (recost.ts keeps them at the
 // PI price), else the cutover layers relayered from the bound PO's AutoCount
-// receipt (grns.linked_ac_docno), else the MYR PO line price.
+// receipt (a migrated GRN is numbered HC-<AC GR>[-<AC PO>]; linked_ac_docno holds
+// the AC PO, not the GR), else the MYR PO line price.
 //
 // PUBLIC LOG: document numbers, item codes, warehouse codes, quantities, verdicts
 // and percentages only. No cost, amount, customer or phone.
@@ -47,7 +48,7 @@ import { computeVariantKey } from '../src/scm/shared/variant-key.ts';
 import { isHardBoundLine } from '../src/scm/lib/so-stock-allocation.ts';
 import {
   DEFAULT_REF_PREFIX, VERDICTS, parseAcDoc, originCandidates, lotPos, classifyLine, expectedUnitCost,
-  costRatio, sameCost, tally, parseDocNos,
+  costRatio, sameCost, tally, parseDocNos, acGrOfMigratedGrn,
 } from './lib/hard-bound-cost-check.mjs';
 import { DEFAULT_CUTOVER, isNegativeAfterCutover, intEnv } from './lib/variant-key-drift.mjs';
 
@@ -128,8 +129,9 @@ async function analyse(sql, movementIds) {
      WHERE g.company_id = ${CO} AND g.id::text = ANY(${c})`)).map((r) => [r.id, r.poNo]));
   const poByAcDoc = new Map();
   for (const r of await many(acDocs, (c) => sql`
-    SELECT g.linked_ac_docno AS doc, po.po_number AS "poNo" FROM scm.grns g JOIN scm.purchase_orders po ON po.id = g.purchase_order_id
-     WHERE g.company_id = ${CO} AND g.linked_ac_docno = ANY(${c})`)) {
+    SELECT substring(g.grn_number from '^HC-(GR-[0-9]+)') AS doc, po.po_number AS "poNo"
+      FROM scm.grns g JOIN scm.purchase_orders po ON po.id = g.purchase_order_id
+     WHERE g.company_id = ${CO} AND substring(g.grn_number from '^HC-(GR-[0-9]+)') = ANY(${c})`)) {
     poByAcDoc.set(r.doc, [...new Set([...(poByAcDoc.get(r.doc) ?? []), r.poNo])]);
   }
 
@@ -158,7 +160,8 @@ async function analyse(sql, movementIds) {
       FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
      WHERE g.company_id = ${CO} AND gi.purchase_order_item_id::text = ANY(${c})`);
   const boundGrnIds = [...new Set(grnLines.map((g) => g.grnId))];
-  const boundAcDocs = [...new Set(grnLines.map((g) => g.acDoc).filter(Boolean))];
+  for (const g of grnLines) g.acGr = acGrOfMigratedGrn(g.grnNo);
+  const boundAcDocs = [...new Set(grnLines.map((g) => g.acGr).filter(Boolean))];
   const grnLots = await many(boundGrnIds, (c) => sql`
     SELECT source_doc_id::text AS "grnId", item_code AS "itemCode", qty_received::int AS qty, COALESCE(unit_cost_sen, 0)::bigint AS "unitCostSen"
       FROM scm.inventory_lots WHERE company_id = ${CO} AND source_doc_type = 'GRN' AND source_doc_id::text = ANY(${c})`);
@@ -194,7 +197,7 @@ async function analyse(sql, movementIds) {
     const cls = classifyLine({ hardBound, boundPoNos, costing });
     const exp = expectedUnitCost({
       grnLots: grnLots.filter((l) => l.itemCode === o.itemCode && bGrn.some((g) => g.grnId === l.grnId)),
-      cutoverLayers: layers.filter((l) => l.itemCode === o.itemCode && bGrn.some((g) => g.acDoc === l.doc)),
+      cutoverLayers: layers.filter((l) => l.itemCode === o.itemCode && bGrn.some((g) => g.acGr === l.doc)),
       poLines: bound.filter((p) => p.currency === 'MYR').map((p) => ({ qty: p.received, unitCostSen: p.unitPriceSen })),
     });
     const costedQty = costing.reduce((s, c) => s + c.qty, 0);
