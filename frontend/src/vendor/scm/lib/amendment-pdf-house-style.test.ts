@@ -3,6 +3,7 @@
 // band (fill 26,188,156, white text) was printed on every amendment. Measured
 // off the DRAWN page content, not the options object.
 import { describe, expect, test, vi } from 'vitest';
+import { pdfRawText } from './pdf-raw-text';
 
 type JsPdf = import('jspdf').jsPDF;
 const captured: { doc: JsPdf | null } = { doc: null };
@@ -35,7 +36,7 @@ async function drawnContent(): Promise<string> {
   });
   const doc = captured.doc as JsPdf | null;
   if (!doc) throw new Error('the PDF was never delivered');
-  return doc.output();
+  return pdfRawText(new Uint8Array(doc.output('arraybuffer')));
 }
 
 describe('amendment PDF — change table header follows the house print style', () => {

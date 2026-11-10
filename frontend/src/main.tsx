@@ -58,6 +58,9 @@ if (canonicalTarget) window.location.replace(canonicalTarget);
 // The public surfaces (survey, customer/supplier portal, password reset)
 // are split out of the staff bundle — staff never download them, and the
 // public flows skip the whole dashboard bundle in return.
+// Lazy so the initial bundle does not carry it; it wraps the router a moment
+// after first paint, before anyone has typed into a form.
+const LeaveGuardBridge = lazy(() => import("./components/LeaveGuardBridge").then((m) => ({ default: m.LeaveGuardBridge })));
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
 const PublicDoScan = lazy(() => import("./pages/PublicDoScan").then((m) => ({ default: m.PublicDoScan })));
@@ -298,6 +301,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <ToastProvider>
        <DialogProvider>
         <RootApp />
+        <LazySlot resetKey="leave-guard" fallback={null}><LeaveGuardBridge /></LazySlot>
         <PwaBanners />
        </DialogProvider>
       </ToastProvider>

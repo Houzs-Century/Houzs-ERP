@@ -49,6 +49,7 @@ import { AccountCell } from './JournalEntryCards';
 import styles from './Suppliers.module.css';
 import mo from './MoneyOut.module.css';
 import pvx from './PaymentVouchers.module.css';
+import { PDF_COMPRESS } from '../../vendor/scm/lib/pdf-options';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -370,7 +371,7 @@ export const PaymentVouchers = () => {
 
       if (!withFiles) {
         /* Vouchers only — one shared doc, each starting on a fresh page. */
-        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
         for (let i = 0; i < targets.length; i += 1) {
           if (i > 0) doc.addPage();
           const detail = await fetchPvPrintDetail(targets[i]!.id);
@@ -390,7 +391,7 @@ export const PaymentVouchers = () => {
       const parts: Array<{ pvId: string; voucherBase64: string }> = [];
       for (const r of targets) {
         const detail = await fetchPvPrintDetail(r.id);
-        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
         type A = Parameters<typeof renderPaymentVoucherInto>;
         await renderPaymentVoucherInto(
           doc, autoTable,

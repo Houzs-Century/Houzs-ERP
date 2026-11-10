@@ -120,6 +120,7 @@ async function main() {
       for (const a of pairPlan.get(p.drop)?.acknowledged ?? []) log(`       ACKNOWLEDGED stock split carried onto "${p.keep}": ${a.warehouse} ledger ${a.ledger} / open lots ${a.lots} - ${a.reason}`);
     }
     for (const m of plan.moves) log(`     size ${m.size}: move "${m.code}" under the kept Model`);
+    for (const m of plan.inactiveMoves) log(`     move switched-off "${m.code}" under the kept Model`);
     for (const f of plan.fills) log(`     "${f.code}": take ${f.field}${f.supplier ? ` ${f.supplier} ${sup.get(f.supplier) ?? ""}` : ""} from "${f.from}"`);
     if (plan.addSizes.length) log(`     size pool + ${plan.addSizes.join("/")}`);
     for (const f of plan.foldModels) log(`     switch off Model "${f.code}"`);
@@ -135,6 +136,7 @@ async function main() {
     groups: acting.length,
     pairs: actingPairs.length,
     moves: acting.reduce((a, g) => a + g.plan.moves.length, 0),
+    inactive: acting.reduce((a, g) => a + g.plan.inactiveMoves.length, 0),
     fills: acting.reduce((a, g) => a + g.plan.fills.length, 0),
     folds: acting.reduce((a, g) => a + g.plan.foldModels.length + (g.plan.createModel ? 1 : 0), 0),
     idleModels: idle.filter((x) => x.modelId).length,
@@ -144,7 +146,7 @@ async function main() {
   const units = actingPairs.reduce((a, p) => a + p.unitsMoved, 0);
   const phrase = confirmPhrase(t);
   log("");
-  log(`TOTALS groups ${groups.length} (acting ${t.groups}, refused ${groups.length - t.groups}); SKU merges ${t.pairs} (re-key ${rekeyRows} row(s), move ${units} unit(s)); SKU moves ${t.moves}; fills ${t.fills}; Models created+folded ${t.folds}; idle off ${t.idleModels} Model(s) / ${t.idleSkus} SKU(s)`);
+  log(`TOTALS groups ${groups.length} (acting ${t.groups}, refused ${groups.length - t.groups}); SKU merges ${t.pairs} (re-key ${rekeyRows} row(s), move ${units} unit(s)); SKU moves ${t.moves}; switched-off moves ${t.inactive}; fills ${t.fills}; Models created+folded ${t.folds}; idle off ${t.idleModels} Model(s) / ${t.idleSkus} SKU(s)`);
   log(`to apply: MODE=apply CONFIRM="${phrase}"`);
 
   if (!APPLY) { log("PLAN ONLY - nothing was written."); await sql.end(); return; }
@@ -163,6 +165,7 @@ async function main() {
   }
   for (const { plan } of acting) {
     for (const m of plan.moves) { const s = skuById.get(m.id); log(`   undo move ${m.id}: model_id ${s.model_id}, base_model ${JSON.stringify(s.base_model)}, size_code ${JSON.stringify(s.size_code)}`); }
+    for (const m of plan.inactiveMoves) { const s = skuById.get(m.id); log(`   undo switched-off move ${m.id}: model_id ${s.model_id}, base_model ${JSON.stringify(s.base_model)}`); }
     for (const f of plan.fills.filter((x) => x.field === "main supplier")) { const b = bindingFill(world, f); log(`   undo main supplier on "${f.code}": binding ${b.bindingId} ${b.kind === "star" ? "is_main_supplier false" : `item_code '${f.from}'`}`); }
     for (const f of plan.fills.filter((x) => x.field !== "main supplier")) log(`   undo fill "${f.code}".${f.field}: back to blank`);
     const kept = world.models.find((m) => m.id === plan.keptModelId);

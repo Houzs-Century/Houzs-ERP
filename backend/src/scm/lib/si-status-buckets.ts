@@ -12,7 +12,8 @@
    backend/tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL /
    COMPLETED were never members (INPUT-only via SI_STATUS_CANON in
    routes/sales-invoices.ts), OVERDUE was bucketless and joins `sent`, as the
-   frontend did.
+   frontend did. DRAFT left `sent` for its own `draft` tab on 2026-11-10: the
+   Sent count was including invoices nobody had issued.
 
    MOVED 2026-09-15 out of routes/sales-invoices.ts, unchanged, when the list's
    filter moved to lib/si-list-read.ts for the exports — the same move the PI
@@ -20,7 +21,8 @@
    ---------------------------------------------------------------------------- */
 
 export const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'OVERDUE'],
+  draft: ['DRAFT'],
+  sent: ['SENT', 'OVERDUE'],
   partial: ['PARTIALLY_PAID'],
   paid: ['PAID'],
   cancelled: ['CANCELLED'],

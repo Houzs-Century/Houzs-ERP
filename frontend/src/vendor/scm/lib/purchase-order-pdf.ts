@@ -34,8 +34,8 @@
 //   └──────────────────────────────────────────────────────────────────┘
 //
 // Letterhead comes from pdf-common COMPANY (= apps/pos legal.ts, the real
-// registered entity). Page number prints on EVERY page header via the
-// autotable didDrawPage hook + jsPDF putTotalPages.
+// registered entity). The page number prints on EVERY page header and footer,
+// counted within the PO, from finalizePoPdf once every page exists.
 // ----------------------------------------------------------------------------
 
 import { buildDefaultSofaCells, CONSOLE_ATTACH_KEY, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
@@ -47,7 +47,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout, layoutDepth } from './sofa-layout-pdf';
-import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
+import { COMPANY, amountInWordsMyr, docPageLabel, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
 import { ensureBrandingForActiveCompany } from '../../../hooks/useBranding';
@@ -76,6 +76,7 @@ import {
 } from './pdf-item-photos';
 import { fetchPoItemPhotoBlob } from './sales-order-queries';
 import type { PoEmailPhotos } from './po-email-photos';
+import { PDF_COMPRESS } from './pdf-options';
 
 type PoHeader = {
   po_number:     string;
@@ -320,7 +321,7 @@ async function renderPurchaseOrderInto(
   header: PoHeader,
   items: PoItem[],
   opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null; photoMaxPx?: number },
-): Promise<{ supplierName: string }> {
+): Promise<{ supplierName: string; firstPage: number; label: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
   const docTitle = opts?.docTitle ?? 'PURCHASE ORDER';
@@ -601,18 +602,6 @@ async function renderPurchaseOrderInto(
     ];
   });
 
-  /* Page-number on EVERY page header (didDrawPage) using the jsPDF
-     total-pages placeholder, resolved by putTotalPages below. */
-  const totalPagesExp = '{total_pages}';
-  const drawPageHeader = (pageNumber: number) => {
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
-    doc.text(
-      `${poDisplayNumber(header.po_number, header.revision)} · Page ${pageNumber} of ${totalPagesExp}`,
-      pageW - margin, 10, { align: 'right' },
-    );
-    doc.setTextColor(0);
-  };
-
   const drawerSides = orderedItems.map((it) => drawerSidesOf(it.variants));
   autoTable(doc, {
     startY: y,
@@ -643,7 +632,6 @@ async function renderPurchaseOrderInto(
       7: { cellWidth: 19, halign: 'right' },   // Total
     },
     margin: { left: margin, right: margin, top: 16 },
-    didDrawPage: (data) => drawPageHeader(data.pageNumber),
     // DEV-74: drawer lines get a pull-out picture under the description.
     didParseCell: (data) => {
       if (data.section !== 'body' || data.column.index !== 2 || drawerSides[data.row.index]!.length === 0) return;
@@ -663,7 +651,7 @@ async function renderPurchaseOrderInto(
   let lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 5;
 
   // ── Totals (right) + amount in words (left, AutoCount footer) ─────
-  if (lastY > 250) { doc.addPage(); drawPageHeader(doc.getNumberOfPages()); lastY = 20; }
+  if (lastY > 250) { doc.addPage(); lastY = 20; }
   const totalsX = pageW - margin - 70;
   const drawRow = (label: string, val: string, ry: number, bold = false, ruled = false) => {
     if (ruled) { doc.setDrawColor(0); doc.line(totalsX, ry - 3, pageW - margin, ry - 3); }
@@ -819,7 +807,7 @@ async function renderPurchaseOrderInto(
     // Section needs room for the title + at least one row; else new page.
     const TITLE_H = 8;
     if (lastY + TITLE_H + ROW_H > 285) {
-      doc.addPage(); drawPageHeader(doc.getNumberOfPages()); lastY = 20;
+      doc.addPage(); lastY = 20;
     }
 
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
@@ -865,7 +853,7 @@ async function renderPurchaseOrderInto(
       }
       // New page when this row would overflow.
       if (rowTop + ROW_H > 290) {
-        doc.addPage(); drawPageHeader(doc.getNumberOfPages());
+        doc.addPage();
         rowTop = 20;
         col = 0;
         // Repeat the section title at the top of the continued page.
@@ -905,7 +893,7 @@ async function renderPurchaseOrderInto(
       pageBottom: 275,
       pageTop: 20,
       side: photoSide,
-      onNewPage: () => drawPageHeader(doc.getNumberOfPages()),
+      onNewPage: null,
     });
     if (photoRes.drew) {
       lastY = photoRes.pagesAdded > 0
@@ -915,7 +903,7 @@ async function renderPurchaseOrderInto(
   }
 
   // ── Signature block ──────────────────────────────────────────────
-  if (lastY > 240) { doc.addPage(); drawPageHeader(doc.getNumberOfPages()); lastY = 20; }
+  if (lastY > 240) { doc.addPage(); lastY = 20; }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
   doc.setDrawColor(120); doc.setLineWidth(0.2);
   const sigW = (pageW - margin * 2) / 2 - 4;
@@ -942,30 +930,30 @@ async function renderPurchaseOrderInto(
     }
   }
 
-  return { supplierName: s.name ?? 'supplier' };
+  return { supplierName: s.name ?? 'supplier', firstPage, label: poDisplayNumber(header.po_number, header.revision) };
 }
 
-const PO_TOTAL_PAGES_EXP = '{total_pages}';
+type PoPages = { firstPage: number; label: string };
 
-/* Footer page numbers on every page + resolve the {total_pages} placeholder.
-   Runs ONCE after all POs are rendered. `pageOnePatch` (single-PO only) writes
-   "1 of N" into the meta block's reserved Page row. */
-function finalizePoPdf(doc: JsPdf): void {
+/* Header "<PO no> · Page x of y" and footer "Page x of y · Generated ..." on
+   every page, counted within EACH PO. Runs once after every PO is rendered, so
+   each PO's last page is known; a combined batch used to number the whole file
+   ("Page 3 of 7" on the second PO's first page). */
+function finalizePoPdf(doc: JsPdf, pos: PoPages[]): void {
   const pageW = doc.internal.pageSize.getWidth();
   const pageCount = doc.getNumberOfPages();
-  for (let p = 1; p <= pageCount; p += 1) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
-    doc.text(
-      `Page ${p} of ${pageCount}    ·    Generated ${fmtDocStamp()}`,
-      pageW / 2, 287, { align: 'center' },
-    );
-    doc.setTextColor(0);
-  }
-  const docWithTotals = doc as unknown as { putTotalPages?: (exp: string) => unknown };
-  if (typeof docWithTotals.putTotalPages === 'function') {
-    docWithTotals.putTotalPages(PO_TOTAL_PAGES_EXP);
-  }
+  pos.forEach((po, i) => {
+    const lastPage = i + 1 < pos.length ? pos[i + 1]!.firstPage - 1 : pageCount;
+    for (let p = po.firstPage; p <= lastPage; p += 1) {
+      const pageLabel = docPageLabel(p, po.firstPage, lastPage);
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
+      doc.text(`${po.label} · ${pageLabel}`, pageW - 10, 10, { align: 'right' });
+      doc.setTextColor(110);
+      doc.text(`${pageLabel}    ·    Generated ${fmtDocStamp()}`, pageW / 2, 287, { align: 'center' });
+      doc.setTextColor(0);
+    }
+  });
 }
 
 /* Single PO → its own file (unchanged behaviour). */
@@ -976,9 +964,10 @@ export async function generatePurchaseOrderPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
-  finalizePoPdf(doc);
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
+  const rendered = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
+  finalizePoPdf(doc, [rendered]);
+  const { supplierName } = rendered;
   // Was a private copy of the old ASCII-only scrub — a China supplier's name is
   // exactly the case it destroyed, and the PO is the document that goes to them.
   deliverPdf(
@@ -998,9 +987,8 @@ export async function purchaseOrderPdfBase64(
 ): Promise<string> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
-  finalizePoPdf(doc);
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
+  finalizePoPdf(doc, [await renderPurchaseOrderInto(doc, autoTable, header, items, opts)]);
   // 'datauristring' → "data:application/pdf;base64,XXXX"; keep the base64 tail.
   const uri = doc.output('datauristring');
   return uri.slice(uri.indexOf(',') + 1);
@@ -1033,20 +1021,20 @@ export async function purchaseOrderPdfForEmail(
 
 /* Several POs → ONE combined file, each PO starting on a new page. For the
    batch "Print documentation" action (send a supplier all their POs in one
-   attachment). The per-PO "1 of N" meta patch is skipped (cosmetic in a
-   multi-PO doc); each page still carries its own PO number header + a global
-   "Page p of N" footer. */
+   attachment). Each page carries its own PO number and its page within that
+   PO, header and footer. */
 export async function generateCombinedPurchaseOrderPdf(
   pos: Array<{ header: PoHeader; items: PoItem[] }>,
   opts?: { docTitle?: string; fileName?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
+  const pages: PoPages[] = [];
   for (let i = 0; i < pos.length; i += 1) {
     if (i > 0) doc.addPage();
-    await renderPurchaseOrderInto(doc, autoTable, pos[i]!.header, pos[i]!.items, opts);
+    pages.push(await renderPurchaseOrderInto(doc, autoTable, pos[i]!.header, pos[i]!.items, opts));
   }
-  finalizePoPdf(doc);
+  finalizePoPdf(doc, pages);
   deliverPdf(doc, opts?.fileName ?? 'purchase-orders.pdf', opts?.action);
 }

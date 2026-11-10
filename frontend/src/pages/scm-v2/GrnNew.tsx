@@ -66,6 +66,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { canPostGoodsReceipts } from '../../auth/salesAccess';
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 import { supplierEmailList } from '../../vendor/shared/supplier-emails';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -158,6 +160,8 @@ export const GrnNew = () => {
   const { user } = useAuth();
   const mayPost = canPostGoodsReceipts(user);
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const notify = useNotify();
   const [params] = useSearchParams();
 
@@ -317,6 +321,8 @@ export const GrnNew = () => {
       return;
     }
     removeScmHandoff('grnFromPoPicks');
+    // Lines brought back from the picker are work the person did.
+    markTouched();
 
     // Restore the draft saved before we left for the picker (header + lines).
     const draft = readScmHandoff<GrnNewDraft>('grnNewDraft');
@@ -442,6 +448,7 @@ export const GrnNew = () => {
       setDialog({ title: 'Unable to continue', body: 'This browser could not safely store the current GRN draft. Nothing was discarded; free some browser storage and try again.' });
       return;
     }
+    allowLeave();
     navigate('/scm/grns/from-po');
   };
 
@@ -750,6 +757,7 @@ export const GrnNew = () => {
       lastCreatedIdRef.current = createRes.id;
       if (!asDraft) await post.mutateAsync(createRes.id);
       if (isReplay) {
+        allowLeave();
         setDialog({
           title: `GRN ${createRes.grnNumber} was already created`,
           body: 'This submit repeated the earlier one — the same receipt was answered again and no second GRN or stock movement was written. '
@@ -767,6 +775,7 @@ export const GrnNew = () => {
          it" and how it is worded must not be re-decided per screen
          (ac-not-sent.tsx's own header). Never blocks; the goods are received. */
       await notifyAcNotSent(notify, createRes, 'Goods receipt');
+      allowLeave();
       setDialog({
         title: `GRN ${createRes.grnNumber} ${asDraft ? 'saved as draft' : 'created'}`,
         body: asDraft
@@ -781,6 +790,7 @@ export const GrnNew = () => {
   };
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Procurement"
@@ -1491,5 +1501,6 @@ export const GrnNew = () => {
         />
       )}
     </div>
+    </FormTouchScope>
   );
 };

@@ -27,6 +27,7 @@ import { renderCreditNoteInto, type CreditNotePdfHeader, type CreditNotePdfLine 
 import { renderPurchaseInvoiceInto } from './purchase-invoice-pdf';
 import { pdfBytesToBase64 } from './payment-voucher-pdf';
 import { fetchPrintBundle } from './payment-voucher-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** One paper to print: what it is, its id, and its number (the file's name, and the refusal's). */
 export type BillPrintDoc = { kind: 'API' | 'PI' | 'SCN'; id: string; number: string };
@@ -75,7 +76,7 @@ export async function printSupplierBills(docs: BillPrintDoc[], opts: { withFiles
 
   /* A purchase invoice keeps no files here, so a print of nothing else has none to fetch. */
   if (!opts.withFiles || docs.every((d) => d.kind === 'PI')) {
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
     for (const [i, d] of docs.entries()) {
       if (i > 0) doc.addPage();
       await renderPaper(doc, d, nameOf);
@@ -86,7 +87,7 @@ export async function printSupplierBills(docs: BillPrintDoc[], opts: { withFiles
 
   const parts: Array<{ kind: BillPrintDoc['kind']; id: string; pageBase64: string }> = [];
   for (const d of docs) {
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
     await renderPaper(doc, d, nameOf);
     parts.push({ kind: d.kind, id: d.id, pageBase64: pdfBytesToBase64(doc.output('arraybuffer')) });
   }

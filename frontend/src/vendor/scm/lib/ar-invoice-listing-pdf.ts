@@ -15,6 +15,7 @@ import {
 } from './pdf-common';
 import type { ArListKind, ArListRow } from './ar-invoice-queries';
 import { todayMyt } from './dates';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type ArListingFilter = { kind: ArListKind; partyName?: string | null };
 
@@ -51,7 +52,7 @@ export function arListingTable(rows: ArListRow[]): {
 }
 
 export async function generateArListingPdf(rows: ArListRow[], filter: ArListingFilter, opts?: { action?: PdfAction }): Promise<void> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'landscape' });
   await ensurePdfCjkFont(doc, rows);
   const y = drawHeader(doc, {
     docTitle: 'CUSTOMER INVOICE LISTING',

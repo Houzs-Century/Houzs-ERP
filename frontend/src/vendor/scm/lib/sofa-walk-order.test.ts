@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 import { splitBackendSofa } from './sofa-walk-order';
+import { pdfRawText } from './pdf-raw-text';
 
 const split = (ids: string[]) => splitBackendSofa(ids, (id) => id);
 
@@ -51,7 +52,7 @@ describe('PO PDF prints a mis-keyed backend sofa in walking order', () => {
     const b64 = await purchaseOrderPdfBase64(header, [
       line('1A(LHF)', 1), line('1A(RHF)', 3), line('Console', 4), line('2S', 5),
     ]);
-    const raw = Buffer.from(b64, 'base64').toString('latin1');
+    const raw = pdfRawText(Buffer.from(b64, 'base64'));
     const at = (s: string) => raw.indexOf(s);
     expect(at('SOFFIO 1A\\(LHF\\)')).toBeGreaterThan(-1);
     expect(at('SOFFIO 1A\\(LHF\\)')).toBeLessThan(at('SOFFIO Console'));

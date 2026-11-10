@@ -61,6 +61,8 @@ import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { DateField } from "../vendor/scm/components/DateField";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
 
 type ItemRow = { id?: unknown; line_delivery_date?: unknown; line_delivery_date_overridden?: unknown };
 
@@ -72,6 +74,9 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
   onBack: () => void;
   onSaved: () => void;
 }) {
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const guardedBack = useGuardedBack(onBack);
   const { user, can, pageAccess } = useAuth();
   const mayEdit = canOperateDeliveryOrders(user, can, pageAccess);
   const notify = useNotify();
@@ -163,6 +168,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
       await updateHeader.mutateAsync({ id, ...buildDoHeaderBody(form, salesStaff, { locked }) });
       invalidateMobileLists(qc);
       void notify({ title: "Delivery order updated" });
+      allowLeave();
       onSaved();
     } catch (err) {
       await notify({
@@ -201,7 +207,8 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
   const country = (form.state ? countryForState(locRows, form.state) : null) ?? "Malaysia";
 
   return (
-    <Shell onBack={onBack} title={`Edit ${String(doo?.do_number ?? "delivery order")}`}
+    <FormTouchScope onTouch={markTouched}>
+    <Shell onBack={guardedBack} title={`Edit ${String(doo?.do_number ?? "delivery order")}`}
       footer={
         <button className="btn" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={() => void save()}>
           {busy ? "Saving…" : "Save changes"}
@@ -278,6 +285,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
           onChange={(e) => set({ note: e.target.value })} />
       ))}
     </Shell>
+    </FormTouchScope>
   );
 }
 

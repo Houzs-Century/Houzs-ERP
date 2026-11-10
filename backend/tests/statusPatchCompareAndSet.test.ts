@@ -137,4 +137,12 @@ describe('Consignment Note status PATCH — compare-and-set on the status the gu
     expect(res.status).toBe(200);
     expect(tables.consignment_delivery_orders![0]!.status).toBe('SIGNED');
   });
+
+  test('an unknown status is refused before any write (sister-ERP gap review)', async () => {
+    const { app, tables } = harness('consignment_delivery_orders', noteRow('DISPATCHED'), false);
+    const res = await patch(app, '/consignment-notes/cn-1/status', 'SHIPPED-ISH');
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error?: string }).error).toBe('invalid_status');
+    expect(tables.consignment_delivery_orders![0]!.status).toBe('DISPATCHED');
+  });
 });

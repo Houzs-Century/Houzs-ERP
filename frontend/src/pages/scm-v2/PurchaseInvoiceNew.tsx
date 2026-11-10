@@ -69,6 +69,11 @@ import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
+import { attachTakenFiles, takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { uploadFlowDocFile } from '../../vendor/scm/lib/flow-doc-files';
+import type { PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -129,6 +134,8 @@ type DraftLine = {
 
 export const PurchaseInvoiceNew = () => {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const notify = useNotify();
   const [params] = useSearchParams();
   const grnId    = params.get('grnId');
@@ -285,6 +292,7 @@ export const PurchaseInvoiceNew = () => {
      paying stays an AP Payment, later, his call. */
   const location = useLocation();
   const scanApplied = useRef(false);
+  const [scanFiles, setScanFiles] = useState<PvFilePayload[]>([]);
   useEffect(() => {
     const scan = (location.state as {
       scanBill?: {
@@ -295,6 +303,8 @@ export const PurchaseInvoiceNew = () => {
     } | null)?.scanBill;
     if (!scan || scanApplied.current || !isManual) return;
     scanApplied.current = true;
+    const pages = takePvFiles();
+    if (pages.length > 0) setScanFiles(pages);
     if (scan.supplierId) setManualSupplierId(scan.supplierId);
     if (scan.extraction.invoiceNumber) setSupplierInvoiceRef(scan.extraction.invoiceNumber);
     if (scan.extraction.invoiceDate) setInvoiceDate(scan.extraction.invoiceDate);
@@ -592,6 +602,15 @@ export const PurchaseInvoiceNew = () => {
           variants:       l.variants,
         })),
       });
+      /* The scanned bill's pages, attached once the invoice exists. A failed
+         upload never un-saves the invoice: the dialog says what to add from
+         its Files card. */
+      const att = await attachTakenFiles(scanFiles, (f) => uploadFlowDocFile('purchase-invoice', createRes.id, f));
+      if (scanFiles.length > 0) setScanFiles([]);
+      const filesNote = [
+        att.attached > 0 ? `${att.attached} scanned page(s) attached.` : null,
+        att.error ? `${att.failed} scanned page(s) did not attach (${att.error}) — add them from the invoice's Files card.` : null,
+      ].filter(Boolean).join(' ');
       // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
       const ledger = asDraft ? undefined : (await post.mutateAsync(createRes.id)).ledger;
       /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — and on a purchase
@@ -599,11 +618,12 @@ export const PurchaseInvoiceNew = () => {
          invoice number, which is the one accounts will ask about. Same shared
          frame as every other surface. Never blocks; the liability is booked. */
       await notifyAcNotSent(notify, createRes, 'Purchase invoice');
+      allowLeave();
       setDialog({
         title: `PI ${createRes.invoiceNumber} created`,
-        body: asDraft
+        body: [asDraft
           ? 'Saved as Draft — review, then Confirm to post the AP liability.'
-          : piCreatedAndPostedSentence(ledger),
+          : piCreatedAndPostedSentence(ledger), filesNote].filter(Boolean).join(' '),
         goTo: afterCreatePath(`/scm/purchase-invoices/${createRes.id}`, sourceDocPath.goodsReceipt(grnId)),
         goLabel: grnId ? 'Back to GRN' : undefined,
       });
@@ -614,6 +634,7 @@ export const PurchaseInvoiceNew = () => {
 
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Procurement"
@@ -1088,5 +1109,6 @@ export const PurchaseInvoiceNew = () => {
         />
       )}
     </div>
+    </FormTouchScope>
   );
 };

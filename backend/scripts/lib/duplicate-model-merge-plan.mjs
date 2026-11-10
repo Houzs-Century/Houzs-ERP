@@ -237,5 +237,5 @@ export function planIdleModel({ entry, models, skus }) {
 
 /** The CONFIRM phrase carries the measured counts, so a phrase from an older run cannot fire. */
 export function confirmPhrase(t) {
-  return `MERGE ${t.groups} MODELS: ${t.pairs} SKU MERGES, MOVE ${t.moves} SKUS, FILL ${t.fills}, FOLD ${t.folds}, IDLE OFF ${t.idleModels}/${t.idleSkus}`;
+  return `MERGE ${t.groups} MODELS: ${t.pairs} SKU MERGES, MOVE ${t.moves} SKUS, MOVE ${t.inactive} SWITCHED-OFF, FILL ${t.fills}, FOLD ${t.folds}, IDLE OFF ${t.idleModels}/${t.idleSkus}`;
 }

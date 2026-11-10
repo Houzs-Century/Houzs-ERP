@@ -79,3 +79,15 @@ export function fieldPhotoOwnerPrefix(houzsUserId: number): string {
 export function fieldPhotoDraftId(houzsUserId: number, context: string): string {
   return `${fieldPhotoOwnerPrefix(houzsUserId)}${context}`;
 }
+
+/* Who uploaded a slip and for which stop. Every upload records its real
+   uploader since crew sharing (2026-11-10): a crew member's photos are listed
+   and claimed by the stop, so the uploader is the only thing left that says
+   whose a photo is. context '' = an upload for no stop (a payment slip, a
+   problem photo). null = a row from before the uploader was recorded. */
+export function parseFieldPhotoDraftId(draftId: string | null | undefined): { uploaderId: number; context: string } | null {
+  const m = /^field:u(\d+):(.*)$/s.exec(draftId ?? '');
+  if (!m) return null;
+  const uploaderId = Number(m[1]);
+  return Number.isSafeInteger(uploaderId) ? { uploaderId, context: m[2]! } : null;
+}
