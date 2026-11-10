@@ -19,8 +19,13 @@
  * the rest is handed out in line order. A line with an explicit rack pick takes
  * from that rack before anyone else.
  *
- * A line with nothing known (no PO, no stock-adjustment units, no rack) is NOT
- * stamped: an empty stamp would lock in "unknown" and hide the bound-PO fallback.
+ * planShippedFrom returns CANDIDATES: what is known per line right now, partial
+ * or not. ONLY A COMPLETE CANDIDATE IS LOCKED (owner decision 2026-11-10): a rack
+ * known for the full line qty AND a source known for the full line qty (POs, plus
+ * units from a PO-less stock-adjustment lot, which have no PO to wait for). An
+ * incomplete line stays NULL, keeps the worked-out answer, and is retried at the
+ * next ship / resync and by the nightly pass, so it locks once the GRN gets its
+ * rack. Nothing is ever partially locked. splitCompleteStamps is that gate.
  *
  * RACK WHEN THE DO NEVER TOOK GOODS OFF A RACK (owner rule 2026-11-10: "看拿什么PO
  * 的货，然后看是什么GR，然后看在GR的什么rack"). A line that got no dispatch
@@ -104,7 +109,8 @@ function drain(pool, keyOf, entries) {
  *        what each GRN line of the stamped POs recorded per rack (grn_item_racks split, else grn_items.rack_id x qty_accepted)
  * @param {string} input.at  ISO timestamp
  * @param {'ship'|'backfill'} input.src
- * @returns {Map<string, object>}  line id -> new stamp, only for unstamped lines with something known
+ * @returns {Map<string, object>}  line id -> CANDIDATE stamp, for unstamped lines with something known;
+ *          lock only what splitCompleteStamps passes
  */
 export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, grnRacks, at, src }) {
   const goods = lines.filter((l) => l.goods && Number(l.qty) > 0 && l.item_code);
@@ -228,6 +234,44 @@ function grnRacksFor(pool, line, pos) {
     }
   }
   return out;
+}
+
+const EPS = 1e-9;
+
+/** What a candidate still lacks for its line, empty when it can lock. PURE.
+ *  A PO entry with qty null (several hard-bound POs share the line) names the
+ *  source of the whole line. */
+export function stampGaps(qty, candidate) {
+  const want = Number(qty);
+  const pos = candidate?.pos ?? [];
+  const poQty = pos.some((p) => p.qty == null)
+    ? want
+    : pos.reduce((s, p) => s + Number(p.qty ?? 0), 0) + Number(candidate?.adj_qty ?? 0);
+  const rackQty = (candidate?.racks ?? []).reduce((s, r) => s + Number(r.qty ?? 0), 0);
+  const gaps = [];
+  if (rackQty + EPS < want) gaps.push(`no rack for ${round(want - rackQty)} of ${round(want)}`);
+  if (poQty + EPS < want) gaps.push(`no PO for ${round(want - poQty)} of ${round(want)}`);
+  return gaps;
+}
+const round = (n) => Math.round(n * 1000) / 1000;
+
+/** The lock gate: candidates -> the stamps that may be written (complete only)
+ *  and, per other unstamped line, why it stays open. PURE.
+ * @param {Array<{ id: string, item_code: string|null, qty: number, goods: boolean, shipped_from: object|null }>} lines
+ * @param {Map<string, object>} candidates  planShippedFrom's output
+ * @returns {{ stamps: Map<string, object>, open: Map<string, string> }} */
+export function splitCompleteStamps(lines, candidates) {
+  const stamps = new Map();
+  const open = new Map();
+  for (const l of lines) {
+    if (l.shipped_from || !(Number(l.qty) > 0)) continue;
+    if (!l.goods) { open.set(l.id, 'service line'); continue; }
+    const c = candidates.get(l.id) ?? null;
+    const gaps = stampGaps(l.qty, c);
+    if (c && gaps.length === 0) stamps.set(l.id, c);
+    else open.set(l.id, gaps.join('; '));
+  }
+  return { stamps, open };
 }
 
 /** The stamp after a revert / cancel put the stock back: the core is untouched

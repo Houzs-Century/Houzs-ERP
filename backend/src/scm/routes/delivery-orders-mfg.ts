@@ -126,7 +126,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
-import { stampDoShippedFrom, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
+import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1179,11 +1179,11 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-ship failed:', e); }
   }
   /* REC P4 — physical RACK stock-out (counterpart of the GRN placement), then lock each line's PO(s) and rack(s)
-     onto it (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
+     onto it after the response (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
   try {
     await stockOutDoLinesFromRacks(sb, deliveryOrderId, doNo, performedBy, lineWh, items as Array<Record<string, unknown>>, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] stock-out failed:', e); }
-  await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   return movementErrors;
 }
 
@@ -1717,7 +1717,7 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     /* Costing C — line set changed → re-derive each line's actual FIFO cost
        from the now-current movements (ship OUT + these resync deltas). */
     await restampDoActualCost(sb, deliveryOrderId);
-    await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
+    await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
     /* Resync changed stock — re-walk SO allocation. Best-effort. */
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
