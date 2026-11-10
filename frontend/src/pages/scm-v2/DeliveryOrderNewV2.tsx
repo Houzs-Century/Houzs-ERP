@@ -27,6 +27,7 @@
 //
 // Route: /scm/delivery-orders/new (App.tsx flips ScmDeliveryOrderNewV2 here).
 
+import { DO_SPEC_KEYS, DO_SPEC_LOCKED_MESSAGE, doSpecLocked } from '../../vendor/shared/do-spec-lock';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -558,6 +559,11 @@ export function DeliveryOrderNewV2() {
      server's own; `lk(bodyKey)` disables exactly what the PATCH would refuse. */
   const headerLocked = !!editId && doHeaderLocked((doDetail.data as { deliveryOrder?: { has_children?: unknown } } | undefined)?.deliveryOrder);
   const lk = (bodyKey: string) => isDoHeaderKeyLocked(bodyKey, headerLocked);
+  /* Owner 2026-11-10 (shared/do-spec-lock.ts): once shipped, a saved line keeps
+     its product and spec. The card disables those fields and says why; the save
+     never sends them, so a qty edit cannot re-bucket the line. */
+  const specLockedReason = editId && doSpecLocked((doDetail.data as { deliveryOrder?: { status?: string | null } } | undefined)?.deliveryOrder?.status ?? null)
+    ? DO_SPEC_LOCKED_MESSAGE : null;
   const createDo = useCreateMfgDeliveryOrder();
   /* One key for the one DO this page is open to raise (lib/idempotency.ts).
      This is the ROUTED desktop DO create (App.tsx:543 → /scm/delivery-orders/
@@ -1096,7 +1102,9 @@ export function DeliveryOrderNewV2() {
         if (l.itemId) {
           const orig = originalLinesRef.current.get(l.itemId);
           if (orig !== JSON.stringify(body)) {
-            ops.push(updateItem.mutateAsync({ id: editId, itemId: l.itemId, ...body }));
+            const send: Record<string, unknown> = { ...body };
+            if (specLockedReason) for (const k of DO_SPEC_KEYS) delete send[k];
+            ops.push(updateItem.mutateAsync({ id: editId, itemId: l.itemId, ...send }));
           }
         } else {
           added.push(body);
@@ -1557,6 +1565,7 @@ export function DeliveryOrderNewV2() {
                    category-mandatory variants are NOT re-required here (they
                    ride in from the SO stash / DO detail). */
                 variantsRequired={false}
+                specLockedReason={line.itemId ? specLockedReason : null}
                 lineDateLocked={false}
                 seedSofaLegDefault={false}
                 attachOptions={null}
