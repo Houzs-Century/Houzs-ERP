@@ -57,8 +57,8 @@
     },
     {
       "check": "D1",
-      "key": "BEDFRAME,MATTRESS,SOFA|backend/src/scm/lib/so-display-branding.ts backend/src/scm/lib/so-readiness.ts backend/src/scm/routes/consignment-orders.ts backend/src/scm/routes/delivery-planning.ts backend/src/scm/routes/mfg-sales-orders.ts frontend/src/vendor/scm/components/SpecialAddonsTab.tsx",
-      "why": "THE MAIN CATEGORIES (sofa/bedframe/mattress) — the set the sofa-exclusivity rule, the branding label and the readiness roll-up all key on. Six homes: MAIN_CATS, MAIN_CATEGORY_ORDER, MAIN, DELIVERABLE, SA_CATEGORIES. A genuine duplicated decision; unifying it changes what SpecialAddonsTab offers and what so-readiness counts, so it is the owner's call and not a drive-by."
+      "key": "BEDFRAME,MATTRESS,SOFA|backend/src/scm/lib/delivery-board-maps.ts backend/src/scm/lib/so-display-branding.ts backend/src/scm/lib/so-readiness.ts backend/src/scm/routes/consignment-orders.ts backend/src/scm/routes/mfg-sales-orders.ts frontend/src/vendor/scm/components/SpecialAddonsTab.tsx",
+      "why": "THE MAIN CATEGORIES (sofa/bedframe/mattress) — the set the sofa-exclusivity rule, the branding label and the readiness roll-up all key on. Six homes (the board's MAIN_CATS moved from delivery-planning.ts to lib/delivery-board-maps.ts, 2026-11-10): MAIN_CATS, MAIN_CATEGORY_ORDER, MAIN, DELIVERABLE, SA_CATEGORIES. A genuine duplicated decision; unifying it changes what SpecialAddonsTab offers and what so-readiness counts, so it is the owner's call and not a drive-by."
     },
     {
       "check": "D1",

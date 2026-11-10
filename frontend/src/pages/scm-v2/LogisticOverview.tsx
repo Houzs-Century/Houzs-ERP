@@ -9,7 +9,9 @@
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
 import { LorryCapacity } from "./LorryCapacity";
 import { LogisticOnTimeSection } from "./LogisticOnTimeSection";
-import { useOnTime } from "../../vendor/scm/lib/on-time-queries";
+import { useOnTime, onTimeKey, onTimeUrl, type OnTimeData } from "../../vendor/scm/lib/on-time-queries";
+import { CacheStamp } from "../../components/CacheStamp";
+import { useCacheRefresh, withFresh, oldestCachedAt } from "../../lib/cacheStamp";
 import { jobDone } from "./logisticDone";
 import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
@@ -45,6 +47,8 @@ const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
+  /** When the server computed these figures (its kept copy can be up to 2 h old). */
+  cachedAt?: string;
   today: string; thisMonday: string; weeks: Week[]; deliveredMonths: Array<{ month: string; doCount: number; doAmountSen: number }>;
   months: Array<{ month: string; doCount: number; doAmountSen: number }>;
   deliveredOwing: { count: number; balanceSen: number; oldestDays: number };
@@ -93,12 +97,21 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
      of another company are left out. A row with no company tag stays. */
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => api.get<{ activeCompanyCode: string | null }>("/api/companies"), staleTime: 300_000 });
   const activeCode = companies.data?.activeCompanyCode ?? null;
+  const histUrl = `/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`;
+  const histKey = ["logistic-overview", period.from, period.to, warehouse];
   const hist = useQuery({
-    queryKey: ["logistic-overview", period.from, period.to, warehouse],
-    queryFn: () => authedFetch<History>(`/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`),
+    queryKey: histKey,
+    queryFn: () => authedFetch<History>(histUrl),
     staleTime: 60_000,
   });
   const onTime = useOnTime(period.from, period.to, warehouse || null);
+  /* The period figures and on-time come from a copy up to 2 h old (the board below is live). */
+  const { refresh, refreshing } = useCacheRefresh();
+  const onRefresh = () => void refresh([
+    { queryKey: histKey, load: () => authedFetch<History>(withFresh(histUrl)) },
+    { queryKey: onTimeKey(period.from, period.to, warehouse || null), load: () => authedFetch<OnTimeData>(withFresh(onTimeUrl(period.from, period.to, warehouse || null))) },
+  ]);
+  const stamp = hist.data && <CacheStamp cachedAt={oldestCachedAt([hist.data.cachedAt, onTime.data?.cachedAt])} onRefresh={onRefresh} refreshing={refreshing} />;
 
   const warehouses = useMemo(() => {
     const map = new Map<string, string>();
@@ -263,6 +276,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           {viewSwitch}
           <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
           {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+          {stamp}
         </div>
         {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
         <LorryCapacity period={{ from: period.from, to: period.to }} overviewLorries={h?.period.byLorry ?? []} />
@@ -281,6 +295,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           {warehouses.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
         {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+        {stamp}
       </div>
       <BoardLoadStatus updatedAt={board.updatedAt} bands={board} />
       {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}

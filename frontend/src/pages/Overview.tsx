@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { api } from "../api/client";
-import { useQuery } from "../hooks/useQuery";
+import { useQuery, buildQueryKey } from "../hooks/useQuery";
+import { CacheStamp } from "../components/CacheStamp";
+import { useCacheRefresh, withFresh, oldestCachedAt } from "../lib/cacheStamp";
 import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
@@ -77,22 +79,31 @@ export function Overview() {
   /* The figures below follow the dashboard period (this month by default). */
   const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const pFrom = period.from; const pTo = period.to;
-  const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } } }>("/api/scm/procurement-overview#home",
+  const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } }; cachedAt?: string }>("/api/scm/procurement-overview#home",
     () => api.get(`/api/scm/procurement-overview?from=${pFrom}&to=${pTo}`),
     [pFrom, pTo],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
   );
-  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[] }>("/api/scm/logistic-overview",
+  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[]; cachedAt?: string }>("/api/scm/logistic-overview",
     () => api.get("/api/scm/logistic-overview"),
     [],
     { enabled: pageAccess("scm.transportation.drivers") !== "none" },
   );
   /* The same figures as Project Overview: keyed books, else the event's Sales Orders. */
-  const pnl = useQuery<{ projects: OvProject[] }>("/api/projects/overview",
+  const pnl = useQuery<{ projects: OvProject[]; cachedAt?: string }>("/api/projects/overview",
     () => api.get("/api/projects/overview"),
     [],
     { enabled: !!user?.project_finance_viewer && pageAccess("projects.finances") !== "none" },
   );
+  /* Those three overviews are served from a copy up to 2 h old: the watchlist says
+     the oldest copy's time and Refresh recomputes the ones this viewer reads. */
+  const { refresh, refreshing } = useCacheRefresh();
+  const onRefresh = () => void refresh([
+    ...(proc.data ? [{ queryKey: buildQueryKey("/api/scm/procurement-overview#home", [pFrom, pTo]), load: () => api.get(withFresh(`/api/scm/procurement-overview?from=${pFrom}&to=${pTo}`)) }] : []),
+    ...(logi.data ? [{ queryKey: buildQueryKey("/api/scm/logistic-overview"), load: () => api.get(withFresh("/api/scm/logistic-overview")) }] : []),
+    ...(pnl.data ? [{ queryKey: buildQueryKey("/api/projects/overview"), load: () => api.get(withFresh("/api/projects/overview")) }] : []),
+  ]);
+  const overviewsAt = oldestCachedAt([proc.data?.cachedAt, logi.data?.cachedAt, pnl.data?.cachedAt]);
   const gaps = useQuery<NonNullable<WatchInputs["projectGaps"]>>("/api/projects/data-gaps",
     () => api.get("/api/projects/data-gaps"),
     [],
@@ -215,7 +226,8 @@ export function Overview() {
       </div>
 
       {/* ── What every module overview found, ranked ──────────── */}
-      <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading} />
+      <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading}
+        stamp={(proc.data || logi.data || pnl.data) ? <CacheStamp cachedAt={overviewsAt} onRefresh={onRefresh} refreshing={refreshing} /> : null} />
 
       {/* ── Two columns: needs-me feed + P&L of the period ──────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">

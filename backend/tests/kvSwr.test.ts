@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import { cachedSwr, serveSwr, writeSwr, type SwrBuild } from '../src/scm/lib/kv-swr';
+import { cachedSwr, serveSwr, writeSwr, REFRESH_FLOOR_SECONDS, type SwrBuild } from '../src/scm/lib/kv-swr';
 import { procurementOverviewKey, procurementOverviewParams } from '../src/scm/routes/procurement-overview';
 
 function fakeKv() {
@@ -112,10 +112,12 @@ describe('serveSwr', () => {
     const get = app(build, 1, kv);
     const first = await get();
     expect(first.headers.get('X-Cache')).toBe('miss');
-    expect(await first.json()).toEqual({ n: 1 });
+    expect(await first.json()).toMatchObject({ n: 1 });
     const second = await get();
     expect(second.headers.get('X-Cache')).toBe('fresh');
-    expect(await second.json()).toEqual({ n: 1 });
+    const body = await second.json() as { n: number; cachedAt: string };
+    expect(body.n).toBe(1);
+    expect(body.cachedAt).toBe(second.headers.get('X-Cache-At'));
     expect(build).toHaveBeenCalledTimes(1);
   });
 
@@ -123,7 +125,7 @@ describe('serveSwr', () => {
     const kv = fakeKv();
     await app(async () => ({ ok: true, body: { co: 1 } }), 1, kv)();
     const other = await app(async () => ({ ok: true, body: { co: 2 } }), 2, kv)();
-    expect(await other.json()).toEqual({ co: 2 });
+    expect(await other.json()).toMatchObject({ co: 2 });
   });
 
   it('with no active company it builds every time and stores nothing', async () => {
@@ -139,5 +141,46 @@ describe('serveSwr', () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'load_failed', reason: 'x' });
     expect(kv.m.size).toBe(0);
+  });
+});
+
+/* The overviews said "as of today" over a copy up to two hours old. The body now
+   carries when its figures were computed, and Refresh (?fresh=1) recomputes. */
+describe('what the overview says about its own age', () => {
+  function app(build: () => Promise<SwrBuild>, kv: KVNamespace) {
+    const a = new Hono<{ Bindings: { SESSION_CACHE: KVNamespace }; Variables: { companyId?: number } }>();
+    a.use('*', async (c, next) => { c.set('companyId', 1); await next(); });
+    a.get('/r', (c) => serveSwr(c, { family: 't', parts: ['2026-10-23'], softSeconds: 7200, hardSeconds: 7200, build }));
+    return (req = '/r') => a.request(req, {}, { SESSION_CACHE: kv });
+  }
+
+  it('a served copy names the time it was computed, not the time it was served', async () => {
+    const kv = fakeKv();
+    const old = Date.now() - 90 * 60 * 1000;
+    await writeSwr(kv, 'swr:t:v1:1:2026-10-23', { ok: true, body: { n: 1 } }, 7200, 7200, old);
+    const res = await app(async () => ({ ok: true, body: { n: 2 } }), kv)();
+    expect(await res.json()).toEqual({ n: 1, cachedAt: new Date(old).toISOString() });
+  });
+
+  it('Refresh recomputes an old copy and stores the new one', async () => {
+    const kv = fakeKv();
+    const old = Date.now() - 90 * 60 * 1000;
+    await writeSwr(kv, 'swr:t:v1:1:2026-10-23', { ok: true, body: { n: 1 } }, 7200, 7200, old);
+    const build = vi.fn(async (): Promise<SwrBuild> => ({ ok: true, body: { n: 2 } }));
+    const res = await app(build, kv)('/r?fresh=1');
+    const body = await res.json() as { n: number; cachedAt: string };
+    expect(body.n).toBe(2);
+    expect(Date.parse(body.cachedAt)).toBeGreaterThan(old);
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(kv.m.get('swr:t:v1:1:2026-10-23')!).v).toEqual({ ok: true, body: { n: 2 } });
+  });
+
+  it('Refresh on a copy built moments ago serves that copy', async () => {
+    const kv = fakeKv();
+    await writeSwr(kv, 'k', ok(7), 60, 600, 1_000);
+    const compute = vi.fn(async () => ok(8));
+    const r = await cachedSwr({ kv, key: 'k', softSeconds: 60, hardSeconds: 600, compute, cacheable: (x) => x.ok, waitUntil: null, refresh: true, now: () => 1_000 + (REFRESH_FLOOR_SECONDS - 1) * 1000 });
+    expect(r.result).toEqual(ok(7));
+    expect(compute).not.toHaveBeenCalled();
   });
 });

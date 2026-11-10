@@ -77,6 +77,19 @@ export function bandHeaderOr(band: BandNo, today: string): string {
   return [`${A}.lt.${lo}`, `${A}.gt.${hi}`, `and(${A}.is.null,${C}.lt.${lo})`, `and(${A}.is.null,${C}.gt.${hi})`, `and(${A}.is.null,${C}.is.null)`].join(',');
 }
 
+/** The same band as bandHeaderOr, as dates for the SQL board path
+ *  (delivery-board-sql.ts): `inside` = coalesce(amended, customer) falls in one of
+ *  the ranges; `outside` (band 5) = it is null, or before lo, or after hi.
+ *  amended ?? customer is exactly bandHeaderOr's "amended, or customer when amended is null". */
+export function bandDateRanges(band: BandNo, today: string): { inside: Array<[string, string]> | null; outside: [string, string] | null } {
+  const b = BANDS[band - 1]!;
+  if (b.far == null) return { inside: null, outside: [shift(today, -(b.near - 1)), shift(today, b.near - 1)] };
+  const inside: Array<[string, string]> = b.near === 0
+    ? [[shift(today, -b.far), shift(today, b.far)]]
+    : [[shift(today, -b.far), shift(today, -b.near)], [shift(today, b.near), shift(today, b.far)]];
+  return { inside, outside: null };
+}
+
 /** Narrow the SO header read to a band; the whole board otherwise. */
 export function bandFilter<Q extends { or: (expr: string) => Q }>(q: Q, band: BandParams, today: string): Q {
   return band && band !== 'invalid' ? q.or(bandHeaderOr(band.band, today)) : q;
