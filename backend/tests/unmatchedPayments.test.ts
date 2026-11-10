@@ -156,6 +156,8 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       pay({ id: 'p-card-held', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-04' }),
       pay({ id: 'p-card-no-credit', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-05' }),
       pay({ id: 'p-card-part', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-06' }),
+      /* Paid in full once the charge PBB kept, booked on its advice day, is counted (owner 2026-11-10). */
+      pay({ id: 'p-card-kept', method: 'merchant', merchant_provider: 'PBB', amount_sen: 336500, paid_at: '2026-09-06' }),
       pay({ id: 'p-tr-matched', amount_sen: 162000 }),
       pay({ id: 'p-tr-named', amount_sen: 598000, paid_at: '2026-09-20' }),
       pay({ id: 'p-tr-open-line', amount_sen: 143300, paid_at: '2026-09-20', approval_code: '260920CE0DB5C26' }),
@@ -190,6 +192,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-held', settlement_row_id: 3 },
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-no-credit', settlement_row_id: 6 },
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-part', settlement_row_id: 7 },
+      { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-kept', settlement_row_id: 8 },
     ],
     acc_settlement_rows: [
       { id: 1, batch_id: 1, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S1', bucket: 'MATCHED' },
@@ -200,6 +203,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { id: 5, batch_id: 3, company_id: CO, confirmed_at: null, posted_je_no: null, bucket: 'IGNORED' },
       { id: 6, batch_id: 4, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S6', bucket: 'MATCHED' },
       { id: 7, batch_id: 5, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S7', bucket: 'MATCHED' },
+      { id: 8, batch_id: 6, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S8', bucket: 'MATCHED' },
     ],
     acc_settlement_batches: [
       { id: 1, company_id: CO, file_name: 'ghl-0901.csv', acquirer_code: 'GHL', net_sen: 166800, stated_net_sen: null },
@@ -207,6 +211,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { id: 3, company_id: CO, file_name: 'mbb-0904.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
       { id: 4, company_id: CO, file_name: 'mbb-0905.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
       { id: 5, company_id: CO, file_name: 'mbb-0906.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
+      { id: 6, company_id: CO, file_name: 'pbb-0906.csv', acquirer_code: 'PBB', net_sen: 334818, stated_net_sen: null },
     ],
     acc_settlement_receipts: [
       /* Report 1 is in the bank, its credit booked. */
@@ -214,6 +219,11 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       /* A credit keyed but never booked is not money in the bank. */
       { id: 2, company_id: CO, batch_id: 4, received_on: '2026-09-07', amount_sen: 100000, charge_sen: 0, je_no: null },
       { id: 3, company_id: CO, batch_id: 5, received_on: '2026-09-08', amount_sen: 40000, charge_sen: 0, je_no: 'JE-R5' },
+      { id: 4, company_id: CO, batch_id: 6, received_on: '2026-09-08', amount_sen: 302418, charge_sen: 0, je_no: 'JE-R6' },
+    ],
+    /* The RM 324 PBB kept off that payout, booked on its advice day (acc/payout-charge). */
+    acc_settlement_payout_batches: [
+      { id: 4, company_id: CO, payout_id: 3, batch_id: 6, settled_on: '2026-09-06', net_sen: 302418, charge_sen: 32400, charge_je_no: 'JE-C4' },
     ],
     journal_entries: [
       je('je-1', 'JE-1', 'p-tr-matched'),
@@ -288,6 +298,8 @@ describe('GET /unmatched-payments', () => {
     expect(byId['p-card-held']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 3, fileName: 'mbb-0904.csv', acquirerCode: 'MBB', waitingLines: 1, bankShare: 0 } });
     expect(byId['p-card-no-credit']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 4, waitingLines: 0, bankShare: 0 } });
     expect(byId['p-card-part']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 5, waitingLines: 0, bankShare: 0.4 } });
+    /* 90.3% credited + the RM 324 PBB kept and he booked on the advice day = all of it: matched (owner 2026-11-10). */
+    expect(byId['p-card-kept']).toBeUndefined();
     expect(byId['p-card-waiting']).toMatchObject({ state: 'CARD_NOT_REPORTED', channel: 'MBB', customerName: 'Poon How kei', salespersonName: null });
     expect(byId['p-card-cimb']).toMatchObject({ state: 'CARD_NO_MERCHANT', channel: 'CIMB' });
     /* A match row on an OPEN line claims nothing; the statement reaches its day. */

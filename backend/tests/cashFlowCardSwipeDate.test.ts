@@ -16,7 +16,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { CARD_COLUMN, receiptsPaymentsReport } from '../src/scm/routes/accounting-rp';
-import { inBankShares, merchantMatched } from '../src/acc/card-in-bank';
+import { inBankShares, loadCardPayoutFacts, merchantMatched } from '../src/acc/card-in-bank';
 
 const CO = 2;
 let lineId = 0;
@@ -247,5 +247,38 @@ describe('Cash Flow: card money on the swipe date (owner 2026-11-05)', () => {
     expect(inBankShares(facts, '2026-10-31').get('SOPAY:pay-c')).toBe(1);
     /* A credit not yet in the ledger is not money in the bank. */
     expect(inBankShares({ ...facts, receipts: facts.receipts.map((x) => ({ ...x, je_no: null })) }, '2026-10-31').get('SOPAY:pay-c')).toBe(0);
+  });
+
+  /* Owner 2026-11-10 (2990-SO-2606-005, PBB's 06/06 report read "the bank has paid 90%"):
+     「应该是324，那时说了是手续费不是？」 — PBB kept RM 324 off the 08/06 payout, and on
+     2026-09-10 he booked it on the advice day (acc/payout-charge). Kept off the payout, it
+     settles with the payout, as a receipt's own charge does. */
+  test('a charge kept off the payout and booked on its advice day counts with the credit', () => {
+    const facts = {
+      matches: [{ payment_source: 'SOPAY', payment_id: 'sarah', settlement_row_id: 7 }],
+      rows: [{ id: 7, batch_id: 9, confirmed_at: '2026-06-09T02:00:00Z' }],
+      batches: [{ id: 9, stated_net_sen: null, net_sen: 334818 }],
+      receipts: [{ batch_id: 9, received_on: '2026-06-08', amount_sen: 302418, charge_sen: 0, je_no: 'JE-R11' }],
+      dayCharges: [{ batch_id: 9, charge_sen: 32400, charge_je_no: 'JE-C4' }],
+    };
+    expect(inBankShares(facts, '2026-06-30').get('SOPAY:sarah')).toBe(1);
+    /* Without it the report read 90.3% paid — the false "not in the bank yet". */
+    expect(inBankShares({ ...facts, dayCharges: [] }, '2026-06-30').get('SOPAY:sarah')).toBeCloseTo(302418 / 334818, 6);
+    /* A charge not posted is not settled money. */
+    expect(inBankShares({ ...facts, dayCharges: [{ batch_id: 9, charge_sen: 32400, charge_je_no: null }] }, '2026-06-30').get('SOPAY:sarah')).toBeLessThan(1);
+    /* Before the payout reached the bank, nothing of the report is settled — the charge waits for it. */
+    expect(inBankShares(facts, '2026-06-07').get('SOPAY:sarah')).toBe(0);
+  });
+
+  test('the advice days\' charges are read with the rest of the settlement history, this company\'s only', async () => {
+    const sb = fakeSb({
+      acc_settlement_payout_batches: [
+        { id: 4, company_id: CO, payout_id: 3, batch_id: 9, settled_on: '2026-06-06', net_sen: 302418, charge_sen: 32400, charge_je_no: 'JE-C4' },
+        { id: 5, company_id: 1, payout_id: 8, batch_id: 40, settled_on: '2026-06-06', net_sen: 1000, charge_sen: 100, charge_je_no: 'HC-JE-1' },
+      ],
+    });
+    const loaded = await loadCardPayoutFacts(sb as never, CO);
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) expect(loaded.facts.dayCharges).toEqual([{ batch_id: 9, charge_sen: 32400, charge_je_no: 'JE-C4' }]);
   });
 });
