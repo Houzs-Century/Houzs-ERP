@@ -19,21 +19,25 @@
      HC-DO-2610-419   cancelled, ELEPHANE-(K) given back twice. DO-2610-420's uncosted
                       OUT draws the GRN-2610-207 lot; ADJUSTMENT -1 against the cancel.
 
-   Every kind must leave its bucket at movements == open lots. Anything else is
-   refused, and on apply ONE refusal writes nothing at all: the four documents go
+   Company 1 binds each SO line to a PO line (hard binding, made to order) and
+   does not pick stock by spec, so only TOTAL qty per document and item counts:
+   spec buckets are out of scope, every row is written in the spec the document
+   already carries, and nothing is re-keyed or moved between specs. The guard is
+   the item total at the warehouse (all specs): a plan that would leave its open
+   lots further from its movements than it found them is refused, and on apply ONE refusal writes nothing at all: the four documents go
    in one transaction, all or none. A document whose movements already match its
    lines is reported "already done" and skipped (that is what makes a re-run inert).
 
    The plan prints, per document: the finding, the explanation, the movements to
-   write (document numbers, item codes, qty) and the lot links, and the bucket
-   before / after. Quantities only: this repo's Actions logs are public, so no
+   write (document numbers, item codes, qty) and the lot links, and the item
+   total (all specs) before / after. Quantities only: this repo's Actions logs are public, so no
    cost, customer or phone is ever printed.
 
    MODE=plan (default) writes nothing. MODE=apply needs
    CONFIRM="WRITE THE MISSING HALF-DONE MOVEMENTS". Optional COMPANY_ID (default 1).
    Verified on a fresh connection: each document's movements match its lines by
    the same rule the check uses (compareDocItems / cancelledResidue), every touched
-   bucket has movements == open lots, each opened-and-closed lot is closed, no OUT
+   item total is no further from its lots than before, each opened-and-closed lot is closed, no OUT
    draws more than its qty, and every written row carries the tag in its notes.
    Also asks the allocation worker to recompute.
 
@@ -49,7 +53,7 @@ import { compareDocItems, cancelledResidue } from './lib/half-done-documents.mjs
 import {
   CONFIRM_PHRASE, TAG, KIND, TARGETS, EXPLAIN,
   planGrnInMissingShipUncosted, planGrnInLostOnRepost, planDoOutMissing, planCancelledDoOverReversed,
-  receiptUnitCost, movementNotes,
+  receiptUnitCost, collapseDoLines, movementNotes,
 } from './lib/half-done-repair-2026-11.mjs';
 
 function resolveUrl() {
@@ -73,25 +77,25 @@ const ymd = (d) => (d == null ? '-' : d instanceof Date ? d.toISOString().slice(
 
 /* ---------------------------------------------------------------- reads */
 
-async function bucket(c, wh, item, vk) {
+/* The item at the warehouse, ALL specs together: movements (balance-view signs) and open lots. */
+async function itemTotal(c, wh, item) {
   const [m] = await c`
     SELECT COALESCE(SUM(CASE WHEN movement_type = 'OUT' THEN -qty WHEN movement_type IN ('IN', 'ADJUSTMENT', 'TRANSFER') THEN qty ELSE 0 END), 0)::int AS mov
-      FROM scm.inventory_movements
-     WHERE company_id = ${CO} AND warehouse_id = ${wh} AND item_code = ${item} AND COALESCE(variant_key, '') = ${vk}`;
+      FROM scm.inventory_movements WHERE company_id = ${CO} AND warehouse_id = ${wh} AND item_code = ${item}`;
   const [l] = await c`
     SELECT COALESCE(SUM(qty_remaining), 0)::int AS lots FROM scm.inventory_lots
-     WHERE company_id = ${CO} AND warehouse_id = ${wh} AND item_code = ${item} AND COALESCE(variant_key, '') = ${vk} AND qty_remaining > 0`;
+     WHERE company_id = ${CO} AND warehouse_id = ${wh} AND item_code = ${item} AND qty_remaining > 0`;
   return { mov: Number(m.mov), lots: Number(l.lots) };
 }
 
-/* The OUT a DO wrote in one bucket, with the units a lot already backs. */
-async function doOut(c, doNo, wh, item, vk) {
+/* The one OUT a DO wrote for an item at a warehouse (any spec), with the units a lot already backs. */
+async function doOut(c, doNo, wh, item) {
   const rows = await c`
     SELECT m.id, ABS(m.qty)::int AS qty, m.source_doc_id,
            COALESCE((SELECT SUM(x.qty_consumed) FROM scm.inventory_lot_consumptions x WHERE x.movement_id = m.id), 0)::int AS consumed
       FROM scm.inventory_movements m
      WHERE m.company_id = ${CO} AND m.source_doc_type = 'DO' AND m.movement_type = 'OUT' AND m.source_doc_no = ${doNo}
-       AND m.warehouse_id = ${wh} AND m.item_code = ${item} AND COALESCE(m.variant_key, '') = ${vk}
+       AND m.warehouse_id = ${wh} AND m.item_code = ${item}
      ORDER BY m.created_at, m.id`;
   if (rows.length !== 1) return null;
   return { outId: rows[0].id, outQty: rows[0].qty, consumed: rows[0].consumed, doId: rows[0].source_doc_id };
@@ -120,9 +124,9 @@ async function grnFacts(c, t) {
     const mine = movs.filter((m) => m.item_code === code);
     const grnNetIn = mine.reduce((s, m) => s + (m.movement_type === 'IN' ? Number(m.qty) : m.movement_type === 'OUT' ? -Number(m.qty) : 0), 0);
     const movVks = [...new Set(mine.map((m) => m.vk))];
-    const b = await bucket(c, g.warehouse_id, code, vk);
-    const downstream = await doOut(c, t.downstreamDo, g.warehouse_id, code, vk);
-    const base = { code, line: l, vk, movVks, grnNetIn, batchNo: l.po_number ?? null, bucket: b, downstream };
+    const tot = await itemTotal(c, g.warehouse_id, code);
+    const downstream = await doOut(c, t.downstreamDo, g.warehouse_id, code);
+    const base = { code, line: l, vk, movVks, grnNetIn, batchNo: l.po_number ?? null, downstream };
     if (t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
       const bills = await c`
         SELECT x.grn_item_id, x.qty, x.unit_price_sen, x.allocated_charge_sen, p.status::text AS status, p.exchange_rate
@@ -141,7 +145,7 @@ async function grnFacts(c, t) {
         const v = costOf(x);
         return { code: x.item_code, same: v != null && ins.every((m) => Number(m.unit_cost_sen) === v) };
       }).filter(Boolean);
-      items.push({ ...base, unitCost, siblings, billed, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
+      items.push({ ...base, unitCost, siblings, billed, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, item: tot, unitCost, downstream }) });
     } else {
       const lots = await c`
         SELECT l.id, l.qty_received, l.qty_remaining, l.unit_cost_sen, l.movement_id, l.source_doc_type, l.received_at,
@@ -149,7 +153,7 @@ async function grnFacts(c, t) {
                COALESCE((SELECT array_agg(DISTINCT x.source_doc_no) FROM scm.inventory_lot_consumptions x WHERE x.lot_id = l.id), '{}') AS consumed_by
           FROM scm.inventory_lots l
          WHERE l.company_id = ${CO} AND l.warehouse_id = ${g.warehouse_id} AND l.item_code = ${code}
-           AND COALESCE(l.variant_key, '') = ${vk} AND l.batch_no IS NOT DISTINCT FROM ${l.po_number ?? null}
+           AND l.batch_no IS NOT DISTINCT FROM ${l.po_number ?? null}
            AND l.source_doc_type = 'ADJUSTMENT'
          ORDER BY l.received_at`;
       const pick = lots.find((x) => (x.consumed_by ?? []).includes(t.downstreamDo)) ?? null;
@@ -157,7 +161,7 @@ async function grnFacts(c, t) {
         id: pick.id, qtyReceived: Number(pick.qty_received), qtyRemaining: Number(pick.qty_remaining), unitCost: Number(pick.unit_cost_sen ?? 0),
         hasMovement: Boolean(pick.has_movement), consumedBy: pick.consumed_by ?? [], receivedAt: pick.received_at,
       } : null;
-      items.push({ ...base, standIn, plan: planGrnInLostOnRepost({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, standIn, downstreamDo: t.downstreamDo }) });
+      items.push({ ...base, standIn, plan: planGrnInLostOnRepost({ lineQty: Number(l.qty_accepted), grnNetIn, item: tot, standIn, downstreamDo: t.downstreamDo }) });
     }
   }
   return { t, g, items };
@@ -187,13 +191,23 @@ async function doMissingOutFacts(c, t) {
     batchNo: r.allocated_batch_no ?? r.committed_po_batch_no ?? null,
     service: isServiceLineMirror({ itemGroup: r.item_group, itemCode: r.item_code }),
   }));
-  const buckets = new Map();
+  const items = new Map();
   for (const l of lines) {
     if (!l.warehouseId) continue;
-    const k = `${l.warehouseId}::${l.itemCode}::${l.vk}`;
-    if (!buckets.has(k)) buckets.set(k, await bucket(c, l.warehouseId, l.itemCode, l.vk));
+    const k = `${l.warehouseId}::${l.itemCode}`;
+    if (!items.has(k)) items.set(k, await itemTotal(c, l.warehouseId, l.itemCode));
   }
-  const plan = planDoOutMissing({ status: d.status, stockOutStates: DO_STOCK_OUT_STATES, existingOuts: ex.n, lines, buckets });
+  /* What each OUT can draw: the FIFO trigger consumes in the OUT's own spec (the
+     DO line's), bound batch first. That is the trigger's mechanics, not a spec
+     rule of ours; it only decides whether the OUT comes out costed. */
+  const drawable = new Map();
+  for (const o of collapseDoLines(lines.filter((l) => l.warehouseId))) {
+    const [r] = await c`SELECT COALESCE(SUM(qty_remaining), 0)::int AS n FROM scm.inventory_lots
+                         WHERE company_id = ${CO} AND warehouse_id = ${o.warehouseId} AND item_code = ${o.itemCode}
+                           AND COALESCE(variant_key, '') = ${o.vk} AND qty_remaining > 0`;
+    drawable.set(o.key, Number(r.n));
+  }
+  const plan = planDoOutMissing({ status: d.status, stockOutStates: DO_STOCK_OUT_STATES, existingOuts: ex.n, lines, items, drawable });
   if (d.is_dropship === true && !plan.done) plan.refusals.push('a drop-ship DO: its batch rule is not mirrored here');
   if (d.migrated_no_stock === true && !plan.done) plan.refusals.push('a migrated DO: it never moves stock');
   if (plan.refusals.length) plan.outs = [];
@@ -222,28 +236,36 @@ async function cancelledFacts(c, t) {
   const items = [];
   for (const code of t.items) {
     const rows = await c`
-      SELECT warehouse_id, COALESCE(variant_key, '') AS vk,
+      SELECT warehouse_id,
+             (ARRAY_AGG(COALESCE(variant_key, '') ORDER BY created_at) FILTER (WHERE source_doc_type = 'ADJUSTMENT'))[1] AS vk,
+             COUNT(DISTINCT COALESCE(variant_key, ''))::int AS specs,
              SUM(CASE WHEN source_doc_type = 'DO' AND movement_type = 'OUT' THEN qty
                       WHEN source_doc_type = 'DO' AND movement_type = 'IN' THEN -qty
                       WHEN source_doc_type = 'ADJUSTMENT' AND movement_type = 'ADJUSTMENT' THEN -qty ELSE 0 END)::int AS net,
              (ARRAY_AGG(batch_no ORDER BY created_at) FILTER (WHERE source_doc_type = 'ADJUSTMENT'))[1] AS cancel_batch
         FROM scm.inventory_movements
        WHERE company_id = ${CO} AND source_doc_id = ${d.id} AND item_code = ${code} AND source_doc_type IN ('DO', 'ADJUSTMENT')
-       GROUP BY 1, 2`;
+       GROUP BY 1`;
+    /* Net per item in TOTAL at the warehouse (hard binding: spec is not a stock key
+       for company 1). The correcting row is written in the spec the cancel row carries. */
     const off = rows.filter((r) => Number(r.net) !== 0);
     if (off.length === 0) { items.push({ code, plan: { done: true, refusals: [], writes: [], attach: [] }, rows }); continue; }
     for (const r of off) {
-      const b = await bucket(c, r.warehouse_id, code, r.vk);
-      const downstream = await doOut(c, t.downstreamDo, r.warehouse_id, code, r.vk);
+      const tot = await itemTotal(c, r.warehouse_id, code);
+      const downstream = await doOut(c, t.downstreamDo, r.warehouse_id, code);
       const open = await c`
         SELECT id, source_doc_no, batch_no, qty_remaining FROM scm.inventory_lots
          WHERE company_id = ${CO} AND warehouse_id = ${r.warehouse_id} AND item_code = ${code}
-           AND COALESCE(variant_key, '') = ${r.vk} AND qty_remaining > 0 ORDER BY received_at, id`;
+           AND COALESCE(variant_key, '') = ${r.vk ?? ''} AND qty_remaining > 0
+         ORDER BY (batch_no IS NOT DISTINCT FROM ${r.cancel_batch ?? null}) DESC, received_at, id`;
       const plan = planCancelledDoOverReversed({
-        status: d.status, doNet: Number(r.net), bucket: b, downstream,
+        status: d.status, doNet: Number(r.net), item: tot, downstream,
         openLots: open.map((l) => ({ id: l.id, qtyRemaining: Number(l.qty_remaining) })),
       });
-      items.push({ code, wh: r.warehouse_id, vk: r.vk, net: Number(r.net), cancelBatch: r.cancel_batch, bucket: b, downstream, open, plan });
+      if (r.vk == null) plan.refusals.push('no cancel row to take the spec from');
+      if (Number(r.specs) > 1) plan.refusals.push('the DO moved this item in more than one spec: the correcting row would have to pick one');
+      if (plan.refusals.length) { plan.writes = []; plan.attach = []; }
+      items.push({ code, wh: r.warehouse_id, vk: r.vk ?? '', net: Number(r.net), cancelBatch: r.cancel_batch, downstream, open, plan });
     }
   }
   return { t, d, items };
@@ -294,11 +316,10 @@ function printPlan(facts, whName) {
       for (const l of f.lines) note(`    line ${l.itemCode} x${l.qty} SO ${l.soDocNo ?? '-'} ship-from ${whName(l.warehouseId)} spec [${vkOf(l.vk)}] batch ${l.batchNo ?? '-'}${l.service ? ' (service: no stock)' : ''}`);
       if (f.plan.done) { note('  ALREADY DONE: the DO has its OUT rows. Nothing to write.'); continue; }
       for (const o of f.plan.outs) note(`  WRITE OUT ${o.qty} ${o.itemCode} [${vkOf(o.vk)}] batch ${o.batchNo ?? '-'} at ${whName(o.warehouseId)}, source DO ${f.t.docNo}`);
-      for (const d of f.draws) note(`    draws lot ${d.lot} (${d.from ?? '-'}, batch ${d.batch ?? '-'}) x${d.qty}`);
-      for (const [k, b] of f.plan.before) {
-        const a = f.plan.after.get(k) ?? b;
-        const [wh, item, vk] = k.split('::');
-        note(`  BUCKET ${item} [${vkOf(vk)}] at ${whName(wh)}: movements ${b.mov} -> ${a.mov} | open lots ${b.lots} -> ${a.lots}`);
+      for (const d of f.draws) note(`    the trigger draws lot ${d.lot} (${d.from ?? '-'}, batch ${d.batch ?? '-'}) x${d.qty}`);
+      for (const [k, g] of f.plan.items) {
+        const [wh, item] = k.split('::');
+        note(`  ITEM TOTAL ${item} at ${whName(wh)} (all specs): movements ${g.before.mov} -> ${g.after.mov} | open lots ${g.before.lots} -> ${g.after.lots}`);
       }
       for (const r of f.plan.refusals) bad(`  REFUSED: ${r}`);
       continue;
@@ -307,12 +328,12 @@ function printPlan(facts, whName) {
       note(`  FINDING: status ${f.d.status}`);
       for (const it of f.items) {
         if (it.plan.done) { note(`  ALREADY DONE: ${it.code} nets to 0 on this DO. Nothing to write.`); continue; }
-        note(`  ${it.code} [${vkOf(it.vk)}] at ${whName(it.wh)}: OUT - give-backs = ${it.net} (over-reversed by ${-it.net})`);
-        note(`    replacement ${f.t.downstreamDo} OUT: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none in this bucket'}`);
+        note(`  ${it.code} at ${whName(it.wh)}, in total: OUT - give-backs = ${it.net} (over-reversed by ${-it.net}); the cancel row's spec [${vkOf(it.vk)}]`);
+        note(`    replacement ${f.t.downstreamDo} OUT: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none for this item'}`);
         for (const l of it.open) note(`    open lot ${short(l.id)} (${l.source_doc_no ?? '-'}, batch ${l.batch_no ?? '-'}) left ${l.qty_remaining}`);
         for (const a of it.plan.attach) note(`  LINK lot ${short(a.lotId)} x${a.qty} -> ${f.t.downstreamDo} OUT (it shipped that unit before the GRN arrived)`);
         for (const w of it.plan.writes) note(`  WRITE ${w.type} ${w.qty} ${it.code} [${vkOf(it.vk)}] batch ${it.cancelBatch ?? '-'}, source ADJUSTMENT ${f.t.docNo} (consumes nothing)`);
-        note(`  BUCKET ${it.code} [${vkOf(it.vk)}] at ${whName(it.wh)}: movements ${it.plan.before.mov} -> ${it.plan.after.mov} | open lots ${it.plan.before.lots} -> ${it.plan.after.lots}`);
+        note(`  ITEM TOTAL ${it.code} at ${whName(it.wh)} (all specs): movements ${it.plan.item.before.mov} -> ${it.plan.item.after.mov} | open lots ${it.plan.item.before.lots} -> ${it.plan.item.after.lots}`);
         for (const r of it.plan.refusals) bad(`  REFUSED: ${r}`);
       }
       continue;
@@ -320,9 +341,9 @@ function printPlan(facts, whName) {
     note(`  FINDING: status ${f.g.status}, received ${ymd(f.g.received_at)} at ${whName(f.g.warehouse_id)}`);
     for (const it of f.items) {
       if (it.missingLine) { bad(`  ${it.code}: no such line`); continue; }
-      note(`  ${it.code} line qty ${it.line.qty_accepted}, spec [${vkOf(it.vk)}], PO ${it.batchNo ?? '-'}: GRN net IN ${it.grnNetIn}`);
+      note(`  ${it.code} line qty ${it.line.qty_accepted}, PO ${it.batchNo ?? '-'}: GRN net IN in total ${it.grnNetIn} (the line's spec [${vkOf(it.vk)}])`);
       if (it.plan.done) { note(`  ALREADY DONE: the GRN's IN for ${it.code} matches the line. Nothing to write.`); continue; }
-      note(`    ${f.t.downstreamDo} OUT in this bucket: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
+      note(`    ${f.t.downstreamDo} OUT for this item: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
       if (f.t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
         note(`    unit cost: the rule the bill recost applies to every GRN lot (recostFromGrn): ${it.unitCost == null ? 'NONE' : 'present'}; live supplier-bill lines on this GRN line: ${it.billed}`);
         note(`    the same rule checked on the GRN's other lines with an IN (does it reproduce what they carry?) -> ${it.siblings.map((s) => `${s.code} ${s.same ? 'yes' : 'NO'}`).join(', ') || 'no other line'}`);
@@ -332,7 +353,7 @@ function printPlan(facts, whName) {
       }
       for (const w of it.plan.writes) note(`  WRITE IN ${w.qty} ${it.code} [${vkOf(it.vk)}] batch ${it.batchNo ?? '-'}, source GRN ${f.t.docNo}${w.closeMintedLot ? '; the lot it opens is closed at once' : ''}`);
       for (const a of it.plan.attach) note(`  LINK the new lot x${a.qty} -> ${f.t.downstreamDo} OUT (the unit it shipped)`);
-      note(`  BUCKET ${it.code} [${vkOf(it.vk)}] at ${whName(f.g.warehouse_id)}: movements ${it.plan.before.mov} -> ${it.plan.after.mov} | open lots ${it.plan.before.lots} -> ${it.plan.after.lots}`);
+      note(`  ITEM TOTAL ${it.code} at ${whName(f.g.warehouse_id)} (all specs): movements ${it.plan.item.before.mov} -> ${it.plan.item.after.mov} | open lots ${it.plan.item.before.lots} -> ${it.plan.item.after.lots}`);
       for (const r of it.plan.refusals) bad(`  REFUSED: ${r}`);
     }
   }
@@ -469,13 +490,22 @@ async function docStillOff(c, f) {
   return compareDocItems(docs, lines, movs);
 }
 
-function touchedBuckets(facts) {
+/* Each (warehouse, item) a write touches, with its total (all specs) before the write. */
+function touchedItems(facts) {
   const out = new Map();
   for (const f of facts) {
     if (f.missing) continue;
-    if (f.t.kind === KIND.DO_OUT_MISSING) for (const o of f.plan.outs) out.set(`${o.warehouseId}::${o.itemCode}::${o.vk}`, [o.warehouseId, o.itemCode, o.vk]);
-    else if (f.t.kind === KIND.CANCELLED_DO_OVER_REVERSED) for (const it of f.items) { if (!it.plan.done) out.set(`${it.wh}::${it.code}::${it.vk}`, [it.wh, it.code, it.vk]); }
-    else for (const it of f.items) { if (!it.missingLine && !it.plan.done) out.set(`${f.g.warehouse_id}::${it.code}::${it.vk}`, [f.g.warehouse_id, it.code, it.vk]); }
+    if (f.t.kind === KIND.DO_OUT_MISSING) {
+      if (f.plan.done) continue;
+      for (const o of f.plan.outs) {
+        const k = `${o.warehouseId}::${o.itemCode}`;
+        out.set(k, { wh: o.warehouseId, item: o.itemCode, before: f.plan.items.get(k)?.before });
+      }
+    } else if (f.t.kind === KIND.CANCELLED_DO_OVER_REVERSED) {
+      for (const it of f.items) if (!it.plan.done) out.set(`${it.wh}::${it.code}`, { wh: it.wh, item: it.code, before: it.plan.item.before });
+    } else {
+      for (const it of f.items) if (!it.missingLine && !it.plan.done) out.set(`${f.g.warehouse_id}::${it.code}`, { wh: f.g.warehouse_id, item: it.code, before: it.plan.item.before });
+    }
   }
   return out;
 }
@@ -487,9 +517,11 @@ async function verify(check, facts, written) {
     const off = await docStillOff(check, f);
     say(off.length === 0, `${f.t.docNo}: movements match its lines${off.length ? ` - still off: ${off.map((o) => `${o.itemCode} lines=${o.expected} movements=${o.actual}`).join('; ')}` : ''}`);
   }
-  for (const [, [wh, item, vk]] of touchedBuckets(facts)) {
-    const b = await bucket(check, wh, item, vk);
-    say(b.mov === b.lots, `${item} [${vkOf(vk)}] at ${short(wh)}: movements ${b.mov}, open lots ${b.lots}`);
+  for (const [, t] of touchedItems(facts)) {
+    const now = await itemTotal(check, t.wh, t.item);
+    const was = t.before ?? now;
+    say(Math.abs(now.lots - now.mov) <= Math.abs(was.lots - was.mov),
+      `${t.item} at ${short(t.wh)} (all specs): movements ${was.mov} -> ${now.mov}, open lots ${was.lots} -> ${now.lots}`);
   }
   for (const w of written) {
     const [mv] = await check`SELECT notes FROM scm.inventory_movements WHERE id = ${w.id} AND company_id = ${CO}`;
@@ -519,8 +551,8 @@ async function main() {
   const facts = await gather(sql);
   printPlan(facts, whName);
   const refusals = refusalsOf(facts);
-  const todo = touchedBuckets(facts).size;
-  note(`\n  documents: ${facts.length}; buckets to correct: ${todo}; refusals: ${refusals.length}`);
+  const todo = touchedItems(facts).size;
+  note(`\n  documents: ${facts.length}; items touched: ${todo}; refusals: ${refusals.length}`);
   for (const r of refusals) bad(`  REFUSED ${r}`);
 
   if (!APPLY || todo === 0 || refusals.length) {
@@ -537,10 +569,9 @@ async function main() {
   let again = null;
   try {
     await sql.begin(async (tx) => {
-      /* Lock every lot in the touched buckets, then re-read and re-plan: the plan above is a preview. */
-      for (const [, [w, item, vk]] of touchedBuckets(facts)) {
-        await tx`SELECT id FROM scm.inventory_lots WHERE company_id = ${CO} AND warehouse_id = ${w} AND item_code = ${item}
-                  AND COALESCE(variant_key, '') = ${vk} FOR UPDATE`;
+      /* Lock every lot of the touched items (all specs), then re-read and re-plan: the plan above is a preview. */
+      for (const [, t] of touchedItems(facts)) {
+        await tx`SELECT id FROM scm.inventory_lots WHERE company_id = ${CO} AND warehouse_id = ${t.wh} AND item_code = ${t.item} FOR UPDATE`;
       }
       again = await gather(tx);
       const r2 = refusalsOf(again);

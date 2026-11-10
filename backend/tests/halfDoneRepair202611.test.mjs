@@ -15,18 +15,18 @@ describe('TARGETS', () => {
 });
 
 describe('GRN-2609-118: IN never written, DO-329 shipped the unit uncosted', () => {
-  const live = { lineQty: 1, grnNetIn: 0, bucket: { mov: -1, lots: 0 }, unitCost: 1000, downstream: { outId: 'out329', outQty: 1, consumed: 0 } };
+  const live = { lineQty: 1, grnNetIn: 0, item: { mov: 0, lots: 1 }, unitCost: 1000, downstream: { outId: 'out329', outQty: 1, consumed: 0 } };
 
-  test('writes IN +1 and links its lot to the DO OUT; bucket ends 0 / 0', () => {
+  test('writes IN +1 and links its lot to the DO OUT; the item total (all specs) closes its gap', () => {
     const p = planGrnInMissingShipUncosted(live);
     expect(p.refusals).toEqual([]);
     expect(p.writes).toEqual([{ type: 'IN', qty: 1, unitCost: 1000, closeMintedLot: false }]);
     expect(p.attach).toEqual([{ fromMinted: true, toOut: 'out329', qty: 1 }]);
-    expect(p.after).toEqual({ mov: 0, lots: 0 });
+    expect(p.item.after).toEqual({ mov: 1, lots: 1 });
   });
 
   test('re-run after apply: the GRN nets 1 IN, so it is done and writes nothing', () => {
-    const p = planGrnInMissingShipUncosted({ ...live, grnNetIn: 1, bucket: { mov: 0, lots: 0 } });
+    const p = planGrnInMissingShipUncosted({ ...live, grnNetIn: 1, item: { mov: 1, lots: 1 } });
     expect(p.done).toBe(true);
     expect(p.writes).toEqual([]);
   });
@@ -42,26 +42,26 @@ describe('GRN-2609-118: IN never written, DO-329 shipped the unit uncosted', () 
     expect(planGrnInMissingShipUncosted({ ...live, downstream: null }).refusals.join(' ')).toMatch(/has no OUT/);
   });
 
-  test('refused when the bucket would not balance (it already holds an extra lot)', () => {
-    const p = planGrnInMissingShipUncosted({ ...live, bucket: { mov: -1, lots: 1 } });
+  test('refused when the item total would move further from its lots (all specs; no spec rule)', () => {
+    const p = planGrnInMissingShipUncosted({ ...live, item: { mov: 2, lots: 1 } });
     expect(p.writes).toEqual([]);
-    expect(p.refusals.join(' ')).toMatch(/not equal/);
+    expect(p.refusals.join(' ')).toMatch(/further from its lots/);
   });
 });
 
 describe('GRN-2610-045: re-post wrote no IN, a stand-in lot carried the unit to DO-343', () => {
   const standIn = { qtyReceived: 1, qtyRemaining: 0, hasMovement: false, unitCost: 900, consumedBy: ['HC-DO-2610-343'] };
-  const live = { lineQty: 1, grnNetIn: 0, bucket: { mov: -1, lots: 0 }, standIn, downstreamDo: 'HC-DO-2610-343' };
+  const live = { lineQty: 1, grnNetIn: 0, item: { mov: 9, lots: 10 }, standIn, downstreamDo: 'HC-DO-2610-343' };
 
-  test('writes IN +1 and closes the lot it opens; lots stay 0, movements reach 0', () => {
+  test('writes IN +1 and closes the lot it opens; item movements +1, open lots unchanged', () => {
     const p = planGrnInLostOnRepost(live);
     expect(p.refusals).toEqual([]);
     expect(p.writes).toEqual([{ type: 'IN', qty: 1, unitCost: 900, closeMintedLot: true }]);
-    expect(p.after).toEqual({ mov: 0, lots: 0 });
+    expect(p.item.after).toEqual({ mov: 10, lots: 10 });
   });
 
   test('done once the GRN nets its IN again', () => {
-    expect(planGrnInLostOnRepost({ ...live, grnNetIn: 1, bucket: { mov: 0, lots: 0 } }).done).toBe(true);
+    expect(planGrnInLostOnRepost({ ...live, grnNetIn: 1 }).done).toBe(true);
   });
 
   test('refused when the stand-in lot has a movement, still holds the unit, or was drawn by another DO', () => {
@@ -85,22 +85,25 @@ describe('DO-2610-319: Confirmed, no OUT', () => {
     { itemCode: '8030-1A(RHF)', qty: 1, warehouseId: KL, vk: SOFA, batchNo: 'HC-PO-010145', service: false },
     { itemCode: 'AMN-SOFA PILLOW', qty: 2, warehouseId: KL, vk: '', batchNo: null, service: false },
   ];
-  const buckets = new Map([
-    [`${KL}::8030-1A(LHF)::${SOFA}`, { mov: 1, lots: 1 }],
-    [`${KL}::8030-CONSOLE::${SOFA}`, { mov: 1, lots: 1 }],
-    [`${KL}::8030-1A(RHF)::${SOFA}`, { mov: 1, lots: 1 }],
-    [`${KL}::AMN-SOFA PILLOW::`, { mov: 159, lots: 159 }],
+  const items = new Map([
+    [`${KL}::8030-1A(LHF)`, { mov: 13, lots: 16 }],
+    [`${KL}::8030-CONSOLE`, { mov: 2, lots: 2 }],
+    [`${KL}::8030-1A(RHF)`, { mov: 12, lots: 14 }],
+    [`${KL}::AMN-SOFA PILLOW`, { mov: 159, lots: 159 }],
   ]);
-  const live = { status: 'LOADED', stockOutStates: DO_STOCK_OUT_STATES, existingOuts: 0, lines, buckets };
+  const key = (l) => `${l.warehouseId}::${l.itemCode}::${l.vk}::${l.batchNo ?? ''}`;
+  const drawable = new Map(lines.map((l) => [key(l), l.itemCode === 'AMN-SOFA PILLOW' ? 159 : 1]));
+  const live = { status: 'LOADED', stockOutStates: DO_STOCK_OUT_STATES, existingOuts: 0, lines, items, drawable };
 
-  test('one OUT per line as the ship would write it; every bucket stays balanced', () => {
+  test('one OUT per line as the ship would write it; item totals move by the qty shipped', () => {
     const p = planDoOutMissing(live);
     expect(p.refusals).toEqual([]);
     expect(p.outs.map((o) => [o.itemCode, o.qty, o.batchNo])).toEqual([
       ['8030-1A(LHF)', 1, 'HC-PO-010145'], ['8030-CONSOLE', 1, 'HC-PO-010145'], ['8030-1A(RHF)', 1, 'HC-PO-010145'], ['AMN-SOFA PILLOW', 2, null],
     ]);
-    expect(p.after.get(`${KL}::AMN-SOFA PILLOW::`)).toEqual({ mov: 157, lots: 157 });
-    expect(p.after.get(`${KL}::8030-CONSOLE::${SOFA}`)).toEqual({ mov: 0, lots: 0 });
+    expect(p.items.get(`${KL}::AMN-SOFA PILLOW`).after).toEqual({ mov: 157, lots: 157 });
+    expect(p.items.get(`${KL}::8030-CONSOLE`).after).toEqual({ mov: 1, lots: 1 });
+    expect(p.items.get(`${KL}::8030-1A(LHF)`).after).toEqual({ mov: 12, lots: 15 });
   });
 
   test('done once any OUT exists (the ship guard would also skip it)', () => {
@@ -108,8 +111,8 @@ describe('DO-2610-319: Confirmed, no OUT', () => {
   });
 
   test('refused when the goods are not open lots, the DO is not shipped, or a line has no warehouse', () => {
-    const short = new Map(buckets); short.set(`${KL}::8030-CONSOLE::${SOFA}`, { mov: 0, lots: 0 });
-    expect(planDoOutMissing({ ...live, buckets: short }).refusals.join(' ')).toMatch(/not on the shelf/);
+    const none = new Map(drawable); none.set(key(lines[1]), 0);
+    expect(planDoOutMissing({ ...live, drawable: none }).refusals.join(' ')).toMatch(/not on the shelf/);
     expect(planDoOutMissing({ ...live, status: 'DRAFT' }).refusals.join(' ')).toMatch(/not a stock-out status/);
     const noWh = lines.map((l, i) => (i === 0 ? { ...l, warehouseId: null } : l));
     expect(planDoOutMissing({ ...live, lines: noWh }).refusals.join(' ')).toMatch(/no ship-from warehouse/);
@@ -129,17 +132,17 @@ describe('DO-2610-319: Confirmed, no OUT', () => {
 
 describe('DO-2610-419: cancelled, ELEPHANE-(K) given back twice', () => {
   const live = {
-    status: 'CANCELLED', doNet: -1, bucket: { mov: 1, lots: 1 },
+    status: 'CANCELLED', doNet: -1, item: { mov: 0, lots: 1 },
     downstream: { outId: 'out420', outQty: 1, consumed: 0 },
     openLots: [{ id: 'lot-grn207', qtyRemaining: 1 }],
   };
 
-  test('DO-420 draws the GRN-207 lot, then ADJUSTMENT -1; bucket ends 0 / 0', () => {
+  test('DO-420 draws the GRN-207 lot, then ADJUSTMENT -1; the item total is no worse (an old cutover row stays)', () => {
     const p = planCancelledDoOverReversed(live);
     expect(p.refusals).toEqual([]);
     expect(p.attach).toEqual([{ lotId: 'lot-grn207', toOut: 'out420', qty: 1 }]);
     expect(p.writes).toEqual([{ type: 'ADJUSTMENT', qty: -1, unitCost: 0, closeMintedLot: false }]);
-    expect(p.after).toEqual({ mov: 0, lots: 0 });
+    expect(p.item.after).toEqual({ mov: -1, lots: 0 });
   });
 
   test('done once the DO nets to 0', () => {
@@ -147,7 +150,7 @@ describe('DO-2610-419: cancelled, ELEPHANE-(K) given back twice', () => {
   });
 
   test('refused when an open lot would be left for the ADJUSTMENT to consume (real stock)', () => {
-    const p = planCancelledDoOverReversed({ ...live, bucket: { mov: 2, lots: 2 }, openLots: [{ id: 'a', qtyRemaining: 2 }] });
+    const p = planCancelledDoOverReversed({ ...live, item: { mov: 2, lots: 2 }, openLots: [{ id: 'a', qtyRemaining: 2 }] });
     expect(p.writes).toEqual([]);
     expect(p.refusals.join(' ')).toMatch(/real stock/);
   });
