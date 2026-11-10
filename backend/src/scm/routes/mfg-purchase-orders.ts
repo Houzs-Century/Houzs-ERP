@@ -2728,13 +2728,13 @@ async function recomputePoTotals(sb: any, poId: string) {
 
 /* Keep header expected_at in sync with the lines: earliest non-null line
    delivery_date, else null. Mirrors the PO-create rule so a per-line Delivery
-   Date edit shows on the PO list + PDF (both read the header expected_at).
-   Best-effort: never fail the line write on this. (Commander 2026-06-18 #2/#3) */
+   Date edit shows on the PO list + PDF. Best-effort; an UNREAD line set skips the write (it is not "no dates"). */
 export async function recomputePoExpectedAt(sb: any, poId: string) {
   try {
-    const { data: lines } = await sb.from('purchase_order_items')
+    const { data: lines, error: linesErr } = await sb.from('purchase_order_items')
       .select('delivery_date')
       .eq('purchase_order_id', poId);
+    if (linesErr) throw linesErr;
     const dates = ((lines ?? []) as Array<{ delivery_date: string | null }>)
       .map((r) => r.delivery_date)
       .filter((d): d is string => Boolean(d))
@@ -2762,14 +2762,13 @@ export async function recomputePoExpectedAt(sb: any, poId: string) {
 export async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undefined>) {
   const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return;
-  // Best-effort, never throws (Commander 2026-05-30): the primary write already
-  // committed. If this secondary recount hiccups we log + skip — the live-count
-  // model self-heals on the next operation that touches these SO lines.
+  // Best-effort, never throws: a hiccup (a FAILED read included — it is not "zero picked") logs + skips; it self-heals.
   try {
-    const { data: lines } = await sb
+    const { data: lines, error: linesErr } = await sb
       .from('purchase_order_items')
       .select('so_item_id, qty, purchase_order_id, from_mrp')
       .in('so_item_id', ids);
+    if (linesErr) throw linesErr;
     /* Commander 2026-05-31 — MRP-origin PO lines are reference-only: they do NOT
        lock the source SO line via po_qty_picked, so the recount excludes them.
        The Commander's "an MRP-ordered SO must drop off the Convert-from-SO
@@ -2789,7 +2788,8 @@ export async function recomputeSoPicked(sb: any, soItemIds: Array<string | null 
        confirms (DRAFT -> SUBMITTED). */
     const deadPo = new Set<string>();
     if (poIds.length > 0) {
-      const { data: pos } = await sb.from('purchase_orders').select('id, status').in('id', poIds);
+      const { data: pos, error: posErr } = await sb.from('purchase_orders').select('id, status').in('id', poIds);
+      if (posErr) throw posErr; // unread statuses would count DRAFT / CANCELLED lines as picked
       for (const p of (pos ?? []) as Array<{ id: string; status: string }>) {
         if (p.status === 'CANCELLED' || p.status === 'DRAFT') deadPo.add(p.id);
       }
