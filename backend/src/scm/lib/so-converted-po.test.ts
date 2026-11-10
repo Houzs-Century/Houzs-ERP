@@ -25,6 +25,8 @@ function fakeSb(tables: Record<string, Row[]>) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
     }
+    order() { return this; }
+    range(from: number, to: number) { this.rows = this.rows.slice(from, to + 1); return this; }
     then<T>(onFulfilled: (v: { data: Row[]; error: null }) => T, onRejected?: (e: unknown) => T) {
       return Promise.resolve({ data: this.rows, error: null }).then(onFulfilled, onRejected);
     }

@@ -11,11 +11,16 @@ function fakeSb(tables: Record<string, Row[]>) {
   return {
     from(table: string) {
       const filters: Array<(r: Row) => boolean> = [];
+      let win: [number, number] | null = null;
       const q = {
         select: () => q,
         in: (col: string, vals: unknown[]) => { filters.push((r) => vals.includes(r[col])); return q; },
-        then: (resolve: (v: { data: Row[]; error: null }) => unknown) =>
-          resolve({ data: (tables[table] ?? []).filter((r) => filters.every((f) => f(r))), error: null }),
+        order: () => q,
+        range: (from: number, to: number) => { win = [from, to]; return q; },
+        then: (resolve: (v: { data: Row[]; error: null }) => unknown) => {
+          const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+          return resolve({ data: win ? rows.slice(win[0], win[1] + 1) : rows, error: null });
+        },
       };
       return q;
     },
