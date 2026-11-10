@@ -50,9 +50,11 @@ vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
 vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadFieldPhoto: vi.fn(async () => ({ r2Key: "slips/2026/10/pod-test.jpg" })),
-
-  // No photos uploaded earlier for this stop (the re-list after a reload).
-  listFieldPhotos: (context: string) => listFieldPhotos(context),
+}));
+// The crew's photos already uploaded for this stop (the re-list after a reload).
+vi.mock("../vendor/scm/lib/crew-stop-photos", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../vendor/scm/lib/crew-stop-photos")>()),
+  listCrewStopPhotos: (context: string) => listFieldPhotos(context),
 }));
 /* No network for the stamp's server clock in a unit test. */
 vi.mock("../lib/photoStamp", async (importOriginal) => ({
@@ -266,7 +268,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     /* iOS often reloads the page when the camera opens. The photo had already
        uploaded, so the server lists it for this DO and the driver does not
        have to take it again. */
-    listFieldPhotos.mockResolvedValue([{ uploadSessionId: "s-old", r2Key: "slips/2026/11/before-reload.jpg", contentType: "image/jpeg", createdAt: "2026-11-10T01:00:00Z" }]);
+    listFieldPhotos.mockResolvedValue([{ uploadSessionId: "s-old", r2Key: "slips/2026/11/before-reload.jpg", contentType: "image/jpeg", createdAt: "2026-11-10T01:00:00Z", uploadedBy: { id: 7, name: "Faslie" }, mine: true, canRemove: true }]);
     wrap();
     expect(await screen.findByText("Uploaded")).toBeTruthy();
     expect(listFieldPhotos).toHaveBeenCalledWith("do:do-uuid-1");

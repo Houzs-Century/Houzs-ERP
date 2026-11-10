@@ -55,7 +55,7 @@ afterEach(cleanup);
 /* SearchableSelect is an input + a portalled <li> menu, so a pick is
    focus → (optionally type) → mousedown the row, not a <select> change. */
 function pick(label: string, optionText: string | RegExp) {
-  const input = screen.getByRole("textbox", { name: label });
+  const input = screen.getByRole("combobox", { name: label });
   fireEvent.focus(input);
   fireEvent.mouseDown(screen.getByText(optionText));
 }
@@ -69,7 +69,7 @@ describe("SalespersonHandover", () => {
      under the old source she was unselectable and her 30 orders unreachable. */
   it("lists who holds orders, most first, with the count", () => {
     render(<SalespersonHandover />);
-    fireEvent.focus(screen.getByRole("textbox", { name: "Orders currently with" }));
+    fireEvent.focus(screen.getByRole("combobox", { name: "Orders currently with" }));
     const rows = [...document.querySelectorAll("li")].map((li) => li.textContent);
     expect(rows).toEqual(["alicia (inactive) — 30", "Sim — 2"]);
   });

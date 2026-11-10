@@ -5,7 +5,7 @@
    silent cap. */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import {
+import { type ListedFieldPhoto,
   admit, completionGate, fieldPhotosReducer, nextToUpload, useFieldPhotos, type FieldPhoto, type FieldPhotoRestore, type RestoreState,
 } from "./fieldPhotos";
 
@@ -20,6 +20,7 @@ vi.mock("./photoStamp", async (importOriginal) => ({
 const jpg = (name: string) => new File(["x"], name, { type: "image/jpeg" });
 const photo = (id: string, status: FieldPhoto["status"], key: string | null = null): FieldPhoto => ({
   id, file: jpg(`${id}.jpg`), stamped: false, previewUrl: null, status, key, sessionId: key ? `s-${id}` : null, error: null,
+  uploadedBy: null, canRemove: true, serverSeen: false,
 });
 
 describe("fieldPhotosReducer", () => {
@@ -146,7 +147,7 @@ describe("completionGate while the photos already uploaded are being looked up",
   it("waits while the re-list is loading, so a job is not completed without them", () => {
     const g = completionGate([photo("a", "done", "k1")], "none", { phase: "loading" });
     expect(g.ok).toBe(false);
-    if (!g.ok) expect(g.reason).toMatch(/Checking for photos you already uploaded/);
+    if (!g.ok) expect(g.reason).toMatch(/Checking for photos already uploaded/);
   });
 
   it("refuses after a failed re-list, naming the reason and both ways out", () => {
@@ -167,9 +168,25 @@ describe("fieldPhotosReducer restore", () => {
   });
 });
 
+describe("fieldPhotosReducer sync (the crew share one stop)", () => {
+  const seen = (p: FieldPhoto): FieldPhoto => ({ ...p, serverSeen: true });
+  it("brings in a crew member's photo, drops one the server no longer lists, keeps this phone's unlisted upload", () => {
+    const state = [seen(photo("a", "done", "k-removed")), photo("b", "done", "k-mine-new"), photo("c", "uploading")];
+    const crew = { ...photo("x", "done", "k-helper"), file: null, uploadedBy: "Ali", canRemove: false, serverSeen: true };
+    const s = fieldPhotosReducer(state, { type: "sync", photos: [crew] });
+    expect(s.map((p) => p.key)).toEqual(["k-helper", "k-mine-new", null]);
+    expect(s[0]).toMatchObject({ uploadedBy: "Ali", canRemove: false });
+  });
+  it("returns the same state when nothing changed, so the screen does not re-render", () => {
+    const state = [seen(photo("a", "done", "k1"))];
+    expect(fieldPhotosReducer(state, { type: "sync", photos: [seen(photo("z", "done", "k1"))] })).toBe(state);
+  });
+});
+
 function fakeRestore(over: Partial<FieldPhotoRestore> = {}): FieldPhotoRestore & { list: ReturnType<typeof vi.fn>; discard: ReturnType<typeof vi.fn> } {
   return {
     key: "job:project:P-1:setup",
+    pollMs: null,
     list: vi.fn(async () => [{ uploadSessionId: "s1", r2Key: "slips/old-1" }, { uploadSessionId: "s2", r2Key: "slips/old-2" }]),
     preview: vi.fn(async (id: string) => `blob:${id}`),
     discard: vi.fn(async () => {}),
@@ -242,6 +259,33 @@ describe("useFieldPhotos after a page reload", () => {
     expect(result.current.gate("none").ok).toBe(false);
     act(() => result.current.skipRestore());
     expect(result.current.gate("none")).toEqual({ ok: true, keys: ["slips/new"] });
+  });
+
+  it("asks again while the stop is open, so the other crew member's photo appears and a completed one leaves", async () => {
+    const driver = { uploadSessionId: "s1", r2Key: "slips/driver-1", mine: true, canRemove: true };
+    const helper = { uploadSessionId: "s9", r2Key: "slips/helper-1", mine: false, canRemove: false, uploadedBy: { name: "Ali" } };
+    let server: ListedFieldPhoto[] = [driver];
+    const list = vi.fn(async () => server);
+    const restore = fakeRestore({ list, pollMs: 30 });
+    const { result, unmount } = renderHook(() => useFieldPhotos({ stampLabel: null, max: 10, upload: vi.fn(), restore }));
+    await waitFor(() => expect(result.current.photos.map((p) => p.key)).toEqual(["slips/driver-1"]));
+    // The helper takes a photo on their phone.
+    server = [driver, helper];
+    await waitFor(() => expect(result.current.photos.map((p) => p.key)).toEqual(["slips/helper-1", "slips/driver-1"]));
+    expect(result.current.photos[0]).toMatchObject({ uploadedBy: "Ali", canRemove: false });
+    server = [];
+    // The helper completed: the server lists nothing pending, so both leave this phone too.
+    await waitFor(() => expect(result.current.photos).toHaveLength(0));
+    unmount();
+  });
+
+  it("a photo this person may not remove is not removed", async () => {
+    const restore = fakeRestore({ list: vi.fn(async () => [{ uploadSessionId: "s9", r2Key: "slips/helper-1", mine: false, canRemove: false, uploadedBy: { name: "Ali" } }]) });
+    const { result } = renderHook(() => useFieldPhotos({ stampLabel: null, max: 10, upload: vi.fn(), restore }));
+    await waitFor(() => expect(result.current.photos).toHaveLength(1));
+    act(() => result.current.remove(result.current.photos[0]!.id));
+    expect(result.current.photos).toHaveLength(1);
+    expect(restore.discard).not.toHaveBeenCalled();
   });
 
   it("does not ask the server when the screen passes no restore", () => {

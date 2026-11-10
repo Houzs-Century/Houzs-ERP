@@ -23,7 +23,8 @@ const bump = (qc: QueryClient, keys: string[]) => {
 };
 
 const SO_ROOTS = ["mfg-sales-orders", "mfg-sales-orders-paged", "mfg-sales-order-detail"];
-const DO_ROOTS = ["mfg-delivery-orders", "mfg-delivery-orders-paged", "mfg-delivery-order-detail", "delivery-planning"];
+// mfg-delivery-order-pod: the crew's read of one DO (MobilePOD, the open run-sheet stop).
+const DO_ROOTS = ["mfg-delivery-orders", "mfg-delivery-orders-paged", "mfg-delivery-order-detail", "delivery-planning", "mfg-delivery-order-pod"];
 const INVENTORY_ROOTS = ["inventory", "stock-transfers"];
 
 export function invalidateSoShared(qc: QueryClient) {

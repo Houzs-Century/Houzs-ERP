@@ -33,6 +33,7 @@
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { chunkIn } from './paginate-all';
+import { readPoLineLinkedGrnIds } from './po-grn-links';
 import {
   SO_LINE_FROZEN_REFUSAL,
   soLineFreezeFrom,
@@ -300,9 +301,26 @@ export function soBuildLineIds(read: SoLineFreezeRead, lineId: string): string[]
 /** A PO locks on any live GRN against it. A Purchase Invoice cannot exist
  *  without one, because grnHasDownstream refuses to cancel an invoiced GRN. */
 export async function poHasDownstream(sb: Sb, poId: string): Promise<DownstreamRefusal | null> {
-  const grns = await liveCount(sb, 'grns', 'purchase_order_id', poId);
+  const [byHeader, byLine] = await Promise.all([
+    liveCount(sb, 'grns', 'purchase_order_id', poId),
+    liveGrnCountByPoLines(sb, poId),
+  ]);
+  const grns: LiveCount = !byHeader.ok ? byHeader
+    : !byLine.ok ? byLine
+    : { ok: true, count: Math.max(byHeader.count, byLine.count) };
   return verdictFromReads('PO', [['grns', grns]]);
 }
+
+/** Live GRNs holding one of this PO's LINES. A multi-PO receipt names only its
+ *  first PO in grns.purchase_order_id (grns POST /from-pos), so the header alone
+ *  left every later PO on it unlocked (sister review G5). */
+const liveGrnCountByPoLines = async (sb: Sb, poId: string): Promise<LiveCount> => {
+  const linked = await readPoLineLinkedGrnIds(sb, poId);
+  if (!linked.ok) return linked;
+  const st = await statusById(sb, 'grns', linked.ids);
+  if (!st.ok) return st;
+  return { ok: true, count: [...st.map.values()].filter((s) => String(s ?? '').trim().toUpperCase() !== 'CANCELLED').length };
+};
 
 /** Live Sales Invoices that carry one of this DO's LINES (sales_invoice_items.
  *  do_item_id). The header column sales_invoices.delivery_order_id names only

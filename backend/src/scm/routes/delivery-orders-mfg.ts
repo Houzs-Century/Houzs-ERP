@@ -32,7 +32,8 @@ import { resolveDeliveryScope, scopeMatchesAssignment, podWriteScopeCompany } fr
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
-import { claimPodPhotos } from '../lib/pod-photo-claim';
+import { claimPodPhotos, doStopContext } from '../lib/pod-photo-claim';
+import { alreadyDeliveredRefusal, houzsUserIdOf } from '../lib/crew-stop-complete';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -5047,6 +5048,15 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
   }
 
+  /* The crew share one stop (owner, 2026-11-10): a second Complete must not file
+     a second delivery over the first (new photos, delivered time, SO sync). */
+  const prevUp = (prevStatus ?? '').toUpperCase();
+  if (toStatus !== 'CANCELLED' && doHasArrived(prevUp) && doHasArrived(toStatus) && (prevUp === toStatus || bypassPod)) {
+    const { data: doneRow, error: doneErr } = await scopeToCompanyId(sb.from('delivery_orders').select('delivered_at').eq('id', id), scopeCompanyId).maybeSingle();
+    if (doneErr) return c.json({ error: 'load_failed', reason: doneErr.message }, 500);
+    return c.json(alreadyDeliveredRefusal((doneRow as { delivered_at?: string | null } | null)?.delivered_at ?? null), 409);
+  }
+
   // Already cancelled → echo back; past the retry window, re-run the idempotent reversal.
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     const retried = cancelReversalRetryDue((cur as { updated_at?: string | null }).updated_at, Date.now())
@@ -5118,13 +5128,14 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      photo. Only write when present so a plain status change never blanks
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
-  /* Every photo of the POD; the first also stays in pod_r2_key. Only the caller's
-     own uploads are accepted, and claiming them stops the slip reaper deleting
-     them an hour later (lib/pod-photo-claim.ts). */
+  /* Every photo of the POD; the first also stays in pod_r2_key. The caller's own
+     uploads and any crew member's photos for THIS DO are accepted (the crew
+     share the stop; the gates above admitted the caller to it), and claiming
+     them stops the slip reaper deleting them (lib/pod-photo-claim.ts). */
   const podRaw = [body.podKey, ...(Array.isArray(body.podKeys) ? body.podKeys : [])].filter((k) => typeof k === 'string' && k);
   let podKeys: string[] = [];
   if (podRaw.length) {
-    const claim = await claimPodPhotos(sb, c, user?.id ? String(user.id) : null, podRaw);
+    const claim = await claimPodPhotos(sb, c, { houzsUserId: houzsUserIdOf(c), stopContext: doStopContext(id) }, podRaw);
     if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
     podKeys = claim.keys;
   }
