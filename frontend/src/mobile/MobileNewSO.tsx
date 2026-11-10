@@ -115,6 +115,7 @@ import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
 import { computeTotalHeight, isTotalHeightCategory, parseInches, TOTAL_HEIGHT_PARTS } from "../vendor/shared/total-height";
+import { activeCompanyTracksVariants } from "../vendor/scm/lib/binding-mode";
 import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
 import { Field, SpecSel } from "./mobile-fields";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -394,16 +395,15 @@ function defaultSofaLegValue(maint: MaintenanceConfig | null | undefined): strin
    the remark + a fresh computed totalHeight for bedframes (kept for the backend
    even though the readout is hidden).
 
-   The total is assigned whenever the line has a part key (even a cleared one),
-   so a cleared spec clears, as on the purchasing screens. A saved line with a
-   total and NO part keys keeps its total: re-saving must not change its stock
-   key (PR #5609 follow-up). '' and an absent key are interchangeable to every
-   consumer (computeVariantKey, pricing, the allowed-options gate). */
+   The total is assigned on every save, so a cleared spec clears, as on the
+   purchasing screens. For a variant-tracked company (binding-mode.ts) a saved
+   line with a total and NO part keys keeps its total, so a re-save cannot move
+   its stock bucket (PR #5609); company 1 keeps the unconditional write. */
 function buildVariants(l: LineItem): Record<string, unknown> {
   const variants: Record<string, unknown> = { ...(l.variants ?? {}) };
   if (l.remark.trim()) variants.remark = l.remark.trim();
   else delete variants.remark;
-  if (isTotalHeightCategory(l.cat) && TOTAL_HEIGHT_PARTS.some((k) => k in variants)) variants.totalHeight = computeTotalHeight(l.cat, variants);
+  if (isTotalHeightCategory(l.cat) && (!activeCompanyTracksVariants() || TOTAL_HEIGHT_PARTS.some((k) => k in variants))) variants.totalHeight = computeTotalHeight(l.cat, variants);
   return variants;
 }
 
@@ -3058,7 +3058,7 @@ function LineCard({
      REAL category by code and, when it disagrees with the line's cat, rewrite
      cat + itemGroup so the right panel shows and its variants become required.
      For sofa, also default Leg Height to the "Default" option (RM 0.00) when
-     unset, for a product PICKED here only, never a saved line merely opened. */
+     unset; for a variant-tracked company only a product PICKED here, not a line merely opened. */
   const skuCategoryQ = useSkuCategoryByCode(line.itemCode || undefined);
   const itemCodeAtOpen = useRef(line.itemCode);
   useEffect(() => {
@@ -3071,7 +3071,7 @@ function LineCard({
       patch.itemGroup = resolved;
     }
     const effCat = patch.cat ?? line.cat;
-    if (effCat === "sofa" && maint && line.itemCode !== itemCodeAtOpen.current
+    if (effCat === "sofa" && maint && (!activeCompanyTracksVariants() || line.itemCode !== itemCodeAtOpen.current)
         && isBlankVar(v.legHeight) && isBlankVar(v.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
       if (def) patch.variants = { ...line.variants, ...(patch.variants ?? {}), legHeight: def };

@@ -73,15 +73,17 @@ describe('the sofa Leg Height default is a per-document decision', () => {
     expect(CARD).not.toMatch(/seedSofaLegDefault\s*=\s*(true|false)\s*,/);
   });
 
-  /* PR #5609 follow-up: opening a saved line is not picking a product. The seed
-     runs only once the code differs from the one the card opened with, on the
-     desktop card and on mobile. */
-  test('the seed never fires for a line that is merely opened', () => {
+  /* PR #5609 follow-up: for a variant-tracked company (company 2) opening a saved
+     line is not picking a product, so the seed waits for a code change, on the
+     desktop card and on mobile. Company 1 (PO hard binding) seeds as before. */
+  test('company 2 never seeds a line that is merely opened; company 1 is unchanged', () => {
     expect(CARD).toContain('const itemCodeAtOpen = useRef(draft.itemCode);');
-    expect(CARD).toMatch(/&& draft\.itemCode !== itemCodeAtOpen\.current/);
+    expect(CARD).toContain('&& (!variantTracked || draft.itemCode !== itemCodeAtOpen.current)');
+    expect(CARD).toContain('const variantTracked = activeCompanyTracksVariants();');
     const MOBILE = read('../../../mobile/MobileNewSO.tsx');
     expect(MOBILE).toContain('const itemCodeAtOpen = useRef(line.itemCode);');
-    expect(MOBILE).toMatch(/line\.itemCode !== itemCodeAtOpen\.current/);
+    expect(MOBILE).toContain('(!activeCompanyTracksVariants() || line.itemCode !== itemCodeAtOpen.current)');
+    expect(MOBILE).toContain('(!activeCompanyTracksVariants() || TOTAL_HEIGHT_PARTS.some(');
   });
 
   test('the seed re-fires when the answer changes', () => {
