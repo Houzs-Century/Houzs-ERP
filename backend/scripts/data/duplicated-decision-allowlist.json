@@ -652,8 +652,8 @@
     },
     {
       "check": "D1",
-      "key": "P.DISMANTLE_DRIVER_USER_ID = ?,P.DISMANTLE_HELPER_1_ID = ?,P.DISMANTLE_HELPER_2_ID = ?,P.SETUP_DRIVER_USER_ID = ?,P.SETUP_HELPER_1_ID = ?,P.SETUP_HELPER_2_ID = ?|backend/src/routes/projects.ts backend/src/services/projects.ts",
-      "why": "THE SIX CREW COLUMNS a project's setup/dismantle assignment can live in, written as SQL fragments in the route and again in the service. Same question — is this user crewed on this event — with the answer spelled out twice in SQL. Out of reach of every check in this repo (limit 2 in the header: a rule expressed in SQL)."
+      "key": "P.DISMANTLE_DRIVER_USER_ID = ?,P.DISMANTLE_HELPER_1_ID = ?,P.DISMANTLE_HELPER_2_ID = ?,P.SETUP_DRIVER_USER_ID = ?,P.SETUP_HELPER_1_ID = ?,P.SETUP_HELPER_2_ID = ?|backend/src/routes/lib/calendar-visibility.ts backend/src/services/projects.ts",
+      "why": "THE SIX CREW COLUMNS a project's setup/dismantle assignment can live in, written as SQL fragments in the calendar visibility helper (routes/lib/calendar-visibility.ts, moved out of routes/projects.ts so the calendar feed and the all-dates calendar search share one copy) and again in the service. Same question — is this user crewed on this event — with the answer spelled out twice in SQL. Out of reach of every check in this repo (limit 2 in the header: a rule expressed in SQL)."
     },
     {
       "check": "D1",
