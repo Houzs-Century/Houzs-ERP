@@ -205,7 +205,7 @@ function printPlan(plan, closed, affected) {
   for (const [c, n] of tallyBy(plan.buckets, (b) => b.classes.join('+'))) say(`    ${String(n).padStart(6)}  ${c}`);
   const doing = plan.groups.flatMap((g) => g.recost);
   const skipped = plan.buckets.filter((b) => b.skip);
-  note(`to re-cost: ${doing.length} bucket(s), ${doing.reduce((s, b) => s + b.netQty, 0)} unit(s), ${new Set(doing.map((b) => b.doId)).size} DO(s), ${plan.groups.length} warehouse x item x spec group(s)`);
+  note(`buckets to re-cost from their bound PO: ${doing.length}; units ${doing.reduce((s, b) => s + b.netQty, 0)}; DOs ${new Set(doing.map((b) => b.doId)).size}; warehouse x item x spec groups ${plan.groups.length}`);
   for (const [c, n] of tallyBy(doing, (b) => b.classes.join('+'))) say(`    ${String(n).padStart(6)}  ${c}`);
   note(`left alone: ${skipped.length} bucket(s)`);
   for (const [k, desc] of SKIPS) {
