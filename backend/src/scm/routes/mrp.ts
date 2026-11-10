@@ -88,6 +88,7 @@ import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
 import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { isDocumentHeld } from '../lib/document-hold';
 import { MRP_DELIVERED_EMBED, compareDelivered, deliveredBySoItemFrom, readUnlinkedDoLines, type MrpDemandLine, type NettingCheck } from '../lib/mrp-delivered';
 import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
@@ -212,6 +213,7 @@ type DemandRow = {
   so: {
     debtor_name: string | null;
     status: string;
+    on_hold?: boolean | null;
     so_date: string | null;
     customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
     amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
@@ -663,7 +665,7 @@ export async function computeMrp(
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled, allocated_batch_no,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )${embedDelivered ? `, ${MRP_DELIVERED_EMBED}` : ''}
+      so:mfg_sales_orders!inner ( debtor_name, status, on_hold, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )${embedDelivered ? `, ${MRP_DELIVERED_EMBED}` : ''}
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL)
@@ -699,8 +701,10 @@ export async function computeMrp(
      take supply from a dated line and every dated line's coverage is IDENTICAL
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
+  /* A held order is not demand: hold blocks raising its PO (firstUnorderableSo)
+     and never writes status, so SO_DONE cannot see it. */
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
-    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && isReleased(r) && r.qty > 0,
+    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && !isDocumentHeld(r.so) && isReleased(r) && r.qty > 0,
   );
   const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
