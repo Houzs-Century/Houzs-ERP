@@ -81,16 +81,22 @@ arReconciliation.get('/reconciliation', async (c) => {
      (scm.finance.outstanding) was added at the mount in scm/index.ts. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  let soQ = sb
-    .from('mfg_sales_orders')
-    .select('doc_no, so_date, status, debtor_name, local_total_sen, paid_sen, salesperson_id')
-    .in('status', AR_STATUSES)
-    .order('so_date', { ascending: false })
-    .limit(2000);
-  if (scopeIds) soQ = soQ.in('salesperson_id', scopeIds);
-  soQ = scopeToAllowedCompanies(soQ, c);
-  const { data: soData, error: soErr } = await soQ;
+  /* PAGED: `.limit(2000)` was still cut at PostgREST's 1,000 rows, so every
+     order older than the newest 1,000 in play silently left the outstanding
+     total. A truncated read is refused, never summed. */
+  const { data: soData, error: soErr, truncated: soCut } = await paginateAll<SoRow>((from, to) => {
+    let soQ = sb
+      .from('mfg_sales_orders')
+      .select('doc_no, so_date, status, debtor_name, local_total_sen, paid_sen, salesperson_id')
+      .in('status', AR_STATUSES)
+      .order('so_date', { ascending: false })
+      .order('doc_no');
+    if (scopeIds) soQ = soQ.in('salesperson_id', scopeIds);
+    soQ = scopeToAllowedCompanies(soQ, c);
+    return soQ.range(from, to);
+  });
   if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  if (soCut) return c.json({ error: 'too_many_orders', reason: 'More open orders than one read can take; the totals would be wrong.' }, 500);
   const sos = (soData ?? []) as SoRow[];
   if (sos.length === 0) return c.json({ rows: [], summary: emptySummary() });
 
@@ -98,10 +104,11 @@ arReconciliation.get('/reconciliation', async (c) => {
      plain select at 1000 — a silent truncation here would understate what a
      customer has paid, which is the worst direction to be wrong in. */
   const docNos = new Set(sos.map((s) => s.doc_no));
-  const { data: payData, error: payErr } = await paginateAll<PayRow>((from, to) =>
+  const { data: payData, error: payErr, truncated: payCut } = await paginateAll<PayRow>((from, to) =>
     sb.from('mfg_sales_order_payments').select('so_doc_no, amount_sen').order('so_doc_no').range(from, to),
   );
   if (payErr) return c.json({ error: 'payments_load_failed', reason: payErr.message }, 500);
+  if (payCut) return c.json({ error: 'payments_load_failed', reason: 'More payment rows than one read can take; paid amounts would be understated.' }, 500);
   const paidByDoc = new Map<string, number>();
   for (const p of payData ?? []) {
     if (!docNos.has(p.so_doc_no)) continue;

@@ -26,6 +26,8 @@ function fakeSb(tables: Record<string, Row[]>, failOn?: string) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
     }
+    order() { return this; }
+    range(from: number, to: number) { this.rows = this.rows.slice(from, to + 1); return this; }
     then<T>(onFulfilled: (v: { data: Row[] | null; error: unknown }) => T, onRejected?: (e: unknown) => T) {
       const res = this.table === failOn
         ? { data: null, error: { message: 'boom' } }

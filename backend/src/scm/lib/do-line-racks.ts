@@ -15,8 +15,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { pgrestIn } from './pgrest-in-list';
-
-const CHUNK = 200;
+import { chunkIn } from './paginate-all';
 
 export type DoLineRacks = {
   /** `${warehouse_id}::${item_code}::${po_number}` → rack labels, sorted. */
@@ -28,13 +27,14 @@ export type DoLineRacks = {
 async function readIn<T>(
   sb: any, table: string, cols: string, column: string, values: string[],
 ): Promise<T[]> {
-  const out: T[] = [];
-  for (let i = 0; i < values.length; i += CHUNK) {
-    const { data, error } = await pgrestIn(sb.from(table).select(cols), column, values.slice(i, i + CHUNK));
-    if (error) throw error;
-    out.push(...((data ?? []) as T[]));
-  }
-  return out;
+  /* Each batch is PAGED (chunkIn): a warehouse's racks, or the placements of 200
+     item codes, pass PostgREST's 1,000-row page, and the rows past it were
+     dropped without an error, so the printed DO lost rack labels. */
+  const { data, error, truncated } = await chunkIn<T>(values, (part, from, to) =>
+    pgrestIn(sb.from(table).select(cols), column, part).order('id').range(from, to));
+  if (error) throw error;
+  if (truncated) throw new Error(`${table}: too many rows to read in full`);
+  return data;
 }
 
 export async function resolveDoLineRacks(

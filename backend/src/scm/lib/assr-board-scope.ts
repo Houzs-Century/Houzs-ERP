@@ -110,6 +110,18 @@ export const ASSR_LEG_REMARK_COL = {
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
 
+/** A leg still has an upcoming visit: a scheduled date (confirmed, else requested)
+ *  of today or later with no actual completion yet. Such a leg is NOT done however
+ *  far the case stage has moved, so the stage-past-this-leg shortcuts below must not
+ *  mark it Delivered or lock its writes (owner 2026-11-10: a re-inspection booked
+ *  after the case reached Pending Delivery/Service showed Delivered and could not be
+ *  given a driver). Dates are 'YYYY-MM-DD' (or a timestamp whose first 10 chars are),
+ *  compared lexically to todayMyt(); an empty `today` disables the check (a caller
+ *  without board time keeps the legacy stage-only behaviour). */
+function legUpcoming(effectiveDate: string | null | undefined, actualAt: string | null | undefined, today: string): boolean {
+  return !actualAt && today !== '' && effectiveDate != null && effectiveDate.slice(0, 10) >= today;
+}
+
 /** A case is done when it carries a closed / archived stamp, a terminal stage,
  *  or (cases from before the stamp existed) the status "Closed". Only the stamps
  *  were read until 2026-10-26, so 56 old Closed cases showed as pending jobs. */
@@ -139,7 +151,7 @@ export type AssrBoardLeg = {
  *    -> Pending Delivery, and that date shows back on the case.
  *  - a leg the case has moved past (picked up, inspected, case closed) is done:
  *    Delivered, never left in Pending Delivery. */
-export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardLeg[] {
+export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean, today = ''): AssrBoardLeg[] {
   const legs: AssrBoardLeg[] = [];
   // `cancelled` drops the leg off the board entirely (owner 2026-11-06): a cancelled
   // trip is called off, so it is not shown at all — never left as a pending row.
@@ -155,7 +167,11 @@ export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardL
     add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || PAST_PICKUP.has(a.stage ?? ''), Boolean(a.pickup_cancelled_at));
   }
   if (a.inspection_by === 'own' && (a.inspection_visit_at || a.sched_inspection_date)) {
-    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || Boolean(a.actual_inspection_at) || PAST_INSPECTION.has(a.stage ?? ''), Boolean(a.inspection_cancelled_at));
+    // An inspection still scheduled for today or later (no actual visit yet) stays a
+    // live PENDING leg even past the inspection stage — else a re-inspection booked
+    // after the case moved to Pending Delivery/Service shows Delivered (owner 2026-11-10).
+    const inspUpcoming = legUpcoming(a.sched_inspection_date ?? a.inspection_visit_at, a.actual_inspection_at, today);
+    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || Boolean(a.actual_inspection_at) || (PAST_INSPECTION.has(a.stage ?? '') && !inspUpcoming), Boolean(a.inspection_cancelled_at));
   }
   const deliveryDated = Boolean(a.do_date || a.sched_delivery_date);
   const deliveryOwn = a.delivery_by === 'own' || (a.delivery_by == null && deliveryDated);
@@ -255,7 +271,7 @@ export function assrBoardLocation(
  *  on the board is one they cannot write to, and it 404s) and `assrLegOpen`
  *  then asks only about the named job. Archived cases stay locked. */
 export function assrLegGuardSql(c: CompanyScopeCtx): string {
-  return `SELECT id, assr_no, company_id, stage, actual_pickup_at, closed_at, status FROM assr_cases
+  return `SELECT id, assr_no, company_id, stage, actual_pickup_at, closed_at, status, sched_inspection_date, inspection_visit_at, actual_inspection_at FROM assr_cases
         WHERE id = ? AND archived_at IS NULL${assrCompanySql(c)}`;
 }
 
@@ -265,11 +281,18 @@ export function assrLegGuardSql(c: CompanyScopeCtx): string {
  *  the terminal stage, which any job can set); delivery is the job whose POD
  *  closes the case. */
 export function assrLegOpen(
-  a: { stage: string | null; actual_pickup_at: string | null; closed_at: string | null; status: string | null },
+  a: { stage: string | null; actual_pickup_at: string | null; closed_at: string | null; status: string | null;
+       sched_inspection_date?: string | null; inspection_visit_at?: string | null; actual_inspection_at?: string | null },
   jobKind: AssrBoardLeg['jobKind'],
+  today = '',
 ): boolean {
   const stage = a.stage ?? '';
   if (jobKind === 'customer_pickup') return !a.actual_pickup_at;
-  if (jobKind === 'inspection') return !(PAST_INSPECTION.has(stage) && !(ASSR_TERMINAL_STAGES as readonly string[]).includes(stage));
+  if (jobKind === 'inspection') {
+    // An inspection still scheduled for today or later stays writable even past its
+    // stage, so a re-inspection can still be given a date / driver (owner 2026-11-10).
+    if (legUpcoming(a.sched_inspection_date ?? a.inspection_visit_at, a.actual_inspection_at, today)) return true;
+    return !(PAST_INSPECTION.has(stage) && !(ASSR_TERMINAL_STAGES as readonly string[]).includes(stage));
+  }
   return !assrCaseClosed({ closed_at: a.closed_at, archived_at: null, stage, status: a.status });
 }

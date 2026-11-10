@@ -29,6 +29,7 @@ import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
 import { autoFinalInvoiceBestEffort } from './auto-final-invoice';
+import { paginateAll } from './paginate-all';
 
 /** East Malaysia + Singapore are excluded: do_date is their ship-out date, not a
  *  delivery; their delivered signal is the HC Delivery sheet. Everything else is
@@ -61,13 +62,19 @@ export async function deliverDueShippedOrders(
   today: string,
   actorId: string | null,
 ): Promise<DeliverDueResult> {
-  const { data: soRaw, error: soErr } = await sb
+  /* PAGED: a bare .limit(5000) is still cut at PostgREST's 1,000 rows, and SHIPPED
+     orders that never qualify (outstation, no driver) stay in the set for good,
+     so past 1,000 of them some due orders were never even looked at. */
+  const { data: soRaw, error: soErr, truncated } = await paginateAll<Record<string, unknown>>((from, to) => sb
     .from('mfg_sales_orders')
     .select('doc_no, company_id, customer_state, customer_country')
     .eq('status', 'SHIPPED')
-    .limit(5000);
+    .order('doc_no')
+    .range(from, to));
   // A failed read is not "no SHIPPED orders" — deliver nothing this run.
   if (soErr) return { scanned: 0, delivered: 0, skipped: 0 };
+  // eslint-disable-next-line no-console
+  if (truncated) console.warn('[deliver-due-shipped] more SHIPPED orders than one paged read; the rest wait for the next run');
   const sos = ((soRaw ?? []) as Array<{
     doc_no: string; company_id: number | null; customer_state: string | null; customer_country: string | null;
   }>).filter((s) => isLocalDeliveryGeography(s.customer_state, s.customer_country));
