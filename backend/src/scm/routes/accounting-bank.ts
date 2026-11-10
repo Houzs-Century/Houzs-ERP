@@ -34,7 +34,7 @@ import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-r
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadCompanyMatches,
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadLineMatches,
   loadQrReports } from '../../acc/bank';
 import { paginateAll } from '../lib/paginate-all';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
@@ -865,10 +865,16 @@ export const bankStatementDetail = guard(async (c) => {
   if (!stmt) return c.json({ error: 'not_found' }, 404);
   const statement = stmt as Record<string, any>;
 
+  /* The matches are read for THIS statement's lines, as soon as they are in —
+     the screen shows no other line's. This was every match the company holds,
+     paged, on every open. */
+  const linesP = paginateAll<Record<string, any>>((lo, hi) => (sb as Parameters<typeof loadAccountLedger>[0]).from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId)
+    .order('line_no').order('id').range(lo, hi));
   const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts, qrReports] = await Promise.all([
-    paginateAll<Record<string, any>>((lo, hi) => (sb as Parameters<typeof loadAccountLedger>[0]).from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId)
-      .order('line_no').order('id').range(lo, hi)),
-    loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason'),
+    linesP,
+    linesP.then((r) => (r.error
+      ? { data: [], error: null }
+      : loadLineMatches(sb, co.companyId, (r.data ?? []).map((l) => Number(l.id)), 'id, bank_line_id, je_no, amount_sen, match_reason'))),
     loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
     loadPayableBatches(sb, co.companyId),
     /* Only what was claimed by the statement's own last day: a later payment of an earlier entry leaves it waiting here. */
