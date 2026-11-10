@@ -230,6 +230,7 @@ describe('the note form, in place of the list', () => {
       kind: 'CN', noteDate: TODAY, reason: 'Scratched leg', sourceDocNo: null, soDocNo: 'HC-SO-2611-004',
       lines: [{ description: 'Goodwill', accountCode: null, amountSen: 15_000 }],
       allocations: [],
+      idempotencyKey: expect.any(String),
     });
     expect(await screen.findByText('HC-CN-2611-003 saved and posted')).toBeTruthy();
     expect(where()).toBe('/scm/credit-notes/n9');

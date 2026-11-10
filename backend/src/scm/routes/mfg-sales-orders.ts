@@ -336,6 +336,7 @@ import { registerCustomerCreditRoutes } from './mfg-sales-orders/customer-credit
 import { registerHistoryRoutes } from './mfg-sales-orders/history';
 import { registerPaymentsListRoutes } from './mfg-sales-orders/payments-list';
 import { registerDebtorSearchRoutes } from './mfg-sales-orders/debtor-search';
+import { linesUnreadableBody } from '../lib/failed-read-refusal'; import { readOverrideLineCost } from '../lib/so-override-cost';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -5009,7 +5010,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      `internalExpectedDd` is the legacy spelling of the same key and is still
      accepted (readSoProcessingDateFromBody); it is the name this route's
      contract was documented under, and no live client sends it. */
-  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; processingDate?: string; internalExpectedDd?: string };
+  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; processingDate?: string; internalExpectedDd?: string; overrideReason?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
@@ -5104,6 +5105,31 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      existing value is read first so a re-entry never overwrites it. (Merged
      with main's CANCELLED downstream-lock guard above — both apply.) */
   if (fromNorm === toStatus) {
+    /* EDIT-LOCK OVERRIDE. The detail page's Override sends the SO's own status
+       with the reason the operator typed; the banner then says "tracked in the
+       status timeline". This branch used to answer `unchanged` and keep nothing,
+       so the reason was thrown away and the timeline showed no override. It is
+       written now, and a failure to write it is a failure: the page unlocks only
+       on this answer's success. */
+    const overrideReason = typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
+    if (overrideReason) {
+      if (overrideReason.length < 10) return c.json({ error: 'override_reason_too_short', message: 'Override needs a reason of at least 10 characters.' }, 400);
+      const { error: trailErr } = await sb.from('mfg_so_status_changes').insert({
+        company_id: co.companyId,
+        doc_no: docNo,
+        from_status: fromStatus,
+        to_status: fromStatus,
+        changed_by: user.id,
+        notes: `Edit-lock override: ${overrideReason}`,
+      });
+      if (trailErr) return c.json({ error: 'override_not_recorded', message: `The override reason could not be saved (${trailErr.message}). The SO stays locked — try again.` }, 500);
+      await recordSoAudit(sb, {
+        docNo, action: 'UPDATE_STATUS', actorId: user.id,
+        actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+        fieldChanges: [], statusSnapshot: fromStatus, note: `Edit-lock override: ${overrideReason}`,
+      });
+      return c.json({ salesOrder: prev, version: currentVersion, unchanged: true, overrideRecorded: true });
+    }
     return c.json({ salesOrder: prev, version: currentVersion, unchanged: true });
   }
   /* ── Confirm gate (owner 2026-08-08) — a DRAFT may only become CONFIRMED
@@ -5600,6 +5626,13 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     }, 422);
   }
 
+  /* Task #114 — pull current line_cost_sen so the price override
+     recomputes line_margin_sen correctly. Previous code used `- 0`
+     which silently broke margin tracking on every override. Read BEFORE the
+     audit insert: a FAILED read refuses with nothing written (lib/so-override-cost.ts). */
+  const lineCost = await readOverrideLineCost(sb, itemId);
+  if (!lineCost.ok) return c.json(linesUnreadableBody('the line cost', 'changed', lineCost.error), 503);
+
   // Audit first (so we don't lose original even if the update fails)
   const originalPriceSen = i.unit_price_sen;
   const overridePriceSen = newPrice;
@@ -5615,14 +5648,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
   });
 
   const newLineTotal = (i.qty * newPrice) - i.discount_sen;
-  /* Task #114 — pull current line_cost_sen so the price override
-     recomputes line_margin_sen correctly. Previous code used `- 0`
-     which silently broke margin tracking on every override. */
-  const { data: costRow } = await sb.from('mfg_sales_order_items')
-    .select('line_cost_sen')
-    .eq('id', itemId)
-    .maybeSingle();
-  const currentLineCost = Number((costRow as { line_cost_sen?: number } | null)?.line_cost_sen ?? 0);
+  const currentLineCost = lineCost.costSen;
   const { error } = await sb.from('mfg_sales_order_items').update({
     unit_price_sen: newPrice,
     total_sen: newLineTotal,

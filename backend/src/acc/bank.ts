@@ -554,6 +554,15 @@ export async function loadStatementLines(
   return { data, error: null };
 }
 
+/** The match rows of the given bank lines only — what one statement's screen
+    shows against its own lines. Chunked and paged like every read here. */
+export async function loadLineMatches(sb: any, companyId: number, lineIds: readonly number[], fields: string): Promise<Rows> {
+  if (lineIds.length === 0) return { data: [], error: null };
+  const res = await chunkIn<Record<string, any>, number>([...lineIds], (batch, lo, hi) => sb.from('acc_bank_statement_matches')
+    .select(fields).eq('company_id', companyId).in('bank_line_id', batch).order('id').range(lo, hi));
+  return { data: res.error ? [] : res.data, error: res.error };
+}
+
 /** Every match row of the company, paged: a company's matches pass 1,000 long
     before any one account's lines do, and a dropped match row turned a
     reconciled line back into an unexplained one (Conts #334). */

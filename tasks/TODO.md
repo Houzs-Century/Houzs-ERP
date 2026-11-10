@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - CODY-(K) at KL WAREHOUSE: run `flatten-spec-buckets.mjs` (plan, then apply) so "Leg 4" (+1) and "Leg 4 + Total 24" (-1) both read 0; the plan lists any order whose readiness changes — lead / owner — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
 - Fleet: which lorries are MSJ and which Penang; the cargo box size (L x W x H) of each lorry, for the capacity check — owner — 2026-11-08

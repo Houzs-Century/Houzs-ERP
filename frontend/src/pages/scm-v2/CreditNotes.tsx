@@ -43,6 +43,7 @@
 
 import { lazy, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { FileText, Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
@@ -581,10 +582,16 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   const create = useCreateCreditNote();
   const update = useUpdateCreditNote();
   const post = usePostCreditNote();
+  /* One key per opened form: a second press answers the first note, never a second. */
+  const idemKey = useIdempotencyKey();
+  /* The whole save — create, the scanned pages, the post — is one press: the
+     button stays off between the steps too, where `create.isPending` alone had
+     already turned back to false while the pages were still uploading. */
+  const [saving, setSaving] = useState(false);
   const leaves = useMemo(() => leafAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const totalSen = v.lines.reduce((s, l) => { const p = lineSen(l); return s + (p.ok ? p.sen : 0); }, 0);
   const badAmount = amountProblem(v.lines);
-  const busy = create.isPending || update.isPending || post.isPending;
+  const busy = saving || create.isPending || update.isPending || post.isPending || uploadFile.isPending;
   const failed = create.isError ? create.error : update.isError ? update.error : post.isError ? post.error : null;
   const setLine = (rid: number, patch: Partial<FormLine>) => setV((p) => ({ ...p, lines: p.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
   const fromReturn = v.kind === 'CN' && !!v.deliveryReturnId;
@@ -613,12 +620,14 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
 
   /* Save as draft, or Save & post (the redesign): the same save, then the post. */
   const save = async (postAfter = false) => {
+    if (saving) return;
+    setSaving(true);
     try {
       const body = bodyOf(v);
       let noteId = id ?? '';
       let number: string | null = null;
       if (mode === 'new') {
-        const r = await create.mutateAsync(body);
+        const r = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
         noteId = r.note.id;
         number = r.note.note_number;
         /* The scanned pages go with the note they became. */
@@ -632,7 +641,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
       onSaved(noteId, { number, posted: postAfter });
-    } catch { /* the hook holds the error; it is shown below */ }
+    } catch { /* the hook holds the error; it is shown below */ } finally { setSaving(false); }
   };
 
   const body = (

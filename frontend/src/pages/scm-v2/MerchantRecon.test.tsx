@@ -105,7 +105,7 @@ let reportRows: SettlementRow[] = REPORT_ROWS;
 /* What differs on the report a test opens. */
 let openedBatch: Record<string, unknown> = {};
 
-vi.mock('./settlement-queries', () => ({
+vi.mock('./settlement-queries', () => { const m = {
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
   useReadSettlementBatches: () => readBatches,
@@ -150,7 +150,7 @@ vi.mock('./settlement-queries', () => ({
     /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
     { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63, ref: null, customer_so_no: 'ZNT6656', accountSheet: '393020' },
   ] }, isLoading: false }),
-}));
+}; return { ...m, useSettlementBatchRow: m.useSettlementBatch }; });
 
 /* The advice tab is the acquirer's own paperwork, so it has a door on this
    screen too (owner, 2026-08-24: 毕竟它属于card merchant 那边). Its contract is

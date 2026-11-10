@@ -13,7 +13,7 @@
 // grow (file-size gate); it is pure (sb + docNos -> four in-flight promises) and
 // is exercised end-to-end by delivery-planning.board.test.ts through the handler.
 import type { Context } from 'hono';
-import { chunkIn } from './paginate-all';
+import { chunkIn, paginateAll } from './paginate-all';
 import { boardDeliverableByDoc } from './board-deliverable';
 import { scopeToAllowedCompanies } from './companyScope';
 import { assrBoardUnionSql } from './assr-board-scope';
@@ -179,15 +179,21 @@ export function kickOffSubBoardReads(
 
   const dpResP = (async () => {
     try {
-      let dpQuery = sb.from('dp_orders')
-        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range, remark')
-        .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
-        // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
-        // finished DP job belongs on the Delivered tab, not hidden).
-        .neq('status', 'CANCELLED')
-        .limit(1000);
-      dpQuery = scopeToAllowedCompanies(dpQuery, c);
-      return { ok: await dpQuery } as const;
+      /* PAGED, ordered by id: this read used to stop at .limit(1000) with no order, so
+         once manual DP jobs (DELIVERED ones are kept) passed 1,000 the board silently
+         dropped an arbitrary set of them. */
+      const dpRes = await paginateAll<Record<string, unknown>>((from, to) => scopeToAllowedCompanies(
+        sb.from('dp_orders')
+          .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range, remark')
+          .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
+          // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
+          // finished DP job belongs on the Delivered tab, not hidden).
+          .neq('status', 'CANCELLED')
+          .order('id'),
+        c,
+      ).range(from, to));
+      if (dpRes.error) throw dpRes.error;
+      return { ok: dpRes } as const;
     } catch (e) { return { err: e } as const; }
   })();
 
