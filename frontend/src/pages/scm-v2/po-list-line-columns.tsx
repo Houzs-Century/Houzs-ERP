@@ -30,7 +30,10 @@ const date = (key: string, label: string, pick: (l: PoListLine) => string | null
 export function poLineColumns(): Record<string, PoColumn> {
   return {
     so_doc_no: text("so_doc_no", PO_LINE_LABELS.soDocNo, (l) => l.so_doc_no, { mono: true }),
-    item_code: text("item_code", PO_LINE_LABELS.itemCode, (l) => l.supplier_sku, { width: "200px", mono: true }),
+    /* The supplier's code when the binding has one, else ours (sister review
+       P15): a line with no supplier SKU showed "—" and the purchaser had to
+       open the PO to see what was ordered. The line import ignores this column. */
+    item_code: text("item_code", PO_LINE_LABELS.itemCode, (l) => l.supplier_sku?.trim() || l.item_code, { width: "200px", mono: true }),
     item_description: text("item_description", PO_LINE_LABELS.itemDescription, (l) => l.item_description, { width: "240px" }),
     item_description_2: text("item_description_2", PO_LINE_LABELS.itemDescription2, (l) => l.description2, { width: "240px" }),
     location: text("location", PO_LINE_LABELS.location, (l) => l.location, { width: "100px" }),

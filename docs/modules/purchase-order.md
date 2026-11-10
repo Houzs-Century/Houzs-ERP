@@ -36,6 +36,7 @@ Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
+- The list's bulk actions (Supplier date, Print all, To Goods Receipt) act on the ticked rows the table SHOWS (`tickedRows` = visible rows that are ticked); a new search, status tab or server filter clears the ticks. The list's Item Code line column shows the supplier SKU, else our item code (the line import ignores that column).
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
 - New PO (desktop, PC Order, phone): picking a SKU while Supplier is empty adopts its only supplier, else its one ACTIVE main supplier (`default-supplier-binding.ts`); several or no main suppliers leaves the choice to the buyer, and a chosen supplier is never replaced.
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
