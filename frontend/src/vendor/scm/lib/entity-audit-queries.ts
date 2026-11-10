@@ -65,6 +65,8 @@ export const AUDIT_ENTITY_TYPES = [
   'COMMISSION_MONTH',
   'OPENING_BALANCE',
   'LORRY_OFF_ROAD',
+  'GL_ACCOUNT',
+  'CREDIT_NOTE',
 ] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

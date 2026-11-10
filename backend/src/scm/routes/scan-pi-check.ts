@@ -22,7 +22,7 @@ import { loadSuppliers } from '../lib/grn-scan-load';
 import { createDraftPiFromGrnItems } from '../lib/pi-from-grn-core';
 import { loadBillableLines, reviewOfPiRead } from '../lib/pi-scan-run';
 import type { PiScanExtract } from '../lib/pi-scan-extract';
-import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, extractOfReview, mergeRebuiltLines, repeatedPis, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
+import { PI_REVIEW_VERSION, billBlocked, billCodesToTeach, billPicks, cleanPiReview, duplicatePi, extractOfReview, mergeRebuiltLines, repeatedPis, staleSuggestions, type ExistingPi, type PiReview } from '../lib/pi-scan-check';
 import { aiSkuMatcher, type AiSkuMatcher } from '../lib/pi-scan-ai-match';
 import { refVariants } from '../lib/grn-scan-check';
 import { callerId, goldSamples, handleDiscard, handleFile, handleGold, handleRetry, handleUpload, idsOf, jsonBody, ownRows, svcOf, waitingRows, type CheckRow } from './scan-check-shared';
@@ -41,12 +41,19 @@ scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature
    the operator may have edited and every row already tied stay; a row still
    untied takes what the newer matching ties it to. Copies rebuild side by side:
    each may ask the AI once. */
-async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>, ai: AiSkuMatcher | null): Promise<void> {
-  await Promise.all(rows.map((r) => upgradeCopy(svc, companyId, r, ai)));
+async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>, ai: AiSkuMatcher | null, openIds: ReadonlySet<string>): Promise<void> {
+  await Promise.all(rows.map((r) => upgradeCopy(svc, companyId, r, ai, openIds)));
 }
 
-async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | null, r: CheckRow<PiReview>, ai: AiSkuMatcher | null): Promise<void> {
-  if (r.review_state !== 'pending' || !r.review || r.review.v === PI_REVIEW_VERSION) return;
+async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | null, r: CheckRow<PiReview>, ai: AiSkuMatcher | null, openIds: ReadonlySet<string>): Promise<void> {
+  if (r.review_state !== 'pending' || !r.review) return;
+  /* A SUGGESTED tie to a receipt line another invoice has since billed is stale: the
+     row showed blank under "no longer open to bill" and never matched again (owner
+     2026-11-10, INV-2610-097 after the batch's other invoices were created). Untie it
+     and rebuild; a tie the operator chose keeps its warning instead. */
+  const stale = staleSuggestions(r.review, openIds);
+  if (r.review.v === PI_REVIEW_VERSION && stale === 0) return;
+  if (stale > 0) r.review = { ...r.review, lines: r.review.lines.map((l) => (l.suggested && l.grnItemId && !openIds.has(l.grnItemId) ? { ...l, grnItemId: null, grnNumber: null, suggested: false } : l)) };
   /* The stored read when there is one; else the copy's own rows (2026-11-09: the
      five HOOKKA invoices waiting at deploy carried no scan sample, so they were
      skipped and kept their old, empty matching). */
@@ -78,10 +85,9 @@ scanPiCheck.get('/pending', async (c) => {
   const waiting = await waitingRows<PiReview>(svc, c, 'PI');
   if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const { rows } = waiting;
-  await upgradeCopies(svc, companyId, rows, aiSkuMatcher(c.env, companyId, callerId(c)));
-
   const [suppliers, lines] = await Promise.all([loadSuppliers(svc, companyId), loadBillableLines(svc, companyId)]);
   if (lines === null) return c.json({ error: 'query_failed', reason: 'Could not load what is left to bill. Please try again.' }, 500);
+  await upgradeCopies(svc, companyId, rows, aiSkuMatcher(c.env, companyId, callerId(c)), new Set(lines.map((l) => l.grnItemId)));
   const open = new Map(lines.map((l) => [l.grnItemId, l]));
   const refs = [...new Set(rows.flatMap((r) => (r.review?.invoiceNumber ? refVariants(r.review.invoiceNumber) : [])))];
   const existing: ExistingPi[] = [];

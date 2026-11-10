@@ -78,7 +78,7 @@ function harness(perms: readonly string[] = KEYS, pis: Row[] = []) {
     app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const pi = (id: string) => (sb as unknown as { from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: Row }> } } } })
     .from('purchase_invoices').select('paid_sen, status').eq('id', id).maybeSingle().then((r) => r.data);
-  return { req, pi };
+  return { req, pi, sb };
 }
 
 const SCN = (over: Row = {}) => ({ kind: 'SCN', supplierId: 'sup-d', noteDate: '2026-09-21', lines: [{ description: "Sales Rebate - Aug'26", accountCode: '591-0000', amountSen: 2_862_237 }], ...over });
@@ -166,5 +166,67 @@ describe('a note naming no invoice', () => {
 
     const { req: noKey } = harness(['scm.payment_voucher.create']);
     expect((await noKey(`/credit-notes/${big}/apply`, 'POST', { targets: [] })).status).toBe(403);
+  });
+});
+
+/* The audit trail (sister-ERP gap review BE6, 2026-11-10): giving a credit back
+   to the note was a hard delete that left no trace of who did it or what the
+   invoice had been credited. Now each one writes a CREDIT_NOTE row in
+   scm.entity_audit_log, and a sink that cannot take the row refuses up front. */
+describe('giving a credit back leaves an audit row', () => {
+  const posted = async (h: ReturnType<typeof harness>) => {
+    const id = await raise(h.req, SCN());
+    await h.req(`/credit-notes/${id}/post`, 'POST');
+    const res = await h.req(`/credit-notes/${id}/apply`, 'POST', { targets: [{ kind: 'PI', id: 'pi-18', amountSen: 130_000 }, { kind: 'PI', id: 'pi-19', amountSen: 170_600 }] });
+    expect(res.status, await res.clone().text()).toBe(200);
+    return id;
+  };
+  const trail = (h: ReturnType<typeof harness>) => (h.sb.tables.entity_audit_log ?? []).filter((r) => r.entity_type === 'CREDIT_NOTE');
+
+  test('a remove records who, and the invoice\'s applied amount from -> to', async () => {
+    const h = harness();
+    const id = await posted(h);
+    const d = await (await h.req(`/credit-notes/${id}`, 'GET')).json() as Detail;
+    const allocationId = d.allocations.find((a) => a.number === 'HC-PI-2610-018')!.id as string;
+    expect((await h.req(`/credit-notes/${id}/allocations/${allocationId}/remove`, 'POST')).status).toBe(200);
+    const rows = trail(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ entity_id: id, company_id: CO, action: 'UPDATE', actor_name_snapshot: 'Chew' });
+    expect(rows[0]!.field_changes).toEqual([{ field: 'appliedSen:HC-PI-2610-018', from: 130_000, to: 0 }]);
+  });
+
+  test('unticking on a posted note records each document given back', async () => {
+    const h = harness();
+    const id = await posted(h);
+    const res = await h.req(`/credit-notes/${id}/allocations`, 'PUT', { targets: [{ kind: 'PI', id: 'pi-19', amountSen: 170_600 }] });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await h.pi('pi-18')).toMatchObject({ paid_sen: 0 });
+    expect(trail(h).map((r) => r.field_changes)).toEqual([[{ field: 'appliedSen:HC-PI-2610-018', from: 130_000, to: 0 }]]);
+  });
+
+  test('a cancel records the status and every credit it gave back', async () => {
+    const h = harness();
+    const id = await posted(h);
+    const res = await h.req(`/credit-notes/${id}/cancel`, 'POST');
+    expect(res.status, await res.clone().text()).toBe(200);
+    const rows = trail(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'CANCEL', status_snapshot: 'CANCELLED' });
+    expect(rows[0]!.field_changes).toEqual([
+      { field: 'status', from: 'POSTED', to: 'CANCELLED' },
+      { field: 'appliedSen:HC-PI-2610-018', from: 130_000, to: 0 },
+      { field: 'appliedSen:HC-PI-2610-019', from: 170_600, to: 0 },
+    ]);
+  });
+
+  test('an audit sink that cannot take the row refuses the remove and the invoice keeps its credit', async () => {
+    const h = harness();
+    const id = await posted(h);
+    const d = await (await h.req(`/credit-notes/${id}`, 'GET')).json() as Detail;
+    const allocationId = d.allocations.find((a) => a.number === 'HC-PI-2610-018')!.id as string;
+    h.sb.rpcHandlers.entity_audit_writable = () => false;
+    expect((await h.req(`/credit-notes/${id}/allocations/${allocationId}/remove`, 'POST')).status).toBe(409);
+    expect(await h.pi('pi-18')).toMatchObject({ paid_sen: 130_000, status: 'PAID' });
+    expect(trail(h)).toEqual([]);
   });
 });
