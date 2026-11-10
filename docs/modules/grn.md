@@ -107,6 +107,11 @@ go through `/api/scm/grns`.
 - A `purchase_order_item_id` passed from the client must name the SAME product as
   the GRN line, checked by `line-link-item-identity.ts` (`409
   link_material_mismatch`); a failed identity read must refuse (503), never pass.
+- A `purchase_order_item_id` must also be on a PO from the GRN's OWN supplier
+  (`lib/grn-po-supplier.ts`, `409 po_supplier_mismatch`; a failed read is 503).
+  Checked on `POST /`, `POST /:id/items`, and on `PATCH /:id` when `supplierId`
+  changes while PO-linked lines exist. `/from-pos` refuses `mixed_suppliers` and
+  `/from-po-items` makes one GRN per supplier, so those paths cannot mix.
 - `grnHasDownstream` blocks line add/edit/delete **and cancel** once any line has
   `invoiced_qty > 0` or `returned_qty > 0` (a PI/PR has drawn on it).
 - `grnReverseWouldGoNegative` blocks cancel and warehouse relocation once the
