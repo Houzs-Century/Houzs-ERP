@@ -14,7 +14,7 @@ const contracts: RecoveryContract[] = [
   {
     file: 'SalesOrderNew.tsx',
     state: 'createdDocNo',
-    detailPath: /if \(intents\.length === 0\) \{\s*navigate\(`\/scm\/sales-orders\/\$\{createdDocNo\}`\);/,
+    detailPath: /if \(intents\.length === 0\) \{\s*(?:allowLeave\(\);\s*)?navigate\(`\/scm\/sales-orders\/\$\{createdDocNo\}`\);/,
     retryLabel: 'Continue payment retry',
     openLabel: 'Open created order',
   },
