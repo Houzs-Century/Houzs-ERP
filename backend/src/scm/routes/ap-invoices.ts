@@ -61,6 +61,7 @@ import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-requ
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { eventAccountRefusal } from '../lib/event-accounts';
 import { openingDocumentRefusal } from '../../acc/books-opening';
+import { paginateAll } from '../lib/paginate-all';
 
 type Row = Record<string, any>;
 
@@ -127,9 +128,13 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
-    let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
-    if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
-    const { data, error } = await q.order('invoice_date', { ascending: false }).limit(500);
+    /* Every bill, paged: the voucher pickers read this list, and a newest-500
+       cap made an older unpaid bill impossible to pay, with nothing said. */
+    const { data, error } = await paginateAll<Row>((from, to) => {
+      let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
+      if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
+      return q.order('invoice_date', { ascending: false }).order('id', { ascending: true }).range(from, to);
+    });
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
@@ -137,11 +142,11 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     /* The operational invoices, read-only here: the Procurement page raises
        and edits them; this list only SHOWS them beside the AP invoices so
        the Finance side sees a supplier's whole debt. */
-    const { data, error } = await scopeToCompany(
+    const { data, error } = await paginateAll<Row>((from, to) => scopeToCompany(
       sb.from('purchase_invoices')
         .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
-    ).order('invoice_date', { ascending: false }).limit(500);
+    ).order('invoice_date', { ascending: false }).order('id', { ascending: true }).range(from, to));
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
