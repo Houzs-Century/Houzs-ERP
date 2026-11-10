@@ -63,6 +63,7 @@ import { eventAccountRefusal } from '../lib/event-accounts';
 import { openingDocumentRefusal } from '../../acc/books-opening';
 import { paginateAll } from '../lib/paginate-all';
 import { duplicateBillRefusal, findDuplicateSupplierBill } from '../lib/duplicate-supplier-bill';
+import { listDuplicateSupplierBillsHandler } from './ap-duplicate-bills';
 
 type Row = Record<string, any>;
 
@@ -524,6 +525,8 @@ apInvoices.get('/:id/files', listApInvoiceFilesHandler);
 apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
 apInvoices.delete('/:id/files/:fileId', deleteApInvoiceFileHandler);
 apInvoices.put('/plans', putBillPlanHandler);
+/* Bills booked twice before #5535 refused it, for Finance to review — a literal path, before '/:id'. */
+apInvoices.get('/duplicate-bills', listDuplicateSupplierBillsHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);
 apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);
