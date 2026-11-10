@@ -10,7 +10,7 @@
 -- the match rows can tell which rule decided and the screen can say so. No row
 -- changes; only the set of words the column may hold widens.
 --
--- Reversal (the UPDATE first, or the ADD fails on the rows this made possible):
+-- REVERSAL: the UPDATE first, or the ADD fails on the rows this made possible —
 --   UPDATE scm.acc_bank_statement_matches SET match_reason = 'manual' WHERE match_reason = 'amount+document';
 --   ALTER TABLE scm.acc_bank_statement_matches DROP CONSTRAINT acc_bank_match_reason;
 --   ALTER TABLE scm.acc_bank_statement_matches ADD CONSTRAINT acc_bank_match_reason
