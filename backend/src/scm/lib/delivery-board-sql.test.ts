@@ -8,7 +8,7 @@ import { fakeSb, type Row } from './fake-postgrest';
 import { boardDeliverableByDoc } from './board-deliverable';
 import { planningPoNosByDoc } from './planning-po-nos';
 import { chunkIn } from './paginate-all';
-import { chunkRank, foldDeliverable, foldPoNos } from './delivery-board-sql';
+import { BOARD_DATA_SQL, BOARD_HEAD_SQL, chunkRank, foldDeliverable, foldPoNos } from './delivery-board-sql';
 import { diffBoardRows, parseBoardSource } from './delivery-board-source';
 
 /* Two orders: A has a linked delivery, a partial return, a cancelled return, a
@@ -141,6 +141,17 @@ describe('diffBoardRows', () => {
       { doc_no: 'C', fields: ['(missing in sql)'] },
       { doc_no: 'D', fields: ['(extra in sql)'] },
     ]);
+  });
+});
+
+describe('JSON parameters reach Postgres as text', () => {
+  // postgres.js JSON.stringifies any parameter the server types as jsonb, so a JSON
+  // string bound to a bare $n::jsonb arrives double-encoded (a jsonb scalar).
+  it('every JSON placeholder is funnelled through ::text', () => {
+    for (const text of [BOARD_HEAD_SQL, BOARD_DATA_SQL]) {
+      expect(text).not.toMatch(/\$\d+::jsonb/);
+      expect(text).toMatch(/\$1::text::jsonb/);
+    }
   });
 });
 

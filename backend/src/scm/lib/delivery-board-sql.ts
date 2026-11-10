@@ -298,9 +298,13 @@ export async function loadSoBoardMapsSql(
     pairs.push([String(r.doc_no), cid]);
   }
   const linkedAc = linkedAcDocByDoc(soRows);
+  /* JSON text for the $n::text::jsonb placeholders of BOARD_DATA_SQL (pinned by
+     delivery-board-sql.test.ts: no bare $n::jsonb in either statement). */
+  const docsJson = JSON.stringify(docNos);
+  const pairsJson = JSON.stringify(pairs);
+  const acDocsJson = JSON.stringify([...new Set(linkedAc.values())]);
   const rows = await sql.unsafe(BOARD_DATA_SQL, [
-    JSON.stringify(docNos), display, catalogScope, active ?? null,
-    JSON.stringify(pairs), JSON.stringify([...new Set(linkedAc.values())]), jsonOrNull(allowed ?? null),
+    docsJson, display, catalogScope, active ?? null, pairsJson, acDocsJson, jsonOrNull(allowed ?? null),
   ] as never[]) as unknown as DataRow[];
   const row = rows.at(0);
   if (!row) throw new Error('board data query returned no row');
