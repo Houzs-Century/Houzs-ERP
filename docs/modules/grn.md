@@ -16,7 +16,7 @@ go through `/api/scm/grns`.
   `status:'DRAFT'` directly in the body is rejected — `asDraft` is the only way in.
 - `POSTED`: set by create-as-posted, `PATCH /:id/post`, or the from-PO converts —
   all funnel through the one chokepoint `postGrnAndRollup` (`grns.ts`), which flips
-  status first (atomic CAS on the observed status) and only then recounts the PO's
+  status first (atomic CAS on the status the caller saw) and only then recounts the PO's
   `received_qty`, so this GRN's own lines are included.
 - `CANCELLED`: `PATCH /:id/cancel`. A DRAFT writes no stock OUT. A POSTED GRN
   reverses the IN per line and is blocked if the stock was already consumed
@@ -71,7 +71,10 @@ go through `/api/scm/grns`.
 ## Rules that must not break
 
 - All stock/status mutation goes through `postGrnAndRollup`; the flip is a CAS on
-  the *observed* status, never a blind `.neq('status', 'CLOSED')` update.
+  the status the CALLER saw (required `expectedStatus`: confirm passes the DRAFT it
+  loaded, creates pass what they inserted), never a fresh read inside the chokepoint
+  and never a blind `.neq('status', 'CLOSED')` update. A fresh read let the second
+  of two simultaneous confirms CAS POSTED -> POSTED and book the stock twice.
 - A from-PO convert makes one GRN per supplier AND PO ship-to warehouse: posting
   books every line into the header warehouse, so two warehouses never share a GRN.
 - Delivery-order scan: a PO printed with its location in place of `HC-PO`
