@@ -129,6 +129,17 @@ describe('raising a note', () => {
     expect((await noSupplier.json() as { error: string }).error).toBe('supplier_required');
   });
 
+  test('an amount that is not a whole positive number of sen is refused and writes nothing — null (a NaN the screen sent), a string, true, a fraction', async () => {
+    const { app, sb } = harness();
+    for (const amountSen of [null, '15000', true, 150.5, 0]) {
+      const res = await json(app, '/credit-notes', 'POST', { ...CN, lines: [{ description: 'x', amountSen }] });
+      expect(res.status, `amountSen ${JSON.stringify(amountSen)}`).toBe(400);
+      expect((await res.json() as { error: string }).error).toBe('bad_line');
+    }
+    expect(sb.tables.acc_credit_notes ?? []).toHaveLength(0);
+    expect(sb.tables.acc_credit_note_lines ?? []).toHaveLength(0);
+  });
+
   test('a control account on a line, a bad kind and a missing permission are refused by name', async () => {
     const { app } = harness();
     const control = await json(app, '/credit-notes', 'POST', { ...CN, lines: [{ accountCode: '300-0000', amountSen: 100 }] });

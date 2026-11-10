@@ -73,6 +73,7 @@ import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
+import { parseMoneyToSen } from '../../lib/money';
 
 export const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
 /* The kind as the tab and the form's picker say it. */
@@ -217,7 +218,14 @@ export const fromScan = (r: ScnScan): FormValues => ({
   creditedDoc: r.suggested ? { kind: r.suggested.kind, id: r.suggested.id } : null,
   knockOff: scanKnockOff(r),
 });
-const toSen = (rm: string): number => Math.round(Number(rm) * 100);
+/* The repo's money parser, never Number(): Number("3,500.00") is NaN, which
+   JSON sends as null. A line whose amount cannot be read is refused with its
+   sentence, never treated as blank (a blank line is dropped). */
+const lineSen = (l: FormLine) => parseMoneyToSen(l.amountRm, `Line ${l.rid}'s amount`);
+export const amountProblem = (lines: FormLine[]): string | null => {
+  for (const l of lines) { const p = lineSen(l); if (!p.ok) return p.message; }
+  return null;
+};
 
 /* The body the server takes, off the form — the lines with a sen amount; an
    account left blank lets the server land it on the kind's default. */
@@ -233,12 +241,14 @@ export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reaso
   /* A supplier, other-debtor or customer credit note always says its ticks — none ticked is a plan too. */
   ...(knocksOff(v.kind) || v.kind === 'CN' ? { allocations: pickTargets(v.knockOff ?? {}) } : {}),
   ...(v.kind === 'CN' && v.deliveryReturnId ? { deliveryReturnId: v.deliveryReturnId } : {}),
-  lines: v.lines
-    .filter((l) => l.amountRm.trim() !== '')
-    .map((l) => ({
-      description: l.description.trim() || null, accountCode: l.accountCode || null, amountSen: toSen(l.amountRm), ...(l.projectId != null ? { projectId: l.projectId } : {}),
+  lines: v.lines.flatMap((l) => {
+    const p = lineSen(l);
+    if (!p.ok) throw new Error(p.message);
+    return p.empty ? [] : [{
+      description: l.description.trim() || null, accountCode: l.accountCode || null, amountSen: p.sen, ...(l.projectId != null ? { projectId: l.projectId } : {}),
       ...(l.ret ? { deliveryReturnItemId: l.ret.itemId, qty: l.ret.qty } : {}),
-    })),
+    }];
+  }),
 });
 
 const StatusPill = ({ status }: { status: NoteStatus }) => (
@@ -572,7 +582,8 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   const update = useUpdateCreditNote();
   const post = usePostCreditNote();
   const leaves = useMemo(() => leafAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
-  const totalSen = v.lines.reduce((s, l) => s + (l.amountRm.trim() ? toSen(l.amountRm) : 0), 0);
+  const totalSen = v.lines.reduce((s, l) => { const p = lineSen(l); return s + (p.ok ? p.sen : 0); }, 0);
+  const badAmount = amountProblem(v.lines);
   const busy = create.isPending || update.isPending || post.isPending;
   const failed = create.isError ? create.error : update.isError ? update.error : post.isError ? post.error : null;
   const setLine = (rid: number, patch: Partial<FormLine>) => setV((p) => ({ ...p, lines: p.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
@@ -585,7 +596,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   /* An other debtor's credit has no default account — each money line names its own (the server refuses one without). */
   const accountsNamed = v.kind !== 'OCN' || v.lines.every((l) => l.amountRm.trim() === '' || l.accountCode !== '');
   const partyId = v.kind === 'OCN' ? v.debtorId ?? '' : v.supplierId;
-  const canSave = totalSen > 0 && v.noteDate !== '' && accountsNamed && (knocksOff(v.kind)
+  const canSave = badAmount === null && totalSen > 0 && v.noteDate !== '' && accountsNamed && (knocksOff(v.kind)
     ? partyId !== '' && pickSen(v.knockOff ?? {}) <= totalSen
     : (v.soDocNo.trim() !== '' || v.partyName.trim() !== '') && pickSen(v.knockOff ?? {}) <= totalSen);
   const withEvents = knocksOff(v.kind);
@@ -692,7 +703,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
                     {l.ret?.maxQty != null && <div style={soft}>of {l.ret.maxQty}</div>}
                   </td>
                 )}
-                <td style={{ ...td, ...num }}><input type="number" min={0} step="0.01" value={l.amountRm} onChange={(e) => setLine(l.rid, { amountRm: e.target.value })} aria-label={`Line ${l.rid} amount`} style={{ ...input, minWidth: 120, textAlign: 'right' }} /></td>
+                <td style={{ ...td, ...num }}><input type="text" inputMode="decimal" value={l.amountRm} onChange={(e) => setLine(l.rid, { amountRm: e.target.value })} aria-label={`Line ${l.rid} amount`} style={{ ...input, minWidth: 120, textAlign: 'right' }} /></td>
                 <td style={td}>
                   {v.lines.length > 1 && (
                     <button type="button" onClick={() => setV({ ...v, lines: v.lines.filter((x) => x.rid !== l.rid) })} aria-label={`Remove line ${l.rid}`} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)' }}><X size={14} /></button>
@@ -710,6 +721,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
             </tr>
           </tbody>
         </table>
+        {badAmount && <div role="alert" style={{ color: danger, fontSize: 'var(--fs-13)' }}>{badAmount}</div>}
 
         {knocksOff(v.kind) && (
           <FormKnockOff who={whoOf(v.kind)} partyId={partyId} noteId={mode === 'edit' ? id : undefined} totalSen={totalSen}
