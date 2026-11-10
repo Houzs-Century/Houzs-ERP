@@ -93,8 +93,11 @@ export function topFrame(stack) {
  *   n: number|string, first_seen: string, last_seen: string, users: Array<number|string>,
  *   stack: string|null}>} rows
  * @param {number} limit
+ * @param {{kind: string|null, byPage: boolean}} filter  kind keeps only that
+ *   kind in the top list (totals still cover every kind); byPage=false merges
+ *   one signature across pages, for request notes that fire from every page.
  */
-export function groupTopErrors(rows, limit) {
+export function groupTopErrors(rows, limit, filter) {
   const groups = new Map();
   const allUsers = new Set();
   const byKind = {};
@@ -102,7 +105,7 @@ export function groupTopErrors(rows, limit) {
   for (const r of rows) {
     const kind = classifyKind(r.message);
     const message = scrubText(r.message);
-    const page = normalizeRoute(r.route);
+    const page = filter.byPage ? normalizeRoute(r.route) : "(any)";
     const key = `${kind}\u0000${message}\u0000${page}`;
     const n = Number(r.n) || 0;
     occurrences += n;
@@ -139,6 +142,7 @@ export function groupTopErrors(rows, limit) {
     if (!g.frame && r.stack) g.frame = topFrame(r.stack);
   }
   const top = [...groups.values()]
+    .filter((g) => !filter.kind || g.kind === filter.kind)
     .sort((a, b) => b.count - a.count || b.users.size - a.users.size)
     .slice(0, limit)
     .map((g) => ({
