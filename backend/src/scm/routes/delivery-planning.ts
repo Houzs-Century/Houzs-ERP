@@ -1077,7 +1077,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const caseClosed = assrCaseClosed(a);
 
       // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
-      for (const leg of assrBoardLegs(a, caseClosed)) {
+      for (const leg of assrBoardLegs(a, caseClosed, today)) {
         const legDate = leg.confirmed ?? leg.requested;
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
@@ -2270,7 +2270,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     }
 
     // Date / crew / trip need the job still OPEN — no trip + trip_stop + DP number for a done leg.
-    if (!assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
+    if (!assrLegOpen(legCase, jobKind, todayMyt())) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
