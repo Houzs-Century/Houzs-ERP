@@ -70,8 +70,10 @@ function harness(otherConfirmWinsMidRequest: boolean) {
   return { app, tables };
 }
 
+/* No database behind these stubs, so the post runs its two-step path
+   (GRN_POST_MODE). The CAS is the same line in both paths. */
 const confirm = (app: Hono) =>
-  app.request('/grns/g-1/post', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' });
+  app.request('/grns/g-1/post', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' }, { GRN_POST_MODE: 'two-step' });
 
 describe('GRN confirm — CAS on the status the caller saw', () => {
   test('the second of two simultaneous confirms is refused and posts nothing', async () => {

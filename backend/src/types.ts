@@ -121,6 +121,8 @@ export type Env = {
   AUTOCOUNT_API_KEY: string;
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
+  // Stock posts: atomic (default) | two-step (the old non-atomic path, rollback only). scm/lib/stock-post-tx.ts. Set in wrangler.toml [vars].
+  GRN_POST_MODE?: string;
   // Delivery Planning board reads: rest | shadow | sql (scm/lib/delivery-board-source.ts). Set in wrangler.toml [vars].
   DP_BOARD_SOURCE?: string;
   // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
