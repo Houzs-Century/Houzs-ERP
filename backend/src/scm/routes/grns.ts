@@ -47,7 +47,7 @@ import {
   parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
-import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { refuseWithoutWriting } from '../lib/no-write-refusal'; import { LINES_UNREADABLE, linesUnreadableBody } from '../lib/failed-read-refusal';
 import { grnPostRefusal } from '../lib/grn-post-capability';
 import { getGrnItemRacksHandler, grnRackSplitPostRefusal, putGrnItemRacksHandler } from '../lib/grn-line-racks';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
@@ -332,8 +332,9 @@ async function computeAndStoreGrnAllocation(
    (used after the allocation_method / rate is changed on PATCH, before recost).
    Reads everything off the DB so it's self-contained. Best-effort. */
 async function reallocateGrnCharges(sb: any, grnId: string, companyId: number | null): Promise<void> {
-  const { data: head } = await sb.from('grns')
+  const { data: head, error: headErr } = await sb.from('grns')
     .select('exchange_rate, allocation_method').eq('id', grnId).maybeSingle();
+  if (headErr) return; // a guessed rate (1) would store a wrong landed cost; keep the last one
   const grnRate = (head as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
   const method = normalizeAllocationMethod((head as { allocation_method?: string | null } | null)?.allocation_method);
   const { data: items } = await sb.from('grn_items')
@@ -390,12 +391,17 @@ async function checkGrnZeroCost(
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
 async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
-  const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
+  const { data: grnHeader, error: headErr } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
-  const { data: items } = await sb.from('grn_items')
+  const { data: items, error: itemsErr } = await sb.from('grn_items')
     .select('id, purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
     .eq('grn_id', grnId);
+  /* A failed read is not an empty receipt (lib/failed-read-refusal.ts). Refused BEFORE the flip,
+     so nothing is written. The PO-line warehouses are read here for the same reason. */
+  const linkedPoItemIds = (items ?? []).map((it: { purchase_order_item_id: string | null }) => it.purchase_order_item_id).filter((x: string | null): x is string => !!x);
+  const poWhRes = linkedPoItemIds.length > 0 ? await sb.from('purchase_order_items').select('warehouse_id').in('id', [...new Set(linkedPoItemIds)]) : { data: [], error: null };
+  if (headErr || itemsErr || poWhRes.error) return { ok: false, reason: LINES_UNREADABLE, status: 503 };
 
   /* ZERO-COST GATE — the last honest moment. Runs BEFORE the CAS flip so a
      refusal writes nothing at all: the GRN stays exactly as it was and the
@@ -507,13 +513,8 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      truth — override a mismatched header + persist it so the movement (and the
      detail/list) land where the PO expected. Manual (no-PO) or mixed-warehouse
      GRNs keep the header/default untouched. */
-  const linkedPoItemIds = (items ?? [])
-    .map((it: { purchase_order_item_id: string | null }) => it.purchase_order_item_id)
-    .filter((x: string | null): x is string => !!x);
   if (linkedPoItemIds.length > 0) {
-    const { data: poWhRows } = await sb.from('purchase_order_items')
-      .select('warehouse_id').in('id', [...new Set(linkedPoItemIds)]);
-    const poWhs = [...new Set(((poWhRows ?? []) as Array<{ warehouse_id: string | null }>)
+    const poWhs = [...new Set(((poWhRes.data ?? []) as Array<{ warehouse_id: string | null }>)
       .map((r) => r.warehouse_id).filter((x): x is string => !!x))];
     if (poWhs.length === 1 && poWhs[0] !== warehouseId) {
       warehouseId = poWhs[0]!;
@@ -1664,6 +1665,7 @@ grns.post('/', async (c) => {
       return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
     }
     if (postRes.reason === 'qty_exceeds_remaining') return c.json({ error: 'qty_exceeds_remaining', message: 'Another receipt already covers this Purchase Order line. Refresh and check the remaining qty.' }, 409);
+    if (postRes.reason === LINES_UNREADABLE) return c.json(linesUnreadableBody('the receipt lines', 'posted', null), 503);
     return c.json({ error: 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
@@ -1896,9 +1898,10 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'POSTED');
   /* ZERO-COST refusal — same rollback as POST /: this path also inserts POSTED
      before calling the chokepoint, so the document must not survive a refusal. */
-  if (!postRes.ok && postRes.zeroCost) {
+  if (!postRes.ok && (postRes.zeroCost || postRes.reason === LINES_UNREADABLE)) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
+    if (!postRes.zeroCost) return c.json(linesUnreadableBody('the receipt lines', 'posted', null), 503);
     return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
@@ -1978,8 +1981,9 @@ export const postGrnHandler = async (c: any) => {
      guard (a draft consumes no PO headroom), so re-check it here before the
      stock IN / PO rollup commits. If confirming this draft would push a PO line
      past its cap, refuse + leave it DRAFT. */
-  const { data: gLines } = await sb.from('grn_items')
+  const { data: gLines, error: gLinesErr } = await sb.from('grn_items')
     .select('purchase_order_item_id').eq('grn_id', id);
+  if (gLinesErr) return refuseWithoutWriting(c, linesUnreadableBody('the receipt lines', 'posted', gLinesErr), 503);
   const poItemIds = ((gLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
     .map((l) => l.purchase_order_item_id);
   const over = await verifyGrnOverReceipt(sb, id, poItemIds);
@@ -2006,6 +2010,7 @@ export const postGrnHandler = async (c: any) => {
         .select('id, status, posted_at, total_sen').eq('id', id), co.companyId).maybeSingle();
       return c.json({ error: 'cannot_confirm', reason: res.reason, grn: now ?? undefined }, 409);
     }
+    if (res.reason === LINES_UNREADABLE) return refuseWithoutWriting(c, linesUnreadableBody('the receipt lines', 'posted', null), 503);
     return c.json({ error: 'post_failed', reason: res.reason }, res.status === 404 ? 404 : 500);
   }
   // Header money rollup (no stock) — keep it in sync on confirm.
@@ -2326,9 +2331,10 @@ export const cancelGrnCommand = async (
 
   // Load the GRN lines once — needed by the downstream-consumption guard BELOW
   // and by both reversals further down.
-  const { data: lines } = await sb.from('grn_items')
+  const { data: lines, error: linesErr } = await sb.from('grn_items')
     .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
     .eq('grn_id', id);
+  if (linesErr) return refuseWithoutWriting(c, linesUnreadableBody('the receipt lines', 'cancelled', linesErr), 503);
   const lineList = (lines ?? []) as Array<{
     purchase_order_item_id: string | null; qty_accepted: number;
     item_code: string; material_name: string | null; unit_price_sen: number | null;
@@ -3147,7 +3153,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
   let editGrnNo = grnId;
   let editRate: string | number | null = 1;
   if (inventoryChange) {
-    const { data: grnHead } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
+    const { data: grnHead, error: grnHeadErr } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
+    if (grnHeadErr) return refuseWithoutWriting(c, linesUnreadableBody('the receipt header', 'changed', grnHeadErr), 503);
     editWarehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
       ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     editGrnNo = (grnHead as { grn_number: string } | null)?.grn_number ?? grnId;

@@ -91,6 +91,9 @@ export interface SendDeliveryMessagesResult {
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
   readError?: { code: string; reason: string };
+  /** Sends whose wa_message_log row did NOT land. The board's Message column reads
+   *  that log, so these orders will look unsent (or show an older result) there. */
+  notLogged: Array<{ phone: string; docNos: string[]; sent: boolean; reason: string }>;
   /** Each order's Delivery Message Status as read before the send (HC-0205). */
   statusAtSend?: Map<string, string | null>;
 }
@@ -123,7 +126,7 @@ export async function sendDeliveryMessageForDocs(
       .in('doc_no', docNos),
     c,
   );
-  if (readErr) return { sent: [], failed: [], skipped: [], readError: { code: 'load_failed', reason: readErr.message } };
+  if (readErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'load_failed', reason: readErr.message } };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
@@ -149,6 +152,7 @@ export async function sendDeliveryMessageForDocs(
 
   const sent: Array<{ phone: string; docNos: string[]; httpCode: number }> = [];
   const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
+  const notLogged: SendDeliveryMessagesResult['notLogged'] = [];
 
   // Per-company message values (signature / bank / disposal) the rebuilt flows
   // reference; read once. A profile keyed by company is config, not business
@@ -160,7 +164,7 @@ export async function sendDeliveryMessageForDocs(
   // A FAILED read is not "no profile": sending without it would hand the
   // customer a balance paragraph with no bank details and no signature, and
   // the staff would never know. Refuse; nothing has been sent yet.
-  if (profileErr) return { sent, failed, skipped, readError: { code: 'profile_load_failed', reason: profileErr.message } };
+  if (profileErr) return { sent, failed, skipped, notLogged, readError: { code: 'profile_load_failed', reason: profileErr.message } };
   // Parse ONCE into a company_id -> profile map; the profile is resolved PER
   // GROUP below, by the ORDER's own company — NOT by activeCompanyId(c). Keyed
   // by the sender, a 2990 order sent by Houzs staff printed HOUZS's signature
@@ -188,7 +192,7 @@ export async function sendDeliveryMessageForDocs(
       .in('doc_no', docNos),
     c,
   );
-  if (balErr) return { sent, failed, skipped, readError: { code: 'balance_load_failed', reason: balErr.message } };
+  if (balErr) return { sent, failed, skipped, notLogged, readError: { code: 'balance_load_failed', reason: balErr.message } };
   const balanceByDoc = new Map<string, number>();
   const totalByDoc = new Map<string, number>();
   for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null; local_total_sen: number | null }>) {
@@ -255,12 +259,13 @@ export async function sendDeliveryMessageForDocs(
     const result = await postConnectContact(c.env, contact);
 
     // Log one row per doc (all of the phone's docs, not only the 3 shown — the
-    // send covers them all), tied by batch_id. Best-effort: a log failure must
-    // not turn a delivered WhatsApp into a reported error — but it is COUNTED
-    // (console.warn), never silently dropped.
+    // send covers them all), tied by batch_id. A log failure must not turn a
+    // delivered WhatsApp into a reported error, but it is REPORTED (notLogged):
+    // supabase-js returns a failed insert as `error`, it does not throw, so the
+    // catch alone lost every one of them and the Message column lied.
     const batchId = crypto.randomUUID();
     try {
-      await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
+      const { error: logErr } = await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
         batch_id: batchId,
         company_id: activeCompanyId(c) ?? null,
         doc_no: docNo,
@@ -272,8 +277,11 @@ export async function sendDeliveryMessageForDocs(
         source: 'delivery-planning',
         created_by: user?.id ?? null,
       })));
+      if (logErr) throw new Error(logErr.message);
     } catch (e) {
-      console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
+      const reason = String((e as Error).message).slice(0, 120);
+      console.warn(`[delivery-messages] log insert failed: ${reason}`);
+      notLogged.push({ phone, docNos: groupDocs, sent: result.ok, reason });
     }
 
     if (result.ok) sent.push({ phone, docNos: groupDocs, httpCode: result.httpCode ?? 0 });
@@ -281,7 +289,7 @@ export async function sendDeliveryMessageForDocs(
   }
 
   const statusAtSend = new Map(rows.map((r) => [String(r.doc_no), (r.delivery_message_status as string | null) ?? null]));
-  return { sent, failed, skipped, statusAtSend };
+  return { sent, failed, skipped, notLogged, statusAtSend };
 }
 
 /* The result of a contact-info sync — one Connect upsert per (phone, company),
@@ -486,6 +494,7 @@ deliveryMessages.post('/send', async (c) => {
     failed: [...assrResult.failed, ...result.failed],
     skipped: [...assrResult.skipped, ...result.skipped],
     statusNotMoved,
+    ...(result.notLogged.length ? { notLogged: result.notLogged } : {}),
   });
 });
 
