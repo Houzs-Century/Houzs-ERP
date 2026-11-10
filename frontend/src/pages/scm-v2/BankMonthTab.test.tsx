@@ -296,7 +296,9 @@ describe('what is still to decide, on the month', () => {
     await waitFor(() => expect(state.autoMatch).toHaveBeenCalledTimes(2));
     /* One call per file of the month, in the order the files cover it. */
     expect(state.autoMatch.mock.calls.map((c) => c[0])).toEqual([1, 3]);
-    expect(await screen.findByText(/3 matched by amount and name — JE-1, JE-2, JE-3; 1 pair the bank reversed left out/)).toBeTruthy();
+    expect(await screen.findByText(/3 matched — JE-1, JE-2, JE-3; 1 pair the bank reversed left out/)).toBeTruthy();
+    /* The voucher a line names is the rule too (owner 2026-11-10). */
+    expect(screen.getByText(/carry a voucher's number/)).toBeTruthy();
   });
 
   test('a file the server refuses is named, and the others still run', async () => {
@@ -306,7 +308,7 @@ describe('what is still to decide, on the month', () => {
       .mockResolvedValueOnce({ ok: true, matched: 1, jeNos: ['JE-3'], contraPairs: 0 });
     openMonth();
     fireEvent.click(screen.getByText('Match the obvious ones now'));
-    expect(await screen.findByText(/1 matched by amount and name — JE-3/)).toBeTruthy();
+    expect(await screen.findByText(/1 matched — JE-3/)).toBeTruthy();
     expect(screen.getByText(/d01\.csv: .*closed by Chew/)).toBeTruthy();
   });
 
