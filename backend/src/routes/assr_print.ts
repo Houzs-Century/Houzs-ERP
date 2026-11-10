@@ -1029,11 +1029,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .bar { font-size: 10.5pt; padding: 1.3mm 3mm; margin-top: 3.5mm; }
     body.sup .mgrid .lc { padding: 1.9mm 2.8mm; font-size: 8.4pt; display: flex; align-items: center; }
     body.sup .mgrid .vc { padding: 1.9mm 2.8mm; font-size: 10pt; line-height: 1.4; }
-    body.sup .mgrid.cols-4 { grid-template-columns: 34mm 1fr 34mm 1fr; }
+    /* Every supplier grid shares one first column so values line up down the page. */
+    body.sup .mgrid.cols-4 { grid-template-columns: 38mm 1fr 34mm 1fr; }
     body.sup .mgrid.cols-4 .lc { white-space: nowrap; }
     body.sup .mgrid.cols-2 { grid-template-columns: 38mm 1fr; }
     /* Next Action + Target Date share a row; the first column matches cols-2 above it. */
-    body.sup .mgrid.cols-split { grid-template-columns: 38mm 1fr 30mm 1fr; }
+    body.sup .mgrid.cols-split { grid-template-columns: 38mm 1fr 34mm 1fr; }
     body.sup .mgrid.cols-split .lc { white-space: nowrap; }
     body.sup .itable .th { padding: 1.4mm 2.4mm; font-size: 8pt; }
     body.sup .itable .td { padding: 2.1mm 2.8mm; font-size: 10pt; line-height: 1.4; }
