@@ -77,7 +77,10 @@ const candidates = (client) => client`
    ORDER BY m.created_at, m.id`;
 
 /* The DO's consumptions of the IN's (old) bucket, newest first: the order
-   scm.fn_return_do_units_at_cost unwinds in. The locked form is the same
+   scm.fn_return_do_units_at_cost unwinds in. Company scope comes from the OUT
+   movement they hang off: a consumption's own company_id is not reliable (the
+   FIFO functions insert it without one, so it takes the column default; the
+   first production plan found none under company 2). The locked form is the same
    statement with FOR UPDATE, spelled out rather than spliced. */
 const oldConsumptions = (client, r, lock) => (lock
   ? client`
@@ -86,7 +89,7 @@ const oldConsumptions = (client, r, lock) => (lock
     FROM scm.inventory_lot_consumptions c
     JOIN scm.inventory_movements mo ON mo.id = c.movement_id
    WHERE mo.source_doc_type = 'DO' AND mo.source_doc_id = ${r.source_doc_id} AND mo.movement_type = 'OUT'
-     AND mo.company_id = ${r.company_id} AND c.company_id = ${r.company_id}
+     AND mo.company_id = ${r.company_id}
      AND mo.warehouse_id = ${r.warehouse_id} AND mo.item_code = ${r.item_code}
      AND COALESCE(mo.variant_key, '') = ${r.vk} AND mo.batch_no IS NOT DISTINCT FROM ${r.batch_no}
    ORDER BY c.consumed_at DESC NULLS LAST, c.id DESC
@@ -97,7 +100,7 @@ const oldConsumptions = (client, r, lock) => (lock
     FROM scm.inventory_lot_consumptions c
     JOIN scm.inventory_movements mo ON mo.id = c.movement_id
    WHERE mo.source_doc_type = 'DO' AND mo.source_doc_id = ${r.source_doc_id} AND mo.movement_type = 'OUT'
-     AND mo.company_id = ${r.company_id} AND c.company_id = ${r.company_id}
+     AND mo.company_id = ${r.company_id}
      AND mo.warehouse_id = ${r.warehouse_id} AND mo.item_code = ${r.item_code}
      AND COALESCE(mo.variant_key, '') = ${r.vk} AND mo.batch_no IS NOT DISTINCT FROM ${r.batch_no}
    ORDER BY c.consumed_at DESC NULLS LAST, c.id DESC`);
@@ -239,9 +242,9 @@ async function main() {
         for (const [id, n] of taken) {
           const c = byId.get(id);
           const left = Number(c.qty_consumed) - n;
-          if (left <= 0) await tx`DELETE FROM scm.inventory_lot_consumptions WHERE id = ${id} AND company_id = ${r.company_id}`;
+          if (left <= 0) await tx`DELETE FROM scm.inventory_lot_consumptions WHERE id = ${id}`;
           else await tx`UPDATE scm.inventory_lot_consumptions SET qty_consumed = ${left}, total_cost_sen = ${left * Number(c.unit_cost_sen ?? 0)}
-                          WHERE id = ${id} AND company_id = ${r.company_id}`;
+                          WHERE id = ${id}`;
         }
         /* Re-cost every OUT of this item on this DO from the consumptions it now has. */
         await tx`
