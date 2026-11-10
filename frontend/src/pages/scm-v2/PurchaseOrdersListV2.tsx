@@ -895,6 +895,19 @@ export function PurchaseOrdersListV2() {
      compares LENGTH rather than array identity, now live once in the hook. */
   const visible = useVisibleRows(rows);
 
+  /* A bulk action acts on the ticked rows the operator can SEE (sister review
+     G14): a tick left on a row a later search or funnel hid used to ride along
+     into "Supplier date (N)", which listed the visible POs and wrote all N.
+     A new search, tab or server filter starts with no ticks. */
+  const tickedRows = useMemo(
+    () => visible.rows.filter((r) => selectedIds.has(r.id)),
+    [visible.rows, selectedIds],
+  );
+  const serverFunnelsSig = JSON.stringify(serverFunnels);
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedSearch, status, serverFunnelsSig]);
+
   // Money-out KPIs sum the rows ON SCREEN (the paginated contract has no
   // full-set money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
@@ -1045,8 +1058,8 @@ export function PurchaseOrdersListV2() {
   // Batch convert → the From-PO picker accepts a comma-separated poId list and
   // pre-ticks each PO's outstanding lines (honouring its one-warehouse lock).
   const convertSelectedToGrn = () => {
-    if (selectedIds.size === 0) return;
-    const ids = [...selectedIds];
+    if (tickedRows.length === 0) return;
+    const ids = tickedRows.map((r) => r.id);
     clearSelection();
     navigate(convertToLink('poToGrn', ids));
   };
@@ -1084,7 +1097,7 @@ export function PurchaseOrdersListV2() {
   // Download are the exits and only Download still asks combined-vs-separate.
   const deliverSelectedPos = async (action: PdfAction) => {
     if (printingDocs) return;
-    const chosen = rows.filter((r) => selectedIds.has(r.id));
+    const chosen = tickedRows;
     if (chosen.length === 0) return;
     const warehouses = warehousesQ.data ?? [];
     const toPo = (d: { purchaseOrder: PoHeaderRow; items: PoItemRow[] }) => {
@@ -1603,10 +1616,10 @@ export function PurchaseOrdersListV2() {
         <div className="hidden md:block">
           {view === "table" ? (
             <>
-              {selectedIds.size > 0 && !searchTransition.resultsAreStale && (
+              {tickedRows.length > 0 && !searchTransition.resultsAreStale && (
                 <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5">
                   <span className="text-[13px] font-semibold text-primary">
-                    {selectedIds.size} selected
+                    {tickedRows.length} selected
                   </span>
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" onClick={clearSelection}>
@@ -1617,7 +1630,7 @@ export function PurchaseOrdersListV2() {
                       icon={<CalendarClock size={14} />}
                       onClick={() => setBulkDateOpen(true)}
                     >
-                      Supplier date ({selectedIds.size})
+                      Supplier date ({tickedRows.length})
                     </Button>
                     <Button
                       variant="secondary"
@@ -1627,13 +1640,13 @@ export function PurchaseOrdersListV2() {
                     >
                       {printingDocs
                         ? "Printing…"
-                        : `Print all (${selectedIds.size})`}
+                        : `Print all (${tickedRows.length})`}
                     </Button>
                     <PrintPreviewBatchModal
                       open={batchPrint.open}
                       onClose={batchPrint.close}
                       docTitle="Purchase Orders"
-                      docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => poDisplayNumber(r.po_number, r.revision))}
+                      docNos={tickedRows.map((r) => poDisplayNumber(r.po_number, r.revision))}
                       {...batchPrint.handlers}
                     />
                     <Button
@@ -1641,7 +1654,7 @@ export function PurchaseOrdersListV2() {
                       icon={<Package size={14} />}
                       onClick={convertSelectedToGrn}
                     >
-                      To Goods Receipt ({selectedIds.size})
+                      To Goods Receipt ({tickedRows.length})
                     </Button>
                   </div>
                 </div>
@@ -1753,8 +1766,8 @@ export function PurchaseOrdersListV2() {
 
       <PoBulkSupplierDateModal
         open={bulkDateOpen}
-        poIds={[...selectedIds]}
-        pos={rows.filter((r) => selectedIds.has(r.id))}
+        poIds={tickedRows.map((r) => r.id)}
+        pos={tickedRows}
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />

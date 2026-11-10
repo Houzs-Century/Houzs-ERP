@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-334 route modules (105 in `backend/src/routes`, 229 in `backend/src/scm/routes`), 1772 endpoint registrations.
+333 route modules (105 in `backend/src/routes`, 228 in `backend/src/scm/routes`), 1772 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -33,7 +33,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assr_print.ts` | 1 | 1372 |
 | `backend/src/routes/attendance.ts` | 5 | 287 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
-| `backend/src/routes/auth.ts` | 14 | 907 |
+| `backend/src/routes/auth.ts` | 14 | 965 |
 | `backend/src/routes/brandShare.ts` | 2 | 53 |
 | `backend/src/routes/branding.ts` | 5 | 298 |
 | `backend/src/routes/chatCallback.ts` | 1 | 343 |
@@ -123,7 +123,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
-| `backend/src/routes/users.ts` | 22 | 2049 |
+| `backend/src/routes/users.ts` | 24 | 2123 |
 | `backend/src/scm/routes/acc-event-commission.ts` | 0 | 395 |
 | `backend/src/scm/routes/acc-events.ts` | 13 | 204 |
 | `backend/src/scm/routes/acc-logistics-pnl.ts` | 0 | 425 |
@@ -192,8 +192,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-messages.ts` | 3 | 529 |
 | `backend/src/scm/routes/delivery-order-exports.ts` | 1 | 56 |
 | `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
-| `backend/src/scm/routes/delivery-order-pod-attempts.ts` | 2 | 54 |
-| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 296 |
+| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 284 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5364 |
 | `backend/src/scm/routes/delivery-planning-changes.ts` | 0 | 47 |
@@ -362,14 +361,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 175 | `175_email_outbox_claim.sql` (175) | no | yes |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 176 | `176_users_password_change_required.sql` (176) | no | yes |
 | `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 637 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4464 files, 1084052 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (4462 files, 1084212 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -674,7 +673,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1848 |
 | `frontend/src/mobile/MobileMailPersonal.tsx` | 87 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 421 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1919 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1915 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 396 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2101 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 330 |

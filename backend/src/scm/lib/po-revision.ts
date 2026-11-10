@@ -402,8 +402,10 @@ export async function applyPoAmendment(
     revision:       nextRevision,
     updated_at:     new Date().toISOString(),
   };
-  // Only let the line set drive expected_at when the header did not set it explicitly.
-  if (!expectedAtOverridden) bump.expected_at = dates[0] ?? null;
+  // Only let the line set drive expected_at when the header did not set it
+  // explicitly, and only when a line carries a date: undated lines say nothing
+  // about arrival, so they must not wipe the PO's expected date.
+  if (!expectedAtOverridden && dates.length > 0) bump.expected_at = dates[0];
   const { error: bumpErr } = await sb.from('purchase_orders').update(bump).eq('id', poId);
   if (bumpErr) throw new Error(`applyPoAmendment: PO revision bump failed: ${bumpErr.message}`);
 
