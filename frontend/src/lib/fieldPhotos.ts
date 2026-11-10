@@ -17,14 +17,23 @@
    job is never completed without photos the crew already took. Remove also
    tells the server, so a removed photo does not come back.
 
+   The crew share one stop (owner, 2026-11-10): the list is EVERY crew member's
+   pending photos for the stop, with who took each, and it is asked again every
+   `pollMs` while the screen is open (and right after a Remove), so the driver's
+   photo shows on the helper's phone and a photo the other removed, or a
+   Complete the other made, leaves this one. A photo another person took cannot
+   be removed here unless the server says this caller may (its uploader or the
+   stop's lead).
+
    Not in scope: an offline queue. A photo that had NOT finished uploading when
    the page reloaded is still lost (it lived only in the page's memory), and a
    failed upload stays on screen as failed until Retry. */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { stampLines, stampNow, stampPhoto } from "./photoStamp";
+import { ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import {
-  ALLOWED_SLIP_MIMES, discardFieldPhoto, fieldPhotoImagePath, listFieldPhotos,
-} from "../vendor/scm/lib/slip";
+  CREW_STOP_POLL_MS, crewStopPhotoImagePath, discardCrewStopPhoto, listCrewStopPhotos,
+} from "../vendor/scm/lib/crew-stop-photos";
 import { api as apiClient } from "../api/client";
 
 export type FieldPhotoStatus = "queued" | "uploading" | "done" | "failed";
@@ -41,6 +50,13 @@ export type FieldPhoto = {
   /** The upload session, so Remove can tell the server; null until uploaded. */
   sessionId: string | null;
   error: string | null;
+  /** Who took it, when another crew member did; null for this phone's own. */
+  uploadedBy: string | null;
+  canRemove: boolean;
+  /** The server has listed it, so its absence from a later list means it was
+   *  removed or completed elsewhere (a photo just uploaded here may not be
+   *  listed yet, and must not vanish). */
+  serverSeen: boolean;
 };
 
 export type FieldPhotosAction =
@@ -49,6 +65,7 @@ export type FieldPhotosAction =
   | { type: "stamped"; id: string; file: File }
   | { type: "done"; id: string; key: string; sessionId: string | null }
   | { type: "restore"; photos: FieldPhoto[] }
+  | { type: "sync"; photos: FieldPhoto[] }
   | { type: "preview"; id: string; url: string }
   | { type: "failed"; id: string; error: string }
   | { type: "retry"; id: string }
@@ -64,6 +81,29 @@ export function fieldPhotosReducer(state: FieldPhoto[], a: FieldPhotosAction): F
       const have = new Set(state.map((x) => x.key).filter(Boolean));
       const fresh = a.photos.filter((x) => x.key && !have.has(x.key));
       return fresh.length ? [...fresh, ...state] : state;
+    }
+    // A later list from the server: new crew photos come in, the ones it no
+    // longer lists (removed or completed by someone else) go, this phone's
+    // uploads it has not listed yet stay.
+    case "sync": {
+      const incoming = new Map(a.photos.filter((x) => x.key).map((x) => [x.key as string, x]));
+      let changed = false;
+      const kept: FieldPhoto[] = [];
+      for (const x of state) {
+        const got = x.status === "done" && x.key ? incoming.get(x.key) : undefined;
+        if (got) {
+          incoming.delete(x.key as string);
+          if (x.uploadedBy !== got.uploadedBy || x.canRemove !== got.canRemove || !x.serverSeen) {
+            changed = true;
+            kept.push({ ...x, uploadedBy: got.uploadedBy, canRemove: got.canRemove, serverSeen: true, sessionId: x.sessionId ?? got.sessionId });
+          } else kept.push(x);
+        } else if (x.status === "done" && x.serverSeen) {
+          changed = true;
+        } else kept.push(x);
+      }
+      const fresh = [...incoming.values()];
+      if (!fresh.length && !changed) return state;
+      return [...fresh, ...kept];
     }
     case "preview": return patch(a.id, { previewUrl: a.url });
     case "start": return patch(a.id, { status: "uploading", error: null });
@@ -101,8 +141,8 @@ export type RestoreState =
  *  lookup failed and nobody chose to go on), Complete waits: completing then
  *  would leave out photos the crew already took. */
 export function completionGate(state: FieldPhoto[], noneMessage: string, restore: RestoreState): CompletionGate {
-  if (restore.phase === "loading") return { ok: false, reason: "Checking for photos you already uploaded for this job. Try again in a moment." };
-  if (restore.phase === "failed") return { ok: false, reason: `Could not check for photos you already uploaded for this job (${restore.error}). Tap Check again, or Continue without them.` };
+  if (restore.phase === "loading") return { ok: false, reason: "Checking for photos already uploaded for this job. Try again in a moment." };
+  if (restore.phase === "failed") return { ok: false, reason: `Could not check for photos already uploaded for this job (${restore.error}). Tap Check again, or Continue without them.` };
   const pending = state.filter((x) => x.status === "queued" || x.status === "uploading").length;
   const failed = state.filter((x) => x.status === "failed").length;
   const keys = state.filter((x) => x.status === "done" && x.key).map((x) => x.key as string);
@@ -141,6 +181,8 @@ export type FieldPhotosApi = {
   skipRestore: () => void;
   /** A capacity or file-type message from the last add, or null. */
   notice: string | null;
+  /** A background re-list failed; the next one retries. null when the last worked. */
+  syncError: string | null;
   add: (files: File[]) => void;
   retry: (id: string) => void;
   remove: (id: string) => void;
@@ -152,23 +194,44 @@ export type FieldPhotosApi = {
    type the server refuses is never offered here. */
 export const ACCEPTED_PHOTO_TYPES: readonly string[] = ALLOWED_SLIP_MIMES.filter((m) => m.startsWith("image/"));
 
-/** How a screen gets back the photos it had already uploaded. `key` names the
- *  stop; the list is fetched again whenever it changes. */
+export type ListedFieldPhoto = {
+  uploadSessionId: string;
+  r2Key: string;
+  uploadedBy?: { name: string | null } | null;
+  mine?: boolean;
+  canRemove?: boolean;
+};
+
+/** How a screen gets back the photos already uploaded for its stop. `key` names
+ *  the stop; the list is fetched again whenever it changes, and every `pollMs`
+ *  (null = only on mount). */
 export type FieldPhotoRestore = {
   key: string;
-  list: () => Promise<Array<{ uploadSessionId: string; r2Key: string }>>;
+  pollMs: number | null;
+  list: () => Promise<ListedFieldPhoto[]>;
   /** A displayable URL for one uploaded photo (a blob URL; revoked on unmount). */
   preview: (uploadSessionId: string) => Promise<string>;
   discard: (uploadSessionId: string) => Promise<void>;
 };
 
-/** The server-backed restore for one stop (context from fieldPhotoContext). */
+/** The server-backed restore for one stop (context from fieldPhotoContext):
+ *  every crew member's pending photos for it, asked again while the screen is open. */
 export function serverFieldPhotoRestore(context: string): FieldPhotoRestore {
   return {
     key: context,
-    list: () => listFieldPhotos(context),
-    preview: (id) => apiClient.fetchBlobUrl(fieldPhotoImagePath(id)),
-    discard: (id) => discardFieldPhoto(id),
+    pollMs: CREW_STOP_POLL_MS,
+    list: () => listCrewStopPhotos(context),
+    preview: (id) => apiClient.fetchBlobUrl(crewStopPhotoImagePath(id, context)),
+    discard: (id) => discardCrewStopPhoto(id, context),
+  };
+}
+
+function listedToPhoto(row: ListedFieldPhoto): FieldPhoto {
+  return {
+    id: newId(), file: null, stamped: true, previewUrl: null, status: "done", key: row.r2Key, sessionId: row.uploadSessionId, error: null,
+    uploadedBy: row.mine === false ? (row.uploadedBy?.name || "another crew member") : null,
+    canRemove: row.canRemove ?? true,
+    serverSeen: true,
   };
 }
 
@@ -189,6 +252,12 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
 }): FieldPhotosApi {
   const [photos, dispatch] = useReducer(fieldPhotosReducer, []);
   const [notice, setNotice] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  // Bumped by a Remove so the list is asked again at once, not at the next poll.
+  const [syncNonce, setSyncNonce] = useState(0);
+  // Keys removed on this phone: a list already in flight must not bring them back.
+  const removedKeys = useRef(new Set<string>());
+  const syncSeq = useRef(0);
   const [restoreState, setRestoreState] = useState<RestoreState>(restore ? { phase: "loading" } : { phase: "off" });
   const [restoreNonce, setRestoreNonce] = useState(0);
   const started = useRef(new Set<string>());
@@ -203,6 +272,16 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   // Revoke every preview when the screen goes away.
   useEffect(() => () => { for (const p of photosRef.current) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); }, []);
 
+  const showPreviews = (r: FieldPhotoRestore, photos: FieldPhoto[], run: { live: boolean }) => {
+    for (const p of photos) {
+      // A thumbnail that cannot load still leaves the photo counted and sent.
+      r.preview(p.sessionId as string).then((url) => {
+        if (run.live) dispatch({ type: "preview", id: p.id, url }); else URL.revokeObjectURL(url);
+      }, () => {});
+    }
+  };
+  const listed = (rows: ListedFieldPhoto[]) => rows.filter((row) => !removedKeys.current.has(row.r2Key)).map(listedToPhoto);
+
   useEffect(() => {
     const r = latest.current.restore;
     if (!r || restoreKey === null) { setRestoreState({ phase: "off" }); return; }
@@ -210,28 +289,53 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
     const run = { live: true };
     setRestoreState({ phase: "loading" });
     void (async () => {
-      let rows: Array<{ uploadSessionId: string; r2Key: string }>;
+      let rows: ListedFieldPhoto[];
+      const seq = ++syncSeq.current;
       try {
         rows = await r.list();
       } catch (e) {
         if (run.live) setRestoreState({ phase: "failed", error: (e as Error).message || "no connection" });
         return;
       }
-      if (!run.live) return;
-      const back = rows.map((row): FieldPhoto => ({
-        id: newId(), file: null, stamped: true, previewUrl: null, status: "done", key: row.r2Key, sessionId: row.uploadSessionId, error: null,
-      }));
+      if (!run.live || seq !== syncSeq.current) return;
+      const back = listed(rows);
       dispatch({ type: "restore", photos: back });
       setRestoreState({ phase: "done" });
-      for (const p of back) {
-        // A thumbnail that cannot load still leaves the photo counted and sent.
-        r.preview(p.sessionId as string).then((url) => {
-          if (run.live) dispatch({ type: "preview", id: p.id, url }); else URL.revokeObjectURL(url);
-        }, () => {});
-      }
+      const have = new Set(photosRef.current.map((x) => x.key));
+      showPreviews(r, back.filter((p) => !have.has(p.key)), run);
     })();
     return () => { run.live = false; };
   }, [restoreKey, restoreNonce]);
+
+  // The crew's later changes: asked again every pollMs while the stop is open
+  // (not while the phone is in a pocket with the screen off), and after a Remove.
+  const restoreDone = restoreState.phase === "done" || restoreState.phase === "skipped";
+  useEffect(() => {
+    const r = latest.current.restore;
+    if (!r || restoreKey === null || !restoreDone) return;
+    const run = { live: true };
+    const sync = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const seq = ++syncSeq.current;
+      let rows: ListedFieldPhoto[];
+      try {
+        rows = await r.list();
+      } catch (e) {
+        if (run.live) setSyncError((e as Error).message || "no connection");
+        return;
+      }
+      // An older answer than one already applied is dropped.
+      if (!run.live || seq !== syncSeq.current) return;
+      setSyncError(null);
+      const incoming = listed(rows);
+      const have = new Set(photosRef.current.map((x) => x.key));
+      dispatch({ type: "sync", photos: incoming });
+      showPreviews(r, incoming.filter((p) => !have.has(p.key)), run);
+    };
+    if (syncNonce > 0) void sync();
+    const timer = r.pollMs ? setInterval(() => { void sync(); }, r.pollMs) : null;
+    return () => { run.live = false; if (timer) clearInterval(timer); };
+  }, [restoreKey, restoreDone, syncNonce]);
 
   const next = nextToUpload(photos);
   useEffect(() => {
@@ -273,19 +377,23 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
     setNotice(parts.length ? parts.join(" ") : null);
     const fresh = good.slice(0, take).map((file): FieldPhoto => ({
       id: newId(), file, stamped: false, previewUrl: previewFor(file), status: "queued", key: null, sessionId: null, error: null,
+      uploadedBy: null, canRemove: true, serverSeen: false,
     }));
     if (fresh.length) dispatch({ type: "add", photos: fresh });
   }, [max]);
 
   const remove = useCallback((id: string) => {
     const p = photosRef.current.find((x) => x.id === id);
+    if (p && !p.canRemove) return;
     if (p?.previewUrl) URL.revokeObjectURL(p.previewUrl);
     setNotice(null);
     dispatch({ type: "remove", id });
     const r = latest.current.restore;
     if (r && p?.status === "done" && p.sessionId) {
-      r.discard(p.sessionId).catch((e: unknown) => {
-        setNotice(`Removed here, but the server was not told (${(e as Error).message || "no connection"}). It may show again if the page reloads; remove it again then.`);
+      if (p.key) removedKeys.current.add(p.key);
+      r.discard(p.sessionId).then(() => setSyncNonce((n) => n + 1), (e: unknown) => {
+        if (p.key) removedKeys.current.delete(p.key);
+        setNotice(`Removed here, but the server was not told (${(e as Error).message || "no connection"}). It may show again; remove it again then.`);
       });
     }
   }, []);
@@ -301,5 +409,5 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   const retryRestore = useCallback(() => setRestoreNonce((n) => n + 1), []);
   const skipRestore = useCallback(() => setRestoreState((s) => (s.phase === "failed" ? { phase: "skipped" } : s)), []);
 
-  return { photos, max, restore: restoreState, retryRestore, skipRestore, notice, add, retry, remove, clear, gate };
+  return { photos, max, restore: restoreState, retryRestore, skipRestore, notice, syncError, add, retry, remove, clear, gate };
 }

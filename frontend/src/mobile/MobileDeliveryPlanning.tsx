@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
+import { useLiveDoStop, withLiveDo } from "../vendor/scm/lib/crew-stop-live";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { companyHeaderFor } from "../lib/activeCompany";
 import { useUpdateMfgDeliveryOrderStatus } from "../vendor/scm/lib/delivery-order-queries";
@@ -444,6 +445,8 @@ export function MobileDeliveryPlanning({
   const routeDate = day === "today" ? todayKey : day === "tomorrow" ? tomorrowKey : null;
 
   const detailJob = detailOrder ? jobRefOf(detailOrder) : null;
+  // The open DO stop follows the other crew member's taps (crew-stop-live.ts).
+  const liveDo = useLiveDoStop(detailOrder && !detailJob ? (latestDo(detailOrder)?.do_number ?? null) : null).data?.deliveryOrder;
   if (detailOrder && detailJob) {
     return (
       // Keyed per job: moving to the next stop must not carry the last stop's photos.
@@ -454,7 +457,7 @@ export function MobileDeliveryPlanning({
   if (detailOrder) {
     return (
       <StopDetail
-        order={detailOrder}
+        order={withLiveDo(detailOrder, liveDo)}
         seq={detailSeq}
         isToday={isToday}
         onBack={() => setOpenStop(null)}

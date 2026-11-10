@@ -69,6 +69,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { assertPoLinesFromSupplier } from '../lib/grn-po-supplier';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -1435,6 +1436,8 @@ grns.post('/', async (c) => {
     if (acceptedByPoItem.size > 0) {
       const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()], { lines: items, linkField: 'purchaseOrderItemId', source: 'Purchase Order line' });
       if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
+      const sup = await assertPoLinesFromSupplier(sb, c, [...acceptedByPoItem.keys()], String(body.supplierId));
+      if (!sup.ok) return refuseWithoutWriting(c, sup.body, sup.status);
       const { data: poItems } = await sb.from('purchase_order_items')
         .select('id, qty, received_qty, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
@@ -2496,6 +2499,20 @@ grns.patch('/:id', async (c) => {
     return refuseWithoutWriting(c, grnHeaderInheritedRefusal(grnHeaderLocked), 409);
   }
 
+  /* A supplier change may not leave the receipt holding another supplier's PO
+     lines (sister review G3) — the same rule the create and add-line apply. */
+  if (typeof body.supplierId === 'string' && body.supplierId && body.supplierId !== before.supplier_id) {
+    const { data: linked, error: linkedErr } = await scopeToCompanyId(
+      sb.from('grn_items').select('purchase_order_item_id').eq('grn_id', id).not('purchase_order_item_id', 'is', null),
+      co.companyId,
+    );
+    if (linkedErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: linkedErr.message }, 500);
+    const sup = await assertPoLinesFromSupplier(
+      sb, c, ((linked ?? []) as Array<{ purchase_order_item_id: string | null }>).map((r) => r.purchase_order_item_id), body.supplierId,
+    );
+    if (!sup.ok) return refuseWithoutWriting(c, sup.body, sup.status);
+  }
+
   /* Before the relocation block below, which writes inventory movements — those
      are a real stock change, so the last honest refusal point is above them, not
      above the header UPDATE further down. */
@@ -2777,6 +2794,12 @@ grns.post('/:id/items', async (c) => {
   if (addLinePoItemId) {
     const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId], { lines: [it], linkField: 'purchaseOrderItemId', source: 'Purchase Order line' });
     if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
+    const { data: grnSup, error: grnSupErr } = await scopeToCompanyId(
+      sb.from('grns').select('supplier_id').eq('id', grnId), co.companyId,
+    ).maybeSingle();
+    if (grnSupErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: grnSupErr.message }, 500);
+    const sup = await assertPoLinesFromSupplier(sb, c, [addLinePoItemId], String((grnSup as { supplier_id?: string | null } | null)?.supplier_id ?? ''));
+    if (!sup.ok) return refuseWithoutWriting(c, sup.body, sup.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],
