@@ -17,7 +17,7 @@ const {
 const counts = (all: number): PlanningCounts =>
   ({ ALL: all, PENDING_DELIVERY: all, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 });
 
-function rig(o: { feed?: boolean; poll?: boolean; server?: PlanningCounts; loaded?: PlanningCounts | null } = {}) {
+function rig(o: { feed?: boolean; poll?: boolean; server?: PlanningCounts; loaded?: PlanningCounts | null; spreadMs?: number } = {}) {
   const rows = vi.fn();
   let visible = true;
   let today = '2026-11-10';
@@ -29,6 +29,7 @@ function rig(o: { feed?: boolean; poll?: boolean; server?: PlanningCounts; loade
     today: () => today,
     visible: () => visible,
     fullReread,
+    spreadMs: () => o.spreadMs ?? 0,
     feed: o.feed === false ? null : { read: fetchChanges, rows },
     pollFeed: o.poll ?? true,
     counts: o.server ? { read: fetchCounts, loaded: () => (o.loaded === undefined ? counts(5) : o.loaded) } : null,
@@ -97,6 +98,38 @@ describe('createBoardRefresher', () => {
     expect(t.fullReread).not.toHaveBeenCalled();
     t.setDay('2026-11-11');
     await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS);
+    expect(t.fullReread).toHaveBeenCalledTimes(1);
+    t.r.stop();
+  });
+
+  it('an unasked-for re-read waits its spread, once; Refresh does not wait', async () => {
+    vi.useFakeTimers();
+    const t = rig({ spreadMs: 20_000 });
+    t.fetchChanges
+      .mockResolvedValueOnce({ cursor: 10, docs: [], others: false, full: false })
+      .mockResolvedValueOnce({ cursor: 12, docs: [], others: false, full: true });
+    t.r.start();
+    await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS);
+    expect(t.fullReread).not.toHaveBeenCalled(); // `full` answered; waiting its spread
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(t.fullReread).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(t.fullReread).toHaveBeenCalledTimes(1);
+    t.r.refreshNow();
+    expect(t.fullReread).toHaveBeenCalledTimes(2);
+    t.r.stop();
+  });
+
+  it('a spread re-read that comes due while hidden waits for the tab to show', async () => {
+    vi.useFakeTimers();
+    const t = rig({ spreadMs: 20_000 });
+    t.r.start();
+    await vi.advanceTimersByTimeAsync(BOARD_FULL_REREAD_MS);
+    t.hide();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.fullReread).not.toHaveBeenCalled();
+    t.show();
+    await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS + 20_000);
     expect(t.fullReread).toHaveBeenCalledTimes(1);
     t.r.stop();
   });

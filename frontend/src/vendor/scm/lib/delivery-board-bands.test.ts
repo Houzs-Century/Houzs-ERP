@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
-import { bandOfDay, bandOrder, loadedBoardCounts, mergeBands, sumDelivered } from './delivery-board-bands';
+import { bandOfDay, bandOrder, createRequestLimiter, loadedBoardCounts, mergeBands, sumDelivered, BOARD_MAX_IN_FLIGHT } from './delivery-board-bands';
 import { boardUpdatedLabel, stillLoadingMessage } from '../components/BoardLoadStatus';
 import type { PlanningOrder, PlanningResponse } from './delivery-planning-queries';
 
@@ -58,5 +58,37 @@ describe('loadedBoardCounts (what the counts_only safety net compares with)', ()
     expect(loadedBoardCounts(qc, 'OPEN')).toBeNull();
     for (const b of [2, 3, 4, 5]) qc.setQueryData(['delivery-planning', 'ALL', 'OPEN', 'band', b], resp([row('SO-1')], 1));
     expect(loadedBoardCounts(qc, 'OPEN')).toEqual({ ALL: 9, PENDING_DELIVERY: 1, PENDING_SCHEDULE: 0, OVERDUE: 1, DELIVERED: 7 });
+  });
+});
+
+/* Production 2026-11-10: a board open fired five bands and counts_only at once. */
+describe('createRequestLimiter (board requests per tab)', () => {
+  it('runs at most two at once, lowest priority number first', async () => {
+    expect(BOARD_MAX_IN_FLIGHT).toBe(2);
+    const lim = createRequestLimiter(BOARD_MAX_IN_FLIGHT);
+    const started: string[] = [];
+    const done: Record<string, () => void> = {};
+    let peak = 0;
+    const job = (name: string, priority: number) => lim.run(priority, () => new Promise<string>((resolve) => {
+      started.push(name);
+      peak = Math.max(peak, lim.inFlight);
+      done[name] = () => resolve(name);
+    }));
+    const all = [job('band1', 1), job('band2', 2), job('band3', 3), job('counts', 1.5), job('band4', 4)];
+    expect(started).toEqual(['band1', 'band2']);
+    done.band1!(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(started).toEqual(['band1', 'band2', 'counts']);
+    for (const n of ['band2', 'counts', 'band3', 'band4']) { done[n]!(); await new Promise((r) => setTimeout(r, 0)); }
+    expect(await Promise.all(all)).toEqual(['band1', 'band2', 'band3', 'counts', 'band4']);
+    expect(started).toEqual(['band1', 'band2', 'counts', 'band3', 'band4']);
+    expect(peak).toBe(2);
+  });
+
+  it('a failed request frees its slot', async () => {
+    const lim = createRequestLimiter(1);
+    const a = lim.run(1, () => Promise.reject(new Error('boom')));
+    const b = lim.run(1, () => Promise.resolve('ok'));
+    await expect(a).rejects.toThrow('boom');
+    expect(await b).toBe('ok');
   });
 });
