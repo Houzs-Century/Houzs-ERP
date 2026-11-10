@@ -44,7 +44,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, FileText, Plus, Printer } from 'lucide-react';
+import { Camera, Copy, FileText, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
@@ -446,8 +446,14 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       {!debitNotes && <PageHeader
         eyebrow="Finance · Money out"
         title="Supplier bills"
-        actions={canCreate ? (
+        actions={canCreate || canPost || canCancel ? (
           <span style={{ display: 'inline-flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* The bills booked twice before the server refused it: whoever can
+                cancel a bill reviews them, not only whoever can raise one. */}
+            <Button variant="secondary" size="sm" onClick={() => navigate('/scm/ap-invoices/duplicates')}>
+              <Copy {...ICON} /> Duplicate supplier bills
+            </Button>
+            {canCreate && <>
             {/* The pile: many supplier bills at once, read and split one AP
                 invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
                 + new ap invoice 附近吗). */}
@@ -468,6 +474,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             <Button variant="primary" size="sm" onClick={openNew}>
               <Plus {...ICON} /> New AP bill
             </Button>
+            </>}
           </span>
         ) : undefined}
       />}
