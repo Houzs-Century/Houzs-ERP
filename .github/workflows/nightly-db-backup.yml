@@ -1,0 +1,187 @@
+name: Nightly database backup (encrypted, to private R2)
+
+# One encrypted copy of the production database per night, kept in a PRIVATE
+# Cloudflare R2 bucket that belongs to backups only (owner decision 2026-11-10:
+# not the app's file bucket). Restore steps and the one-time setup:
+# docs/db-restore-runbook.md.
+#
+# THIS REPOSITORY IS PUBLIC (docs/staging-dump-artifact-exposure-coe.md).
+#   - The dump is NEVER uploaded as a workflow artifact and never printed.
+#   - It is encrypted to the owner's RSA public key (BACKUP_PUBKEY) on the
+#     runner, before anything leaves it. Only the owner's offline private key
+#     opens it; the R2 credentials alone are not enough to read a backup.
+#   - scripts/check-workflow-dump-artifacts.mjs fails CI if a bucket upload in
+#     a job that dumps a database has no encryption step before it.
+#
+# NOT CONFIGURED = NO-OP. Until every secret below is set, each run logs one
+# notice naming what is missing and exits green. Nothing is read.
+#   DATABASE_URL                 existing, the production connection string
+#   BACKUP_R2_ACCOUNT_ID         Cloudflare account id (the R2 endpoint host)
+#   BACKUP_R2_ACCESS_KEY_ID      R2 API token, Object Read & Write, this bucket only
+#   BACKUP_R2_SECRET_ACCESS_KEY  its secret
+#   BACKUP_R2_BUCKET             the backup bucket's name
+#   BACKUP_PUBKEY                base64 (one line) of the owner's RSA public key PEM
+#
+# RETENTION is an R2 lifecycle rule on the bucket (delete after 30 days), not
+# this workflow: a CI job that can delete backups is one more way to lose them.
+# The last step warns if an object older than 35 days is still there, which
+# means the rule is missing.
+#
+# Schema scope: public + scm, the same scope local-dev-snapshot.yml dumps
+# (its run 38923168411 dumped 209,540,992 bytes on 2026-10-16). Supabase's own
+# schemas (auth, storage) are managed by Supabase and not part of this app.
+
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 03:00 Malaysia (UTC+8)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check the backup is configured
+        id: cfg
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_R2_ACCOUNT_ID: ${{ secrets.BACKUP_R2_ACCOUNT_ID }}
+          BACKUP_R2_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_ACCESS_KEY_ID }}
+          BACKUP_R2_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_SECRET_ACCESS_KEY }}
+          BACKUP_R2_BUCKET: ${{ secrets.BACKUP_R2_BUCKET }}
+          BACKUP_PUBKEY: ${{ secrets.BACKUP_PUBKEY }}
+        run: |
+          missing=()
+          for v in DATABASE_URL BACKUP_R2_ACCOUNT_ID BACKUP_R2_ACCESS_KEY_ID BACKUP_R2_SECRET_ACCESS_KEY BACKUP_R2_BUCKET BACKUP_PUBKEY; do
+            if [ -z "${!v}" ]; then missing+=("$v"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::notice::backup not configured: ${missing[*]} missing"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.configured == 'true'
+
+      - name: Check the owner's public key before reading the database
+        if: steps.cfg.outputs.configured == 'true'
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ secrets.BACKUP_PUBKEY }}
+
+      # Production is Postgres 17 and pg_dump refuses a newer server than
+      # itself; the runner image ships 16. Same install as local-dev-snapshot.
+      - name: Install PostgreSQL 17 client
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      # --format=custom is already compressed, so no separate gzip, and it is
+      # what pg_restore reads (one table at a time if needed). With --schema,
+      # pg_dump leaves extensions out, so their names go in beside the dump for
+      # the restore to create first.
+      - name: Dump the database (read-only)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          stamp=$(date -u +%Y-%m-%dT%H%MZ)
+          echo "STAMP=$stamp" >> "$GITHUB_ENV"
+          mkdir -p backup
+          psql "$DATABASE_URL" -At -c "select e.extname || '|' || n.nspname from pg_extension e
+            join pg_namespace n on n.oid = e.extnamespace where e.extname <> 'plpgsql' order by 1" \
+            > backup/extensions.txt
+          pg_dump "$DATABASE_URL" --format=custom --compress=6 \
+            --schema=public --schema=scm --no-owner --no-privileges \
+            --file="backup/houzs-erp-$stamp.dump"
+          echo "dump size: $(stat -c%s "backup/houzs-erp-$stamp.dump") bytes, extensions: $(wc -l < backup/extensions.txt)"
+
+      - name: Encrypt the dump to the owner's key
+        if: steps.cfg.outputs.configured == 'true'
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ secrets.BACKUP_PUBKEY }}
+          paths: backup/
+          name: houzs-erp-${{ env.STAMP }}
+
+      # aws s3 cp switches to multipart on its own for large files, so a dump
+      # past R2's 5 GiB single-upload limit still goes up. The two checksum
+      # settings are Cloudflare's documented setting for aws-cli with R2.
+      - name: Upload the encrypted files to R2
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ACCOUNT: ${{ secrets.BACKUP_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.BACKUP_R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          test ! -e backup || { echo "::error::plaintext dump still on disk after sealing; refusing to upload"; exit 1; }
+          endpoint="https://${R2_ACCOUNT}.r2.cloudflarestorage.com"
+          prefix="houzs-erp/${STAMP:0:10}"
+          for f in sealed/*.enc; do
+            [ -s "$f" ] || { echo "::error::$f is empty"; exit 1; }
+            case "$f" in *.enc) ;; *) echo "::error::$f is not ciphertext"; exit 1 ;; esac
+            aws s3 cp "$f" "s3://${R2_BUCKET}/${prefix}/$(basename "$f")" \
+              --endpoint-url "$endpoint" --only-show-errors
+          done
+          n=0
+          for f in sealed/*.enc; do
+            local_size=$(stat -c%s "$f")
+            remote_size=$(aws s3api head-object --bucket "$R2_BUCKET" \
+              --key "${prefix}/$(basename "$f")" --endpoint-url "$endpoint" \
+              --query ContentLength --output text)
+            if [ "$remote_size" != "$local_size" ] || [ "$remote_size" -le 0 ]; then
+              echo "::error::$(basename "$f"): R2 holds $remote_size bytes, expected $local_size"
+              exit 1
+            fi
+            echo "verified $(basename "$f"): $remote_size bytes"
+            n=$((n + 1))
+          done
+          [ "$n" -eq 2 ] || { echo "::error::expected 2 encrypted files, verified $n"; exit 1; }
+          echo "::notice::backup stored: ${prefix}/ ($n encrypted files)"
+
+      - name: Check retention (the lifecycle rule should keep 30 days)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ACCOUNT: ${{ secrets.BACKUP_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.BACKUP_R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT}.r2.cloudflarestorage.com"
+          cutoff=$(date -u -d '35 days ago' +%Y-%m-%d)
+          days=$(aws s3 ls "s3://${R2_BUCKET}/houzs-erp/" --endpoint-url "$endpoint" \
+            | awk '$1=="PRE"{print $2}' | tr -d '/' | sort)
+          total=$(printf '%s\n' "$days" | grep -c . || true)
+          old=$(printf '%s\n' "$days" | awk -v c="$cutoff" 'NF && $0 < c' | wc -l)
+          echo "nights stored: $total, older than 35 days: $old"
+          if [ "$old" -gt 0 ]; then
+            echo "::warning::$old night(s) older than 35 days are still in the bucket - the 30-day lifecycle rule is missing (docs/db-restore-runbook.md, setup step 2)"
+          fi
