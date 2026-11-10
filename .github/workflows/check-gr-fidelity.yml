@@ -70,3 +70,13 @@ jobs:
           TOP: ${{ inputs.top }}
           # GitHub-hosted runners have no IPv6 egress.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      # Receipts whose lines came from more than one PO (staff 2026-11-09,
+      # HC-GRN-2611-052). It rides here because a workflow_dispatch file is
+      # dispatchable only once it is on the default branch, and this answer was
+      # needed before census-grn-multi-po.yml could merge. Read-only, like the
+      # step above; `if: always()` so either answer survives the other failing.
+      - run: node scripts/census-grn-multi-po.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

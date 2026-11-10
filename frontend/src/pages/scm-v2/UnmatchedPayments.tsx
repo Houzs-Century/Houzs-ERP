@@ -54,7 +54,11 @@ const COLUMNS: Column<UnmatchedPayment>[] = [
     getValue: (r) => r.docNo,
   },
   { key: 'customer', label: 'Customer', render: (r) => r.customerName ?? '—', getValue: (r) => r.customerName ?? '' },
-  { key: 'salesperson', label: 'Salesperson', render: (r) => r.salespersonName ?? '—', getValue: (r) => r.salespersonName ?? '' },
+  /* Owner 2026-11-09 (sales person 应该不太对，应该是collected by 的人): who took the money,
+     off the payment itself — the one to ask about it. The order's salesperson stays a
+     choice under Columns. */
+  { key: 'collectedBy', label: 'Collected by', render: (r) => r.collectedByName ?? '—', getValue: (r) => r.collectedByName ?? '' },
+  { key: 'salesperson', label: 'Salesperson', defaultHidden: true, render: (r) => r.salespersonName ?? '—', getValue: (r) => r.salespersonName ?? '' },
   { key: 'method', label: 'Method', render: (r) => <span className={styles.codeChip}>{methodText(r)}</span>, getValue: (r) => methodText(r) },
   {
     key: 'amount', label: 'Amount', align: 'right', render: (r) => fmt(r.amountSen),

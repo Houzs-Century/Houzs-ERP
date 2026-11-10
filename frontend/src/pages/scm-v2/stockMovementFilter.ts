@@ -6,6 +6,7 @@
 // each surviving row keeps its true running balance.
 // ----------------------------------------------------------------------------
 import type { InventoryMovement } from '../../vendor/scm/lib/inventory-queries';
+import { mytDayOfValue } from '../../vendor/scm/lib/dates';
 
 export type MovementType = InventoryMovement['movement_type'];
 
@@ -37,17 +38,13 @@ export const isMovementFilterActive = (f: MovementFilter): boolean =>
   f.dateTo !== '' ||
   f.sourceDoc.trim() !== '';
 
-/** The movement's LOCAL calendar date as YYYY-MM-DD, matching what the WHEN
- *  column shows (which formats created_at in local time). '' for an unparseable
- *  timestamp — such a row then falls outside any date bound. */
+/** The movement's MALAYSIAN calendar date as YYYY-MM-DD, matching what the
+ *  WHEN column shows (fmtDateTime renders in Malaysia time on every device).
+ *  '' for an unparseable timestamp — such a row then falls outside any date
+ *  bound. */
 export const movementDateKey = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return '';
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, '0');
-  const da = String(d.getDate()).padStart(2, '0');
-  return `${y}-${mo}-${da}`;
+  if (!iso || !Number.isFinite(new Date(iso).getTime())) return '';
+  return mytDayOfValue(iso) ?? '';
 };
 
 /** Fields the filter reads; a superset row (with runningBalance etc.) is fine. */

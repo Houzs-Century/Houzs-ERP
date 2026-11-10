@@ -49,6 +49,7 @@
  *                  one bucket.
  *   COMPANY_ID     optional, default 1
  */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const CO = Number(process.env.COMPANY_ID || 1);

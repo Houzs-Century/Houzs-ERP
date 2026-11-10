@@ -53,6 +53,7 @@
    Env: DATABASE_URL  PO_NUMBERS  EXPECT_ROWS  MODE=plan|apply  CONFIRM
         COMPANY (default 1) */
 
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

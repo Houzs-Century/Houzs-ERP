@@ -63,6 +63,7 @@
    ADJUSTMENT row already tags this DO, and this script detects that same prior
    reversal up front and exits without touching the ledger — a second run can
    never double-reverse the stock. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

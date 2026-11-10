@@ -65,6 +65,7 @@
 // RE-RUN: idempotent and side-effect free. Safe to run any number of times.
 // After a repair it should report zero wrong links; that is its second job.
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { decomposeGroup } from './lib/sofa-compartment-suffixes.mjs';
 import { compareColour } from './lib/colour-identity.mjs';

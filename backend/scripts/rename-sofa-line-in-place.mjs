@@ -43,6 +43,7 @@
 //   FROM, TO       required — item codes
 //   LINE_ID        optional — the row, when FROM matches more than one
 //   APPLY=1 + CONFIRM=<DOC>   to write
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { PIECE_RX, assertMatcherSane, movePieceTo, pieceOf } from './lib/sofa-piece-token.mjs';
 

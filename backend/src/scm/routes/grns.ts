@@ -1,6 +1,7 @@
 // /grns — Goods Receipt Notes (procurement receiving step).
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
+import { yymmFor } from '../../services/documentRefs';
 import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
@@ -709,8 +710,7 @@ const ITEM =
   'zero_cost_ack, zero_cost_reason, zero_cost_ack_by, zero_cost_ack_at';
 
 const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> extends never ? never : any, prefix: string, table: string, col: string, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, table, col, `${p}${prefix}-${yymm}`);
 };
@@ -1267,8 +1267,14 @@ grns.get('/:id', async (c) => {
   const itemRows = (i.data ?? []) as Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>;
   // The detail page and phone show warehouse_code; only warehouse_id is a column
   // (Sim, 2026-10-19: "the GRN also did not capture the warehouse").
-  const header = h.data as Record<string, unknown> & { warehouse?: { code?: string | null } | null };
-  const grn = { ...header, warehouse_code: header.warehouse?.code ?? null, ...computeGrnFlags(itemRows) };
+  // warehouse_name is what the printed GRN names (Conts-ERP #717).
+  const header = h.data as Record<string, unknown> & { warehouse?: { code?: string | null; name?: string | null } | null };
+  const grn = {
+    ...header,
+    warehouse_code: header.warehouse?.code ?? null,
+    warehouse_name: (header.warehouse?.name ?? '').trim() || null,
+    ...computeGrnFlags(itemRows),
+  };
 
   /* Bug #2 (Agent C 2026-05-31) — surface "received from which PO" + "receive
      date" per GRN line. The header carries received_at; each line links to a PO
@@ -1778,8 +1784,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   // Generate GRN number using same pattern as the single-POST endpoint.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const cp = companyDocPrefix(c);
   let grnNumber = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
 

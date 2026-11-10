@@ -205,6 +205,10 @@ export function ReportHead({ batch, counts, payNote = null }: { batch: Settlemen
   const toGo = counts['to-confirm'] + counts['to-choose'] + counts['no-sale'];
   const received = batch.received_sen ?? 0;
   const paid = !!batch.received_on;
+  /* DuitNow QR money (owner 2026-11-09): in the bank by its sales, never paid out
+     through this report — so a report of nothing else has no payout to wait for. */
+  const qrSen = batch.qr_gross_sen ?? 0;
+  const qrOnly = qrSen !== 0 && payableOf(batch) === 0;
   const steps: Array<{ label: string; sub: string; state: 'done' | 'current' | 'todo' }> = [
     { label: 'Swiped', sub: `${swipeLabel(batch)} · ${n} sale${n === 1 ? '' : 's'}`, state: 'done' },
     { label: 'Report in', sub: `Uploaded ${fmtDate(batch.created_at)}${batch.uploaded_by ? ` · ${batch.uploaded_by}` : ''}`, state: 'done' },
@@ -213,11 +217,13 @@ export function ReportHead({ batch, counts, payNote = null }: { batch: Settlemen
       sub: toGo > 0 ? `${counts.done} of ${n} lines · ${toGo} to go` : `${counts.done} of ${n} lines · ${counts['set-aside']} set aside`,
       state: toGo > 0 ? 'current' : 'done',
     },
-    {
-      label: 'Paid out',
-      sub: paid ? `${fmtDate(batch.received_on ?? '')} · ${rm(received)}` : received > 0 ? `${rm(received)} in · ${rm(batch.outstanding_sen ?? 0)} still out` : payNote ?? 'Comes in through Bank statements',
-      state: paid ? 'done' : toGo === 0 ? 'current' : 'todo',
-    },
+    qrOnly
+      ? { label: 'Paid out', sub: 'QR money — in the bank with its sales', state: toGo === 0 ? 'done' : 'todo' }
+      : {
+        label: 'Paid out',
+        sub: paid ? `${fmtDate(batch.received_on ?? '')} · ${rm(received)}` : received > 0 ? `${rm(received)} in · ${rm(batch.outstanding_sen ?? 0)} still out` : payNote ?? 'Comes in through Bank statements',
+        state: paid ? 'done' : toGo === 0 ? 'current' : 'todo',
+      },
   ];
   const pctOfGross = (sen: number): string => (batch.gross_sen > 0 ? ((sen / batch.gross_sen) * 100).toFixed(2) : '0.00');
   const charge = batch.adjustment_sen;
@@ -244,6 +250,12 @@ export function ReportHead({ batch, counts, payNote = null }: { batch: Settlemen
         )}
         <span className={styles.op}>=</span>
         <span className={styles.figure}><span className={styles.figLabel}>{paid ? 'Net · paid out' : 'Net to be paid out'}</span><b>{rm(payableOf(batch))}</b><span className={styles.muted}>{paid ? 'In the bank' : 'Comes in through Bank statements'}</span></span>
+        {qrSen !== 0 && (
+          <>
+            <span className={styles.op}>·</span>
+            <span className={styles.figure}><span className={styles.figLabel}>DuitNow QR</span><b>{rm(qrSen)}</b><span className={styles.muted}>Straight to the bank with its sales — not paid out here</span></span>
+          </>
+        )}
       </div>
     </div>
   );

@@ -36,6 +36,7 @@
  * transaction. RE-RUN: pure. The same commit against the same database prints
  * the same answer; it changes only when the snapshot or the ERP does.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

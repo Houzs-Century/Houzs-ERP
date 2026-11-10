@@ -102,6 +102,15 @@ export function isSendableEmail(addr: string | null | undefined): boolean {
   return isValidEmailAddress(addr);
 }
 
+/* Reply-To for a supplier PO email: the person who pressed Send. The From is
+   the shared no-reply sender, so without this a supplier's reply about the
+   order lands in the shared inbox instead of with the purchaser. null when the
+   sender has no sendable address; sendEmail then keeps its default Reply-To. */
+export function poReplyTo(sender: { email?: string | null } | null | undefined): string | null {
+  const addr = sender?.email?.trim() ?? '';
+  return isSendableEmail(addr) ? addr : null;
+}
+
 export interface PoEmailRow {
   id: string;
   po_number: string | null;

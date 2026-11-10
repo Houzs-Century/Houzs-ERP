@@ -9,8 +9,9 @@
 // a modal is never hidden behind it.
 // ----------------------------------------------------------------------------
 
-import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { useEscapeLayer } from '../../../lib/escapeStack';
 
 const backdrop: CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(34,31,32,0.4)',
@@ -40,11 +41,7 @@ export const Modal = ({ title, onClose, width = 'min(1100px, 100%)', actions, ch
   children: ReactNode;
   ariaLabel?: string;
 }) => {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); };
-  }, [onClose]);
+  useEscapeLayer(onClose, true);
 
   return (
     <div style={backdrop} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} role="presentation">

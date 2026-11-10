@@ -35,6 +35,7 @@ import {
   type NewPoItem,
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
+import { defaultSupplierBinding } from '../../vendor/scm/lib/default-supplier-binding';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
@@ -235,8 +236,8 @@ export const PurchaseConsignmentOrderNew = () => {
     if (supplierId) { setPendingItemPick(null); return; }
     if (itemSuppliersQuery.isLoading) return;
     const matches = itemSuppliersQuery.data?.bindings ?? [];
-    const b = matches[0];
-    if (matches.length === 1 && b) {
+    const b = defaultSupplierBinding(matches);
+    if (b) {
       setSupplierId(b.supplier.id);
       setLines((prev) => prev.map((l) => (l.rid === pendingItemPick.rid ? {
         ...l,

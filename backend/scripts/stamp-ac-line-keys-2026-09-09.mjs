@@ -87,6 +87,7 @@
  *   DATABASE_URL=... MODE=apply CONFIRM='stamp ac line keys 2026-09-09' \
  *     node backend/scripts/stamp-ac-line-keys-2026-09-09.mjs
  */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const MODE = (process.env.MODE ?? 'plan').toLowerCase();

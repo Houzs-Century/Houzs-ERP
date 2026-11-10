@@ -53,6 +53,7 @@
         MODE=plan|apply  CONFIRM  COMPANY (default 1)
         READ_ONLY=1 (plan only: print the derivation, never open the transaction) */
 
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;
@@ -180,7 +181,7 @@ async function main() {
   say('   PLANNED CHANGES (column: now -> after):');
   for (const [k, v] of changes) say(`      ${k}: ${show(line[k])} -> ${show(v)}`);
   const delta = Number(patch.line_total_sen) - Number(line.line_total_sen ?? 0);
-  if (delta !== 0) say(`   header subtotal/total move by ${delta} sen (${po.subtotal_sen} / ${po.total_sen})`);
+  if (delta !== 0) say(`   header subtotal/total move by ${delta} sen (subtotal_sen=${po.subtotal_sen} total_sen=${po.total_sen})`);
   const [sumRow] = await sql`SELECT coalesce(sum(line_total_sen),0)::bigint AS s FROM scm.purchase_order_items WHERE purchase_order_id = ${po.id}`;
   const headerWasSum = Number(sumRow.s) === Number(po.subtotal_sen);
 

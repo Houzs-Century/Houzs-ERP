@@ -75,6 +75,7 @@
  * assignment is derived from a sorted plan, so a second run re-derives the same
  * keys and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -195,7 +196,7 @@ async function shapeOf(sql) {
 
 const printShape = (label, s) => {
   log(`${label}:`);
-  plain(`      mfg_sales_order_items  rows ${s.so_items.rows}, qty ${s.so_items.qty}, unit_price_sen ${s.so_items.unit_sen}, total_sen ${s.so_items.total_sen}, discount_sen ${s.so_items.discount_sen}, cancelled ${s.so_items.cancelled}`);
+  plain(`      mfg_sales_order_items  rows ${s.so_items.rows}, qty ${s.so_items.qty}, unit_price_sen ${s.so_items.unit_sen}, total_sen ${s.so_items.total_sen}, discount_sen=${s.so_items.discount_sen}, cancelled ${s.so_items.cancelled}`);
   plain(`      mfg_sales_orders       rows ${s.sales_orders.rows}, subtotal_sen ${s.sales_orders.subtotal_sen}, local_total_sen ${s.sales_orders.local_total_sen}`);
   plain(`      SO line readiness      ${Object.entries(s.allocation).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   plain(`      inventory_movements    rows ${s.inventory_movements.rows}, units ${s.inventory_movements.units}`);

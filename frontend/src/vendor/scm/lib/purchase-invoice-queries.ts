@@ -20,6 +20,7 @@ import { authedFetch } from './authed-fetch';
 import { piListParams } from './pi-list-export';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
+import { piLedgerGap, type PiLedgerOutcome } from './pi-ledger-outcome';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { applyPiListMrpEnrichment, type EnrichablePiRow, type PiListMrpEnrichment } from '../../../lib/piListEnrichment';
 
@@ -138,10 +139,17 @@ export const usePurchaseInvoiceDetail = (id: string | null) => useQuery({
 export const usePostPurchaseInvoice = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/purchase-invoices/${id}/post`, { method: 'PATCH' }),
-    onSuccess: (_, id) => {
+    mutationFn: (id: string) =>
+      authedFetch<{ ledger?: PiLedgerOutcome }>(`/purchase-invoices/${id}/post`, { method: 'PATCH' }),
+    /* A 200 here means the invoice is POSTED, not that its AP journal was
+       written: the server keeps the post when the journal is refused. Every
+       caller (list, both details, desktop and phone create) hears it from here,
+       and the returned promise holds mutateAsync until the operator has read it. */
+    onSuccess: async (res, id) => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', id] });
+      const gap = piLedgerGap(res.ledger);
+      if (gap) await serviceNotify({ title: 'Invoice posted without its AP journal', body: gap.charAt(0).toUpperCase() + gap.slice(1), tone: 'error' });
     },
     /* The AP commit had no error path until 2026-08-21, while every sibling in
        this file (cancel, record payment, delete item) had one. Its two call

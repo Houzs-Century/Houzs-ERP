@@ -45,6 +45,7 @@
 
    RE-RUN: idempotent — value-guarded on unit_cost_sen = 0, so a second run
    stamps nothing (every gap the products can fill is already filled). */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { comboLineCosts, costHeight, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
 

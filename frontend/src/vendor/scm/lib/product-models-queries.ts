@@ -41,6 +41,8 @@ export type ProductModelRow = {
    *  the Model still lingers in Modular). Optional so older cached payloads /
    *  the detail endpoint (which doesn't compute it) stay type-compatible. */
   sku_count?: number;
+  /** Of sku_count, the codes that are ACTIVE (Modular hides a Model with none). */
+  active_sku_count?: number;
 };
 
 /** Per-category allowed-options pool. Empty `{}` = no restriction. */

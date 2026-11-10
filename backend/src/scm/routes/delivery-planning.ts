@@ -63,6 +63,7 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -2193,8 +2194,7 @@ async function deriveTripOutsourced(sb: any, lorryId: string | null): Promise<bo
    mintMonthlyDocNo — never count+1, and never a capped scan. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function nextTripNo(sb: any): Promise<string> {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   return mintMonthlyDocNo(sb, 'trips', 'trip_no', `TRIP-${yymm}`);
 }
 

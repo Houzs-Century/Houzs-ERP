@@ -18,6 +18,7 @@
 // Strictly SELECTs. No writes, no DDL, no transaction. Exits 0 for EVERY real
 // answer — the ANSWER is the output; only an unreachable DB / query error exits
 // non-zero. Manual trigger only (so-si-deposit-link-check.yml).
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

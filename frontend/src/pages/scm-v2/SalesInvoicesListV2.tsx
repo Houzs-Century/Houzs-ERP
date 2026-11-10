@@ -80,6 +80,7 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
 import { customerRefOf } from '../../lib/customer-ref';
 import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -1054,7 +1055,7 @@ export function SalesInvoicesListV2() {
       for (const r of chosen) bundles.push(await fetchSiBundle(r));
       if (how === "one") {
         await generateCombinedSalesInvoicePdf(bundles as never, {
-          fileName: `sales-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `sales-invoices-${todayMyt()}.pdf`,
           action,
         });
       } else {

@@ -55,6 +55,7 @@
 //   legheight=default) finds nothing for it and reports 0 to repair. It can
 //   never re-strip or re-ship a line, because the invented key it keys on is
 //   already gone. A second APPLY with nothing in scope writes nothing.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { planDoLegDefaultRepair, LEG_DEFAULT_FRAGMENT } from "./lib/do-leg-default-repair-plan.mjs";

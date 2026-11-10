@@ -36,6 +36,7 @@
 // Run: npx tsx scripts/backfill-migrated-so-balance-push.mjs            (plan)
 //      APPLY=1 CONFIRM="PUSH MIGRATED BALANCE" npx tsx scripts/backfill-migrated-so-balance-push.mjs
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";

@@ -13,6 +13,7 @@
 // prefix, which compares for EQUALITY across docs and reveals nothing.
 //
 //   DOCS=2990-SO-2607-019,2990-SO-2606-040 COMPANY=2 node scripts/probe-so-identity-and-amendments.mjs
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { createHash } from 'node:crypto';
 

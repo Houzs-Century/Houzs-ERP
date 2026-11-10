@@ -11,6 +11,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { DEFAULT_PAY_RULES, hhmmToMin, minToHhmm, normalizePayRules, payRulesProblem, type PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import { Empty, Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { HR, useEmployees, usePayRules } from "./hrApi";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 type Draft = Record<string, string>;
 
@@ -68,12 +69,14 @@ const rm = (v: number) => formatCurrency(v);
 
 /* Worked example, RM2,050 on a 9h day in the current month, recomputed from
  * the draft on every keystroke so the effect of a setting is seen before saving. */
-function Explainer({ r }: { r: PayRulesConfig }) {
+export function Explainer({ r }: { r: PayRulesConfig }) {
   const S = 2050;
-  const now = new Date();
-  const calDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const today = todayMyt();
+  const year = Number(today.slice(0, 4));
+  const month0 = Number(today.slice(5, 7)) - 1;
+  const calDays = new Date(year, month0 + 1, 0).getDate();
   let monSat = 0;
-  for (let i = 1; i <= calDays; i++) if (new Date(now.getFullYear(), now.getMonth(), i).getDay() !== 0) monSat++;
+  for (let i = 1; i <= calDays; i++) if (new Date(year, month0, i).getDay() !== 0) monSat++;
   const dayDiv = r.dayRateDivisorMode === "calendarDays" ? calDays : r.dayRateDivisorMode === "workingDays" ? monSat : 26;
   const dayRate = S / dayDiv;
   const hourDiv = r.hourRateDivisorMode === "fixed" ? r.rateHoursPerDay : r.hourRateDivisorMode === "hoursOnly" ? 9 : 9 + r.lunchMin / 60;

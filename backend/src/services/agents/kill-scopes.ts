@@ -126,7 +126,7 @@ export async function recordDecision(db: D1Database, d: DecisionRecord): Promise
            (id, agent, family, decision_class, statement, reason, evidence, options, impact,
             policy, confidence, data_quality, reversible, rollback, verification,
             approver, approval_required, outcome, created_at)
-         VALUES (?,?,?,?,?,?,?::jsonb,?::jsonb,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?::text::jsonb,?::text::jsonb,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .bind(
         crypto.randomUUID(), d.agent, d.family ?? null, d.decisionClass, d.statement,

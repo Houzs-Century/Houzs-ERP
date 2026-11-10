@@ -11,6 +11,7 @@ import { useRafCoalescedHover } from "../../hooks/useRafCoalescedHover";
 import { api } from "../../api/client";
 import { ResetFiltersButton } from "../../components/ResetFiltersButton";
 import { cn, todayInAppTz } from "../../lib/utils";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 import { composeDefaultProjectName, upcaseLeadingState } from "./projectHelpers";
 import { STATUS_OPTIONS, statusBarStyle } from "./projectStatus";
 import {
@@ -252,8 +253,7 @@ export function ProjectsCalendarView() {
     // anchor to the Monday of "today" so the user lands on the
     // current week instead of an unrelated one.
     if (next === "week" && !weekStartStr) {
-      const d = new Date();
-      d.setUTCHours(0, 0, 0, 0);
+      const d = new Date(todayMyt() + "T00:00:00Z");
       d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
       const yyyy = d.getUTCFullYear();
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -391,15 +391,13 @@ export function ProjectsCalendarView() {
         </button>
         <button
           onClick={() => {
+            const today = todayMyt();
             if (mode === "week") {
-              const d = new Date();
-              d.setUTCHours(0, 0, 0, 0);
-              d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+              const d = new Date(today + "T00:00:00Z");
+              d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
               setAnchor(d);
             } else {
-              const d = new Date();
-              d.setDate(1);
-              setAnchor(d);
+              setAnchor(new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, 1));
             }
           }}
           className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary"

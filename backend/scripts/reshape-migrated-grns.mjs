@@ -156,6 +156,7 @@
  * a FRESH AutoCount cut carries the new receipts in and re-dates any that
  * moved — which is the point.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

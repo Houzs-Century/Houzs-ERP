@@ -26,6 +26,7 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 import { abortableDelay, abortReason, combineAbortSignals } from "../lib/abort";
+import { openLoadedTab } from "../lib/openLoadedTab";
 
 export { requestIdFromError } from "../lib/requestCorrelation";
 
@@ -573,6 +574,8 @@ function cachedGet<T>(path: string): Promise<T> {
   return p;
 }
 
+// Uploads below call invalidateForMutation too: a just-uploaded photo or file
+// was otherwise hidden by the cached read for up to its TTL.
 function mutate<T>(path: string, opts: RequestInit): Promise<T> {
   return request<T>(path, opts).then((r) => {
     invalidateForMutation(path);
@@ -634,6 +637,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
 
@@ -659,6 +663,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
 
@@ -686,6 +691,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     if (res.status === 204) return undefined as T;
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
@@ -713,6 +719,7 @@ export const api = {
       } catch {}
       throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
     }
+    invalidateForMutation(path);
     if (res.status === 204) return undefined as T;
     return consumeCorrelated(res, () => res.json() as Promise<T>);
   },
@@ -738,6 +745,17 @@ export const api = {
         ? blob.slice(0, blob.size, typeHint)
         : blob;
     });
+  },
+
+  /** A stored photo plus its Last-Modified (when it reached storage), for the
+   *  POD photos PDF, which prints each photo's time. */
+  async fetchBlobWithTime(path: string): Promise<{ blob: Blob; storedAt: string | null }> {
+    const token = tokenStore.get();
+    const res = await binaryFetch(`${baseUrl}${path}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
+    }, BINARY_GET_TIMEOUT_MS);
+    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
+    return consumeCorrelated(res, async () => ({ blob: await res.blob(), storedAt: res.headers.get("Last-Modified") }));
   },
 
   /**
@@ -799,20 +817,14 @@ export const api = {
     return html;
   },
 
+  /* The tab opens before the fetch (inside openLoadedTab): opened after it, a
+     phone blocks it as a popup. Revoke after the new tab has had time to parse;
+     an instant revoke breaks some browsers. */
   async openHtml(path: string): Promise<void> {
-    const token = tokenStore.get();
-    const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
-    }, BINARY_GET_TIMEOUT_MS);
-    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
-    await consumeCorrelated(res, async () => {
-      const html = await res.text();
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
-      // Revoke after the new tab has had time to parse; instant revoke breaks some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    });
+    await openLoadedTab(async () => {
+      const html = await api.getHtml(path);
+      return URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    }, 60_000);
   },
 };
 

@@ -161,6 +161,17 @@ export const DO_STATUSES = [
  *  2026-08-22. */
 export const CONFIRM_HOP_STATES = ['LOADED', 'DISPATCHED'] as const;
 
+/** The delivery has reached the customer: a POD signed it off (SIGNED folds into
+ *  DELIVERED on screen) or it is billed. Nothing moves a DO out of these through
+ *  the status PATCH — a wrong "Delivered" goes back only through the audited
+ *  revert (POST /:id/revert), which refuses while an invoice or return stands on it. */
+export const DO_ARRIVED_STATES = ['SIGNED', 'DELIVERED', 'INVOICED'] as const;
+
+/** Has this delivery reached the customer? Case-insensitive; null is no. */
+export function doHasArrived(status: string | null | undefined): boolean {
+  return (DO_ARRIVED_STATES as readonly string[]).includes(String(status ?? '').toUpperCase());
+}
+
 /** Pre-ship: no stock has left our hands yet. DRAFT alone since 2026-08-22 —
  *  LOADED (= Confirmed) moved into DO_SHIPPED_STATES, see the block above. This
  *  is the set the PATCH /:id/status guard uses to refuse a shipped DO falling

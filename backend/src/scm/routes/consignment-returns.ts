@@ -21,6 +21,7 @@
 //
 // Mounted at '/consignment-returns' in apps/api/src/index.ts. Numbering CRN-YYMM-NNN.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
@@ -112,8 +113,7 @@ function gateCrnFinance(
 }
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'consignment_delivery_returns', 'return_number', `${p}CRN-${yymm}`);
 };

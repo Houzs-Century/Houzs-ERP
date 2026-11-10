@@ -21,6 +21,7 @@ import { describe, expect, test } from 'vitest';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler, requireLeafAccount,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
+  whyNotPostable,
 } from '../src/scm/routes/accounting-chart';
 
 type Row = Record<string, any>;
@@ -116,6 +117,25 @@ function harness(
 const acct = (company_id: number, code: string, over: Row = {}): Row => ({
   company_id, account_code: code, account_name: `Name ${code}`,
   account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, ...over,
+});
+
+/* The one postability rule every door asks (Conts #338): voucher lines and
+   item-group bindings must not drift apart on what a header or a control is. */
+describe('whyNotPostable — the one rule', () => {
+  test('a header never books, whatever else it is', () => {
+    expect(whyNotPostable({ hasChildren: true })).toEqual({ kind: 'header' });
+    expect(whyNotPostable({ hasChildren: true, specialType: 'SBS', controlRole: 'AR' })).toEqual({ kind: 'header' });
+  });
+  test('a control account is refused by its role or by its special type', () => {
+    expect(whyNotPostable({ hasChildren: false, controlRole: 'AR' })).toEqual({ kind: 'control', label: 'AR' });
+    for (const s of ['SDC', 'SCC', 'SBS']) {
+      expect(whyNotPostable({ hasChildren: false, specialType: s })).toEqual({ kind: 'control', label: s });
+    }
+  });
+  test('an ordinary leaf, or a non-control special, is postable', () => {
+    expect(whyNotPostable({ hasChildren: false })).toBeNull();
+    expect(whyNotPostable({ hasChildren: false, specialType: 'CSH', controlRole: null })).toBeNull();
+  });
 });
 
 describe('GET /chart — the union', () => {

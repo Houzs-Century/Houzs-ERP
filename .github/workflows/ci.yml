@@ -290,6 +290,11 @@ jobs:
       - run: node ../frontend/scripts/check-silent-writes.mjs --strict
       # CLAUDE.md, module guides, the bug summary and TODO stay short (line limits).
       - run: node ../scripts/check-docs-size.mjs
+      # This repository is public, so an artifact is downloadable by anyone with
+      # a GitHub account. A dump, backup or export of database rows must be
+      # encrypted before upload (docs/staging-dump-artifact-exposure-coe.md).
+      - run: node ../scripts/check-workflow-dump-artifacts.mjs
+      - run: node --test ../scripts/check-workflow-dump-artifacts.test.mjs
 
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written
@@ -411,6 +416,12 @@ jobs:
       # days in September. An enumerated allowlist of write sites: a new one
       # fails here and gets read by a human who is told what the column holds.
       - run: npm run audit:multi-owner-jsonb
+      # Money in a PUBLIC Actions log. This repository is public, so a run log
+      # and an uploaded artifact are readable outside the company. The FIFO
+      # repair workflow printed unit costs on two dry-runs; the sweep that day
+      # found 139 runnable scripts formatting money into output. A script
+      # that prints money must import scripts/lib/public-log-guard.mjs first.
+      - run: npm run audit:public-log-money
       # A read whose failure is discarded (`const { data }` with no `error`,
       # `.catch(() => {})`). Ratchet, not ban: 954 sites predate it. It is here
       # because the class GREW from 785 to 954 in the four weeks after it was

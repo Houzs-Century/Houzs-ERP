@@ -26,10 +26,20 @@ export type SheetColumn = {
   beside?: boolean;
   /** The 累计 column — a rule after it, as on the screen. */
   edge?: boolean;
+  /** A heading the column shares with the columns beside it (the Cash Flow's month over
+      Settlement | Deposit): side by side, the same heading prints once, above them all. */
+  group?: string;
 };
 /** sen for an amount column, one-decimal % for a pct column, a string for text; null prints a dash. */
 export type SheetValue = number | string | null;
-export type SheetRow = { kind: SheetRowKind; depth: number; label: string; cells: SheetValue[]; /** A group's own Total name (layout totalLabel). */ totalLabel?: string };
+export type SheetRow = {
+  kind: SheetRowKind; depth: number; label: string; cells: SheetValue[];
+  /** A group's own Total name (layout totalLabel). */
+  totalLabel?: string;
+  /** Cells that run across columns: the cell's index → how many columns it covers (the
+      covered cells are null). A Cash Flow line not split, across a month's two columns. */
+  spans?: Partial<Record<number, number>>;
+};
 export type SheetTable = { columns: SheetColumn[]; rows: SheetRow[] };
 
 /** The screen's totals-below rule on a file (owner 2026-11-05: Excel and PDF the same
@@ -39,11 +49,17 @@ export type SheetTable = { columns: SheetColumn[]; rows: SheetRow[] };
 export function rowsWithTotalsBelow(rows: SheetRow[]): SheetRow[] {
   const out: SheetRow[] = [];
   const stack: SheetRow[] = [];
-  const close = (g: SheetRow) => out.push({ kind: 'total', depth: g.depth, label: g.totalLabel ?? `Total ${g.label}`, cells: g.cells });
+  const close = (g: SheetRow) =>
+    out.push({ kind: 'total', depth: g.depth, label: g.totalLabel ?? `Total ${g.label}`, cells: g.cells, ...(g.spans ? { spans: g.spans } : {}) });
   rows.forEach((r, i) => {
     while (stack.length > 0 && stack[stack.length - 1]!.depth >= r.depth) close(stack.pop()!);
     const group = r.depth > 0 && (r.kind === 'category' || r.kind === 'unassigned') && (rows[i + 1]?.depth ?? -1) > r.depth;
-    if (group) { out.push({ ...r, cells: [] }); stack.push(r); } else out.push(r);
+    if (group) {
+      const bare: SheetRow = { ...r, cells: [] };
+      delete bare.spans;
+      out.push(bare);
+      stack.push(r);
+    } else out.push(r);
   });
   while (stack.length > 0) close(stack.pop()!);
   return out;
@@ -181,22 +197,43 @@ export function monthlyTable(columns: MonthColumn[], shown: MonthlyLine[], showP
 
 /** A statement's columns as the screen shows them (the redesign's Compare and
     By month, or one period without its %): each column an amount, its % beside
-    it where the screen prints one; a Total column ruled after, as on screen. */
+    it where the screen prints one; a Total column ruled after, as on screen. A
+    column under a shared heading keeps it (the Cash Flow's month over Settlement |
+    Deposit), and a line's figure running across columns on the screen runs across
+    the same cells here. */
 export function statementColumnsTable(
-  columns: ReadonlyArray<{ key: string; label: string; pct: boolean; edge?: boolean }>,
+  columns: ReadonlyArray<{ key: string; label: string; pct: boolean; edge?: boolean; group?: string }>,
   shown: MonthlyLine[],
 ): SheetTable {
-  const cols: SheetColumn[] = columns.flatMap((c): SheetColumn[] => (c.pct
-    ? [{ label: c.label, kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: c.edge }]
-    : [{ label: c.label, kind: 'amount', edge: c.edge }]));
-  const rows = shown.map((l): SheetRow => ({
-    kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}),
-    cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
-      const cell = l.cells[c.key];
-      if (!cell) return c.pct ? [null, null] : [null];
-      return c.pct ? [cell.amountSen, cell.pct] : [cell.amountSen];
-    }),
-  }));
+  const cols: SheetColumn[] = columns.flatMap((c): SheetColumn[] => {
+    const group = c.group ? { group: c.group } : {};
+    return c.pct
+      ? [{ label: c.label, kind: 'amount', ...group }, { label: '%', kind: 'pct', beside: true, edge: c.edge, ...group }]
+      : [{ label: c.label, kind: 'amount', edge: c.edge, ...group }];
+  });
+  /* Where each screen column's cells start on the sheet, and how wide a run of them is. */
+  const width = (c: { pct: boolean }): number => (c.pct ? 2 : 1);
+  const starts = columns.map((_, i) => columns.slice(0, i).reduce((n, c) => n + width(c), 0));
+  const spansOf = (l: MonthlyLine): SheetRow['spans'] => {
+    const out: Partial<Record<number, number>> = {};
+    columns.forEach((c, i) => {
+      const n = l.spans?.[c.key] ?? 1;
+      if (n > 1) out[starts[i]!] = columns.slice(i, i + n).reduce((w, x) => w + width(x), 0);
+    });
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  const rows = shown.map((l): SheetRow => {
+    const spans = l.kind === 'block' ? undefined : spansOf(l);
+    return {
+      kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}),
+      cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
+        const cell = l.cells[c.key];
+        if (!cell) return c.pct ? [null, null] : [null];
+        return c.pct ? [cell.amountSen, cell.pct] : [cell.amountSen];
+      }),
+      ...(spans ? { spans } : {}),
+    };
+  });
   return { columns: cols, rows };
 }
 

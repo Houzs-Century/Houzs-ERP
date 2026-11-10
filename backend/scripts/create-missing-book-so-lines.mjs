@@ -60,6 +60,7 @@
  * reported as `already present` and nothing is inserted, so a second run
  * creates no duplicate and writes nothing at all.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -176,7 +177,7 @@ async function main() {
     log(`  ${e.doc} dtl ${key}: ADD line ${lineNo}  ${grp}  ${JSON.stringify(prod.code)} x${qty} @ RM 0.00`);
     log(`      description2 = ${JSON.stringify(d2)}`);
     log(`      book says the document holds ${bh?.lineCount ?? "?"} line(s); the ERP holds ${rows.length} and will hold ${rows.length + 1}`);
-    log(`      header total stays ${hdr.local_total_sen} and status stays ${JSON.stringify(hdr.status)} (the line carries no money); inventory movements naming it: ${movesBefore}`);
+    log(`      header local_total_sen=${hdr.local_total_sen} stays, and status stays ${JSON.stringify(hdr.status)} (the line carries no money); inventory movements naming it: ${movesBefore}`);
     log(`      why: ${e.why}`);
 
     verify.push({
@@ -248,7 +249,7 @@ async function verifyOnFreshConnection(items) {
     if (String(h?.status) !== String(it.status)) say.push(`status ${h?.status}, expected ${it.status} — THE DOCUMENT CHANGED STATE`);
     if (Number(h?.line_count) !== it.lines) say.push(`header line_count ${h?.line_count}, expected ${it.lines}`);
     if (moves !== it.moves) say.push(`inventory movements ${moves}, expected ${it.moves} — STOCK MOVED`);
-    if (!say.length) { log(`  OK  ${it.doc}  ${it.code} x${it.qty} @ 0  total ${h.local_total_sen}  status ${h.status}  lines ${h.line_count}  movements ${moves}`); continue; }
+    if (!say.length) { log(`  OK  ${it.doc}  ${it.code} x${it.qty} @ 0  local_total_sen=${h.local_total_sen}  status ${h.status}  lines ${h.line_count}  movements ${moves}`); continue; }
     bad++;
     for (const s of say) log(`  FAIL ${it.doc}: ${s}`);
   }

@@ -22,6 +22,7 @@
 // every legitimate answer. Only an unreachable DB or a query error exits non-zero.
 //   DATABASE_URL=... npx tsx scripts/plan-writeoff-duplicate-sofa-lots.mjs
 // tsx is not required (no TS imports) but harmless; the workflow uses node.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { planDuplicateSofaLots, variantKeyMirror } from "./lib/duplicate-sofa-lot-plan.mjs";

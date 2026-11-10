@@ -25,6 +25,7 @@ import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import { mfgCategoryLabel } from "../vendor/shared/product-categories";
 import { supplierEmailList } from "../vendor/shared/supplier-emails";
+import { byStr } from "./mobile-list-compare";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -299,9 +300,6 @@ const balanceSen = (r: any): number => siOutstandingSen(
   Number(pick(r, "paidSen", "paid_sen") ?? 0),
   siDepositAppliedSen({ so_deposit_applied_sen: pick(r, "soDepositAppliedSen", "so_deposit_applied_sen") as number | null }), siCreditNotesSen({ credit_notes_sen: pick(r, "creditNotesSen", "credit_notes_sen") as number | null }));
 
-/** Numeric-aware locale compare, mirroring the prototype's localeCompare with
- *  { numeric: true }. Used to keep sort keys terse in the configs. */
-const byStr = (a: unknown, b: unknown) => String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true });
 const byNum = (a: unknown, b: unknown) => (Number(b) || 0) - (Number(a) || 0);
 const byDate = (a: unknown, b: unknown) => {
   const ta = a ? +new Date(String(a)) : 0;
@@ -1261,7 +1259,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "mfg-purchase-orders": {
     title: "Purchase Orders",
     eyebrow: "Procurement",
-    placeholder: "Search PO · supplier",
+    placeholder: "Search PO · supplier · item code",
     endpoint: "/mfg-purchase-orders?limit=500",
     listKey: "purchaseOrders",
     primary: (r) => r.supplier?.name || r.po_number,

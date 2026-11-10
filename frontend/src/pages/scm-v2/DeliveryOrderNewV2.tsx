@@ -96,6 +96,7 @@ import {
   seedFollowerVariants,
   seedableMasterVariants,
 } from "../../vendor/scm/lib/so-variant-cascade";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,14 +106,6 @@ import {
 type DoDraftLine = SoLineDraft & { rid: string; itemId?: string; soItemId?: string | null };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const todayIso = (): string => {
-  const d = new Date();
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-};
 
 const isoToDmy = fmtDate;
 
@@ -599,7 +592,7 @@ export function DeliveryOrderNewV2() {
   const [ecName, setEcName] = useState("");
   const [ecRelationship, setEcRelationship] = useState("");
   const [ecPhone, setEcPhone] = useState("");
-  const [doDate, setDoDate] = useState(todayIso());
+  const [doDate, setDoDate] = useState(todayMyt());
   const [driver, setDriver] = useState("");
   const [vehicle, setVehicle] = useState("");
   const [buildingType, setBuildingType] = useState("");
@@ -877,7 +870,7 @@ export function DeliveryOrderNewV2() {
     if (!doo) return;
     setEditSeeded(true);
     /* The seed is the shared layer's (do-header-form.ts), the one the phone's edit sheet uses. */
-    const f = seedDoHeaderForm(doo, todayIso());
+    const f = seedDoHeaderForm(doo, todayMyt());
     setCustomerName(f.customerName); setDebtorCode(f.debtorCode); setCustomerSoRef(f.customerSoRef);
     setPhone(f.phone); setEmail(f.email); setCustomerType(f.customerType); setSalespersonId(f.salespersonId);
     setAddr1(f.address1); setAddr2(f.address2); setState(f.state); setCity(f.city); setPostcode(f.postcode);
@@ -1141,7 +1134,7 @@ export function DeliveryOrderNewV2() {
           stacked sticky boxes would each pin at top:0 and overlap. */}
       {/* top-12 / lg:top-[52px] z-20 is the house offset for a page-level sticky
           (Layout.tsx, DetailLayout, AmendmentDetailV2, PoAmendmentDetailV2): the
-          workspace tab strip in TopNavbar is itself `sticky top-0 z-30 h-[52px]`
+          workspace tab strip in TopNavbar is itself `sticky top-0 z-40 h-[52px]`
           inside this same scroll container. This box was `top-0 z-10`, so it
           parked UNDER that strip and the strip painted over its first 52px —
           exactly the title row and the Cancel / Save as Draft / Create buttons.

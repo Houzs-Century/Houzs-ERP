@@ -293,7 +293,7 @@ export function PageHeader({
              content that would otherwise show through. */
         /* 2026-07-19 (fix/so-maintenance-403) — the sticky offsets were
            DESKTOP-ONLY correct. Below lg the chrome above us is MobileTopBar
-           (`sticky top-0 z-20 h-14`, 56 px), not TopNavbar (`sticky top-0 z-30
+           (`sticky top-0 z-20 h-14`, 56 px), not TopNavbar (`sticky top-0 z-40
            h-12`, 48 px). Parking at top-12 on every breakpoint left this header
            8 px INSIDE the mobile app bar, and z-20 TIED with it — a tie the
            later-painted element wins, so the pinned page header covered the

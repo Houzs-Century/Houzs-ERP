@@ -9,6 +9,7 @@ import { Button } from "../../components/Button";
 import { api } from "../../api/client";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { LABEL } from "./FleetUi";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 const CLS = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none";
 
@@ -19,7 +20,7 @@ export function PlanServiceForm({ planId, componentLabel, currentKm, onCancel, o
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const [doneDate, setDoneDate] = useState(new Date().toISOString().slice(0, 10));
+  const [doneDate, setDoneDate] = useState(todayMyt());
   const [km, setKm] = useState(currentKm != null ? String(currentKm) : "");
   const [cost, setCost] = useState("");
   const [workshop, setWorkshop] = useState("");

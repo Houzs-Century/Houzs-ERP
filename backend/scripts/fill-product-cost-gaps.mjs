@@ -18,6 +18,7 @@
 
    RE-RUN: idempotent, value-guarded on an empty cost; a second run writes nothing.
    Env: DATABASE_URL (required); COMPANY (optional, default every company). */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { kivSourceCode } from './lib/kiv-bedframe-cost.mjs';
 
@@ -87,7 +88,7 @@ async function main() {
   let bad = 0;
   for (const w of applied) {
     const [r] = await check`SELECT base_price_sen FROM scm.mfg_products WHERE company_id = ${w.co} AND code = ${w.code}`;
-    if (Number(r?.base_price_sen) !== w.sen) { bad += 1; console.error(`MISMATCH ${w.code}: ${r?.base_price_sen} != ${w.sen}`); }
+    if (Number(r?.base_price_sen) !== w.sen) { bad += 1; console.error(`MISMATCH ${w.code}: base_price_sen=${r?.base_price_sen} != ${w.sen} sen`); }
   }
   await check.end();
   console.log(`APPLIED ${applied.length} products; ${bad} did not read back.`);

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
+import { CrewPinForm } from "./CrewPinForm";
 import { useAuth } from "./AuthContext";
 import { signInErrorMessage } from "./loginErrors";
 import { Button } from "../components/Button";
@@ -14,6 +15,7 @@ import { validatePasswordStrength } from "../lib/passwordStrength";
 import { AmbientSnow } from "../components/AmbientSnow";
 import { consumeCorrelated, correlatedFetch } from "../lib/requestCorrelation";
 import { readRememberedEmail } from "../lib/rememberedEmail";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 // NOTE: this module is lazy-loaded by auth/AuthGate.tsx — every screen here is
 // unauthenticated-only UI, kept out of the initial bundle on purpose. AuthGate
@@ -44,7 +46,7 @@ function AuthShell({
   subtitle: string;
   children: ReactNode;
 }) {
-  const year = new Date().getFullYear();
+  const year = todayMyt().slice(0, 4);
   const branding = useBranding();
   return (
     <div
@@ -244,6 +246,8 @@ export function LoginScreen() {
   // Set once a password login returns a 2FA challenge — switches to the code step.
   const [challenge, setChallenge] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  // Crew sign-in (staff code + PIN) instead of email + password.
+  const [crew, setCrew] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -324,6 +328,18 @@ export function LoginScreen() {
     );
   }
 
+  if (crew) {
+    return (
+      <AuthShell
+        eyebrow="Crew Sign In"
+        title="Staff code and PIN"
+        subtitle="For drivers and helpers. Opens the delivery and project crew screens."
+      >
+        <CrewPinForm onTotp={setChallenge} onBack={() => setCrew(false)} />
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell
       eyebrow="Sign In"
@@ -382,6 +398,18 @@ export function LoginScreen() {
         <Button variant="brass" className="w-full" disabled={busy}>
           {busy ? "Signing in…" : "Sign In"}
         </Button>
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setErr(null);
+              setCrew(true);
+            }}
+            className="text-[11px] text-ink-muted underline-offset-2 hover:text-accent hover:underline"
+          >
+            Driver or helper? Sign in with staff code and PIN
+          </button>
+        </div>
       </form>
     </AuthShell>
   );

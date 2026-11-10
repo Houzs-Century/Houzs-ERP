@@ -32,7 +32,7 @@ import { Plus, Printer } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useArInvoices } from '../../../vendor/scm/lib/ar-invoice-queries';
 import {
-  useCancelCreditNote, useCreditNoteDetail, useCreditNotes, type CreditNoteDetail, type NoteKind,
+  useCancelCreditNote, useCreditNoteDetail, useCreditNoteFromReturn, useCreditNotes, type CreditNoteDetail, type NoteKind,
 } from '../../../vendor/scm/lib/credit-note-queries';
 import { useCancelDebtorBill } from '../../../vendor/scm/lib/accounting-queries';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
@@ -46,6 +46,7 @@ import { useToastOptional } from '../../../hooks/useToast';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { NoteForm, emptyForm, noteEditValues } from '../CreditNotes';
+import { fromReturnValues, nothingToCredit, skippedReturnLines } from '../credit-note-from-return';
 import { AskBanner, type Ask } from './AskBanner';
 import { batchTitle, useMoneyInPrint } from './moneyInPrint';
 import { BillFormPage } from './BillFormPage';
@@ -220,7 +221,7 @@ export function MoneyInNotes() {
   const openRow = (x: NoteItem) => openInTab(noteHref(x));
   const openForm = (mode: 'new' | 'copy' | 'edit' | 'knock', x?: NoteItem) =>
     setUrl({ form: mode, id: x?.id ?? null, src: x?.source === 'bill' ? 'bill' : null, type: null, party: null }, true);
-  const closeForm = () => setUrl({ form: null, id: null, src: null, type: null, party: null, back: null }, true);
+  const closeForm = () => setUrl({ form: null, id: null, src: null, type: null, party: null, back: null, fromReturn: null }, true);
 
   const menuOf = (x: NoteItem): MenuItem[] => {
     const open: MenuItem = { label: 'Open', onClick: () => openRow(x) };
@@ -309,14 +310,16 @@ export function MoneyInNotes() {
     }
     const type: NoteType = params.get('type') === 'debit' ? 'debit' : 'credit';
     const party: NoteParty = params.get('party') === 'debtor' ? 'debtor' : 'customer';
-    const switches = form === 'new'
+    /* From a delivery return (backlog A1): a customer credit note, so no type switch. */
+    const fromReturn = form === 'new' ? params.get('fromReturn') : null;
+    const switches = form === 'new' && !fromReturn
       ? <NoteTypeSwitch type={type} party={party} onChange={(t, p) => setUrl({ type: t === 'credit' ? null : t, party: p === 'customer' ? null : p })} />
       : null;
     if (form === 'new' && type === 'debit' && party === 'debtor') {
       return <BillFormPage mode="new" id={null} debtorId="" docKind="DN" backLabel={BACK} titleExtra={switches} onClose={closeForm} openDoc={openInTab} />;
     }
     return (
-      <NoteFormPage mode={form} id={id} kind={kindOf(type, party)} switches={switches}
+      <NoteFormPage mode={form} id={id} kind={fromReturn ? 'CN' : kindOf(type, party)} switches={switches} fromReturn={fromReturn}
         onClose={closeForm} onSaved={refreshAll} openDoc={openInTab} />
     );
   }
@@ -408,40 +411,49 @@ function NoteTypeSwitch({ type, party, onChange }: { type: NoteType; party: Note
    CreditNotes.tsx's NoteForm, inline: POST /credit-notes (a draft) or PATCH
    /credit-notes/:id, then POST /credit-notes/:id/post on Save & post. Copy as
    new starts from the note's party and lines, dated today, nothing knocked off. */
-function NoteFormPage({ mode, id, kind, switches, onClose, onSaved, openDoc }: {
+function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, openDoc }: {
   mode: 'new' | 'copy' | 'edit';
   id: string | null;
   kind: NoteKind;
   switches: ReactNode;
+  /** A delivery return's id: the new note is filled from it. Null for every other new note. */
+  fromReturn: string | null;
   onClose: () => void;
   onSaved: () => void;
   openDoc: (href: string) => void;
 }) {
   const toast = useToastOptional();
   const detailQ = useCreditNoteDetail(mode === 'new' ? null : id);
+  const prefillQ = useCreditNoteFromReturn(mode === 'new' ? fromReturn : null);
   const d = detailQ.data;
   const n = d?.note;
+  const prefill = prefillQ.data;
   const initial = useMemo(() => {
+    if (mode === 'new' && fromReturn) return prefill ? fromReturnValues(prefill) : null;
     if (mode === 'new') return emptyForm(kind);
     if (!d) return null;
     const values = noteEditValues(d.note, d.lines, mode === 'copy' ? [] : d.allocations ?? []);
     return mode === 'copy' ? { ...values, noteDate: emptyForm(d.note.kind).noteDate, knockOff: {} } : values;
-  }, [mode, kind, d]);
+  }, [mode, kind, d, fromReturn, prefill]);
+  const blocked = mode === 'new' && fromReturn && prefill ? nothingToCredit(prefill) : null;
+  const skipped = mode === 'new' && fromReturn && prefill ? skippedReturnLines(prefill) : [];
   const title = mode === 'edit' ? `Edit ${n?.note_number ?? ''}` : mode === 'copy' ? `New note · copy of ${n?.note_number ?? ''}` : 'New note';
   /* A posted or cancelled note is not edited here (the server refuses it too). */
   const locked = mode === 'edit' && n != null && n.status !== 'DRAFT';
 
   return (
     <DocFormShell title={mode !== 'new' && !n ? 'Note' : title} backLabel={BACK} onBack={onClose} titleExtra={switches} bare>
-      {!initial || locked
+      {!initial || locked || blocked
         ? (
-          <div className={ui.hint} role={detailQ.isError || locked ? 'alert' : undefined}>
+          <div className={ui.hint} role={detailQ.isError || prefillQ.isError || locked || blocked ? 'alert' : undefined}>
             {locked ? `${n.note_number} is ${n.status === 'POSTED' ? 'posted' : 'cancelled'} — only a draft changes.`
-              : detailQ.isError ? `The note did not load — ${errText(detailQ.error)}` : 'Loading the note…'}
+              : blocked ?? (prefillQ.isError ? `The delivery return did not load — ${errText(prefillQ.error)}`
+                : detailQ.isError ? `The note did not load — ${errText(detailQ.error)}` : fromReturn ? 'Loading the delivery return…' : 'Loading the note…')}
           </div>
         )
         : (
           <div className={ui.formCard}>
+            {skipped.length > 0 && <div className={ui.hint} aria-label="Returned lines left off">Left off: {skipped.join('; ')}.</div>}
             <NoteForm key={`${mode}-${initial.kind}-${id ?? ''}`} inline mode={mode === 'edit' ? 'edit' : 'new'} id={mode === 'edit' ? n?.id : undefined}
               kinds={[initial.kind]} initial={initial} onClose={onClose}
               onSaved={(noteId, done) => {

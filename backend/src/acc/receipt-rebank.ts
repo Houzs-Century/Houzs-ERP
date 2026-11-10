@@ -120,11 +120,13 @@ async function liveEntries(
   return { ok: true, byPayment };
 }
 
+/** `bank`: the bank to move onto; null = the company's current BANK_DEFAULT
+    (Receive into). Formalising a receipt onto a named bank passes that bank. */
 async function listFor(
   sb: Db, companyId: number, range: { from: string; to: string } | null, only: Array<{ source: Source; paymentId: string }> | null,
+  bank: string | null,
 ): Promise<RebankList & { payments?: Map<string, PaymentRead> }> {
-  const roles = await resolveRoles(sb, companyId);
-  const target = roles.BANK_DEFAULT;
+  const target = bank ?? (await resolveRoles(sb, companyId)).BANK_DEFAULT;
   const pays = await readTransfers(sb, companyId, range, only);
   if (!pays.ok) return pays;
   const live = await liveEntries(sb, companyId, pays.rows);
@@ -143,6 +145,26 @@ async function listFor(
     });
   }
   if (rows.length === 0) return { ok: true, target, rows, payments };
+
+  /* Confirmed into a named bank (Conts #476): a receipt Finance confirmed into
+     the bank its entry sits on stays there — the clean-up never undoes it. */
+  if (bank === null) {
+    const confirmed = new Set<string>();
+    for (const source of ['SOPAY', 'SIPAY'] as const) {
+      const ids = rows.filter((r) => r.source === source).map((r) => r.paymentId);
+      if (ids.length === 0) continue;
+      const f = await chunkIn<Rec>(ids, (batch, lo, hi) => sb.from('acc_official_receipts')
+        .select('payment_id, channel_account_code').eq('company_id', companyId).eq('status', 'FORMAL')
+        .eq('payment_source', source).in('payment_id', batch).order('payment_id').range(lo, hi));
+      if (f.error) return { ok: false, reason: `receipts: ${f.error.message}` };
+      for (const x of f.data) if (x.channel_account_code) confirmed.add(`${source}:${String(x.payment_id)}|${String(x.channel_account_code)}`);
+    }
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (confirmed.has(`${r.source}:${r.paymentId}|${r.fromAccount}`)) { rows.splice(i, 1); payments.delete(`${r.source}:${r.paymentId}`); }
+    }
+    if (rows.length === 0) return { ok: true, target, rows, payments };
+  }
 
   /* Claimed on a statement: the money was matched on the bank it sits on. */
   const claims = await chunkIn<Rec>(rows.map((r) => r.jeNo), (batch, lo, hi) => sb.from('acc_bank_statement_matches')
@@ -169,7 +191,7 @@ async function listFor(
 
 /** The transfer receipts in [from, to] that sit on another bank than the company's Receive into. */
 export async function rebankCandidates(sb: Db, companyId: number, from: string, to: string): Promise<RebankList> {
-  const r = await listFor(sb, companyId, { from, to }, null);
+  const r = await listFor(sb, companyId, { from, to }, null, null);
   if (!r.ok) return r;
   return { ok: true, target: r.target, rows: r.rows };
 }
@@ -191,7 +213,27 @@ export type RebankOutcome = {
 export async function rebankReceipts(
   sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>,
 ): Promise<{ ok: true; target: string; results: RebankOutcome[] } | { ok: false; reason: string }> {
-  const fresh = await listFor(sb, companyId, null, items);
+  return moveReceipts(sb, companyId, items, null);
+}
+
+/**
+ * Where a transfer payment's live entry sits against the bank Finance is
+ * confirming it into (Conts #476): null when it is already there (or has no
+ * live entry, or is no transfer), else the move with its `blocked` reason.
+ */
+export async function transferMoveFor(
+  sb: Db, companyId: number, item: { source: Source; paymentId: string }, bank: string,
+): Promise<{ ok: true; move: RebankCandidate | null } | { ok: false; reason: string }> {
+  const r = await listFor(sb, companyId, null, [item], bank);
+  if (!r.ok) return r;
+  return { ok: true, move: r.rows[0] ?? null };
+}
+
+/** Move the named receipts onto `bank` (null = BANK_DEFAULT). */
+export async function moveReceipts(
+  sb: Db, companyId: number, items: Array<{ source: Source; paymentId: string }>, bank: string | null,
+): Promise<{ ok: true; target: string; results: RebankOutcome[] } | { ok: false; reason: string }> {
+  const fresh = await listFor(sb, companyId, null, items, bank);
   if (!fresh.ok) return fresh;
   const byKey = new Map(fresh.rows.map((r) => [`${r.source}:${r.paymentId}`, r]));
   const results: RebankOutcome[] = [];
@@ -209,7 +251,8 @@ export async function rebankReceipts(
     if (!undone.ok) { results.push({ ...base, status: 'skipped', reason: `reverse: ${undone.status}${undone.reason ? ` (${undone.reason})` : ''}` }); continue; }
 
     const row = fresh.payments!.get(key)!.row;
-    const posted = it.source === 'SOPAY' ? await postSoPayment(sb, row as SoPaymentRow) : await postSiPayment(sb, row as SiPaymentRow);
+    const onto = { bankAccountCode: fresh.target };
+    const posted = it.source === 'SOPAY' ? await postSoPayment(sb, row as SoPaymentRow, onto) : await postSiPayment(sb, row as SiPaymentRow, onto);
     if (!posted.ok || (posted.status !== 'posted' && posted.status !== 'already_posted')) {
       const why = posted.ok ? posted.status : `${posted.status}${posted.reason ? ` (${posted.reason})` : ''}`;
       results.push({ ...base, status: 'failed', reason: `reversed, but the new entry did not post: ${why}` });

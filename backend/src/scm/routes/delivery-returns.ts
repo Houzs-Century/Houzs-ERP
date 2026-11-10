@@ -12,6 +12,7 @@
 //
 // Mounted at '/delivery-returns' in apps/api/src/index.ts.
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
@@ -45,6 +46,7 @@ import { sourceUnitCostByItemId } from '../lib/source-cost';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
+import { creditNoteHold, loadReturnCredit } from '../lib/cn-from-return';
 import {
   DR_FINANCE_KEYS,
   DR_HEADER_COLS,
@@ -84,8 +86,7 @@ const ITEM =
   'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'delivery_returns', 'return_number', `${p}DR-${yymm}`);
 };
@@ -885,7 +886,14 @@ deliveryReturns.get('/:id', async (c) => {
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
   // (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ deliveryReturn: h.data, items });
+  /* The money side (backlog A1): where the credit note stands, from the notes
+     actually linked. A failed read says so instead of "awaiting". */
+  const co = requireActiveCompanyId(c);
+  const credit = co.ok ? await loadReturnCredit(sb, co.companyId, id, null) : null;
+  const creditNote = credit?.ok
+    ? { state: credit.value.state, notes: credit.value.notes.map((n) => ({ id: n.id, number: n.note_number, status: n.status })) }
+    : { state: 'UNKNOWN', notes: [] };
+  return c.json({ deliveryReturn: { ...(h.data as unknown as Record<string, unknown>), credit_note_state: creditNote.state }, items, creditNote });
 });
 
 /* Insert the DR header from a client body. Shared by POST / and the
@@ -1662,6 +1670,10 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     if (q === null) return c.json({ error: 'invalid_qty', message: returnLineQtyMessage((it.itemCode ?? prev.item_code) as string, it.qtyReturned ?? it.qty) }, 400);
     qty = q;
   }
+  if (qty < Number(prev.qty_returned ?? 0)) {
+    const held = await creditNoteHold(sb, co.companyId, [{ itemId, qty }]);
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
+  }
 
   /* Over-return cap (parity with create + add-line; was the one DR back door).
      An edited qty must not push the DO line past its remaining (delivered −
@@ -1753,6 +1765,10 @@ deliveryReturns.delete('/:id/items/:itemId', async (c) => {
       .select('id').eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
     if (!line) return c.json(NOT_THIS_COMPANY, 404);
   }
+  {
+    const held = await creditNoteHold(sb, co.companyId, [{ itemId, qty: 0 }]);
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
+  }
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
@@ -1830,38 +1846,44 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
     }, 409);
   }
 
+  if (toStatus === 'CANCELLED') {
+    const { data: lines, error: lErr } = await scopeToCompanyId(sb.from('delivery_return_items').select('id').eq('delivery_return_id', id), co.companyId);
+    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+    const held = await creditNoteHold(sb, co.companyId, ((lines ?? []) as Array<{ id: string }>).map((l) => ({ itemId: l.id, qty: 0 })));
+    if (held) return c.json({ error: held.error, message: held.message }, held.status);
+  }
+
   const now = new Date().toISOString();
   const ts: Record<string, string> = { updated_at: now, status: toStatus };
   if (toStatus === 'RECEIVED') ts.received_at = now;
   if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
   if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
-  /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
-     window: two concurrent cancels can both read a non-cancelled status and both
-     fall through to reverse the return's stock (double-reverse). For the CANCELLED
-     transition we make the write conditional on the row still being non-cancelled
-     and treat "no row returned" as "someone else already cancelled" → idempotent
-     echo, NO second reversal. Postgres serialises the UPDATEs so exactly one wins
-     the row and fires the single reversal. */
-  let data: { id: string; status: string } | null;
-  if (toStatus === 'CANCELLED') {
-    const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
-      .update(ts).eq('id', id), co.companyId).neq('status', 'CANCELLED')
-      .select('id, status').maybeSingle();
-    if (isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
-    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    if (!updated) {
-      // Lost the race — another concurrent cancel already flipped it. Do NOT
-      // reverse again; echo the cancelled state.
+  /* COMPARE-AND-SET on the status we read. Every status write — cancel and the
+     RECEIVED / INSPECTED / REFUNDED stamps alike — carries `.eq('status',
+     prevStatus)`, so a write that lost a race matches zero rows instead of
+     overwriting the winner. The CANCELLED gate above is a read; without this a
+     REFUNDED landing just after a concurrent cancel turned CANCELLED back into
+     REFUNDED with the stock already drained (Hookka #1130 sister). Two cancels
+     racing: Postgres serialises the UPDATEs, one wins and fires the single
+     reversal, the loser re-reads CANCELLED and echoes without reversing. */
+  const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
+    .update(ts).eq('id', id), co.companyId).eq('status', prevStatus)
+    .select('id, status').maybeSingle();
+  if (toStatus === 'CANCELLED' && isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!updated) {
+    const { data: latest, error: reErr } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (reErr) return c.json({ error: 'status_changed', message: 'This return was changed by someone else just now and its new state could not be read. Nothing was saved. Refresh and check before trying again.', reason: reErr.message }, 409);
+    if (!latest) return c.json(NOT_THIS_COMPANY, 404);
+    const nowStatus = (latest as { status: string }).status;
+    if (toStatus === 'CANCELLED' && nowStatus === 'CANCELLED') {
       return c.json({ deliveryReturn: { id, status: 'CANCELLED' } });
     }
-    data = updated as { id: string; status: string };
-  } else {
-    const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
-      .update(ts).eq('id', id), co.companyId).select('id, status').single();
-    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    data = updated as { id: string; status: string };
+    const message = `This return was changed by someone else just now (it is now ${nowStatus}, it was ${prevStatus} when you started). Nothing was saved. Refresh and check before trying again.`;
+    return c.json({ error: 'status_changed', message, reason: message, currentStatus: nowStatus }, 409);
   }
+  const data = updated as { id: string; status: string };
 
   // Cancelling a DR → drain the inventory IN it wrote on create back out, via
   // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed

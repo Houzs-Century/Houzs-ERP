@@ -40,6 +40,7 @@ export function VerificationFindingsFields({ c, patch }: { c: Row; patch: (body:
           <InlineEdit
             label="Pending With"
             isLabelHidden
+            textarea
             value={c.pending_with}
             placeholder="Example: Logistic Team / Supplier / Customer"
             onSave={(v) => patch({ pending_with: v })}

@@ -67,6 +67,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -394,7 +395,7 @@ export const ConsignmentOrderNew = () => {
   }, [resolvedVenueId, venuesQ.data]);
 
   const datesXor = (processingDate.trim() !== '') !== (deliveryDate.trim() !== '');
-  const today = new Date().toLocaleDateString('en-CA');
+  const today = todayMyt();
 
   const flushPendingPhotos = async (
     docNo: string,

@@ -122,6 +122,7 @@
  * RE-RUN: read-only, so a second run answers again from current state — which
  * is the point: it runs again after the delta migration.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

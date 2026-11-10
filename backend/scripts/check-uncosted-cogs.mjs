@@ -46,6 +46,7 @@
 //
 // Mirrors backend/scripts/check-soak-gate.mjs + diag-do-payments.mjs (the repo's
 // read-only-diagnostic shape) and its workflow .github/workflows/uncosted-cogs-check.yml.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

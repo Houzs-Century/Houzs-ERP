@@ -33,6 +33,7 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { monthWindow } from '../../acc/bank-month';
+import { monthBoundsMy } from '../lib/my-time';
 import { SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
 import { usersHoldingPermission } from '../../services/permissionHolders';
 import {
@@ -50,12 +51,13 @@ const DEFAULT_SOURCE = 'web';
 const AUDIT_COLS = 'id, so_doc_no, action, actor_name_snapshot, field_changes, note, created_at, payment_id, source';
 const CHUNK = 200;
 
-/** The first day of the month AFTER `month`, as the exclusive upper bound a
-    timestamptz filter wants — `monthWindow` gives inclusive dates, and a
-    `lte('…-30')` would drop everything corrected on the 30th after midnight. */
-const nextMonthStart = (month: string): string => {
+/** The month as Malaysian-midnight instants for the timestamptz filter: a bare
+    `YYYY-MM-01` is read as UTC midnight, so a correction made before 08:00 on
+    the 1st was reviewed under the previous month. */
+const monthInstants = (month: string): { from: string; to: string } => {
   const [y, m] = month.split('-').map(Number);
-  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const b = monthBoundsMy(y, m - 1);
+  return { from: b.startUtc as string, to: b.endUtc as string };
 };
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
@@ -97,6 +99,7 @@ export const paymentCorrections = async (c: Ctx) => {
   const month = String(c.req.query('month') ?? '').trim();
   const window = monthWindow(month);
   if (!window) return c.json({ error: 'bad_month', message: 'Say which month, as YYYY-MM.' }, 400);
+  const bounds = monthInstants(month);
   const sb = c.get('supabase');
   const fail = (what: string, reason: string) => c.json({ error: 'load_failed', reason: `${what}: ${reason}` }, 500);
 
@@ -106,8 +109,8 @@ export const paymentCorrections = async (c: Ctx) => {
     .eq('company_id', co.companyId)
     .eq('source', AMEND_SOURCE)
     .in('action', CORRECTION_ACTIONS)
-    .gte('created_at', window.from)
-    .lt('created_at', nextMonthStart(month))
+    .gte('created_at', bounds.from)
+    .lt('created_at', bounds.to)
     .order('created_at', { ascending: false });
   if (auditErr) return fail('audit', auditErr.message);
   const audits = ((auditRaw ?? []) as Row[]).map(toAudit);
@@ -126,8 +129,8 @@ export const paymentCorrections = async (c: Ctx) => {
       .eq('source', DEFAULT_SOURCE)
       .in('action', CORRECTION_ACTIONS)
       .in('actor_name_snapshot', holders)
-      .gte('created_at', window.from)
-      .lt('created_at', nextMonthStart(month));
+      .gte('created_at', bounds.from)
+      .lt('created_at', bounds.to);
     if (earlyErr) return fail('audit before the rule', earlyErr.message);
     audits.push(...((earlyRaw ?? []) as Row[]).map(toAudit));
   }

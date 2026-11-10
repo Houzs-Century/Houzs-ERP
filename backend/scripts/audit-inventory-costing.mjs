@@ -49,6 +49,7 @@
 //
 // Env: DATABASE_URL (or .dev.vars for local use). SAMPLE=<n> rows per section.
 // ----------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

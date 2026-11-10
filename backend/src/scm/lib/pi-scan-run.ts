@@ -31,7 +31,8 @@ import { loadSuppliers } from './grn-scan-load';
 import { buildPiReview, readKey, NO_CODES, type BillableLine, type PiReview, type SupplierCodes } from './pi-scan-check';
 import { aiSkuMatcher, rowSize, type AiSkuMatcher } from './pi-scan-ai-match';
 import { modelPrefixes } from './pi-scan-sku';
-import { loadOutstandingGrnLines, remainingToBill } from './outstanding-grn-lines';
+import { loadOutstandingGrnLines, loadPoByPoItem, remainingToBill } from './outstanding-grn-lines';
+import { chunkIn } from './paginate-all';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
   matchInvoiceLinesToGrnLines, docRefMatches, docRefsOf, normalizeCode,
@@ -278,9 +279,10 @@ function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | nul
 
 /** Find the POSTED, not-held GRN(s) this invoice is for: DO No against
  *  delivery_note_ref (strongest), then grn_number, then PO No against
- *  purchase_orders.po_number (suffix-tolerant). Supplier-narrowed when the
- *  invoice named a resolvable supplier. Returns [] when nothing anchors. */
-async function findAnchorGrns(
+ *  purchase_orders.po_number (suffix-tolerant) of the receipt's header OR of
+ *  any of its lines. Supplier-narrowed when the invoice named a resolvable
+ *  supplier. Returns [] when nothing anchors. */
+export async function findAnchorGrns(
   svc: SupabaseClient,
   parsed: PiScanExtract,
   companyId: number | null,
@@ -324,8 +326,48 @@ async function findAnchorGrns(
   const refs = docRefsOf(doNo);
   const byDo = rows.filter((g) => refs.some((d) => docRefMatches(d, g.delivery_note_ref) || docRefMatches(d, g.grn_number)));
   if (byDo.length > 0) return byDo;
-  const byPo = rows.filter((g) => docRefMatches(poNo, g.po_number));
-  return byPo;
+  if (!poNo) return [];
+  const linePoNumbers = await loadLinePoNumbersByGrn(svc, rows.map((g) => g.id), companyId);
+  if (linePoNumbers === null) return [];
+  return rows.filter((g) => docRefMatches(poNo, g.po_number)
+    || (linePoNumbers.get(g.id) ?? []).some((n) => docRefMatches(poNo, n)));
+}
+
+/* One goods receipt can take lines from several POs (the add-PO picker,
+   `/from-po-items`) and grns.purchase_order_id names only the first, so an
+   invoice for a later PO of that receipt never matched its header. Each line's
+   PO comes through its purchase_order_item_id, resolved by the same reader the
+   Bill-a-GRN picker uses. null when a read fails: anchoring on the header alone
+   would bill a subset of the receipts the invoice names, so the scan stops at
+   needs-review instead. */
+async function loadLinePoNumbersByGrn(
+  svc: SupabaseClient,
+  grnIds: string[],
+  companyId: number | null,
+): Promise<Map<string, string[]> | null> {
+  const out = new Map<string, string[]>();
+  if (grnIds.length === 0) return out;
+  const scopeQuery = <Q>(q: Q): Q => scopeToCompanyIdOrOpen(q, companyId);
+  const lines = await chunkIn<{ id: string; grn_id: string; purchase_order_item_id: string | null }>(grnIds, (batch, from, to) =>
+    scopeQuery(svc.from('grn_items').select('id, grn_id, purchase_order_item_id').in('grn_id', batch))
+      .order('id').range(from, to));
+  if (lines.error) {
+    console.warn('[pi-scan-job] anchor GRN line PO read failed:', lines.error.message);
+    return null;
+  }
+  const po = await loadPoByPoItem({ sb: svc, scopeQuery, poItemIds: lines.data.map((l) => l.purchase_order_item_id) });
+  if (po.error !== null) {
+    console.warn('[pi-scan-job] anchor GRN line PO read failed:', po.error);
+    return null;
+  }
+  for (const l of lines.data) {
+    const n = l.purchase_order_item_id ? po.byPoItem.get(l.purchase_order_item_id)?.poDocNo : null;
+    if (!n) continue;
+    const list = out.get(l.grn_id) ?? [];
+    if (!list.includes(n)) list.push(n);
+    out.set(l.grn_id, list);
+  }
+  return out;
 }
 
 /** Resolve the invoice's supplier to a suppliers.id (by code, then name),

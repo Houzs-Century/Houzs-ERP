@@ -379,7 +379,7 @@ async function insertProposal(db: D1Database, p: ProposalInsert, nowIso: string)
   await db
     .prepare(
       `INSERT INTO delivery_agent_proposals (id, kind, key, status, payload, summary, created_at)
-       VALUES (?, ?, ?, 'PENDING', ?::jsonb, ?, ?)`,
+       VALUES (?, ?, ?, 'PENDING', ?::text::jsonb, ?, ?)`,
     )
     .bind(crypto.randomUUID(), p.kind, p.key, JSON.stringify(p.payload), p.summary, nowIso)
     .run();
@@ -796,7 +796,7 @@ async function collectDeliveryBriefCore(
   try {
     await db
       .prepare(
-        'INSERT INTO delivery_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::jsonb, NULL, ?)',
+        'INSERT INTO delivery_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)',
       )
       .bind(crypto.randomUUID(), JSON.stringify(brief), brief.generatedAt)
       .run();

@@ -81,6 +81,12 @@ function* walk(dir) {
   }
 }
 
+/* Every json-shaped column the AI agents bind is jsonb (migrations 0092-0097,
+   0130, 0133, agent_decisions), so there a stringified .bind() argument must use
+   ?::text::jsonb even with no cast in the SQL (B19: 21 sites were stored as
+   jsonb strings). */
+const STRICT_BIND_PREFIXES = ['backend/src/services/agents/'];
+
 const findings = [];
 for (const root of ROOTS) {
   for (const file of walk(root)) {
@@ -90,7 +96,8 @@ for (const root of ROOTS) {
     // which is the hardest kind to believe.
     const rel = relative(REPO, file).split(sep).join('/');
     if (ALLOWLIST.has(rel)) continue;
-    findings.push(...scanSource(rel, readFileSync(file, 'utf8')));
+    const strictBind = STRICT_BIND_PREFIXES.some((p) => rel.startsWith(p));
+    findings.push(...scanSource(rel, readFileSync(file, 'utf8'), { strictBind }));
   }
 }
 

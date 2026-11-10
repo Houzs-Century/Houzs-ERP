@@ -49,6 +49,7 @@
 // for every legitimate answer — including "none found", which is a real result
 // and not a failure. Non-zero only when the database is unreachable.
 // ---------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const url = process.env.DATABASE_URL;

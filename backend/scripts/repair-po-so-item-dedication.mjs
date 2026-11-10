@@ -81,6 +81,7 @@
    RE-RUN: inert. Keyed on a dedication that disagrees with its own line or is
    absent, which a successful move turns into a KEEP, so a second run plans
    nothing and writes nothing. */
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 import { K, planDedication, seatKey } from './lib/po-so-dedication-plan.mjs';
@@ -191,9 +192,9 @@ async function runPair(SO_DOC, PO_DOC) {
   const beforeShape = dedicationShape(poRows, soRows);
 
   note(`\n${SO_DOC}  (${soRows.length} line(s), money total ${beforeSo.total}, charged ${beforeSo.charged})`);
-  for (const r of soRows) note(`  ${String(r.line_no).padStart(3)}  ${show(r.item_code, r.seat).padEnd(22)} qty ${r.qty}  price ${r.unit_price_sen}  total ${r.total_sen}${r.cancelled ? '  CANCELLED' : ''}  ${r.id}`);
+  for (const r of soRows) note(`  ${String(r.line_no).padStart(3)}  ${show(r.item_code, r.seat).padEnd(22)} qty ${r.qty}  price ${r.unit_price_sen}  total_sen ${r.total_sen}${r.cancelled ? '  CANCELLED' : ''}  ${r.id}`);
   note(`\n${po.po_number}  [${po.status}]  (${poRows.length} line(s), money total ${beforePo.total}, charged ${beforePo.charged})`);
-  for (const r of poRows) note(`  ${show(r.item_code, r.seat).padEnd(22)} qty ${r.qty}  recv ${r.received_qty}  price ${r.unit_price_sen}  total ${r.line_total_sen}  -> ${r.so_item_id ?? '(none)'}`);
+  for (const r of poRows) note(`  ${show(r.item_code, r.seat).padEnd(22)} qty ${r.qty}  recv ${r.received_qty}  price ${r.unit_price_sen}  total_sen ${r.line_total_sen}  -> ${r.so_item_id ?? '(none)'}`);
   note('\ndedication now:');
   for (const line of beforeShape) note(`  ${line}`);
 

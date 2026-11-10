@@ -71,4 +71,30 @@ describe('the printed table', () => {
     /* Two months with a % beside each still print as two columns — upright. */
     expect(isLandscape({ ...base, tables: [monthly] })).toBe(false);
   });
+
+  it('columns under a heading print the heading over them on a row of its own; a cell runs across where the line is not split (owner 2026-11-09)', () => {
+    const t: SheetTable = {
+      columns: [
+        { label: 'Total', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
+        { label: 'Settlement', kind: 'amount', group: 'Oct 2026' }, { label: 'Deposit', kind: 'amount', group: 'Oct 2026' },
+        { label: 'Settlement', kind: 'amount', group: 'Sep 2026' }, { label: 'Deposit', kind: 'amount', group: 'Sep 2026' },
+      ],
+      rows: [
+        { kind: 'row', depth: 1, label: '300-0000', cells: [90_000, 100, 50_000, 40_000, null, null] },
+        { kind: 'row', depth: 1, label: 'TAXATION', cells: [5_000, 2.5, 5_000, null, null, null], spans: { 2: 2, 4: 2 } },
+      ],
+    };
+    expect(printedColumns(t).map((p) => [p.label, p.group])).toEqual([['Total', undefined], ['Settlement', 'Oct 2026'], ['Deposit', 'Oct 2026'], ['Settlement', 'Sep 2026'], ['Deposit', 'Sep 2026']]);
+    const p = printedTable(t);
+    expect(p.headRows).toEqual([
+      [{ content: '', rowSpan: 2 }, { content: 'Total', rowSpan: 2 }, { content: 'Oct 2026', colSpan: 2, styles: { halign: 'center' } }, { content: 'Sep 2026', colSpan: 2, styles: { halign: 'center' } }],
+      ['Settlement', 'Deposit', 'Settlement', 'Deposit'],
+    ]);
+    expect(p.body[0]).toEqual(['300-0000', '900.00', '500.00', '400.00', '-', '-']);
+    expect(p.body[1]).toEqual(['TAXATION', '50.00', { content: '50.00', colSpan: 2, styles: { halign: 'center' } }, { content: '-', colSpan: 2, styles: { halign: 'center' } }]);
+    /* The % beside Total stays beside it; a merged cell has none. */
+    expect(p.beside[1]).toEqual([null, '2.5%', null, null, null, null]);
+    /* Without headings, one head row — as before. */
+    expect(printedTable(monthly).headRows).toEqual([['', '累计 08/2026 – 09/2026', '09/2026']]);
+  });
 });

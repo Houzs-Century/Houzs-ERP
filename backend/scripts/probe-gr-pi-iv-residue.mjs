@@ -55,6 +55,7 @@
  * same one the reconcile grades against, so this probe and that run cannot
  * disagree about what AutoCount says. AutoCount's SQL book is NOT queried.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

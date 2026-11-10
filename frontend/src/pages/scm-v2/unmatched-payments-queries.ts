@@ -21,6 +21,8 @@ export type UnmatchedPayment = {
   docNo: string;
   customerName: string | null;
   salespersonName: string | null;
+  /** Who took the money — the payment's own collected_by; null when nobody was recorded. */
+  collectedByName: string | null;
   paidOn: string;
   kind: 'card' | 'transfer';
   /** card: the bank it was keyed with (null = none, 未标); transfer: its sub-type. */

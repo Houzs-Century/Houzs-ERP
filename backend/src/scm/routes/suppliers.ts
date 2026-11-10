@@ -263,6 +263,30 @@ export function validatePriceMatrix(
    be shape-validated. Returns null for non-mfg_product kinds (fabric/raw)
    or codes that aren't in the catalogue — those bindings should not carry
    a price_matrix. */
+/* One binding per supplier per item. MRP lists every binding row, so a second
+   one showed the same supplier twice for the item. There is no unique index:
+   the route is the guard until production is proven clean of old duplicates. */
+async function findSameBinding(
+  supabase: SupabaseClient,
+  companyId: number,
+  supplierId: string,
+  kind: string,
+  itemCode: string,
+  excludeId: string | null,
+): Promise<{ ok: true; id: string | null } | { ok: false; reason: string }> {
+  let q = supabase.from('supplier_material_bindings').select('id')
+    .eq('company_id', companyId).eq('supplier_id', supplierId)
+    .eq('material_kind', kind).eq('item_code', itemCode);
+  if (excludeId !== null) q = q.neq('id', excludeId);
+  const { data, error } = await q.limit(1);
+  if (error) return { ok: false, reason: error.message };
+  const rows = data as Array<{ id: string }> | null;
+  const first = rows === null ? undefined : rows.at(0);
+  return { ok: true, id: first === undefined ? null : first.id };
+}
+
+const DUPLICATE_BINDING_MESSAGE = 'This supplier is already bound to this item. Edit the existing binding instead.';
+
 async function categoryForMaterial(
   supabase: SupabaseClient,
   kind: string,
@@ -810,6 +834,12 @@ export const createSupplierBindingHandler = async (c: any) => {
   };
   if (priceMatrix !== undefined) row.price_matrix = priceMatrix;
 
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const same = await findSameBinding(supabase, co.companyId, supplierId, kind, String(body.itemCode), null);
+  if (!same.ok) return c.json({ error: 'load_failed', reason: same.reason }, 500);
+  if (same.id) return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE, bindingId: same.id }, 409);
+
   // If marking as main supplier, demote any other main for the same material.
   if (row.is_main_supplier) {
     await supabase
@@ -824,6 +854,8 @@ export const createSupplierBindingHandler = async (c: any) => {
   const { data, error } = await supabase.from('supplier_material_bindings').insert({ ...row, company_id: activeCompanyId(c) }).select(BINDING_COLS).single();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    // The unique index catches what the pre-check above loses to a concurrent create.
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   // Auto-derive stage 2b: recompute the product cost from all suppliers when the
@@ -864,10 +896,8 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
     .from('supplier_material_bindings')
     .select('item_code, material_kind')
     .eq('supplier_id', supplierId), 'item_code', codes);
-  if (existingErr) {
-    // eslint-disable-next-line no-console
-    console.error('[suppliers] existing bindings read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
-  }
+  // A failed read would let every row through as new and bind them twice.
+  if (existingErr) return c.json({ error: 'load_failed', reason: existingErr.message }, 500);
   const seen = new Set<string>(
     ((existing ?? []) as Array<{ item_code: string; material_kind: string }>)
       .map((r) => `${r.material_kind}|${r.item_code}`),
@@ -941,6 +971,7 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
     .select(BINDING_COLS);
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   // Auto-derive stage 2b: recompute each affected SKU's product cost when ON;
@@ -1018,6 +1049,21 @@ export const patchSupplierBindingHandler = async (c: any) => {
     }
   }
 
+  if (updates.item_code !== undefined || updates.material_kind !== undefined) {
+    const { data: cur, error: curErr } = await scopeToCompanyId(supabase
+      .from('supplier_material_bindings')
+      .select('supplier_id, material_kind, item_code')
+      .eq('id', bindingId), co.companyId)
+      .maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+    if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    const same = await findSameBinding(supabase, co.companyId, cur.supplier_id,
+      (updates.material_kind as string | undefined) ?? cur.material_kind,
+      String((updates.item_code as string | undefined) ?? cur.item_code), bindingId);
+    if (!same.ok) return c.json({ error: 'load_failed', reason: same.reason }, 500);
+    if (same.id) return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE, bindingId: same.id }, 409);
+  }
+
   // If promoting to main, demote others first (need to fetch the binding's material info).
   if (updates.is_main_supplier === true) {
     const { data: existing } = await scopeToCompanyId(supabase
@@ -1040,6 +1086,7 @@ export const patchSupplierBindingHandler = async (c: any) => {
   const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').update(updates).eq('id', bindingId), co.companyId).select(BINDING_COLS).maybeSingle();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    if (error.code === '23505') return c.json({ error: 'duplicate_binding', message: DUPLICATE_BINDING_MESSAGE }, 409);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);

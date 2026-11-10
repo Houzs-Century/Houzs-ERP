@@ -47,6 +47,7 @@
 //   COMPANY_ID     optional, default 1
 //   MODE           plan (default) | apply
 //   CONFIRM        required for apply: THE PRICE IS COST ONLY
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const CONFIRM_PHRASE = 'THE PRICE IS COST ONLY';

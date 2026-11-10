@@ -158,6 +158,58 @@ export function couldBeAcquirers(method: string, provider: string | null | undef
   return method === 'imported';
 }
 
+/**
+ * Which of these payments are already ON THE BANK STATEMENT: their live entry
+ * (SOPAY / SIPAY, posted, not reversed) is held by a POSTED bank line — through
+ * a match row, or as the line's own posted entry. A match row left on an OPEN
+ * line is an older undo's leftover (docs/bugs/0802) and holds nothing.
+ *
+ * Owner 2026-11-09, on Find the sale for a QR line listing 73 Online payments,
+ * 61 of them long matched on the bank statement: 「已经match 的就不应该出现」.
+ * Such a transfer is that customer's own money on the statement and can never
+ * be a QR's. Reads fail closed: "could not tell" is not "nothing is matched".
+ */
+export async function bankHeldPayments(
+  sb: any, companyId: number, payments: ReadonlyArray<{ source: string; id: string }>,
+): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
+  const keys = new Set<string>();
+  if (payments.length === 0) return { ok: true, keys };
+  const wanted = new Set(payments.map((p) => `${p.source}:${p.id}`));
+  const ids = [...new Set(payments.map((p) => p.id))];
+  const jes = await chunkIn<{ je_no: string; source_type: string; source_doc_no: string; reversed: boolean | null }>(ids, (batch, f, t) => sb
+    .from('journal_entries').select('je_no, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId).in('source_type', ['SOPAY', 'SIPAY']).in('source_doc_no', batch).eq('posted', true)
+    .order('je_no').range(f, t));
+  if (jes.error) return { ok: false, reason: `the payments' entries: ${jes.error.message}` };
+  const live = jes.data.filter((e) => e.reversed !== true && wanted.has(`${String(e.source_type)}:${String(e.source_doc_no)}`));
+  if (live.length === 0) return { ok: true, keys };
+  const jeNos = [...new Set(live.map((e) => String(e.je_no)))];
+
+  const matches = await chunkIn<{ bank_line_id: number; je_no: string }>(jeNos, (batch, f, t) => sb
+    .from('acc_bank_statement_matches').select('bank_line_id, je_no')
+    .eq('company_id', companyId).in('je_no', batch).order('id').range(f, t));
+  if (matches.error) return { ok: false, reason: `bank matches: ${matches.error.message}` };
+  const owned = await chunkIn<{ id: number; posted_je_no: string | null }>(jeNos, (batch, f, t) => sb
+    .from('acc_bank_statement_lines').select('id, posted_je_no')
+    .eq('company_id', companyId).eq('state', 'POSTED').in('posted_je_no', batch).order('id').range(f, t));
+  if (owned.error) return { ok: false, reason: `bank lines: ${owned.error.message}` };
+  const lineIds = [...new Set(matches.data.map((m) => Number(m.bank_line_id)))];
+  const posted = lineIds.length === 0
+    ? { data: [] as Array<{ id: number }>, error: null }
+    : await chunkIn<{ id: number }, number>(lineIds, (batch, f, t) => sb
+      .from('acc_bank_statement_lines').select('id')
+      .eq('company_id', companyId).eq('state', 'POSTED').in('id', batch).order('id').range(f, t));
+  if (posted.error) return { ok: false, reason: `bank lines: ${posted.error.message}` };
+
+  const postedIds = new Set(posted.data.map((l) => Number(l.id)));
+  const held = new Set<string>([
+    ...matches.data.filter((m) => postedIds.has(Number(m.bank_line_id))).map((m) => String(m.je_no)),
+    ...owned.data.map((l) => String(l.posted_je_no)),
+  ]);
+  for (const e of live) if (held.has(String(e.je_no))) keys.add(`${String(e.source_type)}:${String(e.source_doc_no)}`);
+  return { ok: true, keys };
+}
+
 const PAYMENT_COLUMNS_SO = 'id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
 const PAYMENT_COLUMNS_SI = 'id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
 
@@ -194,14 +246,22 @@ export async function loadPaymentCandidates(
    * distance.
    */
   refs: readonly string[] = [],
+  /** `online`: the company's ONLINE payments (method `transfer`) instead of its
+      card money — the pool a DuitNow QR line is matched against (owner
+      2026-11-09: QR 是 direct 去 bank 的，不算卡机的). A QR line has no
+      reference, so none is read by one. */
+  opts: { online?: boolean } = {},
 ): Promise<{ ok: true; payments: PaymentCandidate[] } | { ok: false; reason: string }> {
   const lo = shiftDays(from, -Math.max(0, acquirer.date_tolerance_days));
   const hi = `${shiftDays(to, Math.max(0, acquirer.date_tolerance_days))}T23:59:59.999`;
   const names = merchantNamesOf(acquirer);
+  const belongs = (r: Record<string, any>): boolean => (opts.online
+    ? String(r.method) === 'transfer'
+    : couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
   /* Deduplicated and blank-free: a statement of 300 lines shares a handful of
      references, and an empty one would ask the database for every payment that
      has no approval code at all. */
-  const wanted = [...new Set(refs.map((r) => String(r ?? '').trim()).filter(Boolean))];
+  const wanted = opts.online ? [] : [...new Set(refs.map((r) => String(r ?? '').trim()).filter(Boolean))];
 
   /* The window is read WHOLE and filtered here, not by `.eq('merchant_provider',
      name)` in the query — that filter was how a NULL-tagged payment could never
@@ -228,8 +288,7 @@ export async function loadPaymentCandidates(
     .order('id').range(f, t));
   if (soByRef.error) return { ok: false, reason: `SO payments by reference: ${soByRef.error.message}` };
 
-  const soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data])
-    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
+  let soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs);
 
   const siAll = await paginateAll<Record<string, any>>((f, t) => sb
     .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
@@ -243,8 +302,19 @@ export async function loadPaymentCandidates(
     .order('id').range(f, t));
   if (siByRef.error) return { ok: false, reason: `SI payments by reference: ${siByRef.error.message}` };
 
-  const siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data])
-    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
+  let siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs);
+
+  /* An Online payment already on the bank statement is that customer's own
+     money there, never a QR's (owner 2026-11-09: 已经match 的就不应该出现). */
+  if (opts.online) {
+    const held = await bankHeldPayments(sb, companyId, [
+      ...soRaw.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
+      ...siRaw.map((r) => ({ source: 'SIPAY', id: String(r.id) })),
+    ]);
+    if (!held.ok) return { ok: false, reason: held.reason };
+    soRaw = soRaw.filter((r) => !held.keys.has(`SOPAY:${String(r.id)}`));
+    siRaw = siRaw.filter((r) => !held.keys.has(`SIPAY:${String(r.id)}`));
+  }
 
   /* WHOSE sale it was. The operator is reconciling money against documents,
      and a document number alone does not tell him which customer he is looking
@@ -409,6 +479,12 @@ export type FoundPayment = PaymentCandidate & {
    migration-era rows AutoCount carried with no method of their own. */
 const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
 
+/* A DuitNow QR line (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct
+   去bank 的，不算卡机的) is explained by Online money only — the sale the till
+   keyed as a transfer, booked straight to the bank. */
+export const QR_CHANNEL = 'QR';
+const ONLINE_METHODS = new Set(['transfer']);
+
 /** Money typed as money ("2865", "2,865.00", "RM 2865") → sen; null when the
     text is not a number. */
 const senOfText = (q: string): number | null => {
@@ -432,29 +508,43 @@ export async function findPaymentsForRow(
   limit = 50,
 ): Promise<{ ok: true; payments: FoundPayment[] } | { ok: false; status: 'not_found' | 'load_failed'; reason: string }> {
   const { data: rowRaw, error: rowErr } = await sb
-    .from('acc_settlement_rows').select('id, gross_sen').eq('id', rowId).eq('company_id', companyId).maybeSingle();
+    .from('acc_settlement_rows').select('id, gross_sen, channel').eq('id', rowId).eq('company_id', companyId).maybeSingle();
   if (rowErr) return { ok: false, status: 'load_failed', reason: rowErr.message };
   if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
   const grossSen = Number((rowRaw as { gross_sen: number }).gross_sen);
+  /* A QR line's sale is Online money, a card line's is card money — each is
+     searched in its own kind and never the other (owner 2026-11-09). */
+  const methods = (rowRaw as { channel?: string | null }).channel === QR_CHANNEL ? [...ONLINE_METHODS] : [...CARD_METHODS];
 
   const settled = await loadSettledKeys(sb, companyId);
   if (!settled.ok) return { ok: false, status: 'load_failed', reason: settled.reason };
 
-  /* EVERY card payment, paged: `.limit(3000)` asked for more than PostgREST's
-     1000-row ceiling, which answers with the newest 1000 and no error — so an
-     older sale could not be found by any search. */
+  /* EVERY payment of the kind, paged: `.limit(3000)` asked for more than
+     PostgREST's 1000-row ceiling, which answers with the newest 1000 and no
+     error — so an older sale could not be found by any search. */
   const soRes = await paginateAll<CardPaymentRow>((f, t) => sb
     .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
-    .eq('company_id', companyId).in('method', [...CARD_METHODS])
+    .eq('company_id', companyId).in('method', methods)
     .order('paid_at', { ascending: false }).order('id').range(f, t));
   if (soRes.error) return { ok: false, status: 'load_failed', reason: `SO payments: ${soRes.error.message}` };
   const siRes = await paginateAll<CardPaymentRow>((f, t) => sb
     .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
-    .eq('company_id', companyId).in('method', [...CARD_METHODS])
+    .eq('company_id', companyId).in('method', methods)
     .order('paid_at', { ascending: false }).order('id').range(f, t));
   if (siRes.error) return { ok: false, status: 'load_failed', reason: `SI payments: ${siRes.error.message}` };
-  const soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
-  const siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+  let soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
+  let siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+  /* A QR line: an Online payment already matched on the bank statement is not
+     offered (owner 2026-11-09: 已经match 的就不应该出现). */
+  if ((rowRaw as { channel?: string | null }).channel === QR_CHANNEL) {
+    const held = await bankHeldPayments(sb, companyId, [
+      ...soRows.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
+      ...siRows.map((r) => ({ source: 'SIPAY', id: String(r.id) })),
+    ]);
+    if (!held.ok) return { ok: false, status: 'load_failed', reason: held.reason };
+    soRows = soRows.filter((r) => !held.keys.has(`SOPAY:${String(r.id)}`));
+    siRows = siRows.filter((r) => !held.keys.has(`SIPAY:${String(r.id)}`));
+  }
 
   /* The customer, off the document — read in chunks, because the name is one
      of the things a person searches by. A read that fails is a refusal. */
@@ -797,6 +887,8 @@ type SettlementAcquirer = Extract<Awaited<ReturnType<typeof loadAcquirer>>, { ok
 /** The payments a person picked, read back from the books (see the comment inside). */
 async function readChosenPayments(
   sb: any, companyId: number, asked: ConfirmInput['payments'],
+  /** 'online' for a QR line: only Online money explains it. */
+  kind: 'card' | 'online' = 'card',
 ): Promise<{ ok: true; chosen: ChosenPayment[] } | { ok: false; status: string; reason: string }> {
   /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
      screen believed; the amount that clears in-transit is what the row holds
@@ -818,7 +910,13 @@ async function readChosenPayments(
       const r = byId.get(p.id);
       if (!r) return { ok: false, status: 'payment_not_found', reason: `Payment ${p.docNo ?? p.id} is not in this company's books. Refresh the list.` };
       const method = String(r.method ?? '');
-      if (!CARD_METHODS.has(method)) {
+      if (kind === 'online' && !ONLINE_METHODS.has(method)) {
+        return {
+          ok: false, status: 'not_online_payment',
+          reason: `${p.docNo ?? p.id} is keyed as a ${CARD_METHODS.has(method) ? 'card' : (method || 'an unknown')} payment. A DuitNow QR goes straight to the bank, so its sale is keyed Online — change the payment to Online first.`,
+        };
+      }
+      if (kind === 'card' && !CARD_METHODS.has(method)) {
         return { ok: false, status: 'not_card_payment', reason: `${p.docNo ?? p.id} was paid by ${method || 'an unknown method'} — a merchant report cannot be explained by it.` };
       }
       chosen.push({
@@ -915,6 +1013,10 @@ async function postRowFee(
   return posted;
 }
 
+/* What confirming a QR line books and moves: nothing (see confirmSettlementRow). */
+const BOOKS_NOTHING = { ok: true as const, status: 'nothing_to_post' as const, jeNo: null as string | null, jeId: null as string | null };
+const MOVES_NOTHING = { ok: true as const, movedSen: 0, jeNo: null as string | null };
+
 /** The card payments' Official Receipts turn formal (see the comment inside). Never fails the confirm. */
 async function formaliseQuietly(sb: any, companyId: number, acquirer: SettlementAcquirer, chosen: ChosenPayment[], userName: string | null): Promise<void> {
   /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
@@ -949,6 +1051,7 @@ type GroupRow = {
   id: number; batch_id: number; acquirer_code: string; line_no: number; txn_date: string; ref: string | null;
   gross_sen: number; fee_sen: number; net_sen: number; bucket: string;
   confirmed_at: string | null; posted_je_no: string | null; matched_with_row_id: number | null;
+  channel?: string | null;
 };
 
 /**
@@ -977,7 +1080,7 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
   const ids = [...new Set(input.rowIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length < 2) return { ok: false, status: 'group_too_small', reason: 'Pick at least two lines to match together — one line is confirmed on its own.' };
   const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
-    .select('id, batch_id, acquirer_code, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no, matched_with_row_id')
+    .select('id, batch_id, acquirer_code, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no, matched_with_row_id, channel')
     .eq('company_id', companyId).in('id', ids);
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   const rows = ((rowsRaw ?? []) as GroupRow[]).map((r) => ({
@@ -988,6 +1091,13 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
   if (new Set(rows.map((r) => r.batch_id)).size > 1) {
     return { ok: false, status: 'different_reports', reason: 'Only lines on the same merchant report can be matched together.' };
   }
+  /* QR money and card money are different money (owner 2026-11-09): QR lines
+     link Online sales and book nothing, card lines book their fees. */
+  const qrCount = rows.filter((r) => r.channel === QR_CHANNEL).length;
+  if (qrCount > 0 && qrCount < rows.length) {
+    return { ok: false, status: 'mixed_qr_and_card', reason: 'A DuitNow QR line and a card line are different money — match them separately.' };
+  }
+  const qr = qrCount > 0;
   rows.sort((a, b) => String(a.txn_date).localeCompare(String(b.txn_date)) || a.line_no - b.line_no || a.id - b.id);
   const lead = rows[0]!;
   const members = rows.slice(1);
@@ -1008,7 +1118,7 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
   if (asked.length === 0) {
     return { ok: false, status: 'no_payments', reason: 'Nothing to confirm: pick the payments these lines cover. Money that arrived without a sale behind it must not be cleared out of the in-transit account.' };
   }
-  const read = await readChosenPayments(sb, companyId, asked);
+  const read = await readChosenPayments(sb, companyId, asked, qr ? 'online' : 'card');
   if (!read.ok) return read;
   const chosen = read.chosen;
   const grossTotal = rows.reduce((t, r) => t + Number(r.gross_sen), 0);
@@ -1023,8 +1133,10 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
 
   const acq = await loadAcquirer(sb, companyId, lead.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
-  const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, lead.acquirer_code, chosen, input.userName);
-  if (!stamped.ok) return stamped;
+  if (!qr) {
+    const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, lead.acquirer_code, chosen, input.userName);
+    if (!stamped.ok) return stamped;
+  }
 
   /* The links, once, on the lead. A line already holding a payment was matched
      on its own (by its reference, at upload) and is not this group's to take;
@@ -1067,7 +1179,7 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
      posted, the links stay and a second press finishes (each fee books once). */
   const fees = new Map<number, { jeNo: string | null; jeId: string | null }>();
   for (const r of rows) {
-    const posted = await postRowFee(sb, companyId, acq.acquirer, r, chosen);
+    const posted = qr ? BOOKS_NOTHING : await postRowFee(sb, companyId, acq.acquirer, r, chosen);
     if (!posted.ok) {
       if (fees.size === 0) await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', lead.id);
       return {
@@ -1078,7 +1190,7 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
     fees.set(r.id, { jeNo: posted.jeNo ?? null, jeId: posted.jeId ?? null });
   }
 
-  const moved = await moveUntaggedBooking(sb, companyId, acq.acquirer, lead, chosen);
+  const moved = qr ? MOVES_NOTHING : await moveUntaggedBooking(sb, companyId, acq.acquirer, lead, chosen);
   if (!moved.ok) return { ok: false, status: moved.status, reason: `${moved.reason} (the fees DID post — press confirm again to finish)` };
 
   /* Members first, the lead last: the lead's stamp is what says the group is done. */
@@ -1119,7 +1231,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const { data: rowRaw, error: rowErr } = await sb
     .from('acc_settlement_rows')
-    .select('id, batch_id, company_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no')
+    .select('id, batch_id, company_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no, channel')
     .eq('id', rowId)
     .eq('company_id', companyId)
     .maybeSingle();
@@ -1128,8 +1240,13 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   const row = rowRaw as {
     id: number; batch_id: number; acquirer_code: string; txn_date: string; ref: string | null;
     gross_sen: number; fee_sen: number; net_sen: number; bucket: string;
-    confirmed_at: string | null; posted_je_no: string | null;
+    confirmed_at: string | null; posted_je_no: string | null; channel?: string | null;
   };
+  /* A DuitNow QR line (owner 2026-11-09): its sale already booked the money
+     straight to the bank, so confirming it LINKS that sale and books nothing —
+     no fee (there is none), no bank stamped on an Online payment, nothing moved
+     between clearing accounts it never touched. */
+  const qr = row.channel === QR_CHANNEL;
   if (row.confirmed_at) {
     return { ok: true, status: 'already_confirmed', ...(row.posted_je_no ? { jeNo: row.posted_je_no } : {}) };
   }
@@ -1145,7 +1262,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
       reason: 'Nothing to confirm: this settlement has no matching payment in the ERP. Record the sale first — money that arrived without a sale behind it must not be cleared out of the in-transit account.',
     };
   }
-  const read = await readChosenPayments(sb, companyId, asked);
+  const read = await readChosenPayments(sb, companyId, asked, qr ? 'online' : 'card');
   if (!read.ok) return read;
   const chosen = read.chosen;
   /* The sum must be the gross, to the sen. A difference here IS the thing this
@@ -1162,8 +1279,10 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, row.acquirer_code, chosen, input.userName);
-  if (!stamped.ok) return stamped;
+  if (!qr) {
+    const stamped = await stampMerchantTags(sb, companyId, acq.acquirer, row.acquirer_code, chosen, input.userName);
+    if (!stamped.ok) return stamped;
+  }
 
   /* A previous attempt may have linked and posted but failed on the final
      stamp. Resuming must not read its own links as "someone else already
@@ -1196,7 +1315,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     };
   }
 
-  const posted = await postRowFee(sb, companyId, acq.acquirer, row, chosen);
+  const posted = qr ? BOOKS_NOTHING : await postRowFee(sb, companyId, acq.acquirer, row, chosen);
   if (!posted.ok) {
     /* The entry did not post, so the links must not survive — otherwise the
        payments are marked settled with nothing in the ledger behind them. */
@@ -1208,7 +1327,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
      account for the merchant's own. After the fee, which is the confirm's
      truth; a move that fails leaves the fee standing and asks for a second
      press, which resumes through the gate's idempotency like the stamp below. */
-  const moved = await moveUntaggedBooking(sb, companyId, acq.acquirer, row, chosen);
+  const moved = qr ? MOVES_NOTHING : await moveUntaggedBooking(sb, companyId, acq.acquirer, row, chosen);
   if (!moved.ok) {
     return { ok: false, status: moved.status, reason: `${moved.reason} (the fee entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish)` };
   }
@@ -1540,6 +1659,19 @@ export async function postBatchReceipt(
 
   const payableSen = Number(batch.stated_net_sen ?? batch.net_sen ?? 0);
   if (payableSen === 0) {
+    /* A report of DuitNow QR lines pays nothing through the clearing account:
+       its sales booked the money straight to the bank (owner 2026-11-09). The
+       bank's QR credit is THAT money — booked here it would be in the bank
+       twice — so it is matched to the sales instead, and said so. */
+    const { data: qrRaw, error: qrErr } = await sb.from('acc_settlement_rows')
+      .select('id').eq('company_id', companyId).eq('batch_id', batchId).eq('channel', QR_CHANNEL).limit(1);
+    if (qrErr) return { ok: false, status: 'load_failed', reason: qrErr.message };
+    if (((qrRaw ?? []) as unknown[]).length > 0) {
+      return {
+        ok: false, status: 'qr_report',
+        reason: 'This is DuitNow QR money — its sales already put it in the bank, so nothing is paid out against this report. Match the bank\'s QR credit to those sales instead.',
+      };
+    }
     return { ok: false, status: 'nothing_to_receive', reason: 'This statement pays nothing — there is no receipt to book.' };
   }
 
