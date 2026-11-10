@@ -23,6 +23,7 @@ import { authedFetch } from './authed-fetch';
 import { companyHeaderFor } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
+import { reportInBandFailure, type InBandFailure } from './mutation-error';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -344,15 +345,30 @@ export const useUpdateMfgDeliveryOrderStatus = () => {
        while the tab reads HOUZS. Omitted by the desktop callers, which keep the
        active company. */
     mutationFn: ({ id, status, evidence, companyCode }: { id: string; status: string; evidence?: DoDeliveryEvidence; companyCode?: string | null }) =>
-      authedFetch(`/delivery-orders-mfg/${id}/status`, {
+      authedFetch<{ deliveryOrder?: { id: string; status: string } } & InBandFailure>(`/delivery-orders-mfg/${id}/status`, {
         method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }), headers: companyHeaderFor(companyCode),
       }),
-    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
+    /* IN-BAND FAILURE. The status saves and the stock OUT is best-effort, so a
+       refused deduction comes back as a 200 carrying `movementErrors`
+       (delivery-orders-mfg.ts patchDeliveryOrderStatusHandler). Only the cancel
+       hook read it; Confirm, Dispatch and the driver's run-sheet and POD all
+       come through here, and all said the DO shipped with the stock untouched. */
+    onSuccess: (data, vars) => {
+      reportInBandFailure(doStatusInBandTitle(vars.status), data);
+      refreshAfterDoStatus(qc, vars.id);
+    },
     onError: (err) => {
       serviceNotify({ title: 'Status update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     },
   });
 };
+
+/** The title over a status change whose stock write was refused. */
+export function doStatusInBandTitle(status: string): string {
+  if (status === 'CANCELLED') return 'DO cancelled, but stock was NOT returned';
+  const word = status === 'LOADED' ? 'confirmed' : status === 'DELIVERED' ? 'delivered' : status === 'IN_TRANSIT' ? 'on the way' : 'shipped';
+  return `DO ${word}, but stock was NOT deducted`;
+}
 
 function refreshAfterDoStatus(qc: ReturnType<typeof useQueryClient>, id: string) {
   void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });

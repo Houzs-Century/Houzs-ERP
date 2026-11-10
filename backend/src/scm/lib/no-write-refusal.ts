@@ -37,7 +37,8 @@
  * boundary by the file's own construction. */
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { clearIdempotencyNoWrite, markIdempotencyNoWrite } from '../../middleware/idempotency';
+import type { MiddlewareHandler } from 'hono';
 
 export function refuseWithoutWriting(
   c: Context,
@@ -50,4 +51,26 @@ export function refuseWithoutWriting(
 ): Response {
   markIdempotencyNoWrite(c);
   return c.json(body as Record<string, unknown>, status);
+}
+
+/* THE SAME PROOF FOR A WHOLE HANDLER WHOSE CHECKS ALL COME FIRST. A create that
+   validates everything (reads only) and then writes can say "nothing written"
+   for every refusal at once: mark the claim releasable on entry, and take the
+   mark back immediately BEFORE the first write (`writesFromHere`). Every answer
+   built through the same context before that line (`c.json`, including the
+   ones helpers return) carries the mark; every answer after it does not.
+
+   The precondition is the one above, stated for the whole span: between this
+   middleware and `writesFromHere` the handler and every helper it calls only
+   READ. Credit notes and AP invoices adopted it with their per-mount
+   Idempotency-Key (2026-11): without it a refused save claimed the key and the
+   corrected one met `idempotency_key_reused`. */
+export const noWriteUntilMarked: MiddlewareHandler = async (c, next) => {
+  markIdempotencyNoWrite(c);
+  await next();
+};
+
+export function writesFromHere(c: Context): void {
+  /* Hono deletes a prepared header set to undefined. */
+  clearIdempotencyNoWrite(c);
 }

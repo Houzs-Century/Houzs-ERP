@@ -23,7 +23,7 @@ import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment }
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
-import { writeFailed, writeFailedAs, reportInBandFailure } from './mutation-error';
+import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } from './mutation-error';
 
 /* ── Batch conversions ────────────────────────────────────────────────
    BOTH hooks below have ZERO callers as of 2026-07-17 (verified across every
@@ -213,7 +213,9 @@ export const useCreateGrn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ id: string; grnNumber: string }>(`/grns`,
+      /* A non-draft create posts in the same request: its stock / PO-recount
+         failures ride in the 201 body (grn-create-outcome.ts reads them). */
+      authedFetch<{ id: string; grnNumber: string } & InBandFailure>(`/grns`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['grns'] }),
   });
@@ -227,7 +229,7 @@ export const usePostGrn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ grn?: unknown; movementErrors?: string[] }>(`/grns/${id}/post`, { method: 'PATCH' }),
+      authedFetch<{ grn?: unknown } & InBandFailure>(`/grns/${id}/post`, { method: 'PATCH' }),
     onSuccess: (data, id) => {
       /* IN-BAND FAILURE. `PATCH /grns/:id/post` answers 200 with
          `{ grn, movementErrors }` (grns.ts:2077): the DOCUMENT posts and the
@@ -236,7 +238,7 @@ export const usePostGrn = () => {
          operator had just confirmed "Inventory will be received into the
          warehouse". `useCancelGrn` below has read its `cancelErrors` since
          2026-08-13 for exactly this reason. */
-      reportInBandFailure('GRN posted, but the stock was not received', data);
+      reportInBandFailure('GRN posted, but not everything was recorded', data);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });

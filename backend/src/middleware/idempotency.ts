@@ -33,6 +33,13 @@ export function markIdempotencyNoWrite(c: {
   c.header(IDEMPOTENCY_OUTCOME_HEADER, NO_WRITE_OUTCOME);
 }
 
+/** Take back an earlier `markIdempotencyNoWrite` — the route is about to write. */
+export function clearIdempotencyNoWrite(c: {
+  header(name: string, value: string | undefined): void;
+}): void {
+  c.header(IDEMPOTENCY_OUTCOME_HEADER, undefined);
+}
+
 export function isUniqueViolation(error: unknown): boolean {
   if ((error as { code?: unknown } | null)?.code === "23505") return true;
   const message = String((error as Error)?.message ?? error ?? "");

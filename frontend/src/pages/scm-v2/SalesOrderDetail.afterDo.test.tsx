@@ -15,6 +15,8 @@ const { detail, perms } = vi.hoisted(() => ({ detail: vi.fn(), perms: { afterDo:
 
 vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
+  /* The server kept the override reason: the page unlocks (fix/failed-save-looks-ok). */
+  useOverrideSoLock: () => ({ mutate: (_v: unknown, o?: { onSuccess?: () => void }) => o?.onSuccess?.(), isPending: false }),
   useMfgSalesOrderDetail: detail,
   useSalesOrderAuditLog: () => ({ data: [], isLoading: false, isError: false }),
   useSalesOrderPayments: () => ({ data: [], isLoading: false, isError: false }),

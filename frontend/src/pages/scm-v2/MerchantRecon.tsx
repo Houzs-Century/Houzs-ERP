@@ -29,7 +29,7 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
-  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch, useReadSettlementBatches,
+  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch, useSettlementBatchRow, useReadSettlementBatches,
   useConfirmSettlementRow, useConfirmSettlementGroup, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, useUnconfirmSettlementRow, useReleaseSettlementRow, useFindPayments, usePayouts,
   confirmMatchedBatch, useInvalidateAfterPosting,
@@ -469,7 +469,7 @@ const useConfirmAcross = () => {
         out.failures.push({ file: b.file_name, reason: e instanceof Error ? e.message : String(e) });
       }
     }
-    refresh();
+    refresh(batches.filter(worthConfirming).map((b) => b.id));
     setBusy(false);
     setPosted(out);
   };
@@ -713,7 +713,7 @@ const LinesTable = ({ batches, onOpen, openOnly, onExport }: {
 const BatchRows = ({ batch, onOpen, openOnly }: {
   batch: SettlementBatch; onOpen: (id: number) => void; openOnly?: boolean;
 }) => {
-  const q = useSettlementBatch(batch.id);
+  const q = useSettlementBatchRow(batch.id);
   const all = q.data?.rows ?? [];
   /* On the work list, only what is still to do — a line already decided is not
      work. On the upload summary, everything the file contained. */

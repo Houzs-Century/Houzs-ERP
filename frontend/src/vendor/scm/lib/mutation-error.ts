@@ -76,20 +76,43 @@ export type InBandFailure = {
   movementErrors?: string[] | null;
   cancelErrors?: string[] | null;
   reversalErrors?: string[] | null;
+  /** GRN post: the receipt and its stock stand, the PO's received qty was not recounted (grns.ts postGrnAndRollup). */
+  recountError?: string | null;
+};
+
+/**
+ * The sentence for what did NOT happen, or null when everything did. Exported
+ * for a screen that shows its outcome in its own dialog (GrnNew) rather than a
+ * toast — the dialog must not say "PO received qty updated" over a recount that
+ * failed.
+ */
+export const inBandFailureText = (res: InBandFailure | undefined | void): string | null => {
+  const stock = [
+    ...(res?.movementErrors ?? []),
+    ...(res?.cancelErrors ?? []),
+    ...(res?.reversalErrors ?? []),
+  ];
+  const parts: string[] = [];
+  if (stock.length) {
+    parts.push(
+      `${stock.join('\n')}\n\n` +
+      'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
+    );
+  }
+  if (res?.recountError) {
+    parts.push(
+      `The purchase order's received quantity was NOT updated (${res.recountError}). ` +
+      'The receipt is saved, but the PO may still show these goods as outstanding — tell IT so it can be recounted.',
+    );
+  }
+  return parts.length ? parts.join('\n\n') : null;
 };
 
 export const reportInBandFailure = (
   title: string,
   res: InBandFailure | undefined | void,
 ): void => {
-  const errs = [
-    ...(res?.movementErrors ?? []),
-    ...(res?.cancelErrors ?? []),
-    ...(res?.reversalErrors ?? []),
-  ];
-  if (!errs.length) return;
-  writeFailedAs(title)(new Error(
-    `${errs.join('\n')}\n\n` +
-    'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
-  ));
+  const text = inBandFailureText(res);
+  if (!text) return;
+  writeFailedAs(title)(new Error(text));
 };

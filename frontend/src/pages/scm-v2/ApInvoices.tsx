@@ -43,6 +43,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { newIdempotencyKey } from '../../lib/idempotency';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, Copy, FileText, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -252,6 +253,9 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingForm, detail, detailId]);
 
+  /* One Idempotency-Key per OPENED form (each setForm is a new object): a second
+     press of the same bill answers the first one; the next bill gets its own. */
+  const createKey = useMemo(() => (form ? newIdempotencyKey() : null), [form]);
   const submitForm = async (values: ApFormSubmit, pendingFiles: PvFilePayload[], opts?: { post?: boolean }) => {
     if (!form) return;
     /* Save & post: today's confirm first, so a "no" saves nothing. */
@@ -272,7 +276,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
         return;
       }
       const body = form.request ? { ...values, paymentRequestId: form.request.id } : values;
-      const res = await create.mutateAsync(form.docKind === 'DN' ? { ...body, docKind: 'DN' } : body);
+      const res = await create.mutateAsync({ ...(form.docKind === 'DN' ? { ...body, docKind: 'DN' as const } : body), idempotencyKey: createKey });
       if (form.request) {
         setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('fromRequest'); return next; }, { replace: true });
       }

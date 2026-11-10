@@ -15,7 +15,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, type CompanyScopeCtx } from '../lib/companyScope';
-import { cachedSwr, writeSwr, bustSwrPrefix } from '../lib/kv-swr';
+import { cachedSwr, writeSwr, bustSwrPrefix, cachedAtOf, wantsFresh } from '../lib/kv-swr';
 import { MRP_REFRESH_COMPANY_IDS } from '../lib/mrp-snapshot';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env as WorkerEnv } from '../../types';
@@ -93,22 +93,23 @@ async function cachedReport(c: Context<{ Bindings: Env; Variables: Variables }>)
     compute: () => buildProcurementOverview(c.get('supabase'), c, p),
     cacheable: (r) => r.ok,
     waitUntil,
+    refresh: wantsFresh(c),
   });
   c.header('X-Cache', source);
   if (at) c.header('X-Cache-At', at);
-  return result;
+  return { result, cachedAt: cachedAtOf(at) };
 }
 
 procurementOverview.get('/', async (c) => {
-  const result = await cachedReport(c);
-  return result.ok ? c.json(forPage(result.body as Record<string, unknown>)) : c.json(result.body, 500);
+  const { result, cachedAt } = await cachedReport(c);
+  return result.ok ? c.json({ ...forPage(result.body as Record<string, unknown>), cachedAt }) : c.json(result.body, 500);
 });
 
 /* GET /procurement-overview/stock-health - every dead and buffer row of the
    same cached report (same query parameters as the page), for the full list,
    its sort and its Excel export. */
 procurementOverview.get('/stock-health', async (c) => {
-  const result = await cachedReport(c);
+  const { result } = await cachedReport(c);
   if (!result.ok) return c.json(result.body, 500);
   const dead = (result.body as { deadStock?: { top?: unknown[]; bufferTop?: unknown[] } }).deadStock;
   return c.json({ dead: dead?.top ?? [], buffer: dead?.bufferTop ?? [] });
