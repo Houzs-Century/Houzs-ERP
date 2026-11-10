@@ -270,7 +270,7 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
       )}
       {sourceState != null && ((racks?.length ?? 0) > 0 || sourceState === "worked_out") && (
         <div style={{ flexBasis: "100%", fontSize: 10.5, color: "#7d8476", marginTop: 3 }}>
-          {(racks?.length ?? 0) > 0 ? `Rack: ${racks!.join(", ")}` : "Rack: —"}
+          {(racks?.length ?? 0) > 0 ? `Rack: ${shortRackLabels(racks).join(", ")}` : "Rack: —"}
           {sourceState === "locked" ? " · locked at dispatch" : <i> · worked out</i>}
         </div>
       )}
@@ -1928,3 +1928,4 @@ import { MobileDoDeliveryIssues } from "./DeliveryIssueForm";
 import { DoEarlierPodAttempts } from "../components/scm-v2/DoEarlierPodAttempts";
 import { poDriftMode } from "../vendor/scm/lib/po-drift";
 import { returnCreditLabel } from "../vendor/scm/lib/return-credit-state";
+import { shortRackLabels } from "../vendor/scm/lib/rack-label";
