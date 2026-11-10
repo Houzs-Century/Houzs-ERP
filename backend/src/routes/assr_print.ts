@@ -675,6 +675,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .entities .reg { font-size: 7.5pt; color: var(--ink-3); margin-top: .8mm; }
     .entities .addr { font-size: 8pt; line-height: 1.5; color: var(--ink-2); margin-top: 1.2mm; }
     .entities .contact { font-size: 7.5pt; color: var(--ink-2); margin-top: 1.2mm; }
+    /* entity=both: the letterhead already names the service provider, so only
+       the retail entity is added, on one line (client 2026-11-10). */
+    .entity-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1mm 3mm; margin-top: 3mm; padding: 2mm 3mm; background: var(--c-paper); border: 1px solid var(--line); border-radius: 6px; }
+    .entity-line .cap { font-size: 7.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .14em; color: var(--c-brass); }
+    .entity-line .nm { font-size: 10pt; font-weight: 600; }
+    .entity-line .reg { font-size: 8pt; color: var(--ink-3); }
     .letterhead .company .co-name { font-weight: 700; font-size: 12.5pt; letter-spacing: 0.3pt; text-transform: uppercase; }
     .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 10.0pt; margin-top: 0.5pt; }
 
@@ -1084,18 +1090,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           </div>
         </div>
         ${entity === "both" && houzsProfile && homeProfile ? `
-        <div class="entities">
-          ${[
-            { cap: "Service Provider", p: houzsProfile },
-            { cap: "Retail Entity", p: homeProfile },
-          ].map(({ cap, p }) => `
-          <div>
-            <div class="cap mono">${esc(cap)}</div>
-            <div class="nm">${esc(p.name)}</div>
-            ${p.reg ? `<div class="reg mono">${esc(p.reg)}</div>` : ""}
-            ${p.addressLines.length ? `<div class="addr">${p.addressLines.map((l) => esc(l)).join("<br>")}</div>` : ""}
-            ${p.tel || p.email ? `<div class="contact mono">${[p.tel, p.email].filter(Boolean).map((v) => esc(String(v))).join(" · ")}</div>` : ""}
-          </div>`).join("")}
+        <div class="entity-line">
+          <span class="cap mono">Retail Entity</span>
+          <span class="nm">${esc(homeProfile.name)}</span>${homeProfile.reg ? `
+          <span class="reg mono">${esc(homeProfile.reg)}</span>` : ""}
         </div>` : ""}
       </div>
     </td></tr></thead>
@@ -1149,13 +1147,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
           <span class="td remark">${it.remark ? esc(it.remark) : i === 0 && cs.action_remark ? esc(cs.action_remark) : ""}</span>
         </div>`);
-      const blanks = Math.max(0, 3 - officeItems.length);
-      for (let i = 0; i < blanks; i++) {
-        officeItems.push(`
-        <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
-          <span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span>
-        </div>`);
-      }
       // Split the case photos into the two panels ops asked for on the
       // customer copy: the reported defect ("Service Issue") vs the
       // post-return quality shots ("QC Approved"). Categories mirror the
@@ -1176,7 +1167,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         const cells = imgs.slice(0, 6).map((a, i) =>
           `<div class="ph"><img src="${a.data_url}" alt="${esc(a.file_name || "")}" /><span class="tag">${tag}_${String(i + 1).padStart(2, "0")}</span></div>`
         );
-        if (cells.length === 0) cells.push(`<div class="add">＋ Add</div>`);
         return cells.join("");
       };
       return `
@@ -1209,13 +1199,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
     ${officeItems.join("")}
 
-    <!-- service issue pictures -->
+    ${issuePhotos.length ? `
     <div class="bar">Service Issue &nbsp;<span class="note">(reported defect)</span></div>
-    <div class="pgrid">${photoCells(issuePhotos, "ISS")}</div>
-
-    <!-- qc approved pictures -->
+    <div class="pgrid">${photoCells(issuePhotos, "ISS")}</div>` : ""}
+    ${qcPhotos.length ? `
     <div class="bar">QC Approved &nbsp;<span class="note">(quality inspection after service)</span></div>
-    <div class="pgrid">${photoCells(qcPhotos, "QC")}</div>
+    <div class="pgrid">${photoCells(qcPhotos, "QC")}</div>` : ""}
 
     <!-- sign-off -->
     <div class="bar">Acknowledgement &amp; Sign-off</div>
