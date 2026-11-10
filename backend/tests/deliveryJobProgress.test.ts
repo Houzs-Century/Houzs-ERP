@@ -74,6 +74,7 @@ function fakeDb(state: { project?: Row; assr?: Row; checklist?: Row[] }, ran: st
         },
         async all() {
           if (/FROM project_checklist/.test(sql)) return { results: (state.checklist ?? []).filter((r) => r.status !== 'done') };
+          if (/FROM users/.test(sql)) return { results: args.filter((id) => id === 7).map((id) => ({ id, name: 'Faslie' })) };
           return { results: [] };
         },
         async run() { ran.push(`${sql.replace(/\s+/g, ' ').trim()} :: ${JSON.stringify(args)}`); return { meta: {} }; },
@@ -96,10 +97,13 @@ function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?:
     ],
     lorry_work_orders: [{ id: 'wo-1', photo_refs: ['old.jpg'] }],
     job_progress: [],
-    // The driver's own uploads (staff 'stf-7'); one key belongs to someone else.
+    // The driver's (user 7) own uploads; staff_id is the shared system staff for
+    // everyone, so the uploader is the user id /slips init records. One key is
+    // another person's for another stop; one is the helper's for dp-1's stop.
     pending_slip_uploads: [
-      ...SESSION_KEYS.map((k, i) => ({ id: `s${i}`, r2_key: k, staff_id: 'stf-7', status: 'uploaded', promoted_to_order_id: null, company_id: 1 })),
-      { id: 'sx', r2_key: 'slips/2026/10/other.jpg', staff_id: 'stf-OTHER', status: 'uploaded', promoted_to_order_id: null, company_id: 1 },
+      ...SESSION_KEYS.map((k, i) => ({ id: `s${i}`, r2_key: k, staff_id: 'sys', order_draft_id: 'field:u7:', status: 'uploaded', promoted_to_order_id: null, company_id: 1 })),
+      { id: 'sx', r2_key: 'slips/2026/10/other.jpg', staff_id: 'sys', order_draft_id: 'field:u99:job:dp:dp-9:TRANSFER', status: 'uploaded', promoted_to_order_id: null, company_id: 1 },
+      { id: 'sh', r2_key: 'slips/2026/10/helper.jpg', staff_id: 'sys', order_draft_id: 'field:u8:job:dp:dp-1:SUPPLIER_PICKUP', status: 'uploaded', promoted_to_order_id: null, company_id: 1 },
     ],
   };
   const ran: string[] = [];
@@ -254,6 +258,27 @@ describe('review fixes (2026-10-08)', () => {
     expect((await json(res)).error).toBe('photo_not_accepted');
     expect(tables.job_progress.filter((r) => r.completed_at)).toHaveLength(0);
     expect(tables.dp_orders[0]!.status).toBe('SCHEDULED');
+  });
+
+  test("the helper's photo for the same stop goes with the driver's Complete (the crew share the stop)", async () => {
+    const { a, tables } = app();
+    const res = await post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', { photoKeys: ['slips/2026/10/a.jpg', 'slips/2026/10/helper.jpg'] });
+    expect(res.status).toBe(200);
+    expect(tables.job_progress[0]!.pod_photo_keys).toEqual(['slips/2026/10/a.jpg', 'slips/2026/10/helper.jpg']);
+  });
+
+  test('two Completes at the same moment: one wins, the other is told who completed it', async () => {
+    const { a, tables } = app();
+    const [r1, r2] = await Promise.all([
+      post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', PHOTO),
+      post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', { photoKeys: ['slips/2026/10/helper.jpg'] }),
+    ]);
+    const lost = r1.status === 409 ? r1 : r2;
+    expect([r1.status, r2.status].sort()).toEqual([200, 409]);
+    const b = await json(lost);
+    expect(b.error).toBe('already_completed');
+    expect(b.reason).toMatch(/already completed by Faslie at \d\d:\d\d/);
+    expect(tables.job_progress.filter((r) => r.completed_at)).toHaveLength(1);
   });
 
   test('a second complete runs no side effect twice (one survey for one close)', async () => {

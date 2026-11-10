@@ -78,6 +78,7 @@ QR scan and paper
 
 POD, money, AutoCount
 - POD evidence columns are written only when present; Mobile POD sends `signatureData` only after the customer actually drew.
+- The crew share one stop (owner 2026-11-10). A POD (DELIVERED / SIGNED) on a DO already delivered — the same status again, or any POD by a bypassed driver — is 409 `already_completed` ("already marked delivered at HH:MM", nothing written: no second photo set, delivered time or SO sync). Who delivered is not named: the DO stores no completer. Every non-cancel status write is compare-and-set on the status it read (409 `status_changed`), so two Completes at the same moment file one delivery. The POD accepts the caller's own photos and any crew member's pending photos for THIS DO (`lib/pod-photo-claim.ts`, `podPhotoClaimable`).
 - The DO shows its sales order's payments read-only (`useSalesOrderPayments`; `error` is a required prop). There is no separate DO payment ledger — money is taken on the SO (the removed `delivery_order_payments` endpoints served a table production never had, #3835).
 - The DO reaches AutoCount by transfer: the create returns `acNotSent` and the New screen calls `notifyAcNotSent`; it never blocks.
 - The status handler's only AutoCount call is `enqueueCancel` on CANCELLED, after the downstream check; a sign-off never reaches AutoCount (its DO has no such field).

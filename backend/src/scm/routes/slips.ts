@@ -129,7 +129,9 @@ slips.post('/init', async (c) => {
   const r2Key = buildSlipKey(sessionId, contentType as SlipMime);
   const expiresAt = slipSessionExpiry(purpose);
   const uid = houzsUserIdOf(c);
-  const draftId = fieldContext && uid != null ? fieldPhotoDraftId(uid, fieldContext) : null;
+  // Every upload names its real uploader (staff_id is the shared system staff),
+  // so a POD can tell a crew member's photo from anyone else's (pod-photo-claim.ts).
+  const draftId = uid != null ? fieldPhotoDraftId(uid, fieldContext ?? '') : null;
 
   const { error: insertErr } = await sb.from('pending_slip_uploads').insert({
     company_id: activeCompanyId(c),

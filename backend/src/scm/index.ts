@@ -126,6 +126,7 @@ import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
+import { crewStopPhotos } from "./routes/crew-stop-photos";
 import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { doDeliveryIssues, soDeliveryIssues, jobDeliveryIssues, lastMileDeliveryIssues } from "./routes/delivery-issues";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
@@ -888,6 +889,9 @@ scm.use(
 // delivery-jobs guard above (POST writeBypass for scm.do.dispatch; the handler
 // admits only the caller's own job), the Last Mile read the delivery-planning one.
 scm.route("/delivery-jobs", jobDeliveryIssues);
+// The crew's shared pending photos for one stop (routes/crew-stop-photos.ts);
+// before deliveryJobProgress so /stop-photos is never read as a job type.
+scm.route("/delivery-jobs", crewStopPhotos);
 scm.route("/delivery-jobs", deliveryJobProgress);
 scm.route("/delivery-planning", lastMileDeliveryIssues);
 scm.route("/delivery-planning", deliveryPlanning);

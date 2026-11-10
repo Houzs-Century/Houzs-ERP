@@ -32,7 +32,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment, podWriteScopeCompany } fr
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
-import { claimPodPhotos } from '../lib/pod-photo-claim';
+import { claimPodPhotos, doStopContext } from '../lib/pod-photo-claim';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -5039,6 +5039,24 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
   }
 
+  /* The crew share one stop (owner, 2026-11-10): when the driver and the helper
+     both press Complete, the second must not file a second delivery over the
+     first (its photos replacing the first's, a new delivered time, the SO synced
+     again). It is told the stop is already done, and when. */
+  const prevUpper0 = (prevStatus ?? '').toUpperCase();
+  if (toStatus !== 'CANCELLED' && doHasArrived(prevUpper0) && doHasArrived(toStatus) && (prevUpper0 === toStatus || bypassPod)) {
+    const { data: doneRow } = await scopeToCompanyId(
+      sb.from('delivery_orders').select('delivered_at').eq('id', id), scopeCompanyId,
+    ).maybeSingle();
+    const at = (doneRow as { delivered_at?: string | null } | null)?.delivered_at ?? null;
+    const clock = at ? new Date(at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+    return c.json({
+      error: 'already_completed',
+      reason: `This delivery was already marked delivered${clock ? ` at ${clock}` : ''}. Nothing was changed.`,
+      deliveredAt: at,
+    }, 409);
+  }
+
   // Already cancelled → echo back without re-reversing (would double-credit).
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryOrder: { id, status: 'CANCELLED' } });
@@ -5107,13 +5125,18 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      photo. Only write when present so a plain status change never blanks
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
-  /* Every photo of the POD; the first also stays in pod_r2_key. Only the caller's
-     own uploads are accepted, and claiming them stops the slip reaper deleting
-     them an hour later (lib/pod-photo-claim.ts). */
+  /* Every photo of the POD; the first also stays in pod_r2_key. The caller's own
+     uploads and any crew member's photos for THIS DO are accepted (the crew
+     share the stop; the gates above admitted the caller to it), and claiming
+     them stops the slip reaper deleting them (lib/pod-photo-claim.ts). */
   const podRaw = [body.podKey, ...(Array.isArray(body.podKeys) ? body.podKeys : [])].filter((k) => typeof k === 'string' && k);
   let podKeys: string[] = [];
   if (podRaw.length) {
-    const claim = await claimPodPhotos(sb, c, user?.id ? String(user.id) : null, podRaw);
+    const claimerId = Number(c.get('houzsUser')?.id);
+    const claim = await claimPodPhotos(sb, c, {
+      houzsUserId: Number.isSafeInteger(claimerId) && claimerId > 0 ? claimerId : null,
+      stopContext: doStopContext(id),
+    }, podRaw);
     if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
     podKeys = claim.keys;
   }
@@ -5218,10 +5241,15 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
     data = updated as { id: string; status: string };
   } else {
+    /* Written only over the status every guard above read: a cancel landing in
+       between must not be overwritten, or a cancelled DO reads shipped with its
+       stock already back on the shelf. */
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId)
+      .eq('status', prevStatus).select('id, status').maybeSingle();
     if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json({ error: 'status_changed', reason: 'This delivery order just changed. Reload it and try again.' }, 409);
     data = updated as { id: string; status: string };
   }
 
