@@ -130,7 +130,7 @@ describePg('a supplier return is one transaction: OUT + GRN returned + PO receiv
     await sql`
       INSERT INTO scm.purchase_return_items (id, purchase_return_id, company_id, grn_item_id, item_code, material_name, qty_returned, item_group) VALUES
         ('pri-1', 'pr-1', ${CO}, 'gi-1', 'CHAIR-1', 'Chair', 1, 'chair'),
-        ('pri-b1', 'pr-boom', ${CO}, 'gi-1', 'CHAIR-1', 'Chair', 1, 'chair'),
+        ('pri-b1', 'pr-boom', ${CO}, NULL, 'CHAIR-1', 'Chair', 1, 'chair'),
         ('pri-b2', 'pr-boom', ${CO}, NULL, 'BOOM', 'Table', 1, 'table'),
         ('pri-o', 'pr-o', ${OTHER_CO}, 'gi-o', 'SOFA-9', 'Sofa', 1, 'sofa')`;
     await sql`TRUNCATE scm.test_fifo_lots`;
@@ -248,11 +248,10 @@ describePg('a supplier return is one transaction: OUT + GRN returned + PO receiv
     expect(stockTxFor({ PURCHASE_RETURN_MODE: 'two-step', DATABASE_URL: url }, 'PURCHASE_RETURN_MODE')).toBeNull();
     const out = await prStockOutCore(autocommitClient(sql), 'pr-boom', 'HC-PRT-2611-002', 'g-1', 'user-1');
     expect(out.errors.join(' ')).toContain('fifo trigger refused');
-    /* writeMovements writes the batch in one insert, so the refused BOOM row
-       takes its sibling with it; what two-step lacks is the recount rolling
-       back with a failure, shown here by the GRN line it leaves to the caller. */
-    expect((await grnLine('gi-1')).returned_qty).toBe(0);
+    /* The OUT was refused, yet the old path's recount still commits on its own
+       afterwards: pr-1's unit now counts as returned with no OUT behind it. */
+    expect(await prMovs()).toHaveLength(0);
     expect((await recountGrnLines(autocommitClient(sql), ['gi-1'])).ok).toBe(true);
-    expect((await grnLine('gi-1')).returned_qty).toBe(2);
+    expect((await grnLine('gi-1')).returned_qty).toBe(1);
   });
 });

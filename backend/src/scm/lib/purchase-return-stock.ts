@@ -15,7 +15,7 @@
 
 import { writeMovements, reverseMovementsCore, defaultWarehouseId } from './inventory-movements';
 import * as bk from './stock-bucket-key'; // variant-tracked companies only; company 1 keys exactly as before
-import { hasUnreadableLines, LINES_UNREADABLE, linesUnreadableMessage, unreadableMovementError } from './failed-read-refusal';
+import { hasUnreadableLines, LINES_UNREADABLE, linesUnreadableMessage, ReadFailedError, unreadableMovementError } from './failed-read-refusal';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { STOCK_TX_ROLLED_BACK, stockTxFailureBody, type StockTx, type StockTxClient } from './stock-post-tx';
 import { recomputePoReceived } from '../routes/grns';
@@ -161,8 +161,9 @@ export async function resolvePrLineWarehouses(
   const grnItemToGrn = new Map<string, string | null>();
   const grnIds = new Set<string>();
   if (grnItemIds.length > 0) {
-    const { data: giRows } = await sb.from('grn_items')
+    const { data: giRows, error: giErr } = await sb.from('grn_items')
       .select('id, grn_id').in('id', grnItemIds);
+    if (giErr) throw new ReadFailedError('the receipt lines', giErr);
     for (const r of (giRows ?? []) as Array<{ id: string; grn_id: string | null }>) {
       grnItemToGrn.set(r.id, r.grn_id ?? null);
       if (r.grn_id) grnIds.add(r.grn_id);
@@ -171,8 +172,9 @@ export async function resolvePrLineWarehouses(
   if (primaryGrnId) grnIds.add(primaryGrnId);
   const grnWh = new Map<string, string | null>();
   if (grnIds.size > 0) {
-    const { data: grnRows } = await sb.from('grns')
+    const { data: grnRows, error: grnErr } = await sb.from('grns')
       .select('id, warehouse_id').in('id', [...grnIds]);
+    if (grnErr) throw new ReadFailedError('the receipts', grnErr);
     for (const r of (grnRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
       grnWh.set(r.id, r.warehouse_id ?? null);
     }
@@ -213,12 +215,18 @@ export async function prStockOutCore(sb: Db, prId: string, returnNumber: string,
   if (itemsErr || !items) return done(itemsErr ? [unreadableMovementError('the purchase return lines', itemsErr)] : []);
   // Per-line warehouse — each line draws OUT of its source GRN line's warehouse,
   // not a single primary-GRN default (a batched PR can span warehouses).
-  const lineWh = await resolvePrLineWarehouses(
-    sb,
-    items as Array<{ id: string; grn_item_id?: string | null }>,
-    grnId,
-    prCompanyId ?? undefined,
-  );
+  let lineWh: Map<string, string | null>;
+  try {
+    lineWh = await resolvePrLineWarehouses(
+      sb,
+      items as Array<{ id: string; grn_item_id?: string | null }>,
+      grnId,
+      prCompanyId ?? undefined,
+    );
+  } catch (e) {
+    if (e instanceof ReadFailedError) return done([e.message]);
+    throw e;
+  }
 
   /* Resolve the dye-lot batch each returned line drew in at GRN time so the
      return OUT consumes the EXACT PO/dye-lot it came from — not plain FIFO across
@@ -235,7 +243,8 @@ export async function prStockOutCore(sb: Db, prId: string, returnNumber: string,
     const giIds = [...new Set(itemList.map((it) => it.grn_item_id ?? null).filter((x): x is string => !!x))];
     const giToGrn = new Map<string, string | null>();
     if (giIds.length > 0) {
-      const { data: giRows } = await sb.from('grn_items').select('id, grn_id').in('id', giIds);
+      const { data: giRows, error: giErr } = await sb.from('grn_items').select('id, grn_id').in('id', giIds);
+      if (giErr) return done([unreadableMovementError('the receipt lines', giErr)]);
       for (const r of (giRows ?? []) as Array<{ id: string; grn_id: string | null }>) giToGrn.set(r.id, r.grn_id ?? null);
     }
     for (const it of itemList) {

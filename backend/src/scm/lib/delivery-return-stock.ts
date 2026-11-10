@@ -19,7 +19,7 @@ import { traceDoShipmentSources } from './source-po-trace';
 import { shippedBatchOf } from './return-line-batch';
 import { HARD_BOUND_COMPANY_ID, isHardBoundLine } from './so-stock-allocation';
 import { foldTargetsIntoOwnBuckets, stockBucketKeyResolver } from './stock-bucket-key';
-import { hasUnreadableLines, LINES_UNREADABLE, linesUnreadableMessage, unreadableMovementError } from './failed-read-refusal';
+import { hasUnreadableLines, LINES_UNREADABLE, linesUnreadableMessage, ReadFailedError, unreadableMovementError } from './failed-read-refusal';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { STOCK_TX_ROLLED_BACK, stockTxFailureBody, type StockTx, type StockTxClient } from './stock-post-tx';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
@@ -78,14 +78,16 @@ export async function resolveDrLineWarehouses(
   const doLineMeta = new Map<string, { soItemId: string | null; doWarehouseId: string | null }>();
   const soItemIds = new Set<string>();
   if (doItemIds.length > 0) {
-    const { data: doLines } = await sb.from('delivery_order_items')
+    const { data: doLines, error: doLinesErr } = await sb.from('delivery_order_items')
       .select('id, so_item_id, delivery_order_id').in('id', doItemIds);
+    if (doLinesErr) throw new ReadFailedError('the delivery order lines', doLinesErr);
     const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; delivery_order_id: string }>;
     const doIds = [...new Set(doRows.map((r) => r.delivery_order_id).filter(Boolean))];
     const doHeaderWh = new Map<string, string | null>();
     if (doIds.length > 0) {
-      const { data: doHeaders } = await sb.from('delivery_orders')
+      const { data: doHeaders, error: doHeadersErr } = await sb.from('delivery_orders')
         .select('id, warehouse_id').in('id', doIds);
+      if (doHeadersErr) throw new ReadFailedError('the delivery orders', doHeadersErr);
       for (const d of (doHeaders ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
         doHeaderWh.set(d.id, d.warehouse_id ?? null);
       }
@@ -99,8 +101,9 @@ export async function resolveDrLineWarehouses(
   // so_item_id → warehouse_id (the authoritative ship-from, 0118).
   const soWh = new Map<string, string | null>();
   if (soItemIds.size > 0) {
-    const { data: soRows } = await sb.from('mfg_sales_order_items')
+    const { data: soRows, error: soRowsErr } = await sb.from('mfg_sales_order_items')
       .select('id, warehouse_id').in('id', [...soItemIds]);
+    if (soRowsErr) throw new ReadFailedError('the sales order lines', soRowsErr);
     for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
       soWh.set(r.id, r.warehouse_id ?? null);
     }
@@ -132,8 +135,9 @@ export async function resolveDrLineBatches(
   const out = new Map<string, string>();
   const doItemIds = [...new Set(items.map((it) => it.do_item_id ?? null).filter((x): x is string => !!x))];
   if (doItemIds.length === 0) return out;
-  const { data: doLines } = await sb.from('delivery_order_items')
+  const { data: doLines, error: doLinesErr } = await sb.from('delivery_order_items')
     .select('id, so_item_id, delivery_order_id').in('id', doItemIds);
+  if (doLinesErr) throw new ReadFailedError('the delivery order lines', doLinesErr);
   const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; delivery_order_id: string | null }>;
   const soByDoLine = new Map<string, string>();
   const doByDoLine = new Map<string, string>();
@@ -233,15 +237,22 @@ export async function drStockInCore(sb: Db, deliveryReturnId: string, performedB
 
   // Per-line warehouse — each returned line re-enters the warehouse the DO line
   // shipped from (its SO line's warehouse, 0118), not a single DR-header default.
-  const lineWh = await resolveDrLineWarehouses(
-    sb,
-    items as Array<{ id: string; do_item_id?: string | null }>,
-    drHeaderWarehouseId,
-    (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
-  );
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
-  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
-    (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  let lineWh: Map<string, string | null>;
+  let lineBatch: Map<string, string>;
+  try {
+    lineWh = await resolveDrLineWarehouses(
+      sb,
+      items as Array<{ id: string; do_item_id?: string | null }>,
+      drHeaderWarehouseId,
+      (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
+    );
+    lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
+      (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  } catch (e) {
+    if (e instanceof ReadFailedError) return done([e.message]);
+    throw e;
+  }
 
   /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
@@ -368,13 +379,20 @@ export async function drResyncCore(sb: Db, deliveryReturnId: string, performedBy
       .eq('delivery_return_id', deliveryReturnId);
     if (itemsErr) return done([unreadableMovementError('the delivery return lines', itemsErr)]);
     const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>;
-    const lineWh = await resolveDrLineWarehouses(
-      sb,
-      lineRows as Array<{ id: string; do_item_id?: string | null }>,
-      drHeaderWarehouseId,
-      (drHeader as { company_id?: number | null }).company_id ?? undefined,
-    );
-    const lineBatch = await resolveDrLineBatches(sb, lineRows, (drHeader as { company_id?: number | null }).company_id ?? null);
+    let lineWh: Map<string, string | null>;
+    let lineBatch: Map<string, string>;
+    try {
+      lineWh = await resolveDrLineWarehouses(
+        sb,
+        lineRows as Array<{ id: string; do_item_id?: string | null }>,
+        drHeaderWarehouseId,
+        (drHeader as { company_id?: number | null }).company_id ?? undefined,
+      );
+      lineBatch = await resolveDrLineBatches(sb, lineRows, (drHeader as { company_id?: number | null }).company_id ?? null);
+    } catch (e) {
+      if (e instanceof ReadFailedError) return done([e.message]);
+      throw e;
+    }
     for (const it of lineRows) {
       /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote IN on create, so they
          stay out of the resync TARGET too (else the delta walk would write a
