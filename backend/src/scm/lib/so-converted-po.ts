@@ -33,16 +33,20 @@
 // ----------------------------------------------------------------------------
 
 import { effectiveDelivery } from '../shared/effective-delivery';
+import { chunkIn } from './paginate-all';
 
-/** PostgREST `.in()` caps out on URL length, and the un-paginated SO list can
- *  hand us 500 docs → well over a thousand line ids. Chunk every `.in()` set so
- *  a wide list can't blow the query-string limit. */
-const IN_CHUNK = 200;
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
+/** Every `.in()` read here goes through chunkIn: batches sized by URL bytes, and
+ *  each batch PAGED. The old fixed 200-value loop was not paged, so 200 orders
+ *  x their lines passed PostgREST's 1,000-row page and the rest were dropped
+ *  without an error (a converted order showing no PO). null = failed or
+ *  truncated read; callers keep their best-effort empty answer. */
+async function readIn<T>(
+  ids: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (part: string[]) => any,
+): Promise<T[] | null> {
+  const r = await chunkIn<T>(ids, (part, from, to) => build(part).order('id').range(from, to));
+  return r.error || r.truncated ? null : r.data;
 }
 
 export type SoConvertedPo = { id: string; po_number: string };
@@ -106,33 +110,29 @@ export async function soLineBoundPoNumbers(
     };
     const links: Link[] = [];
     const poIds = new Set<string>();
-    for (const part of chunk(ids, IN_CHUNK)) {
-      const { data, error } = await scoped(sb
-        .from('purchase_order_items')
-        .select(`so_item_id, purchase_order_id, qty, received_qty, delivery_date, ${REVISED}`))
-        .in('so_item_id', part)
-        .not('purchase_order_id', 'is', null);
-      if (error) return out;
-      for (const r of (data ?? []) as Link[]) {
-        if (r.so_item_id && r.purchase_order_id) {
-          links.push(r);
-          poIds.add(r.purchase_order_id);
-        }
+    const linkRows = await readIn<Link>(ids, (part) => scoped(sb
+      .from('purchase_order_items')
+      .select(`so_item_id, purchase_order_id, qty, received_qty, delivery_date, ${REVISED}`))
+      .in('so_item_id', part)
+      .not('purchase_order_id', 'is', null));
+    if (!linkRows) return out;
+    for (const r of linkRows) {
+      if (r.so_item_id && r.purchase_order_id) {
+        links.push(r);
+        poIds.add(r.purchase_order_id);
       }
     }
     if (links.length === 0) return out;
     type Head = DateCols & { id: string; po_number: string | null; status: string | null; expected_at: string | null };
     const headById = new Map<string, Head>();
-    for (const part of chunk([...poIds], IN_CHUNK)) {
-      const { data, error } = await scoped(sb
-        .from('purchase_orders')
-        .select(`id, po_number, status, expected_at, ${REVISED}`))
-        .in('id', part);
-      if (error) return out;
-      for (const p of (data ?? []) as Head[]) {
-        if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
-        if (p.po_number) headById.set(p.id, p);
-      }
+    const heads = await readIn<Head>([...poIds], (part) => scoped(sb
+      .from('purchase_orders')
+      .select(`id, po_number, status, expected_at, ${REVISED}`))
+      .in('id', part));
+    if (!heads) return out;
+    for (const p of heads) {
+      if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
+      if (p.po_number) headById.set(p.id, p);
     }
     const bySoItem = new Map<string, { pos: Set<string>; etas: Record<string, string> }>();
     for (const l of links) {
@@ -174,15 +174,13 @@ export async function soConvertedPos(
     //    against a line that was later cancelled still exists and still counts
     //    as a conversion of that SO.)
     const docByItemId = new Map<string, string>();
-    for (const part of chunk(docs, IN_CHUNK)) {
-      const { data, error } = await scoped(sb
-        .from('mfg_sales_order_items')
-        .select('id, doc_no'))
-        .in('doc_no', part);
-      if (error) return out;
-      for (const r of (data ?? []) as Array<{ id: string | null; doc_no: string | null }>) {
-        if (r.id && r.doc_no) docByItemId.set(r.id, r.doc_no);
-      }
+    const lineRows = await readIn<{ id: string | null; doc_no: string | null }>(docs, (part) => scoped(sb
+      .from('mfg_sales_order_items')
+      .select('id, doc_no'))
+      .in('doc_no', part));
+    if (!lineRows) return out;
+    for (const r of lineRows) {
+      if (r.id && r.doc_no) docByItemId.set(r.id, r.doc_no);
     }
     const itemIds = [...docByItemId.keys()];
     if (itemIds.length === 0) return out;
@@ -190,18 +188,16 @@ export async function soConvertedPos(
     // 2. PO lines raised from those SO lines → (SO line id, PO id).
     const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
     const poIds = new Set<string>();
-    for (const part of chunk(itemIds, IN_CHUNK)) {
-      const { data, error } = await scoped(sb
-        .from('purchase_order_items')
-        .select('so_item_id, purchase_order_id'))
-        .in('so_item_id', part)
-        .not('purchase_order_id', 'is', null);
-      if (error) return out;
-      for (const r of (data ?? []) as Array<{ so_item_id: string | null; purchase_order_id: string | null }>) {
-        if (r.so_item_id && r.purchase_order_id) {
-          links.push({ so_item_id: r.so_item_id, purchase_order_id: r.purchase_order_id });
-          poIds.add(r.purchase_order_id);
-        }
+    const linkRows = await readIn<{ so_item_id: string | null; purchase_order_id: string | null }>(itemIds, (part) => scoped(sb
+      .from('purchase_order_items')
+      .select('so_item_id, purchase_order_id'))
+      .in('so_item_id', part)
+      .not('purchase_order_id', 'is', null));
+    if (!linkRows) return out;
+    for (const r of linkRows) {
+      if (r.so_item_id && r.purchase_order_id) {
+        links.push({ so_item_id: r.so_item_id, purchase_order_id: r.purchase_order_id });
+        poIds.add(r.purchase_order_id);
       }
     }
     if (links.length === 0) return out;
@@ -209,16 +205,14 @@ export async function soConvertedPos(
     // 3. PO id → po_number, dropping CANCELLED (filtered app-side so a schema
     //    without the status column can't silently widen the set).
     const numById = new Map<string, string>();
-    for (const part of chunk([...poIds], IN_CHUNK)) {
-      const { data, error } = await scoped(sb
-        .from('purchase_orders')
-        .select('id, po_number, status'))
-        .in('id', part);
-      if (error) return out;
-      for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
-        if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
-        if (p.po_number) numById.set(p.id, p.po_number);
-      }
+    const heads = await readIn<{ id: string; po_number: string | null; status: string | null }>([...poIds], (part) => scoped(sb
+      .from('purchase_orders')
+      .select('id, po_number, status'))
+      .in('id', part));
+    if (!heads) return out;
+    for (const p of heads) {
+      if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
+      if (p.po_number) numById.set(p.id, p.po_number);
     }
 
     // Assemble doc_no → PO de-duped by id, sorted by number.

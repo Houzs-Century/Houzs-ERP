@@ -8,6 +8,7 @@
 // ticks it was sent with.
 
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { BankLine, LedgerEntry } from './bank-queries';
 
@@ -18,10 +19,13 @@ vi.mock('./bank-queries', () => ({
 }));
 
 import { ReconcilePickProvider, useReconcilePick } from './bank-reconcile-pick';
+import { EntryDocument } from './bank-entry-doc';
+import { rememberReturnPicks } from '../../lib/returnScroll';
 
 afterEach(() => {
   groupMutate.mockReset();
   groupState = { isError: false, error: null };
+  sessionStorage.clear();
 });
 
 const line = (id: number, amountSen: number, description: string): BankLine => ({
@@ -100,5 +104,47 @@ describe('a refusal', () => {
     expect(screen.getByText('Movement 1192 is already posted. Undo it first.')).toBeTruthy();
     tick('2990-JE-2610-0354');
     expect(screen.queryByText(/already posted/)).toBeNull();
+  });
+});
+
+/* Owner 2026-11-10: 我希望这里也可以点开so, 点开后也可以返回这里. Opening an order leaves the
+   page, and the ticks lived only on it; they are noted as the order opens and given back
+   once, when the page comes back at the same address. */
+describe('the ticks, across a trip to an order and back', () => {
+  const BANK = '/scm/bank-recon?account=310-0020&month=2026-10&tab=not-on-bank';
+  const Trip = ({ ready = true, lines = [UMOBILE], entries = [PV021] }: { ready?: boolean; lines?: BankLine[]; entries?: LedgerEntry[] }) => (
+    <MemoryRouter>
+      <ReconcilePickProvider lines={lines} entries={entries} ready={ready}>
+        <Ticks lines={lines} entries={entries} />
+        <EntryDocument text="2990-DraftOR-2610-019 · 2990-SO-2609-016" />
+      </ReconcilePickProvider>
+    </MemoryRouter>
+  );
+  const isTicked = (name: string) => (screen.getByLabelText(`Pick ${name}`) as HTMLInputElement).checked;
+
+  test('come back as they were; the next visit starts clean', () => {
+    window.history.replaceState(null, '', BANK);
+    const away = render(<Trip />);
+    tick('U MOBILE');
+    tick('2990-JE-2610-0354');
+    fireEvent.click(screen.getByRole('link', { name: '2990-SO-2609-016' }));
+    away.unmount();
+    const back = render(<Trip />);
+    expect(isTicked('U MOBILE')).toBe(true);
+    expect(isTicked('2990-JE-2610-0354')).toBe(true);
+    expect(bar()!.textContent).toContain('The totals agree.');
+    back.unmount();
+    render(<Trip />);
+    expect(isTicked('U MOBILE')).toBe(false);
+    expect(bar()).toBeNull();
+  });
+
+  test('a page still loading keeps them until its lists arrive', () => {
+    window.history.replaceState(null, '', BANK);
+    rememberReturnPicks({ lines: [1192], entries: ['2990-JE-2610-0354'] });
+    const { rerender } = render(<Trip ready={false} lines={[]} entries={[]} />);
+    rerender(<Trip />);
+    expect(isTicked('U MOBILE')).toBe(true);
+    expect(isTicked('2990-JE-2610-0354')).toBe(true);
   });
 });

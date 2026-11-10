@@ -61,7 +61,8 @@ import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/compan
 import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jobs';
 import { flattenProjectCrew } from '../lib/delivery-planning-board-reads';
 import { downDays, loadDownWindows } from '../lib/lorry-down-days';
-import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
+import { costSen } from '../lib/lorry-km';
+import { kmByLorryForRange } from '../lib/lorry-km-range';
 import { todayMyt } from '../lib/my-time';
 
 export const lorryCapacity = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -202,27 +203,15 @@ export async function loadProjectJobs(c: Ctx, from: string, to: string): Promise
 }
 
 /* GPS km per lorry from the Velocity fixes (scm.lorry_positions, Malaysia days).
-   Fixes exist from 15 Oct 2026 only. Unified fleet like /lorries/km-cost. */
-async function loadKmByLorry(c: Ctx, from: string, to: string): Promise<Loaded<Map<string, number>>> {
-  const winFrom = myDayWindow(from)?.from;
-  const winTo = myDayWindow(to)?.to;
-  if (!winFrom || !winTo) return { data: new Map(), error: null };
+   Fixes exist from 15 Oct 2026 only. Unified fleet like /lorries/km-cost.
+   data = null with `incomplete` set when km cannot be given in full (see
+   lib/lorry-km-range.ts); km and running cost then show a dash, never a low number. */
+async function loadKmByLorry(c: Ctx, from: string, to: string): Promise<Loaded<Map<string, number> | null> & { incomplete: string | null }> {
   // ponytail: reads every fix in range (~288 per tracked lorry per day); a daily km rollup table if many lorries get tracked.
-  const { data: fixes, error } = await paginateAll<Fix & { lorry_id: string }>((lo, hi) =>
-    c.get('supabase').from('lorry_positions')
-      .select('lorry_id, lat, lng, recorded_at')
-      .gte('recorded_at', winFrom).lt('recorded_at', winTo)
-      .order('recorded_at').order('id')
-      .range(lo, hi),
-  );
-  if (error) return { data: new Map(), error: error.message };
-  const byLorry = new Map<string, Fix[]>();
-  for (const f of fixes ?? []) {
-    const list = byLorry.get(f.lorry_id) ?? [];
-    list.push(f);
-    byLorry.set(f.lorry_id, list);
-  }
-  return { data: new Map([...byLorry].map(([lid, list]) => [lid, kmFromFixes(list)])), error: null };
+  const r = await kmByLorryForRange(c.get('supabase'), from, to);
+  if (!r.ok) return { data: null, error: r.error, incomplete: null };
+  if (r.km === null) return { data: null, error: null, incomplete: r.incomplete };
+  return { data: r.km, error: null, incomplete: null };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -277,7 +266,7 @@ lorryCapacity.get('/', async (c) => {
     setupDismantle: number;
     deliveryRevenueSen: number;
     costPerKmSen: number | null;
-    km: number;
+    km: number | null;
   };
   const byLorry = new Map<string, LorryAcc>();
   for (const r of (lorryRows ?? []) as Array<Record<string, unknown>>) {
@@ -319,14 +308,19 @@ lorryCapacity.get('/', async (c) => {
   type TripMeta = { lorryId: string | null; date: string };
   const tripMeta = new Map<string, TripMeta>();
   {
-    const { data: trips } = await paginateAll<Record<string, unknown>>((lo, hi) =>
+    /* Ordered, so pages cannot overlap or skip; a failed or truncated read is an
+       error, not an empty fleet-month (it used to be ignored and read as zero trips). */
+    const { data: trips, error: tripErr, truncated: tripsCut } = await paginateAll<Record<string, unknown>>((lo, hi) =>
       sb.from('trips')
         .select('id, lorry_id, trip_date, status')
         .gte('trip_date', from)
         .lte('trip_date', to)
         .neq('status', 'CANCELLED')
+        .order('id')
         .range(lo, hi),
     );
+    if (tripErr) return c.json({ error: 'load_failed', reason: `trips: ${tripErr.message}` }, 500);
+    if (tripsCut) return c.json({ error: 'range_too_large', reason: 'Too many trips in this range to count in full; narrow the range.' }, 400);
     for (const t of (trips ?? [])) {
       const id = dual<string>(t, 'id');
       const lorryId = dual<string | null>(t, 'lorry_id') ?? null;
@@ -342,52 +336,52 @@ lorryCapacity.get('/', async (c) => {
 
   /* 4. Stops for those trips — bucket by stop_type per lorry, sum DELIVERY
         revenue, and mark a trip's date as a delivery day. Read all stops whose
-        trip_id is in our in-range trip set. Paginated, chunked over the trip ids
-        (a large fleet-month can exceed a 1000-element IN list). */
+        trip_id is in our in-range trip set. chunkIn: URL-sized batches, each paged
+        and ordered; a failed read is an error (it used to be ignored, and the
+        lorry's stops and revenue read as zero). */
   const tripIds = [...tripMeta.keys()];
   const unpricedDo = new Map<string, string[]>();
   if (tripIds.length > 0) {
-    const CHUNK = 200;
-    for (let i = 0; i < tripIds.length; i += CHUNK) {
-      const batch = tripIds.slice(i, i + CHUNK);
-      const { data: stops } = await paginateAll<Record<string, unknown>>((lo, hi) =>
-        sb.from('trip_stops')
-          .select('trip_id, stop_type, revenue_sen, do_id, assr_case_id')
-          .in('trip_id', batch)
-          .range(lo, hi),
-      );
-      for (const s of (stops ?? [])) {
-        const tid = dual<string>(s, 'trip_id');
-        const meta = tripMeta.get(tid);
-        if (!meta || !meta.lorryId) continue;
-        const acc = byLorry.get(meta.lorryId);
-        if (!acc) continue;
-        const kind = String(dual<string>(s, 'stop_type') ?? '').toUpperCase();
-        /* A service case's delivery leg rides the run as a service job, the same rule as
-           the Logistic Overview, so it is not a delivery order and earns no DO revenue. */
-        if (kind === 'DELIVERY' && dual(s, 'assr_case_id') != null) {
-          acc.services += 1;
-        } else if (kind === 'DELIVERY') {
-          acc.deliveries += 1;
-          /* revenue_sen is stamped only when the board scheduled the stop; otherwise
-             the stop's delivery order carries the amount (read below). */
-          const stamped = Number(dual(s, 'revenue_sen') ?? 0);
-          const doId = dual<string | null>(s, 'do_id');
-          if (stamped > 0) acc.deliveryRevenueSen += stamped;
-          else if (doId) unpricedDo.set(doId, [...(unpricedDo.get(doId) ?? []), meta.lorryId]);
-          if (meta.date) acc.deliveryTripDates.add(meta.date);
-        } else if (kind === 'PICKUP') {
-          acc.pickups += 1;
-        } else if (kind === 'SERVICE' || kind === 'INSPECTION') {
-          /* INSPECTION (mig 0165) is an ASSR on-site inspection visit scheduled
-             from the Delivery Planning board. It is service-case work and counts
-             with SERVICE — without this arm it matched no bucket at all and the
-             visit consumed a lorry's day while showing up in none of its stop
-             counts. */
-          acc.services += 1;
-        } else if (kind === 'SETUP' || kind === 'DISMANTLE') {
-          acc.setupDismantle += 1;
-        }
+    const { data: stops, error: stopErr, truncated: stopsCut } = await chunkIn(tripIds, (batch, lo, hi) =>
+      sb.from('trip_stops')
+        .select('trip_id, stop_type, revenue_sen, do_id, assr_case_id')
+        .in('trip_id', batch)
+        .order('id')
+        .range(lo, hi),
+    );
+    if (stopErr) return c.json({ error: 'load_failed', reason: `trip stops: ${stopErr.message}` }, 500);
+    if (stopsCut) return c.json({ error: 'range_too_large', reason: 'Too many trip stops in this range to count in full; narrow the range.' }, 400);
+    for (const s of (stops as Array<Record<string, unknown>>)) {
+      const tid = dual<string>(s, 'trip_id');
+      const meta = tripMeta.get(tid);
+      if (!meta || !meta.lorryId) continue;
+      const acc = byLorry.get(meta.lorryId);
+      if (!acc) continue;
+      const kind = String(dual<string>(s, 'stop_type') ?? '').toUpperCase();
+      /* A service case's delivery leg rides the run as a service job, the same rule as
+         the Logistic Overview, so it is not a delivery order and earns no DO revenue. */
+      if (kind === 'DELIVERY' && dual(s, 'assr_case_id') != null) {
+        acc.services += 1;
+      } else if (kind === 'DELIVERY') {
+        acc.deliveries += 1;
+        /* revenue_sen is stamped only when the board scheduled the stop; otherwise
+           the stop's delivery order carries the amount (read below). */
+        const stamped = Number(dual(s, 'revenue_sen') ?? 0);
+        const doId = dual<string | null>(s, 'do_id');
+        if (stamped > 0) acc.deliveryRevenueSen += stamped;
+        else if (doId) unpricedDo.set(doId, [...(unpricedDo.get(doId) ?? []), meta.lorryId]);
+        if (meta.date) acc.deliveryTripDates.add(meta.date);
+      } else if (kind === 'PICKUP') {
+        acc.pickups += 1;
+      } else if (kind === 'SERVICE' || kind === 'INSPECTION') {
+        /* INSPECTION (mig 0165) is an ASSR on-site inspection visit scheduled
+           from the Delivery Planning board. It is service-case work and counts
+           with SERVICE — without this arm it matched no bucket at all and the
+           visit consumed a lorry's day while showing up in none of its stop
+           counts. */
+        acc.services += 1;
+      } else if (kind === 'SETUP' || kind === 'DISMANTLE') {
+        acc.setupDismantle += 1;
       }
     }
   }
@@ -427,10 +421,9 @@ lorryCapacity.get('/', async (c) => {
     for (const d of t.dates) acc.tripDates.add(d);
     for (const d of t.deliveryDates) acc.deliveryTripDates.add(d);
   }
-  for (const [lid, k] of km.data) {
-    const acc = byLorry.get(lid);
-    if (acc) acc.km = k;
-  }
+  /* km cannot be given in full -> null for every lorry (a dash), and the reason
+     goes out as km_incomplete for the page to show. */
+  for (const acc of byLorry.values()) acc.km = km.data ? (km.data.get(acc.id) ?? 0) : null;
 
   /* 5. Shape per-lorry metrics (formulas above). Money returned as cents; client
         divides by 100. Every displayed ratio rounded (counts integer; rates 1dp;
@@ -463,7 +456,7 @@ lorryCapacity.get('/', async (c) => {
       revenue_per_order_sen: revenuePerOrderSen == null ? null : Math.round(revenuePerOrderSen),
       revenue_per_trip_sen: revenuePerTripSen == null ? null : Math.round(revenuePerTripSen),
       km: a.km,
-      running_cost_sen: costSen(a.km, a.costPerKmSen),
+      running_cost_sen: a.km == null ? null : costSen(a.km, a.costPerKmSen),
     };
   });
 
@@ -497,6 +490,7 @@ lorryCapacity.get('/', async (c) => {
     totals,
     workingDays,
     range: { from, to, fleet },
+    km_incomplete: km.incomplete,
   });
 });
 

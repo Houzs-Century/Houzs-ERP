@@ -61,7 +61,7 @@ salesOrderExports.get('/export/rows', soExportRowsHandler);
 export async function soFunnelValuesHandler(c: Ctx) {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  const out = await buildSoFunnelValues(sb, c, scopeIds, canViewScmFinance(c));
+  const out = await buildSoFunnelValues(sb, c, scopeIds, canViewScmFinance(c), c.env);
   if (out.error !== null) return c.json({ error: 'load_failed', reason: out.error }, 500);
   return c.json(out);
 }

@@ -10,12 +10,13 @@
  * come through the same /activity feed but we filter to action === "note" so
  * the mobile card stays a chat thread. The project detail already surfaces the
  * system rows elsewhere. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { relativeTime } from "../lib/utils";
+import { salesReportFormatIssues, type SalesReportFormatIssue } from "../lib/salesReportFormatIssues";
 
 type NoteActivity = {
   id: number;
@@ -154,6 +155,11 @@ export function MobileProjectChat({
                   >
                     {n.note ?? ""}
                   </div>
+                  {/* Format hints (owner 2026-11-10 "bagi warning kalau sales
+                      person kurang satu format or salah format"). Shared helper
+                      with the desktop ProjectChat so both surfaces read a paste
+                      the same way. Hidden entirely for regular chat. */}
+                  <FormatHints note={n.note} align={mine ? "end" : "start"} />
                 </div>
               );
             })
@@ -212,5 +218,43 @@ export function MobileProjectChat({
         )}
       </div>
     </details>
+  );
+}
+
+/** Inline format hints under a sales-report message — the mobile mirror of
+ *  the desktop ChatBubble's FormatHints, keyed to the paste through the
+ *  shared `salesReportFormatIssues` helper so both surfaces say the same
+ *  thing about the same text. */
+function FormatHints({ note, align }: { note: string | null; align: "start" | "end" }) {
+  const issues: SalesReportFormatIssue[] = useMemo(() => salesReportFormatIssues(note), [note]);
+  if (issues.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        marginTop: 4,
+        maxWidth: "88%",
+        alignSelf: align === "end" ? "flex-end" : "flex-start",
+      }}
+    >
+      {issues.map((it, i) => (
+        <div
+          key={i}
+          style={{
+            fontSize: 11,
+            lineHeight: 1.4,
+            padding: "5px 8px",
+            borderRadius: 7,
+            border: it.tone === "warn" ? "1px solid #f4d9a8" : "1px solid #dde1d8",
+            background: it.tone === "warn" ? "#fdf5e4" : "#f3f5f0",
+            color: it.tone === "warn" ? "#8a4e0e" : "#414539",
+          }}
+        >
+          {it.message}
+        </div>
+      ))}
+    </div>
   );
 }
