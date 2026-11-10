@@ -16,8 +16,10 @@ import { namesAgree, nameTokens, ENTRY_MATCH_WINDOW_DAYS } from '../src/acc/bank
    or the whole name when it is one word. Same word test as namesAgree. */
 const sharedWords = (text, name) => { const bank = nameTokens(text); return nameTokens(name ?? '').filter((p) => bank.some((b) => b === p || (p.length >= 5 && b.length >= 5 && (b.startsWith(p) || p.startsWith(b))))); };
 const strictAgree = (text, name) => { const all = nameTokens(name ?? ''); const got = sharedWords(text, name); return all.length > 0 && (got.length >= 2 || (all.length === 1 && got.length === 1)); };
-const MODE_NAME = process.env.NAME_RULE === 'strict' ? 'strict' : 'loose';
-const agree = (text, name) => (MODE_NAME === 'strict' ? strictAgree(text, name) : namesAgree(text, name));
+/* FULL: every word of the customer's name is in the bank's words (two words at least, or a one-word name). */
+const fullAgree = (text, name) => { const all = nameTokens(name ?? ''); const got = sharedWords(text, name); return all.length > 0 && got.length === all.length && (all.length >= 2 || got.length === 1); };
+const MODE_NAME = ['strict', 'full'].includes(process.env.NAME_RULE) ? process.env.NAME_RULE : 'loose';
+const agree = (text, name) => (MODE_NAME === 'strict' ? strictAgree(text, name) : MODE_NAME === 'full' ? fullAgree(text, name) : namesAgree(text, name));
 
 if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set.'); process.exit(2); }
 if ((process.env.MODE || 'plan') !== 'plan') { console.error('read-only: run it with mode=plan.'); process.exit(1); }
@@ -59,7 +61,7 @@ try {
       const customerOf = new Map(pays.map((p) => [p.id, p.debtor_name]));
       const held = new Set(lines.filter((l) => l.state === 'POSTED').flatMap((l) => String(l.jes ?? '').split(',').filter(Boolean)));
       const names = (g) => namesAgree.length >= 0 && [g.party ?? g.notes ?? null, g.type === 'SOPAY' ? customerOf.get(String(g.doc)) ?? null : null];
-      const namesPayer = (text, g) => names(g).some((n) => n && agree(text, n));
+      const namesPayer = (text, g) => { const [own, customer] = names(g); return (own != null && namesAgree(text, own)) || (customer != null && agree(text, customer)); };
       const todayRule = (text, cands) => cands.length === 1 && namesAgree(text, cands[0].party ?? cands[0].notes ?? null) ? cands[0] : null;
       const newRule = (text, cands) => { const n = cands.filter((g) => namesPayer(text, g)); return n.length === 1 ? n[0] : null; };
 
