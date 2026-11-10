@@ -122,13 +122,14 @@ const AutoMatchNow = ({ id }: { id: number }) => {
         <Link2 {...ICON} /> {run.isPending ? 'Matching…' : 'Match the obvious ones now'}
       </button>
       <span style={softText}>
-        A movement with exactly one entry of the same amount in the books, whose name the bank's line carries, is
-        matched without asking. A transfer the bank itself reversed under the same reference leaves with its
-        reversal, as a pair. The rest stay below for you.
+        A payment whose words carry a voucher's number (or the Draft number it went out under) is matched to that
+        voucher when the amounts agree, however many days apart. Otherwise a movement with exactly one entry of the
+        same amount in the books, whose name the bank's line carries, is matched without asking. A transfer the bank
+        itself reversed under the same reference leaves with its reversal, as a pair. The rest stay below for you.
       </span>
       {run.data && (
         <span style={{ fontSize: 'var(--fs-13)', color: run.data.matched > 0 ? good : undefined }}>
-          {run.data.matched} matched by amount and name{run.data.matched > 0 ? ` — ${run.data.jeNos.join(', ')}` : ''}.
+          {run.data.matched} matched{run.data.matched > 0 ? ` — ${run.data.jeNos.join(', ')}` : ''}.
         </span>
       )}
       {run.data && run.data.contraPairs > 0 && (
@@ -865,6 +866,7 @@ export const DoneLine = ({ line }: { line: BankLine }) => {
               {line.matches.length > 0 ? ` · ${line.matches.map((m) => m.je_no).join(', ')}` : ''}
               {/* Said, because nobody pressed it (docs/bugs/0814). */}
               {line.matches.some((m) => m.match_reason === 'amount+name') ? ' · matched by amount and name' : ''}
+              {line.matches.some((m) => m.match_reason === 'amount+document') ? " · matched by the voucher number on the bank's line" : ''}
             </span>}
       </td>
       <td>

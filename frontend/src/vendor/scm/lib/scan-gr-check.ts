@@ -52,7 +52,7 @@ export function warehouseTone(name: string, tones: number): number {
   return h % tones;
 }
 
-export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; warehouseId?: string | null; name: string | null; remaining: number; warehouse: string | null };
+export type CheckPoLine = { poItemId: string; poNumber: string; supplierId: string | null; itemCode: string; supplierSku: string | null; spec?: string | null; colour?: string | null; warehouseId?: string | null; name: string | null; remaining: number; warehouse: string | null };
 export type CheckSupplier = { id: string; code: string | null; name: string | null };
 export type PendingResp = { success: boolean; data: { documents: CheckDoc[]; suppliers: CheckSupplier[]; poLines: CheckPoLine[] } };
 export type CreateResult = { id: string; ok: boolean; grnNumbers?: string[]; reason?: string; giftNote?: string | null };
@@ -123,10 +123,11 @@ export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArra
   const onPo = poNumber ? lines.filter((l) => l.poNumber === poNumber) : lines;
   const out: SkuOption[] = onPo.map((l) => ({
     value: `line:${l.poItemId}`,
-    label: l.supplierSku || l.itemCode,
+    // The line's colour beside the SKU, so a row tied to the wrong colour shows (HOOKKA DO-2611-035).
+    label: [l.supplierSku || l.itemCode, l.colour].filter(Boolean).join(' · '),
     detail: [l.supplierSku ? l.itemCode : null, l.spec, poNumber ? null : l.poNumber, `owed ${l.remaining}`].filter(Boolean).join(' · '),
     group: poNumber ? `Still owed on ${poNumber}` : 'Still owed on open POs',
-    search: `${l.supplierSku ?? ''} ${l.itemCode} ${l.name ?? ''} ${l.poNumber}`,
+    search: `${l.supplierSku ?? ''} ${l.itemCode} ${l.colour ?? ''} ${l.name ?? ''} ${l.poNumber}`,
   }));
   if (!poNumber) {
     const owed = new Set(lines.map((l) => l.itemCode));

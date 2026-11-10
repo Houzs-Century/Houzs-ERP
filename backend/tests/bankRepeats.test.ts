@@ -163,3 +163,68 @@ describe('POST /bank/statements/:id/repeats — a statement already in', () => {
     expect((sb.tables.acc_bank_statement_lines as Row[]).find((l) => l.id === 292)!.state).toBe('OPEN');
   });
 });
+
+/* 2990's Hong Leong October (owner 2026-11-10: 「已经match 的就不需要去理会」). The
+   month-end CSV printed three movements the any-day export had already matched
+   in words neither inside the other's — a description cut short, a reference
+   reordered — and they came in still to decide, the month RM 9,095.10 apart.
+   Each pair carries the same transaction number, biller account or document
+   number. The prints, statement and line numbers as stored. */
+describe('October: the same movement worded differently is still a repeat', () => {
+  const STATEMENTS: Row[] = [
+    { id: 16, company_id: CO, account_code: ACCOUNT, file_name: 'Transaction_Statement_20261001_20261026.csv', period_from: '2026-10-01', period_to: '2026-10-31', line_count: 59, created_at: '2026-10-27T08:38:00Z' },
+    { id: 23, company_id: CO, account_code: ACCOUNT, file_name: 'acs_23600602788_31102026 (1).csv', period_from: '2026-10-01', period_to: '2026-10-31', line_count: 80, created_at: '2026-11-10T02:53:00Z' },
+  ];
+  const line = (id: number, statementId: number, lineNo: number, bookedOn: string, amountSen: number, description: string, reference: string, over: Row = {}): Row => ({
+    id, statement_id: statementId, company_id: CO, line_no: lineNo, booked_on: bookedOn, amount_sen: amountSen, charge_sen: 0, description, reference,
+    kind: 'OTHER', state: 'OPEN', posted_je_no: null, note: null, acquirer_code: null, trading_date: null, merchant_no: null,
+    matched_batch_id: null, split: null, contra_line_id: null, ...over,
+  });
+  const LINES = (): Row[] => [
+    line(431, 16, 67, '2026-10-02', -7210, 'JomPAY Bill Payment', 'U MOBILE SDN BHD 30515721824 DA203JNP22610021822Y', { state: 'POSTED', posted_je_no: '2990-JE-2609-0379' }),
+    line(429, 16, 65, '2026-10-02', -70000, 'Fund Trf fr CA to CA-Internet(B)', 'THE CONTS SDN. BHD. I-2608-063 2990-Draft-2609-030', { state: 'POSTED', posted_je_no: '2990-JE-2609-0377' }),
+    line(403, 16, 39, '2026-10-12', -832300, 'Fund Trf from CA to SA via Internet (B)', 'CHOW WAI MAN TNB DEPOSIT n PRINT 2990-HPV-2610-013', { state: 'POSTED', posted_je_no: '2990-JE-2610-0204' }),
+    line(1130, 23, 6, '2026-10-02', -7210, 'JomPAY Bill Payment at DIO', '30515721824 DA203JNP22610021822Y U MOBILE SDN BHD CIBJOM29092026039886'),
+    line(1132, 23, 8, '2026-10-02', -70000, 'Fund Trf fr CA to CA-Internet(B)', 'I-2608-063 2990-Draft-2609-030 THE CONTS SDN. BHD.'),
+    line(1158, 23, 34, '2026-10-12', -832300, 'Fund Trf from CA to SA via Intern', 'TNB DEPOSIT n PRINT 2990-HPV-2610-013 CHOW WAI MAN'),
+    /* The next month's U Mobile bill: the same biller account, its own movement. */
+    line(1192, 23, 68, '2026-10-27', -7210, 'JomPAY Bill Payment at DIO', '30515721824 DASMRCEV22610271127Y U MOBILE SDN BHD CIBJOM16102026050909'),
+  ];
+
+  test('"Leave out already recorded" files the three, naming the entry each is matched to; the later bill stays', async () => {
+    const { app, sb } = harness({ acc_bank_statements: STATEMENTS.map((s) => ({ ...s })), acc_bank_statement_lines: LINES() });
+    const res = await post(app, '/bank/statements/23/repeats');
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, leftOut: 3, lineIds: [1130, 1132, 1158] });
+    const byId = new Map((sb.tables.acc_bank_statement_lines as Row[]).map((l) => [Number(l.id), l]));
+    expect([1130, 1132, 1158].map((id) => [byId.get(id)!.kind, byId.get(id)!.state])).toEqual([['DUPLICATE', 'IGNORED'], ['DUPLICATE', 'IGNORED'], ['DUPLICATE', 'IGNORED']]);
+    expect(String(byId.get(1130)!.note)).toContain('2990-JE-2609-0379');
+    expect(String(byId.get(1132)!.note)).toContain('2990-JE-2609-0377');
+    expect(String(byId.get(1158)!.note)).toContain('2990-JE-2610-0204');
+    expect(byId.get(1192)!.state).toBe('OPEN');
+  });
+
+  test('and an upload of the month-end file leaves them out on the way in', async () => {
+    const { app, sb } = harness();
+    const anyDay = [HEAD,
+      row('20261002', '000000000007210', 'DR', 'JomPAY Bill Payment', 'U MOBILE SDN BHD 30515721824 DA203JNP22610021822Y'),
+      row('20261002', '000000000070000', 'DR', 'Fund Trf fr CA to CA-Internet(B)', 'THE CONTS SDN. BHD. I-2608-063 2990-Draft-2609-030'),
+      row('20261012', '000000000832300', 'DR', 'Fund Trf from CA to SA via Internet (B)', 'CHOW WAI MAN TNB DEPOSIT n PRINT 2990-HPV-2610-013'),
+    ].join('\n');
+    const monthEnd = [HEAD,
+      row('20261002', '000000000007210', 'DR', 'JomPAY Bill Payment at DIO', '30515721824 DA203JNP22610021822Y U MOBILE SDN BHD CIBJOM29092026039886'),
+      row('20261002', '000000000070000', 'DR', 'Fund Trf fr CA to CA-Internet(B)', 'I-2608-063 2990-Draft-2609-030 THE CONTS SDN. BHD.'),
+      row('20261012', '000000000832300', 'DR', 'Fund Trf from CA to SA via Intern', 'TNB DEPOSIT n PRINT 2990-HPV-2610-013 CHOW WAI MAN'),
+      row('20261027', '000000000007210', 'DR', 'JomPAY Bill Payment at DIO', '30515721824 DASMRCEV22610271127Y U MOBILE SDN BHD CIBJOM16102026050909'),
+    ].join('\n');
+    expect((await post(app, '/bank/statements', { accountCode: ACCOUNT, fileName: 'Transaction_Statement_20261001_20261026.csv', content: anyDay })).status).toBe(200);
+    const second = await post(app, '/bank/statements', { accountCode: ACCOUNT, fileName: 'acs_23600602788_31102026.csv', content: monthEnd });
+    expect(second.status, await second.clone().text()).toBe(200);
+    const up = await second.json() as any;
+    expect(up.alreadyRecorded).toBe(3);
+    expect(linesOf(sb, up.statementId).map((l) => [l.booked_on, l.amount_sen, l.kind, l.state])).toEqual([
+      ['2026-10-02', -7210, 'DUPLICATE', 'IGNORED'], ['2026-10-02', -70000, 'DUPLICATE', 'IGNORED'],
+      ['2026-10-12', -832300, 'DUPLICATE', 'IGNORED'], ['2026-10-27', -7210, 'OTHER', 'OPEN'],
+    ]);
+  });
+});

@@ -3,7 +3,7 @@
 // these are transport only, so the page cannot drift from what actually posts.
 
 import { useCallback } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
@@ -349,6 +349,22 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
   enabled: batchId != null,
 });
 
+/** Several reports' lines on one screen (Payments not matched yet's merchant report
+    lines): each report read exactly as Merchant Recon reads it, so the two say the
+    same thing about a line. */
+type BatchDetail = Awaited<ReturnType<ReturnType<typeof settlementBatchQuery>['queryFn']>>;
+/* One stable function: React Query re-runs a combine only when its results or
+   the function change, so the screen's rows keep their identity between renders. */
+const combineDetails = (results: ReadonlyArray<{ data?: BatchDetail; isLoading: boolean; isError: boolean }>) => ({
+  details: results.map((r) => r.data),
+  loading: results.some((r) => r.isLoading),
+  failed: results.some((r) => r.isError),
+});
+export const useSettlementBatchDetails = (batchIds: readonly number[]) => useQueries({
+  queries: batchIds.map((id) => settlementBatchQuery(id)),
+  combine: combineDetails,
+});
+
 /** Several reports' lines at once, for an export: as the list already read them, so the
     file says what the screen says; one not read yet is read now. */
 export const useReadSettlementBatches = () => {
@@ -442,11 +458,13 @@ export const useConfirmSettlementGroup = () => {
 /* "Not this" (owner 2026-11-03, batch 3 d2): release an unconfirmed line's
    match; the line goes back to be chosen and is not offered that payment again.
    Posts nothing. */
+/** `payments`: the system's GUESS the line shows ("SOPAY:<id>" keys), for a line
+    that holds no link (owner 2026-11-10). A linked line releases its link. */
 export const useReleaseSettlementRow = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (rowId: number) => authedFetch<{ ok: boolean; released: string[] }>(
-      `/accounting/settlement/rows/${rowId}/release`, { method: 'POST', body: '{}' },
+    mutationFn: ({ rowId, payments }: { rowId: number; payments: string[] }) => authedFetch<{ ok: boolean; released: string[] }>(
+      `/accounting/settlement/rows/${rowId}/release`, { method: 'POST', body: JSON.stringify({ payments }) },
     ),
     onSuccess: () => invalidateAfterPosting(qc),
   });

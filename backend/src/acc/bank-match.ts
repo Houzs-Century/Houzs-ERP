@@ -752,6 +752,69 @@ export function obviousEntryFor(
   return namesAgree(text, only.partyName ?? only.notes ?? null) ? only : null;
 }
 
+/* ── The voucher a bank line names (owner 2026-11-10) ─────────────────────────
+   「银行单上写着 PV 号码的，直接配那张 PV，不管差几天」. 2990's Hong Leong
+   October: five payments printed their voucher's number — four the formal one
+   (2990-HPV-2610-018), one the Draft number it went out under before it was
+   checked (2990-Draft-2610-006, now 2990-HPV-2610-009) — dated 12 to 24 days
+   after the voucher, past the week an equal amount is offered in, so each sat
+   under "No entry found" with its voucher under "Not on the bank yet".
+
+   The number and the amount together name one entry, and the days do not
+   matter: a voucher paid a fortnight after it was written is still that
+   voucher. Only a voucher's own entry answers (source PV, its number), only
+   money going out takes one, only an entry no other line holds, and only when
+   exactly one does — a line naming two vouchers of its amount is a person's. A
+   number the line names with a different amount (a short transfer, a typed
+   number) names nothing here. Maybank prints the number without the company's
+   prefix (MPV-2609-012 for HC-MPV-2609-012); that is read as the company's own,
+   the only vouchers this ledger holds. */
+
+/** A voucher number as a bank line's words carry it: formal ({co}-{letter}PV-YYMM-NNN,
+    {co}-{letter}RF-…, with or without the company prefix) or Draft ({co}-Draft-YYMM-NNN). */
+const VOUCHER_NO = /\b(?:[A-Z0-9]+-)?(?:[A-Z]{0,2}PV|[A-Z]{1,2}RF|DRAFT)-\d{4}-\d{2,5}\b/g;
+
+/** The voucher numbers in a bank line's words, upper case, each once. */
+export function voucherNumbersIn(text: string): string[] {
+  return [...new Set(String(text ?? '').toUpperCase().match(VOUCHER_NO) ?? [])];
+}
+
+/** A voucher number without its company prefix: HC-MPV-2609-012 → MPV-2609-012. */
+export const withoutCompanyPrefix = (no: string): string =>
+  String(no).toUpperCase().replace(/^[A-Z0-9]+-(?=(?:[A-Z]{0,2}PV|[A-Z]{1,2}RF|DRAFT)-\d{4}-)/, '');
+
+/**
+ * The entry of the voucher a movement's words name — or null, in which case
+ * the other rules, or a person, decide. `formerNumbers` reads a Draft number
+ * (upper case, with or without the company prefix) through to the formal
+ * number(s) the voucher took at Checked — the audit trail's record of it.
+ */
+export function voucherEntryFor(
+  movement: { bookedOn: string; amountSen: number; description: string; reference: string | null },
+  ledger: EntryCandidateSource[],
+  claimed: ReadonlySet<string>,
+  formerNumbers: ReadonlyMap<string, readonly string[]> = new Map(),
+): EntryCandidate | null {
+  /* A voucher pays money out; a movement in never takes one. */
+  if (!(movement.amountSen < 0)) return null;
+  const named = voucherNumbersIn(`${movement.description} ${movement.reference ?? ''}`);
+  if (named.length === 0) return null;
+  const wanted = new Set<string>();
+  for (const no of named) {
+    for (const formal of formerNumbers.get(no) ?? formerNumbers.get(withoutCompanyPrefix(no)) ?? []) wanted.add(String(formal).toUpperCase());
+    /* A formal number names itself; a Draft number only through what it became. */
+    if (!/(^|-)DRAFT-/.test(no)) wanted.add(no);
+  }
+  const hits = ledger.filter((e) => e.sourceType === 'PV' && e.sourceDocNo != null && !claimed.has(e.jeNo)
+    && e.debitSen - e.creditSen === movement.amountSen
+    && (wanted.has(String(e.sourceDocNo).toUpperCase()) || wanted.has(withoutCompanyPrefix(e.sourceDocNo))));
+  if (hits.length !== 1) return null;
+  const hit = hits[0]!;
+  const daysApart = /^\d{4}-\d{2}-\d{2}$/.test(hit.entryDate) && /^\d{4}-\d{2}-\d{2}$/.test(movement.bookedOn)
+    ? daysBetween(hit.entryDate, movement.bookedOn) : 0;
+  return { ...hit, amountSen: hit.debitSen - hit.creditSen, daysApart };
+}
+
 /* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
    Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
    Alliance account failed, and the bank put the money back the same day —

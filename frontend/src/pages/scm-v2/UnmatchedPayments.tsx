@@ -1,144 +1,322 @@
 // ----------------------------------------------------------------------------
-// UnmatchedPayments — every customer payment not matched yet, card and
-// transfer on ONE list (owner 2026-09-30: 我现在可以看到的是 card payment 哪些
-// 还没 match 罢了，如果 online transfer 那些呢？我有没有一个表是显示全部还没
-// match 的 → 做). Each row says where the payment is stuck and links the screen
-// that unsticks it: Merchant Recon for a card, Bank Recon for a transfer.
-// The rules live on the server (acc/unmatched-payments).
+// UnmatchedPayments — everything not matched yet, three lists under one date
+// range (owner 2026-09-30: 我有没有一个表是显示全部还没 match 的 → 做; 2026-11-10:
+// 关于那个unmatch payment 我要优化 … 一个就是有卡机报告但没有对应的收款记录，一个就是
+// 现有的记录收钱了，但没有对应的卡机报告或收款记录，如果银行那边的收款有，也没有对应
+// 的transaction 也可以显示 / 要支持可以export 全部 / 也要支持pdf → 做):
+//   Merchant report lines — on a merchant report, no sale reconciled;
+//   Payments              — money recorded on an order or invoice, not matched;
+//   Bank money in         — in the bank, no entry in the books matched.
+// Each list exports what it shows, to Excel or PDF. Export all writes every row
+// of the three in the range, whatever list or chip is open, each with the
+// columns its table has showing — so the three tables stay mounted, the hidden
+// ones too, and tell the page their columns. Every row links the screen that
+// unsticks it. Words and columns: unmatchedLists.tsx; the rules are the server's.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Download, FileText } from 'lucide-react';
+import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
+import {
+  buildLineExportMatrix, exportableColumns, tablePdfViewOf, writeLineExportBook, type TablePdfView,
+} from '../../components/dataTableLineExport';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { fmtDate } from '../../vendor/shared/format';
-import { btn, danger, fmt, softText } from './settlement-ui';
-import styles from './Suppliers.module.css';
-import { useUnmatchedPayments, type UnmatchedPayment, type UnmatchedState } from './unmatched-payments-queries';
+import { danger, fmt, softText } from './settlement-ui';
+import top from './MerchantReports.module.css';
+import { useSettlementBatchDetails, useSettlementBatches } from './settlement-queries';
+import { useUnmatchedBankLines, useUnmatchedPayments, type UnmatchedBankLine, type UnmatchedPayment } from './unmatched-payments-queries';
+import {
+  BANK_COLUMNS, BANK_KINDS, LISTS, PAYMENT_COLUMNS, PAYMENT_STAGES, REPORT_COLUMNS, REPORT_STATUSES, reportLinesOf,
+  type ListKey, type ReportLineRow,
+} from './unmatchedLists';
+
+const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const daysBefore = (day: string, n: number): string =>
   new Date(Date.parse(`${day}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
 
-/** Where it is stuck, in words, and the screen that unsticks it — one home for both. */
-export const STUCK: Record<UnmatchedState, { text: (r: UnmatchedPayment) => string; to: string; screen: string }> = {
-  CARD_NOT_REPORTED: { text: () => 'Not on a merchant report yet', to: '/scm/merchant-recon', screen: 'Merchant reports' },
-  CARD_TO_CONFIRM: { text: () => 'On a merchant report — waiting for you to confirm', to: '/scm/merchant-recon', screen: 'Merchant reports' },
-  CARD_NO_MERCHANT: { text: (r) => `${r.channel ?? 'Its bank'} is not set up as a merchant`, to: '/scm/settlement-setup', screen: 'Merchant setup' },
-  TRANSFER_NOT_BOOKED: { text: () => 'Not in the books — see Self-check', to: '/scm/accounting?tab=check', screen: 'Self-check' },
-  TRANSFER_NOT_MATCHED: { text: () => 'Not matched to the bank statement yet', to: '/scm/bank-recon', screen: 'Bank statements' },
-  TRANSFER_NO_STATEMENT: {
-    text: (r) => (r.statementUpTo
-      ? `Bank statement for this day not uploaded yet (uploaded to ${fmtDate(r.statementUpTo)})`
-      : 'No bank statement uploaded yet'),
-    to: '/scm/bank-recon',
-    screen: 'Bank statements',
-  },
+const asList = (v: string | null): ListKey => LISTS.find((l) => l.key === v)?.key ?? 'payments';
+const titleOf = (k: ListKey): string => LISTS.find((l) => l.key === k)!.label;
+
+/** What each list is, said once above it. */
+const ABOUT: Record<ListKey, string> = {
+  reports: 'Lines on a merchant report that are not reconciled to their sale yet, read as Merchant Recon reads them. '
+    + '“No sale in the ERP” is card money nobody keyed a sale for — key it, or find it on the report.',
+  payments: 'Every card and transfer payment on a sales order or invoice that is not matched yet. A card payment is matched once '
+    + 'the merchant report line claiming it is confirmed and that report’s money is matched to a bank line; a transfer once a bank '
+    + 'statement line is matched to it. Not listed: cash (there is nothing to match it against), payments carried over from '
+    + 'AutoCount, and cancelled orders.',
+  bank: 'Money in on an uploaded bank statement that no entry in the books is matched to yet: a card payout waiting for its report, '
+    + 'DuitNow QR money, and transfers — each with the entries of the same amount it could be.',
 };
 
-/** "Card · GHL", "Card · 未标", "Transfer · TNG". */
-export const methodText = (r: UnmatchedPayment): string =>
-  (r.kind === 'card' ? `Card · ${r.channel ?? '未标'}` : `Transfer${r.channel ? ` · ${r.channel}` : ''}`);
-
-type Kind = 'all' | 'card' | 'transfer';
-
-const COLUMNS: Column<UnmatchedPayment>[] = [
-  { key: 'paidOn', label: 'Paid on', render: (r) => fmtDate(r.paidOn), getValue: (r) => r.paidOn, exportFormat: 'date' },
-  {
-    key: 'document', label: 'Document',
-    /* An order opens its own page; an invoice's number is shown as it is. */
-    render: (r) => (r.source === 'SOPAY'
-      ? <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</Link>
-      : r.docNo),
-    getValue: (r) => r.docNo,
-  },
-  { key: 'customer', label: 'Customer', render: (r) => r.customerName ?? '—', getValue: (r) => r.customerName ?? '' },
-  /* Owner 2026-11-09 (sales person 应该不太对，应该是collected by 的人): who took the money,
-     off the payment itself — the one to ask about it. The order's salesperson stays a
-     choice under Columns. */
-  { key: 'collectedBy', label: 'Collected by', render: (r) => r.collectedByName ?? '—', getValue: (r) => r.collectedByName ?? '' },
-  { key: 'salesperson', label: 'Salesperson', defaultHidden: true, render: (r) => r.salespersonName ?? '—', getValue: (r) => r.salespersonName ?? '' },
-  { key: 'method', label: 'Method', render: (r) => <span className={styles.codeChip}>{methodText(r)}</span>, getValue: (r) => methodText(r) },
-  {
-    key: 'amount', label: 'Amount', align: 'right', render: (r) => fmt(r.amountSen),
-    getValue: (r) => r.amountSen, exportValue: (r) => r.amountSen / 100, exportFormat: 'money',
-  },
-  { key: 'reference', label: 'Reference', render: (r) => r.reference ?? '—', getValue: (r) => r.reference ?? '' },
-  {
-    key: 'days', label: 'Days', align: 'right',
-    render: (r) => <span style={{ color: r.ageDays > 14 ? danger : undefined, fontWeight: r.ageDays > 14 ? 700 : undefined }}>{r.ageDays}</span>,
-    getValue: (r) => r.ageDays, exportFormat: 'number',
-  },
-  { key: 'stuck', label: 'Where it is stuck', render: (r) => STUCK[r.state].text(r), getValue: (r) => STUCK[r.state].text(r) },
-  {
-    key: 'go', label: '',
-    render: (r) => <Link to={STUCK[r.state].to}>{STUCK[r.state].screen}</Link>,
-  },
+type Chip = { key: string; label: string; n: number; sen: number };
+const total = <T,>(rows: readonly T[], sen: (r: T) => number): number => rows.reduce((s, r) => s + sen(r), 0);
+/** "All" first, then each chip with something in it. */
+const chipsOf = <T,>(rows: readonly T[], sen: (r: T) => number, defs: ReadonlyArray<{ key: string; label: string }>, keyOf: (r: T) => string): Chip[] => [
+  { key: 'all', label: 'All', n: rows.length, sen: total(rows, sen) },
+  ...defs.map((d) => {
+    const mine = rows.filter((r) => keyOf(r) === d.key);
+    return { key: d.key, label: d.label, n: mine.length, sen: total(mine, sen) };
+  }).filter((c) => c.n > 0),
 ];
+const pick = <T,>(rows: T[] | null, chip: string, keyOf: (r: T) => string): T[] | null =>
+  (rows == null ? null : chip === 'all' ? rows : rows.filter((r) => keyOf(r) === chip));
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+/** The columns a table has showing, or — before it has said — its own default view. */
+const shownOr = <T,>(shown: Column<T>[] | null, all: Column<T>[]): Column<T>[] => shown ?? all.filter((c) => !c.defaultHidden);
+
+type Shown = { reports: Column<ReportLineRow>[] | null; payments: Column<UnmatchedPayment>[] | null; bank: Column<UnmatchedBankLine>[] | null };
+type Seen = { reports: ReportLineRow[] | null; payments: UnmatchedPayment[] | null; bank: UnmatchedBankLine[] | null };
 
 export const UnmatchedPayments = () => {
   const today = myt();
   const [from, setFrom] = useState(daysBefore(today, 180));
   const [to, setTo] = useState(today);
-  const [kind, setKind] = useState<Kind>('all');
   const backwards = from > to;
-  const q = useUnmatchedPayments(from, to, !backwards);
-  const all = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const [params, setParams] = useSearchParams();
+  const list = asList(params.get('list'));
+  const choose = (k: ListKey) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    next.set('list', k);
+    return next;
+  }, { replace: true });
+  const [chip, setChip] = useState<Record<ListKey, string>>({ reports: 'all', payments: 'all', bank: 'all' });
 
-  const count = useMemo(() => {
-    const of = (k: 'card' | 'transfer') => all.filter((r) => r.kind === k);
-    const sum = (rs: UnmatchedPayment[]) => rs.reduce((s, r) => s + r.amountSen, 0);
-    return {
-      all: { n: all.length, sen: sum(all) },
-      card: { n: of('card').length, sen: sum(of('card')) },
-      transfer: { n: of('transfer').length, sen: sum(of('transfer')) },
-    };
-  }, [all]);
-  const shown = useMemo(() => (kind === 'all' ? all : all.filter((r) => r.kind === kind)), [all, kind]);
+  /* The merchant report lines: each open report read as Merchant Recon reads it. */
+  const batchesQ = useSettlementBatches();
+  const openBatches = useMemo(() => (batchesQ.data?.batches ?? []).filter((b) => (b.open_count ?? 0) > 0
+    && String(b.period_to ?? '9999-12-31').slice(0, 10) >= from
+    && String(b.period_from ?? '0000-01-01').slice(0, 10) <= to), [batchesQ.data, from, to]);
+  const detailQ = useSettlementBatchDetails(openBatches.map((b) => b.id));
+  const reportsFailed = batchesQ.isError || detailQ.failed;
+  const reports = useMemo(() => (backwards || reportsFailed || batchesQ.isLoading || detailQ.loading ? null
+    : reportLinesOf(openBatches, detailQ.details, from, to, today)),
+  [backwards, reportsFailed, batchesQ.isLoading, detailQ.loading, detailQ.details, openBatches, from, to, today]);
+  const payQ = useUnmatchedPayments(from, to, !backwards);
+  const payments = backwards ? null : payQ.data?.rows ?? null;
+  const bankQ = useUnmatchedBankLines(from, to, !backwards);
+  const bank = backwards ? null : bankQ.data?.rows ?? null;
 
-  const chip = (k: Kind, label: string) => (
-    <button type="button" style={btn(kind === k)} onClick={() => setKind(k)} aria-pressed={kind === k}>
-      {`${label} (${count[k].n})`}
-    </button>
+  /* What each table shows — its columns, and its rows after its own funnels —
+     for Export all and the PDF button. Refs: told on every render, read on a press. */
+  const shown = useRef<Shown>({ reports: null, payments: null, bank: null });
+  const seen = useRef<Seen>({ reports: null, payments: null, bank: null });
+  const shownReports = useCallback((c: Column<ReportLineRow>[]) => { shown.current.reports = c; }, []);
+  const shownPayments = useCallback((c: Column<UnmatchedPayment>[]) => { shown.current.payments = c; }, []);
+  const shownBank = useCallback((c: Column<UnmatchedBankLine>[]) => { shown.current.bank = c; }, []);
+  const seenReports = useCallback((r: ReportLineRow[]) => { seen.current.reports = r; }, []);
+  const seenPayments = useCallback((r: UnmatchedPayment[]) => { seen.current.payments = r; }, []);
+  const seenBank = useCallback((r: UnmatchedBankLine[]) => { seen.current.bank = r; }, []);
+
+  const chips: Record<ListKey, Chip[]> = {
+    reports: chipsOf(reports ?? [], (r) => r.grossSen, REPORT_STATUSES, (r) => r.status),
+    payments: chipsOf(payments ?? [], (r) => r.amountSen, PAYMENT_STAGES, (r) => r.state),
+    bank: chipsOf(bank ?? [], (r) => r.amountSen, BANK_KINDS, (r) => r.what),
+  };
+  const on = (k: ListKey): string => (chips[k].some((c) => c.key === chip[k]) ? chip[k] : 'all');
+  const rowsOn = {
+    reports: pick(reports, on('reports'), (r) => r.status),
+    payments: pick(payments, on('payments'), (r) => r.state),
+    bank: pick(bank, on('bank'), (r) => r.what),
+  };
+  const oldest: Record<ListKey, number> = {
+    reports: Math.max(0, ...(reports ?? []).map((r) => r.ageDays)),
+    payments: Math.max(0, ...(payments ?? []).map((r) => r.ageDays)),
+    bank: Math.max(0, ...(bank ?? []).map((r) => r.ageDays)),
+  };
+  const loaded: Record<ListKey, boolean> = { reports: reports != null, payments: payments != null, bank: bank != null };
+
+  const range = `Dated ${fmtDate(from)} to ${fmtDate(to)}`;
+  const chipLabel = (k: ListKey): string | null => {
+    const c = chips[k].find((x) => x.key === on(k));
+    return c && c.key !== 'all' ? c.label : null;
+  };
+  const [exportError, setExportError] = useState<string | null>(null);
+  const failed = (e: unknown) => setExportError(`The file could not be made — ${e instanceof Error ? e.message : 'something went wrong.'}`);
+
+  /** One list on paper: what its table shows. */
+  const printList = async <T,>(k: ListKey, view: TablePdfView<T>) => {
+    setExportError(null);
+    try {
+      const { generateUnmatchedPdf } = await import('../../vendor/scm/lib/unmatched-payments-pdf');
+      const narrowed = chipLabel(k);
+      await generateUnmatchedPdf([{ title: titleOf(k), view }], { subtitle: narrowed ? `${range} · ${narrowed}` : range });
+    } catch (e) { failed(e); }
+  };
+
+  /** Every row of the three lists in the range, each with the columns its table shows. */
+  const exportAll = async (how: 'excel' | 'pdf') => {
+    if (!reports || !payments || !bank) return;
+    setExportError(null);
+    const r = shownOr(shown.current.reports, REPORT_COLUMNS);
+    const p = shownOr(shown.current.payments, PAYMENT_COLUMNS);
+    const b = shownOr(shown.current.bank, BANK_COLUMNS);
+    try {
+      if (how === 'excel') {
+        await writeLineExportBook([
+          { name: titleOf('reports'), matrix: buildLineExportMatrix(reports, () => [], exportableColumns(r)) },
+          { name: titleOf('payments'), matrix: buildLineExportMatrix(payments, () => [], exportableColumns(p)) },
+          { name: titleOf('bank'), matrix: buildLineExportMatrix(bank, () => [], exportableColumns(b)) },
+        ], `payments-not-matched-all-${today}.xlsx`);
+        return;
+      }
+      const { generateUnmatchedPdf } = await import('../../vendor/scm/lib/unmatched-payments-pdf');
+      await generateUnmatchedPdf([
+        { title: titleOf('reports'), view: tablePdfViewOf(reports, r) },
+        { title: titleOf('payments'), view: tablePdfViewOf(payments, p) },
+        { title: titleOf('bank'), view: tablePdfViewOf(bank, b) },
+      ], { subtitle: `${range} · every row of the three lists` });
+    } catch (e) { failed(e); }
+  };
+  const allReady = loaded.reports && loaded.payments && loaded.bank;
+
+  const summary: Record<ListKey, string> = {
+    reports: (() => {
+      const c = chips.reports.find((x) => x.key === on('reports'))!;
+      return `${plural(c.n, 'line')} not reconciled, ${fmt(c.sen)} gross.`;
+    })(),
+    payments: (() => {
+      const c = chips.payments.find((x) => x.key === on('payments'))!;
+      const of = (k: 'card' | 'transfer') => (payments ?? []).filter((x) => x.kind === k);
+      const card = of('card');
+      const transfer = of('transfer');
+      return `${plural(c.n, 'payment')} not matched, ${fmt(c.sen)} in total.${on('payments') === 'all'
+        ? ` Card ${card.length} (${fmt(total(card, (x) => x.amountSen))}) · Transfer ${transfer.length} (${fmt(total(transfer, (x) => x.amountSen))}).`
+        : ''}`;
+    })(),
+    bank: (() => {
+      const c = chips.bank.find((x) => x.key === on('bank'))!;
+      return `${plural(c.n, 'bank line')} with no entry matched, ${fmt(c.sen)} in total.`;
+    })(),
+  };
+
+  const pdfButton = (onPress: () => void, disabled: boolean) => (
+    <Button variant="ghost" size="sm" disabled={disabled} onClick={onPress}>
+      <FileText {...ICON} /> PDF
+    </Button>
   );
+  const errorOf = (k: ListKey): string | null => {
+    if (backwards) return 'The From date is after the To date.';
+    if (k === 'reports') return reportsFailed ? 'The merchant reports did not load.' : null;
+    if (k === 'payments') return payQ.isError ? 'The list did not load.' : null;
+    return bankQ.isError ? 'The bank lines did not load.' : null;
+  };
 
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · bank & cards" title="Payments not matched yet" />
-      <div style={softText}>
-        Every card and transfer payment on a sales order or invoice that is not matched yet. A card payment is
-        matched when the merchant report line claiming it is confirmed (Merchant Recon); a transfer when a bank
-        statement line is matched to it (Bank Recon). Not listed: cash (there is nothing to match it against),
-        payments carried over from AutoCount, and cancelled orders.
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        {chip('all', 'All')}
-        {chip('card', 'Card')}
-        {chip('transfer', 'Transfer')}
-        <span style={{ flex: 1 }} />
-        <span style={softText}>Paid from</span>
-        <DateField value={from} onChange={(v) => { if (v) setFrom(v); }} aria-label="Paid from" />
-        <span style={softText}>to</span>
-        <DateField value={to} onChange={(v) => { if (v) setTo(v); }} aria-label="Paid to" />
-      </div>
-      {q.data && !backwards && (
-        <div style={softText}>
-          {`${count[kind].n} payment${count[kind].n === 1 ? '' : 's'} not matched, ${fmt(count[kind].sen)} in total.`}
-          {kind === 'all' && ` Card ${count.card.n} (${fmt(count.card.sen)}) · Transfer ${count.transfer.n} (${fmt(count.transfer.sen)}).`}
+      <div className={top.top}>
+        <div className={top.headRow}>
+          <span style={softText}>Dated from</span>
+          <DateField value={from} onChange={(v) => { if (v) setFrom(v); }} aria-label="Dated from" />
+          <span style={softText}>to</span>
+          <DateField value={to} onChange={(v) => { if (v) setTo(v); }} aria-label="Dated to" />
+          <span className={top.grow} />
+          <Button variant="secondary" size="sm" disabled={!allReady} onClick={() => void exportAll('excel')}
+            title="Every row of the three lists in these dates, a sheet each, with the columns each list shows">
+            <Download {...ICON} /> Export all · Excel
+          </Button>
+          <Button variant="secondary" size="sm" disabled={!allReady} onClick={() => void exportAll('pdf')}
+            title="Every row of the three lists in these dates, a part each, with the columns each list shows">
+            <FileText {...ICON} /> Export all · PDF
+          </Button>
         </div>
-      )}
-      <DataTable<UnmatchedPayment>
-        tableId="unmatched-payments"
-        exportName="payments-not-matched"
-        exportXlsx
-        columns={COLUMNS}
-        rows={backwards ? [] : q.data ? shown : null}
-        loading={!backwards && q.isLoading}
-        error={backwards ? 'The From date is after the To date.' : q.isError ? 'The list did not load.' : null}
-        emptyLabel="Every card and transfer payment in these dates is matched."
-        getRowKey={(r) => `${r.source}:${r.paymentId}`}
-      />
+        {exportError && <div role="alert" style={{ color: danger, fontSize: 'var(--fs-12)' }}>{exportError}</div>}
+
+        <div className={top.cards} role="tablist" aria-label="Lists">
+          {LISTS.map((l) => {
+            const all = chips[l.key][0]!;
+            return (
+              <button key={l.key} type="button" role="tab" aria-selected={list === l.key}
+                className={`${top.card} ${list === l.key ? top.cardOn : ''}`} onClick={() => choose(l.key)}>
+                <div className={top.cardHead}><span className={top.cardName}>{l.label}</span></div>
+                <div className={`${top.count} ${loaded[l.key] && all.n === 0 ? top.countZero : ''}`}>
+                  {loaded[l.key] ? all.n : '…'}
+                </div>
+                <div className={top.countLabel}>{loaded[l.key] ? `${fmt(all.sen)} · ${l.sub}` : l.sub}</div>
+                {loaded[l.key] && all.n > 0 && (
+                  <div className={top.status}>
+                    <span className={oldest[l.key] > 14 ? top.toneLate : top.toneCalm}>oldest {plural(oldest[l.key], 'day')}</span>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={softText}>{ABOUT[list]}</div>
+        {loaded[list] && (
+          <div className={top.headRow} role="group" aria-label={`${titleOf(list)} filter`}>
+            {chips[list].map((c) => (
+              <button key={c.key} type="button" aria-pressed={on(list) === c.key}
+                className={`${top.chip} ${on(list) === c.key ? top.chipOn : ''}`}
+                onClick={() => setChip((prev) => ({ ...prev, [list]: c.key }))}>
+                {`${c.label} (${c.n})`}
+              </button>
+            ))}
+          </div>
+        )}
+        {loaded[list] && <div style={softText} aria-live="polite">{summary[list]}</div>}
+      </div>
+
+      <div hidden={list !== 'reports'}>
+        <DataTable<ReportLineRow>
+          tableId="unmatched-report-lines"
+          exportName="merchant-report-lines-not-reconciled"
+          exportXlsx
+          onExportPdf={(view) => void printList('reports', view)}
+          toolbarExtra={pdfButton(() => void printList('reports', tablePdfViewOf(seen.current.reports ?? rowsOn.reports ?? [], shownOr(shown.current.reports, REPORT_COLUMNS))), !loaded.reports)}
+          onShownColumnsChange={shownReports}
+          onFilteredRowsChange={seenReports}
+          columns={REPORT_COLUMNS}
+          rows={rowsOn.reports}
+          loading={!backwards && !reportsFailed && reports == null}
+          error={errorOf('reports')}
+          emptyLabel="Every merchant report line in these dates is reconciled."
+          getRowKey={(r) => r.key}
+        />
+      </div>
+      <div hidden={list !== 'payments'}>
+        <DataTable<UnmatchedPayment>
+          tableId="unmatched-payments"
+          exportName="payments-not-matched"
+          exportXlsx
+          onExportPdf={(view) => void printList('payments', view)}
+          toolbarExtra={pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
+          onShownColumnsChange={shownPayments}
+          onFilteredRowsChange={seenPayments}
+          columns={PAYMENT_COLUMNS}
+          rows={rowsOn.payments}
+          loading={!backwards && payQ.isLoading}
+          error={errorOf('payments')}
+          emptyLabel="Every card and transfer payment in these dates is matched."
+          getRowKey={(r) => `${r.source}:${r.paymentId}`}
+        />
+      </div>
+      <div hidden={list !== 'bank'}>
+        <DataTable<UnmatchedBankLine>
+          tableId="unmatched-bank-lines"
+          exportName="bank-money-in-not-matched"
+          exportXlsx
+          onExportPdf={(view) => void printList('bank', view)}
+          toolbarExtra={pdfButton(() => void printList('bank', tablePdfViewOf(seen.current.bank ?? rowsOn.bank ?? [], shownOr(shown.current.bank, BANK_COLUMNS))), !loaded.bank)}
+          onShownColumnsChange={shownBank}
+          onFilteredRowsChange={seenBank}
+          columns={BANK_COLUMNS}
+          rows={rowsOn.bank}
+          loading={!backwards && bankQ.isLoading}
+          error={errorOf('bank')}
+          emptyLabel="Every bank line in these dates is matched."
+          getRowKey={(r) => r.lineId}
+        />
+      </div>
     </div>
   );
 };

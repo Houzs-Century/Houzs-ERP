@@ -171,7 +171,7 @@ export async function draftFromScan(
     // Defensive — ok:true with nothing created (every bucket dropped).
     return { kind: 'needs_review', note: `We read ${doRef} but could not create the receipt automatically. Please create it from the PO.` };
   }
-  const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.racks));
+  const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.rackQty));
   if (rackNote) await appendGrnNote(svc, job.companyId, res.created.map((g) => g.id), rackNote);
   const grnNumbers = res.created.map((g) => g.grnNumber);
   return {

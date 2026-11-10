@@ -44,6 +44,7 @@ import { changedLockedCols, identityLockedRefusal } from '../shared/header-inher
 import { CN_LOCK_COLS, CN_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { moneySkipsCancelled, NOT_CANCELLED_OR } from '../lib/list-money-cancelled';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -535,9 +536,10 @@ consignmentNotes.get('/', async (c) => {
     const moneyRes = await paginateAll<{ local_total_sen: number | null; total_cost_sen: number | null; total_margin_sen: number | null }>((mfrom, mto) => {
       let mq = sb.from('consignment_delivery_orders').select('local_total_sen, total_cost_sen, total_margin_sen');
       if (status) mq = mq.eq('status', status);
+      if (moneySkipsCancelled(status)) mq = mq.or(NOT_CANCELLED_OR); // G16: a cancelled note is no revenue
       if (qText) { const s = escapeForOr(qText); if (s) mq = mq.or(`do_number.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
       mq = scopeToCompany(mq, c);
-      return mq.range(mfrom, mto);
+      return mq.order('id').range(mfrom, mto);
     });
     if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
     let revenueSen = 0, costSen = 0, marginSen = 0;

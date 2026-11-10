@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import { pollEtag, POLLED_LIST_PATHS } from "./middleware/pollEtag";
-import type { Env } from "./types";
+import type { Env, ScanQueueMessage } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
 import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
@@ -178,7 +178,7 @@ import { runPosAlerts } from "./services/posAlerts";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
-import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
+import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage, processDistillQueueMessage } from "./scm/routes/scan-so";
 import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
@@ -1388,16 +1388,29 @@ export default {
   // reliability fix for the old waitUntil pipeline. On success ack; on failure
   // retry (up to max_retries in wrangler.toml, then the message lands in the
   // DLQ and the read-time reaper marks it stale as a final backstop).
-  async queue(batch: MessageBatch<{ jobId: string }>, env: Env, _ctx: ExecutionContext) {
+  async queue(batch: MessageBatch<ScanQueueMessage>, env: Env, _ctx: ExecutionContext) {
     // Mirror the scheduled handler: the consumer writes via env.DB too, so
     // point it at Postgres.
     env = withPgDb(env);
     for (const msg of batch.messages) {
+      const body = msg.body;
+      // A confirmed scan-so correction to learn from (scan-so.ts
+      // runConfirmDistills). Every step is non-fatal, so it is acked, never
+      // retried: a retry would re-spend the Claude calls.
+      if (body && "distill" in body) {
+        try {
+          await processDistillQueueMessage(env, body.distill);
+        } catch (e) {
+          console.error("[scan-queue distill]", e);
+        }
+        msg.ack();
+        continue;
+      }
       try {
-        await processScanQueueMessage(env, msg.body.jobId);
+        await processScanQueueMessage(env, body.jobId);
         msg.ack();
       } catch (e) {
-        console.error("[scan-queue]", msg.body?.jobId, e);
+        console.error("[scan-queue]", body?.jobId, e);
         msg.retry();
       }
     }

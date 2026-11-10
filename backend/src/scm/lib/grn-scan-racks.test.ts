@@ -79,6 +79,18 @@ describe('a matched row hands its rack to the PO line (DO-2610-074)', () => {
     const res = matchGrnScanToPoLines(null, [row('JAGER-(K)', 'HC-PO-2610-177', 'R6-1'), row('JAGER-(K)', 'HC-PO-2610-177', 'R9-1')], two, [], 'hookka');
     expect(res.picks).toEqual([{ poItemId: 'jagerk', qty: 2 }]);
     expect(res.racks).toEqual({});
+    // ...but each rack keeps the qty its own row put there.
+    expect(res.rackQty).toEqual({ jagerk: { 'R6-1': 1, 'R9-1': 1 } });
+  });
+
+  // Owner 2026-11-10: rows LH6-1, LV6-1, LH6-1 of one PO line.
+  test('split rows of one line give each rack its own qty', () => {
+    const three = [{ ...open[1], remaining: 3 }];
+    const res = matchGrnScanToPoLines(null, [
+      row('JAGER-(K)', 'HC-PO-2610-177', 'LH6-1'), row('JAGER-(K)', 'HC-PO-2610-177', 'LV6-1'), row('JAGER-(K)', 'HC-PO-2610-177', 'LH6-1'),
+    ], three, [], 'hookka');
+    expect(res.picks).toEqual([{ poItemId: 'jagerk', qty: 3 }]);
+    expect(res.rackQty).toEqual({ jagerk: { 'LH6-1': 2, 'LV6-1': 1 } });
   });
 });
 
@@ -96,12 +108,14 @@ describe('scanRackNote', () => {
 type Row = Record<string, unknown>;
 function fakeSvc(tables: Record<string, Row[]>) {
   const updates: Array<{ table: string; id: unknown; patch: Row }> = [];
+  const inserts: Array<{ table: string; rows: Row[] }> = [];
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
     let patch: Row | null = null;
     const q = {
       select: () => q,
       update: (p: Row) => { patch = p; return q; },
+      insert: (rows: Row[]) => { inserts.push({ table, rows }); return Promise.resolve({ data: null, error: null }); },
       in: (col: string, vals: unknown[]) => { filters.push((r) => vals.includes(r[col])); return q; },
       eq: (col: string, val: unknown) => { filters.push((r) => r[col] === val); return q; },
       then: (resolve: (v: { data: Row[] | null; error: null }) => void) => {
@@ -112,7 +126,7 @@ function fakeSvc(tables: Record<string, Row[]>) {
     };
     return q;
   };
-  return { svc: { from } as unknown as Parameters<typeof applyScanRacks>[0], updates };
+  return { svc: { from } as unknown as Parameters<typeof applyScanRacks>[0], updates, inserts };
 }
 
 describe('applyScanRacks', () => {
@@ -122,7 +136,7 @@ describe('applyScanRacks', () => {
       { id: 'g2', company_id: 1, warehouse_id: 'srw', status: 'POSTED' },
     ],
     grn_items: [
-      { id: 'i1', company_id: 1, grn_id: 'g1', purchase_order_item_id: 'p1', item_code: 'TRION', rack_id: null },
+      { id: 'i1', company_id: 1, grn_id: 'g1', purchase_order_item_id: 'p1', item_code: 'TRION', rack_id: null, qty_accepted: 3 },
       { id: 'i2', company_id: 1, grn_id: 'g1', purchase_order_item_id: 'p2', item_code: 'CODY-(K)', rack_id: null },
       { id: 'i3', company_id: 1, grn_id: 'g1', purchase_order_item_id: 'p3', item_code: 'JAGER', rack_id: 'kept' },
       { id: 'i4', company_id: 1, grn_id: 'g2', purchase_order_item_id: 'p4', item_code: 'CODY-(SS)', rack_id: null },
@@ -130,6 +144,8 @@ describe('applyScanRacks', () => {
     warehouse_racks: [
       { id: 'kl-r72', company_id: 1, warehouse_id: 'kl', rack: 'Rack R7.2' },
       { id: 'kl-r61', company_id: 1, warehouse_id: 'kl', rack: 'Rack R6.1' },
+      { id: 'kl-lh61', company_id: 1, warehouse_id: 'kl', rack: 'LH6-1' },
+      { id: 'kl-lv61', company_id: 1, warehouse_id: 'kl', rack: 'LV6-1' },
       { id: 'srw-r112', company_id: 1, warehouse_id: 'srw', rack: 'Rack R11.2' },
       { id: 'other-co', company_id: 2, warehouse_id: 'kl', rack: 'Rack R99.1' },
     ],
@@ -138,9 +154,27 @@ describe('applyScanRacks', () => {
   test('fills a DRAFT line from its own warehouse, leaves unknown and already-set lines alone', async () => {
     const t = tables();
     const { svc, updates } = fakeSvc(t);
-    const res = await applyScanRacks(svc, 1, ['g1', 'g2'], { p1: 'R7-2', p2: 'R99-1', p3: 'R6-1', p4: 'R11-2' });
+    const res = await applyScanRacks(svc, 1, ['g1', 'g2'], { p1: { 'R7-2': 3 }, p2: { 'R99-1': 1 }, p3: { 'R6-1': 1 }, p4: { 'R11-2': 1 } });
     expect(updates).toEqual([{ table: 'grn_items', id: 'i1', patch: { rack_id: 'kl-r72' } }]);
     expect(res).toEqual({ written: 3, filled: 1, unknown: [{ written: 'R99-1', itemCode: 'CODY-(K)' }], failed: false });
+  });
+
+  test('one line written onto two racks becomes its rack split, each rack with its own qty', async () => {
+    const { svc, updates, inserts } = fakeSvc(tables());
+    const res = await applyScanRacks(svc, 1, ['g1'], { p1: { 'LH6-1': 2, 'LV6-1': 1 } });
+    expect(inserts).toEqual([{ table: 'grn_item_racks', rows: [
+      { company_id: 1, grn_item_id: 'i1', rack_id: 'kl-lh61', qty: 2, created_by: null },
+      { company_id: 1, grn_item_id: 'i1', rack_id: 'kl-lv61', qty: 1, created_by: null },
+    ] }]);
+    // Several racks: the line's single rack stays empty, as the GRN page leaves it.
+    expect(updates).toEqual([]);
+    expect(res).toMatchObject({ written: 1, filled: 1, failed: false });
+  });
+
+  test('a split never puts more on the racks than the line received', async () => {
+    const { svc, inserts } = fakeSvc(tables());
+    await applyScanRacks(svc, 1, ['g1'], { p1: { 'LH6-1': 2, 'LV6-1': 4 } });
+    expect(inserts[0].rows.map((r) => [r.rack_id, r.qty])).toEqual([['kl-lh61', 2], ['kl-lv61', 1]]);
   });
 
   test('nothing written, nothing read', async () => {

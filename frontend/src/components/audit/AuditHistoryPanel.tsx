@@ -13,7 +13,7 @@
 import { memo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { History, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtSen, fmtDate, fmtDateTime } from '@2990s/shared';
+import { fmtDate, fmtDateTime } from '@2990s/shared';
 import { Button } from '../Button';
 import {
   auditActionLabel,
@@ -22,15 +22,16 @@ import {
   type AuditLabelDictionary,
   type AuditLogEntry,
 } from './audit-labels';
+import { auditValueShown, auditValueText } from './audit-value';
 import styles from './AuditHistoryPanel.module.css';
 
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtValue = (field: string, val: unknown, dict: AuditLabelDictionary): string => {
-  if (val === null || val === undefined || val === '') return '—';
-  if (dict.moneyFields?.has(field) && typeof val === 'number') return fmtSen(val);
-  if (typeof val === 'object') return JSON.stringify(val);
-  return String(val).replace(/_/g, ' ');
+/* One value: pictures read "[image]", long text is cut, the full text is the tooltip. */
+const AuditValue = ({ field, val, dict, className }: { field: string; val: unknown; dict: AuditLabelDictionary; className?: string }) => {
+  const full = auditValueText(field, val, dict);
+  const shown = auditValueShown(full);
+  return <span className={className} title={shown === full ? undefined : full}>{shown}</span>;
 };
 
 const hashHue = (s: string): number => {
@@ -211,11 +212,11 @@ export const AuditHistoryPanel = memo(({
                                 <span className={styles.historyChangeDiff}>
                                   {ch.from !== undefined && ch.from !== null && ch.from !== '' ? (
                                     <>
-                                      <span className={styles.historyChangeFrom}>{fmtValue(ch.field, ch.from, dict)}</span>
+                                      <AuditValue className={styles.historyChangeFrom} field={ch.field} val={ch.from} dict={dict} />
                                       <span className={styles.historyChangeArrow}>→</span>
                                     </>
                                   ) : null}
-                                  <span>{fmtValue(ch.field, ch.to, dict)}</span>
+                                  <AuditValue field={ch.field} val={ch.to} dict={dict} />
                                 </span>
                               </div>
                             ))}

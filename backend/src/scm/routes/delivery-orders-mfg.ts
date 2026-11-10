@@ -125,7 +125,8 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { resolveDoLineRacks, racksForDoLine } from '../lib/do-line-racks';
+import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
+import { stampDoShippedFrom, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -368,10 +369,9 @@ const ITEM =
   'photo_urls, ' +
   'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, ' +
   'line_delivery_date, line_delivery_date_overridden, rack_id, created_at, ' +
-  /* Mig 0230 — the incoming PO batch this line shipped against before its goods
-     arrived. Surfaced so the DO detail can say which PO a short line is bound to
-     instead of leaving the operator to infer it from the header badge. */
-  'committed_po_batch_no, ac_substituted';
+  /* Mig 0230 — the PO batch a short line shipped against (the DO detail names it);
+     mig 20261110T2300 — the PO(s) and rack(s) locked at the first ship. */
+  'committed_po_batch_no, ac_substituted, shipped_from';
 
 /* scm.delivery_order_crew columns (created in migration 0053) — the FK ids + the
    assign-time name/ic/contact/plate snapshot. Read on the DO detail + returned
@@ -1178,12 +1178,12 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-ship failed:', e); }
   }
-  /* REC P4 — physical RACK stock-out. The DO just shipped, so pull the goods off
-     the rack(s) they sat on (the storekeeper counterpart of the GRN placement).
-     Best-effort + idempotent inside; a rack-ledger hiccup never blocks the ship. */
+  /* REC P4 — physical RACK stock-out (counterpart of the GRN placement), then lock each line's PO(s) and rack(s)
+     onto it (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
   try {
     await stockOutDoLinesFromRacks(sb, deliveryOrderId, doNo, performedBy, lineWh, items as Array<Record<string, unknown>>, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] stock-out failed:', e); }
+  await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   return movementErrors;
 }
 
@@ -1206,8 +1206,7 @@ async function stockOutDoLinesFromRacks(
   items: Array<Record<string, unknown>>,
   companyId: number | null,
 ): Promise<void> {
-  const RACK_REASON = 'Delivery order dispatch';
-  // Idempotency — this DO already logged its rack stock-out?
+  const RACK_REASON = DO_RACK_OUT_REASON; // Idempotency — this DO already logged its rack stock-out?
   const { count: already } = await sb.from('warehouse_rack_movements')
     .select('id', { head: true, count: 'exact' })
     .eq('movement_type', 'STOCK_OUT').eq('source_doc_no', doNo).eq('reason', RACK_REASON);
@@ -1314,9 +1313,9 @@ async function refreshRackStatusInline(sb: any, rackId: string): Promise<void> {
 // item so occupancy recovers — original customer/date metadata is not restored).
 // Idempotent on the STOCK_IN marker so a double-cancel never double-credits.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: string, performedBy: string, companyId: number | null): Promise<void> {
-  const OUT_REASON = 'Delivery order dispatch';
-  const IN_REASON = 'DO cancelled';
+export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: string, performedBy: string, companyId: number | null, why: 'revert' | 'cancel'): Promise<void> {
+  await markDoShippedFromReturned(sb, deliveryOrderId, companyId, why);
+  const OUT_REASON = DO_RACK_OUT_REASON, IN_REASON = 'DO cancelled';
   const { count: alreadyBack } = await sb.from('warehouse_rack_movements')
     .select('id', { head: true, count: 'exact' })
     .eq('movement_type', 'STOCK_IN').eq('source_doc_no', doNo).eq('reason', IN_REASON);
@@ -1718,6 +1717,7 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     /* Costing C — line set changed → re-derive each line's actual FIFO cost
        from the now-current movements (ship OUT + these resync deltas). */
     await restampDoActualCost(sb, deliveryOrderId);
+    await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
     /* Resync changed stock — re-walk SO allocation. Best-effort. */
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
@@ -2769,7 +2769,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   (deliveryOrder as Record<string, unknown>).warehouse_name = headerWh ? (whLabels.get(headerWh)?.name ?? null) : null;
   /* Storekeeper picking — the rack(s) each line's source PO was received onto
      (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
-  const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
+  const [doRacks, shippedFrom] = await Promise.all([resolveDoLineRacks(sb, rawItems, lineWh), loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null)]);
   /* Bound-PO fallback — a line whose ledger walk found no batch (not yet
      shipped, negative-stock ship, or un-batched pre-0120 lots) still has a real
      procurement path when a PO was raised against its SO line (per-warehouse
@@ -2839,7 +2839,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       itemCode: (it.item_code as string | null) ?? null,
       rackId: (it.rack_id as string | null) ?? null,
       sourcePos,
-    });
+    }, shippedFrom);
     return {
       ...it,
       warehouse_id: wid,
@@ -2879,7 +2879,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ deliveryOrder, items });
+  return c.json({ deliveryOrder, items: withShippedFromStamp(items) }); // a locked (stamped) line shows its stamp
 });
 
 // ── Create ──────────────────────────────────────────────────────────────
@@ -5331,7 +5331,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     try {
       const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), scopeCompanyId).maybeSingle();
       const doNo = (doRow as { do_number?: string } | null)?.do_number ?? null;
-      if (doNo) await returnDoRacksOnCancel(sb, id, doNo, user.id, (doRow as { company_id?: number | null } | null)?.company_id ?? null);
+      if (doNo) await returnDoRacksOnCancel(sb, id, doNo, user.id, (doRow as { company_id?: number | null } | null)?.company_id ?? null, 'cancel');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] cancel reversal failed:', e); }
     /* SO #4 — this DO's cancel may release its SO from DELIVERED; recompute live. Best-effort. */
     try {

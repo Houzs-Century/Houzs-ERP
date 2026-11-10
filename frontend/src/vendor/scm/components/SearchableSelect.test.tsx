@@ -157,6 +157,63 @@ describe("Enter picks the typed option", () => {
   });
 });
 
+// 2990-GRN-2611-012 / 2610-031 (owner 2026-11-10): racks keyed on New GRN were
+// not saved. 2990 shares its shelves with HC, so the rack picker labels carry
+// the other company's stock ("Rack L1.1 · HC 6 pcs"); a typed "L1.1" then
+// matched no label exactly and also matched L1.10 / L1.11, so Enter picked
+// nothing, and Tab or a click elsewhere never picked anything at all.
+describe("a typed rack is committed by Enter, Tab or leaving the field", () => {
+  const hinted = [
+    { value: "r1", label: "Rack L1.1 · HC 6 pcs" },
+    { value: "r10", label: "Rack L1.10" },
+    { value: "r11", label: "Rack L1.11 · HC 2 pcs" },
+  ];
+  const type = (term: string, onChange: (v: string) => void, value = "") => {
+    render(<SearchableSelect value={value} onChange={onChange} options={hinted} ariaLabel="Rack" />);
+    const box = screen.getByRole("combobox");
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: term } });
+    return box;
+  };
+
+  test("the text before ' · ' names the option exactly", () => {
+    expect(enterPick("L1.1", hinted)?.value).toBe("r1");
+    expect(enterPick("Rack L1.11", hinted)?.value).toBe("r11");
+  });
+  test("Enter", () => {
+    const onChange = vi.fn();
+    fireEvent.keyDown(type("L1.1", onChange), { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("r1");
+  });
+  test("Tab with nothing highlighted", () => {
+    const onChange = vi.fn();
+    fireEvent.keyDown(type("L1.1", onChange), { key: "Tab" });
+    expect(onChange).toHaveBeenCalledWith("r1");
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+  test("leaving the field with an exact name typed", () => {
+    const onChange = vi.fn();
+    fireEvent.blur(type("L1.1", onChange));
+    expect(onChange).toHaveBeenCalledWith("r1");
+  });
+  test("leaving the field with an unclear term picks nothing, and an untouched field changes nothing", () => {
+    const onChange = vi.fn();
+    fireEvent.blur(type("L1", onChange));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+  test("focus and leave, or Tab through, without typing does not re-send the current value", () => {
+    const onChange = vi.fn();
+    render(<SearchableSelect value="r1" onChange={onChange} options={hinted} ariaLabel="Rack" />);
+    const box = screen.getByRole("combobox");
+    fireEvent.focus(box);
+    fireEvent.blur(box);
+    fireEvent.focus(box);
+    fireEvent.keyDown(box, { key: "Tab" });
+    fireEvent.blur(box);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("SearchableSelect clearing", () => {
   const cities = [
     { value: "Kangar", label: "Kangar" },

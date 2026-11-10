@@ -701,11 +701,25 @@ describe('inside one report', () => {
     open();
     const row = screen.getByText('969745').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByText('Not this'));
-    expect(releaseMutate).toHaveBeenCalledWith(9, expect.anything());
+    expect(releaseMutate).toHaveBeenCalledWith({ rowId: 9, payments: [] }, expect.anything());
     /* A confirmed line has Undo, not Not this. */
     openTab('Confirmed');
     const done = screen.getByText(/done · JE-2608-0011/).closest('tr') as HTMLElement;
     expect(within(done).queryByText('Not this')).toBeNull();
+  });
+
+  /* Owner 2026-11-10 (这个 system guess 的，如果我确定了不是有没有按钮可以按不是了 → 做):
+     the guess is no link, so the press names the payments the line shows. */
+  test('the system’s guess can be told "Not this" too — on its card, naming the guessed sale', () => {
+    releaseMutate.mockClear();
+    open();
+    openTab('To choose');
+    const card = screen.getByLabelText('Select SO-2608-050').closest('section') as HTMLElement;
+    fireEvent.click(within(card).getByText('Not this'));
+    expect(releaseMutate).toHaveBeenCalledWith({ rowId: 10, payments: ['SOPAY:b3'] }, expect.anything());
+    /* A line with only possibilities and no guess has nothing to turn down. */
+    const choose = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    expect(within(choose).queryByText('Not this')).toBeNull();
   });
 
   test('a line that needs choosing keeps its card', () => {
@@ -722,6 +736,24 @@ describe('inside one report', () => {
     open();
     openTab('To choose');
     expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
+  });
+});
+
+describe('"Not this" on the work list', () => {
+  test('the guess and the reference match each carry it; a line to choose does not', () => {
+    releaseMutate.mockClear();
+    draw();
+    const guess = screen.getByText('TYPO9').closest('tr') as HTMLElement;
+    expect(within(guess).getByText('the system’s guess — check it')).toBeTruthy();
+    fireEvent.click(within(guess).getByText('Not this'));
+    expect(releaseMutate).toHaveBeenLastCalledWith({ rowId: 10, payments: ['SOPAY:b3'] }, expect.anything());
+
+    const matched = screen.getByText('969745').closest('tr') as HTMLElement;
+    fireEvent.click(within(matched).getByText('Not this'));
+    expect(releaseMutate).toHaveBeenLastCalledWith({ rowId: 9, payments: [] }, expect.anything());
+
+    const choose = screen.getByText('ZZ9').closest('tr') as HTMLElement;
+    expect(within(choose).queryByText('Not this')).toBeNull();
   });
 });
 

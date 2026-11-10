@@ -12,7 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { conditionDateRange } from "../../components/dataTableConditionFilters";
-import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
+import { statusFor, doCancellableStatus, doRevenueSen, type StatusTab } from "./do-list-status";
 import { deliveryOrderRowMenu } from "./row-menus";
 import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
 import { useDoCancelAction } from "./use-do-cancel-action";
@@ -754,6 +754,8 @@ type DoDrillItem = {
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
+  /* 'locked' = stamped when the line shipped; 'worked_out' = re-derived (older DO). */
+  source_state?: 'locked' | 'worked_out' | null;
 };
 
 function DoLinesExpansion({ doId }: { doId: string }) {
@@ -772,6 +774,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     amountSen: l.amount_sen ?? l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0),
     sourcePos: l.source_pos ?? [],
     sourceAdj: l.source_adj ?? false,
+    sourceState: l.source_state ?? null,
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -897,11 +900,7 @@ export function MfgDeliveryOrdersListV2() {
 
   // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
   // not full-set money sums), so the card and the table can never disagree.
-  const revenueSen = useMemo(() => {
-    let sum = 0;
-    for (const r of visible.rows) sum += r.local_total_sen ?? 0;
-    return sum;
-  }, [visible.rows]);
+  const revenueSen = useMemo(() => doRevenueSen(visible.rows, status), [visible.rows, status]);
 
   /* In-transit / Delivered normally read the server's FULL-set statusCounts —
      right, and deliberately unaffected by paging. But under an active column

@@ -58,7 +58,7 @@ import {
 import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
-import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
+import { unmatchedBankLinesHandler, unmatchedPaymentsHandler } from './accounting-unmatched-payments';
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
@@ -160,6 +160,9 @@ accounting.get('/settlement/in-transit', settlementInTransit);
 /* Card AND transfer payments not matched yet, on one list (owner 2026-09-30:
    我有没有一个表是显示全部还没 match 的). Rules in acc/unmatched-payments. */
 accounting.get('/unmatched-payments', unmatchedPaymentsHandler);
+/* And the bank's money-in lines nothing in the books is matched to (owner
+   2026-11-10: 如果银行那边的收款有，也没有对应的transaction 也可以显示). */
+accounting.get('/unmatched-bank-lines', unmatchedBankLinesHandler);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);

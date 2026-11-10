@@ -168,6 +168,17 @@ describe('assemblePackingLists', () => {
     expect(first.items[1].rack).toBe('Rack 3');
   });
 
+  test('a shipped line prints the rack(s) locked at dispatch before any pick (owner 2026-11-10)', () => {
+    const input = base();
+    const stamp = { v: 1, item_code: 'B', pos: [], racks: [{ rack_id: 'r9', label: 'Rack L8.2', qty: 1 }, { rack_id: 'r8', label: 'Rack L9.1', qty: 1 }] };
+    (input.items[0] as Record<string, unknown>).shipped_from = stamp;
+    (input.items[1] as Record<string, unknown>).shipped_from = { ...stamp, item_code: 'OTHER' };
+    const [list] = assemblePackingLists(input as Parameters<typeof assemblePackingLists>[0]);
+    const [a, b] = list.stops[0].items;
+    expect(b).toMatchObject({ rack: 'Rack L8.2, Rack L9.1', rack_locked: true });
+    expect(a).toMatchObject({ rack: null, rack_locked: false }); // a stamp for another item is ignored
+  });
+
   test('counts a delivery order ONCE even when it sits on two stops', () => {
     const input = base();
     input.stops.push({ id: 's4', trip_id: 't1', stop_no: 4, stop_type: 'DELIVERY', do_id: 'do1', customer_name: 'Alpha again', address: 'A' });

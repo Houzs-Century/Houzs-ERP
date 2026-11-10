@@ -22,22 +22,25 @@ export const SPLIT_SUM_LABEL = 'Settlement + Deposit';
 export const splitKey = (month: string, part: SplitPart): string => `${month}:${part}`;
 
 /** Total as it is; each month as Settlement then Deposit under the month's name (the
-    month's own small line — "to 09/11/2026 *" on the month still running — on the heading). */
+    month's own small line — "to 09/11/2026 *" on the month still running — on the heading),
+    Settlement marked petrol and Deposit gold (owner 2026-11-10: 做好看一点). */
 export function splitColumns(months: StatementColumn[]): StatementColumn[] {
   return months.flatMap((c): StatementColumn[] => {
     if (c.kind !== 'period') return [c];
     const group = { key: c.key, label: c.label, ...(c.sub ? { sub: c.sub } : {}) };
     return (['S', 'D'] as const).map((part) => ({
       key: splitKey(c.key, part), label: part === 'S' ? SETTLEMENT_LABEL : DEPOSIT_LABEL, kind: 'period', from: c.from, to: c.to, pct: false, group,
+      mark: part === 'S' ? 'petrol' : 'gold',
     }));
   });
 }
 
 /** The By month lines (merged by id, a month's cell carrying the server's split) laid on
     the split columns: Total whole; a month the server split fills both of its columns (a
-    nil share a dash); a month it left whole prints one figure across both; a month without
-    the line prints one dash across — or a dash in each column when the line splits in
-    another month. */
+    nil share no figure); a month it left whole prints one figure across both; a month
+    without the line has one empty cell across — or an empty cell in each column when the
+    line splits in another month. The table leaves a month's empty cells blank (owner
+    2026-11-10: the dashes made it busy); Total keeps its dash. */
 export function splitLines(merged: StatementLine[], months: StatementColumn[]): StatementLine[] {
   const periods = months.filter((c) => c.kind === 'period');
   const wholes = months.filter((c) => c.kind !== 'period');
@@ -53,7 +56,7 @@ export function splitLines(merged: StatementLine[], months: StatementColumn[]): 
       const cell = l.cells[m.key];
       const settle = splitKey(m.key, 'S');
       if (cell?.sd) {
-        /* A nil share prints a dash, as his workbook leaves the cell blank. */
+        /* A nil share has no figure: the cell stays blank, as his workbook leaves it. */
         if (cell.sd.settlementSen !== 0) cells[settle] = { amountSen: cell.sd.settlementSen, pct: null };
         if (cell.sd.depositSen !== 0) cells[splitKey(m.key, 'D')] = { amountSen: cell.sd.depositSen, pct: null };
         continue;
