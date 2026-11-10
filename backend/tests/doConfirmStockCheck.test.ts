@@ -80,7 +80,7 @@ const confirm = (app: Hono, extra: Row = {}) =>
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ status: 'LOADED', ...extra }),
-  });
+  }, { DO_SHIP_MODE: 'two-step' }); // no database behind these stubs; doShipAtomic.test.ts covers atomic
 
 describe('DO Confirm (DRAFT -> LOADED) re-checks stock', () => {
   test('short stock answers 409 short_stock and the DO stays DRAFT', async () => {

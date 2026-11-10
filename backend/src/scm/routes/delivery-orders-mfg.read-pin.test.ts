@@ -9,7 +9,7 @@
 // The fake resolves the PostgREST embeds these paths ask for (a DO line's
 // parent DO, a return line's parent return, an SO line's DO lines), so both the
 // old two-step reads and the embedded read run against ONE set of rows.
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
 
@@ -243,6 +243,13 @@ async function call(method: 'GET' | 'POST', path: string, body?: unknown) {
   }, {} as Env);
   return { status: res.status, body: await res.json(), writes };
 }
+
+/* The day the snapshot was taken (MYT). Dates minted from "today" also reach
+   audit field changes and SO-derived defaults, so the clock is held, not masked:
+   the pins went red on 2026-11-11 for nothing but the date. Date only, so the
+   promise and timer machinery stays real. */
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-10T04:00:00Z')); });
+afterAll(() => { vi.useRealTimers(); });
 
 /* Strip the per-run noise (dates minted from today) so the snapshot holds the
    decisions, not the clock. */
