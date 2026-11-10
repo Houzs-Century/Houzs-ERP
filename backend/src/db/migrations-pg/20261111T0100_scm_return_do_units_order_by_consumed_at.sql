@@ -1,4 +1,4 @@
--- 20261110T0753_scm_return_do_units_order_by_consumed_at.sql
+-- 20261111T0100_scm_return_do_units_order_by_consumed_at.sql
 --
 -- scm.fn_return_do_units_at_cost has never run to completion in production.
 -- Its consumption walk ordered by c.created_at, and scm.inventory_lot_consumptions

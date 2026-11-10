@@ -3,7 +3,7 @@
 // Used by resyncInventoryForDo (routes/delivery-orders-mfg.ts).
 //
 // The units go back to the lots that paid for them, through
-// scm.fn_return_do_units_at_cost (mig 0291, fixed by 20261110T0753). There is no
+// scm.fn_return_do_units_at_cost (mig 0291, fixed by 20261111T0100). There is no
 // fallback any more. Until 2026-11-10 a failed call wrote a plain IN instead, and
 // the FIFO trigger turned that IN into a NEW lot sourced from the DO: no GRN, no
 // PO, and the original lot still consumed. The call failed every time (the route
