@@ -218,6 +218,26 @@ describe('the Finance list — both kinds', () => {
     expect(only.rows.map((r) => r.kind)).toEqual(['PI']);
   });
 
+  /* The list fed the voucher pickers capped at the newest 500 with nothing
+     said, so an older unpaid bill could not be chosen to pay. */
+  test('every bill is listed, past one page: no silent newest-500 cap on either kind', async () => {
+    const day = (i: number) => `2026-0${1 + (i % 9)}-${String(1 + (i % 28)).padStart(2, '0')}`;
+    const ap = Array.from({ length: 1203 }, (_, i): Row => ({
+      id: `api-${i}`, company_id: CO, invoice_number: `2990-API-X-${i}`, supplier_id: 'sup-h', supplier_invoice_ref: null,
+      invoice_date: day(i), due_date: null, currency: 'MYR', exchange_rate: 1, total_sen: 100, paid_sen: 0, status: 'POSTED', doc_kind: 'INV',
+    }));
+    const pi = Array.from({ length: 1101 }, (_, i): Row => ({
+      id: `pi-${i}`, company_id: CO, invoice_number: `2990-PI-X-${i}`, supplier_invoice_ref: null, supplier_id: 'sup-t',
+      invoice_date: day(i), due_date: null, currency: 'MYR', total_sen: 100, paid_sen: 0, status: 'POSTED',
+    }));
+    const { app } = harness({ ap_invoices: ap, purchase_invoices: pi });
+    const apOnly = await (await app.request('/ap-invoices?kind=API')).json() as { rows: Array<Row> };
+    expect(apOnly.rows).toHaveLength(1203);
+    expect(new Set(apOnly.rows.map((r) => r.id)).size).toBe(1203);
+    const all = await (await app.request('/ap-invoices')).json() as { rows: Array<Row> };
+    expect(all.rows.filter((r) => r.kind === 'PI')).toHaveLength(1101);
+  });
+
   test('a cancelled AP invoice shows nothing outstanding (it used to show its full amount)', async () => {
     /* Regression (sister fix hookka-erp-testing #937): outstanding was total - paid
        whatever the status, so a cancelled bill kept its face amount on the list
