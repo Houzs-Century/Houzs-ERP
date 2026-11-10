@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   aoa: [] as unknown[][],
   files: [] as string[],
   cells: {} as Record<string, unknown>,
+  sheets: [] as Array<{ name: string; aoa: unknown[][] }>,
 }));
 vi.mock("../lib/xlsx-runtime", () => ({
   utils: {
@@ -28,14 +29,14 @@ vi.mock("../lib/xlsx-runtime", () => ({
     },
     encode_cell: ({ r, c }: { r: number; c: number }) => `${c}:${r}`,
     book_new: () => ({}),
-    book_append_sheet: () => {},
+    book_append_sheet: (_wb: unknown, _ws: unknown, name: string) => { h.sheets.push({ name, aoa: h.aoa }); },
   },
   writeFileXLSX: (_wb: unknown, name: string) => { h.files.push(name); },
 }));
 
 import { DataTable, type Column } from "./DataTable";
 import { applyColumnFilters, sortTableRows } from "./dataTableRows";
-import { buildLineExportMatrix, excelDaySerial, type LineExportColumn } from "./dataTableLineExport";
+import { buildLineExportMatrix, excelDaySerial, writeLineExportBook, type LineExportColumn } from "./dataTableLineExport";
 
 type Line = { code: string; qty: number; due: string | null };
 type Doc = { id: string; no: string; status: string; totalSen: number; lines: Line[] };
@@ -67,6 +68,26 @@ afterEach(() => {
   resetInVisitColFilters();
   h.aoa = [];
   h.files = [];
+  h.sheets = [];
+});
+
+/* Payments not matched yet's Export all (owner 2026-11-10: 一个 Excel，分三张表 /
+   这个export可以根据我显示的column 来export). */
+describe("a workbook of several tables", () => {
+  it("writes one sheet per table, in order, into one file", async () => {
+    const m = (header: string) => ({ header: [header], formats: ["text" as const], body: [["x"]] });
+    await writeLineExportBook([{ name: "One", matrix: m("A") }, { name: "Two", matrix: m("B") }], "both.xlsx");
+    expect(h.sheets.map((s) => [s.name, s.aoa[0]])).toEqual([["One", ["A"]], ["Two", ["B"]]]);
+    expect(h.files).toEqual(["both.xlsx"]);
+  });
+
+  it("a table tells its page the columns showing — a column hidden by default is not among them", async () => {
+    const told: string[][] = [];
+    render(<DataTable<Doc, Line> tableId="told" columns={columns.map((c) => (c.key === "status" ? { ...c, defaultHidden: true } : c))}
+      rows={docs} getRowKey={(d) => d.id} onShownColumnsChange={(cols) => told.push(cols.map((c) => c.key))} />);
+    await waitFor(() => expect(told.length).toBeGreaterThan(0));
+    expect(told.at(-1)).toEqual(["no", "code", "qty", "due", "total", "note"]);
+  });
 });
 
 describe("buildLineExportMatrix", () => {

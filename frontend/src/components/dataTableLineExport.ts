@@ -149,8 +149,10 @@ export function fittedColumnWidths(matrix: LineExportMatrix): number[] {
   });
 }
 
-export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: string, fileName: string): Promise<void> {
-  const XLSX = await import("../lib/xlsx-runtime");
+type Xlsx = typeof import("../lib/xlsx-runtime");
+
+/** One sheet: the header and rows, each column's Excel format, each column fitted. */
+function sheetOf(XLSX: Xlsx, matrix: LineExportMatrix): Record<string, unknown> {
   const ws = XLSX.utils.aoa_to_sheet([matrix.header, ...matrix.body]) as Record<string, unknown>;
   matrix.formats.forEach((fmt, c) => {
     const z = NUMBER_FORMAT[fmt];
@@ -169,7 +171,20 @@ export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: s
     }
   });
   ws["!cols"] = fittedColumnWidths(matrix).map((wch) => ({ wch }));
+  return ws;
+}
+
+export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: string, fileName: string): Promise<void> {
+  await writeLineExportBook([{ name: sheetName, matrix }], fileName);
+}
+
+/** Several tables in ONE workbook, a sheet each, in the order given — Payments not
+ *  matched yet's "Export all" (owner 2026-11-10: 一个 Excel，分三张表). */
+export async function writeLineExportBook(
+  sheets: ReadonlyArray<{ name: string; matrix: LineExportMatrix }>, fileName: string,
+): Promise<void> {
+  const XLSX = await import("../lib/xlsx-runtime");
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  for (const s of sheets) XLSX.utils.book_append_sheet(wb, sheetOf(XLSX, s.matrix), s.name);
   XLSX.writeFileXLSX(wb, fileName);
 }
