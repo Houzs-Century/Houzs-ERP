@@ -30,7 +30,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useItSupportConnected } from "./useItSupportConnected";
 import { useVisiblePoll } from "../lib/visiblePoll";
 import { SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
-import { approveKeysFor } from "../vendor/scm/lib/document-cancel-queries";
+import { approveKeysFor } from "../vendor/scm/lib/document-cancel-keys";
 
 /* Who can have a non-zero count. The endpoints answer 0 to anyone else, and the
    area guard in front of them answers 403 to a caller without the SO / PO area

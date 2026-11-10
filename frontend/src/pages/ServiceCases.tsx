@@ -3237,12 +3237,9 @@ function DetailContent({
       }
     })();
   }, [detail.data]);
-  const canListTeam = useCanListUsers();
   const users = useQuery<{ id: number; name: string; department_name?: string }[]>("/api/users#unwrapped",
     () => api.get<any>("/api/users").then((r: any) => r.users ?? r.data ?? r ?? []),
-    [],
-    { enabled: canListTeam },
-  );
+    [], { enabled: useCanListUsers() });
   // Mig 065 — picker values come from the lookup endpoints maintained
   // in Service Maintenance. Each query is small; the four together
   // are still cheap. Fall back to the legacy hardcoded constants when

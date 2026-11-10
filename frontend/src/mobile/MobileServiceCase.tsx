@@ -247,10 +247,8 @@ function useLookupSlugs(kind: string, fallback: readonly string[]): string[] {
 // out-of-Operations assignment never silently vanishes from the list).
 type PicUser = { id: number; name: string; department_name?: string };
 function useAssignableUsers(): PicUser[] {
-  const canListTeam = useCanListUsers();
   const { data } = useQuery({
-    queryKey: ["mobile-assr-users"],
-    enabled: canListTeam,
+    queryKey: ["mobile-assr-users"], enabled: useCanListUsers(),
     queryFn: () =>
       api
         .get<any>("/api/users")
