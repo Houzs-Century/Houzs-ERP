@@ -45,13 +45,18 @@ export const useFlowDocFiles = (kind: FlowDocKind, docId: string | null) => useQ
   retry: retryUnlessClientError,
 });
 
+/** For a document that did not exist when the page mounted (a file attached
+    right after its create), where the hook below cannot be bound yet. */
+export const uploadFlowDocFile = (kind: FlowDocKind, docId: string, file: PvFilePayload) =>
+  authedFetch<{ ok: true; file: PvFile }>(base(kind, docId), {
+    method: 'POST',
+    body: JSON.stringify({ fileName: file.name, mime: file.mime, dataBase64: file.dataBase64 }),
+  });
+
 export const useUploadFlowDocFile = (kind: FlowDocKind, docId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (file: PvFilePayload) => authedFetch<{ ok: true; file: PvFile }>(base(kind, docId), {
-      method: 'POST',
-      body: JSON.stringify({ fileName: file.name, mime: file.mime, dataBase64: file.dataBase64 }),
-    }),
+    mutationFn: (file: PvFilePayload) => uploadFlowDocFile(kind, docId, file),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: key(kind, docId) }); },
   });
 };
