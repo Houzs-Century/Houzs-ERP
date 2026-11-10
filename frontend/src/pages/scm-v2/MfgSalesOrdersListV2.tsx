@@ -27,7 +27,7 @@ import { SoListFilterBar } from "./SoListFilterBar";
 import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, withSoFunnelSeeds, type SoServerFunnels } from "./so-list-server-funnels";
 import { useProjectBrands } from "../../vendor/scm/lib/product-models-queries";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
-import { salesOrderRowMenu } from "./row-menus";
+import { salesOrderRowMenu, soOffersReopen, SO_REOPEN_FINAL_HINT } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CancelledMoneyActions } from "./CancelledMoneyActions";
@@ -173,6 +173,8 @@ type SoRow = HoldFields & {
   delivery_state?: "none" | "partial" | "full" | null;
   /** Server-derived (lib/so-list-rows.ts): something is still left to put on a DO. */
   has_undelivered?: boolean | null;
+  /** Server-decided: a CANCELLED order the status PATCH will reopen (backend so-reopen.ts). */
+  reopenable?: boolean | null;
   lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
@@ -748,17 +750,24 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                // Reopen a cancelled SO back to CONFIRMED so it can proceed
-                // again (2990 MfgSalesOrdersList "Reopen SO" parity).
+                // Reopen a cancelled SO back to CONFIRMED — only where the
+                // server will take it (soOffersReopen); otherwise the button
+                // stays, disabled, with the reason beside it.
                 if (s === "cancelled" || s === "cancel") {
+                  const reopenable = soOffersReopen(row);
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<RotateCcw size={14} />}
-                      onClick={onReopen}
-                    >
-                      Reopen
-                    </Button>
+                    <>
+                      {!reopenable && <span className="text-xs text-ink-muted">{SO_REOPEN_FINAL_HINT}</span>}
+                      <Button
+                        variant="primary"
+                        icon={<RotateCcw size={14} />}
+                        onClick={onReopen}
+                        disabled={!reopenable}
+                        title={reopenable ? undefined : SO_REOPEN_FINAL_HINT}
+                      >
+                        Reopen
+                      </Button>
+                    </>
                   );
                 }
                 return null;
