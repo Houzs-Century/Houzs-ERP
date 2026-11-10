@@ -79,7 +79,9 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
   const lines: CleanLine[] = [];
   for (const [i, l] of arr.entries()) {
     const code = String(l?.accountCode ?? '').trim() || null;
-    const amount = Number(l?.amountSen);
+    /* A JSON number only: Number() would read "350000" or true (= 1 sen) as an
+       amount, and a NaN the screen could not parse arrives as null. */
+    const amount = typeof l?.amountSen === 'number' ? l.amountSen : NaN;
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }

@@ -241,6 +241,32 @@ describe('the Credit & Debit Notes page', () => {
     });
   });
 
+  test('an amount typed with thousands separators is read, never sent as null (G1 #5531 class)', async () => {
+    /* Number("3,500.00") is NaN and JSON sends NaN as null. */
+    const body = bodyOf({ kind: 'SCN', noteDate: '2026-11-10', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: '', reason: '', lines: [
+      { rid: 1, description: '', accountCode: '', amountRm: '3,500.00', projectId: null },
+      { rid: 2, description: '', accountCode: '', amountRm: '  ', projectId: null },
+    ] });
+    expect(body.lines).toEqual([{ description: null, accountCode: null, amountSen: 350000 }]);
+    /* Unreadable: refused with a sentence, never dropped as if blank. */
+    const bad = { kind: 'SCN' as const, noteDate: '2026-11-10', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: '', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '3.500,00', projectId: null }] };
+    expect(() => bodyOf(bad)).toThrow(/Line 1/);
+
+    createMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByText('New note'));
+    const dialog = await screen.findByLabelText('Note form');
+    fireEvent.change(within(dialog).getByLabelText('Sales order'), { target: { value: '2990-SO-2607-019' } });
+    fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: 'abc' } });
+    expect(within(dialog).getByRole('alert').textContent).toMatch(/Line 1/);
+    expect((within(dialog).getByText('Save as draft').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: '3,500.00' } });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    fireEvent.click(within(dialog).getByText('Save as draft'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    expect((createMutate.mock.calls[0]?.[0] as { lines: unknown }).lines).toEqual([{ description: null, accountCode: null, amountSen: 350000 }]);
+  });
+
   test('the body of a supplier note carries the supplier, and a typed customer name stands in for an order', () => {
     const scn = bodyOf({ kind: 'SCN', noteDate: '2026-09-03', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: 'PRT-2609-003', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '500', projectId: null }] });
     /* A supplier note always says its ticks — none ticked is a plan too. */
