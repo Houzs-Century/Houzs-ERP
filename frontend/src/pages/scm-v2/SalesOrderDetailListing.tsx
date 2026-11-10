@@ -775,7 +775,9 @@ export const SalesOrderDetailListing = () => {
             label={label}
             value={value}
             tone={tone}
-            pending={query.isLoading || (query.isFetching && rawRows.length === 0) || Boolean(query.error)}
+            pending={query.isLoading || (query.isFetching && rawRows.length === 0)}
+            failed={Boolean(query.error)}
+            onRetry={() => void query.refetch()}
           />
         ))}
       </div>

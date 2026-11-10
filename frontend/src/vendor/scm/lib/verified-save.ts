@@ -204,6 +204,9 @@ function extractPlainReason(body: string): string | null {
   return null;
 }
 
+const READBACK_ATTEMPTS = 3;
+const READBACK_BACKOFF_MS = [300, 900];
+
 export async function verifiedSave<T>(args: VerifiedSaveArgs<T>): Promise<SaveResult<T>> {
   const fetcher = args.fetcher ?? authedFetcher;
 
@@ -228,16 +231,28 @@ export async function verifiedSave<T>(args: VerifiedSaveArgs<T>): Promise<SaveRe
     return { ok: false, reason: 'http', status: res.status, body, requestId: requestIdFromResponse(res) };
   }
 
-  // 2. Read back (cache-bypassing) and 3. compare.
-  let data: T | null;
-  try {
-    data = await args.readback();
-  } catch (e) {
+  // 2. Read back (cache-bypassing) and 3. compare. The write has already
+  //    landed; a single dropped confirming read used to report "check
+  //    interrupted" for a save that was fine. Up to READBACK_ATTEMPTS reads.
+  let data: T | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < READBACK_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, READBACK_BACKOFF_MS[attempt - 1]));
+    try {
+      data = await args.readback();
+      lastError = null;
+    } catch (e) {
+      lastError = e;
+      data = null;
+    }
+    if (data != null) break;
+  }
+  if (lastError != null) {
     return {
       ok: false,
       reason: 'unverified',
-      details: `readback failed: ${e instanceof Error ? e.message : String(e)}`,
-      requestId: requestIdFromError(e),
+      details: `readback failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      requestId: requestIdFromError(lastError),
     };
   }
   if (data == null) {
