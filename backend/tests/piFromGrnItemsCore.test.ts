@@ -104,7 +104,7 @@ class FakeQuery {
    handler wires from its real Hono context. companyId is the isolation boundary;
    allowedCompanyIds stays undefined (single active company). rpc answers `true`,
    which the doc-no counter reads as suffix 1. */
-const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, body: unknown, prices: ReadonlyMap<string, number> = RECEIPT_PRICES) => {
+const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, body: unknown, prices: ReadonlyMap<string, number> = RECEIPT_PRICES, duplicateBill: 'refuse' | 'allow' = 'refuse') => {
   const log: string[] = [];
   const sb = {
     from: (t: string) => new FakeQuery((tables[t] ||= []), t, log),
@@ -121,7 +121,7 @@ const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, b
   return createDraftPisFromGrnItemsCore({
     req: { json: async () => body },
     get: get as never,
-  }, prices);
+  }, prices, duplicateBill);
 };
 
 /* A billable GRN LINE. grn is the !inner-embedded parent: POSTED + not held so
@@ -212,6 +212,23 @@ describe('createDraftPisFromGrnItemsCore — creates a DRAFT, never books AP', (
     expect(res.created[0]!.lineCount).toBe(1);
   });
 
+  /* One supplier bill is owed once: the route and the headless scan run refuse a
+     bill number this supplier already has live; the scan queue, whose operator
+     was shown "Already billed", may still create it. */
+  test('a supplier bill number already booked for that supplier refuses with 409; allow creates', async () => {
+    const t = tables();
+    t.purchase_invoices = [{ id: 'pi-old', invoice_number: 'HC-PI-2608-009', company_id: CO_A, supplier_id: 's1', supplier_invoice_ref: 'INV 77', status: 'DRAFT' }];
+    const refused = await runCore(t, CO_A, { picks: [{ grnItemId: 'gi-a', qty: 1 }], supplierInvoiceNumber: 'inv77' });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: 'duplicate_supplier_bill', existing: { invoiceNumber: 'HC-PI-2608-009' } });
+    expect(t.purchase_invoices).toHaveLength(1);
+
+    const allowed = await runCore(t, CO_A, { picks: [{ grnItemId: 'gi-a', qty: 1 }], supplierInvoiceNumber: 'inv77' }, RECEIPT_PRICES, 'allow');
+    expect(allowed.ok).toBe(true);
+  });
+
   test('two GRNs from ONE supplier fold into ONE PI (multi-GRN capability intact)', async () => {
     const t = tables();
     const res = await runCore(t, CO_A, {
@@ -280,7 +297,7 @@ describe('createDraftPisFromGrnItemsCore — creates a DRAFT, never books AP', (
       if (key === 'companyCode') return 'HOUZS';
       return undefined;
     };
-    await createDraftPisFromGrnItemsCore({ req: { json: async () => ({ picks: [{ grnItemId: 'gi-a', qty: 0 }] }) }, get: get as never }, RECEIPT_PRICES);
+    await createDraftPisFromGrnItemsCore({ req: { json: async () => ({ picks: [{ grnItemId: 'gi-a', qty: 0 }] }) }, get: get as never }, RECEIPT_PRICES, 'refuse');
     expect(log).toContain('grn_items.select:eq:company_id');
   });
 

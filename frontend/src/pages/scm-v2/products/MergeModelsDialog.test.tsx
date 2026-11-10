@@ -8,7 +8,7 @@ vi.mock('../../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: fetcher })
 
 const plan = (over: object) => ({
   refusals: [], pairs: [], moves: [{ code: 'AMIRA (K)', size: 'K' }], fills: [], addSizes: ['K'], foldModels: ['AMIRA PREMUIM'],
-  keptOff: true, leftInactive: 0, totals: { pairs: 0, moves: 1, folds: 1 }, confirm: 'MERGE 1 MODELS', ...over,
+  keptOff: true, leftInactive: 0, inactiveMoved: 0, totals: { pairs: 0, moves: 1, inactive: 0, folds: 1 }, confirm: 'MERGE 1 MODELS', ...over,
 });
 const open = () => {
   render(<QueryClientProvider client={new QueryClient()}><MergeModelsDialog codes={['AMIRA PREMIUM', 'AMIRA PREMUIM']} onClose={() => {}} /></QueryClientProvider>);
@@ -46,4 +46,14 @@ describe('Merge models', () => {
     expect(await screen.findByText('Cannot merge: different main suppliers')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('a Model that only holds switched-off codes can still be merged, and the Check says they move', async () => {
+    fetcher.mockResolvedValueOnce(plan({ moves: [], addSizes: [], foldModels: [], keptOff: false, inactiveMoved: 4, totals: { pairs: 0, moves: 0, inactive: 4, folds: 0 } }));
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    expect(await screen.findByText('4 switched-off SKU(s) move under the kept Model.')).toBeTruthy();
+    expect(screen.queryByText(/Nothing to do/)).toBeNull();
+    expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });
+

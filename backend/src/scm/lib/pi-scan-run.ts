@@ -172,6 +172,7 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       }),
       supplierInvoiceNumber: parsed.invoiceNumber,
       invoiceDate: parsed.invoiceDate,
+      duplicateBill: 'refuse',
     });
 
     if (!res.ok) {

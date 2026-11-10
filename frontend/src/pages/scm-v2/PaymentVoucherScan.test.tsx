@@ -420,6 +420,9 @@ describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bil
       { description: 'Zhejiang Ju Miao ZJM-88', amountSen: 1644000 },
       { description: 'Zhejiang Ju Miao ZJM-89', amountSen: 100000 },
     ]);
+    /* The supplier's scanned pages ride the stash to the New Purchase Invoice,
+       which attaches them on save; they used to be dropped here. */
+    expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
   });
 
   test('a split (or single) bill offers its own Open as bill, carrying the extraction alone', async () => {
@@ -439,6 +442,7 @@ describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bil
     expect(state.scanBill.supplierId).toBe('sup-405');
     expect(state.scanBill.extraction.invoiceNumber).toBe('ZJM-90');
     expect(state.scanBill.lines).toBeUndefined();
+    expect(takePvFiles().map((f) => f.name)).toEqual(['c.pdf']);
   });
 });
 

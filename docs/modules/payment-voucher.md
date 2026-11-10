@@ -12,6 +12,7 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - Four layers are marker columns on the row, not new status values: `status`
   stays `DRAFT` until approve posts it. No fast path — every voucher walks all
   layers; check and approve can be the same person.
+- **Approved but still `DRAFT`** means the approval stamped and the posting died. The detail page shows **Retry posting** (approve key) in place of Approve & post; it calls the same `/approve`, which resumes the post without re-stamping (`approvePaymentVoucherHandler`, pinned in `pvApproval.test.ts`).
 - **Prepared can still be edited**; **Checked locks editing** (409
   `not_editable` outside DRAFT).
 - **The words alone stay editable until Approve** (`PATCH /:id/text`, `pvCanEditText`,
@@ -122,6 +123,7 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
   `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
   was saved instead of the duplicate-save warning.
+- Every way out of the pile carries the bill's own pages through `pv-file-handoff.ts` (module stash, never `location.state`): Open as voucher, Open as AP invoice, and Open as bill / Open as ONE bill (New Purchase Invoice, which uploads them to `POST /purchase-invoices/:id/files` right after the create; a failed page is named in the result dialog, never un-saves the invoice).
 - The pile lives in `bill-pile-store.ts` (one per company and per kind) while
   the tab lives (owner 2026-10-06): opening a bill and coming back finds the
   rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,

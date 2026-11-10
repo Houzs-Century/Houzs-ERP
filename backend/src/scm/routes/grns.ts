@@ -81,6 +81,7 @@ import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { setGrnLineRackHandler } from '../lib/grn-line-rack';
+import { grnLineNetReceived } from '../lib/po-net-received';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -769,9 +770,9 @@ export async function verifyGrnOverReceipt(
     );
     // Live accepted per PO line across all non-cancelled GRN lines.
     const { data: sib } = await sb.from('grn_items')
-      .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+      .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
       .in('purchase_order_item_id', ids);
-    const sibRows = (sib ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
+    const sibRows = (sib ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
     const grnIds = [...new Set(sibRows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
@@ -796,7 +797,7 @@ export async function verifyGrnOverReceipt(
       // returned_qty), matching recomputePoReceived, so a legitimate replacement
       // GRN after a purchase return isn't falsely rejected by a gross-qty
       // over-receipt cap.
-      const q = Math.max(0, Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0));
+      const q = grnLineNetReceived(r);
       liveByPoi.set(r.purchase_order_item_id, (liveByPoi.get(r.purchase_order_item_id) ?? 0) + q);
       if (r.grn_id === grnId) thisGrnByPoi.set(r.purchase_order_item_id, (thisGrnByPoi.get(r.purchase_order_item_id) ?? 0) + q);
     }
@@ -868,7 +869,8 @@ export async function recomputePoReceived(
     // 1. Recount received_qty per PO item from live GRN lines. Net out goods
     //    sent back to the supplier (returned_qty, migration 0106): a returned
     //    qty no longer counts as received, so the PO line re-opens and a
-    //    replacement shipment can be received against it. Clamped ≥ 0.
+    //    replacement shipment can be received against it. Clamped ≥ 0. Units
+    //    returned with no replacement (returned_closed_qty) stay received.
     /* A FAILED READ STOPS THE RECOUNT before anything is written (READY audit
        F2, 2026-10-16). Unchecked, a failed grn_items read looked like "no
        receipts" and wrote received_qty 0 over real receipts, and a failed grns
@@ -876,10 +878,10 @@ export async function recomputePoReceived(
        no RECOUNT_FAILED row was left. The stored count stays as it was and the
        caller records the failure. */
     const { data: glines, error: glinesErr } = await sb.from('grn_items')
-      .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+      .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
       .in('purchase_order_item_id', ids);
     if (glinesErr) return { ok: false, reason: `GRN line read failed: ${glinesErr.message ?? 'unknown'}` };
-    const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
+    const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
     const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
@@ -896,8 +898,7 @@ export async function recomputePoReceived(
     const recvByPoi = new Map<string, number>(ids.map((id) => [id, 0]));
     for (const r of rows) {
       if (cancelled.has(r.grn_id)) continue;
-      const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
-      recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + Math.max(0, net));
+      recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + grnLineNetReceived(r));
     }
     /* CHECK THE WRITES. supabase-js RESOLVES on a rejected write rather than
        throwing, so a row refused by a constraint never reaches the catch below:

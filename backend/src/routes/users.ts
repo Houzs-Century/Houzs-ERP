@@ -1995,6 +1995,80 @@ app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * POST /api/users/:id/require-password-change
+ * The member must choose a new password at their next sign-in. Their current
+ * password keeps working for exactly one thing: a correct one opens a short
+ * session that can only reach the change-password screen (routes/auth.ts). Every
+ * session they hold now is ended, so a session opened with a leaked password
+ * cannot carry on. Crew PIN sign-in is unaffected — it never asks the password.
+ *
+ * DELETE clears a pending requirement (set by mistake) without touching sessions.
+ */
+app.post("/:id/require-password-change", requirePermission("users.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (!id) return c.json({ error: "Invalid ID." }, 400);
+  const gate = await targetWithinActorCompanies(c, id);
+  if (!gate.ok) return c.json(gate.body, 403);
+
+  // Raw D1-compat SQL, not Drizzle, so the workers suite can drive this
+  // handler end to end (tests/passwordChangeRequired.test.ts).
+  const target = await c.env.DB.prepare(`SELECT id, email, status FROM users WHERE id = ?`)
+    .bind(id)
+    .first<{ id: number; email: string; status: string }>();
+  if (!target) return c.json({ error: "User not found" }, 404);
+  if (target.status === "invited") {
+    return c.json({ error: "User is still invited and has no password yet." }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE users SET password_change_required_at = datetime('now') WHERE id = ?`,
+  )
+    .bind(id)
+    .run();
+  // Bust the cached envelopes and void the signed passes BEFORE the rows go:
+  // bustUserSessions reads the live tokens to know what to bust.
+  await bustUserSessions(c.env, id);
+  const ended = await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(id).run();
+  const sessionsEnded = Number(ended.meta?.changes ?? 0);
+
+  await audit(c, {
+    action: "user.require_password_change",
+    entityType: "user",
+    entityId: id,
+    summary: `Required a new password at next sign-in for ${target.email} (#${id}); ended ${sessionsEnded} session(s)`,
+    meta: { email: target.email, sessions_ended: sessionsEnded },
+  });
+
+  return c.json({ ok: true, sessions_ended: sessionsEnded });
+});
+
+app.delete("/:id/require-password-change", requirePermission("users.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (!id) return c.json({ error: "Invalid ID." }, 400);
+  const gate = await targetWithinActorCompanies(c, id);
+  if (!gate.ok) return c.json(gate.body, 403);
+
+  const target = await c.env.DB.prepare(`SELECT id, email FROM users WHERE id = ?`)
+    .bind(id)
+    .first<{ id: number; email: string }>();
+  if (!target) return c.json({ error: "User not found" }, 404);
+
+  await c.env.DB.prepare(`UPDATE users SET password_change_required_at = NULL WHERE id = ?`)
+    .bind(id)
+    .run();
+
+  await audit(c, {
+    action: "user.require_password_change.clear",
+    entityType: "user",
+    entityId: id,
+    summary: `Cleared the required password change for ${target.email} (#${id})`,
+    meta: { email: target.email },
+  });
+
+  return c.json({ ok: true });
+});
+
 // ── Impersonation ────────────────────────────────────────────────────────────
 // THE app.post("/:id/impersonate") BELOW IS DEAD — the earlier registration in
 // this file shadows it, so the two-door design it implements never runs, while

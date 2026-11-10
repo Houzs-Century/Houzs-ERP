@@ -516,6 +516,9 @@ export interface AuthUser {
   last_login_at?: string | null;
   /** R2 key for the user's profile picture (mig 058). */
   profile_pic_r2_key?: string | null;
+  /** True while the session is the restricted one a member gets when they must
+   *  choose a new password; AuthGate then shows only that screen. */
+  password_change_required?: boolean;
   /** True when the member has an explicit SCM L2 page-access config; the mobile
    *  nav then requires the specific area key (not the bare scm.access). Optional
    *  — older backends omit it, so consumers treat undefined as "not configured". */

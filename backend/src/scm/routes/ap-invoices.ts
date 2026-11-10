@@ -61,6 +61,7 @@ import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-requ
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { eventAccountRefusal } from '../lib/event-accounts';
 import { openingDocumentRefusal } from '../../acc/books-opening';
+import { duplicateBillRefusal, findDuplicateSupplierBill } from '../lib/duplicate-supplier-bill';
 
 type Row = Record<string, any>;
 
@@ -254,6 +255,11 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');
+  {
+    const dup = await findDuplicateSupplierBill(sb, 'ap_invoices', { companyId: co.companyId, supplierId: String(sup.supplier.id), ref: body.supplierInvoiceRef, excludeId: null, docKind });
+    if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
+    if (dup.duplicate) return c.json(duplicateBillRefusal(body.supplierInvoiceRef, dup.duplicate), 409);
+  }
   const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'SDN' : 'API'}-${docMonthTag(invoiceDate)}`);
   const { data: inv, error: insErr } = await sb.from('ap_invoices').insert({
     company_id: co.companyId,
@@ -351,6 +357,13 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     patch.supplier_id = sup.supplier.id;
   }
   if (body.supplierInvoiceRef !== undefined) patch.supplier_invoice_ref = body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null;
+  if (patch.supplier_id !== undefined || patch.supplier_invoice_ref !== undefined) {
+    const ref = patch.supplier_invoice_ref !== undefined ? patch.supplier_invoice_ref : inv.supplier_invoice_ref;
+    const docKind = String(inv.doc_kind ?? 'INV').toUpperCase() === 'DN' ? 'DN' : 'INV';
+    const dup = await findDuplicateSupplierBill(sb, 'ap_invoices', { companyId: co.companyId, supplierId: String(patch.supplier_id ?? inv.supplier_id), ref, excludeId: String(inv.id), docKind });
+    if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
+    if (dup.duplicate) return c.json(duplicateBillRefusal(ref, dup.duplicate), 409);
+  }
   Object.assign(patch, officialOwedUpdates(body, officialActor(c), inv));
   if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? inv.invoice_date;
   if (body.dueDate !== undefined) patch.due_date = dateOrNull(body.dueDate);
