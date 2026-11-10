@@ -37,7 +37,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderHeader,
-  useUpdateMfgSalesOrderStatus,
+  useUpdateMfgSalesOrderStatus, useOverrideSoLock,
   useAddMfgSalesOrderItem,
   useUpdateMfgSalesOrderItem,
   useDeleteMfgSalesOrderItem,
@@ -517,7 +517,7 @@ export const SalesOrderDetail = () => {
   const addLineHandoff = useAddLineHandoff();  // top-level: see useAddLineHandoff
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
-  const updateStatus = useUpdateMfgSalesOrderStatus();
+  const updateStatus = useUpdateMfgSalesOrderStatus(); const overrideLock = useOverrideSoLock(); // unlocks only when the server kept the reason
   const requestCancel = useCancelRequestAction('so');
   const deleteDraft = useDiscardDraftAction();
   const askConfirm = useConfirm();
@@ -2083,7 +2083,7 @@ export const SalesOrderDetail = () => {
 
       {/* ── Lock banner + the DEV-32 after-DO notice ───────────── */}
       <SoLockBanner status={header.status} cancelled={isCancelled} migratedReason={migratedLocked ? soMigratedReason(header) : null} overridden={unlockOverride}
-        onOverride={() => { updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status }); setUnlockOverride(true); }}
+        onOverride={(reason) => overrideLock.mutate({ docNo: header.doc_no, status: header.status, reason }, { onSuccess: () => setUnlockOverride(true) })}
         onRelock={() => setUnlockOverride(false)} afterDo={afterDo} afterDoTargetId={afterDoTargetId} onPickTarget={setAfterDoTargetId} />
 
       {/* ── Amendment-mode banner (Phase 1-C) ─────────────────────────

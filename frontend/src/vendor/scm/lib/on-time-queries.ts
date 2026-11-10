@@ -25,14 +25,21 @@ export interface OnTimeData {
   byLorry: OnTimeGroup[]; byDriver: OnTimeGroup[]; byRegion: OnTimeGroup[];
   excluded: { offPeninsula: number; noPromise: number; noDeliveryTime: number };
   orders: OnTimeOrder[];
+  /** When the server computed these figures (its kept copy can be up to 2 h old). */
+  cachedAt?: string;
 }
 
 export const ON_TIME_LABEL: Record<OnTimeResult, string> = { ON_TIME: 'On time', EARLY: 'Early', LATE: 'Late', LATE_OPEN: 'Late, not delivered' };
 
+/* Exported so the page's Refresh can re-ask this exact question with ?fresh=1. */
+export const onTimeKey = (from: string, to: string, warehouse: string | null) => ['logistic-on-time', from, to, warehouse ?? ''];
+export const onTimeUrl = (from: string, to: string, warehouse: string | null) =>
+  `/logistic-overview/on-time?from=${from}&to=${to}${warehouse ? `&warehouse=${warehouse}` : ''}`;
+
 export function useOnTime(from: string, to: string, warehouse: string | null) {
   return useQuery({
-    queryKey: ['logistic-on-time', from, to, warehouse ?? ''],
-    queryFn: () => authedFetch<OnTimeData>(`/logistic-overview/on-time?from=${from}&to=${to}${warehouse ? `&warehouse=${warehouse}` : ''}`),
+    queryKey: onTimeKey(from, to, warehouse),
+    queryFn: () => authedFetch<OnTimeData>(onTimeUrl(from, to, warehouse)),
     staleTime: 60_000,
   });
 }

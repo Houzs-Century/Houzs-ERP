@@ -64,6 +64,7 @@ import { openingDocumentRefusal } from '../../acc/books-opening';
 import { paginateAll } from '../lib/paginate-all';
 import { duplicateBillRefusal, findDuplicateSupplierBill } from '../lib/duplicate-supplier-bill';
 import { listDuplicateSupplierBillsHandler } from './ap-duplicate-bills';
+import { noWriteUntilMarked, writesFromHere } from '../lib/no-write-refusal';
 
 type Row = Record<string, any>;
 
@@ -266,6 +267,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     if (!dup.ok) return c.json({ error: 'lookup_failed', reason: dup.reason }, 500);
     if (dup.duplicate) return c.json(duplicateBillRefusal(body.supplierInvoiceRef, dup.duplicate), 409);
   }
+  writesFromHere(c);
   const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'SDN' : 'API'}-${docMonthTag(invoiceDate)}`);
   const { data: inv, error: insErr } = await sb.from('ap_invoices').insert({
     company_id: co.companyId,
@@ -514,7 +516,9 @@ export const apInvoices = new Hono();
    service client. Without it every read here answered 403 and every write crashed. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
 apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
-apInvoices.post('/', createApInvoiceHandler);
+/* Every refusal of a create comes before its first write (the number mint), so the
+   per-mount Idempotency-Key is released on each and a corrected Save goes through. */
+apInvoices.post('/', noWriteUntilMarked, createApInvoiceHandler);
 /* Supplier bills printed together, each followed by its files (batch 4,
    step 8; routes/ap-bill-print.ts) — a literal path, before '/:id'. */
 apInvoices.post('/print-bundle', printApBillsBundleHandler);

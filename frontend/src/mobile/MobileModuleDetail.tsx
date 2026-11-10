@@ -22,7 +22,7 @@ import { MobileAddLine } from "./MobileAddLine";
 import { FlowDocFilesCard } from "../vendor/scm/components/FlowDocFilesCard"; import { FLOW_DOC_KIND_BY_MODULE } from "../vendor/scm/lib/flow-doc-files";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
-import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
+import { actionDoneNotice, askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MemberAccountActions } from "./MemberAccountActions";
 import { MODULE_CONFIGS } from "./MobileModuleList";
@@ -1304,7 +1304,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         method: action.request.method,
         ...(action.request.body !== undefined ? { body: JSON.stringify(action.request.body) } : {}),
       }),
-    onSuccess: (_data, action) => {
+    onSuccess: (data, action) => {
       setRunningKey(null);
       // A `removes` action drops the record → refresh the list and pop back to
       // it; every other action stays on the (now-updated) detail. Nothing sets
@@ -1317,7 +1317,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         return;
       }
       refresh();
-      void notify({ title: "Done" });
+      void notify(actionDoneNotice(action.label, data));
     },
     /* A zero-cost receipt refusal is the one error here that CAN be answered on
        this screen: the sheet carries the same sentence plus the two remedies the

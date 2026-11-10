@@ -12,7 +12,7 @@ import { authedFetch } from './authed-fetch';
 import { poListParams, type PoListFilterParams } from './po-list-export';
 import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
-import { writeFailed, writeFailedAs } from './mutation-error';
+import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -994,10 +994,12 @@ export function useCreateGrnsFromPoItems() {
       notes?: string;
     }) =>
       authedFetch<{
-        created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number }>;
+        created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number } & InBandFailure>;
         total: number;
       }>(`/grns/from-po-items`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      /* Each receipt is auto-posted and carries its own stock / PO-recount failure. */
+      for (const g of data.created) reportInBandFailure(`GRN ${g.grnNumber} created, but not everything was recorded`, g);
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
