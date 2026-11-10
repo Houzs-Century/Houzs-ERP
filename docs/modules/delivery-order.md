@@ -40,6 +40,7 @@ Money is integer sen; dates are stored UTC and shown DD/MM/YYYY.
 
 Stock
 - The OUT is written once per DO: `deductInventoryForDo` existence check plus unique `uq_inv_mov_do_source_v2` (source_doc_type, source_doc_id, item_code, variant_key, COALESCE(correction_seq, 0)).
+- `DO_SHIP_MODE=atomic` (default): the first ship (Confirm DRAFT → shipped, and create-as-confirmed) writes the status, the OUT rows and the rack STOCK_OUT in ONE transaction (`shipDoAtomically`, `lib/stock-post-tx.ts`); any failure rolls all back, 503 "Nothing was shipped" (a create goes back to DRAFT). Cost restamp, SO allocation, shipped-from stamp run after commit. `two-step` = old path, rollback switch only.
 - On create, the deduction, SO sync and email are gated on `body.asDraft`, never on the status literal.
 - Request-sourced lines get `item_group` rewritten to the SKU's `mfg_products.category` (company-scoped) by `resolveItemGroups`, once, before the stock check, commitment planning and insert; later OUT and resync read the stored group.
 - A shipped DO line's product and spec (item code, variant key: fabric, size, heights, specials) are locked: the line PATCH answers 409 `spec_locked_after_ship` (`shared/do-spec-lock.ts`, mirrored to the frontend) and the edit form disables those fields, says why and never sends them; qty, price, remark and dates stay editable. To change a spec: Delivery Return, then a new line or DO.

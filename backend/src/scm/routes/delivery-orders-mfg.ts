@@ -130,6 +130,7 @@ import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
 import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
 import { withSoRefDocNos } from '../lib/so-ref-search';
+import { stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { doShipCoreFailure, doShipFailureResponse, keepCreatedDoAsDraft, type DoShipFlip, type DoShipTail } from '../lib/do-ship-atomic';
 import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1101,6 +1102,15 @@ export async function resolveDoSourcePosForDos(
 }
 
 export async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
+  const core = await deductInventoryCore(sb, deliveryOrderId, performedBy);
+  await runDoShipTail(sb, core.tail);
+  return core.errors;
+}
+/* The ship's stock writes: the OUT rows (the FIFO trigger fires on them) and the
+   rack STOCK_OUT. The atomic ship (shipDoAtomically) runs this on its transaction
+   client and the tail after commit; deductInventoryForDo runs both on `sb`. */
+async function deductInventoryCore(sb: Parameters<typeof writeMovements>[0], deliveryOrderId: string, performedBy: string): Promise<{ errors: string[]; tail: DoShipTail }> {
+  const done = (errors: string[]) => ({ errors, tail: null });
   // Idempotency guard #1 — has this DO already written OUT movements?
   const { count: existing, error: existingErr } = await sb
     .from('inventory_movements')
@@ -1109,8 +1119,8 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
     .eq('source_doc_id', deliveryOrderId)
     .eq('movement_type', 'OUT');
   // Every failed read below refuses (lib/failed-read-refusal.ts): null is not "none".
-  if (existingErr) return [unreadableMovementError('the stock already moved for this DO', existingErr)];
-  if ((existing ?? 0) > 0) return []; // already deducted — no-op
+  if (existingErr) return done([unreadableMovementError('the stock already moved for this DO', existingErr)]);
+  if ((existing ?? 0) > 0) return done([]); // already deducted — no-op
 
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
   let doHeaderRes = await sb.from('delivery_orders')
@@ -1127,22 +1137,22 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
       .select('do_number, warehouse_id, company_id')
       .eq('id', deliveryOrderId).maybeSingle();
   }
-  if (doHeaderRes.error) return [unreadableMovementError('the delivery order', doHeaderRes.error)];
+  if (doHeaderRes.error) return done([unreadableMovementError('the delivery order', doHeaderRes.error)]);
   const doHeader = doHeaderRes.data;
   /* IDEMPOTENCY GUARD #2, and why #1 is not enough: #1 asks "did this DO write
      an OUT?", and for migrated paperwork the answer is legitimately no, forever
      — so the guard against double-deducting is the one that lets it in. Reached
      by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and
      shipping it again. lib/migrated-no-stock.ts. */
-  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null } | null)) return [];
+  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null } | null)) return done([]);
   const { data: items, error: itemsErr } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
-  if (itemsErr) return [unreadableMovementError('the delivery order lines', itemsErr)];
+  if (itemsErr) return done([unreadableMovementError('the delivery order lines', itemsErr)]);
   const headerWarehouseId = (doHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string } | null)?.do_number ?? deliveryOrderId;
   const isDropship = (doHeader as { is_dropship?: boolean } | null)?.is_dropship === true;
-  if (!items) return [];
+  if (!items) return done([]);
 
   // Per-line warehouse — each line ships from its SO line's warehouse (0118),
   // not a single DO-header default. Stock never crosses warehouses.
@@ -1223,10 +1233,23 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
        moved and the caller never told). No rollback; just make it loud. */
     const res = await writeMovements(sb, movements, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
     if (!res.ok) movementErrors.push(`OUT ${doNo}: ${res.reason ?? 'unknown'}`);
+  }
+  /* REC P4 — physical RACK stock-out (counterpart of the GRN placement). Best-effort,
+     never blocks the ship; in the atomic ship it commits with the OUT rows. */
+  try {
+    await stockOutDoLinesFromRacks(sb, deliveryOrderId, doNo, performedBy, lineWh, items as Array<Record<string, unknown>>, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] stock-out failed:', e); }
+  return { errors: movementErrors, tail: { deliveryOrderId, companyId: (doHeader as { company_id?: number | null } | null)?.company_id ?? null, wroteOut: movements.length > 0 } };
+}
+
+/* After the ship's stock writes (after commit, in the atomic ship). */
+async function runDoShipTail(sb: Parameters<typeof writeMovements>[0], tail: DoShipTail): Promise<void> {
+  if (!tail) return;
+  if (tail.wroteOut) {
     /* Costing C — the OUT rows now carry their real FIFO cost (trigger filled
        total_cost_sen). Restamp the DO lines from that actual cost so Margin is
        real, not the SO benchmark copy. */
-    await restampDoActualCost(sb, deliveryOrderId);
+    await restampDoActualCost(sb, tail.deliveryOrderId);
     /* B2C SO auto-allocation — stock just went out; other PENDING/READY SOs
        might lose their claim. Best-effort. */
     try {
@@ -1234,13 +1257,28 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-ship failed:', e); }
   }
-  /* REC P4 — physical RACK stock-out (counterpart of the GRN placement), then lock each line's PO(s) and rack(s)
-     onto it after the response (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
-  try {
-    await stockOutDoLinesFromRacks(sb, deliveryOrderId, doNo, performedBy, lineWh, items as Array<Record<string, unknown>>, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] stock-out failed:', e); }
-  await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
-  return movementErrors;
+  /* Lock each line's PO(s) and rack(s) onto it after the response (lib/do-shipped-from-stamp.ts, write-once). */
+  await queueDoShippedFromStamp(sb, tail.deliveryOrderId, tail.companyId);
+}
+
+/* DO_SHIP_MODE=atomic (lib/stock-post-tx.ts, lib/do-ship-atomic.ts): the status
+   write (when given) and the ship's stock writes in ONE transaction; any failure
+   rolls all of it back. The restamp, SO allocation and stamp run after commit. */
+export async function shipDoAtomically(tx: StockTx, sb: Parameters<typeof writeMovements>[0], deliveryOrderId: string, performedBy: string, flip: DoShipFlip | null) {
+  const out = await tx(async (t) => {
+    const flipped = flip ? await flip(t) : { ok: true as const, data: null };
+    if (!flipped.ok) return flipped;
+    const core = await deductInventoryCore(t, deliveryOrderId, performedBy);
+    if (core.errors.length > 0) return doShipCoreFailure(core.errors);
+    return { ok: true as const, data: flipped.data, tail: core.tail };
+  });
+  if (out.ok) await runDoShipTail(sb, out.tail);
+  return out;
+}
+/* Create-as-confirmed: the DO was inserted LOADED, so a rolled-back ship sends it back to DRAFT. */
+async function shipCreatedDoAtomically(tx: StockTx, sb: Parameters<typeof writeMovements>[0], doId: string, doNo: string, companyId: number, performedBy: string): Promise<object | null> {
+  const shipped = await shipDoAtomically(tx, sb, doId, performedBy, null);
+  return shipped.ok ? null : { id: doId, doNumber: doNo, ...(await keepCreatedDoAsDraft(sb, doId, companyId, doNo, shipped)) };
 }
 
 // ── DO rack stock-out (REC P4) ───────────────────────────────────────────────
@@ -3121,7 +3159,10 @@ deliveryOrdersMfg.post('/', async (c) => {
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (body.asDraft !== true) {
-    movementErrors = await deductInventoryForDo(sb, h.id, user.id);
+    const shipTx = stockTxFor(c.env, 'DO_SHIP_MODE');
+    const refused = shipTx ? await shipCreatedDoAtomically(shipTx, sb, h.id, h.do_number, activeCompanyId(c) ?? 0, user.id) : null;
+    if (refused) return c.json(refused, 503);
+    if (!shipTx) movementErrors = await deductInventoryForDo(sb, h.id, user.id);
     // Lines unreadable = nothing moved: keep the DO as a DRAFT rather than let it read shipped.
     if (hasUnreadableLines(movementErrors)) return c.json({ id: h.id, doNumber: h.do_number, ...(await revertShipOnUnreadLines(sb, h.id, activeCompanyId(c) ?? 0, 'LOADED', 'DRAFT', {}, null, movementErrors, h.do_number)) }, 503);
 
@@ -3699,7 +3740,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (body.asDraft !== true) {
-    movementErrors = await deductInventoryForDo(sb, dh.id, user.id);
+    const shipTx = stockTxFor(c.env, 'DO_SHIP_MODE');
+    const refused = shipTx ? await shipCreatedDoAtomically(shipTx, sb, dh.id, dh.do_number, doCompanyId ?? 0, user.id) : null;
+    if (refused) return c.json(refused, 503);
+    if (!shipTx) movementErrors = await deductInventoryForDo(sb, dh.id, user.id);
     if (hasUnreadableLines(movementErrors)) return c.json({ id: dh.id, doNumber: dh.do_number, ...(await revertShipOnUnreadLines(sb, dh.id, doCompanyId ?? 0, 'LOADED', 'DRAFT', {}, null, movementErrors, dh.do_number)) }, 503);
 
     /* Requirement #3 — a multi-SO DO may complete several SOs at once; check each
@@ -5092,6 +5136,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      the write is conditional on status != CANCELLED; "no row returned" = someone
      else already cancelled → idempotent echo, NO second reversal (Postgres serialises). */
   let data: { id: string; status: string } | null;
+  let shippedAtomically = false;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
       .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
@@ -5111,13 +5156,23 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     /* Written only over the status every guard above read: a cancel landing in
        between must not be overwritten, or a cancelled DO reads shipped with its
        stock already back on the shelf. */
-    const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
+    type Written = { data: { id: string; status: string } | null; error: { message: string; code?: string } | null };
+    const write = (db: Parameters<typeof writeMovements>[0]): Promise<Written> => scopeToCompanyId(db.from('delivery_orders')
       .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId)
-      .eq('status', prevStatus).select('id, status').maybeSingle();
-    if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
-    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    if (!updated) return c.json({ error: 'status_changed', reason: 'This delivery order just changed. Reload it and try again.' }, 409);
-    data = updated as { id: string; status: string };
+      .eq('status', prevStatus).select('id, status').maybeSingle()
+      .then((r: unknown) => r as Written, (e: { message: string; code?: string }) => ({ data: null, error: e }));
+    const checked = (w: Written) => (isSoLineOverDelivered(w.error) ? { ok: false as const, reason: 'over_delivery', detail: w.error?.message }
+      : w.error ? { ok: false as const, reason: 'update_failed', detail: w.error.message }
+      : w.data ? { ok: true as const, data: w.data } : { ok: false as const, reason: 'status_changed' });
+    /* DO_SHIP_MODE=atomic: the FIRST ship's flip and its stock writes are one transaction
+       (a later hop's deduction is the idempotent no-op). */
+    const shipTx = SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase()) ? stockTxFor(c.env, 'DO_SHIP_MODE') : null;
+    const res = shipTx
+      ? await shipDoAtomically(shipTx, sb, id, user.id, async (t) => checked(await write(t)))
+      : checked(await write(sb));
+    if (!res.ok) { const r = doShipFailureResponse(res); return c.json(r.body, r.status); }
+    data = res.data;
+    shippedAtomically = shipTx !== null;
   }
 
   /* Inventory OUT — first transition into ANY shipped state; the first rung is
@@ -5126,7 +5181,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
-    movementErrors = await deductInventoryForDo(sb, id, user.id);
+    if (!shippedAtomically) movementErrors = await deductInventoryForDo(sb, id, user.id);
     if (hasUnreadableLines(movementErrors)) return c.json(await revertShipOnUnreadLines(sb, id, scopeCompanyId, toStatus, prevStatus, ts, (cur as { customer_delivered_date?: string | null }).customer_delivered_date ?? null, movementErrors, null), 503);
     /* Mirror the create path: SO coverage sync on the ship-time hop. PRESHIP set, not
        a DRAFT literal — LOADED→DISPATCHED ships here too, and the DRAFT-only gate left
