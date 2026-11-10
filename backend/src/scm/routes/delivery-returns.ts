@@ -316,14 +316,17 @@ async function resolveDrLineBatches(
     : [];
   const hbDoIds = [...new Set(hbItems.map((it) => (it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined)).filter((x): x is string => !!x))];
   if (hbDoIds.length > 0) {
-    const { data: outs } = await sb.from('inventory_movements')
+    const { data: outs, error: outsErr } = await sb.from('inventory_movements')
       .select('source_doc_id, item_code, variant_key, batch_no')
       .eq('source_doc_type', 'DO')
       .eq('movement_type', 'OUT')
       .in('source_doc_id', hbDoIds)
       .not('batch_no', 'is', null);
+    /* An unreadable OUT leaves the line un-batched, which is the old behaviour:
+       the unit still re-enters stock, only not tied to its PO lot. */
+    if (outsErr) console.error('[dr-batch] DO stock-out batches unreadable, returning un-batched:', outsErr.message); // eslint-disable-line no-console
     const batchesByBucket = new Map<string, Set<string>>();
-    for (const m of (outs ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; batch_no: string | null }>) {
+    for (const m of (outsErr ? [] : outs ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; batch_no: string | null }>) {
       if (!m.batch_no) continue;
       const k = `${m.source_doc_id}::${m.item_code}::${m.variant_key ?? ''}`;
       const set = batchesByBucket.get(k) ?? new Set<string>();
