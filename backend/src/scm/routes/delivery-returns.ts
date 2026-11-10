@@ -29,6 +29,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { traceDoShipmentSources } from '../lib/source-po-trace';
 import { shippedBatchOf } from '../lib/return-line-batch';
+import { HARD_BOUND_COMPANY_ID, isHardBoundLine } from '../lib/so-stock-allocation';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { doLineRemaining, returnableRemainingFrom, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
@@ -268,6 +269,7 @@ async function warehouseCodeMap(
 async function resolveDrLineBatches(
   sb: any,
   items: Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
+  companyId: number | null,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const doItemIds = [...new Set(items.map((it) => it.do_item_id ?? null).filter((x): x is string => !!x))];
@@ -304,6 +306,36 @@ async function resolveDrLineBatches(
     const batch = fromShip ?? (so ? batchBySo.get(so) : undefined);
     if (batch) out.set(it.id, batch);
   }
+  /* Company 1, hard-bound and not sofa (owner decision A, 2026-11-10): the DO OUT
+     carries the bound PO as batch_no (lib/hard-bound-cost-batch.ts), so the
+     returned unit re-enters that PO's lot. Only a batch the OUT was actually
+     stamped with counts, so a DO shipped before the change still returns
+     un-batched, as before, and a DR resync keys the same bucket its IN did. */
+  const hbItems = companyId === HARD_BOUND_COMPANY_ID
+    ? items.filter((it) => !out.has(it.id) && it.item_code && !isSofa(it) && isHardBoundLine(it.item_group ?? null, it.item_code))
+    : [];
+  const hbDoIds = [...new Set(hbItems.map((it) => (it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined)).filter((x): x is string => !!x))];
+  if (hbDoIds.length > 0) {
+    const { data: outs } = await sb.from('inventory_movements')
+      .select('source_doc_id, item_code, variant_key, batch_no')
+      .eq('source_doc_type', 'DO')
+      .eq('movement_type', 'OUT')
+      .in('source_doc_id', hbDoIds)
+      .not('batch_no', 'is', null);
+    const batchesByBucket = new Map<string, Set<string>>();
+    for (const m of (outs ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; batch_no: string | null }>) {
+      if (!m.batch_no) continue;
+      const k = `${m.source_doc_id}::${m.item_code}::${m.variant_key ?? ''}`;
+      const set = batchesByBucket.get(k) ?? new Set<string>();
+      set.add(m.batch_no);
+      batchesByBucket.set(k, set);
+    }
+    for (const it of hbItems) {
+      const doId = it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined;
+      const set = doId ? batchesByBucket.get(`${doId}::${it.item_code}::${computeVariantKey(it.item_group ?? null, it.variants ?? null)}`) : undefined;
+      if (set && set.size === 1) out.set(it.id, [...set][0]!);
+    }
+  }
   return out;
 }
 
@@ -336,7 +368,8 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
   );
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
-  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>);
+  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
+    (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
 
   /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
@@ -465,7 +498,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       drHeaderWarehouseId,
       (drHeader as { company_id?: number | null }).company_id ?? undefined,
     );
-    const lineBatch = await resolveDrLineBatches(sb, lineRows);
+    const lineBatch = await resolveDrLineBatches(sb, lineRows, (drHeader as { company_id?: number | null }).company_id ?? null);
     for (const it of lineRows) {
       /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote IN on create, so they
          stay out of the resync TARGET too (else the delta walk would write a
