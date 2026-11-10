@@ -69,14 +69,25 @@ export function moveHighlight(current: number, key: "ArrowDown" | "ArrowUp", tot
  * so the GRN saved one line's rack out of eleven.
  */
 export function enterPick(term: string, filtered: ReadonlyArray<SearchableSelectOption>): SearchableSelectOption | null {
+  const exact = exactPick(term, filtered);
+  if (exact) return exact;
+  return term.trim() && filtered.length === 1 ? filtered[0] : null;
+}
+
+/**
+ * The one option a typed term names exactly, or null. A label's own name is the
+ * text before " · ": the rack picker adds the other company's stock after it
+ * ("Rack L1.1 · HC 6 pcs"), and a typed "L1.1" then named nothing (2990-GRN-2611-012).
+ */
+export function exactPick(term: string, filtered: ReadonlyArray<SearchableSelectOption>): SearchableSelectOption | null {
   const q = term.trim().toLowerCase();
   if (!q) return null;
   const exact = filtered.filter((o) => {
     const l = o.label.toLowerCase();
-    return l === q || o.value.toLowerCase() === q || l.endsWith(` ${q}`);
+    const name = l.split(' · ')[0];
+    return [l, name].some((x) => x === q || x.endsWith(` ${q}`)) || o.value.toLowerCase() === q;
   });
-  if (exact.length === 1) return exact[0];
-  return filtered.length === 1 ? filtered[0] : null;
+  return exact.length === 1 ? exact[0] : null;
 }
 
 export function SearchableSelect({
@@ -118,6 +129,8 @@ export function SearchableSelect({
   // state on a gone component (in a test, after jsdom is torn down: "window is not defined").
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
+  // Set by a pick, so the blur that follows a Tab pick does not commit again.
+  const pickedRef = useRef(false);
   // Pin the portalled menu to the input, tracking scroll/resize, and FLIP it
   // above when the room below cannot hold it. Portalling alone only escapes the
   // card's clip — measured on prod's New Sales Order, the City menu still ran
@@ -168,6 +181,7 @@ export function SearchableSelect({
   }, [activeOption]);
 
   const pick = (o: SearchableSelectOption) => {
+    pickedRef.current = true;
     onChange(o.value);
     setSearch("");
     setOpen(false);
@@ -192,6 +206,7 @@ export function SearchableSelect({
            typing replaces. Blur without a pick restores via the value
            binding. Same non-lossy pattern as Divan/Gap native selects. */
         onFocus={(e) => {
+          pickedRef.current = false;
           setOpen(true);
           setSearch(selectedLabel ?? "");
           e.currentTarget.select();
@@ -200,6 +215,10 @@ export function SearchableSelect({
           // Text deleted, then the operator moved on: that is a clear, not a
           // cancel. (A pick closes the menu first, so it never lands here.)
           if (open && !search.trim() && selectedLabel) onChange("");
+          // A name typed in full, then the operator clicked away: it is picked, as
+          // Enter would. Only an exact name, and only when it changes the value.
+          const typed = open && !pickedRef.current && search.trim() && search !== selectedLabel ? exactPick(search, filtered) : null;
+          if (typed && typed.value !== value) onChange(typed.value);
           if (closeTimer.current) clearTimeout(closeTimer.current);
           closeTimer.current = setTimeout(() => { closeTimer.current = null; setOpen(false); }, 150);
         }}
@@ -227,8 +246,12 @@ export function SearchableSelect({
             return;
           }
           if (e.key === "Tab") {
-            // Focus moves on as usual; a highlighted option is committed first.
-            if (open && active >= 0 && filtered[active]) pick(filtered[active]);
+            // Focus moves on as usual; a highlighted option, else the typed one, is committed first.
+            // Tabbing through untouched (the search still holds the current label) re-sends nothing.
+            const tabbed = !open ? null : active >= 0 && filtered[active] ? filtered[active]
+              : search !== selectedLabel ? enterPick(search, filtered) : null;
+            if (tabbed && tabbed.value !== value) pick(tabbed);
+            else if (tabbed) pickedRef.current = true;
             return;
           }
           if (e.key !== "Enter") return;
