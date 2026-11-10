@@ -78,3 +78,12 @@ describe("the office and customer copies print no empty placeholders", () => {
     expect(src).not.toMatch(/\{ cap: "Service Provider", p: houzsProfile \}/);
   });
 });
+
+describe("the customer's sign-off is left blank for handwriting", () => {
+  const src = fs.readFileSync(path.join(REPO_BACKEND, "src/routes/assr_print.ts"), "utf8");
+
+  test("no name is printed beside the signature line or in NAME", () => {
+    expect(src).not.toMatch(/<span class="cap">Signature<\/span><span style="float: right/);
+    expect(src).not.toMatch(/<span class="cap">Name<\/span>\$\{cs\.customer_name/);
+  });
+});
