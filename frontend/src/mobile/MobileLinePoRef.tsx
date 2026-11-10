@@ -23,16 +23,16 @@ export const mobileLinePoRefFor = (moduleKey: string, line: LinePoFields): LineP
   PO_REF_MODULES.has(moduleKey) ? linePoLink(line) : undefined;
 
 const rowStyle: CSSProperties = { flexBasis: "100%", display: "flex", alignItems: "center", gap: 6, marginTop: 4 };
-const eyebrowStyle: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" };
+const eyebrowStyle: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" };
 const chipStyle: CSSProperties = {
-  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39",
+  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
   background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 
 export function MobileLinePoRef({ poRef, nav }: { poRef: LinePoLink | null | undefined; nav?: FlowNav }) {
   if (poRef === undefined) return null;
   if (poRef === null) {
-    return <div style={rowStyle}><span style={eyebrowStyle}>PO</span><span style={{ fontSize: 11, color: "#9aa093" }}>—</span></div>;
+    return <div style={rowStyle}><span style={eyebrowStyle}>PO</span><span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>—</span></div>;
   }
   const target = { kind: "module" as const, moduleKey: "mfg-purchase-orders", id: poRef.id };
   const canOpen = !!nav && nav.can(target);

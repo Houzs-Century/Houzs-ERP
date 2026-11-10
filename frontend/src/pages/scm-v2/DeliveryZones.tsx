@@ -128,7 +128,7 @@ export const DeliveryZones = () => {
         }
       />
 
-      {zoneMap.isError && <p className="rounded-xl bg-[#f6dcdc] px-4 py-3 text-[13px] text-[#8a2c2c]">The zone map could not be loaded. {zoneMap.error instanceof Error ? zoneMap.error.message : ''}</p>}
+      {zoneMap.isError && <p className="rounded-xl bg-[#f6dcdc] px-4 py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The zone map could not be loaded. {zoneMap.error instanceof Error ? zoneMap.error.message : ''}</p>}
 
       {!zoneMap.isError && <ZoneMapCard rows={rows} map={eff.map} usingDefault={eff.usingDefault} byPrefix={byPrefix}
         selected={selected} onSelect={(k) => setParam('zone', k, 'KL')}
@@ -166,7 +166,7 @@ export const DeliveryZones = () => {
         )}
 
         <div className="rounded-xl border border-border bg-surface py-1.5">
-          {zoneMap.isError && <div className="px-6 py-8 text-center text-[13px] text-[#8a2c2c]">Zone rules could not be loaded, so none are shown.</div>}
+          {zoneMap.isError && <div className="px-6 py-8 text-center text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">Zone rules could not be loaded, so none are shown.</div>}
           {zoneMap.isLoading && <div className="px-6 py-8 text-center text-[13px] text-ink-muted">Loading zone rules…</div>}
           {shown.map((r, i) => {
             const [, fg] = zoneColour(r.zone);
@@ -181,7 +181,7 @@ export const DeliveryZones = () => {
                 <button type="button" role="switch" aria-checked={r.isActive} aria-label={`In use: ${zoneName(r.zone)} ${prefixText(r.prefixStart, r.prefixEnd)}`}
                   onClick={() => void toggle(r)} disabled={update.isPending}
                   className={cn('flex h-[26px] w-11 flex-none rounded-full p-[3px] transition-colors', r.isActive ? 'justify-end bg-primary' : 'justify-start bg-border-strong')}>
-                  <span className="h-5 w-5 rounded-full bg-white shadow" />
+                  <span className="h-5 w-5 rounded-full bg-surface shadow" />
                 </button>
                 <button type="button" aria-label={`Edit rule ${zoneName(r.zone)} ${prefixText(r.prefixStart, r.prefixEnd)}`} onClick={() => setDrawer({ kind: 'edit', rule: r })}
                   className="grid h-9 w-9 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-ink">

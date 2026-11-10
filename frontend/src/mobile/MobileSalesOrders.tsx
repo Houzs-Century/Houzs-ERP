@@ -501,7 +501,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
             {/* Item 3 — Select toggle: enters/exits DRAFT multiselect. In select
                 mode it reads "Done" and clears the picks. */}
             {selectMode ? (
-              <button onClick={exitSelect} className="iconbtn" aria-label="Exit selection" style={{ width: "auto", padding: "0 12px", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "#16695f" }}>
+              <button onClick={exitSelect} className="iconbtn" aria-label="Exit selection" style={{ width: "auto", padding: "0 12px", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary)" }}>
                 Done
               </button>
             ) : (
@@ -524,7 +524,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <SearchProgress active={searchTransition.isSearching} label="Searching…" />
           <button onClick={() => setFilterOpen(true)} className="iconbtn" style={{ position: "relative" }} aria-label="Filter by status">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#414539" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
-            {filterActive && <span style={{ position: "absolute", top: -3, right: -3, width: 9, height: 9, borderRadius: "50%", background: "var(--gold)", border: "1.5px solid #fff" }} />}
+            {filterActive && <span style={{ position: "absolute", top: -3, right: -3, width: 9, height: 9, borderRadius: "50%", background: "var(--gold)", border: "1.5px solid var(--hz-c-surface)" }} />}
           </button>
         </div>
         <SearchScopeHint

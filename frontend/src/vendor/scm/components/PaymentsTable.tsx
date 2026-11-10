@@ -542,7 +542,7 @@ const PaymentSlipThumb = ({ docNo, payment, orderSlipUrl, orderSlipType }: {
           style={{
             width: 72, height: 72, objectFit: 'contain',
             borderRadius: 4, border: '1px solid var(--line)', display: 'block',
-            background: 'var(--bg-subtle, #fff)',
+            background: 'var(--bg-subtle, var(--hz-c-surface))',
           }}
         />
       </a>

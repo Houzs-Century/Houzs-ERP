@@ -600,7 +600,7 @@ export const PurchaseOrderDetail = () => {
         ))}
         <div style={{
           fontSize: 'var(--fs-11)', marginTop: 1,
-          color: remaining > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
+          color: remaining > 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-secondary-a, #2F5D4F)',
         }}>
           {remaining > 0 ? `Balance ${remaining}` : 'Fully received'}
         </div>
@@ -992,7 +992,7 @@ export const PurchaseOrderDetail = () => {
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '2px 8px', borderRadius: 'var(--radius-pill, 999px)',
-              background: 'rgba(47, 93, 79, 0.12)', color: 'var(--c-secondary-a, #2F5D4F)',
+              background: 'rgba(47, 93, 79, 0.12)', color: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))',
               fontSize: 'var(--fs-11)', fontWeight: 700, whiteSpace: 'nowrap',
             }}>
               <History size={12} strokeWidth={1.75} />
@@ -1164,7 +1164,7 @@ export const PurchaseOrderDetail = () => {
                 onClick={() => navigate(`/scm/amendments/${openAmendment.id}`)}
                 style={{
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  color: 'var(--c-secondary-a, #2F5D4F)', fontWeight: 700,
+                  color: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))', fontWeight: 700,
                   fontSize: 'inherit', textDecoration: 'underline',
                 }}
               >
@@ -1353,7 +1353,7 @@ export const PurchaseOrderDetail = () => {
                   {drift && (
                     <div style={{
                       fontSize: 'var(--fs-11)', fontWeight: 700,
-                      color: 'var(--c-danger, #b8331f)',
+                      color: 'var(--c-danger, var(--hz-dk-festive-b, #b8331f))',
                       background: 'rgba(184, 51, 31, 0.06)',
                       border: '1px solid rgba(184, 51, 31, 0.3)',
                       borderRadius: 'var(--radius-sm)',
@@ -1486,7 +1486,7 @@ export const PurchaseOrderDetail = () => {
                     {showDrift && it.so_drift && (
                       /* English copy (owner UI rule; swept 2026-07-27 with the
                          edit-mode redline fix — both modes read identically). */
-                      <div style={{ marginTop: 3, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-danger, #b8331f)', display: 'grid', gap: 2 }}>
+                      <div style={{ marginTop: 3, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-danger, var(--hz-dk-festive-b, #b8331f))', display: 'grid', gap: 2 }}>
                         {it.so_drift.itemChanged && (
                           <div>⚠ SO now orders {it.so_drift.itemSo} (this PO still has {it.so_drift.itemPo}) — cancel &amp; re-raise is safer than editing.</div>
                         )}

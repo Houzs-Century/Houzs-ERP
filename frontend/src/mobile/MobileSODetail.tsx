@@ -767,8 +767,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         <div className="hdr-row">
           <button className="back" onClick={onBack}><span className="chev">{"‹"}</span> Sales Orders</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {h && <button className="tinybtn" onClick={() => setMapOpen(true)} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>Map</button>}
-            {h && <button className="tinybtn" onClick={print.openPreview} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
+            {h && <button className="tinybtn" onClick={() => setMapOpen(true)} style={{ background: "var(--hz-c-surface-2)", border: "1px solid var(--line2)", color: "var(--ink)" }}>Map</button>}
+            {h && <button className="tinybtn" onClick={print.openPreview} style={{ background: "var(--hz-c-surface-2)", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
             {h && (
               <PrintPreviewModal
                 open={print.open}
@@ -813,7 +813,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                 header, whenever the SO is still a draft. Pairs with the amber
                 Draft pill in the header (StatusPill below). */}
             {ph === "draft" && (
-              <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "var(--amber-bg, #f6efd9)", border: "1px solid #e0cf9e", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
+              <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "var(--amber-bg, var(--hz-c-warning-bg))", border: "1px solid #e0cf9e", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber, #8a6a2e)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /></svg>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--amber, #8a6a2e)" }}>Draft — not confirmed</div>
@@ -849,7 +849,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   : "On order to the supplier. Tap Edit to request a line-item amendment — the coordinator and supplier confirm it before the order is revised."}
               </div>
             ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#eef1ec", border: "1px solid #e3e6e0", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#5c6156" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#eef1ec", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#5c6156" }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#767b6e" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
                 Locked view — tap Edit to change. Same form as New SO.
               </div>
@@ -889,7 +889,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     onClick={() => void handleApproveSo()}
                     disabled={busy}
                     className="money"
-                    style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                    style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                   >
                     {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : amendmentLane === "PRICE" ? "Approve price change" : "Approve delivery changes"}
                   </button>
@@ -907,7 +907,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     onClick={() => setSupplierConfirmOpen(true)}
                     disabled={busy}
                     className="money"
-                    style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                    style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                   >
                     Record supplier confirmation
                   </button>
@@ -918,7 +918,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     onClick={() => void handleApproveSo()}
                     disabled={busy}
                     className="money"
-                    style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                    style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                   >
                     {busy ? "Working…" : "Approve SO revision"}
                   </button>
@@ -939,7 +939,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                         onClick={() => void handleApprovePo()}
                         disabled={approvePo.isPending}
                         className="money"
-                        style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: approvePo.isPending ? 0.5 : 1 }}
+                        style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: approvePo.isPending ? 0.5 : 1 }}
                       >
                         {approvePo.isPending ? "Approving…" : "Approve PO revision"}
                       </button>
@@ -960,7 +960,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                         onClick={() => void handleSendAmendment()}
                         disabled={sendAmendment.isPending}
                         className="money"
-                        style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: sendAmendment.isPending ? 0.5 : 1 }}
+                        style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: sendAmendment.isPending ? 0.5 : 1 }}
                       >
                         {sendAmendment.isPending ? "Sending…" : "Send to supplier"}
                       </button>
@@ -975,7 +975,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     onClick={() => void handleReject()}
                     disabled={rejectAmendment.isPending}
                     className="money"
-                    style={{ border: "1px solid #e0bcbc", background: "#f8eaea", color: "#b23a3a", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: rejectAmendment.isPending ? 0.5 : 1 }}
+                    style={{ border: "1px solid #e0bcbc", background: "var(--hz-c-err-bg)", color: "var(--hz-c-err)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: rejectAmendment.isPending ? 0.5 : 1 }}
                   >
                     {rejectAmendment.isPending ? "Rejecting…" : "Reject amendment"}
                   </button>
@@ -987,7 +987,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     type="button"
                     onClick={() => void handleWithdraw()}
                     disabled={withdrawAmendment.isPending}
-                    style={{ border: "1px solid var(--line2)", background: "#fff", color: "var(--mut)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: withdrawAmendment.isPending ? 0.5 : 1 }}
+                    style={{ border: "1px solid var(--line2)", background: "var(--hz-c-surface)", color: "var(--mut)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: withdrawAmendment.isPending ? 0.5 : 1 }}
                   >
                     {withdrawAmendment.isPending ? "Withdrawing…" : "Withdraw this request"}
                   </button>
@@ -1036,7 +1036,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   banner above already uses) and the card's own field font sizes
                   (9px label / 12.5px value). An empty note keeps the plain field. */}
               {(h.note ?? "").trim() ? (
-                <div style={{ marginTop: 2, border: "1px solid #e0cf9e", background: "var(--amber-bg, #f6efd9)", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ marginTop: 2, border: "1px solid #e0cf9e", background: "var(--amber-bg, var(--hz-c-warning-bg))", borderRadius: 10, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--amber, #8a6a2e)" }}>Note</div>
                   <p style={{ margin: "4px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "#6d5626", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{h.note}</p>
                 </div>
@@ -1137,15 +1137,15 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     />
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                    <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "#0c3f39" }}>RM {rm(lineTotalSen(it))}</div>
+                    <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>RM {rm(lineTotalSen(it))}</div>
                     {/* Unit price × qty — the per-unit price was missing on mobile,
                         so a discounted / FOC line was indistinguishable from a
                         full-price one. */}
                     <div className="money" style={{ fontSize: 11, color: "var(--mut)" }}>RM {rm(it.unit_price_sen ?? 0)} {"×"}{it.qty ?? 0}</div>
                     {isFoc ? (
-                      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "#a16a2e", background: "#f6ecd9", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
+                      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "var(--hz-c-accent)", background: "#f6ecd9", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
                     ) : discountSen > 0 ? (
-                      <div className="money" style={{ fontSize: 10.5, color: "#b23a3a" }}>Disc RM {rm(discountSen)}</div>
+                      <div className="money" style={{ fontSize: 10.5, color: "var(--hz-c-err)" }}>Disc RM {rm(discountSen)}</div>
                     ) : null}
                   </div>
                 </div>
@@ -1196,7 +1196,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   <button
                     type="button"
                     onClick={() => setPayEditing((v) => !v)}
-                    style={{ border: "1px solid var(--line2)", background: payEditing ? "#eef1ec" : "#fff", color: "var(--mut)", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                    style={{ border: "1px solid var(--line2)", background: payEditing ? "#eef1ec" : "var(--hz-c-surface)", color: "var(--mut)", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
                   >
                     {payEditing ? "Done" : "Edit"}
                   </button>
@@ -1206,7 +1206,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     type="button"
                     onClick={() => setPayOpen(true)}
                     className="money"
-                    style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                    style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
                   >
                     <span style={{ fontSize: 13, lineHeight: 1 }}>+</span> Add Payment
                   </button>
@@ -1309,7 +1309,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               <button
                 type="button"
                 className="btn-ghost"
-                style={{ opacity: busy ? 0.55 : 1, color: "#b23a3a", borderColor: "#e0bcbc" }}
+                style={{ opacity: busy ? 0.55 : 1, color: "var(--hz-c-err)", borderColor: "#e0bcbc" }}
                 disabled={busy}
                 onClick={() => void handleDiscardDraft()}
               >
@@ -1447,7 +1447,7 @@ function ScannedPhotosCard({ slipKey, receiptKey }: { slipKey: string | null; re
           aria-label={viewer.label}
           style={{ position: "fixed", inset: 0, zIndex: 2600, background: "rgba(0,0,0,0.84)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16 }}
         >
-          <img src={viewer.src} alt={viewer.label} style={{ maxWidth: "100%", maxHeight: "84vh", borderRadius: 10, objectFit: "contain", background: "#fff" }} />
+          <img src={viewer.src} alt={viewer.label} style={{ maxWidth: "100%", maxHeight: "84vh", borderRadius: 10, objectFit: "contain", background: "var(--hz-c-surface)" }} />
           <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: "#fff", opacity: 0.85 }}>{viewer.label} · tap anywhere to close</div>
         </div>
       )}
@@ -1484,7 +1484,7 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
       type="button"
       onClick={() => { if (src) onView(src, label); }}
       aria-label={`View ${label} photo`}
-      style={{ border: "1px solid var(--line2, #e3e6e0)", background: "#f4f6f3", borderRadius: 12, padding: 0, overflow: "hidden", cursor: src ? "pointer" : "default", fontFamily: "inherit", textAlign: "center" }}
+      style={{ border: "1px solid var(--line2, var(--hz-c-border-subtle))", background: "var(--hz-c-surface-2)", borderRadius: 12, padding: 0, overflow: "hidden", cursor: src ? "pointer" : "default", fontFamily: "inherit", textAlign: "center" }}
     >
       {failed ? (
         <div style={{ height: 96, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 8px", fontSize: 10.5, color: "var(--mut2)", lineHeight: 1.4 }}>Couldn't load this photo.</div>
@@ -1493,7 +1493,7 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
       ) : (
         <div className="ph" style={{ height: 96 }} />
       )}
-      <div style={{ padding: "6px 4px", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#9aa093" }}>{label}</div>
+      <div style={{ padding: "6px 4px", fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>{label}</div>
     </button>
   );
 }
@@ -1642,17 +1642,17 @@ function HistoryCard({ docNo }: { docNo: string }) {
                         Changes ({fc.length})
                       </button>
                       {isX && (
-                        <div style={{ marginTop: 5, background: "#f4f6f3", border: "1px solid #e3e6e0", borderRadius: 8, padding: "7px 9px", display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div style={{ marginTop: 5, background: "var(--hz-c-surface-2)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 8, padding: "7px 9px", display: "flex", flexDirection: "column", gap: 4 }}>
                           {fc.map((ch, idx) => (
                             <div key={idx} style={{ fontSize: 11, lineHeight: 1.4, color: "var(--ink)", wordBreak: "break-word" }}>
                               <span style={{ fontWeight: 700, color: "var(--mut)" }}>{HIST_FIELD_LABEL[ch.field] ?? ch.field}:</span>{" "}
                               {ch.from !== undefined && ch.from !== null && ch.from !== "" ? (
                                 <>
-                                  <span style={{ color: "#b23a3a", textDecoration: "line-through" }}>{histVal(ch.field, ch.from)}</span>
+                                  <span style={{ color: "var(--hz-c-err)", textDecoration: "line-through" }}>{histVal(ch.field, ch.from)}</span>
                                   <span style={{ color: "var(--mut2)" }}>{" → "}</span>
                                 </>
                               ) : null}
-                              <span style={{ color: "#0c3f39", fontWeight: 600 }}>{histVal(ch.field, ch.to)}</span>
+                              <span style={{ color: "var(--hz-c-primary-ink)", fontWeight: 600 }}>{histVal(ch.field, ch.to)}</span>
                             </div>
                           ))}
                         </div>
@@ -1819,8 +1819,8 @@ function AmRoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
           key={k}
           style={{
             display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10,
-            padding: "1px 5px", borderRadius: 4, border: "1px solid var(--line2, #e3e6e0)",
-            background: "#f4f6f3", color: "var(--mut)",
+            padding: "1px 5px", borderRadius: 4, border: "1px solid var(--line2, var(--hz-c-border-subtle))",
+            background: "var(--hz-c-surface-2)", color: "var(--mut)",
           }}
         >
           <span style={{ color: "var(--ink)", fontWeight: 600 }}>{FIELD_KIND_LABEL[k]}</span>
@@ -1839,7 +1839,7 @@ function AmTypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
       {isMixed && (
-        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--line2, #e3e6e0)", color: "var(--mut)" }}>
+        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--line2, var(--hz-c-surface-dim))", color: "var(--mut)" }}>
           Mixed
         </span>
       )}
@@ -1950,8 +1950,8 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               {/* Order details (dates / delivery location) first, then the lines. */}
               {headerDiffs.map((d) => (
-                <div key={d.key} style={{ border: "1px solid var(--line2, #e3e6e0)", borderRadius: 11, overflow: "hidden" }}>
-                  <div style={{ padding: "7px 11px", background: "#f4f6f3", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{d.label}</div>
+                <div key={d.key} style={{ border: "1px solid var(--line2, var(--hz-c-border-subtle))", borderRadius: 11, overflow: "hidden" }}>
+                  <div style={{ padding: "7px 11px", background: "var(--hz-c-surface-2)", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{d.label}</div>
                   <AmRoutingChips kinds={[soHeaderFieldKind(d.key) as AmendmentFieldKind]} />
                   <div style={{ display: "flex", gap: 0 }}>
                     <div style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRight: "1px solid var(--line2, #e3e6e0)" }}>
@@ -1979,8 +1979,8 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                 const unrendered = amendmentUnrenderedAxes(l);
                 const unrenderedAll = [...new Set([...unrendered.from, ...unrendered.to])];
                 return (
-                  <div key={l.id} style={{ border: "1px solid var(--line2, #e3e6e0)", borderRadius: 11, overflow: "hidden" }}>
-                    <div style={{ padding: "7px 11px", background: "#f4f6f3", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{amendmentChangeLabel(l.change_type)}</div>
+                  <div key={l.id} style={{ border: "1px solid var(--line2, var(--hz-c-border-subtle))", borderRadius: 11, overflow: "hidden" }}>
+                    <div style={{ padding: "7px 11px", background: "var(--hz-c-surface-2)", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{amendmentChangeLabel(l.change_type)}</div>
                     <AmRoutingChips kinds={amendmentLineFieldKinds(l)} />
                     <div style={{ display: "flex", gap: 0 }}>
                       {/* Before */}
@@ -2010,10 +2010,10 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                       <div style={{ flex: 1, minWidth: 0, padding: "9px 11px" }}>
                         <div className="fld-l" style={{ marginBottom: 3 }}>Requesting</div>
                         {l.change_type === "REMOVE" ? (
-                          <div style={{ fontSize: 11.5, color: "#b23a3a", fontWeight: 600 }}>Removed</div>
+                          <div style={{ fontSize: 11.5, color: "var(--hz-c-err)", fontWeight: 600 }}>Removed</div>
                         ) : (
                           <>
-                            <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
+                            <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary-ink)", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
                               {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
@@ -2072,7 +2072,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                     <div key={d.id} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
                       <span aria-hidden style={{ width: 8, height: 8, minWidth: 8, borderRadius: "50%", marginTop: 4, background: rej ? "#b23a3a" : "#0c3f39" }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 700, color: rej ? "#b23a3a" : "var(--ink)", lineHeight: 1.35 }}>{d.label}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: rej ? "var(--hz-c-err)" : "var(--ink)", lineHeight: 1.35 }}>{d.label}</div>
                         <div className="money" style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 1 }}>
                           {histWhen(d.at)}{d.actor ? ` · ${d.actor}` : ""}
                         </div>

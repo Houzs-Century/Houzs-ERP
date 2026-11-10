@@ -108,7 +108,7 @@ export function MobileProjectChat({
             match every chat app the floor already uses. */}
         <div
           style={{
-            border: "1px solid #eceee9",
+            border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
             borderRadius: 10,
             overflow: "hidden",
             maxHeight: "60vh",
@@ -117,9 +117,9 @@ export function MobileProjectChat({
           }}
         >
           {isLoading ? (
-            <div style={{ padding: 12, fontSize: 12, color: "#9aa093" }}>Loading…</div>
+            <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>Loading…</div>
           ) : notes.length === 0 ? (
-            <div style={{ padding: 12, fontSize: 12, color: "#9aa093" }}>No messages yet.</div>
+            <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No messages yet.</div>
           ) : (
             notes.map((n, i) => {
               const mine = user?.id != null && n.user_id === user.id;
@@ -135,16 +135,16 @@ export function MobileProjectChat({
                     alignItems: mine ? "flex-end" : "flex-start",
                   }}
                 >
-                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 10.5, color: "#767b6e" }}>
-                    <span style={{ fontWeight: 700, color: "#414539" }}>{n.user_name || "Unknown"}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 10.5, color: "var(--hz-c-ink-muted)" }}>
+                    <span style={{ fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>{n.user_name || "Unknown"}</span>
                     <span>{relativeTime(n.created_at)}</span>
                   </div>
                   <div
                     style={{
                       fontSize: 13,
-                      color: "#11140f",
-                      background: mine ? "#e5f4ec" : "#fff",
-                      border: "1px solid #eceee9",
+                      color: "var(--hz-c-ink)",
+                      background: mine ? "#e5f4ec" : "var(--hz-c-surface)",
+                      border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
                       borderRadius: 10,
                       padding: "8px 11px",
                       maxWidth: "88%",
@@ -204,7 +204,7 @@ export function MobileProjectChat({
                 height: 40,
                 padding: 0,
                 borderRadius: 10,
-                color: "#16695f",
+                color: "var(--hz-c-primary)",
                 borderColor: "#bcdcd7",
               }}
             >
@@ -214,7 +214,7 @@ export function MobileProjectChat({
         )}
 
         {failed && (
-          <div style={{ fontSize: 11, color: "#b23a3a", marginTop: 6 }}>{failed}</div>
+          <div style={{ fontSize: 11, color: "var(--hz-c-err)", marginTop: 6 }}>{failed}</div>
         )}
       </div>
     </details>
@@ -249,7 +249,7 @@ function FormatHints({ note, align }: { note: string | null; align: "start" | "e
             borderRadius: 7,
             border: it.tone === "warn" ? "1px solid #f4d9a8" : "1px solid #dde1d8",
             background: it.tone === "warn" ? "#fdf5e4" : "#f3f5f0",
-            color: it.tone === "warn" ? "#8a4e0e" : "#414539",
+            color: it.tone === "warn" ? "#8a4e0e" : "var(--hz-c-ink-secondary)",
           }}
         >
           {it.message}

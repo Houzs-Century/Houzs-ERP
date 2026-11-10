@@ -167,7 +167,7 @@ export function SlipUploadField({
                 right: -4,
                 fontSize: 10,
                 lineHeight: 1,
-                color: 'var(--c-festive-b, #B8331F)',
+                color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                 fontWeight: 700,
                 pointerEvents: 'none',
               }}
@@ -178,7 +178,7 @@ export function SlipUploadField({
         <span
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
-            fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, #2F5D4F)', fontWeight: 600,
+            fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))', fontWeight: 600,
           }}
           title={fileName ?? undefined}
         >
@@ -196,7 +196,7 @@ export function SlipUploadField({
         </span>
       )}
       {errorMsg && (
-        <span style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-11)' }}>
+        <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-11)' }}>
           {errorMsg}
         </span>
       )}

@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatPhone } from "../vendor/shared/phone";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useThemePreference, type ThemePreference } from "../lib/theme";
 // useSystemNoticeUnread was renamed useAnnouncementUnread on main; the body
 // below already calls the new name.
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
@@ -114,7 +115,7 @@ import "./mobile.css";
  *      Orders/Sales MTD + Open cases until those sources exist.
  * ------------------------------------------------------------------ */
 
-type Screen = "home" | "personal" | "notif" | "language" | "help" | "team" | "security";
+type Screen = "home" | "personal" | "notif" | "language" | "appearance" | "help" | "team" | "security";
 
 // The owner's directory (People > User Management) can carry a staff code
 // under any of these keys depending on backend vintage. We read-through them
@@ -200,6 +201,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   const browserNotificationPermission = useBrowserNotificationPermission();
   // Drives the "Language" row's right-hand value; re-renders on change.
   const activeLang = useMobileLang();
+  const [themePref] = useThemePreference();
 
   // The full team roster — used both for the richer Personal-details fields
   // (phone / department / position) and for My Team. Gated by users.read on
@@ -275,6 +277,9 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   if (screen === "language") {
     return <LanguageScreen onBack={() => setScreen("home")} />;
   }
+  if (screen === "appearance") {
+    return <AppearanceScreen onBack={() => setScreen("home")} />;
+  }
   if (screen === "help") {
     return <HelpScreen onBack={() => setScreen("home")} />;
   }
@@ -328,7 +333,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
       <header className="hdr">
         <div className="hdr-row">
           <div>
-            <div className="ey" style={{ color: "#a16a2e" }}>Account</div>
+            <div className="ey" style={{ color: "var(--hz-c-accent)" }}>Account</div>
             <div className="scr-title">Profile</div>
           </div>
           <button type="button" className="iconbtn" onClick={() => setScreen("personal")} aria-label="Personal details">
@@ -352,7 +357,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
                 name={name}
                 email={user?.email}
                 size={58}
-                style={{ background: "#16695f", border: "2px solid rgba(216,168,90,.5)", color: "#d8a85a" }}
+                style={{ background: "var(--hz-c-primary)", border: "2px solid rgba(216,168,90,.5)", color: "#d8a85a" }}
               />
               <MobileAvatarEditor hasImage={user?.profile_pic_r2_key} onChanged={reload} />
             </div>
@@ -373,7 +378,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
           <StatTile value={openCases.toLocaleString("en-US")} label="Open cases" />
         </div>
 
-        <div className="ey" style={{ color: "#767b6e", margin: "18px 2px 9px" }}>Account</div>
+        <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "18px 2px 9px" }}>Account</div>
         <div className="card" style={{ overflow: "hidden" }}>
           <Item icon="users" label="Personal details" onClick={() => setScreen("personal")} first />
           <Item icon="lock" label="Password & security" onClick={() => setScreen("security")} />
@@ -388,6 +393,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
               language in its own script, which is the bit a Bengali reader
               needs to recognise. */}
           <Item icon="list" label="Language" right={LANG_LABELS[activeLang]} onClick={() => setScreen("language")} />
+          <Item icon="list" label="Appearance" right={THEME_LABELS[themePref]} onClick={() => setScreen("appearance")} />
           {showTeam && <Item icon="users" label="My Team" onClick={() => setScreen("team")} />}
         </div>
 
@@ -396,7 +402,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
             the SAME Item pattern (icon + label + chevron) as Account above. */}
         {onOpenOrg && (orgItems?.length ?? 0) > 0 && (
           <>
-            <div className="ey" style={{ color: "#767b6e", margin: "18px 2px 9px" }}>Organisation</div>
+            <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "18px 2px 9px" }}>Organisation</div>
             <div className="card" style={{ overflow: "hidden" }}>
               {(orgItems ?? []).map((it, i) => (
                 <Item key={it.to} icon={orgIconOf(it.to)} label={it.label} onClick={() => onOpenOrg(it.to, it.label)} first={i === 0}
@@ -406,7 +412,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
           </>
         )}
 
-        <div className="ey" style={{ color: "#767b6e", margin: "18px 2px 9px" }}>App</div>
+        <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "18px 2px 9px" }}>App</div>
         <div className="card" style={{ overflow: "hidden" }}>
           <Item icon="shield" label="Help & Support" onClick={() => setScreen("help")} first />
         </div>
@@ -422,9 +428,9 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
 // big tabular number, uppercase caption.
 function StatTile({ value, label, color }: { value: string; label: string; color?: string }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid #d6d9d2", borderRadius: 12, padding: 13, textAlign: "center" }}>
-      <div className="tnum" style={{ fontSize: 24, fontWeight: 800, color: color ?? "#11140f", lineHeight: 1 }}>{value}</div>
-      <div className="ey" style={{ color: "#767b6e", marginTop: 6 }}>{label}</div>
+    <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border)", borderRadius: 12, padding: 13, textAlign: "center" }}>
+      <div className="tnum" style={{ fontSize: 24, fontWeight: 800, color: color ?? "var(--hz-c-ink)", lineHeight: 1 }}>{value}</div>
+      <div className="ey" style={{ color: "var(--hz-c-ink-muted)", marginTop: 6 }}>{label}</div>
     </div>
   );
 }
@@ -467,17 +473,17 @@ function Item({ icon, label, right, onClick, first, badge }: { icon: keyof typeo
       onClick={onClick}
       style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", background: "none", border: "none", borderTop: first ? "none" : "1px solid #e3e6e0", padding: "12px 13px", cursor: "pointer", fontFamily: "inherit" }}
     >
-      <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "#f4f6f3", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "var(--hz-c-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{ROW_ICONS[icon]}</svg>
       </span>
-      <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: "#11140f" }}>{label}</span>
+      <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: "var(--hz-c-ink)" }}>{label}</span>
       {/* Unread count pill — notification-style. Only rendered when > 0. */}
       {badge != null && badge > 0 && (
         <span style={{ flex: "none", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#c0392b", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
           {badge > 99 ? "99+" : badge}
         </span>
       )}
-      {right && <span style={{ fontSize: 12, color: "#9aa093" }}>{right}</span>}
+      {right && <span style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>{right}</span>}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c2c6bd" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
     </button>
   );
@@ -556,7 +562,7 @@ function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRo
       }
     >
       {editing ? (
-        <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
+        <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
           <div style={kvLabel}>Display name</div>
           <input
             value={nameDraft}
@@ -564,7 +570,7 @@ function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRo
             placeholder="Your name"
             style={{ width: "100%", marginTop: 6, border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontFamily: "inherit", fontSize: 14, color: "var(--ink)", outline: "none" }}
           />
-          {err && <div style={{ fontSize: 11.5, color: "#b23a3a", marginTop: 8 }}>{err}</div>}
+          {err && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)", marginTop: 8 }}>{err}</div>}
           <button
             onClick={() => { const n = nameDraft.trim(); if (n) saveName.mutate(n); }}
             disabled={saveName.isPending || !nameDraft.trim()}
@@ -572,7 +578,7 @@ function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRo
           >
             {saveName.isPending ? "Saving…" : "Save name"}
           </button>
-          <div style={{ fontSize: 11, color: "#9aa093", marginTop: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 10, lineHeight: 1.5 }}>
             Only your display name is self-editable. For any other change (phone, department, role) please request an update from HR.
           </div>
         </div>
@@ -594,7 +600,7 @@ function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRo
             {alias && <KV label="Mail alias" value={alias} span />}
           </div>
 
-          <div style={{ fontSize: 11, color: "#9aa093", lineHeight: 1.5, padding: "0 2px" }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", lineHeight: 1.5, padding: "0 2px" }}>
             These details come from your HR record. To change your phone, department, or role, request an update from HR — you can edit only your display name here.
           </div>
         </>
@@ -668,14 +674,14 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <SubScreen title="Password & security" sub="Password, two-factor, unlock" onBack={onBack}>
-      <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: 14 }}>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, padding: 14 }}>
         <div style={kvLabel}>Current password</div>
         <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" style={pwInput} />
         <div style={{ ...kvLabel, marginTop: 14 }}>New password</div>
         <input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" style={pwInput} />
         <div style={{ ...kvLabel, marginTop: 14 }}>Confirm new password</div>
         <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" style={pwInput} />
-        {err && <div style={{ fontSize: 11.5, color: "#b23a3a", marginTop: 10 }}>{err}</div>}
+        {err && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)", marginTop: 10 }}>{err}</div>}
         <button
           type="button"
           onClick={submit}
@@ -685,7 +691,7 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
           {submitting ? "Updating…" : "Update password"}
         </button>
       </div>
-      <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
         Requires your current password. You'll stay signed in here; other devices will be signed out.
       </div>
       {/* Two-factor: enrol, backup-code count, and DISABLE. The last one is why
@@ -695,7 +701,7 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
       <MobileTwoFactorCard />
       {bioSupported && (
         <>
-          <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", marginTop: 14 }}>
+          <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", marginTop: 14 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", cursor: "pointer" }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>Face ID / fingerprint unlock</div>
@@ -713,7 +719,7 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
               />
             </label>
           </div>
-          <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
             Keeps your sign-in in this phone's secure storage, unlocked with Face ID or your fingerprint when the app opens. Turning it off erases the saved session.
           </div>
         </>
@@ -757,7 +763,7 @@ function NotificationsScreen({ onBack, enabled, permission }: {
 
   return (
     <SubScreen title="Notifications" onBack={onBack}>
-      <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", cursor: permission === "unsupported" ? "default" : "pointer" }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>Browser notifications</div>
@@ -780,7 +786,7 @@ function NotificationsScreen({ onBack, enabled, permission }: {
           />
         </label>
       </div>
-      <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, textAlign: "center", lineHeight: 1.5 }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, textAlign: "center", lineHeight: 1.5 }}>
         This is the same browser-banner switch shown on desktop. Notification categories are not configurable yet.
       </div>
     </SubScreen>
@@ -801,7 +807,7 @@ function LanguageScreen({ onBack }: { onBack: () => void }) {
   const t = useT();
   return (
     <SubScreen title={t("lang.title")} onBack={onBack}>
-      <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
         {MOBILE_LANGS.map((code, i) => {
           const selected = code === lang;
           return (
@@ -841,11 +847,59 @@ function LanguageScreen({ onBack }: { onBack: () => void }) {
           );
         })}
       </div>
-      <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, textAlign: "center", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, textAlign: "center", lineHeight: 1.6 }}>
         {t("lang.hint")}
       </div>
-      <div style={{ fontSize: 11, color: "#9aa093", marginTop: 6, textAlign: "center", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 6, textAlign: "center", lineHeight: 1.6 }}>
         {t("lang.dateNote")}
+      </div>
+    </SubScreen>
+  );
+}
+
+// ── Appearance ──
+// Light / dark / follow the phone. Stored on this device only (lib/theme.ts).
+const THEME_LABELS: Record<ThemePreference, string> = { light: "Light", dark: "Dark", system: "Auto" };
+const THEME_SUBLABELS: Record<ThemePreference, string> = {
+  light: "Always light",
+  dark: "Always dark, easier on the eyes at night",
+  system: "Follow this phone's setting",
+};
+function AppearanceScreen({ onBack }: { onBack: () => void }) {
+  const [pref, setPref] = useThemePreference();
+  const options: ThemePreference[] = ["light", "dark", "system"];
+  return (
+    <SubScreen title="Appearance" onBack={onBack}>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+        {options.map((value, i) => {
+          const selected = value === pref;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setPref(value)}
+              aria-pressed={selected}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, width: "100%",
+                padding: "14px 14px", background: "none", border: "none",
+                borderTop: i === 0 ? "none" : "1px solid var(--line)",
+                fontFamily: "inherit", textAlign: "left", cursor: "pointer",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>{THEME_LABELS[value]}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>{THEME_SUBLABELS[value]}</div>
+              </div>
+              {selected ? (
+                <span style={{ width: 22, height: 22, borderRadius: "50%", background: "var(--teal)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                </span>
+              ) : (
+                <span style={{ width: 22, height: 22, borderRadius: "50%", border: "2px solid var(--line)", flex: "none" }} />
+              )}
+            </button>
+          );
+        })}
       </div>
     </SubScreen>
   );
@@ -865,9 +919,9 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
             address is ever configured in branding. */}
         <a
           href="mailto:operation@houzscentury.com"
-          style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: "13px 14px", textDecoration: "none" }}
+          style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: "13px 14px", textDecoration: "none" }}
         >
-          <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "#e1efed", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "var(--hz-c-primary-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
           </span>
           <span style={{ flex: 1 }}>
@@ -878,9 +932,9 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
         </a>
         <a
           href="tel:+60327108800"
-          style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: "13px 14px", textDecoration: "none" }}
+          style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: "13px 14px", textDecoration: "none" }}
         >
-          <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "#f3ece0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "var(--hz-c-accent-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.5a16 16 0 0 0 6 6l1.1-1.1a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2Z" /></svg>
           </span>
           <span style={{ flex: 1 }}>
@@ -892,7 +946,7 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
       </div>
 
       <div style={sectionLabel}>Guides</div>
-      <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
         {["Creating a Sales Order", "Scanning order slips (OCR)", "Logging a service case"].map((g, i) => (
           <div
             key={g}
@@ -967,7 +1021,7 @@ function PersonCard({ person, caption }: { person: MemberRow; caption?: string }
   const sub = person.position_name || person.role_name || person.department_name || "";
   const seed = String(person.id) + (person.email || "");
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: "11px 13px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: "11px 13px" }}>
       {/* The teammate's photo when they have one, their initials on the stable
           per-person colour when they do not. Same shared read as the identity
           card and the desktop Avatar. */}
@@ -980,7 +1034,7 @@ function PersonCard({ person, caption }: { person: MemberRow; caption?: string }
         style={{ background: avatarColor(seed), color: "#fff" }}
       />
       <div style={{ minWidth: 0, flex: 1 }}>
-        {caption && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>{caption}</div>}
+        {caption && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>{caption}</div>}
         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
         {sub && <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
       </div>
@@ -1000,8 +1054,8 @@ function KV({ label, value, span, mono }: { label: string; value: string; span?:
 // ── Shared style objects ──
 const pgrid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 };
 const sectionLabel: React.CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--muted)", margin: "0 2px 8px" };
-const kvLabel: React.CSSProperties = { fontSize: 8.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" };
+const kvLabel: React.CSSProperties = { fontSize: 8.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" };
 const pwInput: React.CSSProperties = { width: "100%", marginTop: 6, border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontFamily: "inherit", fontSize: 14, color: "var(--ink)", outline: "none" };
-const tinyBtn: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--teal)", background: "#fff", border: "1px solid var(--line)", borderRadius: 9, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" };
-const emptyState: React.CSSProperties = { textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" };
-const emptyStateSmall: React.CSSProperties = { fontSize: 12.5, color: "#9aa093", background: "#fff", border: "1px dashed var(--line)", borderRadius: 12, padding: "14px", textAlign: "center" };
+const tinyBtn: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--teal)", background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 9, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" };
+const emptyState: React.CSSProperties = { textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "26px 0" };
+const emptyStateSmall: React.CSSProperties = { fontSize: 12.5, color: "var(--hz-c-ink-soft)", background: "var(--hz-c-surface)", border: "1px dashed var(--line)", borderRadius: 12, padding: "14px", textAlign: "center" };

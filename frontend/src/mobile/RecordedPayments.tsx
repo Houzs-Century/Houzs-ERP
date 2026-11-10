@@ -190,7 +190,7 @@ function SlipLink({ docNo, paymentId }: { docNo: string; paymentId: string }) {
           alt="Payment slip"
           style={{
             width: 56, height: 56, objectFit: "contain", display: "block",
-            borderRadius: 6, border: "1px solid var(--line2)", background: "#fff",
+            borderRadius: 6, border: "1px solid var(--line2)", background: "var(--hz-c-surface)",
           }}
         />
       ) : (
@@ -238,7 +238,7 @@ function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: st
         <button
           type="button"
           onClick={() => window.open(url, "_blank", "noopener")}
-          style={{ width: "100%", boxSizing: "border-box", height: 40, borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700, border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f" }}
+          style={{ width: "100%", boxSizing: "border-box", height: 40, borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700, border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)" }}
         >
           View attached slip (PDF)
         </button>
@@ -247,7 +247,7 @@ function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: st
           type="button"
           onClick={() => window.open(url, "_blank", "noopener")}
           title="Open slip full-size"
-          style={{ padding: 0, border: "1px solid #d6d9d2", borderRadius: 9, background: "#f4f6f3", cursor: "pointer", overflow: "hidden", display: "block", width: "fit-content" }}
+          style={{ padding: 0, border: "1px solid var(--hz-c-border)", borderRadius: 9, background: "var(--hz-c-surface-2)", cursor: "pointer", overflow: "hidden", display: "block", width: "fit-content" }}
         >
           <img src={url} alt="Payment slip" style={{ display: "block", maxHeight: 120, maxWidth: "100%", objectFit: "contain" }} />
         </button>
@@ -587,7 +587,7 @@ export function AddPaymentSheet({
                 by an edit). */}
             {!isEdit && (
               <div className="fld">
-                <span className="fld-l" style={{ color: "#9aa093" }}>{method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</span>
+                <span className="fld-l" style={{ color: "var(--hz-c-ink-soft)" }}>{method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</span>
                 <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => { void onPickSlip(e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 <button
                   type="button"
@@ -596,9 +596,9 @@ export function AddPaymentSheet({
                   title={slipName || "Attach a payment slip"}
                   style={{
                     width: "100%", boxSizing: "border-box", height: 40, borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
-                    border: slipPhase === "done" ? "1px solid #bcdcd7" : "1px solid #d6d9d2",
-                    background: slipPhase === "done" ? "#e1efed" : "#f4f6f3",
-                    color: slipPhase === "done" ? "#16695f" : "#414539",
+                    border: slipPhase === "done" ? "1px solid var(--hz-dk-primary-line, #bcdcd7)" : "1px solid var(--hz-c-border)",
+                    background: slipPhase === "done" ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface-2)",
+                    color: slipPhase === "done" ? "var(--hz-c-primary)" : "var(--hz-c-ink-secondary)",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6, overflow: "hidden",
                   }}
                 >
@@ -612,10 +612,10 @@ export function AddPaymentSheet({
             {/* Plain-language block reason (owner standing rule) — say what is
                 missing instead of only greying Save out. */}
             {slipMissing && amtOk && !missingSubField && slipPhase !== "uploading" && (
-              <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>{slipMissing}</div>
+              <div style={{ fontSize: 11.5, color: "var(--hz-c-accent)", textAlign: "center" }}>{slipMissing}</div>
             )}
             {missingSubField && (
-              <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>
+              <div style={{ fontSize: 11.5, color: "var(--hz-c-accent)", textAlign: "center" }}>
                 {method === CONVERT_LABEL ? "Pick the order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}
               </div>
             )}
@@ -810,7 +810,7 @@ export function RecordedPaymentsList({
           <PaymentInfoBlock payment={p} />
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {slipKeyOf(p) ? <SlipLink docNo={docNo} paymentId={p.id} /> : null}
-            <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39" }}>{fmtSen(p.amount_sen)}</span>
+            <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>{fmtSen(p.amount_sen)}</span>
             {/* Attach / replace the proof — see openAttachPicker: gated by
                 `canEdit` only, never by the same-day window. */}
             {canEdit && (

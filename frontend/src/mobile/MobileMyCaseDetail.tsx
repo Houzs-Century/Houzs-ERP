@@ -103,7 +103,7 @@ const AUTHOR: Record<string, string> = {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${LINE_SOFT}`, borderRadius: 13, padding: "12px 14px", marginBottom: 10 }}>
+    <div style={{ background: "var(--hz-c-surface)", border: `1px solid ${LINE_SOFT}`, borderRadius: 13, padding: "12px 14px", marginBottom: 10 }}>
       <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: MUTED, marginBottom: 8 }}>
         {title}
       </div>

@@ -18,7 +18,7 @@ const RANK: Record<ComplianceTone, number> = { expired: 4, critical: 3, warning:
 const docsTone = (l: LorryRow): ComplianceTone =>
   [l.road_tax_expiry, l.insurance_expiry, l.puspakom_expiry].map((d) => expiryStatus(d ?? null).tone).reduce((a, t) => (RANK[t] > RANK[a] ? t : a), "ok" as ComplianceTone);
 const DOC_NOTE: Partial<Record<ComplianceTone, [string, string]>> = {
-  expired: ["Document expired", "text-[#8a2c2c]"], critical: ["Document due soon", "text-[#8a2c2c]"], warning: ["Document due in 45 days", "text-[#80501c]"],
+  expired: ["Document expired", "text-[color:var(--hz-dk-err,#8a2c2c)]"], critical: ["Document due soon", "text-[color:var(--hz-dk-err,#8a2c2c)]"], warning: ["Document due in 45 days", "text-[#80501c]"],
 };
 
 export function LorriesBoard({ onNew }: { onNew: () => void }) {
@@ -62,7 +62,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
         <button type="button" onClick={onNew} className="ml-auto min-h-[40px] rounded-md bg-primary px-4 text-[13px] font-semibold text-white">New lorry</button>
       </div>
       <p className="text-[12px] text-ink-muted">Showing {shown.length} of {all.length}</p>
-      {lorries.isError && <p className="text-[13px] text-[#8a2c2c]">Lorries could not be loaded.</p>}
+      {lorries.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">Lorries could not be loaded.</p>}
       {lorries.isLoading && <p className="text-[13px] text-ink-muted">Loading lorries…</p>}
       {!lorries.isLoading && !lorries.isError && shown.length === 0 && (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-ink-muted">

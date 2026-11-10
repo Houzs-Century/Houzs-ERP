@@ -117,7 +117,7 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
   const [error, setError] = useState<string | null>(null);
 
   if (q.isPending) return <div className="text-[12.5px] text-ink-muted">Loading…</div>;
-  if (q.error) return <div className="text-[12.5px] text-red-600">{(q.error as Error).message}</div>;
+  if (q.error) return <div className="text-[12.5px] text-red-600 dark:text-red-300">{(q.error as Error).message}</div>;
   const { context: ctx, progress: p, people = {} } = q.data;
   const who = (id: unknown) => (id == null ? null : people[String(id)] ?? `User ${String(id)}`);
   const when = (at: string | null | undefined, by: unknown) => (at ? `${hm(at)}${who(by) ? ` · ${who(by)}` : ""}` : null);
@@ -183,7 +183,7 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
             className="mt-2 w-full rounded-md bg-accent py-2 text-[13px] font-semibold text-white disabled:opacity-50">
             {busy ? "Saving…" : done ? `Add ${picked.photos.length || ""} photo${picked.photos.length === 1 ? "" : "s"}` : "Complete the job with these photos"}
           </button>
-          {error && <div className="mt-2 text-[12.5px] text-red-600">{error}</div>}
+          {error && <div className="mt-2 text-[12.5px] text-red-600 dark:text-red-300">{error}</div>}
         </div>
       </Section>
     </>
@@ -209,7 +209,7 @@ function SoBody({ soDocNo, doId }: { soDocNo: string; doId: string | null }) {
       </div>
       {!doId && <div className="text-[12.5px] text-ink-muted">No delivery order yet — the POD is recorded on the DO once it is cut.</div>}
       {doId && q.isPending && <div className="text-[12.5px] text-ink-muted">Loading…</div>}
-      {doId && q.error && <div className="text-[12.5px] text-red-600">{(q.error as Error).message}</div>}
+      {doId && q.error && <div className="text-[12.5px] text-red-600 dark:text-red-300">{(q.error as Error).message}</div>}
       {q.data && <DoProofOfDeliveryCard h={q.data.deliveryOrder} />}
     </>
   );

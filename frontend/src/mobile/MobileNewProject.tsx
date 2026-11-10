@@ -100,11 +100,11 @@ export function NewProjectSheet({
 
   const fieldStyle: React.CSSProperties = {
     width: "100%", fontSize: 13, padding: "9px 10px", borderRadius: 9,
-    border: "1px solid var(--line)", background: "#fff", color: "var(--ink)", fontFamily: "inherit",
+    border: "1px solid var(--line)", background: "var(--hz-c-surface)", color: "var(--ink)", fontFamily: "inherit",
   };
   const labelStyle: React.CSSProperties = {
     fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase",
-    color: "#767b6e", marginBottom: 4, display: "block",
+    color: "var(--hz-c-ink-muted)", marginBottom: 4, display: "block",
   };
 
   return (
@@ -127,7 +127,7 @@ export function NewProjectSheet({
               <option value="">— select —</option>
               {eventTypes.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
             </select>
-            <div style={{ fontSize: 10.5, color: "#9aa093", marginTop: 3 }}>Loads that type's default checklist.</div>
+            <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", marginTop: 3 }}>Loads that type's default checklist.</div>
           </div>
           <div>
             <label style={labelStyle}>Brand *</label>
@@ -142,7 +142,7 @@ export function NewProjectSheet({
               <option value="">— select —</option>
               {venues.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
             </select>
-            <div style={{ fontSize: 10.5, color: stateName ? "#2f8a5b" : "#9aa093", marginTop: 3 }}>
+            <div style={{ fontSize: 10.5, color: stateName ? "var(--hz-c-synced)" : "var(--hz-c-ink-soft)", marginTop: 3 }}>
               {venueName ? (stateName ? `State: ${stateName}` : "This venue has no state set — add it on a PC first.") : "The state and event code come from the venue."}
             </div>
           </div>
@@ -169,11 +169,11 @@ export function NewProjectSheet({
               <DateField value={endDate} onChange={setEndDate} style={fieldStyle} aria-label="End date" />
             </div>
           </div>
-          {dateInvalid && <div style={{ fontSize: 11.5, color: "#b23a3a" }}>End date must be on or after the start date.</div>}
+          {dateInvalid && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>End date must be on or after the start date.</div>}
           {/* The name is composed, never typed — show what will be saved. */}
-          <div style={{ border: "1px dashed #d6d9d2", borderRadius: 10, padding: "9px 11px", background: "#faf9f5" }}>
+          <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", background: "#faf9f5" }}>
             <div style={labelStyle}>Event name</div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: derivedName ? "var(--ink)" : "#9aa093", lineHeight: 1.35 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: derivedName ? "var(--ink)" : "var(--hz-c-ink-soft)", lineHeight: 1.35 }}>
               {derivedName || "Pick brand + venue to compose the name"}
             </div>
           </div>

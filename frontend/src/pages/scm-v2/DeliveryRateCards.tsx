@@ -254,7 +254,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
       </div>
       <div className="py-1.5 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
         {isLoading && <p className="px-[18px] py-3 text-[13px] text-ink-muted">Loading…</p>}
-        {loadFailed && <p className="px-[18px] py-3 text-[13px] text-[#8a2c2c]">The carriers did not load.</p>}
+        {loadFailed && <p className="px-[18px] py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The carriers did not load.</p>}
         {!isLoading && !loadFailed && companies.length === 0 && (
           <p className="px-[18px] py-3 text-[13px] leading-normal text-ink-secondary">
             No 3PL companies registered yet. A rate card is priced per carrier, so there is nothing to price until one exists.{' '}
@@ -315,7 +315,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
   const unit = card?.basis === 'ITEM' ? 'item' : 'set';
   const totals = useMemo(() => categoryTotals(rules, unit), [rules, unit]);
 
-  if (detail.isError) return <div className={cn(CARD, 'p-6 text-[13px] text-[#8a2c2c]')}>This card did not load.</div>;
+  if (detail.isError) return <div className={cn(CARD, 'p-6 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]')}>This card did not load.</div>;
   if (detail.isLoading || !card) return <div className={cn(CARD, 'p-6 text-[13px] text-ink-muted')}>Loading card…</div>;
 
   const kind = cardKind(card, new Set(companies.map((co) => co.id)));
@@ -369,7 +369,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
       <section aria-label="Card settings" className={cn(CARD, 'flex flex-col gap-3.5 px-5 py-[18px]')}>
         <h3 className="text-[16px] font-bold text-ink">Card settings</h3>
         {(kind === 'removed' || kind === 'inactive') && (
-          <div className="flex flex-wrap items-end gap-3 rounded-xl bg-[#f6ecd4] px-4 py-3 text-[13px] text-[#5a3a14]">
+          <div className="flex flex-wrap items-end gap-3 rounded-xl bg-[#f6ecd4] px-4 py-3 text-[13px] text-accent-ink">
             <p className="min-w-[220px] flex-[1_1_260px]">
               {kind === 'removed'
                 ? 'This card’s 3PL company was deleted, so the card belongs to no carrier. Move it to a carrier, or delete it.'
@@ -769,7 +769,7 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
           </Field>
         </div>
         <p className={HINT}>{aggHint(form.aggregation)}</p>
-        {err && <p role="alert" className="text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
+        {err && <p role="alert" className="text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
       </div>
     </ResizableDrawer>
   );

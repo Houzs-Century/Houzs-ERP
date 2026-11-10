@@ -45,7 +45,7 @@ export function CategorySwapSelect({ kind, id, category }: {
   };
   return (
     <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase', color: '#767b6e' }}>Category</span>
+      <span style={{ fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase', color: 'var(--hz-c-ink-muted)' }}>Category</span>
       <select
         aria-label="Category"
         value={current}

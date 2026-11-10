@@ -260,7 +260,7 @@ function RevisionHero({
                       isDone
                         ? "bg-accent-bright text-sidebar"
                         : isCurrent
-                          ? "bg-white text-sidebar ring-2 ring-accent-bright ring-offset-2 ring-offset-sidebar"
+                          ? "bg-surface text-sidebar ring-2 ring-accent-bright ring-offset-2 ring-offset-sidebar"
                           : "bg-white/15 text-sidebar-ink-muted"
                     )}
                   >

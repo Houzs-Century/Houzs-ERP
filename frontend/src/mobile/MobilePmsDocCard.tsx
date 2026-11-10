@@ -168,10 +168,10 @@ export function BigFilePreview({
         style={{ cursor: "pointer" }}
       >
         {isImage ? (
-          <R2Thumb r2Key={media.r2_key} style={{ width: "100%", height, borderRadius: 10, border: "1px solid #e3e6e0" }} />
+          <R2Thumb r2Key={media.r2_key} style={{ width: "100%", height, borderRadius: 10, border: "1px solid var(--hz-c-border-subtle)" }} />
         ) : (
-          <div className="ph" style={{ height: 92, borderRadius: 10, border: "1px solid #e3e6e0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: "#767b6e", background: "rgba(255,255,255,.85)", border: "1px solid #d6d9d2", borderRadius: 7, padding: "3px 9px" }}>
+          <div className="ph" style={{ height: 92, borderRadius: 10, border: "1px solid var(--hz-c-border-subtle)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--hz-c-ink-muted)", background: "rgba(255,255,255,.85)", border: "1px solid var(--hz-c-border)", borderRadius: 7, padding: "3px 9px" }}>
               {(media.content_type === "application/pdf" ? "PDF" : "FILE")} · tap to view
             </span>
           </div>
@@ -223,8 +223,8 @@ export function UploadGlyph() {
 // The mockup's "Reason:" strip — a per-photo remark under its preview.
 export function RemarkStrip({ label = "Remark", text }: { label?: string; text: string }) {
   return (
-    <div style={{ background: "#faf9f5", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "#414539", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-      <b style={{ color: "#a16a2e" }}>{label}:</b> {text}
+    <div style={{ background: "#faf9f5", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      <b style={{ color: "var(--hz-c-accent)" }}>{label}:</b> {text}
     </div>
   );
 }
@@ -378,7 +378,7 @@ export function ReviewButtons({
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
       {rs !== "approved" && (
-        <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
+        <button className="tinybtn" style={{ flex: 1, background: "var(--hz-c-synced-bg)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
       )}
       {rs !== "rejected" && (
         <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
@@ -407,12 +407,12 @@ export function ReviewBadge({
     const reviewable = !!item && (!!item.required_perm || isReviewableTitle(item.title));
     const approvedByStatus = (item?.status ?? "").toLowerCase() === "done";
     if (!reviewable || !hasFiles || approvedByStatus) return null;
-    return <span className="rbadge" style={{ background: "#f6efd9", color: "#6e4d12" }}>NOT APPROVED</span>;
+    return <span className="rbadge" style={{ background: "var(--hz-c-warning-bg)", color: "var(--hz-c-warning-text)" }}>NOT APPROVED</span>;
   }
   return (
     <span className="rbadge" style={{
-      background: rs === "approved" ? "#e2f0e9" : rs === "rejected" ? "#f7e7e5" : "#f6efd9",
-      color: rs === "approved" ? "#2f8a5b" : rs === "rejected" ? "#a13a34" : "#6e4d12",
+      background: rs === "approved" ? "var(--hz-c-synced-bg)" : rs === "rejected" ? "#f7e7e5" : "var(--hz-c-warning-bg)",
+      color: rs === "approved" ? "var(--hz-c-synced)" : rs === "rejected" ? "#a13a34" : "var(--hz-c-warning-text)",
     }}>{humanize(rs).toUpperCase()}</span>
   );
 }
@@ -584,10 +584,10 @@ export function SalesDocsCard({
           const isDefect = isDefectTile(t);
           const compactRows = isStockTransferTitle(t.item?.title);
           return (
-            <div key={t.label} style={{ border: "1px solid #d6d9d2", borderRadius: 12, background: "#fff", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div key={t.label} style={{ border: "1px solid var(--hz-c-border)", borderRadius: 12, background: "var(--hz-c-surface)", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Block header — name · count badge · role chips · review badge */}
               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#11140f", marginRight: "auto" }}>{t.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-ink)", marginRight: "auto" }}>{t.label}</span>
                 {/* Owner 2026-07-23: oversight viewers (mgt/BD/owner/SD/
                     logistic) see WHO owns each deliverable — the task's
                     role chip, same colours as the old tasklist rows. */}
@@ -599,7 +599,7 @@ export function SalesDocsCard({
                 {/* Review decision (owner 2026-07-29): green approved ·
                     red rejected · amber pending — travels with the block. */}
                 <ReviewBadge reviewStatus={rItem.review_status} item={rItem} hasFiles={t.files.length > 0} />
-                <span className="rbadge" style={{ background: hasContent ? "#e2f0e9" : "#f0f1ed", color: hasContent ? "#2f8a5b" : "#9aa093" }}>
+                <span className="rbadge" style={{ background: hasContent ? "var(--hz-c-synced-bg)" : "#f0f1ed", color: hasContent ? "var(--hz-c-synced)" : "var(--hz-c-ink-soft)" }}>
                   {t.remarkTile || (t.remarkWithFiles && t.files.length === 0)
                     ? (hasContent ? "DONE" : "NONE")
                     : (hasContent ? `${t.files.length} FILE${t.files.length === 1 ? "" : "S"}` : "NONE")}
@@ -613,7 +613,7 @@ export function SalesDocsCard({
                   tabIndex={0}
                   onClick={() => { if (!busy) void openRemark(t); }}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!busy) void openRemark(t); } }}
-                  style={{ background: "#faf9f5", border: "1px solid #eceee9", borderRadius: 9, padding: "8px 10px", fontSize: 11.5, lineHeight: 1.45, color: remarkText ? "#414539" : "#9aa093", cursor: "pointer", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                  style={{ background: "#faf9f5", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 9, padding: "8px 10px", fontSize: 11.5, lineHeight: 1.45, color: remarkText ? "var(--hz-c-ink-secondary)" : "var(--hz-c-ink-soft)", cursor: "pointer", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
                 >
                   {remarkText || (editable && t.remarkTile ? "Tap to write the remark…" : "No remark yet.")}
                 </div>
@@ -627,13 +627,13 @@ export function SalesDocsCard({
                   <span
                     role="button"
                     onClick={() => setView({ items: t.files, idx: i })}
-                    style={{ flex: "none", width: 54, height: 44, borderRadius: 7, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer", display: "block" }}
+                    style={{ flex: "none", width: 54, height: 44, borderRadius: 7, overflow: "hidden", border: "1px solid var(--hz-c-border-subtle)", cursor: "pointer", display: "block" }}
                   >
                     {/^image\//.test(t.files[i]?.content_type ?? "")
                       ? <R2Thumb r2Key={a.r2_key} style={{ width: 54, height: 44 }} />
                       : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
                   </span>
-                  <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "#414539" }}>{a.file_name || "Record"}</span>
+                  <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "var(--hz-c-ink-secondary)" }}>{a.file_name || "Record"}</span>
                   <button type="button" className="tinybtn" onClick={() => setView({ items: t.files, idx: i })}>View</button>
                   {editable && canDeleteFiles && (
                     <button
@@ -678,7 +678,7 @@ export function SalesDocsCard({
                   tabIndex={0}
                   onClick={() => { if (busy) return; if (editable) { void startUpload(t); } else { void notify({ title: `${t.label} not uploaded`, body: "Nothing has been uploaded here yet.", tone: "info" }); } }}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
-                  style={{ border: "1px dashed #d6d9d2", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "#9aa093", cursor: "pointer" }}
+                  style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "var(--hz-c-ink-soft)", cursor: "pointer" }}
                 >
                   {editable ? "No file yet — tap to upload" : "No file yet"}
                 </div>
@@ -696,7 +696,7 @@ export function SalesDocsCard({
               {isDefect && t.item && editable && (
                 <button
                   className="tinybtn"
-                  style={{ width: "100%", background: t.item.status === "na" ? "#f4f6f3" : "#fff", color: "#767b6e" }}
+                  style={{ width: "100%", background: t.item.status === "na" ? "var(--hz-c-surface-2)" : "var(--hz-c-surface)", color: "var(--hz-c-ink-muted)" }}
                   disabled={busy}
                   onClick={async () => {
                     const next = t.item!.status === "na" ? "pending" : "na";
@@ -745,7 +745,7 @@ export function SalesDocsCard({
     <details className="pacc" open>
       <summary>
         <span className="psec-t">{title}</span>
-        <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "#9aa093" }}>{doneCount}/{tiles.length}</span>
+        <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "var(--hz-c-ink-soft)" }}>{doneCount}/{tiles.length}</span>
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">{body}</div>

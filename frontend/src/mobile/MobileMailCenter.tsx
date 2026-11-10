@@ -461,7 +461,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
       <header className="hdr">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
           {onBack ? (
-            <span onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#16695f", cursor: "pointer" }}>
+            <span onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary)", cursor: "pointer" }}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
               Menu
             </span>
@@ -469,7 +469,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           <button
             onClick={() => setCompose({ mode: "new" })}
             className="tinybtn"
-            style={{ background: "#16695f", borderColor: "#16695f", color: "#fff", display: "flex", alignItems: "center", gap: 5 }}
+            style={{ background: "var(--hz-c-primary)", borderColor: "#16695f", color: "#fff", display: "flex", alignItems: "center", gap: 5 }}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
             New
@@ -505,7 +505,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
             aria-label="Search all mail"
           />
           {searching && (
-            <span role="status" aria-live="polite" style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: "#16695f", whiteSpace: "nowrap" }}>
+            <span role="status" aria-live="polite" style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: "var(--hz-c-primary)", whiteSpace: "nowrap" }}>
               Searching…
             </span>
           )}
@@ -619,27 +619,27 @@ function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, s
   return (
     <div
       onClick={onOpen}
-      style={{ display: "flex", gap: 11, background: "#fff", border: `1px solid ${t.unread ? "#bcdcd7" : "#e3e6e0"}`, borderRadius: 13, padding: "11px 12px", cursor: "pointer" }}
+      style={{ display: "flex", gap: 11, background: "var(--hz-c-surface)", border: `1px solid ${t.unread ? "#bcdcd7" : "#e3e6e0"}`, borderRadius: 13, padding: "11px 12px", cursor: "pointer" }}
     >
       <div style={{ width: 38, height: 38, flex: "none", borderRadius: "50%", background: avColor(who), color: "#fff", fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
         {initials(who)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: t.unread ? 800 : 600, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{who}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: t.unread ? 800 : 600, color: "var(--hz-c-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{who}</span>
           {t.starred && (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="#d8a85a" stroke="#d8a85a" strokeWidth="1.5" style={{ flex: "none" }}>
               <path d="M12 2l3 6 6 .9-4.5 4.3 1 6-5.5-3-5.5 3 1-6L3 8.9 9 8Z" />
             </svg>
           )}
-          <span className="money" style={{ fontSize: 10, color: "#9aa093", flex: "none", whiteSpace: "nowrap" }}>{fmtTime(t.lastMessageAt)}</span>
+          <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", flex: "none", whiteSpace: "nowrap" }}>{fmtTime(t.lastMessageAt)}</span>
         </div>
-        <div style={{ fontSize: 12.5, fontWeight: t.unread ? 700 : 500, color: "#11140f", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ fontSize: 12.5, fontWeight: t.unread ? 700 : 500, color: "var(--hz-c-ink)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {t.lastDirection === "outbound" ? "You: " : ""}
           {t.subject}
-          {t.messageCount > 1 && <span style={{ color: "#9aa093", fontWeight: 600 }}> ({t.messageCount})</span>}
+          {t.messageCount > 1 && <span style={{ color: "var(--hz-c-ink-soft)", fontWeight: 600 }}> ({t.messageCount})</span>}
         </div>
-        <div style={{ fontSize: 11.5, color: "#767b6e", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.lastSnippet}</div>
+        <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.lastSnippet}</div>
         {t.labels.length > 0 && (
           <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
             {t.labels.map((l) => {
@@ -653,7 +653,7 @@ function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, s
           </div>
         )}
       </div>
-      {t.unread && <span style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: "#16695f", marginTop: 6 }} />}
+      {t.unread && <span style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: "var(--hz-c-primary)", marginTop: 6 }} />}
     </div>
   );
 }
@@ -901,7 +901,7 @@ function MailThread({
               onClick={trash}
               disabled={busy}
               className="tinybtn"
-              style={{ height: 22, padding: "0 9px", background: "#fbf1f0", borderColor: "#e3c4c1", color: "#b23a3a" }}
+              style={{ height: 22, padding: "0 9px", background: "#fbf1f0", borderColor: "#e3c4c1", color: "var(--hz-c-err)" }}
             >
               {trashed ? "Restore" : "Trash"}
             </button>
@@ -953,14 +953,14 @@ function MailThread({
             <button
               onClick={() => onCompose("replyall")}
               className="btn"
-              style={{ flex: 1, fontSize: 13.5, padding: "13px 6px", background: "#fff", color: "#16695f", border: "1.5px solid #16695f" }}
+              style={{ flex: 1, fontSize: 13.5, padding: "13px 6px", background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1.5px solid var(--hz-c-primary)" }}
             >
               Reply all
             </button>
             <button
               onClick={() => onCompose("forward")}
               className="btn"
-              style={{ flex: 1, fontSize: 13.5, padding: "13px 6px", background: "#fff", color: "#16695f", border: "1.5px solid #16695f" }}
+              style={{ flex: 1, fontSize: 13.5, padding: "13px 6px", background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1.5px solid var(--hz-c-primary)" }}
             >
               Forward
             </button>
@@ -1016,7 +1016,7 @@ function LabelPicker({
               key={l.id}
               onClick={() => onPick(l.name)}
               className="tinybtn"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", background: "#fff", fontSize: 12.5 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", background: "var(--hz-c-surface)", fontSize: 12.5 }}
             >
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: l.color || "#767b6e", flex: "none" }} />
               {l.name}
@@ -1061,21 +1061,21 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f" }}>{who}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>{who}</span>
           {!out && m.fromAddress && (
-            <span style={{ fontSize: 10, color: "#9aa093", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fromAddress}</span>
+            <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fromAddress}</span>
           )}
           {deliveryLabel(m.deliveryStatus) && (
             <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: m.deliveryStatus === "failed" ? "#b42318" : "#b54708" }}>{deliveryLabel(m.deliveryStatus)}</span>
           )}
-          <span style={{ fontSize: 10, color: "#9aa093", marginLeft: "auto", flex: "none" }}>{fmtMsgTime(m)}</span>
+          <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginLeft: "auto", flex: "none" }}>{fmtMsgTime(m)}</span>
         </div>
         {rawHtml ? (
-          <div style={{ background: out ? "#e1efed" : "#f4f6f3", borderRadius: 11, padding: "6px 8px", marginTop: 5 }}>
+          <div style={{ background: out ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface-2)", borderRadius: 11, padding: "6px 8px", marginTop: 5 }}>
             <HtmlBody html={rawHtml} attachments={atts} />
           </div>
         ) : (
-          <div style={{ fontSize: 13, lineHeight: 1.6, color: "#414539", marginTop: 5, background: out ? "#e1efed" : "#f4f6f3", borderRadius: 11, padding: "11px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--hz-c-ink-secondary)", marginTop: 5, background: out ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface-2)", borderRadius: 11, padding: "11px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {plain || "(empty)"}
           </div>
         )}
@@ -1172,14 +1172,14 @@ function AttachmentChip({ a }: { a: Attachment }) {
   return (
     <div
       onClick={open}
-      style={{ border: "1px solid #e3e6e0", borderRadius: 11, padding: "10px 12px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}
+      style={{ border: "1px solid var(--hz-c-border-subtle)", borderRadius: 11, padding: "10px 12px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 8 12 17a4 4 0 0 1-6-6l9-9a3 3 0 0 1 4 4l-9 9" />
       </svg>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.filename}</span>
-      {a.sizeBytes > 0 && <span style={{ fontSize: 10.5, color: "#9aa093", flex: "none" }}>{fmtBytes(a.sizeBytes)}</span>}
-      <span style={{ fontSize: 11, fontWeight: 700, color: "#a16a2e", flex: "none" }}>Download</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: "var(--hz-c-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.filename}</span>
+      {a.sizeBytes > 0 && <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", flex: "none" }}>{fmtBytes(a.sizeBytes)}</span>}
+      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--hz-c-accent)", flex: "none" }}>Download</span>
     </div>
   );
 }
@@ -1342,7 +1342,7 @@ function AttachRow({
         </div>
       )}
       {error && (
-        <p role="alert" style={{ fontSize: 11, color: "#b23a3a", marginTop: 6 }}>{error}</p>
+        <p role="alert" style={{ fontSize: 11, color: "var(--hz-c-err)", marginTop: 6 }}>{error}</p>
       )}
     </div>
   );
@@ -1657,9 +1657,9 @@ function OutboxList({ q }: { q: string }) {
 
   return (
     <>
-      <div style={{ fontSize: 11, color: "#767b6e", padding: "0 2px 9px" }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", padding: "0 2px 9px" }}>
         {counts.sent} sent &middot;{" "}
-        <span style={{ color: counts.failed > 0 ? "#B91C1C" : "#767b6e", fontWeight: counts.failed > 0 ? 800 : 400 }}>
+        <span style={{ color: counts.failed > 0 ? "#B91C1C" : "var(--hz-c-ink-muted)", fontWeight: counts.failed > 0 ? 800 : 400 }}>
           {counts.failed} failed
         </span>{" "}
         &middot; {counts.pending} pending
@@ -1677,28 +1677,28 @@ function OutboxList({ q }: { q: string }) {
               <div
                 key={it.id}
                 onClick={() => setOpenId(it.id)}
-                style={{ background: "#fff", border: `1px solid ${it.status === "FAILED" ? "#e3c4c1" : "#e3e6e0"}`, borderRadius: 13, padding: "11px 12px", cursor: "pointer" }}
+                style={{ background: "var(--hz-c-surface)", border: `1px solid ${it.status === "FAILED" ? "#e3c4c1" : "#e3e6e0"}`, borderRadius: 13, padding: "11px 12px", cursor: "pointer" }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "var(--hz-c-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {it.toAddress || "(no recipient)"}
                   </span>
-                  <span className="money" style={{ fontSize: 10, color: "#9aa093", flex: "none", whiteSpace: "nowrap" }}>
+                  <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", flex: "none", whiteSpace: "nowrap" }}>
                     {fmtTime(it.sentAt || it.createdAt)}
                   </span>
                 </div>
-                <div style={{ fontSize: 12.5, fontWeight: 500, color: "#11140f", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--hz-c-ink)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {it.subject}
                 </div>
                 {it.snippet && (
-                  <div style={{ fontSize: 11.5, color: "#767b6e", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {it.snippet}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 5, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
                   <span className="rbadge" style={{ background: bg, color: fg }}>{outboxLabel(it.status)}</span>
                   {it.attempts > 0 && (
-                    <span style={{ fontSize: 10.5, color: "#9aa093" }}>
+                    <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
                       {it.attempts} attempt{it.attempts === 1 ? "" : "s"}
                     </span>
                   )}
@@ -1770,23 +1770,23 @@ function OutboxSheet({ id, onClose }: { id: string; onClose: () => void }) {
             <div style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)", marginBottom: 6, lineHeight: 1.25 }}>{data.subject}</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
               <span className="rbadge" style={{ background: bg, color: fg }}>{outboxLabel(data.status)}</span>
-              <span style={{ fontSize: 11, color: "#767b6e" }}>To {data.toAddress || "(no recipient)"}</span>
-              <span style={{ fontSize: 11, color: "#9aa093" }}>
+              <span style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>To {data.toAddress || "(no recipient)"}</span>
+              <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>
                 {data.sentAt ? `Sent ${fmtDateTime(new Date(data.sentAt))}` : `Queued ${data.createdAt ? fmtDateTime(new Date(data.createdAt)) : "—"}`}
               </span>
               {data.attachmentNames.length > 0 && (
-                <span style={{ fontSize: 11, color: "#9aa093" }}>&middot; {data.attachmentNames.join(", ")}</span>
+                <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>&middot; {data.attachmentNames.join(", ")}</span>
               )}
             </div>
             {data.status === "FAILED" && data.lastError && (
-              <div style={{ background: "#fbf1f0", border: "1px solid #e3c4c1", borderRadius: 11, padding: "9px 11px", fontSize: 11.5, color: "#b23a3a", marginBottom: 10, wordBreak: "break-word" }}>
+              <div style={{ background: "#fbf1f0", border: "1px solid #e3c4c1", borderRadius: 11, padding: "9px 11px", fontSize: 11.5, color: "var(--hz-c-err)", marginBottom: 10, wordBreak: "break-word" }}>
                 Error: {data.lastError}
               </div>
             )}
             {data.bodyHtml ? (
               <HtmlBody html={data.bodyHtml} attachments={[]} />
             ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#414539", background: "#f4f6f3", borderRadius: 11, padding: "11px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--hz-c-ink-secondary)", background: "var(--hz-c-surface-2)", borderRadius: 11, padding: "11px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                 {data.bodyText || "(no content)"}
               </div>
             )}

@@ -123,8 +123,8 @@ export function MobileSkuPicker({
         <div className="grab" />
         <div className="sheet-head">
           <div>
-            <div className="ey" style={{ color: "#a16a2e" }}>Catalog</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Pick a product</div>
+            <div className="ey" style={{ color: "var(--hz-c-accent)" }}>Catalog</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2 }}>Pick a product</div>
           </div>
           <button className="sheet-x" onClick={onClose}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
@@ -156,13 +156,13 @@ export function MobileSkuPicker({
 
         <div className="sheet-scroll" style={{ gap: 7 }}>
           {!gateOpen ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>Type at least 2 characters, or pick a category, to browse the catalog.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>Type at least 2 characters, or pick a category, to browse the catalog.</div>
           ) : productsQ.isLoading ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>Loading catalog{"…"}</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>Loading catalog{"…"}</div>
           ) : productsQ.isError ? (
-            <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "28px 0" }}>Couldn{"’"}t load the catalog. Pull down and try again.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-err)", fontSize: 12, padding: "28px 0" }}>Couldn{"’"}t load the catalog. Pull down and try again.</div>
           ) : rows.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>No products match{search.trim() ? ` "${search.trim()}"` : ""}.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>No products match{search.trim() ? ` "${search.trim()}"` : ""}.</div>
           ) : (
             <>
             {shown.map((p) => {
@@ -195,7 +195,7 @@ export function MobileSkuPicker({
                   style={{
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     border: `1px solid ${isOn ? "#0c3f39" : "rgba(34,31,32,.12)"}`, borderRadius: 11,
-                    background: isOn ? "#f0f6f2" : "#fff",
+                    background: isOn ? "#f0f6f2" : "var(--hz-c-surface)",
                     padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
                     display: "flex", alignItems: "center", gap: 10,
                   }}
@@ -206,7 +206,7 @@ export function MobileSkuPicker({
                       style={{
                         flex: "none", width: 18, height: 18, borderRadius: 5,
                         border: `1.6px solid ${isOn ? "#0c3f39" : "rgba(34,31,32,.28)"}`,
-                        background: isOn ? "#0c3f39" : "#fff",
+                        background: isOn ? "#0c3f39" : "var(--hz-c-surface)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}
                     >
@@ -224,18 +224,18 @@ export function MobileSkuPicker({
                       row's full width and WRAPS instead of truncating; category
                       stays available as the chip filter above. skuOf() still
                       binds p.code / p.category on tap — display-only change. */}
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#11140f", overflowWrap: "anywhere" }}>{p.name}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)", overflowWrap: "anywhere" }}>{p.name}</span>
                   {repeatable && count > 0 && (
                     <>
-                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "#0c3f39" }}>{"×"}{count}</span>
+                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{"×"}{count}</span>
                       <span
                         role="button"
                         aria-label={`Remove one ${p.name}`}
                         onClick={(e) => { e.stopPropagation(); setPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
                         style={{
                           flex: "none", width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(34,31,32,.2)",
-                          background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 16, fontWeight: 800, color: "#11140f",
+                          background: "var(--hz-c-surface)", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)",
                         }}
                       >
                         {"−"}
@@ -246,7 +246,7 @@ export function MobileSkuPicker({
               );
             })}
             {hiddenCount > 0 && (
-              <div style={{ textAlign: "center", color: "#9aa093", fontSize: 11, padding: "10px 0 4px" }}>
+              <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 11, padding: "10px 0 4px" }}>
                 Showing the first {RENDER_CAP} of {rows.length} products — narrow by search or category.
               </div>
             )}
@@ -256,7 +256,7 @@ export function MobileSkuPicker({
 
         {multi && (
           <div className="sheet-foot">
-            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: picked.length ? "#11140f" : "#9aa093" }}>
+            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: picked.length ? "var(--hz-c-ink)" : "var(--hz-c-ink-soft)" }}>
               {picked.length} selected
             </span>
             <button

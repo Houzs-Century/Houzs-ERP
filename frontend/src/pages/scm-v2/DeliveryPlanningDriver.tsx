@@ -35,7 +35,7 @@ export function DeliveryPlanningDriver() {
     height: "100%",
     overflow: "hidden",
     borderRadius: 14,
-    border: "1px solid #d6d9d2",
+    border: "1px solid var(--hz-c-border)",
     boxShadow: "0 6px 24px rgba(17,24,16,.12)",
   };
 

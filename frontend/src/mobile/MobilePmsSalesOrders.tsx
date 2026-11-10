@@ -14,9 +14,9 @@ import {
 } from "../pages/projects/projectSalesOrders";
 
 const LABEL: React.CSSProperties = {
-  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093",
+  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
-const MUTED: React.CSSProperties = { fontSize: 12, color: "#9aa093" };
+const MUTED: React.CSSProperties = { fontSize: 12, color: "var(--hz-c-ink-soft)" };
 
 export function MobilePmsSalesOrders({
   projectId,
@@ -47,13 +47,13 @@ export function MobilePmsSalesOrders({
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 6px" }}>
         <span style={LABEL}>Sales orders (SO module)</span>
         {s && (
-          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#414539" }}>
+          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>
             {s.count} · {formatCurrency(s.openedRm)}
           </span>
         )}
       </div>
       {s && s.finalTotalRm != null && (
-        <div style={{ fontSize: 11, color: "#414539", margin: "0 0 6px" }}>
+        <div style={{ fontSize: 11, color: "var(--hz-c-ink-secondary)", margin: "0 0 6px" }}>
           Final total {formatCurrency(s.finalTotalRm)}
           {gap && <span style={{ color: gap.color, fontWeight: 700 }}> · {gap.text}</span>}
         </div>
@@ -72,7 +72,7 @@ export function MobilePmsSalesOrders({
       ) : rows.length === 0 ? (
         <div style={MUTED}>No sales orders linked to this event were found in the SO module.</div>
       ) : (
-        <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10, overflow: "hidden" }}>
           {rows.map((r, i) => (
             <div
               key={r.doc_no}
@@ -81,12 +81,12 @@ export function MobilePmsSalesOrders({
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <Link
                   to={`/scm/sales-orders/${encodeURIComponent(r.doc_no)}`}
-                  style={{ fontSize: 12, fontWeight: 700, color: "#16695f", textDecoration: "none" }}
+                  style={{ fontSize: 12, fontWeight: 700, color: "var(--hz-c-primary)", textDecoration: "none" }}
                 >
                   {r.doc_no}
                 </Link>
-                <span style={{ flex: 1, minWidth: 80, fontSize: 12, color: "#414539" }}>{r.customer_name || "—"}</span>
-                <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "#2f8a5b" }}>{fmtSen(r.amount_sen)}</span>
+                <span style={{ flex: 1, minWidth: 80, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>{r.customer_name || "—"}</span>
+                <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "var(--hz-c-synced)" }}>{fmtSen(r.amount_sen)}</span>
               </div>
               <div style={{ ...MUTED, fontSize: 11, marginTop: 2 }}>
                 {r.so_date ? formatDate(r.so_date) : "—"} · {r.ref || "no ref"} · {r.salesperson_name || "—"} · {soStatusLabel(r.status)}

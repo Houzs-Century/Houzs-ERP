@@ -454,7 +454,7 @@ const TYPE_META: Record<
   grn: {
     label: "GRNs",
     icon: <PackageCheck size={13} />,
-    tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+    tile: "bg-[color:var(--hz-dk-secondary-a,#2F5D4F)]/[.14] text-[color:var(--hz-dk-secondary-a,#2F5D4F)]",
   },
   delivery_order: {
     label: "Delivery Orders",
@@ -489,7 +489,7 @@ const TYPE_META: Record<
   user: {
     label: "Users",
     icon: <Users size={13} />,
-    tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+    tile: "bg-[color:var(--hz-dk-secondary-a,#2F5D4F)]/[.14] text-[color:var(--hz-dk-secondary-a,#2F5D4F)]",
   },
   supplier: {
     label: "Suppliers",
@@ -509,7 +509,7 @@ const TYPE_META: Record<
   receipt: {
     label: "Receipts",
     icon: <Receipt size={13} />,
-    tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+    tile: "bg-[color:var(--hz-dk-secondary-a,#2F5D4F)]/[.14] text-[color:var(--hz-dk-secondary-a,#2F5D4F)]",
   },
   delivery_return: {
     label: "Delivery Returns",

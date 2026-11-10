@@ -720,7 +720,7 @@ function DetailDrawer({
                         variant="ghost"
                         icon={<Trash2 size={14} />}
                         onClick={onDiscard}
-                        style={{ color: "var(--c-festive-b, #B8331F)" }}
+                        style={{ color: "var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))" }}
                       >
                         {DISCARD_DRAFT_LABEL}
                       </Button>

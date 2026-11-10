@@ -21,9 +21,9 @@ export function useMobileProjectSalesBills(projectId: number, enabled: boolean):
 }
 
 const LABEL: React.CSSProperties = {
-  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093",
+  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
-const MUTED: React.CSSProperties = { fontSize: 12, color: "#9aa093" };
+const MUTED: React.CSSProperties = { fontSize: 12, color: "var(--hz-c-ink-soft)" };
 const TONE_COLOR = { red: "#b42318", green: "#2f8a5b", amber: "#8a4e0e", grey: "#9aa093" } as const;
 
 export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQuery }) {
@@ -38,13 +38,13 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 6px" }}>
         <span style={LABEL}>Sales report (chat)</span>
         {totals && totals.count > 0 && (
-          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#414539" }}>
+          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>
             {totals.count} · {fmtRmSen(totals.amount_sen)}
           </span>
         )}
       </div>
       {totals && totals.count > 0 && (
-        <div style={{ fontSize: 11, color: "#414539", margin: "0 0 6px" }}>
+        <div style={{ fontSize: 11, color: "var(--hz-c-ink-secondary)", margin: "0 0 6px" }}>
           Opened {totals.opened_count} · {fmtRmSen(totals.opened_sen)}
           <span style={{ color: totals.not_opened_sen > 0 ? TONE_COLOR.red : TONE_COLOR.green, fontWeight: 700 }}>
             {" "}· Not opened {totals.not_opened_count} · {fmtRmSen(totals.not_opened_sen)}
@@ -65,15 +65,15 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
       ) : totals && bills.length === 0 ? (
         <div style={{ fontSize: 12, color: TONE_COLOR.green }}>All {totals.count} bill{totals.count === 1 ? "" : "s"} are opened as Sales Orders under this event — listed below.</div>
       ) : bills.length > 0 ? (
-        <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10, overflow: "hidden" }}>
           {bills.map((b, i) => {
             const st = billStatusLabel(b.match);
             return (
               <div key={b.key} style={{ padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "#11140f" }}>{b.ref_raw}</span>
-                  <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: "#414539" }}>{b.salesperson_name || "—"}</span>
-                  <span className="money" style={{ fontSize: 12, fontWeight: 700, color: st.tone === "red" ? TONE_COLOR.red : "#2f8a5b" }}>{fmtRmSen(b.amount_sen)}</span>
+                  <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "var(--hz-c-ink)" }}>{b.ref_raw}</span>
+                  <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>{b.salesperson_name || "—"}</span>
+                  <span className="money" style={{ fontSize: 12, fontWeight: 700, color: st.tone === "red" ? TONE_COLOR.red : "var(--hz-c-synced)" }}>{fmtRmSen(b.amount_sen)}</span>
                 </div>
                 <div style={{ ...MUTED, fontSize: 11, marginTop: 2 }}>
                   {b.report_date ? formatDate(b.report_date) : "—"} ·{" "}
@@ -81,7 +81,7 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
                   {b.match.so_doc_no && (
                     <>
                       {" "}·{" "}
-                      <Link to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`} style={{ color: "#16695f", fontWeight: 700, textDecoration: "underline" }}>
+                      <Link to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`} style={{ color: "var(--hz-c-primary)", fontWeight: 700, textDecoration: "underline" }}>
                         {b.match.so_doc_no}
                       </Link>
                     </>

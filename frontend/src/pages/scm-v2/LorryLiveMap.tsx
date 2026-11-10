@@ -86,7 +86,7 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
         {q.isLoading ? (
           <p className="text-[13px] text-ink-muted">Loading positions…</p>
         ) : q.isError ? (
-          <p className="text-[13px] text-red-600">Could not load positions. Refresh to try again.</p>
+          <p className="text-[13px] text-red-600 dark:text-red-300">Could not load positions. Refresh to try again.</p>
         ) : positions.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border bg-surface-dim px-4 py-6 text-center text-[13px] text-ink-muted">
             No lorry positions in the last 24 hours.
@@ -115,7 +115,7 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
                   {positions.map((p) => (
                     <tr key={p.lorry_id} className="border-t border-border">
                       <td className="px-3 py-2 font-semibold text-ink">{p.plate}</td>
-                      <td className={isStale(p) ? 'px-3 py-2 text-amber-600' : 'px-3 py-2 text-ink-secondary'}>
+                      <td className={isStale(p) ? 'px-3 py-2 text-amber-600 dark:text-amber-300' : 'px-3 py-2 text-ink-secondary'}>
                         {ago(p.recorded_at)}
                         <span className="ml-1 text-ink-muted">({fmtTime(p.recorded_at)})</span>
                       </td>

@@ -2,9 +2,9 @@
    underline, tabular figures — Money out's own look (MoneyOut.module.css .docLink). */
 .docLink {
   font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; white-space: nowrap; font-variant-numeric: tabular-nums;
-  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hz-dk-ink-soft, #a9ada3);
 }
-.docLink:hover { color: #16695f; text-decoration-color: #16695f; }
+.docLink:hover { color: var(--hz-c-primary); text-decoration-color: var(--hz-c-primary); }
 /* A cancelled document's number is struck through (index.css dt-cancel-strike, owner
    2026-10-06); the dotted underline above must not hide it. */
 .docLink:global(.dt-cancel-strike), .docLink:global(.dt-cancel-strike):hover {

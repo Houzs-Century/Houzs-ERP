@@ -28,7 +28,7 @@ import { todayMyt } from "../../../vendor/scm/lib/dates";
 import { OffRoadPanel } from "../../fleet/OffRoadPanel";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
-  expired: "bg-[#f6dcdc] text-[#8a2c2c]", critical: "bg-[#f6dcdc] text-[#8a2c2c]",
+  expired: "bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]", critical: "bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]",
   warning: "bg-[#f6ecd4] text-[#80501c]", ok: "bg-[#dcebe3] text-[#1f5c43]", none: "bg-surface-2 text-ink-muted",
 };
 const DOCS = [
@@ -124,7 +124,7 @@ function RoadThisMonth({ lorryId }: { lorryId: string }) {
   const m = rows.reduce((a, r) => a + r.distanceM, 0), s = rows.reduce((a, r) => a + r.durationS, 0);
   return (
     <Card title="Google this month">
-      {road.isError ? <p className="text-[12.5px] text-[#8a2c2c]">Road figures could not be loaded.</p>
+      {road.isError ? <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">Road figures could not be loaded.</p>
         : rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No run worked out yet this month.</p>
         : <div className="grid grid-cols-3 gap-2 text-[12.5px]">
             <div className="rounded-lg bg-surface-2 p-2.5"><div className="text-[11px] text-ink-muted">Google km</div><div className="text-[16px] font-semibold">{fmtKm(m)}</div></div>
@@ -202,7 +202,7 @@ function LorryEndActions({ lorry, onDeleted }: { lorry: LorryRow; onDeleted: () 
           : { title: `Use ${lorry.plate} again?`, confirmLabel: "Use again" }).then((ok) => { if (ok) update.mutate({ id: lorry.id, active: !lorry.active }, { onError: writeFailedAs("The lorry was not changed") }); }); }}>
         {lorry.active ? "Stop using this lorry" : "Use this lorry again"}
       </button>
-      <button type="button" className="min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[#8a2c2c]"
+      <button type="button" className="min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]"
         onClick={() => { void confirm({ title: `Delete ${lorry.plate}?`, body: "This cannot be undone. A lorry with runs or records cannot be deleted; stop using it instead.", confirmLabel: "Delete", danger: true })
           .then((ok) => { if (ok) del.mutate(lorry.id, { onSuccess: onDeleted, onError: writeFailedAs("The lorry was not deleted") }); }); }}>
         Delete lorry
@@ -279,7 +279,7 @@ function LorryEdit({ lorry, warehouses, drivers, helpers, carriers, onDone }: {
         <label className={label}>Max value (RM)<input inputMode="decimal" placeholder="30000" value={f.maxRm} onChange={(e) => setF({ ...f, maxRm: e.target.value })} className={inputCls} /></label>
         <label className={label}>Full when<select value={f.layer} onChange={(e) => setF({ ...f, layer: e.target.value as CapacityLayer })} className={inputCls}>{CAPACITY_LAYERS.map((c) => <option key={c} value={c}>{CAPACITY_LAYER_LABEL[c]}</option>)}</select></label>
       </div>
-      {bad && <p className="text-[12.5px] text-[#8a2c2c]">Sizes and limits must be numbers of 0 or more.</p>}
+      {bad && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">Sizes and limits must be numbers of 0 or more.</p>}
       <div className="flex gap-2">
         <button type="button" disabled={bad || !f.plate.trim() || update.isPending} onClick={save} className="min-h-[40px] rounded-md bg-primary px-4 text-[13px] font-semibold text-white disabled:opacity-50">{update.isPending ? "Saving…" : "Save"}</button>
         <button type="button" onClick={onDone} className="min-h-[40px] px-3 text-[13px] text-ink">Cancel</button>

@@ -1164,7 +1164,7 @@ export function PurchaseInvoicesListV2() {
         if (!m) return <span className="text-[12px] text-ink-muted">…</span>;
         if (m.tone === "differs") {
           return (
-            <span className="text-[12px] font-semibold" style={{ color: "#a16a2e" }} title={`Net ${m.diffSen > 0 ? "+" : "−"}${fmtRm(Math.abs(m.diffSen))} against the purchase order prices. For reference only.`}>
+            <span className="text-[12px] font-semibold" style={{ color: "var(--hz-c-accent)" }} title={`Net ${m.diffSen > 0 ? "+" : "−"}${fmtRm(Math.abs(m.diffSen))} against the purchase order prices. For reference only.`}>
               {m.label}
             </span>
           );

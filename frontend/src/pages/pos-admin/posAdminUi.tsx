@@ -6,7 +6,7 @@ export const inputCls = "h-8 w-full rounded-md border border-border bg-surface p
 export const smallBtn = "inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-[11px] font-semibold disabled:opacity-50";
 export const primaryBtn = cn(smallBtn, "border-accent bg-accent text-white hover:bg-accent/90");
 export const ghostBtn = cn(smallBtn, "border-border bg-surface text-ink hover:bg-bg");
-export const dangerBtn = cn(smallBtn, "border-rose-500/40 bg-rose-50 text-rose-800 hover:bg-rose-100");
+export const dangerBtn = cn(smallBtn, "border-rose-500/40 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40");
 
 export function Field({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return (
@@ -32,10 +32,10 @@ export function Toggle({ checked, onChange, label, hint, disabled }: { checked: 
 
 export function Pill({ tone, children }: { tone: "ok" | "warn" | "bad" | "info" | "muted"; children: ReactNode }) {
   const cls = {
-    ok: "bg-emerald-100 text-emerald-800",
-    warn: "bg-amber-100 text-amber-800",
-    bad: "bg-rose-100 text-rose-800",
-    info: "bg-sky-100 text-sky-800",
+    ok: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300",
+    warn: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
+    bad: "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300",
+    info: "bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300",
     muted: "bg-bg text-ink-muted border border-border",
   }[tone];
   return <span className={cn("inline-flex rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider", cls)}>{children}</span>;

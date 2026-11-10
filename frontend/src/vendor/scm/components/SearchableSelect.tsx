@@ -278,7 +278,7 @@ export function SearchableSelect({
               margin: 0,
               padding: 4,
               listStyle: "none",
-              background: "var(--c-paper, #fff)",
+              background: "var(--c-paper, var(--hz-c-surface))",
               border: "1px solid var(--line, #dcdcd2)",
               borderRadius: 8,
               boxShadow: "0 10px 28px rgba(17, 20, 15, 0.14)",

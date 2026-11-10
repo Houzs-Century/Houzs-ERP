@@ -78,7 +78,7 @@ export function MobileFieldPin({ userId, memberName }: { userId: number; memberN
   const line = { fontSize: 12.5, color: "#5f6358", margin: "0 2px 8px" } as const;
   return (
     <div style={{ marginBottom: 13 }}>
-      <div className="ey" style={{ color: "#767b6e", margin: "4px 2px 6px" }}>Crew PIN sign-in</div>
+      <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "4px 2px 6px" }}>Crew PIN sign-in</div>
       {loadError ? (
         <div style={line}>
           Could not check the crew PIN.{" "}

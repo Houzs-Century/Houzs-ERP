@@ -56,14 +56,14 @@ export function SoSearchField({ value, onChange }: { value: string; onChange: (v
         style={{ width: "100%", boxSizing: "border-box" }}
       />
       {open && (
-        <div className="hz-scroll" style={{ position: "absolute", left: 0, right: 0, top: "100%", marginTop: 4, zIndex: 30, border: `1px solid ${DIM}`, borderRadius: 10, background: "#fff", maxHeight: 190, overflowY: "auto", boxShadow: "0 10px 24px -10px rgba(17,24,16,.35)" }}>
+        <div className="hz-scroll" style={{ position: "absolute", left: 0, right: 0, top: "100%", marginTop: 4, zIndex: 30, border: `1px solid ${DIM}`, borderRadius: 10, background: "var(--hz-c-surface)", maxHeight: 190, overflowY: "auto", boxShadow: "0 10px 24px -10px rgba(17,24,16,.35)" }}>
           {loading && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>Searching…</div>}
           {!loading && !results.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
           {results.map((hit, i) => (
             <button
               key={String(get(hit, "docNo", "doc_no")) + i}
               onMouseDown={(e) => { e.preventDefault(); onChange(String(get(hit, "docNo", "doc_no") ?? "")); setFocused(false); }}
-              style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "#fff", padding: "9px 11px", cursor: "pointer" }}
+              style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "var(--hz-c-surface)", padding: "9px 11px", cursor: "pointer" }}
             >
               <div className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(hit, "docNo", "doc_no"))}</div>
               <div style={{ fontSize: 11, color: MUTED, ...cellEllipsis }}>{String(get(hit, "debtorName", "debtor_name") ?? "—")}{get(hit, "phone") ? ` · ${formatPhone(get(hit, "phone"))}` : ""}</div>

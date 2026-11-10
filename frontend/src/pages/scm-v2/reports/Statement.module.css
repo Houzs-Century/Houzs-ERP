@@ -74,7 +74,7 @@
 .pct { flex: none; width: 44px; text-align: right; font-size: 11px; font-weight: 500; color: #8a8f84; }
 .colRule { border-right: 1px solid var(--fin-rule-soft); }
 .colTotal { background: var(--fin-row); }
-.headCell.colTotal { background: #eceee9; }
+.headCell.colTotal { background: var(--hz-dk-surface-2, #eceee9); }
 .colTotal.colRule { border-right: 1.5px solid var(--fin-line); }
 
 /* ── Columns under a shared heading (the Cash Flow's Settlement | Deposit; owner
@@ -102,7 +102,7 @@
 .table tbody tr { background: var(--fin-surface); }
 .table tbody tr > * { border-bottom: 1px solid var(--fin-rule-soft); }
 .rowAccount > *, .rowCategory > *, .rowMuted > * { height: 30px; }
-.rowAccount:hover, .rowCategory:hover { background: #f6faf9; }
+.rowAccount:hover, .rowCategory:hover { background: var(--hz-dk-primary-soft, #f6faf9); }
 .rowCategory { font-weight: 600; }
 .rowMuted { font-style: italic; color: var(--fin-muted); }
 .rowBlock > * { padding-top: 12px; padding-bottom: 4px; font-weight: 700; font-size: 12px; letter-spacing: 0.02em; color: var(--fin-ink); }
@@ -114,10 +114,10 @@
 .rowFinal > * { height: 36px; border-top: 1.5px solid var(--fin-petrol-ink); border-bottom: 3px double var(--fin-petrol-ink); }
 
 /* ── An account's lines, opened under its row ── */
-.linesRow > td { padding: 0; border-bottom: 1px solid #d3e7e3; }
+.linesRow > td { padding: 0; border-bottom: 1px solid var(--hz-dk-primary-line, #d3e7e3); }
 .lines {
   position: sticky; left: 0; box-sizing: border-box; width: var(--st-visible, 100%); max-width: 100%;
-  padding: 10px 16px 14px 34px; background: #f6faf9; border-top: 1px solid #d3e7e3; box-shadow: inset 3px 0 0 var(--fin-petrol);
+  padding: 10px 16px 14px 34px; background: var(--hz-dk-primary-soft, #f6faf9); border-top: 1px solid var(--hz-dk-primary-line, #d3e7e3); box-shadow: inset 3px 0 0 var(--fin-petrol);
   font-style: normal; font-weight: 400;
 }
 .linesHead { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: var(--fin-ink); }

@@ -226,7 +226,7 @@ export function MediaLightbox({
             <iframe
               src={url}
               title={item.caption || "PDF"}
-              className="h-[88vh] w-[92vw] max-w-[1000px] rounded bg-white shadow-2xl"
+              className="h-[88vh] w-[92vw] max-w-[1000px] rounded bg-surface shadow-2xl"
             />
           ) : (
             <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 text-white/60">

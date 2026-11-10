@@ -49,17 +49,17 @@ export const AddSupplierBinding = ({ productCode, productName }: { productCode: 
   };
 
   const cta: React.CSSProperties = {
-    fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--c-burnt, #0c3f39)',
-    background: 'transparent', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)',
+    fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--c-burnt, var(--hz-c-primary-ink))',
+    background: 'transparent', border: '1px solid var(--hz-c-border-strong)', borderRadius: 'var(--radius-sm)',
     padding: '5px 11px', cursor: 'pointer',
   };
   const inputBox: React.CSSProperties = {
-    background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)',
+    background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border-strong)', borderRadius: 'var(--radius-sm)',
     padding: '4px 8px', fontSize: 'var(--fs-13)', outline: 'none',
   };
   const fieldLabel: React.CSSProperties = {
     fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase',
-    letterSpacing: '0.04em', color: '#767b6e', marginBottom: 4, display: 'block',
+    letterSpacing: '0.04em', color: 'var(--hz-c-ink-muted)', marginBottom: 4, display: 'block',
   };
 
   if (!open) {
@@ -72,7 +72,7 @@ export const AddSupplierBinding = ({ productCode, productName }: { productCode: 
 
   const list = suppliers.data ?? [];
   return (
-    <div style={{ marginTop: 'var(--space-2)', padding: 'var(--space-3)', background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)' }}>
+    <div style={{ marginTop: 'var(--space-2)', padding: 'var(--space-3)', background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border-strong)', borderRadius: 'var(--radius-sm)' }}>
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 200 }}>
           <label style={fieldLabel}>Supplier</label>

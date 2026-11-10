@@ -107,7 +107,7 @@ function ToastCard({ item }: { item: ToastItem }) {
       : item.kind === "error"
       ? "text-err"
       : item.kind === "warning"
-      ? "text-amber-600"
+      ? "text-amber-600 dark:text-amber-300"
       : "text-accent";
   return (
     <div

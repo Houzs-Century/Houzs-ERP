@@ -33,7 +33,7 @@
 /* ── The question on an unsaved Close. ── */
 .ask {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 16px;
-  background: var(--fin-warn-bg); border-bottom: 1px solid #e5d6b3; font-size: 12.5px; color: #5a3a14;
+  background: var(--fin-warn-bg); border-bottom: 1px solid #e5d6b3; font-size: 12.5px; color: var(--hz-c-accent-ink);
 }
 .askIcon { flex: none; color: var(--fin-brass); }
 .askText { flex: 1; min-width: 240px; line-height: 1.45; }
@@ -129,6 +129,6 @@
 /* A picked-up row on its way (owner 2026-11-05): the bar stays above the tree while the page scrolls. */
 .parked {
   position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
-  margin: 0 16px 8px; padding: 8px 12px; border: 1px solid var(--fin-petrol-line, #b9d6d1); border-radius: 8px;
-  background: var(--fin-petrol-pale, #e1efed); color: var(--fin-petrol-ink, #0c3f39); font-size: 12.5px;
+  margin: 0 16px 8px; padding: 8px 12px; border: 1px solid var(--fin-petrol-line, var(--hz-dk-primary-line, #b9d6d1)); border-radius: 8px;
+  background: var(--fin-petrol-pale, var(--hz-c-primary-soft)); color: var(--fin-petrol-ink, var(--hz-c-primary-ink)); font-size: 12.5px;
 }

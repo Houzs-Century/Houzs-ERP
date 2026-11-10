@@ -29,7 +29,7 @@ export function StockTransferPodSection({ id }: { id: string }) {
     staleTime: 30_000,
   });
   if (q.isPending) return null;
-  if (q.error) return <div className="rounded-lg border border-border p-4 text-[12.5px] text-red-600">Delivery record could not load: {(q.error as Error).message}</div>;
+  if (q.error) return <div className="rounded-lg border border-border p-4 text-[12.5px] text-red-600 dark:text-red-300">Delivery record could not load: {(q.error as Error).message}</div>;
   if (!q.data.jobs.length) return null;
 
   return (

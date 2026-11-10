@@ -131,7 +131,7 @@ export function useChatSalesReport({
           <span
             className={cn(
               "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-              isCounted ? "border-emerald-600/40 bg-emerald-100 text-emerald-800" : "border-border bg-bg text-ink-muted",
+              isCounted ? "border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300" : "border-border bg-bg text-ink-muted",
             )}
             title={
               isCounted
@@ -148,7 +148,7 @@ export function useChatSalesReport({
             type="button"
             disabled={busy}
             onClick={() => void setTotal(a.id, summary.total_sen, summary.days_sen)}
-            className="rounded-full border border-emerald-600/40 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
+            className="rounded-full border border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800/50 disabled:opacity-50"
             title="Type this message's Total into the event's Total Sales (without transport or disposal)"
           >
             Set Total Sales = {fmtRmSen(summary.total_sen)}

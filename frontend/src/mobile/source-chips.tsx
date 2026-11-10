@@ -13,15 +13,15 @@ const rowStyle: CSSProperties = {
   flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4,
 };
 const eyebrowStyle: CSSProperties = {
-  fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093",
+  fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
 const solidChip: CSSProperties = {
-  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39",
+  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
   background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 const mutedChip: CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#5c6357",
-  background: "#f4f6f3", border: "1px solid #d9ded4", borderRadius: 5, padding: "1px 6px",
+  background: "var(--hz-c-surface-2)", border: "1px solid #d9ded4", borderRadius: 5, padding: "1px 6px",
 };
 /* Floating identity (Decision, docs/modules/purchase-order.md 2026-08-06: soft
    until DO): a live, recomputed-on-every-view allocation wears a dashed border.
@@ -144,7 +144,7 @@ export function SourcePosRowMobile({
     return (
       <div style={rowStyle}>
         <span style={eyebrowStyle}>{label}</span>
-        <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>
+        <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>—</span>
       </div>
     );
   }
@@ -354,7 +354,7 @@ export function PairedSoRowsMobile({
             <span title={r.title} style={r.chip}>
               {r.soDocNo}{r.floating ? " ~" : ""}
             </span>
-            <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
+            <span className="money" style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", fontWeight: 600 }}>
               {r.deliveryDate ? formatDate(r.deliveryDate) : "—"}
             </span>
             {r.dos.map((d) => (
@@ -366,8 +366,8 @@ export function PairedSoRowsMobile({
             <span
               style={{
                 fontSize: 9, fontWeight: 800, letterSpacing: ".4px", padding: "2px 8px", borderRadius: 20,
-                color: shipped ? "#16695f" : "#5c6357",
-                background: shipped ? "#e1efed" : "#f4f6f3",
+                color: shipped ? "var(--hz-c-primary)" : "#5c6357",
+                background: shipped ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface-2)",
               }}
               title={shipped
                 ? "Delivered — at least one Delivery Order has shipped this line's goods for this Sales Order"
@@ -388,7 +388,7 @@ export function PairedSoRowsMobile({
               >
                 {p.soDocNo}
               </span>
-              <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
+              <span className="money" style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", fontWeight: 600 }}>
                 {p.deliveryDate ? formatDate(p.deliveryDate) : "—"}
               </span>
             </span>

@@ -12,7 +12,7 @@ function MobileClaimAddress() {
   const offer = claim.offer;
   if (!offer || offer.address) return null;
   return (
-    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 12, background: "#f4f6f3", fontSize: 12, color: "#414539" }}>
+    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 12, background: "var(--hz-c-surface-2)", fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", marginBottom: 4 }}>Claim my address</div>
       <div style={{ marginBottom: 8 }}>Pick your company address. You can claim it once; an admin can change it later.</div>
       <div style={{ ...field, display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
@@ -63,9 +63,9 @@ export function MobileVisibility() {
   return (
     <>
     {!vis.myAddress && <MobileClaimAddress />}
-    <details style={{ marginBottom: 9, fontSize: 12, color: "#414539" }}>
+    <details style={{ marginBottom: 9, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>
       <summary style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", cursor: "pointer" }}>What may I see</summary>
-      <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 10, background: "#f4f6f3" }}>
+      <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 10, background: "var(--hz-c-surface-2)" }}>
         <div style={{ marginBottom: 6 }}>
           {LEVEL_LABEL[vis.level] ?? vis.level}
           {vis.manage ? "; you can also manage mailboxes." : "."}

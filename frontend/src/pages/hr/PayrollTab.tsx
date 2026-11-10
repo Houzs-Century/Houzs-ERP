@@ -21,7 +21,7 @@ import { generatePayslipPdf } from "./payslipPdf";
 const h2 = (n: number) => String(Math.round(n * 100) / 100);
 const statusPill = (s: Payslip["status"] | "ESTIMATE") =>
   s === "PAID" ? <Pill tone="ok">Paid</Pill> : s === "APPROVED" ? <Pill tone="info">Approved</Pill> : s === "DRAFT" ? <Pill tone="warn">Draft</Pill> : <Pill tone="muted">Estimate</Pill>;
-const pcbCell = (s: Payslip) => (s.pcbStatus === "DISABLED" ? <span className="text-ink-muted">--</span> : pcbHasFigure(s.pcbStatus) ? fmtSen(s.pcbSen) : <span title="Tax profile incomplete" className="text-amber-800">not computed</span>);
+const pcbCell = (s: Payslip) => (s.pcbStatus === "DISABLED" ? <span className="text-ink-muted">--</span> : pcbHasFigure(s.pcbStatus) ? fmtSen(s.pcbSen) : <span title="Tax profile incomplete" className="text-amber-800 dark:text-amber-300">not computed</span>);
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -179,7 +179,7 @@ export function PayrollTab() {
       </div>
 
       {d?.projected && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900">
+        <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11.5px] text-amber-900 dark:text-amber-300">
           An estimate from the hours so far: nothing is stored until Generate.{d.monthFinished ? "" : " Absences are counted only after the grace in Pay Rules, so the month will still move."}
         </div>
       )}
@@ -280,7 +280,7 @@ function SlipDrawer({ slip: s, projected, onClose }: { slip: Payslip; projected:
             </div>
           )}
           {s.detail.otDays.length > 0 && <div>OT: {s.detail.otDays.map((o) => `${formatDate(o.date)} ${o.hours}h${o.kind === "WEEKDAY" ? "" : o.kind === "SUNDAY" ? " Sun" : " PH"}`).join(", ")}</div>}
-          {!pcbHasFigure(s.pcbStatus) && s.pcbStatus !== "DISABLED" && <div className="text-amber-800">{s.detail.pcbNote}</div>}
+          {!pcbHasFigure(s.pcbStatus) && s.pcbStatus !== "DISABLED" && <div className="text-amber-800 dark:text-amber-300">{s.detail.pcbNote}</div>}
           <div>Paid by {s.paymentMethod === "CASH" ? "cash" : `${s.bankName ?? "bank"} ${s.bankAccount ?? ""}`}</div>
         </section>
       </div>

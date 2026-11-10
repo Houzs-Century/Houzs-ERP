@@ -7,52 +7,52 @@
 
 /* The list's card: the views and a line under them, then the table. */
 .card {
-  min-width: 0; background: #ffffff; border: 1px solid #d6d9d2; border-radius: 10px; color: #11140f; font-variant-numeric: tabular-nums;
+  min-width: 0; background: var(--hz-c-surface); border: 1px solid var(--hz-c-border); border-radius: 10px; color: var(--hz-c-ink); font-variant-numeric: tabular-nums;
   box-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
 }
 .cardTop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 16px 20px 0; }
 .cardBody { padding: 12px 20px 16px; overflow-x: auto; }
-.hint { font-size: 12.5px; color: #767b6e; }
+.hint { font-size: 12.5px; color: var(--hz-c-ink-muted); }
 
 /* The views: a segmented switch with a count on each (the design's chips). */
-.views { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; max-width: 100%; border-radius: 9px; background: #eef0ec; }
+.views { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; max-width: 100%; border-radius: 9px; background: var(--hz-c-bg); }
 .view {
   display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 0; border-radius: 7px; white-space: nowrap;
-  background: transparent; color: #5f6459; font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+  background: transparent; color: var(--hz-dk-ink-secondary, #5f6459); font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
 }
-.view:hover { color: #0c3f39; }
-.viewOn, .viewOn:hover { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+.view:hover { color: var(--hz-c-primary-ink); }
+.viewOn, .viewOn:hover { background: var(--hz-c-surface); color: var(--hz-c-primary-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
 .count {
   min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 999px;
-  font-size: 11px; font-weight: 600; color: #a9ada3; font-variant-numeric: tabular-nums;
+  font-size: 11px; font-weight: 600; color: var(--hz-dk-ink-soft, #a9ada3); font-variant-numeric: tabular-nums;
 }
-.countSome { background: #e3e6e0; color: #5b6055; }
-.countWarn { background: #f7f1e3; color: #7a5a1e; }
-.countLate { background: #fbeeee; color: #a83434; }
+.countSome { background: var(--hz-c-surface-dim); color: var(--hz-dk-ink-secondary, #5b6055); }
+.countWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
+.countLate { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-err, #a83434); }
 
 /* Status tags: 20px, 4px radius, 11/600. */
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
-.toneCalm { background: #f0f2ee; color: #5b6055; }
-.toneWarn { background: #f7f1e3; color: #7a5a1e; }
-.toneInfo { background: #eaf3f1; color: #1d5c54; }
-.toneLate { background: #fbeeee; color: #a83434; }
+.toneCalm { background: var(--hz-dk-surface-2, #f0f2ee); color: var(--hz-dk-ink-secondary, #5b6055); }
+.toneWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
+.toneInfo { background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); }
+.toneLate { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-err, #a83434); }
 .tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
 /* A code or number that is not a link: the page's own font with tabular
    figures — never monospace. */
 .code { font-variant-numeric: tabular-nums; }
 .money { font-weight: 600; font-variant-numeric: tabular-nums; }
-.muted { color: #767b6e; }
+.muted { color: var(--hz-c-ink-muted); }
 
 /* A supplier's name reads as the link that opens it (the design's Debtor
    maintenance: the name is the link); its row takes the click. */
 .nameLink {
   font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
-  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hz-dk-ink-soft, #a9ada3);
 }
-.nameLink:hover { color: #16695f; text-decoration-color: #16695f; }
+.nameLink:hover { color: var(--hz-c-primary); text-decoration-color: var(--hz-c-primary); }
 
 /* The marks inside a row (an official invoice's): petrol text buttons, 12/600. */
-.textBtn { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: #16695f; cursor: pointer; }
+.textBtn { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-primary); cursor: pointer; }
 .textBtn:hover:not(:disabled) { text-decoration: underline; }
 .textBtn:disabled { opacity: 0.55; cursor: default; }

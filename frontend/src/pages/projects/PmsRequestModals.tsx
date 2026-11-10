@@ -124,7 +124,7 @@ function Inner(props: PmsModalProps) {
       <Modal title="Request payment · 申请付款 — which file is the bill?" onClose={props.onClose} width="min(560px, 100%)" ariaLabel="Request payment — pick the bill">
         <div style={soft}>Tick the invoice Finance should pay — several files are one bill's pages. A proforma or quotation is fine; Finance marks it to follow up the actual invoice.</div>
         <FilePicker attachments={props.attachments} ticked={ticked} onTick={onTick} />
-        {problem && <div role="alert" style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>{problem}</div>}
+        {problem && <div role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-12)' }}>{problem}</div>}
         <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
           <Button variant="ghost" size="sm" onClick={props.onClose}>Cancel</Button>
           <Button variant="primary" size="sm" onClick={() => void next()} disabled={busy || chosen.length === 0}>{busy ? 'Fetching the file…' : 'Next — fill the request'}</Button>
@@ -159,7 +159,7 @@ function Inner(props: PmsModalProps) {
       {props.attachments.length > 0
         ? <FilePicker attachments={props.attachments} ticked={ticked} onTick={onTick} />
         : <div style={soft}>No file on this row yet.</div>}
-      {problem && <div role="alert" style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>{problem}</div>}
+      {problem && <div role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-12)' }}>{problem}</div>}
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
         <Button variant="ghost" size="sm" onClick={props.onClose}>Cancel</Button>
         <Button variant="primary" size="sm" onClick={() => void send()} disabled={busy || upload.isPending || chosen.length === 0}>{busy || upload.isPending ? 'Sending…' : 'Send as the official invoice'}</Button>
