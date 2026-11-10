@@ -65,6 +65,7 @@ import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } fr
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { todayMyt } from "../scm/lib/my-time";
+import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1232,40 +1233,13 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     archived_only: c.req.query("archived_only") === "1",
     exclude_stage: c.req.query("exclude_stage") || undefined,
   });
-  const headers = [
-    "ASSR No", "SO No", "Delivery Order", "Stage", "Status", "Priority",
-    "Customer", "Phone", "Location", "Salesperson",
-    "Category", "NCR Category", "Resolution",
-    "Item", "Issue",
-    "Complained Date", "Created", "Deadline",
-    "PO Amount", "PO No",
-    "Assigned To", "Created By", "Creditor",
-    "SLA Breached",
-  ];
-  const fields = [
-    "assr_no", "doc_no", "delivery_order", "stage", "status", "priority",
-    "customer_name", "customer_phone", "location", "sales_agent",
-    "service_category", "ncr_category", "resolution_method",
-    "item_code", "complaint_issue",
-    "complained_date", "created_at", "deadline_at",
-    "po_amount", "po_no",
-    "assigned_to_name", "created_by_name", "creditor_name",
-    "is_breached",
-  ];
-  const esc = (v: any) => {
-    if (v == null) return "";
-    const s = String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [headers.join(",")];
   for (const r of rows as any[]) {
     if (csvVisibleIds !== undefined) stripCreditorFields(r);
     // Hand-entered DO wins; the live SCM merge (do_numbers) fills the rest —
     // same precedence as the list's DO No column.
     r.delivery_order = r.delivery_order || r.do_numbers || null;
-    lines.push(fields.map((f) => esc(f === "po_amount" && r[f] != null && Number.isFinite(Number(r[f])) ? Number(r[f]).toFixed(2) : r[f])).join(","));
   }
-  const csv = "\uFEFF" + lines.join("\r\n");
+  const csv = buildAssrCasesCsv(rows as Array<Record<string, unknown>>, assrExportShowsCost(c.get("user") ?? null));
   const date = todayMyt();
   return new Response(csv, {
     headers: {
