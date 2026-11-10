@@ -9,6 +9,8 @@ import type { MiddlewareHandler } from "hono";
      scm/trips*                  dispatch map, 15s (DISPATCH_POLL_MS)
      scm/lorries/*               60s / 5 min
      scm/delivery-planning/changes, scm/delivery-jobs/progress   30s
+     scm/delivery-jobs/stop-photos, scm/delivery-jobs/:type/:id/:leg,
+     scm/delivery-planning/do/:ref/pod   crew stop screen open, 15s
      scm/accounting/todo         finance to-do, 60s */
 export const POLLED_LIST_PATHS = [
   "/api/projects/:id/activity",
@@ -22,6 +24,9 @@ export const POLLED_LIST_PATHS = [
   "/api/scm/lorries/km-cost",
   "/api/scm/delivery-planning/changes",
   "/api/scm/delivery-jobs/progress",
+  "/api/scm/delivery-jobs/stop-photos",
+  "/api/scm/delivery-jobs/:sourceType/:sourceId/:leg",
+  "/api/scm/delivery-planning/do/:doRef/pod",
   "/api/scm/accounting/todo",
 ] as const;
 

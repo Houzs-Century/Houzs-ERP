@@ -9,9 +9,10 @@ import type { FieldPhoto, FieldPhotosApi } from "../lib/fieldPhotos";
 
 const photo = (id: string, status: FieldPhoto["status"], error: string | null = null): FieldPhoto => ({
   id, file: new File(["x"], `${id}.jpg`, { type: "image/jpeg" }), stamped: true, previewUrl: null, status, key: null, sessionId: null, error,
+  uploadedBy: null, canRemove: true, serverSeen: false,
 });
 const api = (photos: FieldPhoto[], restore: FieldPhotosApi["restore"] = { phase: "off" }): FieldPhotosApi => ({
-  photos, max: 10, notice: null, restore, retryRestore: vi.fn(), skipRestore: vi.fn(),
+  photos, max: 10, notice: null, syncError: null, restore, retryRestore: vi.fn(), skipRestore: vi.fn(),
   add: vi.fn(), retry: vi.fn(), remove: vi.fn(), clear: vi.fn(), gate: vi.fn(),
 });
 const touch = (coarse: boolean) => {
@@ -64,9 +65,18 @@ describe("FieldPhotos", () => {
     expect(screen.queryByLabelText("Remove photo 1")).toBeNull();
   });
 
+  it("names the crew member who took a photo, and offers Remove only where the server allows it", () => {
+    touch(false);
+    const helper = { ...photo("h", "done"), uploadedBy: "Ali", canRemove: false };
+    render(<FieldPhotos api={api([photo("a", "done"), helper])} disabled={false} title="POD photos" />);
+    expect(screen.getByText("Ali")).toBeTruthy();
+    expect(screen.getByLabelText("Remove photo 1")).toBeTruthy();
+    expect(screen.queryByLabelText("Remove photo 2")).toBeNull();
+  });
+
   it("after a reload, says it is checking for photos already uploaded", () => {
     render(<FieldPhotos api={api([], { phase: "loading" })} disabled={false} title="POD photos" />);
-    expect(screen.getByText(/Checking for photos you already uploaded/)).toBeTruthy();
+    expect(screen.getByText(/Checking for photos already uploaded/)).toBeTruthy();
   });
 
   it("a failed re-list names the reason and offers Check again / Continue without them", () => {

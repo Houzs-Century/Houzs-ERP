@@ -93,7 +93,9 @@ export type RunKeys = { so?: string[]; do?: string[]; jobs?: string[] };
 
 /** Last Mile and the crew screens: issues by SO, DO number or job key
  *  ("assr:12:delivery", the run-sheet's jobKey). */
-export function useRunDeliveryIssues(keys: RunKeys, enabled = true) {
+/** `refetchMs`: an open crew stop screen asks again so a problem the other crew
+ *  member reported shows without a refresh; omitted = no polling. */
+export function useRunDeliveryIssues(keys: RunKeys, enabled = true, refetchMs?: number) {
   const norm = (xs?: string[]) => [...new Set(xs ?? [])].sort();
   const so = norm(keys.so), dos = norm(keys.do), jobs = norm(keys.jobs);
   const any = so.length + dos.length + jobs.length > 0;
@@ -108,6 +110,7 @@ export function useRunDeliveryIssues(keys: RunKeys, enabled = true) {
     },
     enabled: enabled && any,
     staleTime: 30_000,
+    refetchInterval: enabled && any && refetchMs ? refetchMs : false,
   });
 }
 
