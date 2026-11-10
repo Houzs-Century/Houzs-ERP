@@ -53,3 +53,10 @@ describe('Supplier Service Order alignment', () => {
     expect(printRaw).toMatch(/\.itable > :nth-child\(1\), \.itable > :nth-child\(3\), \.itable > :nth-child\(4\) \{ text-align: center; \}/);
   });
 });
+
+describe('the sign-off box hangs under its bar', () => {
+  test('no gap under the Acknowledgement bar and one grey frame', () => {
+    expect(printRaw).toMatch(/\.bar \+ \.signoff\.boxed-grid \{ margin-top: 0; \}/);
+    expect(printRaw).toMatch(/\.signoff\.boxed-grid \.panel \+ \.panel \{ border-left: 0\.4pt solid #d5d5d5; \}/);
+  });
+});

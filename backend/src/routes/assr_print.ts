@@ -969,6 +969,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .credit-box .v { font-family: "IBM Plex Mono", monospace; font-size: 13.1pt; font-weight: 700; line-height: 1.35; }
     .boxed { border: 0.4pt solid #d5d5d5; border-top: none; padding: 3.6mm 4mm; }
     .signoff.boxed-grid { border: 0.4pt solid #d5d5d5; border-top: none; }
+    /* Hangs straight under its section bar, one grey frame like the grids above
+       (client 2026-11-10: the 8mm gap left the box floating with no top line). */
+    .bar + .signoff.boxed-grid { margin-top: 0; }
+    .signoff.boxed-grid .panel + .panel { border-left: 0.4pt solid #d5d5d5; }
     .doc-footer {
       display: flex; align-items: flex-end; justify-content: space-between; gap: 4mm;
       padding-top: 3.6mm; margin-top: 4mm; border-top: 0.4pt solid #e0e0e0;
