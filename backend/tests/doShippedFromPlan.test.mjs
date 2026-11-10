@@ -4,7 +4,7 @@
 // and its rack came from a read-time walk), so a later FIFO repair or lot relabel
 // could change what an old DO printed. This is the pure per-line rule.
 import { describe, expect, test } from 'vitest';
-import { planShippedFrom, stampFitsLine, stampRackLabel, withReturn, withReship } from '../scripts/lib/do-shipped-from.mjs';
+import { planShippedFrom, splitCompleteStamps, stampFitsLine, stampRackLabel, withReturn, withReship } from '../scripts/lib/do-shipped-from.mjs';
 
 const AT = '2026-11-10T10:28:00.000Z';
 const line = (id, item_code, qty, extra = {}) => ({ id, item_code, variant_key: '', qty, rack_id: null, goods: true, shipped_from: null, ...extra });
@@ -183,6 +183,82 @@ describe('rack from the PO -> GRN chain when the DO left no dispatch rack (owner
   });
 });
 
+describe('only a COMPLETE line is locked (owner decision 2026-11-10)', () => {
+  /* 2990-DO-2611-016: AKKA had a PO and no rack, CODY-(K) a rack and no PO. Both
+     used to lock as they were; now both stay open until the missing half is known. */
+  const gate = (input) => {
+    const candidates = planShippedFrom({ rackOuts: [], at: AT, src: 'backfill', ...input });
+    return splitCompleteStamps(input.lines, candidates);
+  };
+
+  test('a PO but no rack stays unstamped', () => {
+    const { stamps, open } = gate({
+      lines: [line('akka', 'AKKA', 1)],
+      poUnits: [{ item_code: 'AKKA', variant_key: '', po: '2990-PO-2610-018', adjustment: false, qty: 1 }],
+    });
+    expect(stamps.size).toBe(0);
+    expect(open.get('akka')).toBe('no rack for 1 of 1');
+  });
+
+  test('a rack but no PO stays unstamped', () => {
+    const { stamps, open } = gate({
+      lines: [line('cody', 'CODY-(K)', 1)],
+      poUnits: [],
+      rackOuts: [{ item_code: 'CODY-(K)', rack_id: 'r-l82', label: 'L8.2', qty: 1 }],
+    });
+    expect(stamps.size).toBe(0);
+    expect(open.get('cody')).toBe('no PO for 1 of 1');
+  });
+
+  test('a rack and a PO for the full qty lock', () => {
+    const { stamps, open } = gate({
+      lines: [line('l1', 'X', 2)],
+      poUnits: [{ item_code: 'X', variant_key: '', po: 'PO-1', adjustment: false, qty: 2 }],
+      rackOuts: [{ item_code: 'X', rack_id: 'r1', label: 'L1.1', qty: 2 }],
+    });
+    expect(open.size).toBe(0);
+    expect(stamps.get('l1')).toMatchObject({ pos: [{ po: 'PO-1', qty: 2 }], racks: [{ rack_id: 'r1', qty: 2 }] });
+  });
+
+  test('a rack for 1 of 2 stays unstamped; nothing is partially locked', () => {
+    const { stamps, open } = gate({
+      lines: [line('l1', 'X', 2)],
+      poUnits: [{ item_code: 'X', variant_key: '', po: 'PO-1', adjustment: false, qty: 2 }],
+      rackOuts: [{ item_code: 'X', rack_id: 'r1', label: 'L1.1', qty: 1 }],
+    });
+    expect(stamps.size).toBe(0);
+    expect(open.get('l1')).toBe('no rack for 1 of 2');
+  });
+
+  test('nothing known names both gaps; a service line and a stamped line are not candidates', () => {
+    const stamped = { v: 1, at: AT, src: 'ship', item_code: 'S', qty: 1, pos: [{ po: 'P', qty: 1 }], adj_qty: 0, racks: [{ rack_id: 'r', label: 'L', qty: 1 }] };
+    const { stamps, open } = gate({
+      lines: [line('l1', 'NOTRAIL', 3), line('svc', 'DELIVERY', 1, { goods: false }), line('done', 'S', 1, { shipped_from: stamped })],
+      poUnits: [],
+    });
+    expect(stamps.size).toBe(0);
+    expect(open.get('l1')).toBe('no rack for 3 of 3; no PO for 3 of 3');
+    expect(open.get('svc')).toBe('service line');
+    expect(open.has('done')).toBe(false);
+  });
+
+  test('stock-adjustment units count as a known source; several hard-bound POs cover the line', () => {
+    const adj = gate({
+      lines: [line('l1', 'GIFT', 1)],
+      poUnits: [{ item_code: 'GIFT', variant_key: '', po: null, adjustment: true, qty: 1 }],
+      rackOuts: [{ item_code: 'GIFT', rack_id: 'r1', label: 'L1.1', qty: 1 }],
+    });
+    expect(adj.stamps.get('l1')).toMatchObject({ pos: [], adj_qty: 1 });
+    const bound = gate({
+      lines: [line('l1', 'J', 2)],
+      poUnits: [],
+      poOverride: new Map([['J::', ['PO-A', 'PO-B']]]),
+      rackOuts: [{ item_code: 'J', rack_id: 'r1', label: 'L1.1', qty: 2 }],
+    });
+    expect(bound.stamps.get('l1').pos).toEqual([{ po: 'PO-A', qty: null }, { po: 'PO-B', qty: null }]);
+  });
+});
+
 describe('returns and re-ship keep the locked PO and rack', () => {
   const base = { v: 1, at: AT, src: 'ship', item_code: 'X', qty: 1, pos: [{ po: 'PO-1', qty: 1 }], adj_qty: 0, racks: [] };
   test('a revert appends one return; a retried cancel with no re-ship appends nothing', () => {
@@ -209,5 +285,44 @@ describe('readers', () => {
     expect(stampFitsLine('{"v":1}', 'A')).toBe(false);
     expect(stampRackLabel(s, 'A')).toBe('L1.1');
     expect(stampRackLabel(s, 'B')).toBeNull();
+  });
+});
+
+/* 2990-DO-2611-016 (CODY-(K), KL WAREHOUSE): shipped as BF-01 Gap 12 Divan 8 Leg 4,
+   consuming the lot of PO 2990-PO-2610-028; then its spec was edited to add Total
+   24. That bucket consumed nothing (no stock carries that spec), the old bucket's
+   consumption is still booked, and the planner said "PO - | rack L8.2". */
+describe('planShippedFrom — a line whose spec was edited after the ship', () => {
+  const LEG4 = 'fabriccode=bf-01|gap=12"|divanheight=8"|legheight=4"';
+  const LEG4_TOTAL24 = `${LEG4}|totalheight=24"`;
+  const rack = [{ item_code: 'CODY-(K)', rack_id: 'r-l82', label: 'L8.2', qty: 1 }];
+
+  test('takes the PO from the DO bucket no line holds any more', () => {
+    const out = planShippedFrom({
+      lines: [line('l016', 'CODY-(K)', 1, { variant_key: LEG4_TOTAL24 })],
+      poUnits: [{ item_code: 'CODY-(K)', variant_key: LEG4, po: '2990-PO-2610-028', adjustment: false, qty: 1 }],
+      rackOuts: rack, at: AT, src: 'backfill',
+    }).get('l016');
+    expect(out.pos).toEqual([{ po: '2990-PO-2610-028', qty: 1 }]);
+    expect(out.racks).toEqual([{ rack_id: 'r-l82', label: 'L8.2', qty: 1, via: 'dispatch' }]);
+  });
+
+  test('a bucket a line still holds is not handed to another line', () => {
+    const out = planShippedFrom({
+      lines: [line('a', 'X', 1, { variant_key: 'v1' }), line('b', 'X', 1, { variant_key: 'v2' })],
+      poUnits: [{ item_code: 'X', variant_key: 'v1', po: 'PO-1', adjustment: false, qty: 1 }],
+      rackOuts: [], at: AT, src: 'backfill',
+    });
+    expect(out.get('a').pos).toEqual([{ po: 'PO-1', qty: 1 }]);
+    expect(out.has('b')).toBe(false);
+  });
+
+  test('another item\'s orphan bucket is never taken', () => {
+    const out = planShippedFrom({
+      lines: [line('l', 'CODY-(K)', 1, { variant_key: LEG4_TOTAL24 })],
+      poUnits: [{ item_code: 'CODY-(Q)', variant_key: LEG4, po: 'PO-Q', adjustment: false, qty: 1 }],
+      rackOuts: [], at: AT, src: 'backfill',
+    });
+    expect(out.has('l')).toBe(false);
   });
 });
