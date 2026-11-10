@@ -277,3 +277,10 @@ describe('foldOnlyPlan', () => {
     expect(foldOnlyPlan(base, false)).toEqual({ ok: false, reason: 'Model "M" is switched off' });
   });
 });
+
+describe('stock acknowledgements in the ruling file', () => {
+  it('are written per code, warehouse and exact numbers, and only where the owner ruled one', () => {
+    const acks = Object.entries(BOOK).flatMap(([ticket, e]) => e.groups.flatMap((g) => (g.ackStockDivergence ?? []).map((a) => ({ ticket, ...a }))));
+    expect(acks).toEqual([{ ticket: 'OWNER-2026-11-10-RELAX', code: 'DUNLOPILLO RELAX SLEEP LUXURTY MATT (K)', warehouse: 'PG SERVICE', ledger: -1, lots: 0, reason: 'owner 2026-11-10: merge anyway, owner corrects stock' }]);
+  });
+});
