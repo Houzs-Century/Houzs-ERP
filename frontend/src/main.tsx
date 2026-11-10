@@ -99,6 +99,8 @@ loadDeferredFontStylesheet(document, CJK_FONT_STYLESHEET);
    boot is not missed. See lib/staleBuild.ts for exactly what is and is not
    covered. */
 installChunkFailureWatch();
+// Lazy: not needed for first paint, and the entry chunk sits at its size ceiling.
+void import("./lib/numberInputWheel").then((m) => m.installNumberInputWheelGuard());
 /* A PRINT that hits a chunk a deploy deleted reloads once and reopens its
    preview (lib/chunkActionRecovery.ts). That listener installs itself on the
    first tracked print, so it is not imported here: it would add ~0.9 KB gzip to

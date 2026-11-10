@@ -7,7 +7,10 @@ import { inflateSync } from 'node:zlib';
    is kept as it is. */
 export function pdfRawText(pdf: Uint8Array): string {
   const raw = Buffer.from(pdf).toString('latin1');
-  return raw.replace(/stream\r?\n([\s\S]*?)\r?\nendstream/g, (whole, body: string) => {
+  /* jsPDF writes exactly "stream\n<data>\nendstream". An optional \r in the
+     pattern ate a compressed stream whose last byte was 0x0D, so it failed to
+     inflate and a test missed its text — only for some timestamps. */
+  return raw.replace(/stream\n([\s\S]*?)\nendstream/g, (whole, body: string) => {
     try {
       return `stream\n${inflateSync(Buffer.from(body, 'latin1')).toString('latin1')}\nendstream`;
     } catch {

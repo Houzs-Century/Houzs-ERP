@@ -85,13 +85,16 @@ export function ModalOverlay({
   footer?: ReactNode;
 }) {
   useEscapeLayer(onClose, open);
+  /* z-100/101, above the side drawers (ResizableDetailDrawer / ResizableDrawer,
+     z-90/91). A print preview or document map opened from a list's quick-view
+     drawer used to open BEHIND that drawer. ModalOverlay.layer.test.ts pins it. */
   return createPortal(
     <>
       <div
         onClick={onClose}
         aria-hidden
         className={cn(
-          "fixed inset-0 z-[80] bg-ink/45 backdrop-blur-[1px] transition-opacity duration-200",
+          "fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[1px] transition-opacity duration-200",
           open ? "opacity-100" : "pointer-events-none opacity-0"
         )}
       />
@@ -100,7 +103,7 @@ export function ModalOverlay({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "fixed left-1/2 top-[8vh] z-[81] flex max-h-[84vh] w-[calc(100%-32px)] -translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-surface shadow-slab transition-all duration-200",
+          "fixed left-1/2 top-[8vh] z-[101] flex max-h-[84vh] w-[calc(100%-32px)] -translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-surface shadow-slab transition-all duration-200",
           size === "lg" ? "max-w-[760px]" : "max-w-[480px]",
           open ? "scale-100 opacity-100" : "pointer-events-none scale-[.97] opacity-0"
         )}

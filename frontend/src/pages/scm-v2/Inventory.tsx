@@ -384,7 +384,7 @@ const BalancesTab = ({
 }) => {
   const [asOf, setAsOf] = useState(''); // 选日期 (GL item 5) — see InventoryAsOf.tsx
   const { requestTerm } = useDebouncedSearchTerm(search);
-  const { data, isLoading, isFetching, isPlaceholderData, error } = useInventoryProductTotals({
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useInventoryProductTotals({
     search: requestTerm.trim() || undefined,
     category: category === 'all' ? undefined : category,
     warehouseIds,
@@ -431,15 +431,16 @@ const BalancesTab = ({
   // sentence, not a spinner. Mark them unknown until the rows they summarise are
   // the rows actually on screen. An error is unknown too: the aggregate would
   // otherwise describe a list that failed to load.
+  const statsFailed = Boolean(error);
   const statsPending = isLoading || searching || resultsAreStale || Boolean(error);
 
   return (
     <AsOfSection asOf={asOf} onChange={setAsOf} category={category} search={search}>
       <div className={STAT_GRID}>
-        <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} />
-        <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} />
-        <StatCard label="Inventory Value" value={fmtRm(stats.totalValue)} pending={statsPending} />
-        <StatCard label="Consignment Value" value={fmtRm(stats.heldValue)} pending={statsPending} />
+        <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} />
+        <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} />
+        <StatCard label="Inventory Value" value={fmtRm(stats.totalValue)} pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} />
+        <StatCard label="Consignment Value" value={fmtRm(stats.heldValue)} pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} />
       </div>
 
       {/* Dead-stock view — SKUs with Spare (surplus) stock beyond all demand.
@@ -1406,20 +1407,20 @@ const ProductBreakdownDrawer = ({
           {/* The totals reduce over the lot feed, which is [] until it resolves —
               so a confident "RM 0.00" before load would be a lie the operator can
               act on. Unknown until it is known. */}
-          <StatCard label="Total Qty (owned)" value={fmtQty(bd.ownedQty)} pending={breakdownPending} />
+          <StatCard label="Total Qty (owned)" value={fmtQty(bd.ownedQty)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
           {/* Owner 2026-07-25 — the assigned/free split from the ONE MRP engine.
               Free (un-assigned) OWNED stock is the dead-stock slice; for a
               make-to-order SKU it is abnormal (emphasised in the lot rows). */}
           <StatCard
             label="Assigned / Free (owned)"
             value={`${fmtQty(bd.ownedAssignedQty)} / ${fmtQty(bd.ownedFreeQty)}`}
-            pending={breakdownPending}
+            pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()}
           />
           {bd.consignmentQty !== 0 && (
-            <StatCard label="Consignment Qty (not owned)" value={fmtQty(bd.consignmentQty)} pending={breakdownPending} />
+            <StatCard label="Consignment Qty (not owned)" value={fmtQty(bd.consignmentQty)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
           )}
           {/* Value is OWNED stock only — consignment is excluded by SOURCE. */}
-          <StatCard label="Total Value (owned)" value={fmtRm(bd.ownedValueSen)} pending={breakdownPending} />
+          <StatCard label="Total Value (owned)" value={fmtRm(bd.ownedValueSen)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
         </div>
         {/* Dead-stock banner: free make-to-order (SOFA/BEDFRAME) on-hand stock is
             abnormal (built against an SO), so surface it prominently. Soft/absent
@@ -1757,7 +1758,7 @@ export const CogsTab = ({
   warehouseId: string | null;
   search: string;
 }) => {
-  const { data, isLoading, isError, error } = useCogsEntries({
+  const { data, isLoading, isError, error, refetch } = useCogsEntries({
     warehouseId: warehouseId ?? undefined,
     itemCode: search.trim() || undefined,
   });
@@ -1775,7 +1776,9 @@ export const CogsTab = ({
              fetched the consumptions yet" is a lie the operator can act on —
              and `isLoading` is FALSE after a FAILED fetch, which is the other
              way this list is empty for a reason unrelated to cost of goods. */
-          pending={isLoading || isError}
+          pending={isLoading}
+          failed={isError}
+          onRetry={() => void refetch()}
         />
       </div>
 
