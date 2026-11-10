@@ -387,7 +387,7 @@ async function checkGrnZeroCost(
    the single chokepoint that writes inventory IN and rolls PO received_qty, so
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
-async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
+async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
@@ -424,29 +424,23 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      matches no row and is refused. Same pattern stock-take already uses
      (stock-takes.ts, `.eq('status','OPEN')` on its POST flip).
 
-     The expected value is READ rather than hard-coded to 'DRAFT' because the
-     create-as-posted paths insert the row with status 'POSTED' and then call
-     this chokepoint — hard-coding DRAFT would refuse every non-draft create. */
-  const { data: preRow } = await scopeToCompanyId(
-    sb.from('grns').select('status').eq('id', grnId), companyId,
-  ).maybeSingle();
-  /* CAS on the RAW stored value, compare on an upper-cased copy. Feeding the
-     normalised string back into .eq() would never match a row whose status is
-     not already upper-case, turning every post into a spurious 409. */
-  const preStatus = (preRow as { status?: string | null } | null)?.status ?? null;
-  if (preStatus == null) return { ok: false, reason: 'not_found', status: 404 };
-  const preStatusNorm = preStatus.toUpperCase();
+     The expected value is the status the CALLER saw, never a fresh read here:
+     a fresh read lets the second of two simultaneous confirms see the first
+     one's POSTED and CAS POSTED -> POSTED successfully, so both wrote the stock
+     IN (Conts-ERP #787, `expectedStatus`). Confirm passes the DRAFT it loaded;
+     the create paths pass what they inserted (DRAFT, or POSTED on the
+     create-as-posted path). */
   /* A CANCELLED GRN already had its receipt reversed by an OUT; re-posting it
-     would book the stock a second time against that reversal. CLOSED was already
-     excluded by the old predicate. */
-  if (preStatusNorm === 'CANCELLED' || preStatusNorm === 'CLOSED') {
-    return { ok: false, reason: `grn_${preStatusNorm.toLowerCase()}`, status: 409 };
+     would book the stock a second time against that reversal. */
+  const expectedNorm = expectedStatus.toUpperCase();
+  if (expectedNorm === 'CANCELLED' || expectedNorm === 'CLOSED') {
+    return { ok: false, reason: `grn_${expectedNorm.toLowerCase()}`, status: 409 };
   }
   const { data, error } = await scopeToCompanyId(sb.from('grns').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', grnId), companyId).eq('status', preStatus).select('id, status, posted_at').maybeSingle();
+  }).eq('id', grnId), companyId).eq('status', expectedStatus).select('id, status, posted_at').maybeSingle();
   // HC-0004: the DB cap (mig 20261014T1600) refused a post past a PO line's qty.
   if (isPoLineOverReceived(error)) return { ok: false, reason: 'qty_exceeds_remaining', status: 409 };
   if (error) return { ok: false, reason: error.message, status: 500 };
@@ -1650,7 +1644,7 @@ grns.post('/', async (c) => {
      single chokepoint that writes inventory IN + rolls up the PO received_qty.
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
-  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'DRAFT');
   /* ATOMIC CREATE — the row was inserted DRAFT, so any post failure means the
      chokepoint did NOT flip it: it is still DRAFT with no stock and no PO
      rollup. Roll the whole create back rather than leave a half-made document.
@@ -1895,7 +1889,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   }
 
   /* PR-DRAFT-removal — auto-rollup + inventory IN after items insert. */
-  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'POSTED');
   /* ZERO-COST refusal — same rollback as POST /: this path also inserts POSTED
      before calling the chokepoint, so the document must not survive a refusal. */
   if (!postRes.ok && postRes.zeroCost) {
@@ -1992,7 +1986,7 @@ export const postGrnHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'POST', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  const res = await postGrnAndRollup(sb, id, user.id, co.companyId);
+  const res = await postGrnAndRollup(sb, id, user.id, co.companyId, row.status);
   /* Honour the chokepoint's own status. A lost confirm race (409
      'already_posting') is a normal outcome — the other call committed the stock —
      not a server fault; it used to surface as a 500 because res.status was
@@ -2100,7 +2094,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   for (const draft of coreRes.created) {
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
     // The UI create is auto-posted; the draft-only core left this to the handler.
-    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId);
+    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId, 'DRAFT');
     /* ZERO-COST refusal — the core inserted this draft, so roll it back exactly
        like the over-receipt branch inside the core and carry the refusal out of
        the loop. Buckets that received cleanly keep their documents; only the
