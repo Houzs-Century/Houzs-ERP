@@ -17,6 +17,7 @@ import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { useUploadPayoutAdvice, useUploadStatement, type AcquirerSetup, type PayoutDay } from './settlement-queries';
 import { fmt, refusalText } from './settlement-ui';
 import { fmtDate } from '../../vendor/shared/format';
+import { parseMoneyToSen } from '../../lib/money';
 import drawer from './finance/FinanceTasks.module.css';
 import styles from './UploadDrawer.module.css';
 
@@ -100,11 +101,16 @@ export function MerchantUploadDrawer({ acq, acquirers, startWith, onClose }: {
     const ids: number[] = [...made];
     /* One after another: each upload's matching must see the payments the
        previous one claimed, or two reports could take the same money. */
+    const fee = parseMoneyToSen(summaryFee, 'The statement fee total');
+    if (!fee.ok) {
+      setResults(reports.map((f) => ({ name: f.name, ok: false, text: fee.message })));
+      return;
+    }
     for (const f of reports) {
       try {
         const r = await upload.mutateAsync({
           acquirerCode: code, fileName: f.name, content: f.content,
-          summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
+          summaryFeeSen: fee.empty ? null : fee.sen,
           statementMonth: statementMonth || null,
         });
         ids.push(r.batchId);
