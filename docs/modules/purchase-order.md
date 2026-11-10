@@ -34,6 +34,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 
 Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
+- Header `PATCH /:id` requires `expectedUpdatedAt` = the `updated_at` the editor loaded (`lib/po-version.ts`): missing -> 428 `po_version_required`, stale -> 409 `po_version_conflict`, nothing written. The desktop Save sends it first, before any line write; with no header change it sends the token alone, which bumps `updated_at` without an audit row or AutoCount edit. Compared at millisecond precision before the write, not a SQL compare-and-set (an integer `version` column like the SO's would close the same-millisecond race; needs a migration).
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
 - `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).

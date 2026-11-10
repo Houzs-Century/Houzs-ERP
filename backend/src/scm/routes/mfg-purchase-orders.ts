@@ -43,6 +43,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { poVersionRefusal } from '../lib/po-version';
 import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade'; import { movePoLinesToNewWarehouse } from '../lib/po-warehouse-move';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -2479,10 +2480,12 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
      purchase_location_id, migration 0180 = the supplier-revised dates), kept in
      one place so a field added to the PATCH cannot silently escape the log. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('purchase_orders')
-    .select(PO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+    .select(`${PO_AUDIT_SELECT}, updated_at`).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
   const prevExpectedAt = before.expected_at ?? null;
+  const stale = poVersionRefusal(body, before.updated_at); // lib/po-version.ts
+  if (stale) return c.json(stale.body, stale.status);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
@@ -2503,7 +2506,8 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
-  {
+  const touchOnly = Object.keys(updates).length === 1; // version claim before a lines-only Save: no audit, no AutoCount edit
+  if (!touchOnly) {
     const auditPatch: Record<string, unknown> = {};
     for (const [camel, snake] of PO_AUDIT_FIELDS) {
       if (updates[snake] !== undefined) auditPatch[camel] = updates[snake];
@@ -2557,7 +2561,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
         .update({ delivery_date: updates['expected_at'], line_delivery_date_overridden: false }).in('id', openIds), co.companyId);
     if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
   }
-  await queueAcPoEdit(c, id);
+  if (!touchOnly) await queueAcPoEdit(c, id);
 
   return c.json({ purchaseOrder: data });
 });
