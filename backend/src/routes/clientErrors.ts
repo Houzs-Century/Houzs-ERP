@@ -20,9 +20,13 @@ import { captureError } from "../services/errorTracking";
 // of query strings + fragments server-side so a token- or data-carrying URL can
 // never be stored even if a client forgets to.
 //
-// STORM COLLAPSE. One upsert per event on the (dedup_hash, day, user_id) unique
-// key (mig 0151 / D1 126): the same error looping for one user all day is ONE
+// STORM COLLAPSE. Events are collapsed by dedup_hash in memory first (the
+// browser also sends a repeat as ONE event with a `count`), then the whole batch
+// is ONE multi-row write — upsert on the (dedup_hash, day, user_id) unique key
+// (mig 0151 / D1 126), so the same error looping for one user all day is ONE
 // row with a bumped count. dedup_hash = sha256(message + route + build_id).
+// It used to be one awaited statement per event, i.e. up to 20 sequential
+// database round trips per report (p50 675 ms in production).
 //
 // Raw env.DB (not Drizzle) deliberately: the vitest harness runs on isolated D1
 // where the Drizzle/postgres path has no database, and the immediate neighbours
@@ -55,6 +59,8 @@ const eventSchema = z.object({
   buildId: z.string().max(64).optional(),
   userAgent: z.string().max(500).optional(),
   occurredAt: z.string().max(40).optional(),
+  /** How many times the browser saw this exact event before sending it. */
+  count: z.number().int().min(1).max(1000).optional(),
 });
 // Unknown keys are stripped by zod -- a client-sent userId/companyId never
 // reaches the insert even as a value to ignore.
@@ -66,6 +72,12 @@ const bodySchema = z.object({
 // lexicographically, so one row in "YYYY-MM-DD HH:MM:SS" format would corrupt
 // every range scan. Anything else falls back to the server clock.
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+/* Rows per INSERT. Test D1 refuses a statement with more than 100 bound
+   parameters; 13 per row x 7 = 91. A batch of distinct events is almost always
+   one statement; the rare larger one goes as one DB.batch. */
+const ROWS_PER_STATEMENT = 7;
+const COLUMNS = 13;
 
 async function dedupHash(message: string, route: string, buildId: string): Promise<string> {
   const data = new TextEncoder().encode(`${message}\n${route}\n${buildId}`);
@@ -122,31 +134,69 @@ app.post("/", async (c) => {
     waitUntil = undefined;
   }
 
-  let stored = 0;
+  type Row = {
+    occurredAt: string;
+    route: string;
+    message: string;
+    stack: string | null;
+    buildId: string;
+    userAgent: string | null;
+    hash: string;
+    count: number;
+  };
+  const rows = new Map<string, Row>();
   for (const ev of parsed.data.events) {
     const message = ev.message.slice(0, MAX_MESSAGE);
     const route = sanitizeRoute(ev.route);
     const buildId = (ev.buildId ?? "").slice(0, 64);
-    const stack = ev.stack ? ev.stack.slice(0, MAX_STACK) : null;
-    const userAgent = ev.userAgent ? ev.userAgent.slice(0, 500) : null;
-    const occurredAt = ev.occurredAt && ISO_RE.test(ev.occurredAt) ? ev.occurredAt : nowIso;
     const hash = await dedupHash(message, route, buildId);
+    const n = ev.count ?? 1;
+    const seen = rows.get(hash);
+    if (seen) {
+      seen.count += n;
+      continue;
+    }
+    rows.set(hash, {
+      // The FIRST occurrence's values are kept (the first capture is the
+      // cleanest; a loop's later frames add nothing).
+      occurredAt: ev.occurredAt && ISO_RE.test(ev.occurredAt) ? ev.occurredAt : nowIso,
+      route,
+      message,
+      stack: ev.stack ? ev.stack.slice(0, MAX_STACK) : null,
+      buildId,
+      userAgent: ev.userAgent ? ev.userAgent.slice(0, 500) : null,
+      hash,
+      count: n,
+    });
+  }
 
-    // Same-day same-user recurrence bumps the counter instead of inserting --
-    // the storm collapse. stack/user_agent keep the FIRST occurrence's values
-    // (the first capture is the cleanest; a loop's later frames add nothing).
-    await c.env.DB.prepare(
-      `INSERT INTO client_errors
-         (occurred_at, day, user_id, company_id, route, message, stack, build_id, user_agent, dedup_hash, count, last_seen_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-       ON CONFLICT (dedup_hash, day, user_id) DO UPDATE SET
-         count = client_errors.count + 1,
-         last_seen_at = excluded.last_seen_at`,
-    )
-      .bind(occurredAt, day, userId, companyId, route, message, stack, buildId, userAgent, hash, nowIso, nowIso)
-      .run();
-    stored++;
+  const all = [...rows.values()];
+  const statements = [];
+  for (let i = 0; i < all.length; i += ROWS_PER_STATEMENT) {
+    const chunk = all.slice(i, i + ROWS_PER_STATEMENT);
+    const values = chunk.map(() => `(${new Array(COLUMNS).fill("?").join(", ")})`).join(",\n         ");
+    const binds = chunk.flatMap((r) => [
+      r.occurredAt, day, userId, companyId, r.route, r.message, r.stack, r.buildId, r.userAgent, r.hash, r.count, nowIso, nowIso,
+    ]);
+    // Same-day same-user recurrence bumps the counter instead of inserting.
+    // stack/user_agent/occurred_at keep the FIRST occurrence's values.
+    statements.push(
+      c.env.DB.prepare(
+        `INSERT INTO client_errors
+           (occurred_at, day, user_id, company_id, route, message, stack, build_id, user_agent, dedup_hash, count, last_seen_at, created_at)
+         VALUES ${values}
+         ON CONFLICT (dedup_hash, day, user_id) DO UPDATE SET
+           count = client_errors.count + excluded.count,
+           last_seen_at = excluded.last_seen_at`,
+      ).bind(...binds),
+    );
+  }
+  if (statements.length === 1) await statements[0].run();
+  else if (statements.length > 1) await c.env.DB.batch(statements);
 
+  let stored = 0;
+  for (const r of all) {
+    stored += r.count;
     // Mirror the SAME sanitized event to the error tracker so a white-screen
     // gets an alert in minutes instead of waiting for the 02:00 digest. INERT
     // until SENTRY_DSN is set — with no DSN this returns immediately.
@@ -160,15 +210,15 @@ app.post("/", async (c) => {
     // route is a pathname, identity is the session's numeric ids.
     captureError(
       c.env,
-      new Error(message),
+      new Error(r.message),
       {
         source: "browser",
-        route,
+        route: r.route,
         requestId: c.get("requestId"),
         userId,
         companyId,
-        release: buildId || undefined,
-        stack: stack ?? undefined,
+        release: r.buildId || undefined,
+        stack: r.stack ?? undefined,
       },
       waitUntil,
     );

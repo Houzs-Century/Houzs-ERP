@@ -4,6 +4,7 @@ import { Bell } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { cn } from "../lib/utils";
+import { useVisiblePoll } from "../lib/visiblePoll";
 import { LazySlot } from "./LazySlot";
 import { useNotifications } from "../hooks/useNotifications";
 import {
@@ -74,9 +75,9 @@ export function NotificationBell({
     queryFn: () =>
       api.get<BannerResponse>("/api/announcements/banner?scope=system"),
     staleTime: 180_000,
-    refetchInterval: 180_000,
     enabled: !!user?.id,
   });
+  useVisiblePoll(announcementFeedKey("system"), 180_000, !!user?.id);
 
   // The HUMAN slice through the shared hook — same cache entry as the modal
   // and the inbox, same ack, same "have I seen this" answer.
