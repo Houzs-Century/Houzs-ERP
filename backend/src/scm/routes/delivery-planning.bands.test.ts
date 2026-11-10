@@ -7,7 +7,9 @@
 // fixture in delivery-planning.bands.fixture.ts, clock fixed at 2026-11-10. It was
 // produced by importing that handler from a temporary copy and calling runBoard()
 // for each key; it is data, not a guess. Regenerate it the same way whenever the
-// fixture changes.
+// fixture changes. Regenerated 2026-11-10 with the current handler for the
+// Overdue-from-the-delivery-day rule: SO-OPEN-2 (due in 2 days) is now
+// PENDING_DELIVERY, nothing else moved.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import before from './__fixtures__/dp-board-before.json';
