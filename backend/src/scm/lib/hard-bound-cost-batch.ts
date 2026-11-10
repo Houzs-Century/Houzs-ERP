@@ -148,6 +148,40 @@ export function pickHardBoundCostBatches(input: {
   return { batchBySoItem, notes };
 }
 
+export type StampRow = {
+  movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null;
+  batch_no: string | null; qty: number | null; correction_seq: number | null;
+};
+
+/** Per `${wh}::${item}::${vk}` bucket of one DO, the batch its units are out
+ *  under: the one batch whose OUT minus IN is still positive. A DO re-costed by
+ *  backfill-hard-bound-cost.mjs returned its un-batched units and took them again
+ *  under the bound PO, so its positive batch is no longer the first-ship row's.
+ *  With no single positive batch (nothing out, or two batches out) the
+ *  first-ship row's batch stands, as before. */
+export function stampedBatchByBucket(rows: ReadonlyArray<StampRow>): Map<string, string | null> {
+  const net = new Map<string, Map<string, number>>();
+  const firstShip = new Map<string, string | null>();
+  for (const m of rows) {
+    const bk = bucketOf(m.warehouse_id, m.item_code, m.variant_key ?? '');
+    const b = m.batch_no ?? '';
+    const sign = m.movement_type === 'OUT' ? 1 : m.movement_type === 'IN' ? -1 : 0;
+    if (sign === 0) continue;
+    const byBatch = net.get(bk) ?? new Map<string, number>();
+    byBatch.set(b, (byBatch.get(b) ?? 0) + sign * Math.abs(Number(m.qty ?? 0)));
+    net.set(bk, byBatch);
+    if (m.movement_type === 'OUT' && (m.correction_seq ?? 0) === 0) firstShip.set(bk, m.batch_no ?? null);
+    else if (m.movement_type === 'OUT' && !firstShip.has(bk)) firstShip.set(bk, m.batch_no ?? null);
+  }
+  const out = new Map<string, string | null>();
+  for (const [bk, byBatch] of net) {
+    const positive = [...byBatch].filter(([, q]) => q > 0);
+    if (positive.length === 1) out.set(bk, positive[0]![0] || null);
+    else if (firstShip.has(bk)) out.set(bk, firstShip.get(bk) ?? null);
+  }
+  return out;
+}
+
 /** The movement note for one OUT bucket, or null when nothing fell back. */
 export function costBatchNoteText(notes: ReadonlyArray<CostBatchNote>): string | null {
   if (notes.length === 0) return null;
@@ -183,19 +217,12 @@ export async function resolveHardBoundCostBatches(
   let stamped: Map<string, string | null> | null = null;
   if (args.mode !== 'ship') {
     const { data, error } = await sb.from('inventory_movements')
-      .select('warehouse_id, item_code, variant_key, batch_no, correction_seq')
+      .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, correction_seq')
       .eq('source_doc_type', 'DO')
       .eq('source_doc_id', args.deliveryOrderId)
-      .eq('movement_type', 'OUT');
-    if (error) throw new Error(`hard-bound cost: the DO's stock-out rows could not be read: ${error.message}`);
-    stamped = new Map();
-    const firstShip = new Set<string>();
-    for (const m of (data ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; batch_no: string | null; correction_seq: number | null }>) {
-      const bk = bucketOf(m.warehouse_id, m.item_code, m.variant_key ?? '');
-      const isFirst = (m.correction_seq ?? 0) === 0;
-      if (isFirst) { stamped.set(bk, m.batch_no ?? null); firstShip.add(bk); }
-      else if (!firstShip.has(bk) && !stamped.has(bk)) stamped.set(bk, m.batch_no ?? null);
-    }
+      .in('movement_type', ['OUT', 'IN']);
+    if (error) throw new Error(`hard-bound cost: the DO's stock movements could not be read: ${error.message}`);
+    stamped = stampedBatchByBucket((data ?? []) as StampRow[]);
   }
   const allowDecide = args.mode !== 'restamp';
   const toDecide = eligible.filter((l) => !stamped || !stamped.has(bucketOf(l.warehouseId!, l.itemCode, l.variantKey)));

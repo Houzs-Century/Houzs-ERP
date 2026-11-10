@@ -14,6 +14,7 @@ import { recostFromGrn } from '../src/scm/lib/recost';
 import {
   pickHardBoundCostBatches,
   resolveHardBoundCostBatches,
+  stampedBatchByBucket,
   HARD_BOUND_COST_NOTE,
 } from '../src/scm/lib/hard-bound-cost-batch';
 import { computeVariantKey } from '../src/scm/shared';
@@ -261,5 +262,24 @@ describe('pickHardBoundCostBatches', () => {
   test('restamp never decides', () => {
     const r = pickHardBoundCostBatches({ ...base, stamped: new Map(), allowDecide: false, lines: [line] });
     expect(r.batchBySoItem.size).toBe(0);
+  });
+});
+
+describe('stampedBatchByBucket', () => {
+  const row = (movement_type: string, batch_no: string | null, qty: number, correction_seq: number | null) =>
+    ({ movement_type, warehouse_id: 'w', item_code: 'X', variant_key: 'v', batch_no, qty, correction_seq });
+
+  test('a plain ship: the first-ship row', () => {
+    expect(stampedBatchByBucket([row('OUT', null, 1, null)]).get('w::X::v')).toBeNull();
+    expect(stampedBatchByBucket([row('OUT', 'P1', 1, null)]).get('w::X::v')).toBe('P1');
+  });
+
+  test('re-costed by the backfill: the batch still out wins over the first-ship row', () => {
+    const rows = [row('OUT', null, 2, null), row('IN', null, 2, 1), row('OUT', 'P1', 2, 2)];
+    expect(stampedBatchByBucket(rows).get('w::X::v')).toBe('P1');
+  });
+
+  test('fully returned: the first-ship row stands', () => {
+    expect(stampedBatchByBucket([row('OUT', 'P1', 1, null), row('IN', 'P1', 1, 1)]).get('w::X::v')).toBe('P1');
   });
 });
