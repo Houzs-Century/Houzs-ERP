@@ -246,3 +246,30 @@ describe('a refused Purchase Invoice create can be corrected and saved', () => {
     expect(tables.purchase_invoices).toHaveLength(1);
   });
 });
+
+/* One supplier bill is owed once. The New form used to book the same supplier
+   bill number a second time with nothing said. */
+describe('a supplier bill number already booked is refused by name', () => {
+  const booked = (over: Row = {}): Row => ({
+    id: 'pi-old', invoice_number: 'HC-PI-2608-001', company_id: 1, supplier_id: 'sup-1',
+    supplier_invoice_ref: 'SB-001', status: 'POSTED', ...over,
+  });
+
+  it('a second live invoice with the same supplier + bill number (any spacing or case) is a 409 naming the first', async () => {
+    tables.purchase_invoices.push(booked());
+    const res = await save(app(), claimStore().env, draft({ supplierInvoiceRef: ' sb-001 ' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'duplicate_supplier_bill', existing: { invoiceNumber: 'HC-PI-2608-001' } });
+    expect(tables.purchase_invoices).toHaveLength(1);
+  });
+
+  it('a cancelled invoice, another supplier or another company does not block it', async () => {
+    tables.purchase_invoices.push(
+      booked({ status: 'CANCELLED' }),
+      booked({ id: 'pi-other-sup', supplier_id: 'sup-2' }),
+      booked({ id: 'pi-other-co', company_id: 2 }),
+    );
+    const res = await save(app(), claimStore().env, draft({ supplierInvoiceRef: 'SB-001' }));
+    expect(res.status).toBe(201);
+  });
+});

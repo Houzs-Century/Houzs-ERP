@@ -206,7 +206,7 @@ describe('ruling file', () => {
       expect(new Set(codes).size).toBe(codes.length);
     }
     expect(sizeOf({ code: 'DL-CS2 NN-WINTER DREAM MATT (K', size_code: null })).toBe('K');
-    expect(confirmPhrase({ groups: 1, pairs: 2, moves: 3, fills: 4, folds: 5, idleModels: 6, idleSkus: 7 })).toBe('MERGE 1 MODELS: 2 SKU MERGES, MOVE 3 SKUS, FILL 4, FOLD 5, IDLE OFF 6/7');
+    expect(confirmPhrase({ groups: 1, pairs: 2, moves: 3, inactive: 8, fills: 4, folds: 5, idleModels: 6, idleSkus: 7 })).toBe('MERGE 1 MODELS: 2 SKU MERGES, MOVE 3 SKUS, MOVE 8 SWITCHED-OFF, FILL 4, FOLD 5, IDLE OFF 6/7');
   });
 });
 

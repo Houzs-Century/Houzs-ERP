@@ -81,6 +81,7 @@ import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { setGrnLineRackHandler } from '../lib/grn-line-rack';
+import { grnLineNetReceived } from '../lib/po-net-received';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -387,7 +388,7 @@ async function checkGrnZeroCost(
    the single chokepoint that writes inventory IN and rolls PO received_qty, so
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
-async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
+async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
@@ -424,29 +425,23 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      matches no row and is refused. Same pattern stock-take already uses
      (stock-takes.ts, `.eq('status','OPEN')` on its POST flip).
 
-     The expected value is READ rather than hard-coded to 'DRAFT' because the
-     create-as-posted paths insert the row with status 'POSTED' and then call
-     this chokepoint — hard-coding DRAFT would refuse every non-draft create. */
-  const { data: preRow } = await scopeToCompanyId(
-    sb.from('grns').select('status').eq('id', grnId), companyId,
-  ).maybeSingle();
-  /* CAS on the RAW stored value, compare on an upper-cased copy. Feeding the
-     normalised string back into .eq() would never match a row whose status is
-     not already upper-case, turning every post into a spurious 409. */
-  const preStatus = (preRow as { status?: string | null } | null)?.status ?? null;
-  if (preStatus == null) return { ok: false, reason: 'not_found', status: 404 };
-  const preStatusNorm = preStatus.toUpperCase();
+     The expected value is the status the CALLER saw, never a fresh read here:
+     a fresh read lets the second of two simultaneous confirms see the first
+     one's POSTED and CAS POSTED -> POSTED successfully, so both wrote the stock
+     IN (Conts-ERP #787, `expectedStatus`). Confirm passes the DRAFT it loaded;
+     the create paths pass what they inserted (DRAFT, or POSTED on the
+     create-as-posted path). */
   /* A CANCELLED GRN already had its receipt reversed by an OUT; re-posting it
-     would book the stock a second time against that reversal. CLOSED was already
-     excluded by the old predicate. */
-  if (preStatusNorm === 'CANCELLED' || preStatusNorm === 'CLOSED') {
-    return { ok: false, reason: `grn_${preStatusNorm.toLowerCase()}`, status: 409 };
+     would book the stock a second time against that reversal. */
+  const expectedNorm = expectedStatus.toUpperCase();
+  if (expectedNorm === 'CANCELLED' || expectedNorm === 'CLOSED') {
+    return { ok: false, reason: `grn_${expectedNorm.toLowerCase()}`, status: 409 };
   }
   const { data, error } = await scopeToCompanyId(sb.from('grns').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', grnId), companyId).eq('status', preStatus).select('id, status, posted_at').maybeSingle();
+  }).eq('id', grnId), companyId).eq('status', expectedStatus).select('id, status, posted_at').maybeSingle();
   // HC-0004: the DB cap (mig 20261014T1600) refused a post past a PO line's qty.
   if (isPoLineOverReceived(error)) return { ok: false, reason: 'qty_exceeds_remaining', status: 409 };
   if (error) return { ok: false, reason: error.message, status: 500 };
@@ -775,9 +770,9 @@ export async function verifyGrnOverReceipt(
     );
     // Live accepted per PO line across all non-cancelled GRN lines.
     const { data: sib } = await sb.from('grn_items')
-      .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+      .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
       .in('purchase_order_item_id', ids);
-    const sibRows = (sib ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
+    const sibRows = (sib ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
     const grnIds = [...new Set(sibRows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
@@ -802,7 +797,7 @@ export async function verifyGrnOverReceipt(
       // returned_qty), matching recomputePoReceived, so a legitimate replacement
       // GRN after a purchase return isn't falsely rejected by a gross-qty
       // over-receipt cap.
-      const q = Math.max(0, Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0));
+      const q = grnLineNetReceived(r);
       liveByPoi.set(r.purchase_order_item_id, (liveByPoi.get(r.purchase_order_item_id) ?? 0) + q);
       if (r.grn_id === grnId) thisGrnByPoi.set(r.purchase_order_item_id, (thisGrnByPoi.get(r.purchase_order_item_id) ?? 0) + q);
     }
@@ -874,7 +869,8 @@ export async function recomputePoReceived(
     // 1. Recount received_qty per PO item from live GRN lines. Net out goods
     //    sent back to the supplier (returned_qty, migration 0106): a returned
     //    qty no longer counts as received, so the PO line re-opens and a
-    //    replacement shipment can be received against it. Clamped ≥ 0.
+    //    replacement shipment can be received against it. Clamped ≥ 0. Units
+    //    returned with no replacement (returned_closed_qty) stay received.
     /* A FAILED READ STOPS THE RECOUNT before anything is written (READY audit
        F2, 2026-10-16). Unchecked, a failed grn_items read looked like "no
        receipts" and wrote received_qty 0 over real receipts, and a failed grns
@@ -882,10 +878,10 @@ export async function recomputePoReceived(
        no RECOUNT_FAILED row was left. The stored count stays as it was and the
        caller records the failure. */
     const { data: glines, error: glinesErr } = await sb.from('grn_items')
-      .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
+      .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
       .in('purchase_order_item_id', ids);
     if (glinesErr) return { ok: false, reason: `GRN line read failed: ${glinesErr.message ?? 'unknown'}` };
-    const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
+    const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
     const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
@@ -902,8 +898,7 @@ export async function recomputePoReceived(
     const recvByPoi = new Map<string, number>(ids.map((id) => [id, 0]));
     for (const r of rows) {
       if (cancelled.has(r.grn_id)) continue;
-      const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
-      recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + Math.max(0, net));
+      recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + grnLineNetReceived(r));
     }
     /* CHECK THE WRITES. supabase-js RESOLVES on a rejected write rather than
        throwing, so a row refused by a constraint never reaches the catch below:
@@ -1650,7 +1645,7 @@ grns.post('/', async (c) => {
      single chokepoint that writes inventory IN + rolls up the PO received_qty.
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
-  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'DRAFT');
   /* ATOMIC CREATE — the row was inserted DRAFT, so any post failure means the
      chokepoint did NOT flip it: it is still DRAFT with no stock and no PO
      rollup. Roll the whole create back rather than leave a half-made document.
@@ -1895,7 +1890,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   }
 
   /* PR-DRAFT-removal — auto-rollup + inventory IN after items insert. */
-  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'POSTED');
   /* ZERO-COST refusal — same rollback as POST /: this path also inserts POSTED
      before calling the chokepoint, so the document must not survive a refusal. */
   if (!postRes.ok && postRes.zeroCost) {
@@ -1992,7 +1987,7 @@ export const postGrnHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'POST', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  const res = await postGrnAndRollup(sb, id, user.id, co.companyId);
+  const res = await postGrnAndRollup(sb, id, user.id, co.companyId, row.status);
   /* Honour the chokepoint's own status. A lost confirm race (409
      'already_posting') is a normal outcome — the other call committed the stock —
      not a server fault; it used to surface as a 500 because res.status was
@@ -2100,7 +2095,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   for (const draft of coreRes.created) {
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
     // The UI create is auto-posted; the draft-only core left this to the handler.
-    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId);
+    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId, 'DRAFT');
     /* ZERO-COST refusal — the core inserted this draft, so roll it back exactly
        like the over-receipt branch inside the core and carry the refusal out of
        the loop. Buckets that received cleanly keep their documents; only the

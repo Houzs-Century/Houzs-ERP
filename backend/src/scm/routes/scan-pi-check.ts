@@ -149,6 +149,9 @@ scanPiCheck.post('/create', async (c) => {
     const res = await createDraftPiFromGrnItems(c.env, {
       userId, houzsUserId, companyId, allowedCompanyIds: companyId != null ? [companyId] : null, companyCode, picks,
       supplierInvoiceNumber: review.invoiceNumber, invoiceDate: review.invoiceDate, notes: review.notes,
+      /* The queue showed "Already billed" (duplicatePi) before this button; the
+         operator's choice to create anyway stands. */
+      duplicateBill: 'allow',
     });
     if (!res.ok || res.created.length === 0) {
       const b = res.ok ? {} : res.body;
