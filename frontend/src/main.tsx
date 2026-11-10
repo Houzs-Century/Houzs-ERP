@@ -19,6 +19,7 @@ import { LazySlot } from "./components/LazySlot";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
 import { installChunkFailureWatch } from "./lib/staleBuild";
+import { installNumberInputWheelGuard } from "./lib/numberInputWheel";
 import { CJK_FONT_STYLESHEET, loadDeferredFontStylesheet } from "./lib/deferredFonts";
 import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
@@ -96,6 +97,7 @@ loadDeferredFontStylesheet(document, CJK_FONT_STYLESHEET);
    boot is not missed. See lib/staleBuild.ts for exactly what is and is not
    covered. */
 installChunkFailureWatch();
+installNumberInputWheelGuard();
 /* A PRINT that hits a chunk a deploy deleted reloads once and reopens its
    preview (lib/chunkActionRecovery.ts). That listener installs itself on the
    first tracked print, so it is not imported here: it would add ~0.9 KB gzip to
