@@ -46,6 +46,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Dev
 - Receipt rebank: after one clean release of the atomic move, delete `RECEIPT_REBANK_MODE` and the two-step path (`moveOneTwoStep`, acc/receipt-rebank.ts); the payment-edit receipt re-issue (`followPaymentEdit` -> formaliseReceipt, `rebankTx: null`) still moves a transfer two-step until env reaches it — dev — 2026-11-10
+- All-or-nothing stock writes: GRN post is atomic (`GRN_POST_MODE`). Left: DO ship / confirm (`DO_SHIP_MODE`, next PR), then delivery returns and purchase returns. Delete the `two-step` path and the switch after one clean release — 2026-11-10
 - Last Mile map: draw each lorry's road-shaped line from the kept polyline in scm.lorry_day_routes (today straight lines between stops) — 2026-11-08
 - Fleet Health "Off the road": add and end an out-of-service window from the lorry record (backend has the table; no screen) — 2026-11-08
 - Verify on production: System Health shows "Health report to IT Hub: Last sent" (#5398), and an HC SO with a live PO refuses a direct line edit and offers an amendment (#5444) — 2026-11-09
