@@ -15,7 +15,9 @@ import { writeFailed, writeFailedAs } from './mutation-error';
 // useOutstandingGrnItems from there.
 
 import { useMemo } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useListMrpEnrichmentChunks } from './list-mrp-enrichment-chunks';
+import type { ListMrpStatus } from '../../../lib/listMrpStatus';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { piListParams } from './pi-list-export';
 import { idempotentInit } from '../../../lib/idempotency';
@@ -62,54 +64,22 @@ export function usePurchaseInvoicesPaged(params: { from?: string; to?: string; p
    Delivered) the list no longer computes on its critical path (see
    piListEnrichment.ts). Fired AFTER the list renders, for the PIs it just
    showed, and merged in by applyPiListMrpEnrichment. The ids are chunked at 100
-   so the request stays bounded; each chunk is cached independently. The backend
-   runs ONE company-wide computeMrp per request regardless of chunk size, so
-   chunking costs only extra bounded row reads, never extra allocation work. */
+   so the request stays bounded; each chunk is cached independently. The backend answers from the 15-min stored MRP snapshot
+   (list-mrp-enrichment-chunks.ts). */
 const ENRICH_CHUNK = 100;
 
 export function usePiListMrpEnrichmentMap(
   piIds: string[],
   enabled: boolean,
-): { byId: Map<string, PiListMrpEnrichment>; isFetching: boolean } {
-  // Sort so chunk cache keys stay stable across renders (row order can shift
-  // under a re-sort without changing which PIs are on screen).
-  const chunks = useMemo(() => {
-    const uniq = [...new Set(piIds.filter(Boolean))].sort();
-    const out: string[][] = [];
-    for (let i = 0; i < uniq.length; i += ENRICH_CHUNK) out.push(uniq.slice(i, i + ENRICH_CHUNK));
-    return out;
-  }, [piIds]);
-
-  const results = useQueries({
-    queries: chunks.map((chunk) => ({
-      enabled: enabled && chunk.length > 0,
-      queryKey: ['purchase-invoices-list-mrp-enrichment', chunk.join(',')],
-      queryFn: ({ signal }: { signal?: AbortSignal }) =>
-        authedFetch<{ enrichment: Record<string, PiListMrpEnrichment> }>(
-          `/purchase-invoices/list-mrp-enrichment?piIds=${encodeURIComponent(chunk.join(','))}`,
-          { signal },
-        ),
-      staleTime: 30_000,
-      retry: retryUnlessClientError,
-      retryDelay: 800,
-    })),
+): { byId: Map<string, PiListMrpEnrichment>; isFetching: boolean; mrp: ListMrpStatus } {
+  const { byId, isFetching, mrp } = useListMrpEnrichmentChunks<PiListMrpEnrichment>({
+    ids: piIds,
+    enabled,
+    queryKeyPrefix: 'purchase-invoices-list-mrp-enrichment',
+    urlPrefix: '/purchase-invoices/list-mrp-enrichment?piIds=',
+    chunkSize: ENRICH_CHUNK,
   });
-
-  // Signature over the per-chunk update timestamps: rebuild the merged map only
-  // when a chunk's data actually changes, not on every parent render.
-  const sig = results.map((r) => r.dataUpdatedAt).join('|');
-  const isFetching = results.some((r) => r.isFetching);
-  const byId = useMemo(() => {
-    const map = new Map<string, PiListMrpEnrichment>();
-    for (const r of results) {
-      const e = r.data?.enrichment;
-      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
-    }
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
-  }, [sig]);
-
-  return { byId, isFetching };
+  return { byId, isFetching, mrp };
 }
 
 /* The overlay the PI list applies: take the rows the list endpoint returned
@@ -118,16 +88,17 @@ export function usePiListMrpEnrichmentMap(
 export function useEnrichedPiListRows<T extends EnrichablePiRow>(
   rows: T[],
   enabled: boolean,
-): T[] {
-  const piIds = useMemo(
+): { rows: T[]; mrp: ListMrpStatus } {
+  const ids = useMemo(
     () => rows.map((r) => r.id).filter((x): x is string => !!x),
     [rows],
   );
-  const { byId } = usePiListMrpEnrichmentMap(piIds, enabled);
-  return useMemo(
+  const { byId, mrp } = usePiListMrpEnrichmentMap(ids, enabled);
+  const healed = useMemo(
     () => rows.map((r) => applyPiListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
     [rows, byId],
   );
+  return { rows: healed, mrp };
 }
 export const usePurchaseInvoiceDetail = (id: string | null) => useQuery({
   queryKey: ['purchase-invoice-detail', id],
