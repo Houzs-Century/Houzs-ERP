@@ -13,7 +13,7 @@ import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
 import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
-import { billSkuOptions, grnOptions, lineTierNote, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
+import { FREE_ROW_NOTE, billSkuOptions, grnOptions, isFreeRow, lineTierNote, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';
 import styles from './ScanGrnCheck.module.css';
 import { openLoadedTab } from '../../../lib/openLoadedTab';
@@ -167,6 +167,7 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
                   {printed && <div className={styles.printed} title={l.read?.description ?? undefined}>{l.ai ? 'AI match, please check: ' : l.suggested ? 'Matched by name, check: ' : 'Paper: '}{printed}</div>}
+                  {!l.grnItemId && isFreeRow(l.read) && <div className={styles.freeNote}>{FREE_ROW_NOTE}</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />

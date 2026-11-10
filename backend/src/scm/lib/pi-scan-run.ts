@@ -35,7 +35,7 @@ import { loadOutstandingGrnLines, loadPoByPoItem, remainingToBill } from './outs
 import { chunkIn } from './paginate-all';
 import { callClaudePiExtract, loadPiFewShot, type PiScanExtract } from './pi-scan-extract';
 import {
-  matchInvoiceLinesToGrnLines, docRefMatches, docRefsOf, normalizeCode,
+  matchInvoiceLinesToGrnLines, docRefMatches, docRefsOf, normalizeCode, poRefsNote, isFreePrice,
   type PiMatchGrnLine,
 } from './pi-scan-match';
 import { CLAUDE_MODEL, type ContentBlock, type UploadedImage } from './scan-ocr';
@@ -249,7 +249,9 @@ export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | nu
 
 /** The rows the rules left untied, put to the AI in one call; printed row -> our SKU. */
 async function askAi(ai: AiSkuMatcher | null, review: PiReview, open: ReadonlyArray<BillableLine>): Promise<Map<string, string>> {
-  const untied = review.lines.filter((l) => !l.grnItemId && l.read && (l.read.itemCode || l.read.description));
+  // A row printed at RM 0 can only bill a free receipt line: with none open, nothing to ask.
+  const anyFree = open.some((o) => o.unitPriceSen === 0);
+  const untied = review.lines.filter((l) => !l.grnItemId && l.read && (l.read.itemCode || l.read.description) && (anyFree || !isFreePrice(l.read.unitPrice, l.read.lineTotal)));
   if (!ai || untied.length === 0 || open.length === 0) return new Map();
   const bySku = new Map<string, { itemCode: string; description: string | null; supplierSku: string | null; grns: string[] }>();
   for (const l of open) {
@@ -265,9 +267,11 @@ async function askAi(ai: AiSkuMatcher | null, review: PiReview, open: ReadonlyAr
 }
 
 function tierNote(tier: PiLineTier | null, poNo: string | null): string | null {
-  if (tier === 'invoice_po') return `Billed from the lines of ${poNo} printed on the invoice.`;
-  if (tier === 'whole_receipt') return `No line of ${poNo} printed on the invoice matched, so the scan matched against every unbilled line of the receipt — check which PO each line bills.`;
-  return null;
+  const { refs, exchange } = poRefsNote(poNo);
+  const said = tier === 'invoice_po' ? `Billed from the lines of ${refs} printed on the invoice.`
+    : tier === 'whole_receipt' ? `No line of ${refs} printed on the invoice matched, so the scan matched against every unbilled line of the receipt — check which PO each line bills.`
+    : null;
+  return [said, exchange].filter(Boolean).join(' ') || null;
 }
 
 function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | null {
@@ -335,8 +339,9 @@ export async function findAnchorGrns(
   if (!poNo) return [];
   const linePoNumbers = await loadLinePoNumbersByGrn(svc, rows.map((g) => g.id), companyId);
   if (linePoNumbers === null) return [];
-  return rows.filter((g) => docRefMatches(poNo, g.po_number)
-    || (linePoNumbers.get(g.id) ?? []).some((n) => docRefMatches(poNo, n)));
+  const poRefs = docRefsOf(poNo);
+  return rows.filter((g) => poRefs.some((p) => docRefMatches(p, g.po_number)
+    || (linePoNumbers.get(g.id) ?? []).some((n) => docRefMatches(p, n))));
 }
 
 /* One goods receipt can take lines from several POs (the add-PO picker,
@@ -428,7 +433,8 @@ export async function matchAnchoredLines(
   const all = grnLines.map((l) => l.line);
   const poNo = parsed.poNo;
   if (!poNo) return { match: matchInvoiceLinesToGrnLines(parsed.lines, all, bindingBySku), tier: null };
-  const named = grnLines.filter((l) => docRefMatches(poNo, l.poNumber)).map((l) => l.line);
+  const poRefs = docRefsOf(poNo);
+  const named = grnLines.filter((l) => poRefs.some((p) => docRefMatches(p, l.poNumber))).map((l) => l.line);
   if (named.length > 0) {
     const match = matchInvoiceLinesToGrnLines(parsed.lines, named, bindingBySku);
     if (match.picks.length > 0) return { match, tier: 'invoice_po' };

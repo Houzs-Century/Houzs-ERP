@@ -104,6 +104,7 @@
 .qty { text-align: right; font-size: 13px; }
 .desc { min-width: 0; font-size: 12.5px; line-height: 1.3; }
 .printed { font-size: 11px; color: #767b6e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.freeNote { font-size: 11px; color: #6e4d12; white-space: normal; }
 .gift {
   justify-self: start;
   display: inline-flex;

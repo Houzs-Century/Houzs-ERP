@@ -32,14 +32,36 @@ export type PiReview = {
   lines: PiReviewLine[];
 };
 
+/* Mirrors the backend's pi-scan-match docRefsOf: "EX-HC-PO-2609-151" (HOOKKA
+   INV-2610-097) is an exchange, a replacement for HC-PO-2609-151. */
+const EXCHANGE_MARK = /^(?:EXCH|EX)(?:\s*-\s*|\s+)(?=[A-Z0-9])/i;
+
+/** The PO refs printed, without an exchange mark, and those the invoice marks as exchange. */
+export function poRefs(poNo: string | null): { refs: string[]; exchange: string[] } {
+  const printed = (poNo ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  const bare = (s: string) => s.replace(EXCHANGE_MARK, '').trim();
+  return { refs: printed.map(bare).filter(Boolean), exchange: printed.filter((s) => EXCHANGE_MARK.test(s)).map(bare).filter(Boolean) };
+}
+
 /** Which receipt lines the scan matched against, for the operator: the PO
  *  printed on the invoice, or every unbilled line of the receipt when none of
- *  that PO's lines matched. null when the invoice printed no PO. */
+ *  that PO's lines matched, and what an exchange mark on the PO means. null when
+ *  there is nothing to say. */
 export function lineTierNote(review: Pick<PiReview, 'lineTier' | 'poNo'>): string | null {
-  if (review.lineTier === 'invoice_po') return `Matched to the lines of ${review.poNo} printed on the invoice.`;
-  if (review.lineTier === 'whole_receipt') return `No line of ${review.poNo} printed on the invoice matched, so the scan matched against every unbilled line of the receipt. Check which PO each line bills.`;
-  return null;
+  const { refs, exchange } = poRefs(review.poNo);
+  const named = refs.length > 0 ? refs.join(', ') : review.poNo;
+  const said = review.lineTier === 'invoice_po' ? `Matched to the lines of ${named} printed on the invoice.`
+    : review.lineTier === 'whole_receipt' ? `No line of ${named} printed on the invoice matched, so the scan matched against every unbilled line of the receipt. Check which PO each line bills.`
+    : null;
+  const ex = exchange.length > 0 ? `The invoice marks ${exchange.join(', ')} as exchange (EX): replacement goods for those orders.` : null;
+  return [said, ex].filter(Boolean).join(' ') || null;
 }
+
+/** A row printed at RM 0: a replacement or a free gift, nothing to bill. */
+export function isFreeRow(read: PiReviewLine['read']): boolean {
+  return read != null && (read.unitPrice === 0 || (read.unitPrice == null && read.lineTotal === 0));
+}
+export const FREE_ROW_NOTE = 'Free on the invoice (RM 0): a replacement / exchange, nothing to bill — tie it only if it really bills a receipt line.';
 export type PiCheckDoc = {
   id: string;
   batchId: string | null;
@@ -117,7 +139,8 @@ export function priceDiffers(printed: number | null | undefined, unitPriceSen: n
 /** The amounts to tie off. `invoiceSen` is what the invoice charges for every
  *  row it printed. `oursSen` is the rows tied to a receipt line at our price, and
  *  `matchedInvoiceSen` what the invoice charges for those same rows, so the two
- *  compare like for like while some rows are still untied (`unmatched`). */
+ *  compare like for like while some rows are still untied (`unmatched`). A row
+ *  printed at RM 0 bills nothing: it counts on neither side and is not "not matched". */
 export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>): { invoiceSen: number | null; oursSen: number | null; matchedInvoiceSen: number | null; unmatched: number } {
   const printedOf = (l: PiReviewLine): number | null => {
     const r = l.read;
@@ -131,10 +154,11 @@ export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>
     return priced.length > 0 ? priced.reduce((a, v) => a + v, 0) : null;
   };
   const invoiceSen = sum(review.lines.filter((l) => l.read).map(printedOf));
-  const tied = review.lines.filter((l) => l.grnItemId && lines.get(l.grnItemId));
+  const billing = review.lines.filter((l) => !isFreeRow(l.read));
+  const tied = billing.filter((l) => l.grnItemId && lines.get(l.grnItemId));
   const oursSen = tied.length > 0 ? tied.reduce((a, l) => a + Math.round((lines.get(l.grnItemId as string) as BillLine).unitPriceSen * l.qty), 0) : null;
   const matchedInvoiceSen = sum(tied.filter((l) => l.read).map(printedOf));
-  return { invoiceSen, oursSen, matchedInvoiceSen, unmatched: review.lines.length - tied.length };
+  return { invoiceSen, oursSen, matchedInvoiceSen, unmatched: billing.length - tied.length };
 }
 
 /** The receipt side differs from what the invoice charges for the same rows. */
