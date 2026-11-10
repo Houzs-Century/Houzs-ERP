@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_CHARGE_SHARE, groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
   type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor,
-  bankReversalPairs, type ReversalSource } from './bank-match';
+  bankReversalPairs, type ReversalSource, voucherEntryFor, voucherNumbersIn } from './bank-match';
 import type { BankLine } from './bank-parse';
 
 let seq = 0;
@@ -724,5 +724,67 @@ describe('a movement the bank itself reversed', () => {
   it('gives each reversal one original, the earliest still unpaired, and never an original twice', () => {
     expect(ids(bankReversalPairs([mv(1), mv(2), reversal(3), reversal(4)]))).toEqual([[1, 3], [2, 4]]);
     expect(ids(bankReversalPairs([mv(1), reversal(3), reversal(4)]))).toEqual([[1, 3]]);
+  });
+});
+
+/* ── The voucher the bank's line names (owner 2026-11-10) ─────────────────────
+   「银行单上写着 PV 号码的，直接配那张 PV，不管差几天」. 2990's Hong Leong October:
+   five payments printed their voucher's number — four the formal one, one the
+   Draft number it was paid under — and were dated 12 to 24 days after the
+   voucher, past the week an equal amount is offered in, so they sat under "No
+   entry found" with their voucher under "Not on the bank yet". The number and the
+   amount together name one entry; the days do not matter. The prints as stored. */
+describe('the voucher a bank line names', () => {
+  const pv = (jeNo: string, entryDate: string, doc: string, creditSen: number) =>
+    ({ jeNo, entryDate, sourceType: 'PV', sourceDocNo: doc, debitSen: 0, creditSen, partyName: null, notes: null });
+  const LEDGER = [
+    pv('2990-JE-2610-0362', '2026-10-15', '2990-HPV-2610-018', 266711),
+    pv('2990-JE-2610-0447', '2026-10-06', '2990-HPV-2610-009', 1802079),
+    pv('2990-JE-2611-0135', '2026-11-02', '2990-HPV-2611-011', 114006),
+    pv('HC-JE-2609-0300', '2026-09-20', 'HC-MPV-2609-012', 2338100),
+    { jeNo: '2990-JE-2610-0263', entryDate: '2026-10-22', sourceType: 'SOPAY', sourceDocNo: '75c8212b-f5f6-4845-95c9-339d29683bb4', debitSen: 168200, creditSen: 0 },
+  ];
+  const mv = (bookedOn: string, amountSen: number, description: string, reference: string | null) => ({ bookedOn, amountSen, description, reference });
+
+  it('reads formal and Draft numbers out of the words, with or without the company prefix', () => {
+    expect(voucherNumbersIn('Fund Trf fr CA to CA-Internet(B) 10-0015 0017 0026 2990-HPV-2610-018 HOUZS VENTURE HOLDING')).toEqual(['2990-HPV-2610-018']);
+    expect(voucherNumbersIn('CIB Instant Transfer at DIO SHOWROOM_DECO 2990-Draft-2610-006 LOO WEN WEI 20261030HLBBMYKL')).toEqual(['2990-DRAFT-2610-006']);
+    expect(voucherNumbersIn('DUITNOW PAYPRX DR MPV-2609-012 INVOICE JULY 2026')).toEqual(['MPV-2609-012']);
+    expect(voucherNumbersIn('Instant Transfer YEAP KAR CHUN Yeap Kar Chun')).toEqual([]);
+  });
+
+  it('is the voucher named, twelve days before the payment', () => {
+    expect(voucherEntryFor(mv('2026-10-27', -266711, 'Fund Trf fr CA to CA-Internet(B)', '10-0015 0017 0026 2990-HPV-2610-018 HOUZS VENTURE HOLDING'), LEDGER, new Set()))
+      .toMatchObject({ jeNo: '2990-JE-2610-0362', amountSen: -266711, daysApart: 12 });
+  });
+
+  it('reads the Draft number a payment went out under through to the number the voucher took at Checked', () => {
+    const former = new Map([['2990-DRAFT-2610-006', ['2990-HPV-2610-009']]]);
+    expect(voucherEntryFor(mv('2026-10-30', -1802079, 'CIB Instant Transfer at DIO', 'SHOWROOM_DECO 2990-Draft-2610-006 LOO WEN WEI 20261030HLBBMYKL'), LEDGER, new Set(), former))
+      .toMatchObject({ jeNo: '2990-JE-2610-0447', daysApart: 24 });
+    /* Without the Draft's history there is nothing to read it through. */
+    expect(voucherEntryFor(mv('2026-10-30', -1802079, 'CIB Instant Transfer at DIO', 'SHOWROOM_DECO 2990-Draft-2610-006 LOO WEN WEI'), LEDGER, new Set())).toBeNull();
+  });
+
+  it('takes the number as Maybank prints it, without the company prefix', () => {
+    expect(voucherEntryFor(mv('2026-09-23', -2338100, 'DUITNOW PAYPRX DR MPV-2609-012 INVOICE JULY 2026', null), LEDGER, new Set())?.jeNo).toBe('HC-JE-2609-0300');
+  });
+
+  it('is nothing when the amount differs, the entry is already matched, or the voucher is not ours', () => {
+    /* RM 9.00 "Short Transfer" naming a RM 1,140.06 voucher. */
+    expect(voucherEntryFor(mv('2026-11-06', -900, 'Fund Trf fr CA to CA-Internet(B)', 'HOUZS VENTURE HOLDING SDN. BHD. Short Transfer 2990-HPV-2611-011'), LEDGER, new Set())).toBeNull();
+    expect(voucherEntryFor(mv('2026-10-27', -266711, 'Fund Trf', '2990-HPV-2610-018'), LEDGER, new Set(['2990-JE-2610-0362']))).toBeNull();
+    /* Houzs's refund voucher on 2990's bank: the amount is a receipt's, the voucher is not 2990's. */
+    expect(voucherEntryFor(mv('2026-10-28', 168200, 'Fund Transfer at DIO', 'REFUND TO 2990 HC-HPV-2610-113 HOUZS CENTURY SDN. BHD.'), LEDGER, new Set())).toBeNull();
+    /* A voucher is money out: a credit never takes one. */
+    expect(voucherEntryFor(mv('2026-10-27', 266711, 'Fund Trf', '2990-HPV-2610-018'), LEDGER, new Set())).toBeNull();
+  });
+
+  it('leaves two named vouchers of the same amount to a person', () => {
+    const twin = [...LEDGER, pv('2990-JE-2610-0363', '2026-10-15', '2990-HPV-2610-019', 266711)];
+    expect(voucherEntryFor(mv('2026-10-27', -266711, 'Fund Trf', '2990-HPV-2610-018 2990-HPV-2610-019'), twin, new Set())).toBeNull();
+    /* One of the two named carries the amount: that one. */
+    const other = [...LEDGER, pv('2990-JE-2610-0364', '2026-10-15', '2990-HPV-2610-020', 50000)];
+    expect(voucherEntryFor(mv('2026-10-27', -266711, 'Fund Trf', '2990-HPV-2610-018 2990-HPV-2610-020'), other, new Set())?.jeNo).toBe('2990-JE-2610-0362');
   });
 });
