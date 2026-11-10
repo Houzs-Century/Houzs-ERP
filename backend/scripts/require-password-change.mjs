@@ -61,10 +61,25 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
+// The plan may run before the migration is deployed (to size the population);
+// apply never can, because it writes the column.
+const hasColumn = (await sql`
+  SELECT 1 FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'users'
+     AND column_name = 'password_change_required_at'`).length > 0;
+if (!hasColumn) {
+  console.log('note: users.password_change_required_at does not exist yet (migration 20261110T1500 not deployed).');
+  if (APPLY) {
+    console.error('refusing apply: deploy the migration first.');
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
+}
+
 const members = await sql`
   SELECT u.id, u.status,
          (u.password_hash IS NOT NULL AND u.password_hash <> '') AS has_password,
-         u.password_change_required_at IS NOT NULL AS already_flagged,
+         ${hasColumn ? sql`u.password_change_required_at IS NOT NULL` : sql`false`} AS already_flagged,
          r.permissions AS role_permissions,
          p.name AS position_name,
          (pp.position_id IS NOT NULL) AS has_policy_row,
