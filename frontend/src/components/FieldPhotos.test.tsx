@@ -8,10 +8,10 @@ import { FieldPhotos } from "./FieldPhotos";
 import type { FieldPhoto, FieldPhotosApi } from "../lib/fieldPhotos";
 
 const photo = (id: string, status: FieldPhoto["status"], error: string | null = null): FieldPhoto => ({
-  id, file: new File(["x"], `${id}.jpg`, { type: "image/jpeg" }), stamped: true, previewUrl: null, status, key: null, error,
+  id, file: new File(["x"], `${id}.jpg`, { type: "image/jpeg" }), stamped: true, previewUrl: null, status, key: null, sessionId: null, error,
 });
-const api = (photos: FieldPhoto[]): FieldPhotosApi => ({
-  photos, max: 10, notice: null,
+const api = (photos: FieldPhoto[], restore: FieldPhotosApi["restore"] = { phase: "off" }): FieldPhotosApi => ({
+  photos, max: 10, notice: null, restore, retryRestore: vi.fn(), skipRestore: vi.fn(),
   add: vi.fn(), retry: vi.fn(), remove: vi.fn(), clear: vi.fn(), gate: vi.fn(),
 });
 const touch = (coarse: boolean) => {
@@ -62,5 +62,20 @@ describe("FieldPhotos", () => {
     render(<FieldPhotos api={api([photo("c", "failed", "x")])} disabled title="POD photos" />);
     expect(screen.queryByText("Retry")).toBeNull();
     expect(screen.queryByLabelText("Remove photo 1")).toBeNull();
+  });
+
+  it("after a reload, says it is checking for photos already uploaded", () => {
+    render(<FieldPhotos api={api([], { phase: "loading" })} disabled={false} title="POD photos" />);
+    expect(screen.getByText(/Checking for photos you already uploaded/)).toBeTruthy();
+  });
+
+  it("a failed re-list names the reason and offers Check again / Continue without them", () => {
+    const a = api([], { phase: "failed", error: "No signal" });
+    render(<FieldPhotos api={a} disabled={false} title="POD photos" />);
+    expect(screen.getByRole("alert").textContent).toMatch(/\(No signal\)/);
+    fireEvent.click(screen.getByText("Check again"));
+    expect(a.retryRestore).toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Continue without them"));
+    expect(a.skipRestore).toHaveBeenCalled();
   });
 });

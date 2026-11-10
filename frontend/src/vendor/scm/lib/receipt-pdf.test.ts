@@ -47,7 +47,8 @@ async function render(over: Partial<ReceiptPdfData> = {}): Promise<{ draws: Text
   renderReceiptInto(doc, autoTable as unknown as Parameters<typeof renderReceiptInto>[1], { ...OR, ...over });
   return { draws, doc };
 }
-const has = (draws: TextDraw[], needle: string): boolean => draws.some((d) => d.text.includes(needle));
+/* Joined, because a long value in the right info column now wraps onto a second line (drawInfoColumns). */
+const has = (draws: TextDraw[], needle: string): boolean => draws.map((d) => d.text).join(' ').includes(needle);
 
 describe('the official receipt — A5 landscape', () => {
   test('who paid, how and when, for which order, who confirmed it; the amount in a line, in figures and in words', async () => {

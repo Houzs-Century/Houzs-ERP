@@ -1092,10 +1092,14 @@ scm.route("/scan-files/workshop", scanFilesWorkshop);
 // → uploadSlipFull), and a driver holds scm.do.dispatch, not scm.sales.orders.
 // An upload session only stores an image under the caller's own staff id; it
 // attaches to nothing until a route that checks its own access consumes the key.
+// openReadPaths — the only reads here are a caller's OWN not-yet-claimed field
+// photos (re-listed after a page reload); the handler filters to the caller's
+// user id and active company, so a driver without scm.sales.orders can read them.
 scm.use(
   "/slips/*",
   scmAreaGuard("scm.sales.orders", {
     writeLevel: "view",
+    openReadPaths: ["/slips/field-photos", "/image"],
     writeBypass: (c) =>
       c.req.method === "POST" &&
       hasPositionCapability(
