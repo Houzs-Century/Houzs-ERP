@@ -26,6 +26,7 @@ import {
   subscribeActiveCompany,
 } from "../lib/activeCompany";
 import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
+import { allowNextUnload, confirmLeaving, leaveGuardActive } from "../lib/leaveGuard";
 
 /**
  * Desktop-only sticky top chrome — ONE 52px bar (top-chrome redesign 2b,
@@ -156,9 +157,10 @@ function CompanySwitcher() {
     setOpen(false);
     if (id === activeId) return;
     // The switch below hard-reloads the whole app (see the block comment) to
-    // guarantee zero cross-company staleness — but a reload silently discards
-    // any unsaved edits: the app registers no beforeunload guard, so nothing
-    // else warns the user. Confirm first so a mid-edit switch can't lose work.
+    // guarantee zero cross-company staleness — and a reload discards any unsaved
+    // edits. Confirm first, in our own words, so a mid-edit switch can't lose
+    // work; allowNextUnload() then stops the browser's own leave prompt
+    // (LeaveGuardBridge) asking the same question a second time.
     // Only reached when the target company actually differs (same-company
     // re-selects already returned above), so we never nag on a no-op pick.
     const ok = await dialog.confirm({
@@ -189,6 +191,7 @@ function CompanySwitcher() {
     // (see lib/scmHandoffStorage).
     clearAllScmHandoffs();
     setActiveCompanyId(id);
+    allowNextUnload();
     window.location.reload();
   }
 
@@ -313,6 +316,9 @@ function ProfileMenu() {
 
   async function onLogout() {
     setOpen(false);
+    // Asked BEFORE logout(): the guard on the /login move would come after the
+    // session is already gone.
+    if (leaveGuardActive() && !(await confirmLeaving())) return;
     // Same rule as the company switcher: transient SCM navigation handoffs
     // must not survive an SPA identity change, or the next user picks up the
     // outgoing user's in-flight state.

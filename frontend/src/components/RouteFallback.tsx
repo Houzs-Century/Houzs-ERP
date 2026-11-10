@@ -180,13 +180,10 @@ function markHardRecover(kind: RecoverKind): boolean {
  *
  * What actually protects unsaved work is only this: every path here ends in
  * reload(), which fires `beforeunload`, so a page that registers a guard gets
- * the browser's own confirm dialog and nothing below bypasses it. Exactly ONE
- * page registers one today (PaymentsTable). Every other form loses its edits
- * with no prompt.
- *
- * Not fixed here, deliberately: the fix is an app-wide dirty-form registry, a
- * cross-cutting change well outside this boundary. Stated at full strength so
- * the next reader does not inherit a false reason to skip it.
+ * the browser's own confirm dialog and nothing below bypasses it. PaymentsTable
+ * registers one, and so does LeaveGuardBridge for every form holding
+ * hooks/useLeaveGuard (the main create / edit forms). A form that holds neither
+ * still loses its edits with no prompt.
  */
 /* Guarded because hardRecover is FIRE-AND-FORGET: componentDidCatch starts it
    without awaiting, so its continuation can land after the caller's environment
