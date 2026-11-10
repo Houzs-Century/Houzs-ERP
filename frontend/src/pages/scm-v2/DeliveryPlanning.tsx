@@ -39,7 +39,7 @@ import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFields
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
-import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
+import { useBoardRefresh } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal, SKIP_LABEL, failedNote, sendInChunks, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import { phoneKey } from '../../vendor/scm/lib/driver-info-send';
@@ -271,9 +271,9 @@ export const DeliveryPlanning = () => {
   /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
      every edit - 2026-10-26). Rows arrive in date bands, within 15 days of today
      first, the rest in the background; counts come first (delivery-board-bands.ts). */
-  // Others' changes show within 30 s, only the changed orders re-read (board-change-poll.ts).
-  useBoardChangePoll();
   const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
+  // Others' changes within 30 s; every band re-read every 5 min and on the triggers in board-change-poll.ts.
+  const boardRefresh = useBoardRefresh({ changeFeed: true, countsState: needsDelivered ? 'ALL' : 'OPEN' });
   const bands = useBandedBoard({ state: needsDelivered ? 'ALL' : 'OPEN', first: 1 });
   const serverCounts = useBoardCounts(true).data?.counts_by_region;
   const isLoading = bands.firstLoading;
@@ -581,7 +581,7 @@ export const DeliveryPlanning = () => {
         }
       />
 
-      <BoardLoadStatus updatedAt={bands.updatedAt} bands={bands} />
+      <BoardLoadStatus updatedAt={bands.updatedAt} bands={bands} onRefresh={boardRefresh.refreshNow} />
       <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={allOrders}
@@ -592,7 +592,6 @@ export const DeliveryPlanning = () => {
           const region = LAYOUT_PRESET_REGION[id];
           if (region && regionKeys.has(region)) setRegion(region);
         }}
-        initialRowLimit={200}
         defaultSort={orderSort}
         onRowReorder={(keys) => setRowOrder.mutate(mergeShownOrder(rowOrder ?? [], keys, new Set(fetchedOrders.map(rowIdOf))))}
         counts={counts}

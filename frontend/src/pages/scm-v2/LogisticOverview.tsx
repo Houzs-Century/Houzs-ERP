@@ -22,6 +22,7 @@ import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
 import { DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { useBandedBoard } from "../../vendor/scm/lib/delivery-board-bands";
+import { useBoardRefresh } from "../../vendor/scm/lib/board-change-poll";
 import { BoardLoadStatus } from "../../vendor/scm/components/BoardLoadStatus";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
@@ -91,6 +92,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   }, { replace: true });
   // The board in date bands, within 15 days first, the rest after (delivery-board-bands.ts).
   const board = useBandedBoard({ state: "ALL", first: 1 });
+  const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
   const boardRows = board.orders;
   /* Delivery Planning is the shared queue of every company the caller may see;
      this page reports the active company, like its DO figures, so board rows
@@ -297,7 +299,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
         {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
         {stamp}
       </div>
-      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} />
+      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} onRefresh={boardRefresh.refreshNow} />
       {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>

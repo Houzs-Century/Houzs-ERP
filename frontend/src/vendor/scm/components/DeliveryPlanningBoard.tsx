@@ -861,9 +861,8 @@ export type DeliveryPlanningBoardProps = {
   layoutPresets?: LayoutSeed[];
   /* Picking one of `layoutPresets` — the page moves the region chip to match. */
   onApplyLayoutPreset?: (presetId: string) => void;
-  /* First-page row cap (owner 2026-09-26): the full board renders this many rows
-     with a "Load more" for the rest; passed only by the main Delivery Planning
-     page. Omitted on the sub-pages (they render their whole, narrower queue). */
+  /* First-page row cap with a "Load more" for the rest. No board page passes it
+     any more: the grid mounts only the rows on screen, so every row scrolls in. */
   initialRowLimit?: number;
   /* Drag-to-reorder the board rows (owner 2026-09-26): called with the new order
      of the displayed rows. Passed only by the main Delivery Planning page, whose
