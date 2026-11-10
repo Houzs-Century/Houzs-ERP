@@ -85,6 +85,7 @@ import * as bk from '../lib/stock-bucket-key'; // variant-tracked companies only
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { setGrnLineRackHandler } from '../lib/grn-line-rack';
 import { grnLineNetReceived } from '../lib/po-net-received';
+import { stepClock, timed } from '../../lib/step-timing';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -399,10 +400,10 @@ async function checkGrnZeroCost(
 type GrnPostResult = { ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal; detail?: string };
 export async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string, tx: StockTx | null): Promise<GrnPostResult> {
   const core = tx
-    ? await tx((t) => postGrnCore(t, grnId, userId, companyId, expectedStatus, true))
-    : await postGrnCore(sb, grnId, userId, companyId, expectedStatus, false);
+    ? await timed('grn-post-core', () => tx((t) => postGrnCore(t, grnId, userId, companyId, expectedStatus, true)))
+    : await timed('grn-post-core', () => postGrnCore(sb, grnId, userId, companyId, expectedStatus, false));
   if (!core.ok) return core;
-  await runGrnPostTail(sb, core.tail);
+  await timed('grn-post-tail', () => runGrnPostTail(sb, core.tail));
   return { ok: true, movementErrors: core.movementErrors, recountError: core.recountError };
 }
 /* `atomic`: a failed recount or stock IN answers !ok so the runner rolls the
@@ -480,7 +481,7 @@ async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: stri
   // this GRN is POSTED, its lines count).
   const touchedPoItemIds = (items ?? [])
     .map((it: { purchase_order_item_id: string | null }) => it.purchase_order_item_id);
-  const recount = await recomputePoReceived(sb, touchedPoItemIds);
+  const recount = await timed('grn-po-recount', () => recomputePoReceived(sb, touchedPoItemIds));
   if (!recount.ok && atomic) return { ok: false, reason: STOCK_TX_ROLLED_BACK, status: 503, detail: `PO received recount: ${recount.reason ?? 'unknown'}` };
   /* THE GAP THIS CLOSES (2026-07-31). Everything above already committed: the
      GRN is POSTED and the stock IN follows below. If the recount did not run,
@@ -614,7 +615,7 @@ async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: stri
       /* Capture the best-effort write result so the caller can surface a failed
          stock IN (was silently swallowed — GRN flipped POSTED with stock NOT
          booked and the caller never told). No rollback; just make it loud. */
-      const res = await writeMovements(sb, movements, grnHeader?.company_id ?? null);
+      const res = await timed('grn-stock-in', () => writeMovements(sb, movements, grnHeader?.company_id ?? null));
       if (!res.ok && atomic) return { ok: false, reason: STOCK_TX_ROLLED_BACK, status: 503, detail: `stock IN ${grnNo}: ${res.reason ?? 'unknown'}` };
       if (!res.ok) movementErrors.push(`IN ${grnNo}: ${res.reason ?? 'unknown'}`);
       /* Receipt cutoff for the retro-cost reconciles (after commit, lib/grn-post-tail.ts):
@@ -1348,6 +1349,7 @@ grns.get('/:id/linked', async (c) => {
 });
 
 grns.post('/', async (c) => {
+  const lap = stepClock(); // Server-Timing s-grn-* laps
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   /* Draft/Confirmed two-state (mirrors SO) — DRAFT is opt-in per request via
@@ -1499,6 +1501,7 @@ grns.post('/', async (c) => {
      the same company + YYMM both mint the same grn_number; without a retry the
      loser hits the UNIQUE grn_number (23505) and the receipt 500s. Lines key off
      the returned header.id, so a re-mint needs no child re-stamp. */
+  lap('grn-prep');
   let firstMint = true;
   const { data: header, error: hErr } = await insertWithDocNoRetry(
     async () => {
@@ -1599,8 +1602,10 @@ grns.post('/', async (c) => {
   /* LEAK GUARD (CRITICAL): a DRAFT GRN must NOT post — postGrnAndRollup is the
      single chokepoint that writes inventory IN + rolls up the PO received_qty.
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
+  lap('grn-write');
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
   if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'DRAFT', stockTxFor(c.env, 'GRN_POST_MODE'));
+  lap('grn-post');
   /* ATOMIC CREATE — the row was inserted DRAFT, so any post failure means the
      chokepoint did NOT flip it: it is still DRAFT with no stock and no PO
      rollup. Roll the whole create back rather than leave a half-made document.
@@ -1629,6 +1634,7 @@ grns.post('/', async (c) => {
      this is the earliest point at which a CREATE row is true. Written AFTER
      recomputeGrnTotals so totalSen is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
+  lap('grn-totals-audit');
 
   /* ERP -> AutoCount. A receipt whose LINES name a purchase order is sent as a
      real po_to_gr; one that names none is still parentless. This used to record
@@ -1644,6 +1650,7 @@ grns.post('/', async (c) => {
     await recordParentlessCreate(sb, { ...acBase, missing: 'no source Purchase Order' });
   }
 
+  lap('grn-ac-queue');
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -1895,6 +1902,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
 grns.post('/from-pos', createGrnFromPosHandler);
 
 export const postGrnHandler = async (c: any) => {
+  const lap = stepClock(); // Server-Timing s-grn-* laps
   /* Confirm transition (DRAFT → POSTED) — this is where the GRN commits.
      postGrnAndRollup is the single chokepoint: it writes inventory IN +
      rolls up the PO received_qty + flips PO status. A GRN created with
@@ -1950,7 +1958,9 @@ export const postGrnHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'POST', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
+  lap('grn-checks');
   const res = await postGrnAndRollup(sb, id, user.id, co.companyId, row.status, stockTxFor(c.env, 'GRN_POST_MODE'));
+  lap('grn-post');
   /* Honour the chokepoint's own status. A lost confirm race (409
      'already_posting') is a normal outcome — the other call committed the stock —
      not a server fault; it used to surface as a 500 because res.status was
@@ -2010,6 +2020,7 @@ export const postGrnHandler = async (c: any) => {
     catch { /* non-Workers runtime (tests) — let the floating promise run */ }
   } catch { /* learning is best-effort (e.g. no service client configured) — never blocks the post */ }
 
+  lap('grn-totals-audit');
   return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined, recountError: res.recountError });
 };
 grns.patch('/:id/post', postGrnHandler);

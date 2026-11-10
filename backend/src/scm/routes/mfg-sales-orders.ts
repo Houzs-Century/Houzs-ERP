@@ -338,6 +338,7 @@ import { registerHistoryRoutes } from './mfg-sales-orders/history';
 import { registerPaymentsListRoutes } from './mfg-sales-orders/payments-list';
 import { registerDebtorSearchRoutes } from './mfg-sales-orders/debtor-search';
 import { linesUnreadableBody } from '../lib/failed-read-refusal'; import { readOverrideLineCost } from '../lib/so-override-cost';
+import { stepClock } from '../../lib/step-timing';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -2270,6 +2271,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      idempotency_key_reused until the operator left and re-keyed the whole order
      (phone New SO, 2026-11-02). See lib/no-write-refusal.ts for the contract. */
   let wrote = false;
+  const lap = stepClock(); // Server-Timing s-so-* laps: where a create spends its time
   const answer = c.json;
   c = { ...c, json: (b, s) => (wrote ? answer(b, s) : { ...answer(b, s), noWrite: true }) };
   let body: Record<string, unknown>;
@@ -4129,6 +4131,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      rollbackPwpClaims on failure); we only auto-retry when NO PWP claim was made
      (tries=1 keeps today's exact clean-fail+rollback for the rare promo order,
      so a re-mint can never orphan a pwp_codes.redeemed_doc_no). */
+  lap('so-prep');
   let mintedDocNo = docNo;
   let firstMint = true;
   const { error: hErr } = await insertWithDocNoRetry(
@@ -4331,6 +4334,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   );
   if (hErr) { await rollbackPwpClaims(); return c.json({ error: 'insert_failed', reason: hErr.message }, 500); }
   docNo = mintedDocNo; // committed doc_no — every child insert below keys off it
+  lap('so-header-write');
 
   /* P1 (migration 0143) — the slip is now owned by this SO, so promote its
      pending row. 'promoted' rows are excluded from the reaper that deletes the
@@ -4505,6 +4509,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
+  lap('so-payments');
   /* Task 5 — mint the one-shot SKUs (gated + collision-safe). Runs BEFORE the
      item insert: buildOneShotMints mutates each accumulated row's item_code to
      the minted code, and the insert below spreads those rows. Uses a service-
@@ -4604,6 +4609,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        header totals to the combo. No-op for non-sofa / non-matching SOs. */
     await recomputeTotals(sb, docNo, c);
   }
+  lap('so-items-write');
 
   /* ── FAIR LINK (owner 2026-09-13) ─────────────────────────────────────────
      Which EXHIBITION this sale belongs to, not just where it was written. The
@@ -4763,10 +4769,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      never loads the new order and the full re-walk only cost the scan job
      seconds. DRAFT -> CONFIRMED re-walks on the status route, and the 5-minute
      sweep repairs anything else. */
+  lap('so-followers');
   if ((body as { asDraft?: unknown }).asDraft !== true) {
     try { await recomputeSoStockAllocation(sb); }
     catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
   }
+  lap('so-alloc');
 
   /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
      host must not be able to fail a salesperson's Save. No-op while the flag is
@@ -4779,6 +4787,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      now); lib/ac-preflight.ts holds the block-or-warn ruling for every cause. */
   const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
+  lap('so-ac-queue');
 
   return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
@@ -5006,6 +5015,7 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // roll back the status change).
 export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
+  const lap = stepClock(); // Server-Timing s-status-* laps
   /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
      WITH, for a caller proceeding an order that does not carry one yet.
      `internalExpectedDd` is the legacy spelling of the same key and is still
@@ -5364,9 +5374,11 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     });
   };
 
+  lap('status-checks');
   const statusResponse = isCancel
     ? await runScmPgCommand(c, (tx) => commitStatusChange(tx))
     : await commitStatusChange(sb);
+  lap('status-write');
   if (!statusResponse.ok) return statusResponse;
 
   /* OCR self-learning — a DRAFT confirmed is the operator's verdict on the
@@ -5386,8 +5398,10 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   /* SO status changed → recompute allocation. CANCELLED removes the SO from
      the queue (its claim releases); terminal statuses (SHIPPED/DELIVERED/…)
      also drop it out. Other PENDING SOs may move into READY. Best-effort. */
+  lap('status-scan-note');
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-status failed:', e); }
+  lap('status-alloc');
 
   /* ERP -> AutoCount cancel. Reached only for an SO the downstream lock let
      through (soHasDownstream, checked above), which is the same rule AutoCount
@@ -5452,6 +5466,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] so-reopen contra failed:', e); }
   }
 
+  lap('status-followers');
   // The committed response (incl. any pwpVouchers summary) was built inside the
   // command; the effects above are best-effort and never change it.
   return statusResponse;
@@ -7829,6 +7844,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
 
 mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
+  const lap = stepClock(); // Server-Timing s-line-* laps
   const patchSoIsMigrated = await soIsMigrated((d) => sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno').eq('doc_no', d).maybeSingle(), docNo);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -8281,20 +8297,24 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     updates['warehouse_id'] = it.warehouseId as string | null;
   }
 
+  lap('line-checks');
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').update(updates),
     docNo,
     itemId,
   );
+  lap('line-write');
   // HC-0004: the DB floor (mig 20261014T1420) refused a cut below what a DO, created after the freeze read above, ships.
   if (isSoLineOverDelivered(error)) return c.json({ error: 'qty_below_delivered', message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.', reason: error!.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   // Default Free Gift (0170) — editing a line (code/qty) may add or drop a
   // trigger; reconcile auto-syncs the gift lines, then recomputes totals.
   await reconcileFreeGiftLinesForSo(sb, docNo, c);
+  lap('line-free-gift');
   // Re-derive the delivery fee — a line code/qty change can flip a cross-category
   // mix or a special-delivery trigger. Stored cross-category source kept.
   await rederiveDeliveryFee(sb, docNo, c);
+  lap('line-delivery-fee');
 
   /* PR-D — one UPDATE_LINE row when anything moved.
      Owner 2026-08-12, after 2990-SO-2608-017: this used to compare a
@@ -8329,9 +8349,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* Line qty / variants / category may have changed → recompute. Deferred: the
      UPDATE is committed; the global sweep runs in the background (waitUntil) so
      the save returns without blocking ~8s on it (matches the header PATCH). */
+  lap('line-audit');
   deferAllocationRecompute(c, sb, 'post-line-edit');
 
   await queueAcSoEdit(c, docNo);
+  lap('line-ac-queue');
 
   if (afterDoLine) {
     const put = await copyChargeLineToDo(sb, { companyId: afterDoLine.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, itemId, afterDoLine.doLine, afterDoLine.target);
@@ -11258,6 +11280,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
    (scm.amendment.approve_so / approve_po). */
 mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
+  const lap = stepClock(); // Server-Timing s-amd-* laps
 
   // Submit gate — the flat `scm.amendment.create` grant (Owner / IT Admin via
   // `*`, office positions via the matrix) OR any salesperson by STABLE ORG
@@ -11567,6 +11590,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      identity and "Requested by" could not answer who raised it (same defect
      class as the salesperson_id stamp at ~2738). Fall back to the system row
      when the sync row is missing so the FK stays valid. */
+  lap('amd-checks');
   const requesterStaffId = (await resolveCallerStaffId(sb, c.get('houzsUser')?.id)) ?? user.id;
 
   /* One insert per lane present. Numbering stays a single /A{n} sequence per SO
@@ -11675,6 +11699,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   /* A half that applies on submit needs no "waiting for your signature" notice —
      the desk it would call is the desk that raised it. The approve route still
      posts its own APPROVED notice when the apply lands. */
+  lap('amd-write');
   await notifyAmendmentsRaised(c, sb, {
     docNo, reason: body.reason,
     created: createdAmendments.filter((a) => !selfApprovable.includes(a.id)),
@@ -11691,6 +11716,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   /* `amendment` (singular) keeps the pre-split response contract for existing
      callers; `amendments` carries the full split so the UI can say "this was
      split into two approvals". */
+  lap('amd-notify');
   return c.json({
     amendment: createdAmendments[0],
     amendments: createdAmendments,
