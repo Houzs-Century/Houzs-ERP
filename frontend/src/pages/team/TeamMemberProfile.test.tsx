@@ -86,7 +86,7 @@ function mount(over: { canManage?: boolean; roles?: Role[] } = {}) {
   );
 }
 
-const roleField = () => screen.getByRole("textbox", { name: "Role" }) as HTMLInputElement;
+const roleField = () => screen.getByRole("combobox", { name: "Role" }) as HTMLInputElement;
 
 function pickRole(label: string) {
   // Opening the picker seeds its search with the current role, so type the new one.
