@@ -62,9 +62,9 @@ export type BoardRefreshDeps = {
   visible: () => boolean;
   fullReread: () => void;
   /** null = this screen does not run the change feed. */
-  feed: { fetch: (after: number | null) => Promise<BoardChanges>; rows: (ch: BoardChanges) => void } | null;
+  feed: { read: (after: number | null) => Promise<BoardChanges>; rows: (ch: BoardChanges) => void } | null;
   /** null = no counts check. `loaded` is null while bands are loading or refetching. */
-  counts: { fetch: () => Promise<PlanningCounts | null>; loaded: () => PlanningCounts | null } | null;
+  counts: { read: () => Promise<PlanningCounts | null>; loaded: () => PlanningCounts | null } | null;
 };
 
 /** The schedule itself, free of React, so the rules can be tested with fake timers. */
@@ -83,7 +83,7 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     if (!d.feed || feedBusy) return;
     feedBusy = true;
     try {
-      const ch = await d.feed.fetch(cursor);
+      const ch = await d.feed.read(cursor);
       if (cursor == null) cursor = Math.max(0, ch.cursor - FIRST_CURSOR_OVERLAP);
       else {
         cursor = ch.cursor;
@@ -100,7 +100,7 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     if (!d.counts) return;
     lastCountsAt = d.now();
     try {
-      const server = await d.counts.fetch();
+      const server = await d.counts.read();
       const loaded = d.counts.loaded();
       if (server && loaded && countsDiffer(server, loaded)) full();
     } catch {
@@ -156,13 +156,13 @@ export function useBoardRefresh(opts: { changeFeed: boolean; countsState: 'ALL' 
       fullReread: () => { void qc.invalidateQueries({ queryKey: ['delivery-planning'] }); },
       feed: opts.changeFeed
         ? {
-            fetch: (after) => authedFetch<BoardChanges>(`/delivery-planning/changes${after == null ? '' : `?after=${after}`}`),
+            read: (after) => authedFetch<BoardChanges>(`/delivery-planning/changes${after == null ? '' : `?after=${after}`}`),
             rows: (ch) => refreshChangedRows(qc, ch),
           }
         : null,
       counts: withCounts
         ? {
-            fetch: async () => {
+            read: async () => {
               const res = await authedFetch<{ counts_by_region: Partial<Record<string, PlanningCounts>> }>('/delivery-planning?counts_only=1');
               qc.setQueryData(['delivery-planning', 'counts'], res);
               return res.counts_by_region.ALL ?? null;

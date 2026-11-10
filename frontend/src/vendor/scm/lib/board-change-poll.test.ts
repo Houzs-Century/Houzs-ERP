@@ -27,8 +27,8 @@ function rig(o: { feed?: boolean; server?: PlanningCounts; loaded?: PlanningCoun
     today: () => today,
     visible: () => visible,
     fullReread,
-    feed: o.feed === false ? null : { fetch: fetchChanges, rows: vi.fn() },
-    counts: o.server ? { fetch: fetchCounts, loaded: () => (o.loaded === undefined ? counts(5) : o.loaded) } : null,
+    feed: o.feed === false ? null : { read: fetchChanges, rows: vi.fn() },
+    counts: o.server ? { read: fetchCounts, loaded: () => (o.loaded === undefined ? counts(5) : o.loaded) } : null,
   });
   return {
     r, fullReread, fetchChanges, fetchCounts,
