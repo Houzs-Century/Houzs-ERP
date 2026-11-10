@@ -165,7 +165,7 @@ type SiRow = {
   margin_pct_basis?: number;
 };
 
-type StatusTab = "all" | "sent" | "partial" | "paid" | "cancelled";
+type StatusTab = "all" | "draft" | "sent" | "partial" | "paid" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
@@ -186,7 +186,7 @@ const brandOf = (r: SiRow): string => r.branding || "—";
 const brandTone = brandingToneForLabel;
 
 // SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
-// PAID → CANCELLED. Buckets: sent (Draft + Sent + Overdue) / partial / paid /
+// PAID → CANCELLED. Buckets: draft / sent (Sent + Overdue) / partial / paid /
 // cancelled — the same split SI_STATUS_BUCKETS uses server-side
 // (backend/src/scm/routes/sales-invoices.ts), which is what the tab COUNTS are
 // computed from. A row whose bucket here disagrees with the server's is a row
@@ -201,7 +201,7 @@ const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
-  draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
+  draft:           { tone: "warning", label: "Draft",       bucket: "draft" },
   sent:            { tone: "warning", label: "Submitted",   bucket: "sent" },
   issued:          { tone: "warning", label: "Submitted",   bucket: "sent" },
   overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
@@ -862,14 +862,14 @@ export function SalesInvoicesListV2() {
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw statuses it covers (sent = DRAFT+SENT+OVERDUE, partial =
+  // bucket to the raw statuses it covers (draft = DRAFT, sent = SENT+OVERDUE, partial =
   // PARTIALLY_PAID, paid = PAID, cancelled = CANCELLED). `all` omits the filter.
   // ISSUED / PARTIAL / COMPLETED were listed here until 2026-08-17 and are not
   // members of the sales_invoice_status enum — sending them made each of those
   // three tabs 500. The server-side map is the authority (SI_STATUS_BUCKETS).
   const apiStatus = status === "all" ? undefined : status;
 
-  const { data, isLoading, isFetching, isPlaceholderData, error } = useSalesInvoicesPaged({
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useSalesInvoicesPaged({
     page,
     pageSize,
     status: apiStatus,
@@ -890,6 +890,7 @@ export function SalesInvoicesListV2() {
   // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
   // (or the PREVIOUS term's money under a placeholder page) would outlive the
   // rows it describes. Same flag SearchScopeHint already uses for its count.
+  const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateSalesInvoiceStatus();
@@ -899,6 +900,7 @@ export function SalesInvoicesListV2() {
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
+    draft: 0,
     sent: 0,
     partial: 0,
     paid: 0,
@@ -1686,6 +1688,7 @@ export function SalesInvoicesListV2() {
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
+    { value: "draft", label: `Draft · ${counts.draft}` },
     { value: "sent", label: `Sent · ${counts.sent}` },
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "paid", label: `Paid · ${counts.paid}` },
@@ -1765,7 +1768,7 @@ export function SalesInvoicesListV2() {
                 match count and contradicts the table the moment a client-side
                 funnel hides part of the page. */}
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Total Invoices"
               value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
               subtitle={visible.filtered ? "Filtered · shown below" : "All matching invoices"}
@@ -1773,14 +1776,14 @@ export function SalesInvoicesListV2() {
               active
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Billed"
               value={fmtSen(money.revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Outstanding"
               value={fmtSen(money.outstandingSen)}
               subtitle={visible.filtered ? "Balance · filtered" : "Balance on this page"}
@@ -1788,7 +1791,7 @@ export function SalesInvoicesListV2() {
               rail="bg-err"
             />
             <StatCard
-              pending={statsPending}
+              pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
               label="Paid"
               value={fmtSen(money.paidSen)}
               subtitle={visible.filtered ? "Receipts · filtered" : "Receipts on this page"}

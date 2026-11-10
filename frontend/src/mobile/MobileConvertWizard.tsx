@@ -22,6 +22,8 @@ import { matchesSearch } from '../lib/so-ref-search';
    shared, the presentation stays per surface. */
 import { DESCRIPTION_2_LABEL } from '../vendor/scm/components/VariantDescription';
 import { lineDiscountShare } from '../vendor/shared/line-discount-share';
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -259,6 +261,9 @@ export function MobileConvertWizard({
      which lands on the prefilled convert screen for that specific SO. */
   initialSourceId?: string | null;
 }) {
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const guardedBack = useGuardedBack(onBack);
   const meta = META[target];
   const qc = useQueryClient();
   const notify = useNotify();
@@ -677,6 +682,7 @@ export function MobileConvertWizard({
       // Also refresh the shared/desktop doc lists (source + target) so a desktop
       // tab doesn't read a stale picker/list after a mobile convert.
       invalidateConvertShared(qc);
+      allowLeave();
       onCreated(newDocNo, newDocId || undefined);
     } catch (e) {
       // A declined short-stock / drop-ship confirm surfaces as a thrown marker;
@@ -716,12 +722,13 @@ export function MobileConvertWizard({
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       {/* Spec #convert: back "Cancel" chevron, eyebrow, screen-title, source-doc
           sub-line, then the 2-segment step-progress bar + "Step N of 2" label. */}
       <header className="hdr">
         <div className="hdr-row">
-          <button onClick={onBack} className="back" aria-label="Cancel">
+          <button onClick={guardedBack} className="back" aria-label="Cancel">
             <span className="chev">{"‹"}</span> Cancel
           </button>
           <span style={{ fontSize: 11, color: "#767b6e" }}>Step {step} of 2 · {stepLabel}</span>
@@ -851,6 +858,7 @@ export function MobileConvertWizard({
         </footer>
       )}
     </div>
+    </FormTouchScope>
   );
 }
 

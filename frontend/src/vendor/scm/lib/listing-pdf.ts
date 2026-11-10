@@ -13,6 +13,7 @@ import {
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import { fmtSenPlain } from '../../shared/format';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type Rgb = [number, number, number];
 export type Meta = { label: string; value: string };
@@ -58,7 +59,7 @@ export function screenTable({ matrix }: ScreenTableView): {
 }
 
 export async function openListing(title: string, meta: Meta[], subtitle: string, payload: unknown): Promise<{ doc: jsPDF; startY: number }> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'landscape' });
   /* The sentence on top carries 未标 too: a field missed here would print as mojibake. */
   await ensurePdfCjkFont(doc, { payload, meta, subtitle });
   const y = drawHeader(doc, { docTitle: title, rightMeta: [...meta, { label: 'Printed', value: fmtDocStamp() }] });

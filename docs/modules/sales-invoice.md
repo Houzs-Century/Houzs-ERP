@@ -24,6 +24,9 @@ accounting staff. Money is integer sen.
 - `OVERDUE`: no writer exists anywhere in the backend; it is a legal
   transition target and is read by reporting agents, but nothing computes
   or writes it. Filed in the `sent` status bucket.
+- List tabs (`SI_STATUS_BUCKETS`, `scm/lib/si-status-buckets.ts`): `draft` =
+  DRAFT, `sent` = SENT + OVERDUE, `partial`, `paid`, `cancelled`. Drafts had
+  been counted under Sent until 2026-11-10.
 - `CANCELLED`: manual (status PATCH). Reverses revenue (`reverseSiRevenue`)
   and mints a customer credit (`creditFromCancelledSi`).
 - **ISSUED = every status except DRAFT and CANCELLED** — not PAID. Freezes

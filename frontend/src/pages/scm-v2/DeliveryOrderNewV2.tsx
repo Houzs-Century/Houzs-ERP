@@ -97,6 +97,8 @@ import {
   seedableMasterVariants,
 } from "../../vendor/scm/lib/so-variant-cascade";
 import { todayMyt } from "../../vendor/scm/lib/dates";
+import { FormTouchScope } from "../../components/FormTouchScope";
+import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -510,6 +512,8 @@ function FromSoPickerModal({
 
 export function DeliveryOrderNewV2() {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const [params] = useSearchParams();
   /* This page carried seven window.alert/confirm calls, two of which
      concatenated a raw error message into an OS-chrome box. The house dialog
@@ -1000,6 +1004,7 @@ export function DeliveryOrderNewV2() {
       confirmLabel: "Discard",
       danger: true,
     })) {
+      allowLeave();
       navigate("/scm/delivery-orders");
     }
   };
@@ -1035,6 +1040,7 @@ export function DeliveryOrderNewV2() {
              PurchaseOrderNew records: a route change tears the dialog down.
              Never blocks; the DO exists and the goods have gone. */
           await notifyAcNotSent(notify, res, "Delivery order");
+          allowLeave();
           if (res?.id) {
             navigate(afterCreatePath(`/scm/delivery-orders/${res.id}`, sourceDocPath.salesOrder(fromSoParam)));
           } else {
@@ -1103,6 +1109,7 @@ export function DeliveryOrderNewV2() {
       await Promise.all(ops);
       await updateHeader.mutateAsync({ id: editId, ...buildHeaderBody() });
       setFlash("Delivery order updated");
+      allowLeave();
       navigate(`/scm/delivery-orders/${editId}`);
     } catch (err) {
       /* NOT the same message as the create path. This save is a batch of line
@@ -1126,6 +1133,7 @@ export function DeliveryOrderNewV2() {
   const submitting = createDo.isPending || savingEdit;
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="pb-20">
       {/* Sticky form header + document flow.
           Owner 2026-08-03: the flow strip is frozen WITH the action bar, so the
@@ -1615,6 +1623,7 @@ export function DeliveryOrderNewV2() {
         </div>
       )}
     </div>
+    </FormTouchScope>
   );
 }
 

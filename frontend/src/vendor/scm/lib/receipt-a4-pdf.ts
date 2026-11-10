@@ -16,6 +16,7 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes,
   ensurePdfCjkFont, fmtDocDate, fmtRm, type PdfAction,
 } from './pdf-common';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** One receipt as the A4 paper draws it. */
 export type A4ReceiptPaper = {
@@ -108,7 +109,7 @@ export async function renderA4ReceiptInto(doc: JsPdf, autoTable: AutoTable, p: A
 
 const tools = async (): Promise<{ doc: JsPdf; autoTable: AutoTable }> => {
   const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
-  return { doc: new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' }), autoTable: autoTableModule.default as unknown as AutoTable };
+  return { doc: new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'portrait' }), autoTable: autoTableModule.default as unknown as AutoTable };
 };
 
 /** One receipt, or several as ONE document — a page each, in the order given. */

@@ -19,6 +19,10 @@ const CALLER = {
 } as unknown as User;
 
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
+/* The header PATCH needs the version the editor loaded (sister review G6). */
+const withVersion = (body: Record<string, unknown>) => ({
+  expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
+});
 
 async function patch(body: Record<string, unknown>, path = '/po-1') {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -29,7 +33,7 @@ async function patch(body: Record<string, unknown>, path = '/po-1') {
   });
   app.route('/', mfgPurchaseOrders);
   return app.request(path, {
-    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(withVersion(body)),
   });
 }
 
@@ -37,7 +41,7 @@ const line = (id: string) => (sb.tables.purchase_order_items.find((r) => r.id ==
 
 beforeEach(() => {
   sb.tables.purchase_orders = [{
-    id: 'po-1', po_number: 'PO-2610-001', status: 'PARTIALLY_RECEIVED', company_id: 1,
+    id: 'po-1', po_number: 'PO-2610-001', updated_at: '2026-10-01T02:00:00.123456+00:00', status: 'PARTIALLY_RECEIVED', company_id: 1,
     po_date: '2026-10-01', expected_at: '2026-10-10', currency: 'MYR', notes: null,
     supplier_id: 'sup-1', purchase_location_id: 'loc-1',
     supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,

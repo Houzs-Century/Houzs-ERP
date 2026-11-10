@@ -700,6 +700,10 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     'Someone else updated this order while you were editing. Your changes are still on this screen. Copy anything you need, then refresh to review the latest order.',
   so_version_required:
     'This order was opened with an older screen. Your changes are still here. Copy anything you need, then refresh the order before saving again.',
+  po_version_conflict:
+    'Someone else saved this purchase order while you were editing. Your changes are still on this screen. Copy anything you need, then refresh to review the latest order.',
+  po_version_required:
+    'This purchase order was opened with an older screen. Your changes are still here. Copy anything you need, then refresh the order before saving again.',
   so_version_invalid:
     'The order version is invalid. Your changes are still here. Refresh the order before saving again.',
   so_edit_lease_conflict:

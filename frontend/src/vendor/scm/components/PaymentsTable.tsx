@@ -1234,15 +1234,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
 
      `beforeunload` covers the exits the browser owns: closing the tab, a
      refresh, typing a new URL — and the COMPANY SWITCH, which hard-reloads the
-     app (TopNavbar carries its own confirm precisely because, in its words,
-     "the app registers no beforeunload guard". It does now, for this case.)
+     app (TopNavbar asks first in its own words).
 
      It does NOT cover in-app SPA navigation. react-router 6 blocks that only
      through `useBlocker`, which requires a DATA router, and this app mounts a
-     plain BrowserRouter + <Routes>. Converting the whole app's router to get
-     one dialog is not a trade worth making here, so the page-owned exits are
-     guarded individually instead (see onUnsavedChange). The left nav and the
-     workspace tabs remain unguarded — stated plainly rather than papered over.
+     plain BrowserRouter + <Routes>. The page-owned exits are guarded
+     individually instead (see onUnsavedChange), naming the money. The generic
+     form guard (lib/leaveGuard) covers the left nav and workspace tabs for
+     forms that hold it; these rows do not hold it.
 
      SAVED mode only: a DRAFT-mode page (New SO / DO / SI) has its own Save for
      the whole document and its own recovery path, and would otherwise prompt on

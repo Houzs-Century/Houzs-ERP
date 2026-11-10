@@ -3130,11 +3130,14 @@ export async function findRecentSoForSlipSha(
   // HC-0117: "Discard draft" hard-deletes the SO but scan_jobs.so_doc_no keeps
   // pointing at it, so a re-scan of the same photo was refused as "already
   // created HC-SO-2610-210" for an order nobody could open. Only an SO that
-  // still exists counts as the original.
+  // still exists counts as the original. A CANCELLED one does not either: the
+  // content rule below already skips it, and staff re-scan a cancelled order's
+  // slip precisely to raise it again.
   const { data: soRows, error: soErr } = await svc
     .from('mfg_sales_orders')
     .select('doc_no')
-    .in('doc_no', [...new Set(jobDocs)]);
+    .in('doc_no', [...new Set(jobDocs)])
+    .neq('status', 'CANCELLED');
   if (soErr) throw new Error(soErr.message);
   const alive = new Set(((soRows as Array<Record<string, unknown>> | null) ?? [])
     .map((r) => (r.docNo ?? r.doc_no) as unknown));

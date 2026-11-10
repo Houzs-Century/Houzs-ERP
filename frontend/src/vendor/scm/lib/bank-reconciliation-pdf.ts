@@ -42,6 +42,7 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, fmtRm, safeName, type PdfAction,
 } from './pdf-common';
+import { PDF_COMPRESS } from './pdf-options';
 
 /* ── What the month endpoint hands over, structurally ──────────────────────
    Named here rather than imported from the page's query module: this file is
@@ -351,7 +352,7 @@ export async function generateBankReconciliationPdf(
   input: ReconReportInput, opts?: { action?: PdfAction },
 ): Promise<void> {
   const report = reconciliationStatement(input);
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'portrait' });
   await ensurePdfCjkFont(doc, input.lines);
 
   let y = drawHeader(doc, {

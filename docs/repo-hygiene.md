@@ -294,3 +294,20 @@ silently. Fewer than 200 source files scanned is a hard error, not a pass.
 
 Enforced by the `file-size` job in `.github/workflows/ci.yml`. It runs no `npm ci`
 and no build, so it costs the queue seconds rather than a runner slot.
+
+## 3. Secrets — scanned on every PR, on main and in the merge queue
+
+The repository is public, so a committed key is readable by anyone from the
+moment it is pushed, and a later delete does not take it out of history.
+`.github/workflows/secret-scan.yml` runs gitleaks (pinned version,
+checksum-verified download) over the commits a change ADDS and fails the run on
+a finding. Output is redacted, so the log never repeats the secret.
+
+- **False positive in a new change:** add `gitleaks:allow` in a comment on that
+  line. Do not add a fingerprint to `.gitleaksignore` for it: a fingerprint
+  names a commit, and the squash merge gives the line a new one.
+- **`.gitleaksignore`** holds the reviewed false positives already in main's
+  history (29 as of 2026-11-10, all permission keys, variable names and test
+  fixtures), so a full-history scan on manual dispatch is green.
+- **A real secret:** rotate it first, then remove it. Allowlisting it is never
+  the fix — it is already public.

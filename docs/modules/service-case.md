@@ -142,6 +142,11 @@ follows the new SLA at once.
 - **Case number** `ASSR/YYMM-NNN`: month in MYT, number from
   `scm.next_doc_no_n` floored at the month's live max (`nextAssrNumber`); the
   unique index on `assr_no` + the create retry stay as the backstop.
+- **Service PO number** `APO/YYMM-NNN` (`POST /api/assr/:id/generate-po`) and the
+  **hand-added supplier code** `MAN-NNNN` (`POST /api/assr/creditors/create`)
+  use the same counter floored at the live numeric max (`nextServicePONumber`,
+  `nextManualCreditorCode`, `services/assrNumbers.ts`). Generating a PO only fills an EMPTY `po_no`; a
+  second press gets 409 with the number already stored.
 - **Reopen for a DIFFERENT complaint** (`POST /api/assr/:id/reopen`,
   `service_cases.write`): a completed/voided case that comes back with a new
   problem keeps its number. The OLD `complaint_issue` is logged to the timeline

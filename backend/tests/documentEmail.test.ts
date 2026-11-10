@@ -9,6 +9,7 @@ import {
   poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
+  poEmailDocNo,
   type PoEmailRow,
 } from "../src/scm/lib/po-email";
 import { createOutboundFetchMock } from "./outboundFetchMock";
@@ -232,6 +233,7 @@ describe("customer channel gating", () => {
 const poRow = (over: Partial<PoEmailRow> = {}): PoEmailRow => ({
   id: "22222222-2222-2222-2222-222222222222",
   po_number: "PO-2607-014",
+  revision: 1,
   status: "SUBMITTED",
   total_sen: 1234500,
   currency: "MYR",
@@ -245,6 +247,17 @@ const poRow = (over: Partial<PoEmailRow> = {}): PoEmailRow => ({
 const base64OfBytes = (bytes: number): string => "A".repeat(Math.ceil(bytes / 3) * 4);
 
 describe("purchase order email builder", () => {
+  test("a revised PO carries its _R mark in the subject, the body and the attachment name", () => {
+    const row = poRow({ revision: 2 });
+    const msg = buildPurchaseOrderEmail(row, "Houzs Century")!;
+    expect(msg.subject).toBe("Houzs Century — Purchase Order PO-2607-014_R1");
+    expect(msg.html).toContain("PO-2607-014_R1");
+    expect(poEmailDocNo(row)).toBe("PO-2607-014_R1");
+    expect(poEmailDocNo(poRow())).toBe("PO-2607-014");
+    const att = validatePoAttachment(base64OfBytes(30_000), poEmailDocNo(row));
+    expect(att.ok && att.attachment?.filename).toBe("PO-2607-014_R1.pdf");
+  });
+
   test("renders the PO number, supplier, date and total", () => {
     const msg = buildPurchaseOrderEmail(poRow(), "Houzs Century")!;
     expect(msg.to).toBe("sales@kilangkayu.com");

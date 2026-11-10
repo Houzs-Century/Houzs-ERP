@@ -18,7 +18,6 @@ import {
   createLogistics,
   patchLogistics,
   logActivity,
-  nextServicePONumber,
   setCaseCreditorManual,
   setItemRemark,
   setItemSupplierRemark,
@@ -26,6 +25,7 @@ import {
   setItemCartonQty,
 } from "../services/assr";
 import { normalizeSlaHours } from "../services/assrSla";
+import { assignServicePoNumber, nextManualCreditorCode } from "../services/assrNumbers";
 import { assrWindow } from "./lib/assr-window";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
 import { addReturnDoRoute, archiveReturnDoRoute, patchReturnDoRoute, qcInspectionFieldsError } from "../services/assrReturnDos";
@@ -993,10 +993,7 @@ app.post("/creditors/create", requirePermission("service_cases.write"), async (c
 
   let code = (body.creditor_code || "").trim();
   if (!code) {
-    const row = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM creditors WHERE creditor_code LIKE 'MAN-%'`
-    ).first<{ n: number }>();
-    code = `MAN-${String(Number(row?.n ?? 0) + 1).padStart(4, "0")}`;
+    code = await nextManualCreditorCode(c.env);
   }
 
   const dup = await c.env.DB.prepare(
@@ -2764,12 +2761,9 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
     return c.json({ error: `PO already exists: ${existing.po_no}`, po_no: existing.po_no }, 409);
   }
 
-  const poNo = await nextServicePONumber(c.env);
-  await c.env.DB.prepare(
-    `UPDATE assr_cases SET po_no = ?, updated_at = datetime('now') WHERE id = ?`
-  )
-    .bind(poNo, id)
-    .run();
+  const claim = await assignServicePoNumber(c.env, id);
+  if (!claim.ok) return c.json({ error: `PO already exists: ${claim.poNo ?? ""}`, po_no: claim.poNo }, 409);
+  const poNo = claim.poNo;
 
   // Name when the mirror has the creditor, else the raw code — a case can carry
   // a creditor_code the mirror has not synced yet, and the code still tells the

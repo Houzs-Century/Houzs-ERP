@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { poUrgencyLabel } from './purchase-order-pdf';
+import { pdfRawText } from './pdf-raw-text';
 
 vi.mock('./sales-order-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -57,7 +58,7 @@ const line: PoArgs[1][number] = {
 const render = async (h: PoArgs[0]) => {
   const { purchaseOrderPdfBase64 } = await import('./purchase-order-pdf');
   const pdf = Buffer.from(await purchaseOrderPdfBase64(h, [line]), 'base64');
-  return { pdf, raw: pdf.toString('latin1') };
+  return { pdf, raw: pdfRawText(pdf) };
 };
 
 describe('poUrgencyLabel', () => {

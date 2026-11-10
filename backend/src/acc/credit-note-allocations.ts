@@ -269,9 +269,44 @@ export async function applyCreditNote(
   return { ok: true, applied };
 }
 
+/** One document's take from a note, moved: what the audit trail records. */
+export type KnockOffMove = { kind: CreditTargetKind; id: string; fromSen: number; toSen: number };
+
+const moveOfRow = (r: Row): KnockOffMove => {
+  const kind = kindOfRow(r);
+  return { kind, id: String(r[TABLE[kind].column]), fromSen: Number(r.applied_sen ?? 0), toSen: 0 };
+};
+
+/** What a note has applied right now, one entry per document — read before a
+    cancel gives it all back, so the trail can say what was taken off what. */
+export async function noteApplications(sb: Db, companyId: number, noteId: string): Promise<{ ok: true; moves: KnockOffMove[] } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('acc_credit_note_allocations').select(ALLOCATION_COLS)
+    .eq('company_id', companyId).eq('note_id', noteId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, moves: ((data ?? []) as Row[]).filter((r) => Number(r.applied_sen ?? 0) > 0).map(moveOfRow) };
+}
+
+/** The numbers of the documents a set of moves touched, for the audit trail's
+    labels. A miss leaves the id as the label rather than failing the write. */
+export async function moveNumbers(sb: Db, companyId: number, moves: KnockOffMove[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const kind of [...new Set(moves.map((m) => m.kind))]) {
+    const t = TABLE[kind];
+    const { data, error } = await sb.from(t.table).select(`id, ${t.number}`).eq('company_id', companyId)
+      .in('id', moves.filter((m) => m.kind === kind).map((m) => m.id));
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error('[credit-note audit] document numbers unreadable, labelling by id:', error.message);
+      continue;
+    }
+    for (const d of (data ?? []) as Row[]) out.set(String(d.id), String(d[t.number] ?? d.id));
+  }
+  return out;
+}
+
 /** Give one application's credit back to the note: the document owes again
     exactly what was applied, and the row goes. */
-export async function removeAllocation(sb: Db, p: { companyId: number; note: Row; allocationId: string }): Promise<{ ok: true } | { ok: false; refusal: ApplyRefusal }> {
+export async function removeAllocation(sb: Db, p: { companyId: number; note: Row; allocationId: string }): Promise<{ ok: true; moved: KnockOffMove } | { ok: false; refusal: ApplyRefusal }> {
   const { data, error } = await sb.from('acc_credit_note_allocations').select(ALLOCATION_COLS)
     .eq('company_id', p.companyId).eq('note_id', p.note.id).eq('id', p.allocationId).maybeSingle();
   if (error) return { ok: false, refusal: { status: 500, error: 'load_failed', message: error.message } };
@@ -279,7 +314,7 @@ export async function removeAllocation(sb: Db, p: { companyId: number; note: Row
   const r = data as Row;
   const back = await giveBack(sb, p.companyId, [r]);
   await refreshSiStatuses(sb, p.companyId, siIdsOf([r]));
-  return back;
+  return back.ok ? { ok: true, moved: moveOfRow(r) } : back;
 }
 
 /** Every application of the note given back — before a cancel. A sales
@@ -504,7 +539,7 @@ export type KnockOffShort = { number: string; askedSen: number; appliedSen: numb
 export async function setNoteKnockOff(
   sb: Db,
   p: { companyId: number; note: Row; targets: CreditTarget[]; actor: string | null },
-): Promise<{ ok: true; short: KnockOffShort[] } | { ok: false; refusal: ApplyRefusal }> {
+): Promise<{ ok: true; short: KnockOffShort[]; moved: KnockOffMove[] } | { ok: false; refusal: ApplyRefusal; moved?: KnockOffMove[] }> {
   const { note } = p;
   const party = partyOfNote(note);
   if (!party) return { ok: false, refusal: { status: 400, error: 'not_a_supplier_note', message: `${note.note_number} is a debit note — only a credit note knocks off an invoice or a bill.` } };
@@ -522,7 +557,7 @@ export async function setNoteKnockOff(
   if (!checked.ok) return checked;
   if (!posted) {
     const written = await writePlan(sb, { companyId: p.companyId, noteId: String(note.id), targets: p.targets, actor: p.actor });
-    return written.ok ? { ok: true, short: [] } : { ok: false, refusal: { status: 500, error: 'save_failed', message: written.reason } };
+    return written.ok ? { ok: true, short: [], moved: [] } : { ok: false, refusal: { status: 500, error: 'save_failed', message: written.reason } };
   }
 
   const want = new Map(p.targets.map((t) => [t.id, t]));
@@ -541,34 +576,40 @@ export async function setNoteKnockOff(
   }
   changes.sort((a, b) => (a.to - a.from) - (b.to - b.from));
   const short: KnockOffShort[] = [];
+  /* What really moved, refusals included: a refusal part-way leaves the earlier
+     documents changed, and the trail must say so. */
+  const done: KnockOffMove[] = [];
   const doc = (kind: CreditTargetKind) => (kind === 'ODB' ? 'The bill' : 'The invoice');
   try {
     for (const ch of changes) {
       const back = await giveBack(sb, p.companyId, ch.rows);
-      if (!back.ok) return back;
-      if (ch.to <= 0) continue;
+      if (!back.ok) return { ...back, moved: done };
+      const given = { kind: ch.kind, id: ch.id, fromSen: ch.rows.reduce((s, r) => s + Number(r.applied_sen ?? 0), 0), toSen: 0 };
+      if (ch.to <= 0) { done.push(given); continue; }
       const { data: row, error: insErr } = await sb.from('acc_credit_note_allocations').insert({
         company_id: p.companyId, note_id: note.id, [TABLE[ch.kind].column]: ch.id, amount_sen: ch.to, applied_sen: 0, created_by: p.actor,
       }).select('id').single();
-      if (insErr || !row) return { ok: false, refusal: { status: 500, error: 'save_failed', message: insErr?.message ?? 'insert returned nothing' } };
+      if (insErr || !row) { done.push(given); return { ok: false, refusal: { status: 500, error: 'save_failed', message: insErr?.message ?? 'insert returned nothing' }, moved: done }; }
       const moved = await settle(sb, ch.kind, ch.id, ch.to);
       const number = checked.numbers.get(ch.id) ?? doc(ch.kind);
       if (!moved.ok || moved.appliedSen <= 0) {
         await sb.from('acc_credit_note_allocations').delete().eq('company_id', p.companyId).eq('id', (row as Row).id);
-        if (!moved.ok) return { ok: false, refusal: { status: 500, error: 'settle_failed', message: `${number} could not take the credit: ${moved.reason ?? 'unknown'}` } };
+        done.push(given);
+        if (!moved.ok) return { ok: false, refusal: { status: 500, error: 'settle_failed', message: `${number} could not take the credit: ${moved.reason ?? 'unknown'}` }, moved: done };
         short.push({ number, askedSen: ch.to, appliedSen: 0 });
         continue;
       }
+      done.push({ ...given, toSen: moved.appliedSen });
       const { error: upErr } = await sb.from('acc_credit_note_allocations').update({ applied_sen: moved.appliedSen })
         .eq('company_id', p.companyId).eq('id', (row as Row).id);
-      if (upErr) return { ok: false, refusal: { status: 500, error: 'save_failed', message: upErr.message } };
+      if (upErr) return { ok: false, refusal: { status: 500, error: 'save_failed', message: upErr.message }, moved: done };
       if (moved.appliedSen < ch.to) short.push({ number, askedSen: ch.to, appliedSen: moved.appliedSen });
     }
   } finally {
     /* A sales invoice's status follows what is knocked off it — whatever got written. */
     await refreshSiStatuses(sb, p.companyId, changes.filter((ch) => ch.kind === 'SI').map((ch) => ch.id));
   }
-  return { ok: true, short };
+  return { ok: true, short, moved: done };
 }
 
 /** At post — the DRAFT → POSTED moment — the plan is carried out. A document
