@@ -9,6 +9,7 @@ import {
 } from "../vendor/scm/lib/delivery-order-queries";
 import { fieldPhotoContext, uploadFieldPhoto } from "../vendor/scm/lib/slip";
 import { serverFieldPhotoRestore, useFieldPhotos } from "../lib/fieldPhotos";
+import { CREW_STOP_POLL_MS } from "../vendor/scm/lib/crew-stop-photos";
 import { FieldPhotos } from "../components/FieldPhotos";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
@@ -110,6 +111,12 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     queryFn: () => authedFetch<{ deliveryOrder: DoHeader; items: DoItem[] }>(`/delivery-planning/do/${encodeURIComponent(docNo)}/pod`),
     enabled: isCrew,
     staleTime: 30_000,
+    /* The crew share the stop: while it is open and not finished, ask again so
+       the other crew member's Start / Arrived / Delivered shows here too. */
+    refetchInterval: (query) => {
+      const st = query.state.data?.deliveryOrder.status ?? null;
+      return isDelivered(st) || isCancelled(st) ? false : CREW_STOP_POLL_MS;
+    },
   });
 
   /* Resolve docNo (a DO number) → the DO row (carries the UUID every other route
@@ -174,7 +181,7 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
      delivery is saved, so a problem never blocks the delivery (A2). */
   const [issueOn, setIssueOn] = useState(false);
   const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
-  const crewIssuesQ = useRunDeliveryIssues({ do: [docNo] }, isCrew);
+  const crewIssuesQ = useRunDeliveryIssues({ do: [docNo] }, isCrew, CREW_STOP_POLL_MS);
   const officeIssuesQ = useDoDeliveryIssues(isCrew ? null : doId);
   const reportedIssues = isCrew ? crewIssuesQ.data : officeIssuesQ.data;
 
@@ -279,6 +286,9 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
       invalidateSoShared(qc);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      // The other crew member may have just completed it: show this stop as it is now.
+      invalidateDoShared(qc);
+      if (isCrew) void crewQ.refetch();
       setBusy(false);
       return;
     }

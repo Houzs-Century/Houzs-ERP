@@ -12,6 +12,7 @@ import {
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import { LEDGER_COLUMNS, counterLabel, fmtLedger, fmtSide, journalLabel, type LedgerReport } from './ledger-queries';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type LedgerPdfLine = { kind: 'account' | 'bf' | 'line' | 'total' | 'grand'; cells: string[] };
 
@@ -41,7 +42,7 @@ const scopeLabel = (r: LedgerReport): string =>
   : `${r.scope.fromCode ?? '…'} – ${r.scope.toCode ?? '…'}`;
 
 export async function generateLedgerPdf(r: LedgerReport, opts?: { action?: PdfAction }): Promise<void> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'landscape' });
   await ensurePdfCjkFont(doc, r.blocks.flatMap((b) => [b, ...b.lines]));
   const y = drawHeader(doc, {
     docTitle: 'GENERAL LEDGER',

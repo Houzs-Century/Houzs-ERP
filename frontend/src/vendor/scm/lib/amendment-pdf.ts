@@ -23,6 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
+import { PDF_COMPRESS } from './pdf-options';
 
 /* One changed line on the amendment. `kind` drives the tint semantics: a CHANGE
    shows before (red) -> after (green); an ADD has no before; a REMOVE has no
@@ -89,7 +90,7 @@ export async function generateAmendmentPdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
 
   // CJK-safe: a China supplier's name or a Chinese item description is the likely
   // non-WinAnsi text here. No-op / no fetch for a pure-Latin document.

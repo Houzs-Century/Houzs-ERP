@@ -27,7 +27,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { DO_SHIPPED_STATES } from '../shared/do-shipped-states';
+import { DO_SHIPPED_STATES, DO_STATUSES } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -1189,12 +1189,14 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
      `"paid"`, so the assumption that callers send canonical case has already
      been broken twice on sibling documents.
 
-     Deliberately NOT accompanied by a status whitelist. The DO handler can
-     afford `DO_STATUSES.has(...)` because that vocabulary is declared in one
-     place; this document's is not, and a guessed whitelist would refuse a
-     legitimate status. Rejecting an unknown value is written up as a
-     recommendation, not shipped here. */
+     The column is the same scm.do_status enum as delivery_orders.status
+     (scm-schema/consignment/0153_consignment_module.sql), so its vocabulary IS
+     declared in one place — DO_STATUSES. An unknown value used to reach the
+     UPDATE and come back as a raw enum 500; it is now refused up front. */
   const toStatus = String(body.status).trim().toUpperCase();
+  if (!(DO_STATUSES as readonly string[]).includes(toStatus)) {
+    return c.json({ error: 'invalid_status', message: `"${String(body.status)}" is not a consignment note status. Use one of: ${DO_STATUSES.join(', ')}.` }, 400);
+  }
 
   const { data: cur } = await scopeToCompanyId(sb.from('consignment_delivery_orders').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);

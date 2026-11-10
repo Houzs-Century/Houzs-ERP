@@ -37,6 +37,7 @@ function fakeSb(tables: Record<string, Row[]>) {
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
       range() { return builder; },
+      order() { return builder; },
       then(resolve: (v: unknown) => unknown) {
         const rs = rows();
         return Promise.resolve(
@@ -122,6 +123,26 @@ describe('a received Purchase Order can be neither cancelled nor edited', () => 
     const sb = fakeSb({ grns: [{ id: 'g1', purchase_order_id: 'po-1', status: 'CANCELLED' }] });
     expect(await poHasDownstream(sb, 'po-1')).toBeNull();
   });
+
+  /* Sister review G5: a receipt converted from two POs names only the first in
+     its header; the second PO's lines are on it all the same. */
+  test('a live GRN whose header names ANOTHER PO still locks a PO whose line it received', async () => {
+    const sb = fakeSb({
+      grns: [{ id: 'g1', purchase_order_id: 'po-1', status: 'POSTED' }],
+      purchase_order_items: [{ id: 'poi-1', purchase_order_id: 'po-1' }, { id: 'poi-2', purchase_order_id: 'po-2' }],
+      grn_items: [{ id: 'gi-1', grn_id: 'g1', purchase_order_item_id: 'poi-1' }, { id: 'gi-2', grn_id: 'g1', purchase_order_item_id: 'poi-2' }],
+    });
+    expect((await poHasDownstream(sb, 'po-2'))?.error).toBe('po_has_downstream');
+  });
+
+  test('a cancelled line-linked GRN does not lock', async () => {
+    const sb = fakeSb({
+      grns: [{ id: 'g1', purchase_order_id: 'po-1', status: 'CANCELLED' }],
+      purchase_order_items: [{ id: 'poi-2', purchase_order_id: 'po-2' }],
+      grn_items: [{ id: 'gi-2', grn_id: 'g1', purchase_order_item_id: 'poi-2' }],
+    });
+    expect(await poHasDownstream(sb, 'po-2')).toBeNull();
+  });
 });
 
 describe('DO and GRN', () => {
@@ -198,6 +219,9 @@ describe('a read that failed is not an absence', () => {
         select() { return b; },
         eq() { return b; },
         neq() { return b; },
+        in() { return b; },
+        order() { return b; },
+        range() { return b; },
         then(resolve: (v: unknown) => unknown) {
           return Promise.resolve({ data: null, count: null, error: { message: 'connection reset' } }).then(resolve);
         },

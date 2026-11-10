@@ -62,6 +62,8 @@ import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 import { useToastOptional } from '../../hooks/useToast';
 import { useAuth as useHouzsAuthNew } from '../../auth/AuthContext';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -112,6 +114,8 @@ type PiAlloc = {
 
 export const PaymentVoucherNew = () => {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   /* TWO DOCUMENTS, ONE PAGE (the owner, 2026-08-30, AutoCount in hand: 正常
      auto count是可以选payment voucher / AP Payment). ?type=ap is the AP
      Payment: supplier required, the PI list IS the document (tick to pay in
@@ -807,6 +811,7 @@ export const PaymentVoucherNew = () => {
       if (prepareAfter.current) {
         try { await submitPv.mutateAsync(res.id); } catch (e) { prepareErr = e instanceof Error ? e.message : 'Something went wrong.'; }
       }
+      allowLeave();
       const goTo = afterCreatePath(`/scm/payment-vouchers/${res.id}`, sourceDocPath.paymentRequest(refundForRequest ? null : fromRequest));
       /* Saved cleanly: straight to the voucher (or back to its request), the
          word in a toast. Anything that did not go through keeps the dialog. */
@@ -839,6 +844,7 @@ export const PaymentVoucherNew = () => {
   const mayPrepare = canNew('scm.payment_voucher.write');
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Finance · Money out"
@@ -1387,5 +1393,6 @@ export const PaymentVoucherNew = () => {
         />
       )}
     </div>
+    </FormTouchScope>
   );
 };

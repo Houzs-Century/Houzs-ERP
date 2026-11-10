@@ -63,6 +63,8 @@ import {
   type PurchaseHeaderDraft,
   type PurchaseLineDraft,
 } from "./mobile-purchase-doc";
+import { FormTouchScope } from "../components/FormTouchScope";
+import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeaveGuard";
 
 let seq = 0;
 const newKey = () => `pl${seq++}`;
@@ -141,6 +143,9 @@ export function MobilePurchaseDocNew({
    *  caller that forgets it would silently hide a flow the desktop offers. */
   onConvertInstead: { label: string; open: () => void } | null;
 }) {
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
+  const guardedBack = useGuardedBack(onBack);
   const cfg = PURCHASE_DOC_CONFIG[kind];
   const { user } = useAuth();
   // A GRN confirm posts stock — the purchaser's, not every Goods Receipt editor's.
@@ -225,6 +230,7 @@ export function MobilePurchaseDocNew({
     await notify({
       title: `${cfg.label} ${created.number} ${asDraft ? "saved as draft" : "created"}`,
     });
+    allowLeave();
     onCreated(created);
   };
 
@@ -285,10 +291,11 @@ export function MobilePurchaseDocNew({
   );
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
         <div className="hdr-row">
-          <button className="back" onClick={onBack}><span className="chev">‹</span> Back</button>
+          <button className="back" onClick={guardedBack}><span className="chev">‹</span> Back</button>
           <span className="eyebrow">Purchasing · New</span>
         </div>
         <div className="hdr-row" style={{ marginTop: 2 }}>
@@ -405,6 +412,7 @@ export function MobilePurchaseDocNew({
 
       {pickerOpen && <MobileSkuPicker onPick={addSku} onClose={() => setPickerOpen(false)} />}
     </div>
+    </FormTouchScope>
   );
 }
 

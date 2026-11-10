@@ -15,7 +15,7 @@
 import { formatPhone } from '@2990s/shared/phone';
 import { siCreditNotesSen, siDepositAppliedSen } from './si-outstanding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
-import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { docPageLabel, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { getBrandingCache } from '../../../lib/branding';
 import { billToBlock } from './pdf-party-blocks';
 import { stripBookText } from './book-text';
@@ -24,6 +24,7 @@ import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
+import { PDF_COMPRESS } from './pdf-options';
 
 export type SiHeader = {
   invoice_number: string; status: string;
@@ -290,7 +291,7 @@ export async function renderSalesInvoiceInto(
     doc.setPage(p);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.invoice_number, margin, 290);
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
+    doc.text(docPageLabel(p, startPage, pageCount), pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }
 }
@@ -303,7 +304,7 @@ export async function generateSalesInvoicePdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderSalesInvoiceInto(doc, autoTable, header, items);
   deliverPdf(doc, `${header.invoice_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
 }
@@ -313,7 +314,7 @@ export async function generateSalesInvoicePdf(
 export async function salesInvoicePdfBlob(header: SiHeader, items: SiItem[]): Promise<Blob> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   await renderSalesInvoiceInto(doc, autoTable, header, items);
   return doc.output('blob');
 }
@@ -328,7 +329,7 @@ export async function generateCombinedSalesInvoicePdf(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
   for (let i = 0; i < docs.length; i += 1) {
     if (i > 0) doc.addPage();
     await renderSalesInvoiceInto(doc, autoTable, docs[i]!.header, docs[i]!.items);

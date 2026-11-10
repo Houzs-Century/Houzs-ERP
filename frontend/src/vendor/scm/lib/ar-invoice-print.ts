@@ -9,6 +9,7 @@
 import { authedFetch } from './authed-fetch';
 import type { ArBillDetail, ArListRow } from './ar-invoice-queries';
 import type { SiHeader, SiItem } from './sales-invoice-pdf';
+import { PDF_COMPRESS } from './pdf-options';
 
 /* How many documents are fetched at once — each read is its own request. */
 const FETCH_AT_ONCE = 4;
@@ -39,7 +40,7 @@ export async function arInvoicesPdfBlob(rows: ArListRow[], accountName: (code: s
   const autoTable = autoTableModule.default;
   /* The debtor-bill print types its table function narrowly, as its own generator does. */
   const billTable = autoTable as unknown as Parameters<typeof renderDebtorBillInto>[1];
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4', orientation: 'portrait' });
   for (const [i, f] of fetched.entries()) {
     if (i > 0) doc.addPage('a4', 'portrait');
     if (f.kind === 'SI') {

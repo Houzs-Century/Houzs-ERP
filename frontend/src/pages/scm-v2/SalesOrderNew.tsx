@@ -133,6 +133,8 @@ import styles from './SalesOrderNew.module.css';
 import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { isSofaGroup, pieceShareSen, SOFA_PIECES_SPLIT_NOTICE, splitSofaPieceLines } from '../../vendor/scm/lib/sofa-piece-lines';
+import { FormTouchScope } from '../../components/FormTouchScope';
+import { useFormTouched, useLeaveGuard } from '../../hooks/useLeaveGuard';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -155,6 +157,8 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
+  const { touched: formTouched, markTouched } = useFormTouched();
+  const { allowLeave } = useLeaveGuard(formTouched, null);
   const notify = useNotify(); const prompt = usePrompt();
   /* Copy-to-new-SO: ?copyFrom=<docNo> seeds this form from an existing SO
      (customer + line items only — dates, payments, customer SO ref, doc no
@@ -1488,6 +1492,7 @@ export const SalesOrderNew = () => {
     if (createdDocNo) {
       const intents = paymentIntents();
       if (intents.length === 0) {
+        allowLeave();
         navigate(`/scm/sales-orders/${createdDocNo}`);
         return;
       }
@@ -1499,6 +1504,7 @@ export const SalesOrderNew = () => {
         });
         return;
       }
+      allowLeave();
       navigate(`/scm/sales-orders/${createdDocNo}?payments=1&retryPayments=1`, {
         state: paymentRetryNavigationState('so', createdDocNo, intents),
       });
@@ -1728,6 +1734,7 @@ export const SalesOrderNew = () => {
             setCreatedDocNo(res.docNo);
             return;
           }
+          allowLeave();
           navigate(
             `/scm/sales-orders/${res.docNo}${failed > 0 ? '?payments=1&retryPayments=1' : ''}`,
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
@@ -1742,6 +1749,7 @@ export const SalesOrderNew = () => {
   };
 
   return (
+    <FormTouchScope onTouch={markTouched}>
     <div>
       {/* Shared sticky page header — full-bleed, matches SalesOrderMaintenance
           + the PO/DO V2 lists. DRAFT flow: two create actions run the SAME
@@ -2289,5 +2297,6 @@ export const SalesOrderNew = () => {
       />
       </div>
     </div>
+    </FormTouchScope>
   );
 };
