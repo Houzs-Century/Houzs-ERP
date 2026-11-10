@@ -55,7 +55,7 @@ export async function stampPendingScheduleAfterResponse(
   const run = stampPendingSchedule(sb, c, docNos).catch((e: unknown) => {
     console.warn(`[delivery-planning] pending-schedule stamp skipped: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
   });
-  let ctx: ExecutionContext | null = null;
+  let ctx: { waitUntil(p: Promise<unknown>): void } | null = null;
   try { ctx = c.executionCtx; } catch { /* no execution context (tests) */ }
   if (ctx) ctx.waitUntil(run); else await run;
 }
