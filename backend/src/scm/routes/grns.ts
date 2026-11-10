@@ -31,7 +31,7 @@ import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { buildVariantSummary, canonicalVariantKey, computeVariantKey, sameVariantBucket, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
+import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -80,8 +80,7 @@ import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audi
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
-import { loadOwnBucketKeys, ownBucketKey, stockBucketKeyResolver } from '../lib/stock-bucket-key';
-import { variantTrackedCompany } from '../lib/binding-mode';
+import * as bk from '../lib/stock-bucket-key'; // variant-tracked companies only; company 1 keys exactly as before
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { setGrnLineRackHandler } from '../lib/grn-line-rack';
 import { grnLineNetReceived } from '../lib/po-net-received';
@@ -548,12 +547,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
       sb,
       itemRows.map((it) => it.purchase_order_item_id),
     );
-    /* SKU category + canonical key, written as the stocked bucket's own string
-       when canonically equal (lib/stock-bucket-key.ts). The warning still logs
-       a line whose own group would have ignored its spec (docs/bugs/0514). */
-    const grnKeyOf = await stockBucketKeyResolver(sb, companyId, itemRows.map((it) => ({
-      item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: warehouseId,
-    })));
+    const grnKeyOf = await bk.stockBucketKeyResolver(sb, companyId, itemRows.map((it) => bk.stockKeyLine(it, warehouseId)));
     const movements = itemRows
       // SERVICE lines (freight) never enter inventory — skip them here. Their
       // amount has already been allocated INTO the goods lines' lot cost above.
@@ -562,9 +556,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
       .map((it) => ({
         movement_type: 'IN' as const,
         warehouse_id: warehouseId, item_code: it.item_code,
-        variant_key: (keyedVariantWithWarning(grnNo, it, computeVariantKey), grnKeyOf({
-          item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: warehouseId,
-        })),
+        variant_key: (keyedVariantWithWarning(grnNo, it, computeVariantKey), grnKeyOf(bk.stockKeyLine(it, warehouseId))), // mig 0095; warns when the group ignores them
         product_name: it.material_name,
         qty: it.qty_accepted,
         // Landed MYR lot cost = base (rate→MYR) + per-unit allocated freight.
@@ -2410,10 +2402,9 @@ export const cancelGrnCommand = async (
       : head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
-      const ownInKeys = await loadOwnBucketKeys(sb, 'GRN', id, 'IN', activeCompanyId(c) ?? null);
       const movements = buildGrnCancelReversals(lineList, batchByItem, {
         warehouseId, grnId: id, grnNumber: head.grn_number, performedBy: user.id,
-      }, ownInKeys);
+      }, await bk.loadOwnBucketKeys(sb, 'GRN', id, 'IN', activeCompanyId(c) ?? null));
       if (movements.length > 0) {
         /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
            — so the enclosing best-effort catch caught nothing, and discarding the
@@ -2582,22 +2573,16 @@ grns.patch('/:id', async (c) => {
         .eq('movement_type', 'IN');
       if (priorInsErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: priorInsErr.message }, 500);
       const landedByBucket = new Map<string, number>();
-      /* The bucket string this GRN's own IN used, by canonical key: the move OUT
-         of the old warehouse must hit exactly that bucket, even when it was
-         written under an older spelling of the same spec. */
-      const priorKeyByCanon = new Map<string, string>();
       for (const m of ((priorIns ?? []) as Array<{ item_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
         const cost = Number(m.unit_cost_sen ?? 0);
         if (cost > 0) landedByBucket.set(`${m.item_code}::${m.variant_key ?? ''}`, cost);
-        if (variantTrackedCompany(activeCompanyId(c) ?? null)) priorKeyByCanon.set(`${m.item_code}::${canonicalVariantKey(m.variant_key)}`, m.variant_key ?? '');
       }
 
       const movements = lineList
         .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
-          const computed = computeVariantKey(it.item_group, it.variants ?? null);
-          const variant_key = priorKeyByCanon.get(`${it.item_code}::${canonicalVariantKey(computed)}`) ?? computed;
+          const variant_key = bk.ownBucketKey(bk.ownBucketKeyMapFor(activeCompanyId(c) ?? null, (priorIns ?? []) as Array<{ item_code: string; variant_key: string | null }>), it.item_code, computeVariantKey(it.item_group, it.variants ?? null));
           const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
           const base = {
             item_code: it.item_code, variant_key, product_name: it.material_name,
@@ -2957,8 +2942,7 @@ grns.post('/:id/items', async (c) => {
         // Migration 0120 — stamp this added line's IN with its source PO batch.
         const addedPoItemId = (it.purchaseOrderItemId as string) ?? null;
         const batchByItem = await resolvePoBatchByItem(sb, [addedPoItemId]);
-        const addKeyLine = { item_code: String(it.itemCode), item_group: (it.itemGroup as string) ?? null, variants: it.variants ?? null, warehouse_id: warehouseId };
-        const addedKey = (await stockBucketKeyResolver(sb, activeCompanyId(c) ?? null, [addKeyLine]))(addKeyLine);
+        const addedKey = await bk.stockBucketKeyOne(sb, activeCompanyId(c) ?? null, { item_code: String(it.itemCode), item_group: (it.itemGroup as string) ?? null, variants: it.variants ?? null, warehouse_id: warehouseId });
         await writeMovements(sb, [{
           movement_type: 'IN' as const,
           warehouse_id: warehouseId,
@@ -3155,9 +3139,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const newKey = computeVariantKey(effGroup, effVariants);
   const matCode = (updates.item_code as string | undefined) ?? (prev as { item_code: string }).item_code;
   const matName = (updates.material_name as string | undefined) ?? (prev as { material_name: string | null }).material_name;
-  /* Variant-tracked company: adding or dropping a derived total or a `default` leg
-     is the same bucket. Company 1 keeps the exact comparison (binding-mode.ts). */
-  const bucketChanged = variantTrackedCompany(activeCompanyId(c) ?? null) ? !sameVariantBucket(oldKey, newKey) : oldKey !== newKey;
+  const bucketChanged = !bk.sameBucketFor(activeCompanyId(c) ?? null, oldKey, newKey);
   const qtyChanged = newAccepted !== prevAccepted;
   /* LEAK GUARD: a DRAFT GRN has no committed stock, so editing a line writes NO
      inventory delta (and runs no on-hand guard) — the row + header money update,
@@ -3240,14 +3222,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
       ? ((await resolvePoBatchByItem(sb, [editPoItemId])).get(editPoItemId) ?? null)
       : null;
     const batchTag = editBatch ? { batch_no: editBatch } : {};
-    /* The stored strings to move: the old bucket is the one this GRN's IN wrote;
-       a changed bucket resolves like a fresh receipt (lib/stock-bucket-key.ts). */
-    const ownIn = await loadOwnBucketKeys(sb, 'GRN', grnId, 'IN', activeCompanyId(c) ?? null);
-    const oldStoredKey = ownBucketKey(ownIn, matCode, oldKey);
-    const newKeyLine = { item_code: matCode, item_group: effGroup, variants: effVariants, warehouse_id: warehouseId };
-    const newStoredKey = bucketChanged
-      ? (await stockBucketKeyResolver(sb, activeCompanyId(c) ?? null, [newKeyLine]))(newKeyLine)
-      : oldStoredKey;
+    const oldStoredKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, matCode, oldKey);
+    const newStoredKey = bucketChanged ? await bk.stockBucketKeyOne(sb, activeCompanyId(c) ?? null, { item_code: matCode, item_group: effGroup, variants: effVariants, warehouse_id: warehouseId }) : oldStoredKey;
     const movements: Array<Parameters<typeof writeMovements>[1][number]> = [];
     if (bucketChanged) {
       if (prevAccepted > 0) movements.push({
@@ -3467,10 +3443,7 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
           ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
-          // The exact bucket this GRN's IN wrote, even under an older spelling.
-          const variantKey = ownBucketKey(
-            await loadOwnBucketKeys(sb, 'GRN', grnId, 'IN', activeCompanyId(c) ?? null),
-            l.item_code, computeVariantKey(l.item_group, l.variants ?? null));
+          const variantKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, l.item_code, computeVariantKey(l.item_group, l.variants ?? null));
           // Carry THIS line's own dye-lot batch (= its source PO number) so the
           // reversing OUT depletes the EXACT lot the receipt created. Resolved
           // deterministically from the line's purchase_order_item_id — not a

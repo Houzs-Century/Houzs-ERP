@@ -244,3 +244,50 @@ export async function resolveIncreaseKeys<L extends { item_code: string; item_gr
   }
   return lines;
 }
+
+/** One line's write key (same rule as stockBucketKeyResolver). */
+export async function stockBucketKeyOne(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client without generated types; project-wide pattern
+  sb: any,
+  companyId: number | null,
+  line: StockKeyLine,
+): Promise<string> {
+  return (await stockBucketKeyResolver(sb, companyId, [line]))(line);
+}
+
+/** The document's own stored bucket for this line (variant-tracked company), else `computed`. */
+export async function ownDocBucketKey(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client without generated types; project-wide pattern
+  sb: any,
+  doc: { type: string; id: string; movement: 'IN' | 'OUT'; companyId: number | null },
+  itemCode: string,
+  computed: string,
+): Promise<string> {
+  return ownBucketKey(await loadOwnBucketKeys(sb, doc.type, doc.id, doc.movement, doc.companyId), itemCode, computed);
+}
+
+/** Bucket equality for the company: canonical when variant-tracked, exact string otherwise. */
+export function sameBucketFor(companyId: number | null, a: string, b: string): boolean {
+  return variantTrackedCompany(companyId) ? canonicalVariantKey(a) === canonicalVariantKey(b) : a === b;
+}
+
+/** ownBucketKeyMap for a variant-tracked company; null (no remap) otherwise. */
+export function ownBucketKeyMapFor(
+  companyId: number | null,
+  rows: ReadonlyArray<{ item_code: string; variant_key: string | null }>,
+): Map<string, string> | null {
+  return variantTrackedCompany(companyId) ? ownBucketKeyMap(rows) : null;
+}
+
+/** A stored line row (snake_case) as a StockKeyLine for this warehouse. */
+export function stockKeyLine(
+  row: { item_code: string; item_group?: string | null; variants?: unknown },
+  warehouseId: string | null,
+): StockKeyLine {
+  return { item_code: row.item_code, item_group: row.item_group ?? null, variants: row.variants ?? null, warehouse_id: warehouseId };
+}
+
+/** A stored key in the form buckets are compared in for this company. */
+export function bucketIdFor(companyId: number | null, vk: string | null): string {
+  return variantTrackedCompany(companyId) ? canonicalVariantKey(vk) : (vk ?? '');
+}
