@@ -11,6 +11,7 @@
 // HOUZS VENDOR NOTE: the source has NO `import { supabase } from './supabase'`
 // to drop (it only used authedFetch). Everything else is copied verbatim.
 
+import { rememberSavedCrew, withSavedCrew, type CrewSnapshot } from './saved-crew';
 import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -430,6 +431,7 @@ export function useDeliveryPlanning(opts: { region?: string; state?: string }) {
     // Switching region / state tabs keeps the previous board on screen while the
     // next slice loads, instead of flashing an empty table (keepPreviousData).
     placeholderData: (prev) => prev,
+    select: withSavedCrew,
     staleTime: 30_000,
   });
 }
@@ -1267,10 +1269,17 @@ export function useAssignDoCrew() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ doId, ...body }: DoCrewVars) =>
-      authedFetch<{ ok: true }>(`/delivery-orders-mfg/${doId}/crew`, {
+      authedFetch<{ crew?: CrewSnapshot | null }>(`/delivery-orders-mfg/${doId}/crew`, {
         method: 'PUT', body: JSON.stringify(body),
       }),
-    onSuccess: () => {
+    onSuccess: (res, vars) => {
+      // Keep what the server saved on screen, even if the slow board reload
+      // times out or comes back stale (saved-crew.ts).
+      if (res.crew) {
+        rememberSavedCrew(vars.doId, res.crew);
+        qc.setQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] }, (d) => withSavedCrew(d));
+        qc.setQueriesData<PlanningResponse>({ queryKey: ['mobile-delivery-planning'] }, (d) => withSavedCrew(d));
+      }
       // The run and its other DOs follow a DO crew edit (server side). Coalesced
       // so a run of seat edits reconciles once the operator stops, not per seat;
       // the picker's own local state shows the chosen crew immediately meanwhile.
