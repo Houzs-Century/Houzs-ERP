@@ -72,7 +72,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
-import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
+import { docsEnteringPendingSchedule, stampPendingScheduleAfterResponse } from '../lib/pending-schedule-stays';
 import { boardSlice, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
 import { parseBand, planBoardSoRows, bandFilter, bandRows, countsByRegion } from '../lib/delivery-board-window';
 import { boardChangesHandler } from './delivery-planning-changes';
@@ -310,7 +310,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // A closed service case's done legs stay on the Delivered tab 30 days, then drop off; open
   // cases are never time-bound (owner 2026-11-06: 90 -> 30). Separate from the SO 90-day rule.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 30 * 86400000).toISOString().slice(0, 10);
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
+  // Sub-board rows ride page 0 of a band only (bandRows), so a later page does not read them.
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null || (band !== null && band.page > 0));
 
   /* 3-5. Per-order facts as maps (lib/delivery-board-maps.ts): lines + catalog -> readiness
         and Branding, deliverable sums, DOs + crew + trips, live balances, PO lock, PO
@@ -485,9 +486,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   /* An ASSR leg on a trip shows that run's crew — driver, lorry and helpers
      (owner 2026-10-29) — resolved from the leg's trip_stop. Best-effort. */
-  /* sql path: only the legs this band shows get the echo reads (bandRows below keeps exactly
-     these; neither echo moves a row's date), and the ASSR echo overlaps the DP union. */
-  const assrShown = source === 'sql' ? bandRows(assrOrders, band, today) : assrOrders;
+  /* Only the legs this band shows get the echo reads (bandRows below keeps exactly these;
+     neither echo moves a row's date). On the sql path the ASSR echo overlaps the DP union. */
+  const assrShown = bandRows(assrOrders, band, today);
   const assrEchoP = (async () => {
     await echoAssrCrew(sb, assrShown).catch((e: Error) => console.warn(`[delivery-planning] ASSR crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-assr-crew');
     await overlayAssrChatState(sb, assrShown); // HC-0171: the customer's WhatsApp answer on ASSR rows
@@ -613,7 +614,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   } catch (e) {
     if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
-  await Promise.all([echoTripCrew(sb, source === 'sql' ? bandRows(dpBoardRows, band, today) : dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)), assrEchoP]); lap('dp-crew-echo');
+  await Promise.all([echoTripCrew(sb, bandRows(dpBoardRows, band, today)).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)), assrEchoP]); lap('dp-crew-echo');
 
   /* ── PMS project SETUP / DISMANTLE union (mirror; only the Remarks is written here)
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -783,8 +784,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
   if (scope.mode === 'all') {
+    /* The rows show the stamp either way; only a request without a band WRITES it, after
+       the response, so the parallel band reads of one board open never write
+       (lib/pending-schedule-stays.ts). counts_only, fired with band 1, covers every band. */
     const entering = docsEnteringPendingSchedule(allOrders);
-    await stampPendingSchedule(sb, c, entering);
+    if (!band) await stampPendingScheduleAfterResponse(c, sb, entering);
     const stamped = new Set(entering);
     for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
   }

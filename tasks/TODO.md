@@ -3,9 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
-- Company 1 cutover no-spec repair (run 42827135058): run `revert-cutover-nospec-repair.mjs` PLAN (COMPANY_ID=1), check every bucket reads "(match)" and 37 DO OUTs go back to uncosted, then APPLY with ALLOW_CLOSED_MONTHS=2026-09,2026-10 on the owner's go — owner — 2026-11-10
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
-- CODY-(K) at KL WAREHOUSE: run `flatten-spec-buckets.mjs` (plan, then apply) so "Leg 4" (+1) and "Leg 4 + Total 24" (-1) both read 0; the plan lists any order whose readiness changes — lead / owner — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
 - Fleet: which lorries are MSJ and which Penang; the cargo box size (L x W x H) of each lorry, for the capacity check — owner — 2026-11-08
 - VNB9058 on 2026-11-06: one or two Fair setup trips? Lorry Capacity counts it as entered — owner — 2026-11-08
@@ -35,9 +33,10 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - MRP go-ahead: apply the PO-line link repair, then recompute SO allocation — 2026-09-11
 - Legacy relay it-houzs.dev serves the PO dump and debtor list with no key: take it down or add a key — 2026-08-12
 
+- Houzs bound-cost backfill: 8 lines / 8 DOs can be re-costed from their bound PO (`backfill-hard-bound-cost.mjs`, PLAN COMPANY_ID=1; APPLY needs ALLOW_CLOSED_MONTHS=2026-10); the other 272 migrated-PO lines the owner chose NOT to backfill (B3) — owner — 2026-11-11
+- Service case detail: `po_amount` is still visible and editable to anyone who can open a case (the export now hides it from non-cost viewers, #5628) — owner — 2026-11-11
+- Finance: HC-SO-2609-164 (pay 03c0c4b1 + a692fff5, 2.1 s apart) and HC-SO-008674 (112ad71a + 358dea27, 4.1 s apart) look double-recorded; check the bank and who recorded them before deleting either — finance — 2026-11-11
 ## Waiting on others
-- HC-0149 Copy as new: phone entry not built (`MobileNewSO.tsx` at its size ceiling; it already seeds from `convertFrom.copyFrom`). Delivery Order copy dropped (owner 2026-10-23: not needed) — Samuel — 2026-10-23
-- DEV-32 Edit SO after DO is desktop-only: the phone has no Override and `MobileNewSO.tsx` is at its size ceiling; port the after-DO mode (customer details + charge lines + DO pick) when Logistics needs it on the phone — Samuel — 2026-10-02
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
 - Cloudflare account holder: staging Worker needs the staging service_role key (staging rehearsal red) — 2026-09-12
@@ -46,7 +45,6 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Dev
 - Receipt rebank: after one clean release of the atomic move, delete `RECEIPT_REBANK_MODE` and the two-step path (`moveOneTwoStep`, acc/receipt-rebank.ts); the payment-edit receipt re-issue (`followPaymentEdit` -> formaliseReceipt, `rebankTx: null`) still moves a transfer two-step until env reaches it — dev — 2026-11-10
-- All-or-nothing stock writes: GRN post is atomic (`GRN_POST_MODE`). Left: DO ship / confirm (`DO_SHIP_MODE`, next PR), then delivery returns and purchase returns. Delete the `two-step` path and the switch after one clean release — 2026-11-10
 - All-or-nothing stock writes: GRN post (`GRN_POST_MODE`) and DO first ship (`DO_SHIP_MODE`) are atomic. Left: delivery returns and purchase returns; a create-as-confirmed DO still inserts LOADED before its ship transaction (a crash in between = LOADED, no OUT; `check-half-done-documents` finds it). Delete the `two-step` paths and switches after one clean release — 2026-11-10
 - Last Mile map: draw each lorry's road-shaped line from the kept polyline in scm.lorry_day_routes (today straight lines between stops) — 2026-11-08
 - Fleet Health "Off the road": add and end an out-of-service window from the lorry record (backend has the table; no screen) — 2026-11-08
@@ -65,6 +63,10 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Sales order list: right-click "Reopen" shows on cancelled orders but the server always refuses it — 2026-09-15
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
 - Drop `public.project_sales_bills` (created by mig 20261014T1600, unused since the sales report is derived from the project chat; 38 saved rows are superseded by the chat they came from) — needs a migration with REVERSAL — 2026-10-14
+
+- Next, not started (handed off 2026-11-11, in this order): (1) staging migrations catch up with main; (2) AI scans (read-bill, credit-notes/scan, payment-vouchers/extract, scan-payment; p95 17-28 s) move to the scan queue with per-bill progress; (3) measure why GRN create/post and SO create/status/items are 5-10 s (Server-Timing on staging first; suspect inline `recomputeSoStockAllocation` at ~23 call sites); (4) swallowed reads (`swallowed-read-baseline.json`, ~850) in slices, reads in front of writes first; (5) grandfathered company-scope handlers (`company-scope-baseline.json`, e.g. lorry-service-records.ts:87) and raw-SQL master reads; (6) dark mode last (owner 2026-11-10: after speed/accuracy) — dev — 2026-11-11
+- Integrity: `integrity-nightly` (00:05 MYT, #5620) first ran 2026-11-11; read its job_runs row in System Health and act on any finding — dev — 2026-11-11
+- Company split to keep in mind: company 1 (Houzs) picks/costs by hard binding SO line -> PO line, never by spec bucket; company 2 (2990) tracks stock by variant (`binding-mode.ts`) — dev — 2026-11-11
 
 ## Plans in force
 - One table component (owner 2026-09-25): done 2026-09-27. Every list renders `components/DataTable.tsx`, with resize-one-column, wrap, freeze-up-to, Title Case headers, auto-fit, footer totals, Ctrl+C, export of the ticked rows, header descriptions (`lib/columnDescriptions.ts`), fixed overdue/owing highlights (`lib/tableHighlight.ts`), column filters in the URL (`cf.<tableId>`), and one display format (yyyy/mm/dd, "RM 1,234.00" incl. PDFs, readable status). Left: quantity separators on document detail line tables and create-from pickers (in progress); mobile card lists have no totals / freeze / copy by design.
@@ -120,7 +122,7 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 
 - Batch A, no behaviour change (owner OK 2026-10-22): (1) persist the `*-paged` list keys in `lib/query-persist.ts` so a reopened list paints its last page; (2) PO / GRN / PI enrichment take `sharedLiveMrp` and stop reading the delivered ledger and PO header twice; (3) independent reads in `procurement-overview`, `logistic-overview`, `projects/overview` run together; (4) SO / DO list line-attach in waves, DO counts beside the page; (5) `inventory/products` filters finished SO demand in the database and runs its reads together; (6) Delivery Planning's serial PO-number loops go through `chunkIn` — dev
 - Batch B, payload, changes what a screen offers — waiting on owner: `customers` names only; `funnel-values` without the near-unique columns (phone, e-mail, address, doc no., money, note), which become typed filters; Inventory rows without the SO / PO drill arrays, fetched on expand — 2026-10-22
-- Batch C, needs a decision each — waiting on owner: list Stock columns from a 15-min MRP snapshot stored with undated lines; Overview procurement from a snapshot; Smart Placement for the Worker (browser served from NRT while the DB is in Singapore slowed every call 5-7x); `auth/me` on the signed-pass fast path; ETag / 304 on the app-wide polls; Server-Timing step timing — 2026-10-22
+- Batch C, needs a decision each — waiting on owner: Overview procurement from a snapshot; Smart Placement for the Worker (browser served from NRT while the DB is in Singapore slowed every call 5-7x); `auth/me` on the signed-pass fast path; ETag / 304 on the app-wide polls; Server-Timing step timing — 2026-10-22
 - SO / DO list repeated reads, batch 1 (owner OK 2026-10-23): DO pill counts from one grouped read (9 -> 1, falls back to the nine counts); DO lifecycle badge from the SI / DR rows the row builder already reads; the DO line attach hands its header read to the Pending ledger; the SO line attach reuses the row builder's base-table and warehouse reads. Same response, before/after page JSON compared on prod. Batch 2: delivery_order_items read four times per DO page (header sources, source SOs, line attach, ledger) — 2026-10-23
 - MRP delivered per open SO line from DO lines embedded in the demand read + one read of unlinked DO lines (lib/mrp-delivered.ts), instead of soDeliverableRemaining in 200-doc batches over every open order (~70 of the engine's 94 round trips, prod 2026-10-23 15:31: live /mrp = 94 REST, 1.47 s). Batched path kept as fallback; GET /mrp?includeUndated=true&nettingCheck=1 runs both on the same rows and lists any differing line. Benefits every computeMrp consumer (SO list stock column, SO detail coverage, PO/GRN/PI enrichment, procurement overview, cron snapshot) — 2026-10-23
 - PostgREST aggregates look OFF on prod (exact error code shows in Server-Timing `s-db-agg-*` once this ships; DO list search matching nothing = 12 round trips, 3 with them on), so every aggregate fast path (SO pills + money tiles, DO pills, Outstanding /summary) paid a refused request and then paged its fallback UNORDERED — the SO DELIVERED pill read 746 beside a list total of 747 in one response (2026-10-23). Fix: remember PGRST123 per isolate for 10 min (lib/postgrest-aggregate.ts, Server-Timing `s-db-agg-*`), order every fallback page, DO pills fall back to one ordered status read. Turning aggregates on (`pgrst.db_aggregates_enabled`) is Samuel's call — 2026-10-23

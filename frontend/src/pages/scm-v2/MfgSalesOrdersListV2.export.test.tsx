@@ -50,7 +50,7 @@ vi.mock("../../vendor/scm/lib/sales-order-queries", async (importOriginal) => ({
     isPlaceholderData: false,
     error: null,
   }),
-  useEnrichedSoListRows: (rows: unknown[]) => rows,
+  useEnrichedSoListRows: (rows: unknown[]) => ({ rows, mrp: { meta: null, refresh: () => {}, refreshing: false } }),
   useSoLineCoverage: () => ({ data: undefined }),
   useMfgSalesOrderDetail: () => ({ data: undefined, isLoading: false, error: null }),
   useUpdateMfgSalesOrderStatus: () => ({ mutateAsync: vi.fn(), isPending: false }),

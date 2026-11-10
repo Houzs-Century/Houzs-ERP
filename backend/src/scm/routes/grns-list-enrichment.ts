@@ -34,6 +34,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
+import { resolveListMrp, wantsListMrpRefresh } from '../lib/list-mrp-source';
 export { LIST_MRP_ENRICHMENT_KEYS } from '../lib/list-mrp-enrichment-keys';
 
 export const grnsListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -49,6 +50,8 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const raw = (c.req.query('grnIds') ?? '').trim();
   const grnIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (grnIds.length === 0) return c.json({ enrichment: {} });
+  /* The 15-min list snapshot, not a live run (lib/list-mrp-source.ts). */
+  const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
   /* Re-read the GRN headers under the company predicate — the tenant boundary —
      to get each one's parent PO. A spoofed id from another company yields no row. */
@@ -58,7 +61,7 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (hdrErr) return c.json({ error: 'enrichment_failed', reason: hdrErr.message }, 500);
 
   const rows = ((hdrs ?? []) as Array<{ id: string; purchase_order_id: string | null }>);
-  if (rows.length === 0) return c.json({ enrichment: {} });
+  if (rows.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
   const ids = rows.map((g) => g.id);
   const poByGrn = new Map<string, string | null>();
   for (const g of rows) poByGrn.set(g.id, g.purchase_order_id);
@@ -86,7 +89,7 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
   /* The SAME two resolvers the list ran inline, keyed on the parent POs. */
   const poIds = rows.map((g) => g.purchase_order_id);
   const [originsByPo, deliveredByPoCode] = await Promise.all([
-    resolvePoSoCoveragePerSkuForPos(sb, c, poIds),
+    resolvePoSoCoveragePerSkuForPos(sb, c, poIds, listMrp),
     resolveDeliveredByCodeForPos(sb, c, poIds),
   ]);
 
@@ -116,5 +119,5 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
       delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
     };
   }
-  return c.json({ enrichment });
+  return c.json({ enrichment, mrp: (await listMrp).meta });
 });
