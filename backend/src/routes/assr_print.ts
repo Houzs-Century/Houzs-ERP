@@ -59,6 +59,13 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Document numbers and phones, one unbroken line each; a list stays a comma list. */
+export function docCodes(text: string | null | undefined): string {
+  const codes = String(text ?? "").split(/,\s*/).map((code) => code.trim()).filter(Boolean);
+  if (!codes.length) return "—";
+  return codes.map((code) => `<span class="doc-code">${esc(code)}</span>`).join(", ");
+}
+
 // All printed dates/timestamps render in Malaysia wall-clock time
 // (UTC+8). The Worker runs in UTC and the old getUTC* formatting
 // printed instants 8 hours behind the office clock (Nick 2026-07-14:
@@ -862,6 +869,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid.cols-4 { grid-template-columns: 27mm 1fr 27mm 1fr; }
     .mgrid.cols-2 { grid-template-columns: 27mm 1fr; }
     .mgrid.cols-8 { grid-template-columns: 22mm 1fr 18mm 1fr 20mm 1fr 17mm 1fr; }
+    /* Office / customer copy: labels sit on one line and document numbers never
+       break mid-code (client 2026-11-10: "Sales Agent" wrapped to three lines). */
+    .mgrid.cols-meta { grid-template-columns: 26mm 1.5fr 28mm 1fr 23mm 1fr; }
+    .mgrid.cols-info { grid-template-columns: 33mm 1fr 33mm 1fr; }
+    .mgrid.cols-meta .lc, .mgrid.cols-info .lc { white-space: nowrap; display: flex; align-items: center; }
+    .doc-code { white-space: nowrap; }
     .mgrid.rule-top { border-top: 1pt solid #141414; }
     .mgrid .lc {
       padding: 2.4mm 2.8mm; background: #f3f3f1;
@@ -1167,27 +1180,25 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       };
       return `
     <!-- meta grid -->
-    <div class="mgrid cols-8 rule-top">
+    <div class="mgrid cols-meta rule-top">
       <div class="lc">Sales Agent</div><div class="vc">${esc(cs.sales_agent || "—")}</div>
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
-      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
     </div>
 
     <!-- customer info -->
     <div class="bar">Customer Info</div>
-    <div class="mgrid cols-6">
+    <div class="mgrid cols-info">
       <div class="lc">Customer Name</div><div class="vc">${esc(cs.customer_name || "—")}</div>
-      <div class="lc">HP</div><div class="vc mono">${esc(cs.phone || "—")}</div>
-      <div class="lc">Ref No</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
+      <div class="lc">HP</div><div class="vc mono">${docCodes(cs.phone)}</div>
+      <div class="lc">PO No</div><div class="vc mono">${docCodes(assrMergedPoText(cs))}</div>
+      <div class="lc">SO No</div><div class="vc mono">${docCodes(cs.doc_no)}</div>
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
-      <div class="lc">PO No</div><div class="vc mono">${esc(assrMergedPoText(cs) || "—")}</div>
-      <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
       <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
-      <div class="lc">Address</div><div class="vc span5">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
-      <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
+      <div class="lc">Address</div><div class="vc span3">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
+      <div class="lc">Problem</div><div class="vc span3" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
 
     <!-- items -->

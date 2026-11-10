@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { signoffCompanyCode } from "../src/routes/assr_print";
+import { docCodes, signoffCompanyCode } from "../src/routes/assr_print";
 
 /**
  * The service form's sign-off names the company on the letterhead.
@@ -42,5 +42,20 @@ describe("the printed sign-off reads the signing company", () => {
     expect(src).toMatch(/const coShort = shortCompanyName\(signBranding\.companyName\)/);
     expect(src).toMatch(/const csPhone = signCode === HOUZS_COMPANY_CODE/);
     expect(src).not.toMatch(/shortCompanyName\(branding\.companyName\)/);
+  });
+});
+
+describe("docCodes keeps each document number on one line", () => {
+  test("a PO number never breaks at its hyphens", () => {
+    expect(docCodes("HC-PO-2609-116")).toBe('<span class="doc-code">HC-PO-2609-116</span>');
+  });
+
+  test("several numbers stay a comma list, each unbroken", () => {
+    expect(docCodes("HC-PO-1, HC-PO-2")).toBe('<span class="doc-code">HC-PO-1</span>, <span class="doc-code">HC-PO-2</span>');
+  });
+
+  test("an empty value prints a dash and markup is escaped", () => {
+    expect(docCodes(null)).toBe("—");
+    expect(docCodes("<b>")).toBe('<span class="doc-code">&lt;b&gt;</span>');
   });
 });
