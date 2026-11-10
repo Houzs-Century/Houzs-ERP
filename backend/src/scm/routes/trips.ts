@@ -59,7 +59,7 @@ import {
 } from '../lib/fleet-day-view';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
-import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
+import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES, pingCallerAllowed } from '../lib/tripLocation';
 import { dateOrNull } from '../lib/date-coerce';
 import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
 
@@ -1427,8 +1427,10 @@ trips.post('/:id/location', async (c) => {
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
   const t = trip as Record<string, unknown>;
 
+  // A crew member without Transportation edit arrives on the guard's
+  // writeBypass; only their OWN trip is accepted (tripLocation.ts, WHO MAY PING).
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
-  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(t))) {
+  if (!pingCallerAllowed(scope, tripAssignment(t), c.get('scmWriteBypassed') === true)) {
     return c.json({ error: 'not_your_trip' }, 403);
   }
 
