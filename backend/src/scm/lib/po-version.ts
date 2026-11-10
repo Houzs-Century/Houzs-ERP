@@ -18,8 +18,6 @@
  * `poVersionRaced()`. The token stays the client's half because every PO writer
  * bumps `updated_at`, while only this PATCH bumps `version`. */
 
-import { scopeToCompanyId } from './companyScope';
-
 export const PO_VERSION_REQUIRED = {
   error: 'po_version_required',
   message: 'This purchase order was opened with an older screen. Your changes are still here; refresh the order before saving again.',
@@ -68,8 +66,9 @@ export async function claimPoVersion(
   | { ok: false; status: 500; body: { error: 'update_failed'; reason: string } }
 > {
   const from = Number(loadedVersion ?? 1);
-  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders')
-    .update({ version: from + 1 }).eq('id', id).eq('version', from), companyId).select('id').maybeSingle();
+  const { data, error } = await sb.from('purchase_orders')
+    .update({ version: from + 1 }).eq('id', id).eq('company_id', companyId).eq('version', from)
+    .select('id').maybeSingle();
   if (error) return { ok: false, status: 500, body: { error: 'update_failed', reason: String(error.message) } };
   if (!data) return { ok: false, status: 409, body: poVersionRaced() };
   return { ok: true, version: from + 1 };
