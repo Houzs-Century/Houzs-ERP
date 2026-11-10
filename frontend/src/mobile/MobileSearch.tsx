@@ -5,6 +5,7 @@ import {
   GLOBAL_SEARCH_MIN_LENGTH,
   searchHitStatus,
   useGlobalSearchResults,
+  useSearchStatusVocabulary,
   type SearchHit,
   type SearchHitType,
 } from "../lib/globalSearch";
@@ -162,6 +163,7 @@ export function MobileSearch({
 }) {
   const [q, setQ] = useState("");
   const { term, hits, loading, error, degradedNotice } = useGlobalSearchResults(q);
+  const vocab = useSearchStatusVocabulary();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -261,7 +263,7 @@ export function MobileSearch({
                    <div>, not a <button>: showing the record is the fix, offering
                    a tap that goes nowhere would be a different lie. */
                 const nav = navFor(hit);
-                const status = searchHitStatus(hit);
+                const status = searchHitStatus(hit, vocab);
                 const body = (
                   <>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>

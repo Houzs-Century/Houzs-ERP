@@ -1,12 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import {
-  humaniseStatusKey,
-  resolveStatusPill,
-  STATUS_TONES,
-  type StatusDocType,
-  type StatusTone,
-} from "../vendor/scm/lib/status-pill";
+import type * as StatusPill from "../vendor/scm/lib/status-pill";
+import type { StatusDocType, StatusTone } from "../vendor/scm/lib/status-pill";
 
 // Owner UX contract: the first character starts a real server search. The UI
 // enters the searching state immediately; the short debounce only coalesces
@@ -56,14 +51,60 @@ const STATUS_DOC: Partial<Record<SearchHitType, StatusDocType>> = {
   payment_voucher: "pv",
 };
 
-/** The status pill both palettes show on a hit, or null when it has none. */
-export function searchHitStatus(hit: SearchHit): { label: string; bg: string; fg: string } | null {
-  if (!hit.status) return null;
+/* The status vocabulary is loaded on first use, not with the app: the palette
+   lives in the always-loaded shell, and the status maps alone pushed the
+   initial bundle past its gzip ceiling (check-bundle-size.mjs). */
+let vocabulary: typeof StatusPill | null = null;
+let vocabularyLoad: Promise<typeof StatusPill> | null = null;
+
+export function loadSearchStatusVocabulary(): Promise<typeof StatusPill> {
+  vocabularyLoad ??= import("../vendor/scm/lib/status-pill").then(
+    (m) => {
+      vocabulary = m;
+      return m;
+    },
+    (e: unknown) => {
+      // Let the next palette open try again rather than remember the failure.
+      vocabularyLoad = null;
+      throw e;
+    },
+  );
+  return vocabularyLoad;
+}
+
+/** The status vocabulary once loaded; null until then (no pill shows meanwhile). */
+export function useSearchStatusVocabulary(): typeof StatusPill | null {
+  const [v, setV] = useState(vocabulary);
+  useEffect(() => {
+    if (v) return;
+    let live = true;
+    loadSearchStatusVocabulary().then(
+      (m) => {
+        if (live) setV(m);
+      },
+      () => {
+        // Statuses are an extra on a hit; the hit itself still shows and opens.
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [v]);
+  return v;
+}
+
+/** The status pill both palettes show on a hit, or null when it has none (or
+ *  the vocabulary has not loaded yet). */
+export function searchHitStatus(
+  hit: SearchHit,
+  vocab: typeof StatusPill | null,
+): { label: string; bg: string; fg: string } | null {
+  if (!hit.status || !vocab) return null;
   const doc = STATUS_DOC[hit.type];
   const entry: { label: string; tone: StatusTone } = doc
-    ? resolveStatusPill(doc, hit.status)
-    : { label: humaniseStatusKey(hit.status), tone: "neutral" };
-  return { label: entry.label, ...STATUS_TONES[entry.tone] };
+    ? vocab.resolveStatusPill(doc, hit.status)
+    : { label: vocab.humaniseStatusKey(hit.status), tone: "neutral" };
+  return { label: entry.label, ...vocab.STATUS_TONES[entry.tone] };
 }
 
 // Source names for the degraded notice. Kept here, not in either palette, so

@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 /* MobileSearch — the phone's global search palette.
  *
@@ -130,6 +130,11 @@ describe("MobileSearch accounts for every hit", () => {
 });
 
 describe("the finance and master sources (2026-11-10)", () => {
+  beforeAll(async () => {
+    const { loadSearchStatusVocabulary } = await import("../lib/globalSearch");
+    await loadSearchStatusVocabulary();
+  });
+
   it("lists each read-only with its status in the list's own words", () => {
     show([
       { ...hit("payment_voucher", "p1", "PV-2611-001"), status: "POSTED" },

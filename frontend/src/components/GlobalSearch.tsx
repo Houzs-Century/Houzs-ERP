@@ -26,12 +26,6 @@ import {
   Truck,
   ReceiptText,
   Receipt,
-  Building2,
-  Contact,
-  FileMinus,
-  Banknote,
-  Undo2,
-  Wallet,
 } from "lucide-react";
 import { cn, formatDate } from "../lib/utils";
 import { HighlightedText } from "../lib/highlight";
@@ -39,6 +33,7 @@ import {
   GLOBAL_SEARCH_MIN_LENGTH,
   searchHitStatus,
   useGlobalSearchResults,
+  useSearchStatusVocabulary,
   type SearchHit,
   type SearchHitType,
 } from "../lib/globalSearch";
@@ -371,7 +366,8 @@ function HitRow({
   onSelect: () => void;
 }) {
   const meta = TYPE_META[item.type];
-  const status = searchHitStatus(item);
+  const vocab = useSearchStatusVocabulary();
+  const status = searchHitStatus(item, vocab);
   return (
     <button
       id={`global-search-option-${item._idx}`}
@@ -444,7 +440,7 @@ function EmptyHelp() {
           Purchase orders, GRNs, Delivery orders, Invoices by doc no, party, or ref
         </li>
         <li className="flex items-center gap-2">
-          <Wallet size={12} className="text-primary/70" />
+          <ReceiptText size={12} className="text-primary/70" />
           Suppliers, customers, credit notes, receipts, delivery returns and payment vouchers, where you have access
         </li>
         <li className="flex items-center gap-2">
@@ -576,32 +572,32 @@ const TYPE_META: Record<
   },
   supplier: {
     label: "Suppliers",
-    icon: <Building2 size={13} />,
+    icon: <ShoppingCart size={13} />,
     tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
   },
   customer: {
     label: "Customers",
-    icon: <Contact size={13} />,
+    icon: <Users size={13} />,
     tile: "bg-primary/[.12] text-primary",
   },
   credit_note: {
     label: "Credit / Debit Notes",
-    icon: <FileMinus size={13} />,
+    icon: <FileText size={13} />,
     tile: "bg-primary/[.12] text-primary",
   },
   receipt: {
     label: "Receipts",
-    icon: <Banknote size={13} />,
+    icon: <Receipt size={13} />,
     tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
   },
   delivery_return: {
     label: "Delivery Returns",
-    icon: <Undo2 size={13} />,
+    icon: <Truck size={13} />,
     tile: "bg-primary/[.12] text-primary",
   },
   payment_voucher: {
     label: "Payment Vouchers",
-    icon: <Wallet size={13} />,
+    icon: <ReceiptText size={13} />,
     tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
   },
 };
