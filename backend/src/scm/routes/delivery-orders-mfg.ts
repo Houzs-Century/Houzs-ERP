@@ -117,6 +117,7 @@ import {
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
 import { resolveDoLineWarehouses, doShipFromWarehouseId } from '../lib/do-line-warehouses';
+import { resolveHardBoundCostBatches, costBatchNoteText, type CostBatchMode, type CostBatchNote } from '../lib/hard-bound-cost-batch';
 import { doWarehouseLabels } from '../lib/do-warehouse-labels';
 import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
@@ -806,6 +807,44 @@ async function resolveDoSofaBatchMap(
   return batchBySoItem;
 }
 
+/* The batch map every inventory seam of a DO keys on: the sofa / commitment /
+   drop-ship answer above, plus (company 1 only) the hard-bound line's own PO,
+   decided at the first ship and read back from the OUT afterwards
+   (lib/hard-bound-cost-batch.ts, owner decision A 2026-11-10). For any other
+   company the second half reads nothing and adds nothing. */
+async function resolveDoCostBatchMap(
+  sb: any, // eslint-disable-line @typescript-eslint/no-explicit-any -- same untyped client as resolveDoSofaBatchMap
+  items: Array<{
+    id: string; so_item_id?: string | null; item_code: string; item_group?: string | null;
+    variants?: VariantAttrs | null; qty?: number | null; committed_po_batch_no?: string | null;
+  }>,
+  isDropship: boolean,
+  companyId: number | null,
+  lineWh: Map<string, string | null>,
+  deliveryOrderId: string,
+  mode: CostBatchMode,
+): Promise<{ batchBySoItem: Map<string, string>; notes: CostBatchNote[] }> {
+  const batchBySoItem = await resolveDoSofaBatchMap(sb, items, isDropship, companyId);
+  const hb = await resolveHardBoundCostBatches(sb, {
+    companyId,
+    deliveryOrderId,
+    already: batchBySoItem,
+    mode,
+    lines: items
+      .filter((it) => !isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code }))
+      .map((it) => ({
+        soItemId: it.so_item_id ?? null,
+        itemCode: it.item_code,
+        itemGroup: it.item_group ?? null,
+        variantKey: computeVariantKey(it.item_group ?? null, it.variants ?? null),
+        warehouseId: lineWh.get(it.id) ?? null,
+        qty: Number(it.qty ?? 0),
+      })),
+  });
+  for (const [sid, b] of hb.batchBySoItem) batchBySoItem.set(sid, b);
+  return { batchBySoItem, notes: hb.notes };
+}
+
 export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
   try {
     /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
@@ -835,11 +874,12 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
        (allocated_batch_no + drop-ship expected batch), so the bucket key here
        always matches the OUT movement and a drop-ship line picks up the
        arriving lot's real cost after the receipt-time reconcile (C1 helper). */
-    const batchBySoItem = await resolveDoSofaBatchMap(
+    const { batchBySoItem } = await resolveDoCostBatchMap(
       sb,
-      items as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
+      items as Array<{ id: string; so_item_id?: string | null; item_code: string; item_group?: string | null; variants?: VariantAttrs | null; qty?: number | null }>,
       isDropship,
       (doHeader as { company_id?: number | null }).company_id ?? null,
+      lineWh, deliveryOrderId, 'restamp',
     );
     const batchAware = batchBySoItem.size > 0;
 
@@ -1122,11 +1162,12 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
      same batch the receipt-time reconcile keys on. Both sources resolve via
      the SHARED helper (audit C1) so this path can never drift from resync /
      restamp. Forward-compat: absent columns → un-batched, plain FIFO. */
-  const batchBySoItem = await resolveDoSofaBatchMap(
+  const { batchBySoItem, notes: costNotes } = await resolveDoCostBatchMap(
     sb,
-    items as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
+    items as Array<{ id: string; so_item_id?: string | null; item_code: string; item_group?: string | null; variants?: VariantAttrs | null; qty?: number | null }>,
     isDropship,
     (doHeader as { company_id?: number | null } | null)?.company_id ?? null,
+    lineWh, deliveryOrderId, 'ship',
   );
 
   /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
@@ -1136,6 +1177,7 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
      key so two batches of the same sofa SKU each consume their own lots. */
   const byKey = new Map<string, {
     warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null;
+    notes: CostBatchNote[];
   }>();
   for (const it of (items as Array<{ id: string; so_item_id?: string | null; item_code: string; description: string | null; qty: number; item_group?: string | null; variants?: VariantAttrs | null }>)) {
     /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
@@ -1149,9 +1191,16 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
     const variantKey = computeVariantKey(it.item_group ?? null, it.variants ?? null);
     const batchNo = it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? null) : null;
     const k = `${warehouseId}::${it.item_code}::${variantKey}::${batchNo ?? ''}`;
+    const lineNotes = it.so_item_id ? costNotes.filter((n) => n.soItemId === it.so_item_id) : [];
     const cur = byKey.get(k);
-    if (cur) { cur.qty += qty; }
-    else byKey.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key: variantKey, product_name: it.description, qty, batch_no: batchNo });
+    if (cur) { cur.qty += qty; cur.notes.push(...lineNotes); }
+    else byKey.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key: variantKey, product_name: it.description, qty, batch_no: batchNo, notes: [...lineNotes] });
+  }
+  /* A company-1 hard-bound line that fell back to plain FIFO says why on its OUT
+     row, where the backfill reads it (lib/hard-bound-cost-batch.ts). */
+  for (const n of costNotes) {
+    /* eslint-disable-next-line no-console */
+    console.warn(`[hard-bound-cost] ${doNo} ${n.itemCode} @ ${n.warehouseId}: ${n.reason}${n.poNumbers.length ? ` (${n.poNumbers.join(', ')})` : ''}`);
   }
   const movements = [...byKey.values()].map((m) => ({
     movement_type: 'OUT' as const,
@@ -1164,6 +1213,7 @@ export async function deductInventoryForDo(sb: any, deliveryOrderId: string, per
     source_doc_id: deliveryOrderId,
     source_doc_no: doNo,
     ...(m.batch_no ? { batch_no: m.batch_no } : {}),
+    ...(costBatchNoteText(m.notes) ? { notes: costBatchNoteText(m.notes)! } : {}),
     performed_by: performedBy,
   }));
   const movementErrors: string[] = [];
@@ -1482,12 +1532,19 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
      batch_no) never costed it. Best-effort: absent columns (pre-0121) /
      non-sofa → empty map → plain non-batched resync, identical to the old
      behaviour. */
-  const batchBySoItem = await resolveDoSofaBatchMap(
-    sb,
-    (items ?? []) as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
-    isDropship,
+  let costBatches: { batchBySoItem: Map<string, string>; notes: CostBatchNote[] };
+  try {
+    costBatches = await resolveDoCostBatchMap(
+      sb,
+      (items ?? []) as Array<{ id: string; so_item_id?: string | null; item_code: string; item_group?: string | null; variants?: VariantAttrs | null; qty?: number | null }>,
+      isDropship,
       (doHeader as { company_id?: number | null }).company_id ?? null,
-  );
+      lineWh, deliveryOrderId, 'resync',
+    );
+  } catch (e) {
+    return noteResyncReadFailure(sb, deliveryOrderId, doHeader, 'the batches the DO shipped under', { message: e instanceof Error ? e.message : String(e) });
+  }
+  const { batchBySoItem, notes: costNotes } = costBatches;
   const batchAware = batchBySoItem.size > 0;
 
   type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
@@ -1603,7 +1660,9 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
         source_doc_no: doNo,
         correction_seq,
         performed_by: performedBy,
-        notes: 'Resync: line qty increased / line added (shipped DO).',
+        notes: ['Resync: line qty increased / line added (shipped DO).', costBatchNoteText(costNotes.filter((n) =>
+          n.warehouseId === warehouse_id && n.itemCode === item_code && n.variantKey === variant_key
+          && (n.reason === 'own-po-lot-short' ? n.poNumbers[0] ?? null : null) === batch_no))].filter(Boolean).join(' '),
         ...(batch_no ? { batch_no } : {}),
       });
     } else {

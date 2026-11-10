@@ -373,7 +373,7 @@ async function doLinesForBoundPo(
 
 /* so_item_id → the live POs raised for that SO line that have received at
    least one unit, with the item each PO line orders. */
-async function receivedBoundPosBySoItem(
+export async function receivedBoundPosBySoItem(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null>,
