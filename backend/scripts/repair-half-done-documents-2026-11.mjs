@@ -325,7 +325,7 @@ function printPlan(facts, whName) {
       note(`    ${f.t.downstreamDo} OUT in this bucket: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
       if (f.t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
         note(`    unit cost: the rule the bill recost applies to every GRN lot (recostFromGrn): ${it.unitCost == null ? 'NONE' : 'present'}; live supplier-bill lines on this GRN line: ${it.billed}`);
-        note(`    the same rule on the GRN's other lines with an IN reproduces their cost: ${it.siblings.map((s) => `${s.code} ${s.same ? 'yes' : 'NO'}`).join(', ') || 'no other line'}`);
+        note(`    the same rule checked on the GRN's other lines with an IN (does it reproduce what they carry?) -> ${it.siblings.map((s) => `${s.code} ${s.same ? 'yes' : 'NO'}`).join(', ') || 'no other line'}`);
       } else {
         const s = it.standIn;
         note(`    stand-in lot: ${s ? `${short(s.id)} received ${s.qtyReceived}, left ${s.qtyRemaining}, movement behind it: ${s.hasMovement ? 'YES' : 'none'}, drawn by ${s.consumedBy.join(', ') || '-'}, at ${new Date(s.receivedAt).toISOString()}` : 'NOT FOUND'}`);
