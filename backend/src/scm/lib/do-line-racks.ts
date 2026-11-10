@@ -121,12 +121,30 @@ export async function resolveDoLineRacks(
 
 /** Rack label(s) for one DO line: the operator's pick, else the racks its
  *  source PO(s) were received onto in its ship-from warehouse. */
+/** Item code -> the rack labels THIS DO took the goods off when it stocked them out
+ *  (warehouse_rack_movements STOCK_OUT, source_doc_no = the DO number). PURE. */
+export function shippedFromRacks(rows: ReadonlyArray<{ item_code: string | null; rack_label: string | null }>): Map<string, string[]> {
+  const out = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (!r.item_code || !r.rack_label) continue;
+    (out.get(r.item_code) ?? out.set(r.item_code, new Set()).get(r.item_code)!).add(r.rack_label);
+  }
+  return new Map([...out].map(([k, v]) => [k, [...v].sort()]));
+}
+
 export function racksForDoLine(
   r: DoLineRacks,
   line: { warehouseId: string | null; itemCode: string | null; rackId: string | null; sourcePos: readonly string[] },
+  shippedFrom: ReadonlyMap<string, readonly string[]> | null,
 ): string[] {
   const picked = line.rackId ? r.labelById.get(line.rackId) : undefined;
   if (picked) return [picked];
+  /* Once the DO has taken the goods off their racks the placement rows are gone, so
+     the receipt walk below finds nothing and the column went blank (owner 2026-11-10,
+     2990-DO-2611-016: CODY-(K) left Rack L8.2 at 10:28, the DO showed a dash). The
+     rack the goods actually left is the answer then. */
+  const left = line.itemCode ? shippedFrom?.get(line.itemCode) : undefined;
+  if (left && left.length > 0) return [...left];
   if (!line.warehouseId || !line.itemCode) return [];
   const out = new Set<string>();
   for (const po of line.sourcePos) {
