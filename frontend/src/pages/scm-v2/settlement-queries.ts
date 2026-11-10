@@ -500,7 +500,7 @@ export const useConfirmMatched = () => {
 export const useMarkBatchReceived = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ batchId, receivedOn, amountSen }: { batchId: number; receivedOn: string; amountSen?: number | null }) =>
+    mutationFn: ({ batchId, receivedOn, amountSen }: { batchId: number; receivedOn: string; amountSen?: number }) =>
       authedFetch<{ ok: boolean; status: string; jeNo?: string; amountSen: number; receivedSen: number; outstandingSen: number }>(
         `/accounting/settlement/batches/${batchId}/received`,
         { method: 'POST', body: JSON.stringify({ receivedOn, amountSen }) },

@@ -135,6 +135,34 @@ describe('a merchant report', () => {
     expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
   });
 
+  /* "1,234.50" through Number() was NaN, went up as null and the statement
+     fee total was silently dropped. */
+  test('a statement fee typed with a thousands comma goes up as that amount; an unreadable one is refused', async () => {
+    const PRO = [acq('MBB', { fee_method: 'prorated-summary' } as Partial<AcquirerSetup>)];
+    state.report.mockReset().mockResolvedValue({
+      batchId: 42, rows: 1, skippedLines: 0, alreadyOnReport: 0, alreadyOnReportDetail: [], statedNetSen: null, adjustmentSen: 0,
+      grossSen: 100, feeSen: 1, netSen: 99, periodFrom: '2026-10-27', periodTo: '2026-10-27', buckets: {},
+    });
+    const first = render(<MerchantUploadDrawer acq="MBB" acquirers={PRO} startWith={null} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Statement files'), { target: { files: [csv('mbb.csv')] } });
+    fireEvent.change(screen.getByLabelText('Statement fee total'), { target: { value: '1,234.50' } });
+    const go = screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement;
+    await waitFor(() => expect(go.disabled).toBe(false));
+    fireEvent.click(go);
+    await waitFor(() => expect(state.report).toHaveBeenCalledWith(expect.objectContaining({ summaryFeeSen: 123450 })));
+    first.unmount();
+
+    state.report.mockClear();
+    render(<MerchantUploadDrawer acq="MBB" acquirers={PRO} startWith={null} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Statement files'), { target: { files: [csv('mbb.csv')] } });
+    fireEvent.change(screen.getByLabelText('Statement fee total'), { target: { value: 'twelve' } });
+    const again = screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement;
+    await waitFor(() => expect(again.disabled).toBe(false));
+    fireEvent.click(again);
+    expect(await screen.findByText(/The statement fee total isn't a number we can read/)).toBeTruthy();
+    expect(state.report).not.toHaveBeenCalled();
+  });
+
   test('an acquirer with no unique reference is called out before anything goes up', () => {
     render(<MerchantUploadDrawer acq="GHL" acquirers={ACQUIRERS} startWith={null} onClose={vi.fn()} />);
     expect(screen.getByText(/sends no unique reference/)).toBeTruthy();
