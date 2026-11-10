@@ -2769,8 +2769,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   (deliveryOrder as Record<string, unknown>).warehouse_name = headerWh ? (whLabels.get(headerWh)?.name ?? null) : null;
   /* Storekeeper picking — the rack(s) each line's source PO was received onto
      (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
-  const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
-  const shippedFrom = await loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null);
+  const [doRacks, shippedFrom] = await Promise.all([resolveDoLineRacks(sb, rawItems, lineWh), loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null)]);
   /* Bound-PO fallback — a line whose ledger walk found no batch (not yet
      shipped, negative-stock ship, or un-batched pre-0120 lots) still has a real
      procurement path when a PO was raised against its SO line (per-warehouse
