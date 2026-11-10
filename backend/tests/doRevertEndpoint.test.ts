@@ -216,7 +216,7 @@ describe('DO revert — downstream lock', () => {
 });
 
 describe('DO revert — undo a wrong Delivered', () => {
-  test('DELIVERED → DISPATCHED: no stock, stamps cleared, POD kept, audited with the reason', async () => {
+  test('DELIVERED → DISPATCHED: no stock, stamps cleared, POD moved to a prior attempt, audited with the reason', async () => {
     const { app, tables } = revertApp({ doStatus: 'DELIVERED' });
     const res = await revert(app, 'DISPATCHED', 'driver tapped the wrong order');
     expect(res.status).toBe(200);
@@ -228,8 +228,12 @@ describe('DO revert — undo a wrong Delivered', () => {
     expect(d.delivered_at).toBeNull();
     expect(d.signed_at).toBeNull();
     expect(d.dispatched_at).toBe('2026-08-26T00:00:00Z');
-    expect(d.signature_data).toBe('data:image/png;base64,AAAA');
-    expect(d.pod_photo_keys).toEqual(['pod/a.jpg', 'pod/b.jpg']);
+    expect(d.signature_data).toBeNull();
+    expect(d.pod_photo_keys).toEqual([]);
+    expect(tables.delivery_order_pod_attempts?.[0]).toMatchObject({
+      delivery_order_id: 'do-1', company_id: 1, attempt_no: 1, reason: 'driver tapped the wrong order',
+      signature_data: 'data:image/png;base64,AAAA', pod_photo_keys: ['pod/a.jpg', 'pod/b.jpg'],
+    });
     expect(tables.inventory_movements).toHaveLength(0);
   });
 

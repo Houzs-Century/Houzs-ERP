@@ -72,6 +72,7 @@ import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { DoProofOfDeliveryCard, doIsDelivered } from "./DoProofOfDeliveryCard";
+import { DoEarlierPodAttempts } from "../../components/scm-v2/DoEarlierPodAttempts";
 import { DoDeliveryIssuesCard } from "../../components/scm-v2/DeliveryIssuesCard";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -1540,6 +1541,7 @@ export function DeliveryOrderDetailV2() {
 
               <DoDeliveryIssuesCard doId={deliveryOrder.id} />
               <DoProofOfDeliveryCard h={deliveryOrder} />
+              <DoEarlierPodAttempts doId={deliveryOrder.id} docNo={deliveryOrder.do_number || `DO ${deliveryOrder.id.slice(0, 8)}`} />
 
               <AsideCard title="People">
                 <PersonRow
