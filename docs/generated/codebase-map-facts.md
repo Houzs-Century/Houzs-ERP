@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-334 route modules (105 in `backend/src/routes`, 229 in `backend/src/scm/routes`), 1769 endpoint registrations.
+334 route modules (105 in `backend/src/routes`, 229 in `backend/src/scm/routes`), 1772 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -321,7 +321,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-so-serialize.ts` | 0 | 30 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4797 |
 | `backend/src/scm/routes/sg-postcode.ts` | 1 | 35 |
-| `backend/src/scm/routes/slips.ts` | 3 | 248 |
+| `backend/src/scm/routes/slips.ts` | 6 | 360 |
 | `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 89 |
 | `backend/src/scm/routes/so-amendments.ts` | 13 | 1839 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
@@ -369,7 +369,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4461 files, 1083190 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (4462 files, 1083889 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -665,7 +665,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
 | `frontend/src/mobile/MobileInvitations.tsx` | 305 |
 | `frontend/src/mobile/MobileItSupport.tsx` | 453 |
-| `frontend/src/mobile/MobileJobStop.tsx` | 227 |
+| `frontend/src/mobile/MobileJobStop.tsx` | 234 |
 | `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
 | `frontend/src/mobile/MobileLinePoRef.tsx` | 87 |
 | `frontend/src/mobile/MobileLineRemark.tsx` | 38 |
@@ -684,7 +684,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileOrderMoney.tsx` | 84 |
 | `frontend/src/mobile/MobileOverview.tsx` | 40 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4209 |
-| `frontend/src/mobile/MobilePOD.tsx` | 622 |
+| `frontend/src/mobile/MobilePOD.tsx` | 629 |
 | `frontend/src/mobile/MobilePaymentRequests.tsx` | 557 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 180 |
 | `frontend/src/mobile/MobilePmsDocCard.tsx` | 754 |
