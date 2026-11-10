@@ -74,6 +74,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
 import { refuseForeignAttachmentKey, refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
+import { calendarCrewScope } from "./lib/calendar-visibility";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -4855,90 +4856,9 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
   const to = c.req.query("to");
   if (!from || !to) return c.json({ error: "from & to required (YYYY-MM-DD)" }, 400);
 
-  const user = c.get("user");
-
-  /* ── Venue-assignment scoping (owner rule, 2026-07) ─────────────────────
-     A non-admin caller sees ONLY the venues/projects they are ASSIGNED to:
-       · PIC arm    — project's PIC (COALESCE(pic_id, created_by) for legacy
-                      pre-039 rows) is them. scope_to_pic roles KEEP their
-                      existing desktop behavior unchanged: PIC in
-                      [self, manager] AND the department brand allow-list
-                      (services/projectAcl.ts).
-       · Attendee arm — they are on the project's Sales Attending list
-                      (project_sales_attendees → sales_reps.user_id, mig 087
-                      — the same linkage the SO venue auto-fill uses).
-     Admins (`*` wildcard) see everything, unchanged. Previously only
-     scope_to_pic roles were filtered — every other non-admin saw ALL
-     venue events; that lane is now assignment-scoped too. */
-  const granted = user?.permissions_set ?? user?.permissions ?? [];
-  const isAdmin = !!user && hasPermission(granted, "*");
-  /* PIC/brand row-level visibility ACL removed (owner decision 2026-08-19):
-     every non-crew caller now sees the WHOLE (company-scoped) calendar. The
-     only remaining scoped lane is CREW (helpers / storekeepers / drivers), who
-     still see just the events they are crewed on. */
-  /* Owner 2026-07-21: helpers/storekeepers are crew-scoped — their calendar
-     shows only events they're crewed on, so they drop out of the unscoped
-     see-all lane and get a crew-assignment arm instead. */
-  /* Owner 2026-07-23: DRIVERS join the crew lane ON THE CALENDAR — "sales,
-     driver and helper only can see event that assigned to them". This
-     reverses the 2026-07-21 "drivers stay see-all" carve-out for this route
-     only; the projects LIST keeps its own lanes. Same no-write guard as
-     isCrewScopedUser so an admin holding the Driver position isn't caged. */
-  const isScopedDriver =
-    !!user &&
-    !isAdmin &&
-    !hasPermission(granted, "projects.write") &&
-    ((user.position_name ?? "").trim().toLowerCase() === "driver" ||
-      /^drivers?$/i.test(((user as { role_name?: string | null }).role_name ?? "").trim()));
-  const crewScoped = isCrewScopedUser(user) || isScopedDriver;
-  // Every authenticated non-crew caller sees the whole company calendar now
-  // (PIC/brand ACL removed 2026-08-19). Only crew stay scoped, to the events
-  // they are crewed on (OR their sales-attendee arm).
-  const seeAll = !!user && !crewScoped;
-  const assignArms: string[] = [];
-  const scopeBinds: any[] = [];
-  if (!seeAll) {
-    if (crewScoped && user?.id) {
-      // Crew arm — FK slots + per-lorry crew JSON exact-name containment
-      // (same match listProjects' assigned_user arm uses).
-      const idArms = [
-        "p.setup_driver_user_id = ?", "p.dismantle_driver_user_id = ?",
-        "p.setup_helper_1_id = ?", "p.setup_helper_2_id = ?",
-        "p.dismantle_helper_1_id = ?", "p.dismantle_helper_2_id = ?",
-      ];
-      let arm = idArms.join(" OR ");
-      for (const _ of idArms) scopeBinds.push(user.id);
-      const nm = (user.name ?? "").trim().toLowerCase();
-      if (nm) {
-        arm += " OR lower(COALESCE(p.setup_crew,'')) LIKE ? OR lower(COALESCE(p.dismantle_crew,'')) LIKE ?";
-        scopeBinds.push(`%"${nm}"%`, `%"${nm}"%`);
-      }
-      assignArms.push(`(${arm})`);
-    }
-    if (user?.id) {
-      // A crew member who is also on a project's Sales Attending list still
-      // sees that event (attendee arm, mig 087).
-      assignArms.push(
-        `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
-        ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +
-        ` WHERE psa.project_id = p.id AND sr.user_id = ?)`
-      );
-      scopeBinds.push(user.id);
-    }
-  }
-  // Non-admin with no resolvable arms (no session id) → fail closed.
-  /* Owner 2026-07-23 — scoped staff (sales reps, drivers, helpers,
-     storekeepers) see ONLY events assigned to them, whatever the status.
-     This REVERSES the short-lived 2026-07-22 carve-out that showed every
-     pending/cancelled fair to every viewer — the owner clarified the
-     original ask meant the opposite: those rows must NOT appear for scoped
-     staff unless the event is theirs. Assigned pending/cancelled events
-     still show (the arms don't filter on status). */
-  const scopeWhere = seeAll
-    ? ""
-    : assignArms.length
-      ? ` AND (${assignArms.join(" OR ")})`
-      : ` AND 1 = 0`;
+  // Crew scoping (drivers/helpers/storekeepers see only their events) is
+  // shared with the all-dates search: routes/lib/calendar-visibility.ts.
+  const { scopeWhere, scopeBinds } = calendarCrewScope(c);
   // Multi-company: the calendar follows the active company ("" when the
   // context is unresolved). Inlined fragment so the positional binds above
   // stay untouched.

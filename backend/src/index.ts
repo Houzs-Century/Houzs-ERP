@@ -60,6 +60,7 @@ import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import projectsCalendarSearch from "./routes/projectsCalendarSearch";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
 import assrQuality from "./routes/assrQuality";
@@ -532,6 +533,8 @@ app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
+// All-dates calendar search (Previous / Next match). Same exact-path-first reason.
+app.route("/api/projects/calendar/search", projectsCalendarSearch);
 // Finished events with incomplete books (Project Overview, Overview). Same exact-
 // path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));

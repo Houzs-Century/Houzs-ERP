@@ -27,6 +27,53 @@ export interface CalendarProject {
   event_type_name?: string | null;
 }
 
+export interface CalendarFilters {
+  brand: string;
+  status: string;
+  organizer: string;
+  q: string;
+}
+
+/**
+ * The calendar's filter rule for one project: brand / status / organizer exact,
+ * plus free-text search over the label fields (and venue initials). The
+ * all-dates search endpoint mirrors this in backend/src/services/calendarSearch.ts
+ * — change the two together.
+ */
+export function projectMatchesCalendarFilters(
+  project: {
+    code: string | null;
+    name: string | null;
+    venue: string | null;
+    organizer: string | null;
+    brand: string | null;
+    state: string | null;
+    event_type_name?: string | null;
+    status: string | null;
+  },
+  { brand, status, organizer, q }: CalendarFilters,
+): boolean {
+  if (brand && project.brand !== brand) return false;
+  // Filter by project STATUS (owner 2026-07-28) — confirmed / pending / cancelled.
+  if (status && (project.status || "").toLowerCase() !== status) return false;
+  if (organizer && (project.organizer || "") !== organizer) return false;
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const hay = [
+    project.code ?? "",
+    project.name ?? "",
+    project.venue ?? "",
+    project.organizer ?? "",
+    project.brand ?? "",
+    project.state ?? "",
+    project.event_type_name ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  const initials = initialsOf(project.venue);
+  return words.every((w) => hay.includes(w) || initials.includes(w));
+}
+
 export interface CalendarTask {
   id: number;
   project_id: number;
@@ -164,36 +211,9 @@ export function buildProjectsCalendarModel({
   showTasks: boolean;
   expandAll: boolean;
 }) {
-  // Filter by project STATUS (owner 2026-07-28) — the calendar's old "section"
-  // dropdown is now confirmed / pending / cancelled.
-  const matchesStatus = (project: CalendarProject): boolean =>
-    !status || ((project.status as string | null) || "").toLowerCase() === status;
-
-  // Free-text search — case-insensitive over the visible/label fields.
+  const filters = { brand, status, organizer, q };
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const matchesQuery = (project: CalendarProject): boolean => {
-    if (words.length === 0) return true;
-    const hay = [
-      project.code,
-      project.name,
-      project.venue ?? "",
-      project.organizer ?? "",
-      project.brand ?? "",
-      project.state ?? "",
-      project.event_type_name ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-    return words.every((w) => hay.includes(w) || initialsOf(project.venue).includes(w));
-  };
-
-  const projects = allProjects.filter((project) => {
-    if (brand && project.brand !== brand) return false;
-    if (!matchesStatus(project)) return false;
-    if (organizer && (project.organizer || "") !== organizer) return false;
-    if (!matchesQuery(project)) return false;
-    return true;
-  });
+  const projects = allProjects.filter((project) => projectMatchesCalendarFilters(project, filters));
   const projectById = new Map(projects.map((project) => [project.id, project] as const));
   const tasks = showTasks
     ? allTasks.filter((task) => {

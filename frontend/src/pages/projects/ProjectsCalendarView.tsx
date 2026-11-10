@@ -26,6 +26,8 @@ import {
   buildProjectsCalendarModel,
 } from "./calendarModel";
 import { CalendarTaskChip, DayCountBadge, CalendarBarPopover, CalendarTaskPopover, CalendarDayModal } from "./calendarParts";
+import { CalendarSearchStrip, useCalendarSearch } from "./CalendarSearchStrip";
+import { type CalendarMatch, matchStart, monthPeriod, pickAdjacentMatch, weekStartOf } from "./calendarSearch";
 
 // Owner 2026-09-30: the calendar filter must survive going into a project and
 // back, and only clear on logout or after an hour of not being touched.
@@ -50,6 +52,8 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
   "q",
 ] as const;
+
+const EMPTY_MATCHES: CalendarMatch[] = [];
 
 export function ProjectsCalendarView() {
   const toast = useToast();
@@ -335,6 +339,46 @@ export function ProjectsCalendarView() {
       : monthLabel;
   const today = todayInAppTz();
 
+  // All-dates search (owner 2026-11-10): Previous / Next match jump the view to
+  // the month (or week) of a matching event, wherever it is, and flash its bar.
+  const searchState = useCalendarSearch({ q: search, brand, status, organizer }, true);
+  const matches = searchState.result?.matches ?? EMPTY_MATCHES;
+  const [focusedId, setFocusedId] = useState<number | null>(null);
+  const [flash, setFlash] = useState<{ id: number; n: number } | null>(null);
+  const period =
+    mode === "week" ? { start: fromStr, end: toStr } : monthPeriod(anchor.getFullYear(), anchor.getMonth());
+  const adjacent = (direction: "next" | "prev") =>
+    pickAdjacentMatch({ matches, focusedId, periodStart: period.start, periodEnd: period.end, direction });
+  const prevMatch = adjacent("prev");
+  const nextMatch = adjacent("next");
+  const jumpTo = (m: CalendarMatch) => {
+    const start = matchStart(m);
+    if (mode === "week") patchParams({ week: weekStartOf(start) });
+    else patchParams({ month: start.slice(0, 7) });
+    setFocusedId(m.id);
+    setFlash((f) => ({ id: m.id, n: (f?.n ?? 0) + 1 }));
+  };
+  // Enter in the search box = Next match; if the search is still settling,
+  // jump as soon as its result lands.
+  const [enterPending, setEnterPending] = useState(false);
+  useEffect(() => {
+    if (!enterPending || searchState.loading) return;
+    setEnterPending(false);
+    if (nextMatch) jumpTo(nextMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per Enter, when the result settles
+  }, [enterPending, searchState.loading]);
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [flash]);
+  useEffect(() => {
+    if (!flash) return;
+    const el = gridRef.current?.querySelector<HTMLElement>(`[data-cal-project="${flash.id}"]`);
+    if (el && "scrollIntoView" in el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [flash, allProjects]);
+  const noMatches = searchState.result?.total === 0;
+
   // Per-week lane-packing. Each project that overlaps a week becomes a
   // single segment for that week (clipped to the visible Sun..Sat range)
   // with a lane index. Segments are rendered as absolutely-positioned
@@ -448,6 +492,11 @@ export function ProjectsCalendarView() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                setEnterPending(true);
+              }}
               placeholder="Search venue, organizer, brand…"
               className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
               title="Search events on the calendar"
@@ -576,6 +625,19 @@ export function ProjectsCalendarView() {
         )}
       </div>
 
+      {searchState.active && (
+        <CalendarSearchStrip
+          label={search.trim() ? `'${search.trim()}'` : "the filters"}
+          result={searchState.result}
+          loading={searchState.loading}
+          error={searchState.error}
+          prev={prevMatch}
+          next={nextMatch}
+          focusedId={focusedId}
+          onJump={jumpTo}
+        />
+      )}
+
       {q.loading && <div className="text-[12px] text-ink-muted">Loading calendar…</div>}
       {q.error && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
@@ -585,7 +647,8 @@ export function ProjectsCalendarView() {
 
       {/* The grid always fits its container: the 7 day columns shrink to
           the viewport width on mobile rather than scrolling horizontally. */}
-      <div>
+      {/* No match anywhere: the strip says so instead of drawing an empty month. */}
+      <div hidden={noMatches}>
         <div ref={gridRef} className="rounded-md border border-border bg-surface">
         {/* Weekday header — month view only. In week view each cell
             renders its own "Day. DD/MM" header with a today pill, so
@@ -834,6 +897,7 @@ export function ProjectsCalendarView() {
                   return (
                     <button
                       key={`${w}-${seg.project.id}-${seg.startCol}`}
+                      data-cal-project={seg.project.id}
                       onClick={() => navigate(`/projects/${seg.project.id}`)}
                       onMouseEnter={(e) =>
                         enterBarHover(seg.project, e.clientX, e.clientY)
@@ -852,6 +916,7 @@ export function ProjectsCalendarView() {
                       }}
                       className={cn(
                         "cal-bar pointer-events-auto truncate px-2 text-left text-[10.5px] font-semibold leading-[18px] hover:-translate-y-px",
+                        flash?.id === seg.project.id && "z-20 animate-pulse ring-2 ring-accent ring-offset-1",
                         seg.clipLeft ? "rounded-l-none" : "rounded-l-md",
                         seg.clipRight ? "rounded-r-none" : "rounded-r-md"
                       )}
