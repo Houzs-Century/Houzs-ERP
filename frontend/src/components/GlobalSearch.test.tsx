@@ -130,6 +130,41 @@ describe("GlobalSearch", () => {
     expect(screen.getByTestId("location").textContent).toBe("/scm/grns/grn-1");
   });
 
+  it("renders the finance and master sources with their status, and opens each by its link", async () => {
+    apiGet.mockResolvedValue({
+      hits: [
+        { type: "supplier", id: "s1", title: "OHANA · Ohana Furniture", subtitle: "Mr Lim", status: "ACTIVE", link: "/scm/suppliers/s1" },
+        { type: "payment_voucher", id: "p1", title: "PV-2611-001", subtitle: "Tan", status: "POSTED", link: "/scm/payment-vouchers/p1" },
+        { type: "credit_note", id: "n1", title: "CN-2611-001", subtitle: "Credit note · Tan", status: "DRAFT", link: "/scm/credit-notes/n1" },
+        { type: "receipt", id: "r1", title: "RCT-001", subtitle: "Tan", status: "POSTED", link: "/scm/receipts/sundry/r1" },
+        { type: "delivery_return", id: "x1", title: "DR-001", subtitle: "Tan", status: "CREDIT_NOTED", link: "/scm/delivery-returns/x1" },
+        { type: "customer", id: "d1", title: "OD-001 · Tan", subtitle: null, status: "INACTIVE", link: "/scm/other-debtors/d1" },
+      ],
+    });
+    renderSearch();
+    fireEvent.click(screen.getByRole("button", { name: "Open global search" }));
+    const input = screen.getByRole("combobox", { name: /search orders/i });
+    fireEvent.change(input, { target: { value: "tan" } });
+    await finishDebounce();
+
+    const listbox = screen.getByRole("listbox", { name: "Search results" });
+    expect(within(listbox).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "CN-2611-001DraftCredit note · Tan",
+      "RCT-001PostedTan",
+      "PV-2611-001ApprovedTan",
+      "DR-001Credit NotedTan",
+      "OHANA · Ohana FurnitureActiveMr Lim",
+      "OD-001 · TanInactive",
+    ]);
+    for (const g of ["Credit / Debit Notes", "Receipts", "Payment Vouchers", "Delivery Returns", "Suppliers", "Customers"]) {
+      expect(screen.getByRole("group", { name: g })).toBeTruthy();
+    }
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("location").textContent).toBe("/scm/payment-vouchers/p1");
+  });
+
   it("makes an older term impossible to see or open while the next term is pending", async () => {
     apiGet
       .mockResolvedValueOnce({

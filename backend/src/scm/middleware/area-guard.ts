@@ -4,6 +4,7 @@ import type { AuthUser } from "../../services/auth";
 import { meetsLevel, type AccessLevel } from "../../services/pageAccess";
 import { salesJdDenial, salesJdWriteDenial } from "../../services/salesJdAccess";
 import { moneyWriteDenial } from "../../services/positionPolicy";
+import { hasScmUmbrella } from "../../services/scmUmbrella";
 
 // ── L2 per-area WRITE authorization for /api/scm/* ──────────────────────────
 //
@@ -231,4 +232,21 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
     }
     await next();
   };
+}
+
+/**
+ * Whether this user can READ an area guarded by a plain `scmAreaGuard(area)`
+ * (no opts) — asked by a caller outside `/api/scm` that must offer only what the
+ * person could open (global search). The same steps the guard runs for a GET:
+ * the `/api/scm` umbrella, wildcard, the Sales JD deny, the no-L2 fallthrough,
+ * then `view` on the area. Pinned to the guard itself by
+ * tests/scmAreaReadable.test.ts, so the two cannot drift apart silently.
+ */
+export function scmAreaReadable(user: AuthUser | null, area: string): boolean {
+  if (user === null) return false;
+  if (user.permissions_set?.has("*") || user.permissions?.includes("*")) return true;
+  if (!hasScmUmbrella(user)) return false;
+  if (salesJdDenial(user, area)) return false;
+  if (!user.scm_l2_configured) return true;
+  return meetsLevel((user.page_access?.[area] ?? "none") as AccessLevel, "view");
 }

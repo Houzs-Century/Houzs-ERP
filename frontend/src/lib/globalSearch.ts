@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import {
+  humaniseStatusKey,
+  resolveStatusPill,
+  STATUS_TONES,
+  type StatusDocType,
+  type StatusTone,
+} from "../vendor/scm/lib/status-pill";
 
 // Owner UX contract: the first character starts a real server search. The UI
 // enters the searching state immediately; the short debounce only coalesces
@@ -17,7 +24,13 @@ export type SearchHitType =
   | "grn"
   | "delivery_order"
   | "sales_invoice"
-  | "purchase_invoice";
+  | "purchase_invoice"
+  | "supplier"
+  | "customer"
+  | "credit_note"
+  | "receipt"
+  | "delivery_return"
+  | "payment_voucher";
 
 export interface SearchHit {
   type: SearchHitType;
@@ -25,7 +38,32 @@ export interface SearchHit {
   title: string;
   subtitle?: string | null;
   date?: string | null;
+  /** Stored status (DRAFT, POSTED, ...); shown through searchHitStatus. */
+  status?: string | null;
   link: string;
+}
+
+/* The documents the shared status map knows, so a hit reads the same word as
+   its own list ("Submitted", not POSTED). The rest are humanised. */
+const STATUS_DOC: Partial<Record<SearchHitType, StatusDocType>> = {
+  sales_order: "so",
+  purchase_order: "po",
+  grn: "grn",
+  delivery_order: "do",
+  sales_invoice: "si",
+  purchase_invoice: "pi",
+  delivery_return: "dr",
+  payment_voucher: "pv",
+};
+
+/** The status pill both palettes show on a hit, or null when it has none. */
+export function searchHitStatus(hit: SearchHit): { label: string; bg: string; fg: string } | null {
+  if (!hit.status) return null;
+  const doc = STATUS_DOC[hit.type];
+  const entry: { label: string; tone: StatusTone } = doc
+    ? resolveStatusPill(doc, hit.status)
+    : { label: humaniseStatusKey(hit.status), tone: "neutral" };
+  return { label: entry.label, ...STATUS_TONES[entry.tone] };
 }
 
 // Source names for the degraded notice. Kept here, not in either palette, so
@@ -41,6 +79,12 @@ const DEGRADED_LABEL: Record<SearchHitType, string> = {
   assr_case: "Service Cases",
   product: "Products",
   user: "People",
+  supplier: "Suppliers",
+  customer: "Customers",
+  credit_note: "Credit / Debit Notes",
+  receipt: "Receipts",
+  delivery_return: "Delivery Returns",
+  payment_voucher: "Payment Vouchers",
 };
 
 /**

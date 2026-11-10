@@ -26,11 +26,18 @@ import {
   Truck,
   ReceiptText,
   Receipt,
+  Building2,
+  Contact,
+  FileMinus,
+  Banknote,
+  Undo2,
+  Wallet,
 } from "lucide-react";
 import { cn, formatDate } from "../lib/utils";
 import { HighlightedText } from "../lib/highlight";
 import {
   GLOBAL_SEARCH_MIN_LENGTH,
+  searchHitStatus,
   useGlobalSearchResults,
   type SearchHit,
   type SearchHitType,
@@ -364,6 +371,7 @@ function HitRow({
   onSelect: () => void;
 }) {
   const meta = TYPE_META[item.type];
+  const status = searchHitStatus(item);
   return (
     <button
       id={`global-search-option-${item._idx}`}
@@ -393,6 +401,14 @@ function HitRow({
           <span className="truncate text-[12.5px] font-medium text-ink">
             <HighlightedText text={item.title} query={query} className={HIGHLIGHT_CLASS} />
           </span>
+          {status && (
+            <span
+              className="shrink-0 rounded px-1.5 py-px text-[10px] font-semibold"
+              style={{ background: status.bg, color: status.fg }}
+            >
+              {status.label}
+            </span>
+          )}
           {item.date && (
             <span className="shrink-0 text-[10px] text-ink-muted">
               {formatDate(item.date)}
@@ -428,6 +444,10 @@ function EmptyHelp() {
           Purchase orders, GRNs, Delivery orders, Invoices by doc no, party, or ref
         </li>
         <li className="flex items-center gap-2">
+          <Wallet size={12} className="text-primary/70" />
+          Suppliers, customers, credit notes, receipts, delivery returns and payment vouchers, where you have access
+        </li>
+        <li className="flex items-center gap-2">
           <Layers size={12} className="text-primary/70" />
           Projects by code, name, venue, organizer, or brand
         </li>
@@ -460,6 +480,12 @@ function groupHits(hits: SearchHit[]): Array<{
     "delivery_order",
     "sales_invoice",
     "purchase_invoice",
+    "credit_note",
+    "receipt",
+    "payment_voucher",
+    "delivery_return",
+    "supplier",
+    "customer",
     "project",
     "assr_case",
     "product",
@@ -547,6 +573,36 @@ const TYPE_META: Record<
     label: "Users",
     icon: <Users size={13} />,
     tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+  },
+  supplier: {
+    label: "Suppliers",
+    icon: <Building2 size={13} />,
+    tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
+  },
+  customer: {
+    label: "Customers",
+    icon: <Contact size={13} />,
+    tile: "bg-primary/[.12] text-primary",
+  },
+  credit_note: {
+    label: "Credit / Debit Notes",
+    icon: <FileMinus size={13} />,
+    tile: "bg-primary/[.12] text-primary",
+  },
+  receipt: {
+    label: "Receipts",
+    icon: <Banknote size={13} />,
+    tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+  },
+  delivery_return: {
+    label: "Delivery Returns",
+    icon: <Undo2 size={13} />,
+    tile: "bg-primary/[.12] text-primary",
+  },
+  payment_voucher: {
+    label: "Payment Vouchers",
+    icon: <Wallet size={13} />,
+    tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
   },
 };
 
