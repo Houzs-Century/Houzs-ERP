@@ -34,6 +34,17 @@ const iso = (t) => (t ? new Date(t).toISOString().replace(".000Z", "Z") : "-");
 const cut = (s, n) => (s == null ? "" : String(s).replace(/\s+/g, " ").slice(0, n));
 
 try {
+  /* The schema facts the DO-return path depends on: the consumption table's
+     columns (prod-only DDL) and the return function's parameter names, which a
+     PostgREST call must spell exactly. */
+  const cols = await pg`SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND table_name = 'inventory_lot_consumptions' ORDER BY ordinal_position`;
+  console.log(`== inventory_lot_consumptions columns: ${cols.map((c) => c.column_name).join(", ")}`);
+  const fns = await pg`SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'scm' AND p.proname IN ('fn_return_do_units_at_cost', 'fn_reverse_do_out')`;
+  for (const f of fns) console.log(`== fn ${f.proname}(${f.args})`);
+
   const wh = new Map((await pg`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`)
     .map((w) => [w.id, w.code || w.name]));
   const whOf = (id) => wh.get(id) ?? String(id).slice(0, 8);
@@ -76,14 +87,14 @@ try {
   }
 
   const cons = await pg`
-    SELECT c.created_at, c.lot_id, c.movement_id, c.qty_consumed, c.unit_cost_sen, c.source_doc_type, c.source_doc_no, c.variant_key
+    SELECT c.lot_id, c.movement_id, c.qty_consumed, c.unit_cost_sen, c.source_doc_type, c.source_doc_no, c.variant_key
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
      WHERE l.company_id = ${CO} AND l.item_code = ${ITEM}
-     ORDER BY c.created_at, c.id`;
+     ORDER BY c.id`;
   console.log(`\n== CONSUMPTIONS: ${cons.length}`);
   for (const c of cons) {
-    console.log([iso(c.created_at), `lot=${String(c.lot_id).slice(0, 8)}`, `mov=${String(c.movement_id ?? "").slice(0, 8)}`,
+    console.log([`lot=${String(c.lot_id).slice(0, 8)}`, `mov=${String(c.movement_id ?? "").slice(0, 8)}`,
       `qty=${c.qty_consumed}`, `cost=${c.unit_cost_sen}`, `${c.source_doc_type}:${c.source_doc_no ?? ""}`, `vk=${c.variant_key ?? ""}`].join(" | "));
   }
 
