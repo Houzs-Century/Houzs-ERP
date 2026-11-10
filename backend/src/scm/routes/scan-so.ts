@@ -4756,40 +4756,22 @@ scanSo.post('/samples/:id/confirm', async (c) => {
   // directly (read live at extract time), so it still takes effect at once.
   if (acceptedAsIs) return c.json({ success: true });
 
-  // Fire-and-forget rule distillation — REGENERATES so_scan_rules for this
-  // rep (latest ≤50 of their corrected samples) AND the '__GLOBAL__' shared
-  // alias dictionary (latest ≤80 corrected samples across ALL reps). Both
-  // cheap-skip (<2 samples) without an API call, so firing on every confirm
-  // is safe. Sequential to keep it to one Anthropic call at a time. Never
-  // blocks/fails the confirm.
+  // Rule distillation from this correction — see runConfirmDistills. It goes
+  // on SCAN_QUEUE: three sequential Claude calls over up to 50-80 sample
+  // pairs outlive waitUntil's 30 s after the response, so the later ones were
+  // cut off (gap review G19). waitUntil stays only as the fallback when the
+  // queue is unbound or the send fails. Never blocks/fails the confirm.
   const rep = repGiven || normalizeRepKey((updated[0] as { salesperson?: string | null }).salesperson);
-  const distillCompanyName = (await getBranding(c.env)).companyName;
-  const distillUsage = { ...requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL), waitUntil: null };
-  const distillPromise = (async () => {
-    if (rep && !isGlobalKey(rep)) {
-      try {
-        const r = await distillSalespersonRules(svc, c.env.ANTHROPIC_API_KEY, rep, distillCompanyName, distillUsage);
-        if (r.status === 'error') console.warn(`[scan-so distill] ${rep}: ${r.reason}`);
-      } catch (e) {
-        console.warn(`[scan-so distill] ${rep} threw:`, (e as Error).message);
-      }
-    }
+  const tag = requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL);
+  if (c.env.SCAN_QUEUE) {
     try {
-      const g = await distillGlobalAliases(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
-      if (g.status === 'error') console.warn(`[scan-so distill] __GLOBAL__ aliases: ${g.reason}`);
+      await c.env.SCAN_QUEUE.send({ distill: { rep: rep || null, companyId: tag.companyId, userId: tag.userId } });
+      return c.json({ success: true });
     } catch (e) {
-      console.warn('[scan-so distill] __GLOBAL__ aliases threw:', (e as Error).message);
+      console.warn('[scan-so distill] queue send failed, distilling in waitUntil:', (e as Error).message);
     }
-    // Cross-rep shared RULES — regenerated on every confirm too (cheap-skips
-    // <3 samples without an API call) so each rep's correction lifts the
-    // shared baseline for everyone. Sequential; never blocks the confirm.
-    try {
-      const gr = await distillGlobalRules(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
-      if (gr.status === 'error') console.warn(`[scan-so distill] __GLOBAL_RULES__: ${gr.reason}`);
-    } catch (e) {
-      console.warn('[scan-so distill] __GLOBAL_RULES__ threw:', (e as Error).message);
-    }
-  })();
+  }
+  const distillPromise = runConfirmDistills(c.env, svc, rep || null, { ...tag, waitUntil: null });
   try {
     c.executionCtx.waitUntil(distillPromise);
   } catch {
@@ -4798,3 +4780,50 @@ scanSo.post('/samples/:id/confirm', async (c) => {
 
   return c.json({ success: true });
 });
+
+/* Learn from one confirmed correction: REGENERATE so_scan_rules for this rep
+   (latest ≤50 of their corrected samples), the '__GLOBAL__' shared alias
+   dictionary (latest ≤80 across ALL reps) and the cross-rep shared RULES. Each
+   cheap-skips without an API call when the pool is too small, so running on
+   every confirm is safe. Sequential, one Anthropic call at a time; every step
+   is non-fatal. Runs in the SCAN_QUEUE consumer (index.ts queue()), which has
+   minutes, not waitUntil's 30 s. */
+export async function runConfirmDistills(
+  env: Env,
+  svc: SupabaseClient,
+  rep: string | null,
+  usage: AiUsageTag,
+): Promise<void> {
+  const companyName = (await getBranding(env)).companyName;
+  if (rep && !isGlobalKey(rep)) {
+    try {
+      const r = await distillSalespersonRules(svc, env.ANTHROPIC_API_KEY, rep, companyName, usage);
+      if (r.status === 'error') console.warn(`[scan-so distill] ${rep}: ${r.reason}`);
+    } catch (e) {
+      console.warn(`[scan-so distill] ${rep} threw:`, (e as Error).message);
+    }
+  }
+  try {
+    const g = await distillGlobalAliases(svc, env.ANTHROPIC_API_KEY, companyName, usage);
+    if (g.status === 'error') console.warn(`[scan-so distill] __GLOBAL__ aliases: ${g.reason}`);
+  } catch (e) {
+    console.warn('[scan-so distill] __GLOBAL__ aliases threw:', (e as Error).message);
+  }
+  try {
+    const gr = await distillGlobalRules(svc, env.ANTHROPIC_API_KEY, companyName, usage);
+    if (gr.status === 'error') console.warn(`[scan-so distill] __GLOBAL_RULES__: ${gr.reason}`);
+  } catch (e) {
+    console.warn('[scan-so distill] __GLOBAL_RULES__ threw:', (e as Error).message);
+  }
+}
+
+/** The SCAN_QUEUE consumer's half of a { distill } message. */
+export async function processDistillQueueMessage(
+  env: Env,
+  msg: { rep: string | null; companyId: number | null; userId: number | null },
+): Promise<void> {
+  await runConfirmDistills(env, serviceClient(env), msg.rep, {
+    env, feature: 'scan_so_distill', model: CLAUDE_MODEL,
+    companyId: msg.companyId, userId: msg.userId, waitUntil: null,
+  });
+}

@@ -411,7 +411,11 @@ export const listInventoryHandler = async (c: any) => {
     // degrades to no predicate when the active company is unresolved
     // (pre-migration / cold-start), so single-company Houzs is unchanged.
     q = scopeToCompany(q, c);
-    return q.order('item_code').range(from, to);
+    // Total order: item_code alone repeats per warehouse (and per variant), so a
+    // 1000-row window could repeat or skip rows at a page edge.
+    q = q.order('item_code').order('warehouse_id');
+    if (!showAll) q = q.order('variant_key');
+    return q.order('company_id').range(from, to);
   });
   if (error) {
     if (/relation .* does not exist/i.test(error.message) || /column .* does not exist/i.test(error.message)) {
@@ -469,7 +473,7 @@ export const productTotalsHandler = async (
     // exposed on the view by mig 20261104T1000) — scan or type it to find the SKU.
     if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%,barcode.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
-    return q.order('item_code').range(from, to);
+    return q.order('item_code').order('company_id').range(from, to);
   });
   if (error) {
     if (/relation .* does not exist/i.test(error.message)) {
@@ -1194,7 +1198,7 @@ inventory.get('/cogs', async (c) => {
     if (itemCode) q = q.eq('item_code', itemCode);
     if (win.startUtc) q = q.gte('consumed_at', win.startUtc);
     if (win.endUtc) q = q.lt('consumed_at', win.endUtc);
-    return q.range(pFrom, pTo);
+    return q.order('consumed_at', { ascending: false }).order('id').range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ cogs: data ?? [] });
@@ -1215,7 +1219,8 @@ inventory.get('/value', async (c) => {
     let q = sb.from('v_inventory_value').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate valuation to the active company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    return q.order('item_code').range(from, to);
+    // The view's GROUP BY key, so the order is total.
+    return q.order('item_code').order('warehouse_id').order('variant_key').order('product_name').order('company_id').range(from, to);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ value: data ?? [] });
@@ -1245,7 +1250,7 @@ inventory.get('/analytics', async (c) => {
       .select('item_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id, source_doc_type, source_doc_no');
     lotsQ = scopeToCompany(lotsQ, c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
     if (warehouseId) lotsQ = lotsQ.eq('warehouse_id', warehouseId);
-    return lotsQ.range(from, to);
+    return lotsQ.order('received_at').order('id').range(from, to);
   });
   if (lotsErr) return c.json({ error: 'load_failed', reason: lotsErr.message }, 500);
 
@@ -1257,7 +1262,7 @@ inventory.get('/analytics', async (c) => {
       .select('item_code, total_cost_sen, consumed_at, warehouse_id');
     cogsQ = scopeToCompany(cogsQ, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
     if (warehouseId) cogsQ = cogsQ.eq('warehouse_id', warehouseId);
-    return cogsQ.range(from, to);
+    return cogsQ.order('id').range(from, to);
   });
   if (cogsErr) return c.json({ error: 'load_failed', reason: cogsErr.message }, 500);
 
@@ -1509,7 +1514,7 @@ inventory.get('/reservations', async (c) => {
     q = scopeToCompany(q, c); // open lots are per-company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (itemCode) q = q.eq('item_code', itemCode);
-    return q.order('received_at', { ascending: true }).range(from, to);
+    return q.order('received_at', { ascending: true }).order('id').range(from, to);
   });
   if (lotErr) return c.json({ error: 'load_failed', reason: lotErr.message }, 500);
   const lots = lotRows ?? [];
@@ -1534,7 +1539,7 @@ inventory.get('/reservations', async (c) => {
       grnNos,
       (batch, from, to) => scopeToCompany(sb
         .from('grns').select('grn_number, purchase_order_id'), c)
-        .in('grn_number', batch).range(from, to),
+        .in('grn_number', batch).order('id').range(from, to),
     );
     const poIds = [...new Set(
       (grnRows ?? [])
@@ -1547,7 +1552,7 @@ inventory.get('/reservations', async (c) => {
         poIds,
         (batch, from, to) => scopeToCompany(sb
           .from('purchase_orders').select('id, po_number'), c)
-          .in('id', batch).range(from, to),
+          .in('id', batch).order('id').range(from, to),
       );
       for (const p of poRows ?? []) {
         if (p.po_number) poNoById.set(p.id, p.po_number);
@@ -1593,7 +1598,7 @@ inventory.get('/reservations', async (c) => {
       .select(select)
       .eq('stock_status', 'READY')
       .eq('cancelled', false), c)
-      .range(from, to) as unknown as PromiseLike<{ data: ReadyLine[] | null; error: { message: string; code?: string } | null }>);
+      .order('id').range(from, to) as unknown as PromiseLike<{ data: ReadyLine[] | null; error: { message: string; code?: string } | null }>);
     let res = await pull(READY_SELECT);
     if (res.error && /allocated_batch_no|column .* does not exist/i.test(res.error.message ?? '')) {
       res = await pull(READY_SELECT_NOBATCH);
@@ -1637,7 +1642,7 @@ inventory.get('/reservations', async (c) => {
   const categoryByCode = new Map<string, string | null>();
   if (lotCodes.length > 0) {
     const { data: prods, error: prodErr } = await chunkIn(lotCodes, (batch, from, to) => pgrestIn(scopeToCompany(sb
-      .from('mfg_products').select('code, category'), c), 'code', batch).range(from, to));
+      .from('mfg_products').select('code, category'), c), 'code', batch).order('id').range(from, to));
     if (prodErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] lot-code category read failed:', (prodErr as { message?: unknown }).message ?? prodErr);

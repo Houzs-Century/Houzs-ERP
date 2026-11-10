@@ -71,6 +71,7 @@ import { collectProcessingGateProblems, validationFailedBody } from '../shared/s
 import { soDatePairCascadeColumns, soDatePairRefusal } from '../shared/so-processing-date';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { moneySkipsCancelled, NOT_CANCELLED_OR } from '../lib/list-money-cancelled';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -285,11 +286,12 @@ consignmentOrders.get('/', async (c) => {
       let mq = sb.from('consignment_sales_orders').select('local_total_sen, balance_sen, paid_sen');
       if (scopeIds) mq = mq.in('salesperson_id', scopeIds);
       if (status) mq = mq.eq('status', status);
+      if (moneySkipsCancelled(status)) mq = mq.or(NOT_CANCELLED_OR); // G16: a cancelled order is no revenue
       if (debtor) mq = mq.ilike('debtor_name', `%${debtor}%`);
       if (qText) { const s = escapeForOr(qText); if (s) mq = mq.or(`doc_no.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
       if (outstanding) mq = mq.gt('balance_sen', 0);
       mq = scopeToCompany(mq, c);
-      return mq.range(mfrom, mto);
+      return mq.order('doc_no').range(mfrom, mto);
     });
     if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
     let revenueSen = 0, outstandingSen = 0, paidSen = 0;

@@ -12,7 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { conditionDateRange } from "../../components/dataTableConditionFilters";
-import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
+import { statusFor, doCancellableStatus, doRevenueSen, type StatusTab } from "./do-list-status";
 import { deliveryOrderRowMenu } from "./row-menus";
 import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
 import { useDoCancelAction } from "./use-do-cancel-action";
@@ -897,11 +897,7 @@ export function MfgDeliveryOrdersListV2() {
 
   // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
   // not full-set money sums), so the card and the table can never disagree.
-  const revenueSen = useMemo(() => {
-    let sum = 0;
-    for (const r of visible.rows) sum += r.local_total_sen ?? 0;
-    return sum;
-  }, [visible.rows]);
+  const revenueSen = useMemo(() => doRevenueSen(visible.rows, status), [visible.rows, status]);
 
   /* In-transit / Delivered normally read the server's FULL-set statusCounts —
      right, and deliberately unaffected by paging. But under an active column
