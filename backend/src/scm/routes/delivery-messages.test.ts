@@ -109,3 +109,41 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
     expect(posted[0]!.attributes.company_code).toBe('HOUZS');
   });
 });
+
+/* The send log is what the board's Message column reads. supabase-js returns a
+   failed insert as `error` and never throws, so the try/catch around it caught
+   nothing and a sent message showed as unsent with no trace. */
+describe('sendDeliveryMessageForDocs — a send whose log row did not land', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function logRefusingSb() {
+    const base = fakeSb(tables());
+    return {
+      ...base,
+      from(t: string) {
+        const q = base.from(t);
+        if (t === 'wa_message_log') {
+          (q as { insert: unknown }).insert = () => Promise.resolve({ data: null, error: { message: 'permission denied for table wa_message_log' } });
+        }
+        return q;
+      },
+    } as unknown as ReturnType<typeof fakeSb>;
+  }
+
+  it('still reports the message as sent, and names it in notLogged', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await sendDeliveryMessageForDocs(ctx(logRefusingSb(), 1), ['HC-SO-001'], 'delivery', {});
+    warn.mockRestore();
+    expect(res.sent).toHaveLength(1);
+    expect(res.notLogged).toEqual([
+      { phone: '+60123456789', docNos: ['HC-SO-001'], sent: true, reason: 'permission denied for table wa_message_log' },
+    ]);
+  });
+
+  it('is empty when the log row lands', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const res = await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1), ['HC-SO-001'], 'delivery', {});
+    expect(res.notLogged).toEqual([]);
+  });
+});
