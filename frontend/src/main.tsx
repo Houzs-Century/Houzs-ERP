@@ -1,7 +1,7 @@
 import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import App from "./App";
+import App, { preloadRouteChunks } from "./App";
 import "./index.css";
 // Vendored 2990's brand tokens (CSS custom properties only — the global
 // body/h1/table element resets from 2990's main.css are deliberately NOT
@@ -10,8 +10,9 @@ import "./index.css";
 import "./vendor/design-system/tokens.css";
 import { ToastProvider } from "./hooks/useToast";
 import { DialogProvider } from "./hooks/useDialog";
-import { AuthProvider } from "./auth/AuthContext";
-import { AuthGate } from "./auth/AuthGate";
+import { AuthProvider, primeAuthMe } from "./auth/AuthContext";
+import { AuthGate, mobileShellEnabled, preloadMobileApp } from "./auth/AuthGate";
+import { isMobileViewportNow } from "./mobile/useIsMobile";
 import { PwaBanners } from "./components/PwaBanners";
 import { NewVersionBanner } from "./components/NewVersionBanner";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
@@ -29,7 +30,7 @@ import { restoreNativeSession } from "./lib/nativeSession";
 import { registerNativePush } from "./lib/nativePush";
 import { readAuthToken } from "./lib/authToken";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
-import { useAppSurface } from "./routing/appSurface";
+import { appSurfaceForPath, useAppSurface } from "./routing/appSurface";
 
 // Canonical-domain guard (owner 2026-07: "我要全部看到 .houzscentury.com").
 // Production also answers on the Cloudflare Pages default host
@@ -269,6 +270,24 @@ function RootApp() {
       <NewVersionBanner />
     </AuthProvider>
   );
+}
+
+/* Boot head start for a signed-in staff session (2026-11-11). Measured on
+   production, a cold /scm/delivery-planning ran its work strictly in series:
+   entry chunks -> /api/auth/me -> SCM shell chunk -> page chunk -> board data,
+   ~15 s before the board's first request. None of those steps needs the one
+   before it to have FINISHED to start downloading, so start them now:
+     - /api/auth/me goes out before React mounts (AuthProvider takes it over);
+     - the landing route's chunks (page + SCM shell) download while that
+       request is in flight — the phone shell instead on a phone.
+   Only the ONE route in the address bar is warmed, never a list. No token
+   (login screen) or a public surface: nothing is started. A refused guard or a
+   failed chunk changes nothing: render still owns the real load and the
+   existing ChunkReloadBoundary ladder still handles a stale chunk. */
+if (!canonicalTarget && readAuthToken() && appSurfaceForPath(window.location.pathname) === "staff") {
+  primeAuthMe();
+  if (mobileShellEnabled(isMobileViewportNow())) preloadMobileApp();
+  else preloadRouteChunks(window.location.pathname);
 }
 
 /* Native biometric session restore (flag-gated, default OFF — see

@@ -10,6 +10,7 @@ import { PullToRefresh, PullToRefreshGuardProvider } from "./PullToRefresh";
 import { RowActionsMenu, type MenuItem } from "./RowActionsMenu";
 import { useBranding } from "../hooks/useBranding";
 import { CompanyMark } from "./CompanyMark";
+import { whenPageChunksSettled } from "../lib/lazyPage";
 
 interface Props {
   children: ReactNode;
@@ -38,8 +39,15 @@ export function Layout({ children }: Props) {
   // which pushed initial JS to 131.5/130 KB gzip and failed the budget gate.
   // Nothing here is needed before first paint, so the table rides in its own
   // chunk, fetched on the same idle tick that uses it.
+  //
+  // AFTER the landing page's own chunks, not alongside them: each warmed route
+  // pulls its whole dependency list in parallel, and on a cold load that raced
+  // the page the user is opening for the same bandwidth (Hookka's /m preload
+  // lesson; requestIdleCallback alone did not prevent it, the main thread is
+  // idle while chunks download).
   useEffect(() => {
-    void import("../lib/prefetch-routes")
+    void whenPageChunksSettled()
+      .then(() => import("../lib/prefetch-routes"))
       .then((m) => m.prefetchTopRoutes())
       .catch(() => {});
   }, []);
