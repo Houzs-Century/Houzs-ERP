@@ -33,7 +33,7 @@ import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "../vendor/shared/phone";
 import { fmtDateTime } from "../vendor/shared/format";
-import { orderLineIdentity } from "@2990s/shared";
+import { orderLineIdentity } from "@2990s/shared"; import { soEditOpensOnOverride } from "../vendor/scm/lib/so-after-do-client";
 import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked, soDownstreamHardLocked,
@@ -478,7 +478,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
      amendment-eligible. An amendment-eligible SO keeps Edit live so the
      salesperson can raise an amendment from mobile instead of reopening it on
      desktop. */
-  const editLocked = isLocked || (processingLocked && !amendmentEligible);
+  const hardLocked = isLocked || (processingLocked && !amendmentEligible);
+  const editLocked = hardLocked && !(h && soEditOpensOnOverride(h, { can: houzsAuth.can, migrated: migratedLocked })); // DEV-32: the editor's Override / after-DO road
 
   /* Houzs perm gates (mirror the server-side scm.amendment.* keys, desktop
      parity) — the server 403 stays the real gate (its plain-language message is
@@ -828,7 +829,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                 past-processing proceeded order) the banner turns orange and names
                 the reason, mirroring the desktop SO Detail lock banner — and the
                 footer Edit button is disabled below. */}
-            {editLocked ? (
+            {hardLocked ? (
               <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
                 {migratedLocked ? soMigratedReason(h)
@@ -1331,12 +1332,13 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Items locked</div>
                 )}
               </div>
-              {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
+              {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || hardLocked ? 0.4 : 1 }} disabled={busy || hardLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
             </>
           )}
           {ph === "cancelled" && (
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 4 }}>This order was cancelled.</div>
           )}
+          {ph !== "draft" && canWriteSo && onConvert && <button className="btn-ghost" style={{ width: "100%", marginTop: 9 }} disabled={busy} onClick={() => onConvert({ copyFrom: docNo, picks: [] })}>Copy as new</button>}{/* HC-0149: the desktop list's Copy as new, same seed (lib/soCopyLines) */}
         </footer>
       )}
 
