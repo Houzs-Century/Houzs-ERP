@@ -13,6 +13,9 @@ import {
 import { assrCompanySql } from "./assr";
 import { inArm, poIdsForSoDocNos, soDocNosByRef } from "../scm/lib/so-ref-search";
 import { initialsLikes } from "../services/projects";
+import { scmAreaReadable } from "../scm/middleware/area-guard";
+import type { AuthUser } from "../services/auth";
+import { NOTE_KIND_WORD } from "../acc/credit-notes";
 
 /** Each word on its own, in any field, as the project list searches ("mle sccc"). */
 function projectWordSearch(q: string): { sql: string; binds: string[] } {
@@ -47,6 +50,13 @@ function projectWordSearch(q: string): { sql: string; binds: string[] } {
  *   - delivery_order   (scm.delivery_orders)          — Supabase (scm schema)
  *   - sales_invoice    (scm.sales_invoices)           — Supabase (scm schema)
  *   - purchase_invoice (scm.purchase_invoices)        — Supabase (scm schema)
+ *   - supplier         (scm.suppliers)                — only if the caller can open Suppliers
+ *   - customer         (scm.acc_debtors)              — Finance's customer master (Other Debtors)
+ *   - credit_note      (scm.acc_credit_notes)         — credit / debit notes
+ *   - receipt          (scm.acc_receipts + acc_debtor_receipts)
+ *   - delivery_return  (scm.delivery_returns)
+ *   - payment_voucher  (scm.payment_vouchers)
+ *   The last five need Finance / Sales Returns area access — see MASTER_AREA.
  *
  * The public-schema sources use LIKE (rewritten to ILIKE + Postgres `$n`
  * by the d1-compat shim). The scm-schema sources talk to the SAME
@@ -87,7 +97,26 @@ type HitType =
   | "grn"
   | "delivery_order"
   | "sales_invoice"
-  | "purchase_invoice";
+  | "purchase_invoice"
+  | "supplier"
+  | "customer"
+  | "credit_note"
+  | "receipt"
+  | "delivery_return"
+  | "payment_voucher";
+
+/* The six sources added 2026-11-10 are offered only to a caller who could OPEN
+   the result: each is the area its own router is guarded by in scm/index.ts.
+   The older ten predate this and stay as they were (metadata only; the module
+   they open enforces its own gate). */
+const AREA_OF = {
+  supplier: "scm.procurement.suppliers",
+  customer: "scm.finance.accounting",
+  credit_note: "scm.finance.accounting",
+  receipt: "scm.finance.accounting",
+  delivery_return: "scm.sales.returns",
+  payment_voucher: "scm.finance.accounting",
+} as const satisfies Partial<Record<HitType, string>>;
 
 /**
  * What the search could not read. Empty on a healthy search; a source lands
@@ -105,6 +134,7 @@ interface Hit {
   title: string;             // headline
   subtitle?: string | null;  // contextual line
   date?: string | null;      // optional anchor date (DD/MM/YYYY on the client)
+  status?: string | null;    // where the record stands, as stored (DRAFT, POSTED, ...)
   link: string;              // SPA destination (with focus= when relevant)
 }
 
@@ -267,6 +297,7 @@ export async function runGlobalSearch(
         [pick(r, "customer_name"), pick(r, "complaint_issue")].filter(Boolean).join(" · ") ||
         pick(r, "status"),
       date: pick(r, "complained_date"),
+      status: pick(r, "status"),
       link: `/assr?focus=${r.id}`,
     });
   }
@@ -332,7 +363,8 @@ async function appendScmHits(
   } catch (e) {
     // Configured but unbuildable: every SCM source is unreadable, not empty.
     console.warn("[search] SCM client unavailable:", (e as Error)?.message ?? e);
-    degraded.push(...SCM_SOURCE_TYPES);
+    const can = openableNewerTypes((c.get("user") as AuthUser | undefined) ?? null);
+    degraded.push(...SCM_SOURCE_TYPES.filter((t) => !(t in AREA_OF) || can.has(t as keyof typeof AREA_OF)));
     return;
   }
 
@@ -358,7 +390,7 @@ async function appendScmHits(
   // open).
   const soQuery = sb
     .from("mfg_sales_orders")
-    .select("doc_no, debtor_name, phone, ref, so_date, branding")
+    .select("doc_no, debtor_name, phone, ref, so_date, branding, status")
     .or(
       [
         `doc_no.ilike.${wildcard}`, `debtor_name.ilike.${wildcard}`,
@@ -378,12 +410,12 @@ async function appendScmHits(
   // display, not filtered). supplier(name) rides the SELECT for the subtitle.
   const poQuery = sb
     .from("purchase_orders")
-    .select("id, po_number, po_date, notes, supplier:suppliers(name)")
+    .select("id, po_number, po_date, notes, status, supplier:suppliers(name)")
     .or([`po_number.ilike.${wildcard}`, `notes.ilike.${wildcard}`, ...inArm("id", soRefPoIds)].join(","));
   const grnQuery = sb
     .from("grns")
     .select(
-      "id, grn_number, received_at, delivery_note_ref, " +
+      "id, grn_number, received_at, delivery_note_ref, status, " +
         "supplier:suppliers(name), purchase_order:purchase_orders(po_number)"
     )
     .or(
@@ -392,26 +424,28 @@ async function appendScmHits(
     );
   const doQuery = sb
     .from("delivery_orders")
-    .select("id, do_number, do_date, debtor_name, so_doc_no, ref")
+    .select("id, do_number, do_date, debtor_name, so_doc_no, ref, status")
     .or(
       [`do_number.ilike.${wildcard}`, `so_doc_no.ilike.${wildcard}`,
         `debtor_name.ilike.${wildcard}`, `ref.ilike.${wildcard}`, ...inArm("so_doc_no", soRefDocNos)].join(",")
     );
   const siQuery = sb
     .from("sales_invoices")
-    .select("id, invoice_number, invoice_date, debtor_name, so_doc_no, ref")
+    .select("id, invoice_number, invoice_date, debtor_name, so_doc_no, ref, status")
     .or(
       [`invoice_number.ilike.${wildcard}`, `so_doc_no.ilike.${wildcard}`,
         `debtor_name.ilike.${wildcard}`, `ref.ilike.${wildcard}`, ...inArm("so_doc_no", soRefDocNos)].join(",")
     );
   const piQuery = sb
     .from("purchase_invoices")
-    .select("id, invoice_number, invoice_date, supplier_invoice_ref, supplier:suppliers(name)")
+    .select("id, invoice_number, invoice_date, supplier_invoice_ref, status, supplier:suppliers(name)")
     .or(
       `invoice_number.ilike.${wildcard},supplier_invoice_ref.ilike.${wildcard},` +
         `notes.ilike.${wildcard}`
     );
 
+  // The six newer sources run alongside, not after, the seven below.
+  const newer = appendNewerScmHits(c, sb, wildcard, hits, degraded);
   const [soRes, prodRes, poRes, grnRes, doRes, siRes, piRes] = await Promise.allSettled([
     scopeToCompany(soQuery, c)
       .order("so_date", { ascending: false })
@@ -447,6 +481,7 @@ async function appendScmHits(
         [str(r.debtor_name), str(r.branding), str(r.ref)].filter(Boolean).join(" · ") ||
         str(r.phone),
       date: str(r.so_date),
+      status: str(r.status),
       // Deep-link the SPA straight to the SO detail route
       // (/scm/sales-orders/:docNo); the mobile palette maps the same doc_no
       // onto its own so-detail screen.
@@ -478,6 +513,7 @@ async function appendScmHits(
       title: docNo,
       subtitle: [embedField(r.supplier, "name"), str(r.notes)].filter(Boolean).join(" · "),
       date: str(r.po_date),
+      status: str(r.status),
       link: `/scm/purchase-orders/${encodeURIComponent(id)}`,
     });
   }
@@ -497,6 +533,7 @@ async function appendScmHits(
           .filter(Boolean)
           .join(" · "),
       date: str(r.received_at),
+      status: str(r.status),
       link: `/scm/grns/${encodeURIComponent(id)}`,
     });
   }
@@ -514,6 +551,7 @@ async function appendScmHits(
       subtitle:
         [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
       date: str(r.do_date),
+      status: str(r.status),
       link: `/scm/delivery-orders/${encodeURIComponent(id)}`,
     });
   }
@@ -531,6 +569,7 @@ async function appendScmHits(
       subtitle:
         [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
       date: str(r.invoice_date),
+      status: str(r.status),
       link: `/scm/sales-invoices/${encodeURIComponent(id)}`,
     });
   }
@@ -549,7 +588,172 @@ async function appendScmHits(
           .filter(Boolean)
           .join(" · "),
       date: str(r.invoice_date),
+      status: str(r.status),
       link: `/scm/purchase-invoices/${encodeURIComponent(id)}`,
+    });
+  }
+  await newer;
+}
+
+/** Which of the six newer sources this caller could open. A caller with no user
+ *  on the context (a headless job) gets none: the stricter answer. */
+export function openableNewerTypes(user: AuthUser | null): Set<keyof typeof AREA_OF> {
+  const out = new Set<keyof typeof AREA_OF>();
+  for (const [type, area] of Object.entries(AREA_OF) as Array<[keyof typeof AREA_OF, string]>) {
+    if (scmAreaReadable(user, area)) out.add(type);
+  }
+  return out;
+}
+
+
+/**
+ * Suppliers, customers (Finance's Other Debtors master), credit / debit notes,
+ * receipts, delivery returns and payment vouchers. Each is company-scoped by the
+ * same scopeToCompany as the rest, capped at PER_SOURCE_LIMIT, searched only on
+ * columns migration 20261110T2000 gives a trigram index (suppliers' came in
+ * 0240), and skipped outright for a caller who cannot open that area — a hit
+ * the person cannot follow is noise, and a skipped source is not "degraded".
+ */
+async function appendNewerScmHits(
+  c: CompanyScopeCtx,
+  sb: ReturnType<typeof getSupabaseService>,
+  w: string,
+  hits: Hit[],
+  degraded: HitType[],
+): Promise<void> {
+  const user = (c.get("user") as AuthUser | undefined) ?? null;
+  const can = openableNewerTypes(user);
+  if (can.size === 0) return;
+  const skip = Promise.resolve({ data: [], error: null });
+  const run = (type: keyof typeof AREA_OF, q: () => PromiseLike<{ data: unknown; error: unknown }>) =>
+    can.has(type) ? q() : skip;
+
+  const [supRes, custRes, noteRes, rcptRes, drcptRes, drRes, pvRes] = await Promise.allSettled([
+    run("supplier", () => scopeToCompany(
+      sb.from("suppliers").select("id, code, name, contact_person, status")
+        .or(`code.ilike.${w},name.ilike.${w},contact_person.ilike.${w}`), c,
+    ).order("name", { ascending: true }).limit(PER_SOURCE_LIMIT)),
+    run("customer", () => scopeToCompany(
+      sb.from("acc_debtors").select("id, code, name, phone, is_active")
+        .or(`code.ilike.${w},name.ilike.${w},phone.ilike.${w}`), c,
+    ).order("name", { ascending: true }).limit(PER_SOURCE_LIMIT)),
+    run("credit_note", () => scopeToCompany(
+      sb.from("acc_credit_notes").select("id, note_number, kind, party_name, so_doc_no, note_date, status")
+        .or(`note_number.ilike.${w},party_name.ilike.${w},so_doc_no.ilike.${w}`), c,
+    ).order("note_date", { ascending: false }).limit(PER_SOURCE_LIMIT)),
+    run("receipt", () => scopeToCompany(
+      sb.from("acc_receipts").select("id, receipt_number, payer_name, receipt_date, status")
+        .or(`receipt_number.ilike.${w},payer_name.ilike.${w}`), c,
+    ).order("receipt_date", { ascending: false }).limit(PER_SOURCE_LIMIT)),
+    run("receipt", () => scopeToCompany(
+      sb.from("acc_debtor_receipts").select("id, receipt_number, receipt_date, status, debtor:acc_debtors(name)")
+        .ilike("receipt_number", w), c,
+    ).order("receipt_date", { ascending: false }).limit(PER_SOURCE_LIMIT)),
+    run("delivery_return", () => scopeToCompany(
+      sb.from("delivery_returns").select("id, return_number, do_doc_no, debtor_name, return_date, status")
+        .or(`return_number.ilike.${w},do_doc_no.ilike.${w},debtor_name.ilike.${w}`), c,
+    ).order("return_date", { ascending: false }).limit(PER_SOURCE_LIMIT)),
+    run("payment_voucher", () => scopeToCompany(
+      sb.from("payment_vouchers").select("id, pv_number, payee_name, bill_ref, voucher_date, status")
+        .or(`pv_number.ilike.${w},payee_name.ilike.${w},bill_ref.ilike.${w}`), c,
+    ).order("voucher_date", { ascending: false }).limit(PER_SOURCE_LIMIT)),
+  ]);
+
+  for (const r of sourceRows(supRes, "supplier", degraded)) {
+    const id = str(r.id);
+    if (!id) continue;
+    hits.push({
+      type: "supplier",
+      id,
+      title: [str(r.code), str(r.name)].filter(Boolean).join(" · ") || id,
+      subtitle: str(r.contact_person),
+      status: str(r.status),
+      link: `/scm/suppliers/${encodeURIComponent(id)}`,
+    });
+  }
+
+  for (const r of sourceRows(custRes, "customer", degraded)) {
+    const id = str(r.id);
+    if (!id) continue;
+    hits.push({
+      type: "customer",
+      id,
+      title: [str(r.code), str(r.name)].filter(Boolean).join(" · ") || id,
+      subtitle: str(r.phone),
+      status: r.is_active === false ? "INACTIVE" : "ACTIVE",
+      link: `/scm/other-debtors/${encodeURIComponent(id)}`,
+    });
+  }
+
+  for (const r of sourceRows(noteRes, "credit_note", degraded)) {
+    const id = str(r.id);
+    const no = str(r.note_number);
+    if (!id || !no) continue;
+    const so = str(r.so_doc_no);
+    hits.push({
+      type: "credit_note",
+      id,
+      title: no,
+      subtitle: [(NOTE_KIND_WORD as Record<string, string>)[str(r.kind) ?? ""] ?? str(r.kind), str(r.party_name), so ? `SO ${so}` : null]
+        .filter(Boolean).join(" · "),
+      date: str(r.note_date),
+      status: str(r.status),
+      link: `/scm/credit-notes/${encodeURIComponent(id)}`,
+    });
+  }
+
+  // Two receipt tables, one hit type: the newest PER_SOURCE_LIMIT of the pair.
+  const receipts = [
+    ...sourceRows(rcptRes, "receipt", degraded).map((r) => ({
+      r, payer: str(r.payer_name), link: `/scm/receipts/sundry/${encodeURIComponent(String(r.id))}`,
+    })),
+    ...sourceRows(drcptRes, "receipt", degraded).map((r) => ({
+      r, payer: embedField(r.debtor, "name"), link: `/scm/receipts/debtor/${encodeURIComponent(String(r.id))}`,
+    })),
+  ]
+    .filter(({ r }) => str(r.id) && str(r.receipt_number))
+    .sort((a, b) => String(b.r.receipt_date ?? "").localeCompare(String(a.r.receipt_date ?? "")))
+    .slice(0, PER_SOURCE_LIMIT);
+  for (const { r, payer, link } of receipts) {
+    hits.push({
+      type: "receipt",
+      id: String(r.id),
+      title: String(r.receipt_number),
+      subtitle: payer,
+      date: str(r.receipt_date),
+      status: str(r.status),
+      link,
+    });
+  }
+
+  for (const r of sourceRows(drRes, "delivery_return", degraded)) {
+    const id = str(r.id);
+    const no = str(r.return_number);
+    if (!id || !no) continue;
+    const doNo = str(r.do_doc_no);
+    hits.push({
+      type: "delivery_return",
+      id,
+      title: no,
+      subtitle: [str(r.debtor_name), doNo ? `DO ${doNo}` : null].filter(Boolean).join(" · "),
+      date: str(r.return_date),
+      status: str(r.status),
+      link: `/scm/delivery-returns/${encodeURIComponent(id)}`,
+    });
+  }
+
+  for (const r of sourceRows(pvRes, "payment_voucher", degraded)) {
+    const id = str(r.id);
+    const no = str(r.pv_number);
+    if (!id || !no) continue;
+    hits.push({
+      type: "payment_voucher",
+      id,
+      title: no,
+      subtitle: [str(r.payee_name), str(r.bill_ref)].filter(Boolean).join(" · "),
+      date: str(r.voucher_date),
+      status: str(r.status),
+      link: `/scm/payment-vouchers/${encodeURIComponent(id)}`,
     });
   }
 }
@@ -564,6 +768,12 @@ const SCM_SOURCE_TYPES = [
   "delivery_order",
   "sales_invoice",
   "purchase_invoice",
+  "supplier",
+  "customer",
+  "credit_note",
+  "receipt",
+  "delivery_return",
+  "payment_voucher",
 ] as const satisfies readonly HitType[];
 
 /**
@@ -581,12 +791,12 @@ function sourceRows(
 ): Array<Record<string, unknown>> {
   if (res.status === "rejected") {
     console.warn(`[search] source ${type} rejected:`, res.reason);
-    degraded.push(type);
+    if (!degraded.includes(type)) degraded.push(type);
     return [];
   }
   if (res.value.error) {
     console.warn(`[search] source ${type} errored:`, res.value.error);
-    degraded.push(type);
+    if (!degraded.includes(type)) degraded.push(type);
     return [];
   }
   return (res.value.data ?? []) as Array<Record<string, unknown>>;

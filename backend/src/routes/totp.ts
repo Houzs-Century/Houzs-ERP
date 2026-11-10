@@ -3,10 +3,11 @@ import type { Env } from "../types";
 import {
   generateSecret,
   otpauthUri,
-  verifyTotp,
   generateBackupCodes,
   consumeBackupCode,
 } from "../services/totp";
+import { acceptTotpCode } from "../services/totpCheck";
+import { sealTotpSecret } from "../services/totpSecret";
 import { audit } from "../services/audit";
 
 // Authenticated TOTP self-service (mounted at /api/totp, INSIDE the auth
@@ -18,11 +19,12 @@ type TotpRow = {
   totp_secret: string | null;
   totp_enabled: number;
   totp_backup_codes: string | null;
+  totp_last_step: number | string | null;
 };
 
 async function loadTotp(env: Env, userId: number): Promise<TotpRow | null> {
   return env.DB.prepare(
-    `SELECT totp_secret, totp_enabled, totp_backup_codes FROM users WHERE id = ?`,
+    `SELECT totp_secret, totp_enabled, totp_backup_codes, totp_last_step FROM users WHERE id = ?`,
   )
     .bind(userId)
     .first<TotpRow>();
@@ -58,8 +60,8 @@ app.post("/setup", async (c) => {
     return c.json({ error: "2FA is already enabled — disable it first to re-enroll" }, 409);
   }
   const secret = generateSecret();
-  await c.env.DB.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`)
-    .bind(secret, user.id)
+  await c.env.DB.prepare(`UPDATE users SET totp_secret = ?, totp_last_step = NULL WHERE id = ?`)
+    .bind(await sealTotpSecret(c.env, user.id, secret), user.id)
     .run();
   return c.json({ secret, otpauth_uri: otpauthUri(secret, user.email) });
 });
@@ -81,7 +83,7 @@ app.post("/enable", async (c) => {
   if (row.totp_enabled) {
     return c.json({ error: "2FA is already enabled" }, 409);
   }
-  if (!(await verifyTotp(row.totp_secret, code))) {
+  if (!(await acceptTotpCode(c.env, user.id, row, code))) {
     return c.json({ error: "That code didn't match — check your authenticator and try again" }, 400);
   }
 
@@ -121,7 +123,7 @@ app.post("/disable", async (c) => {
   }
   if (!code) return c.json({ error: "code is required to disable 2FA" }, 400);
 
-  let ok = await verifyTotp(row.totp_secret, code);
+  let ok = await acceptTotpCode(c.env, user.id, row, code);
   if (!ok && row.totp_backup_codes) {
     // Allow a backup code too (the user may be disabling because the device is gone).
     try {
@@ -142,7 +144,7 @@ app.post("/disable", async (c) => {
   await c.env.DB.prepare(
     `UPDATE users
         SET totp_enabled = 0, totp_secret = NULL,
-            totp_enrolled_at = NULL, totp_backup_codes = NULL
+            totp_enrolled_at = NULL, totp_backup_codes = NULL, totp_last_step = NULL
       WHERE id = ?`,
   )
     .bind(user.id)

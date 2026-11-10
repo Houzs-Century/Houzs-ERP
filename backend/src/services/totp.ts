@@ -105,8 +105,31 @@ export async function currentTotp(secret: string, nowMs = Date.now()): Promise<s
 }
 
 /**
+ * The 30-second step a 6-digit code belongs to, allowing ±`window` steps of
+ * drift, or null when it matches none. The step is what a caller records so the
+ * same code cannot be accepted twice (services/totpCheck.ts).
+ */
+export async function matchTotpStep(
+  secret: string,
+  code: string,
+  window = 1,
+  nowMs = Date.now(),
+): Promise<number | null> {
+  const clean = (code || "").replace(/\D/g, "");
+  if (clean.length !== DIGITS) return null;
+  const secretBytes = b32ToBytes(secret);
+  const step = Math.floor(nowMs / 1000 / STEP_SECONDS);
+  for (let w = -window; w <= window; w++) {
+    if (constEq(await hotp(secretBytes, step + w), clean)) return step + w;
+  }
+  return null;
+}
+
+/**
  * Verify a 6-digit code against the secret, allowing ±`window` steps of drift.
- * `nowMs` is injectable for tests; defaults to the wall clock.
+ * `nowMs` is injectable for tests; defaults to the wall clock. Pure check with
+ * no memory of earlier use: sign-in and the 2FA settings go through
+ * acceptTotpCode, which also refuses a code already used.
  */
 export async function verifyTotp(
   secret: string,
@@ -114,14 +137,7 @@ export async function verifyTotp(
   window = 1,
   nowMs = Date.now(),
 ): Promise<boolean> {
-  const clean = (code || "").replace(/\D/g, "");
-  if (clean.length !== DIGITS) return false;
-  const secretBytes = b32ToBytes(secret);
-  const step = Math.floor(nowMs / 1000 / STEP_SECONDS);
-  for (let w = -window; w <= window; w++) {
-    if (constEq(await hotp(secretBytes, step + w), clean)) return true;
-  }
-  return false;
+  return (await matchTotpStep(secret, code, window, nowMs)) !== null;
 }
 
 /** The otpauth:// URI an authenticator app scans / imports. */

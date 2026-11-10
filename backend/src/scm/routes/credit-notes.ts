@@ -52,8 +52,10 @@ import { supabaseAuth } from '../middleware/auth';
 import { scanSupplierCreditNoteHandler } from './credit-note-scan';
 import {
   appliedByNote, applyCreditNote, carryOutPlan, checkKnockOff, customerParty, debtorParty, depositPaperBlock, knockOffRows, noteAllocations, parseTargets,
-  partyOfNote, partyOpenDocs, removeAllocation, setNoteKnockOff, supplierParty, writePlan, type CreditParty, type CreditTarget,
+  moveNumbers, noteApplications, partyOfNote, partyOpenDocs, removeAllocation, setNoteKnockOff, supplierParty, writePlan,
+  type CreditParty, type CreditTarget, type KnockOffMove,
 } from '../../acc/credit-note-allocations';
+import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit, statusChange, type AuditAction } from '../lib/entity-audit';
 import { depositPapers } from '../../acc/credit-note-si';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
 import { fmtSen } from '../shared/format';
@@ -77,7 +79,9 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
   const lines: CleanLine[] = [];
   for (const [i, l] of arr.entries()) {
     const code = String(l?.accountCode ?? '').trim() || null;
-    const amount = Number(l?.amountSen);
+    /* A JSON number only: Number() would read "350000" or true (= 1 sen) as an
+       amount, and a NaN the screen could not parse arrives as null. */
+    const amount = typeof l?.amountSen === 'number' ? l.amountSen : NaN;
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
@@ -91,6 +95,32 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
 }
 
 const who = (c: any): string => String(c.get('houzsUser')?.name ?? c.get('user')?.id ?? '');
+
+/* A knock-off given back or changed moves what an invoice owes, and before
+   2026-11-10 it was a hard delete with no trace. The pre-flight runs before
+   the first write (entity-audit.ts); the row records each document's applied
+   amount from -> to, in sen, labelled by the document's number. */
+const knockOffAuditRefusal = async (c: any, companyId: number, note: any, action: AuditAction): Promise<Response | null> => {
+  const pf = await assertAuditWritable(c.get('supabase'), { entityType: 'CREDIT_NOTE', entityId: String(note.id), action, companyId });
+  return pf.ok ? null : c.json(auditUnavailableBody(), 409);
+};
+
+const recordKnockOffAudit = async (
+  c: any, companyId: number, note: any, action: AuditAction, moves: KnockOffMove[], extra: { status?: { from: string; to: string }; note?: string } = {},
+): Promise<void> => {
+  const sb = c.get('supabase');
+  const numbers = moves.length > 0 ? await moveNumbers(sb, companyId, moves) : new Map<string, string>();
+  const changes = [
+    ...(extra.status ? statusChange(extra.status.from, extra.status.to) : []),
+    ...compactChanges(moves.map((m) => fieldChange(`appliedSen:${numbers.get(m.id) ?? m.id}`, m.fromSen, m.toSen))),
+  ];
+  if (changes.length === 0) return;
+  await recordEntityAudit(sb, {
+    entityType: 'CREDIT_NOTE', entityId: String(note.id), entityDocNo: String(note.note_number ?? ''), action,
+    actor: c.get('houzsUser'), companyId, fieldChanges: changes, statusSnapshot: extra.status?.to ?? note.status ?? null,
+    ...(extra.note ? { note: extra.note } : {}),
+  });
+};
 
 /* A note raised from a delivery return (backlog A1): every line names one of
    the return's lines and its units, held against what came back, what other
@@ -712,7 +742,12 @@ export const setCreditNoteAllocationsHandler = async (c: any): Promise<Response>
   if (!may) return c.json(NO_PERM(note.kind === 'CN' ? 'knock off a customer\'s invoice' : note.kind === 'OCN' ? 'knock off a debtor\'s bill' : 'knock off a supplier\'s invoice'), 403);
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  if (note.status === 'POSTED') {
+    const refused = await knockOffAuditRefusal(c, co.companyId, note, 'UPDATE');
+    if (refused) return refused;
+  }
   const set = await setNoteKnockOff(c.get('supabase'), { companyId: co.companyId, note, targets: parseTargets(body?.targets), actor: who(c) });
+  await recordKnockOffAudit(c, co.companyId, note, 'UPDATE', set.moved ?? [], set.ok ? {} : { note: `Stopped part-way: ${set.refusal.message}` });
   if (!set.ok) return c.json({ error: set.refusal.error, message: set.refusal.message }, set.refusal.status);
   return c.json({ ok: true, short: set.short });
 };
@@ -725,8 +760,11 @@ export const removeCreditNoteAllocationHandler = async (c: any): Promise<Respons
   const found = await loadNote(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   if (found.note.status !== 'POSTED') return c.json({ error: 'note_not_posted', message: `${found.note.note_number} is ${String(found.note.status).toLowerCase()}.` }, 409);
+  const refused = await knockOffAuditRefusal(c, co.companyId, found.note, 'UPDATE');
+  if (refused) return refused;
   const back = await removeAllocation(c.get('supabase'), { companyId: co.companyId, note: found.note, allocationId: c.req.param('allocationId') });
   if (!back.ok) return c.json({ error: back.refusal.error, message: back.refusal.message }, back.refusal.status);
+  await recordKnockOffAudit(c, co.companyId, found.note, 'UPDATE', [back.moved]);
   return c.json({ ok: true });
 };
 
@@ -739,12 +777,18 @@ export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
   const note = found.note;
   if (note.opening === true) return c.json(openingDocumentRefusal(String(note.note_number)), 409);
   if (note.status === 'CANCELLED') return c.json({ ok: true, already: true });
+  const refused = await knockOffAuditRefusal(c, co.companyId, note, 'CANCEL');
+  if (refused) return refused;
+  const statusBefore = String(note.status);
+  const applied = await noteApplications(c.get('supabase'), co.companyId, String(note.id));
+  if (!applied.ok) return c.json({ error: 'load_failed', reason: applied.reason }, 500);
   const cancelled = await cancelCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
   if (!cancelled.ok) {
     if (cancelled.status === 'save_failed') return c.json({ error: 'save_failed', reason: cancelled.reason }, 500);
     if (cancelled.status === 'settle_failed' || cancelled.status === 'load_failed') return c.json({ error: cancelled.status, message: cancelled.reason }, 500);
     return c.json({ error: 'reverse_failed', status: cancelled.status, reason: cancelled.reason }, 500);
   }
+  if (cancelled.status === 'cancelled') await recordKnockOffAudit(c, co.companyId, note, 'CANCEL', applied.moves, { status: { from: statusBefore, to: 'CANCELLED' } });
   return c.json({ ok: true });
 };
 

@@ -21,6 +21,15 @@ export type Env = {
   // returns 503 anthropic_key_missing — the worker still boots and tsc passes.
   // Set via `wrangler secret put ANTHROPIC_API_KEY` (and in .dev.vars locally).
   ANTHROPIC_API_KEY?: string;
+  /** AES-GCM key (base64 of 32 random bytes) sealing each user's two-step
+   *  sign-in secret at rest, so a copy of the database alone cannot produce
+   *  anyone's codes (services/totpSecret.ts). Set with `wrangler secret put
+   *  TOTP_ENCRYPTION_KEY`. Unset = secrets stay as they are today (plain), and
+   *  sign-in works exactly as before; set = new secrets are sealed and an old
+   *  plain one is sealed the next time its owner signs in with a code. Never
+   *  rotate or remove it while sealed rows exist: they cannot be opened without
+   *  it, and those users must be reset by an admin. */
+  TOTP_ENCRYPTION_KEY?: string;
   // Shared secret for the Google Form → ERP intake webhook
   // (/api/assr-form-intake). GitHub secret, injected at deploy; the
   // endpoint 401s on every request while unset.

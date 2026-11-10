@@ -7,6 +7,11 @@
     },
     {
       "check": "D2",
+      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER ~ CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER",
+      "why": "TWO DIFFERENT QUESTIONS about the global-search hit types, differing by ASSR_CASE / PROJECT / USER on purpose: routes/search.ts SCM_SOURCE_TYPES is the subset read through the SCM PostgREST client (marked degraded together when that client cannot be built); the three public-schema sources run through env.DB and fail the request instead. The frontend maps are the PRESENTATION of every hit type. Divergence costs a missing name in the degraded notice, never a wrong result."
+    },
+    {
+      "check": "D2",
       "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
       "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
     },
@@ -187,8 +192,8 @@
     },
     {
       "check": "D1",
-      "key": "ASSR_CASE,DELIVERY_ORDER,GRN,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER,USER|frontend/src/components/GlobalSearch.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number."
+      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER|frontend/src/components/GlobalSearchPalette.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number. Grew from ten to sixteen hit types 2026-11-10 (suppliers, customers, credit notes, receipts, delivery returns, payment vouchers); every map is typed Record<SearchHitType, ...>, so a type missing from one fails to compile. The desktop order moved with the overlay from GlobalSearch.tsx to GlobalSearchPalette.tsx the same day."
     },
     {
       "check": "D1",
@@ -1352,7 +1357,7 @@
     },
     {
       "check": "D1",
-      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,LORRY_OFF_ROAD,OPENING_BALANCE,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "COMMISSION_MONTH,CREDIT_NOTE,DELIVERY_ORDER,GL_ACCOUNT,GRN,INVENTORY_ADJUSTMENT,LORRY_OFF_ROAD,OPENING_BALANCE,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
     },
     {

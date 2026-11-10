@@ -578,7 +578,7 @@ export function GoodsReceivedListV2() {
   // the raw statuses it covers (draft/posted/cancelled are 1:1). `all` omits it.
   const apiStatus = status === "all" ? undefined : status;
 
-  const { data, isLoading, isFetching, isPlaceholderData, error } = useGrnsPaged({
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useGrnsPaged({
     page,
     pageSize,
     status: apiStatus,
@@ -599,6 +599,7 @@ export function GoodsReceivedListV2() {
   // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
   // (or the PREVIOUS term's money under a placeholder page) would outlive the
   // rows it describes. Same flag SearchScopeHint already uses for its count.
+  const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const postGrn = usePostGrn();
@@ -1040,10 +1041,10 @@ export function GoodsReceivedListV2() {
         </div>
 
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
-          <StatCard pending={statsPending} label="Total GRNs" value={total.toLocaleString("en-MY")} subtitle="All matching GRNs" rail="bg-primary" active />
-          <StatCard pending={statsPending} label="Received Value" value={fmtRm(money.received)} subtitle="Value on this page" tone="success" rail="bg-synced" />
-          <StatCard pending={statsPending} label="Awaiting PI" value={fmtRm(money.awaitingPi)} subtitle="Not yet invoiced · on this page" tone="warning" rail="bg-accent-bright" />
-          <StatCard pending={statsPending} label="Draft" value={fmtRm(money.draft)} subtitle="Not yet posted · on this page" rail="bg-accent" />
+          <StatCard pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} label="Total GRNs" value={total.toLocaleString("en-MY")} subtitle="All matching GRNs" rail="bg-primary" active />
+          <StatCard pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} label="Received Value" value={fmtRm(money.received)} subtitle="Value on this page" tone="success" rail="bg-synced" />
+          <StatCard pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} label="Awaiting PI" value={fmtRm(money.awaitingPi)} subtitle="Not yet invoiced · on this page" tone="warning" rail="bg-accent-bright" />
+          <StatCard pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} label="Draft" value={fmtRm(money.draft)} subtitle="Not yet posted · on this page" rail="bg-accent" />
         </div>
 
         <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">

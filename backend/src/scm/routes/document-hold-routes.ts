@@ -65,16 +65,34 @@
    ---------------------------------------------------------------------------- */
 
 import { makeHoldHandler, type HoldRouteConfig } from '../lib/document-hold-route';
+import { deferAllocationRecompute, enqueueStockAllocationRecompute } from '../lib/stock-allocation-job';
 
 /** The five documents, and what their own route is keyed by. */
 export type HoldDocument = 'so' | 'po' | 'grn' | 'pi' | 'do';
 
+/* A held Sales Order gives up its allocated stock and a released one may take
+   it back (so-stock-allocation.ts gates held orders), so the hold must start a
+   sweep. The queue row is the durable half — the five-minute cron drains it if
+   this Worker dies — and the deferred sweep is the fast half, the same one the
+   SO header PATCH uses. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches HoldRouteConfig.afterWrite; the five routers share one untyped context
+async function resweepAllocation(c: any, sb: any, docNo: string): Promise<void> {
+  /* The marker is already written, so a failed queue row must not turn the
+     answer into a 500; the deferred sweep below still runs. */
+  try { await enqueueStockAllocationRecompute(sb, `so-hold:${docNo}`); }
+  catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[so-hold] allocation enqueue failed:', error);
+  }
+  deferAllocationRecompute(c, sb, 'post-hold');
+}
+
 const CONFIGS: Record<HoldDocument, HoldRouteConfig> = {
-  so:  { table: 'mfg_sales_orders',   keyColumn: 'doc_no', param: 'docNo', responseKey: 'salesOrder',      echoColumns: 'status' },
-  po:  { table: 'purchase_orders',    keyColumn: 'id',     param: 'id',    responseKey: 'purchaseOrder',   echoColumns: 'po_number, status' },
-  grn: { table: 'grns',               keyColumn: 'id',     param: 'id',    responseKey: 'grn',             echoColumns: 'grn_number, status' },
-  pi:  { table: 'purchase_invoices',  keyColumn: 'id',     param: 'id',    responseKey: 'purchaseInvoice', echoColumns: 'invoice_number, status' },
-  do:  { table: 'delivery_orders',    keyColumn: 'id',     param: 'id',    responseKey: 'deliveryOrder',   echoColumns: 'do_number, status' },
+  so:  { table: 'mfg_sales_orders',   keyColumn: 'doc_no', param: 'docNo', responseKey: 'salesOrder',      echoColumns: 'status',                 afterWrite: resweepAllocation },
+  po:  { table: 'purchase_orders',    keyColumn: 'id',     param: 'id',    responseKey: 'purchaseOrder',   echoColumns: 'po_number, status',      afterWrite: null },
+  grn: { table: 'grns',               keyColumn: 'id',     param: 'id',    responseKey: 'grn',             echoColumns: 'grn_number, status',     afterWrite: null },
+  pi:  { table: 'purchase_invoices',  keyColumn: 'id',     param: 'id',    responseKey: 'purchaseInvoice', echoColumns: 'invoice_number, status', afterWrite: null },
+  do:  { table: 'delivery_orders',    keyColumn: 'id',     param: 'id',    responseKey: 'deliveryOrder',   echoColumns: 'do_number, status',      afterWrite: null },
 };
 
 /** The route path each document mounts the hold on. */

@@ -399,6 +399,12 @@ export function billCodesToTeach(review: PiReview, itemOf: (grnItemId: string) =
  *  (the operator may have chosen them), a row still untied takes the newer
  *  build's tie for the same printed row, and a row the operator removed is not
  *  brought back. */
+/** Suggested rows tied to a receipt line that is no longer open to bill (another
+ *  invoice took it). Those are re-matched; a row the operator tied is not counted. PURE. */
+export function staleSuggestions(review: PiReview, openIds: ReadonlySet<string>): number {
+  return review.lines.filter((l) => l.suggested && l.grnItemId && !openIds.has(l.grnItemId)).length;
+}
+
 export function mergeRebuiltLines(kept: ReadonlyArray<PiReviewLine>, rebuilt: ReadonlyArray<PiReviewLine>): PiReviewLine[] {
   const used = new Set<string>();
   return kept.flatMap((l) => {

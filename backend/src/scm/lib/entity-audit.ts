@@ -59,6 +59,15 @@ export const ENTITY_TYPES = [
   /* A lorry taken off the road by hand and put back (Fleet, 2026-11-10), keyed
      by the scm.lorry_maintenance row id. Write-only so far. */
   'LORRY_OFF_ROAD',
+  /* A Chart of Accounts code (2026-11-10), keyed by the account code: created,
+     its definition edited, ticked on or off for a company, renamed (the row
+     sits under the NEW code), deleted. One row per company touched. Write-only
+     so far. */
+  'GL_ACCOUNT',
+  /* A credit or debit note's knock-off (2026-11-10): an application given back
+     to the note, or a posted note's knock-off changed — the invoice owes again.
+     Write-only so far. */
+  'CREDIT_NOTE',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
