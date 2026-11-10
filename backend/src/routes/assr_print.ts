@@ -59,11 +59,13 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Document numbers and phones, one unbroken line each; a list stays a comma list. */
+/** Document numbers and phones, one unbroken line each; a list keeps its own separators (", " or " · "). */
 export function docCodes(text: string | null | undefined): string {
-  const codes = String(text ?? "").split(/,\s*/).map((code) => code.trim()).filter(Boolean);
-  if (!codes.length) return "—";
-  return codes.map((code) => `<span class="doc-code">${esc(code)}</span>`).join(", ");
+  const parts = String(text ?? "").trim().split(/(\s*[,·]\s*)/);
+  if (!parts.some((part, index) => index % 2 === 0 && part !== "")) return "—";
+  return parts
+    .map((part, index) => (index % 2 === 0 ? (part ? `<span class="doc-code">${esc(part)}</span>` : "") : esc(part)))
+    .join("");
 }
 
 // All printed dates/timestamps render in Malaysia wall-clock time

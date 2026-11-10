@@ -54,6 +54,10 @@ describe("docCodes keeps each document number on one line", () => {
     expect(docCodes("HC-PO-1, HC-PO-2")).toBe('<span class="doc-code">HC-PO-1</span>, <span class="doc-code">HC-PO-2</span>');
   });
 
+  test("a dot-separated PO list keeps its dots and each number unbroken", () => {
+    expect(docCodes("HC-PO-1 · HC-PO-2")).toBe('<span class="doc-code">HC-PO-1</span> · <span class="doc-code">HC-PO-2</span>');
+  });
+
   test("an empty value prints a dash and markup is escaped", () => {
     expect(docCodes(null)).toBe("—");
     expect(docCodes("<b>")).toBe('<span class="doc-code">&lt;b&gt;</span>');
