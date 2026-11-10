@@ -73,6 +73,7 @@ import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
+import { pickDisplayCrew } from '../lib/crew-display';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
 import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
@@ -874,7 +875,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const regionSet = new Set<Region>(stateRegions);
 
     const dos = doByDoc.get(docNo) ?? [];
-    const crew = dos.length > 0 ? (crewByDo.get(dos[dos.length - 1]!.id) ?? typedCrewByDo.get(dos[dos.length - 1]!.id) ?? null) : null;
+    /* Crew to show: the newest DO's crew when it names a driver, else the most
+       recent earlier DO that does — so an assigned driver does not vanish from the
+       column once a later, blank DO joins the SO (crew-display.ts). */
+    const crew = pickDisplayCrew(
+      dos.map((d) => d.id),
+      (id) => crewByDo.get(id) ?? typedCrewByDo.get(id) ?? null,
+      (cr) => !!cr.driver_1_name,
+    );
     const warehouseIds = [...(warehousesByDoc.get(docNo) ?? new Set<string>())];
     const primaryWh = warehouseIds[0] ?? null;
 
