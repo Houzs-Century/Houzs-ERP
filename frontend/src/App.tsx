@@ -128,6 +128,7 @@ const ScmOpeningBalanceV2 = lazy(() => import("./pages/scm-v2/OpeningBalance").t
 const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
 const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
+const ScmDuplicateSupplierBills = lazy(() => import("./pages/scm-v2/DuplicateSupplierBills").then((m) => ({ default: m.DuplicateSupplierBills })));
 /* A bill and a note as their own pages (the Finance redesign, batch 4 step 6). */
 const ScmApBillPage = lazy(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
 const ScmNotePage = lazy(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
@@ -870,6 +871,7 @@ export default function App() {
         <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-listing" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentListingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices/duplicates" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDuplicateSupplierBills /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApBillPage /></Scm2990Shell></ScmGuard>} />
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — two pages since
             2026-10-28: Money in's customer & other-debtor notes, Money out's supplier
