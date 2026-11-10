@@ -117,9 +117,9 @@ describe('racks', () => {
     expect(['Rack 20', 'Rack 3'].sort(compareRackLabels)).toEqual(['Rack 3', 'Rack 20']);
   });
 
-  it('prints the word once and dedupes', () => {
-    expect(formatRacksCompact(['Rack 4', 'Rack 3', 'Rack 4'])).toBe('Rack 3, 4');
-    expect(formatRacksCompact(['19'])).toBe('Rack 19');
+  it('prints the codes only (no word "Rack") and dedupes', () => {
+    expect(formatRacksCompact(['Rack 4', 'Rack 3', 'Rack 4'])).toBe('3, 4');
+    expect(formatRacksCompact(['19'])).toBe('19');
   });
 
   it('answers empty when nothing resolved, so the caller prints a dash', () => {

@@ -103,6 +103,7 @@ import { customerRefOf } from '../../lib/customer-ref';
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { CollectedOnOrderCard } from "../../vendor/scm/components/CollectedOnOrderCard";
+import { shortRackLabels } from "../../vendor/scm/lib/rack-label";
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
@@ -434,7 +435,7 @@ function SourceRackCard({
                 {l.description || l.item_code}
               </div>
               <div className="mb-1.5 text-[11px] text-ink-muted">
-                {(l.racks?.length ?? 0) > 0 ? `On rack: ${l.racks!.join(", ")}` : "Not yet placed on a rack"}
+                {(l.racks?.length ?? 0) > 0 ? `On rack: ${shortRackLabels(l.racks).join(", ")}` : "Not yet placed on a rack"}
                 {(l.racks?.length ?? 0) > 0 && l.source_state === "locked" && " · locked at dispatch"}
                 {(l.racks?.length ?? 0) > 0 && l.source_state === "worked_out" && " · worked out"}
               </div>
