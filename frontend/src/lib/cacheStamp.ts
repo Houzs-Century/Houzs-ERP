@@ -6,18 +6,18 @@
 import { useCallback, useState } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { serviceNotify } from "../vendor/scm/lib/dialog-service";
+import { fmtDateTime } from "../vendor/shared/format";
 
 /** The `cachedAt` every cached overview answers with. */
 export type Cached = { cachedAt?: string | null };
-
-const HHMM = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
 
 /** "Updated 14:05" (Malaysia time), or null when the answer carries no time. */
 export function cacheStampLabel(cachedAt: string | null | undefined): string | null {
   if (!cachedAt) return null;
   const t = Date.parse(cachedAt);
   if (Number.isNaN(t)) return null;
-  return `Updated ${HHMM.format(t)}`;
+  /* The time half of THE date+time format (Malaysia time) — the copy is always today's. */
+  return `Updated ${fmtDateTime(cachedAt).slice(-5)}`;
 }
 
 /** The OLDEST of several answers' times: a page built from several copies is only as current as its oldest. */
