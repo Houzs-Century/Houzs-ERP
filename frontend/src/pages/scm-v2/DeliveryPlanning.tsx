@@ -56,7 +56,7 @@ import {
 import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
-import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
+import { useDeliveryRowOrder, useSetRowOrder, orderComparator, mergeShownOrder } from '../../vendor/scm/lib/delivery-row-order';
 import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -584,7 +584,7 @@ export const DeliveryPlanning = () => {
         }}
         initialRowLimit={200}
         defaultSort={orderSort}
-        onRowReorder={(keys) => setRowOrder.mutate(keys)}
+        onRowReorder={(keys) => setRowOrder.mutate(mergeShownOrder(rowOrder ?? [], keys, new Set(fetchedOrders.map(rowIdOf))))}
         counts={counts}
         regionTabs={regionTabs}
         activeRegion={activeRegion}
