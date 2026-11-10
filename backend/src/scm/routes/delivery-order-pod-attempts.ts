@@ -30,7 +30,7 @@ deliveryOrderPodAttempts.get('/:id/pod-attempts', async (c) => {
     c,
   ).order('attempt_no', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const rows = data as unknown as Array<Record<string, unknown>>;
   const attempts = rows.map(({ pod_photo_keys, pod_r2_key, ...r }) => ({
     ...r,
     photo_count: podPhotoKeysOf({ pod_photo_keys, pod_r2_key: pod_r2_key as string | null }).length,
