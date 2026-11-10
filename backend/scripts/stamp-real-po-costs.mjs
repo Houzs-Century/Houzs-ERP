@@ -51,6 +51,7 @@
 //     precedent, backfill-zero-cost-lots.mjs, printed only its first 20 planned
 //     writes — a dry-run that does not show what APPLY will do is the worst
 //     defect class in this project.)
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

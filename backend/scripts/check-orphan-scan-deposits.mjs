@@ -39,6 +39,7 @@
 // Strictly one SELECT. No DDL, no writes, no transaction. Exits 0 for every
 // legitimate answer (finding zero orphans is a valid answer, not a failure);
 // only an unreachable database or a query error exits non-zero.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

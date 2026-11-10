@@ -72,6 +72,23 @@ describe('birth', () => {
     expect(sb.tables.acc_official_receipts).toHaveLength(1);
   });
 
+  /* Owner 2026-11-09 (为甚没有name 这些): no writer passed the customer, so every receipt
+     was born nameless. The receipt reads its order's name (an invoice payment's, its
+     invoice's) when the writer names nobody; a name the writer gives still wins. */
+  test('a receipt keeps its customer\'s name — the order\'s, or the invoice\'s', async () => {
+    const sb = world({
+      mfg_sales_orders: [{ company_id: CO, doc_no: CARD.docNo, debtor_name: 'Lisa Gan' }],
+      sales_invoices: [{ id: 'inv-1', company_id: CO, debtor_name: 'Acme Sdn Bhd', so_doc_no: CARD.docNo }],
+    });
+    await createReceiptForPayment(sb, CARD);
+    await createReceiptForPayment(sb, { ...CARD, source: 'SIPAY', paymentId: 'si-p1', docNo: 'inv-1' });
+    await createReceiptForPayment(sb, { ...CARD, paymentId: 'p7', customerName: 'Named By Writer' });
+    await createReceiptForPayment(sb, { ...CARD, paymentId: 'p8', docNo: '2990-SO-NOWHERE' });
+    expect(sb.tables.acc_official_receipts.map((r) => [r.payment_id, r.customer_name ?? null])).toEqual([
+      ['p1', 'Lisa Gan'], ['si-p1', 'Acme Sdn Bhd'], ['p7', 'Named By Writer'], ['p8', null],
+    ]);
+  });
+
   test('a CASH payment is FORMAL in the same breath, on the COR series', async () => {
     const sb = world();
     const r = await createReceiptForPayment(sb, { ...CARD, paymentId: 'p2', method: 'cash' });

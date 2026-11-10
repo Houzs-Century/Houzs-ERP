@@ -86,6 +86,7 @@
 // the header top-up is therefore not re-applied either.
 // DRY-RUN by default; APPLY=1 plus CONFIRM writes. DOC=PO-009435 limits it to
 // one document.
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

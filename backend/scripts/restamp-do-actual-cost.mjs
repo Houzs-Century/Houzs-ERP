@@ -55,6 +55,7 @@
 //      INCLUDE_SI     1 (default) chain restampSiFromDo; 0 = DO lines only.
 //
 // Run under tsx (the TS imports): npx tsx scripts/restamp-do-actual-cost.mjs
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";

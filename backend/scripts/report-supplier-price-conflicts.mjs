@@ -23,6 +23,7 @@
 // LIST_LIMIT (blank = 60 per section per company). Exit 0 for every real answer.
 // Run it: Actions -> "Run a backend script on production (plan / apply)" ->
 // script = report-supplier-price-conflicts.mjs, mode = plan, env = COMPANY_ID=1.
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

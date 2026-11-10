@@ -1,11 +1,12 @@
 import { env } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { documentEmailHtml, inviteEmailHtml, resetEmailHtml, sendEmail } from "../src/services/email";
 import { buildDeliveryOrderEmail, type DoEmailRow } from "../src/scm/lib/do-email";
 import {
   base64DecodedBytes,
   buildPurchaseOrderEmail,
   isSendableEmail,
+  poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
   type PoEmailRow,
@@ -436,5 +437,36 @@ describe("attachment-bearing sends are not retried body-only", () => {
       `SELECT status FROM email_outbox WHERE to_address = 'supplier2@example.com'`,
     ).first<{ status: string }>();
     expect(row?.status).toBe("pending");
+  });
+});
+
+describe("PO email Reply-To is the purchaser who sent it", () => {
+  test("the sender's address becomes the Reply-To", () => {
+    expect(poReplyTo({ email: "  buyer@houzscentury.com " })).toBe("buyer@houzscentury.com");
+  });
+
+  test("no usable sender address leaves the Reply-To to sendEmail's default", () => {
+    for (const sender of [undefined, null, {}, { email: null }, { email: "" }, { email: "not-an-address" }]) {
+      expect(poReplyTo(sender)).toBeNull();
+    }
+  });
+
+  test("the Reply-To reaches the provider payload", async () => {
+    await env.DB.exec(`DELETE FROM app_settings WHERE key='email.purchase_order'`);
+    await env.DB.prepare(`INSERT INTO app_settings (key, value) VALUES ('email.purchase_order', '{"value":true}')`).run();
+    outbound.replyOnce("https://api.resend.com/emails", "POST", 200, { id: "re_1" });
+
+    const res = await sendEmail(liveEnv, {
+      to: "supplier3@example.com",
+      subject: "Purchase Order PO-3",
+      html: "<p>x</p>",
+      purpose: "purchase_order",
+      replyTo: poReplyTo({ email: "buyer@houzscentury.com" }),
+    });
+    expect(res.status).toBe("sent");
+
+    const [input, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const sent = await new Request(input, init).json() as { reply_to?: string };
+    expect(sent.reply_to).toBe("buyer@houzscentury.com");
   });
 });

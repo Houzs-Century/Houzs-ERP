@@ -29,7 +29,7 @@
 //     jspdf-autotable` and restoring the source render body.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtMoneySen } from '../../vendor/shared/format';
 import { ArrowLeft, ClipboardList, Printer, Eye, Filter, X, SlidersHorizontal, FileSearch } from 'lucide-react';
@@ -179,11 +179,15 @@ export function DetailListingShell<R extends DetailListingRow>({
     setHasRunQuery(true);
   };
 
-  /* Print now, from the preview. The inquiry has to have run first or there is
-     nothing on the page to print — the 60 ms lets the freshly-set rows paint. */
+  /* Print and Preview wait for the inquiry's rows. They used to fire on a
+     60 / 250 ms timer, which on a slow fetch printed an empty or "Loading"
+     sheet. Now the action is parked until the query has settled. */
+  const [pendingOutput, setPendingOutput] = useState<'print' | 'preview' | null>(null);
+  const queryReady = hasRunQuery && !query.isFetching;
+
   const runPrint = () => {
     if (!hasRunQuery) runInquiry();
-    setTimeout(() => window.print(), 60);
+    setPendingOutput('print');
   };
   const print = usePrintPreview(runPrint);
 
@@ -198,14 +202,21 @@ export function DetailListingShell<R extends DetailListingRow>({
     notify({ title: PDF_UNAVAILABLE, tone: 'error' });
   };
 
-  const runPreview = async () => {
-    if (!hasRunQuery) {
-      runInquiry();
-      setTimeout(() => { void generatePreviewPdf(rows); }, 250);
+  const runPreview = () => {
+    if (!hasRunQuery) runInquiry();
+    setPendingOutput('preview');
+  };
+
+  useEffect(() => {
+    if (!pendingOutput || !queryReady) return;
+    setPendingOutput(null);
+    if (query.isError) {
+      void notify({ title: 'The listing could not be loaded, so there is nothing to print.', tone: 'error' });
       return;
     }
-    await generatePreviewPdf(rows);
-  };
+    if (pendingOutput === 'print') window.print();
+    else void generatePreviewPdf(rows);
+  });
 
   const clearOutstanding = () => {
     const next = new URLSearchParams(searchParams);

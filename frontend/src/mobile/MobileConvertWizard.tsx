@@ -13,6 +13,7 @@ import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandin
 import "./mobile.css";
 import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 import { soCanRaiseDo } from '../vendor/shared/so-deliverable-states';
+import { soOffersTransferToDo } from '../lib/so-transfer-to-do';
 import { customerRefOf } from '../lib/customer-ref';
 import { matchesSearch } from '../lib/so-ref-search';
 /* The word, from the desktop picker's own component, so the phone and the desk
@@ -134,6 +135,8 @@ type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null; on_hold?: boolean | null;
   so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
   ref?: string | null; customer_so_no?: string | null;
+  /** Server-derived (lib/so-list-rows.ts): something is still left to put on a DO. */
+  has_undelivered?: boolean | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
@@ -345,7 +348,9 @@ export function MobileConvertWizard({
        is pinned equal to it. */
     if (meta.source === "so") {
       return ((data?.salesOrders ?? []) as SoListRow[])
-        .filter((r) => soCanRaiseDo(r.status, r.on_hold ?? null))
+        /* SO -> DO also needs something left to deliver (Conts #699); SO -> PO
+           keeps the status rule alone, since a delivered order may still buy. */
+        .filter((r) => (target === "do" ? soOffersTransferToDo(r) : soCanRaiseDo(r.status, r.on_hold ?? null)))
         .filter((r) => matchesSearch([r.debtor_name, r.doc_no, customerRefOf(r)], needle));
     }
     if (meta.source === "do") {
@@ -359,7 +364,7 @@ export function MobileConvertWizard({
       .filter((r) => isReceivablePo(r.status))
       .filter((r) => !supplierFilter || str(r.supplier?.id) === supplierFilter)
       .filter((r) => !needle || `${str(r.supplier?.name)} ${r.po_number}`.toLowerCase().includes(needle));
-  }, [sourceQuery.data, meta.source, q, supplierFilter]);
+  }, [sourceQuery.data, meta.source, q, supplierFilter, target]);
 
   // Distinct suppliers for the GRN supplier chips (from receivable POs).
   const suppliers = useMemo(() => {

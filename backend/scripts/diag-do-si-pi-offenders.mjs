@@ -22,6 +22,7 @@
  * DOCS: a comma-separated list of AutoCount document numbers, or the word ALL
  * to dump every document named in the built-in offender list below.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

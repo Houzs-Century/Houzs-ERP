@@ -12,6 +12,10 @@ name: Delete HC test documents
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       mode:
         description: "plan (default, read-only) or apply (DELETES HC test docs)"
         type: choice
@@ -39,6 +43,11 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -55,11 +64,19 @@ jobs:
           NODE_OPTIONS: --dns-result-order=ipv4first
       # apply dumps the backup BEFORE deleting; always() so a failed apply still
       # uploads the only copy of the deleted rows.
+      - name: Seal the rows to the requester's key before upload
+        if: ${{ always() && github.event.inputs.mode == 'apply' }}
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: hc-test-docs-backup/
+          name: rows
       - name: Upload backup (apply only)
         if: ${{ always() && github.event.inputs.mode == 'apply' }}
         uses: actions/upload-artifact@v4
         with:
           name: hc-test-docs-backup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: hc-test-docs-backup/
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7

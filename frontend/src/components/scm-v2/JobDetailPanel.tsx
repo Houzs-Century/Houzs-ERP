@@ -171,6 +171,7 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
         <PodPhotoAlbum
           paths={photos.map((_, n) => `/api/scm${base}/photo/${n}`)}
           fileStem={`POD-${String(ctx.ref ?? jobRef.leg)}`}
+          title={String(ctx.ref ?? jobRef.leg)}
           emptyText="No photo yet. The crew uploads it from the phone, or upload it here."
         />
         <div className="mt-3 border-t border-border-subtle pt-3">
@@ -191,7 +192,7 @@ function SoBody({ soDocNo, doId }: { soDocNo: string; doId: string | null }) {
   const navigate = useNavigate();
   const q = useQuery({
     queryKey: ["mfg-delivery-order-detail", doId],
-    queryFn: () => authedFetch<{ deliveryOrder: DoPodFields & { do_number?: string | null } }>(`/delivery-orders-mfg/${doId}`),
+    queryFn: () => authedFetch<{ deliveryOrder: DoPodFields }>(`/delivery-orders-mfg/${doId}`),
     enabled: !!doId, staleTime: 15_000,
   });
   return (

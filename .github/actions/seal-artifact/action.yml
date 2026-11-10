@@ -1,0 +1,83 @@
+name: Seal an artifact to the requester's public key
+description: >-
+  Encrypt rows read from a database before they are uploaded as a workflow
+  artifact. This repository is PUBLIC: an artifact is downloadable by any
+  GitHub account, so anything uploaded unencrypted is published.
+
+# Same scheme as local-dev-snapshot.yml: a random AES-256 key encrypts a tarball
+# of the paths, and that key is wrapped with the requester's RSA public key
+# (OAEP/SHA-256). Only the machine holding the private key can open it.
+#
+# mode: check  validates the key and touches nothing. Run it BEFORE the job
+#              reads or writes a database, so a bad key fails the run early
+#              instead of after a delete whose backup could then not be sealed.
+# mode: seal   writes sealed/<name>.tgz.enc + sealed/<name>.key.enc and deletes
+#              the plaintext. Upload `sealed/` and nothing else.
+#
+# Open it locally:
+#   openssl pkeyutl -decrypt -inkey private.pem -pkeyopt rsa_padding_mode:oaep \
+#     -pkeyopt rsa_oaep_md:sha256 -in <name>.key.enc -out data.key
+#   openssl enc -d -aes-256-cbc -pbkdf2 -pass file:data.key -in <name>.tgz.enc | tar xz
+#
+# Make a key pair once:
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out private.pem
+#   openssl pkey -in private.pem -pubout | base64 | tr -d '\n'   # paste as recipient_pubkey
+
+inputs:
+  mode:
+    description: check | seal
+    required: true
+  recipient_pubkey:
+    description: Base64 (one line) of the requester's RSA public key PEM
+    required: true
+  paths:
+    description: Space-separated files or directories, relative to the workspace (seal only)
+    required: false
+    default: ''
+  name:
+    description: Base name of the sealed files (seal only)
+    required: false
+    default: sealed
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        MODE: ${{ inputs.mode }}
+        PUBKEY_B64: ${{ inputs.recipient_pubkey }}
+        SEAL_PATHS: ${{ inputs.paths }}
+        SEAL_NAME: ${{ inputs.name }}
+      run: |
+        set -euo pipefail
+        key="$RUNNER_TEMP/seal-recipient.pem"
+        if [ -z "$PUBKEY_B64" ]; then
+          echo "::error::recipient_pubkey is empty. Rows from a database are never uploaded unencrypted (this repository is public)."
+          exit 1
+        fi
+        echo "$PUBKEY_B64" | base64 -d > "$key"
+        openssl pkey -pubin -in "$key" -noout
+        bits=$(openssl pkey -pubin -in "$key" -noout -text | sed -n 's/.*(\([0-9]*\) bit).*/\1/p' | head -1)
+        if [ -z "$bits" ] || [ "$bits" -lt 2048 ]; then
+          echo "::error::recipient_pubkey must be an RSA key of at least 2048 bits"; exit 1
+        fi
+        echo "recipient key: RSA ${bits} bit"
+        [ "$MODE" = "check" ] && exit 0
+        [ "$MODE" = "seal" ] || { echo "::error::mode must be check or seal"; exit 1; }
+        present=()
+        for p in $SEAL_PATHS; do [ -e "$p" ] && present+=("$p"); done
+        if [ "${#present[@]}" -eq 0 ]; then
+          echo "::warning::nothing to seal - none of: $SEAL_PATHS"; exit 0
+        fi
+        mkdir -p sealed
+        tmp="$RUNNER_TEMP/seal-data.key"
+        tar czf "$RUNNER_TEMP/seal.tgz" "${present[@]}"
+        openssl rand 32 > "$tmp"
+        openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:"$tmp" \
+          -in "$RUNNER_TEMP/seal.tgz" -out "sealed/${SEAL_NAME}.tgz.enc"
+        openssl pkeyutl -encrypt -pubin -inkey "$key" \
+          -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+          -in "$tmp" -out "sealed/${SEAL_NAME}.key.enc"
+        rm -rf "$tmp" "$RUNNER_TEMP/seal.tgz" "${present[@]}"
+        ls -la sealed

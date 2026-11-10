@@ -6,7 +6,7 @@
 //
 // NO SHEBANG: imported by the Worker.
 
-import { sizeOf } from "./duplicate-model-merge-plan.mjs";
+import { sizeOf, planModelGroup } from "./duplicate-model-merge-plan.mjs";
 
 const jarr = (xs) => JSON.stringify([...new Set(xs)]);
 const anyOf = (sql, xs) => sql`ARRAY(SELECT jsonb_array_elements_text(${jarr(xs)}::text::jsonb))`;
@@ -59,6 +59,47 @@ export async function readModelWorld(sql, { co, groups, idle }) {
     };
   });
   return { models, near, skus, bindings };
+}
+
+/* Sofa keys hang on the Model code (combo prices, quick picks). Moving them is a
+   ruling of its own, so a Model that still carries one is refused. */
+export const SOFA_KEYED = ["sofa_combo_pricing", "sofa_quick_picks", "personal_quick_picks", "pos_sofa_combos"];
+
+/** One group (`keep` and the Models folded into it) planned against the live rows.
+ *  `retiring`: codes the caller is about to switch off, planned as already off
+ *  (the SKU merge preview); null when the rows already say it. */
+export async function planModelFold(sql, { co, keep, drops, retiring }) {
+  const rows = await sql`SELECT DISTINCT category::text AS category FROM scm.product_models WHERE company_id = ${co} AND model_code = ${keep}`;
+  const group = { category: String(rows[0]?.category ?? ""), keep, drops };
+  const world = await readModelWorld(sql, { co, groups: [group], idle: [] });
+  if (retiring) world.skus = world.skus.map((s) => (retiring.has(s.code) ? { ...s, status: "INACTIVE" } : s));
+  let plan = planModelGroup({ group, models: world.models, skus: world.skus });
+  const refuse = (refusals) => ({ ...plan, refusals, pairs: [], moves: [], fills: [], addSizes: [], foldModels: [], inactiveMoves: [], createModel: null, activateKept: false });
+  if (rows.length !== 1) plan = refuse([`Model "${keep}" is ${rows.length === 0 ? "not in this company" : "in more than one category"}`]);
+  const keyed = [];
+  for (const table of SOFA_KEYED) {
+    const [n] = await sql`SELECT COUNT(*)::int AS n FROM ${sql(`scm.${table}`)} WHERE company_id = ${co} AND base_model = ANY(${anyOf(sql, drops)})`;
+    if (n.n > 0) keyed.push(`${table} ${n.n}`);
+  }
+  if (keyed.length > 0) plan = refuse([`a folded Model still carries sofa rows (${keyed.join(", ")})`]);
+  const keptActive = Boolean(world.models.find((m) => m.id === plan.keptModelId)?.active);
+  return { world, plan, keptActive, refuse };
+}
+
+/** For a SKU merge's codes: each code's Model, and how many ACTIVE codes those Models hold. */
+export async function readFoldInputs(sql, { co, codes }) {
+  const rows = await sql`
+    SELECT p.code, p.status::text AS status, p.model_id::text AS model_id, m.model_code
+      FROM scm.mfg_products p LEFT JOIN scm.product_models m ON m.id = p.model_id AND m.company_id = p.company_id
+     WHERE p.company_id = ${co} AND p.code = ANY(${anyOf(sql, codes)})`;
+  const ids = [...new Set(rows.map((r) => r.model_id).filter(Boolean))];
+  const counts = await sql`
+    SELECT model_id::text AS model_id, COUNT(*)::int AS n FROM scm.mfg_products
+     WHERE company_id = ${co} AND status = 'ACTIVE' AND model_id::text = ANY(${anyOf(sql, ids)}) GROUP BY model_id`;
+  return {
+    codeModels: new Map(rows.map((r) => [r.code, { model_id: r.model_id, model_code: r.model_code, status: r.status }])),
+    activeByModel: new Map(counts.map((r) => [r.model_id, r.n])),
+  };
 }
 
 export function bindingFill(world, f) {
@@ -122,6 +163,13 @@ export async function writeModelGroup(sql, { co, plan, world, log }) {
         RETURNING id`;
       if (r.length !== 1) throw new Error(`"${f.code}".${f.field} is not blank any more`);
     }
+    for (const m of plan.inactiveMoves ?? []) {
+      const r = await tx`
+        UPDATE scm.mfg_products SET model_id = ${modelId}::uuid, base_model = ${keptCode}, updated_at = now()
+         WHERE company_id = ${co} AND id::text = ${m.id} AND status <> 'ACTIVE' AND model_id::text IS NOT DISTINCT FROM ${m.fromModelId}
+        RETURNING id`;
+      if (r.length !== 1) throw new Error(`"${m.code}" changed since the plan`);
+    }
     for (const f of plan.foldModels) {
       const r = await tx`UPDATE scm.product_models SET active = false, updated_at = now()
                           WHERE company_id = ${co} AND id::text = ${f.id} AND active = true RETURNING id`;
@@ -141,6 +189,10 @@ export async function verifyModelGroup(v, { co, plan, modelId }) {
   for (const mv of plan.moves) {
     const [s] = await v`SELECT model_id::text AS model_id, size_code FROM scm.mfg_products WHERE company_id = ${co} AND id::text = ${mv.id}`;
     if (s?.model_id !== modelId || sizeOf({ code: mv.code, size_code: s?.size_code }) !== mv.size) problems.push(`"${mv.code}" is not under "${plan.label}" with size ${mv.size}`);
+  }
+  for (const mv of plan.inactiveMoves ?? []) {
+    const [s] = await v`SELECT model_id::text AS model_id FROM scm.mfg_products WHERE company_id = ${co} AND id::text = ${mv.id}`;
+    if (s?.model_id !== modelId) problems.push(`"${mv.code}" is not under "${plan.label}"`);
   }
   for (const f of plan.fills.filter((x) => x.field === "main supplier")) {
     const [b] = await v`SELECT COUNT(*)::int AS n FROM scm.supplier_material_bindings WHERE company_id = ${co} AND item_code = ${f.code} AND is_main_supplier = true AND material_kind::text = 'mfg_product'`;

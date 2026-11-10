@@ -141,8 +141,8 @@ export async function sendAssrArrangement(
       String(row.customer_name ?? ''),
       // ref_1 stays the case number (assrNo): the flow's amend confirmation and
       // the Confirm/Amend callback both key on it. The case number ALSO rides in
-      // assr_no (extra) so the template shows it from the dedicated ASSR No field,
-      // matching the Service Case Received ack; the Sales Order rides in ref_2.
+      // assr_no (extra) so the template shows it from the dedicated ASSR No field;
+      // the Sales Order rides in ref_2.
       [{ ref: assrNo, orderRef: '', branding: '', deliveryDate: templateDate(date), balanceSen: null }],
       null,
       {

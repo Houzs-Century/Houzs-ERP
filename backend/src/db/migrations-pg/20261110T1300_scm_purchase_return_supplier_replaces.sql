@@ -1,5 +1,5 @@
 -- ----------------------------------------------------------------------------
--- 20261110T0900 -- a CREDIT purchase return says whether the supplier sends a
+-- 20261110T1300 -- a CREDIT purchase return says whether the supplier sends a
 -- replacement.
 --
 -- WHY. HC-0221 (Sim, 2026-11-09): HC-PO-2609-035 was received in full, its only

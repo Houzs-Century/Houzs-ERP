@@ -226,11 +226,8 @@ export async function getActiveLeadTimeProfileId(env: Env): Promise<number | nul
  * and is based on the highest existing po_no in assr_cases that
  * matches the prefix — no dedicated counter table.
  */
-export async function nextServicePONumber(env: Env): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(-2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `APO/${yy}${mm}`;
+export async function nextServicePONumber(env: Env, nowMs = Date.now()): Promise<string> {
+  const prefix = `APO/${yymmFor(nowMs)}`;
 
   const row = await env.DB.prepare(
     `SELECT po_no FROM assr_cases
@@ -964,7 +961,7 @@ export async function transitionStage(
   }
   if (newStage === "completed") {
     sets.push("completion_date = ?");
-    binds.push(nowIso.slice(0, 10));
+    binds.push(todayMyt());
   }
 
   binds.push(id);

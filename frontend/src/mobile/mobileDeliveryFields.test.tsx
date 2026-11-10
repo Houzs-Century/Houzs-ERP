@@ -204,6 +204,22 @@ describe("buildDeliveryFieldsPatch — the DO-execution group needs a DO", () =>
   });
 });
 
+describe("buildDeliveryFieldsPatch — arrival / departure clock", () => {
+  it("sends a typed Malaysian time with its +08:00 offset, not as a bare UTC clock", () => {
+    const next = form({ arrivalAt: "2026-11-10T11:00", departureAt: "2026-11-10T09:30" });
+
+    const { body } = buildDeliveryFieldsPatch(BLANK, next, UNLOCKED);
+
+    expect(body.arrivalAt).toBe("2026-11-10T11:00:00+08:00");
+    expect(body.departureAt).toBe("2026-11-10T09:30:00+08:00");
+  });
+
+  it("clears to null", () => {
+    const { body } = buildDeliveryFieldsPatch(form({ arrivalAt: "2026-11-10T11:00" }), BLANK, UNLOCKED);
+    expect(body.arrivalAt).toBeNull();
+  });
+});
+
 describe("buildDeliveryFieldsPatch — nothing to send", () => {
   it("reports empty when no field moved", () => {
     const { body, amendmentDisposal, empty } = buildDeliveryFieldsPatch(

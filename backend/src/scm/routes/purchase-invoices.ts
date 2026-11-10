@@ -1,5 +1,6 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
 import { PI_HEADER_COLS, PI_LIST_SELECT, piListSelect, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
@@ -18,6 +19,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { postPiAccounting, reversePiAccounting, resyncPiAccounting } from './accounting';
+import { piLedgerOutcome } from '../lib/pi-ledger-outcome';
 import { recostForPi, recostFromGrn } from '../lib/recost';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
@@ -86,8 +88,7 @@ const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${p}${prefix}-${yymm}`);
 };
@@ -915,6 +916,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
         // eslint-disable-next-line no-console
         console.error(`[pi-accounting] ensure-post failed for ${curRow.invoice_number}:`, ensure.status, ensure.reason);
       }
+      return c.json({ purchaseInvoice: cur, ledger: piLedgerOutcome(ensure) });
     }
     return c.json({ purchaseInvoice: cur });
   }
@@ -1075,7 +1077,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
     // eslint-disable-next-line no-console
     console.warn('[pi scan learning] note skipped (non-fatal):', curRow.invoice_number, (e as Error).message);
   }
-  return c.json({ purchaseInvoice: data });
+  return c.json({ purchaseInvoice: data, ledger: piLedgerOutcome(postRes) });
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 

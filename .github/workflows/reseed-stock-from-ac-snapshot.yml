@@ -26,6 +26,10 @@ name: Re-seed stock from tonight's AutoCount balance (PLAN gated)
 on:
   workflow_dispatch:
     inputs:
+      recipient_pubkey:
+        description: "Base64 (one line) of YOUR RSA public key PEM - the row backup / export is encrypted to it (repo is public). See .github/actions/seal-artifact"
+        required: true
+        type: string
       mode:
         description: "plan (default) or apply"
         required: false
@@ -63,6 +67,11 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+      - name: Check the recipient key before touching a database
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: check
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -79,10 +88,18 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
       # Always, including on a failed apply: the dump is written before any
       # write and it is the only off-database copy of what the balance was.
+      - name: Seal the rows to the requester's key before upload
+        if: always()
+        uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          recipient_pubkey: ${{ inputs.recipient_pubkey }}
+          paths: backend/reseed-pre-balance.json
+          name: rows
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: reseed-pre-balance-${{ inputs.mode }}-${{ github.run_id }}
-          path: backend/reseed-pre-balance.json
+          path: sealed/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7

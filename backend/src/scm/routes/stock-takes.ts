@@ -41,6 +41,7 @@
 //   DELETE /stock-takes/:id            — OPEN only
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -109,8 +110,7 @@ async function notOpenOrNotOurs(
 }
 
 const nextTakeNo = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'stock_takes', 'take_no', `${p}STK-${yymm}`);
 };

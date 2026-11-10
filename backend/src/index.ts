@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
+import { pollEtag, POLLED_LIST_PATHS } from "./middleware/pollEtag";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
@@ -29,6 +30,7 @@ import udf from "./routes/udf";
 import authRoutes from "./routes/auth";
 import totpRoutes from "./routes/totp";
 import users from "./routes/users";
+import fieldPinAdmin from "./routes/fieldPinAdmin";
 import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
@@ -83,6 +85,7 @@ import fleet from "./routes/fleet";
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
+import { fleetOffRoad } from "./scm/routes/fleet-off-road";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
 import fleetBreakdownFiles from "./scm/routes/fleet-breakdown-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
@@ -447,6 +450,12 @@ app.use("/api/*", companyContext);
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
 
+// ETag + 304 on the GET lists the frontend polls (pollEtag.ts lists them), so an
+// unchanged poll costs headers instead of the whole list. Inside auth and
+// companyContext so the tag carries the user and company it was computed for;
+// above every router so it wraps the handler.
+for (const path of POLLED_LIST_PATHS) app.use(path, pollEtag);
+
 // HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
 // payment onto its Sales Order through the one Payments writer. Mounted BELOW the
 // /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
@@ -491,6 +500,7 @@ app.route("/api/client-errors", clientErrors);
 app.route("/api/udf", udf);
 app.route("/api/totp", totpRoutes);
 app.route("/api/users", users);
+app.route("/api/field-pin", fieldPinAdmin);
 app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
@@ -568,6 +578,7 @@ app.route("/api/fleet", fleet);
 app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 // Mounted first: its auth is per-route, and fleet-maintenance.ts is at its file-size ceiling.
 app.route("/api/fleet-maintenance", fleetPlanService);
+app.route("/api/fleet-maintenance", fleetOffRoad);
 app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/fleet-work-order-files", fleetWorkOrderFiles);
 app.route("/api/fleet-breakdown-files", fleetBreakdownFiles);

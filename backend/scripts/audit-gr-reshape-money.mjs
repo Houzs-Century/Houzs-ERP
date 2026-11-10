@@ -30,6 +30,7 @@
  *              UNDER it cannot be double-counting; one landing OVER it is not to
  *              be applied.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

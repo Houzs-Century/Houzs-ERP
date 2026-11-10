@@ -17,6 +17,7 @@ import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/S
 import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
 import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
+import { drivenPath, useLorryRoadTrack } from "../../vendor/scm/lib/lorry-road-track";
 
 const MAPS_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "";
 
@@ -58,7 +59,8 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const points: RoutePoint[] = stops
     .filter((s) => s.lat != null && s.lng != null)
     .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type }));
-  const driven = (track?.fixes ?? []).map((f) => ({ lat: f.lat, lng: f.lng }));
+  const roadTrack = useLorryRoadTrack(lorryId, date);
+  const driven = drivenPath(roadTrack.data, track?.fixes ?? []);
 
   /* A failed read used to look exactly like "no run today / no position yet". */
   const failed = [day.isError && "today's runs", positions.isError && "the GPS position", trackQ.isError && "today's track"].filter(Boolean);
@@ -85,7 +87,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           apiKey={MAPS_KEY}
           depot={runs[0]?.depot ?? null}
           stops={points}
-          track={driven}
+          track={driven.path}
           vehicle={position ? { lat: position.lat, lng: position.lng, label: "Lorry now" } : null}
         />
       ) : (
@@ -93,7 +95,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           The map needs VITE_GOOGLE_MAPS_API_KEY. The facts and stop list still work.
         </p>
       )}
-      {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove today. Blue: today&apos;s planned stops. Dark marker: where it is now.</p>}
+      {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove today{driven.byRoad ? ", along the roads" : ", joined straight between GPS fixes"}. Blue: today&apos;s planned stops. Dark marker: where it is now.</p>}
 
       {stops.length > 0 && (
         <ol className="flex flex-col gap-2">

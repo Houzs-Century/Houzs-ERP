@@ -34,6 +34,7 @@
 // Usage:
 //   node scripts/check-amendment-price-drops.mjs
 //   COMPANY_ID=2 node scripts/check-amendment-price-drops.mjs
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

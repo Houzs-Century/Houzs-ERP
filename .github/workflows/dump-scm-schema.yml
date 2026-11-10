@@ -87,6 +87,7 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v4
+        # dump-artifact-ok: pg_dump --schema-only, no rows; the file is meant to be committed to this repo
         with:
           name: ${{ inputs.schema }}-${{ inputs.target }}-schema
           path: out/*.sql

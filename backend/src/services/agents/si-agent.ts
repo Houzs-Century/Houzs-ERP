@@ -25,6 +25,7 @@ import { activeInstructions } from '../agent-console';
 import { AGENT_BRAIN_MODEL, askAgentBrain, type AgentBrainUsageSink } from '../agent-brain';
 import { agentFeature } from '../aiUsage';
 import { fmtSen } from '../../scm/shared/format';
+import { todayMyt } from '../../scm/lib/my-time';
 
 export const SI_AGENT_SETTING_KEY = 'agents.si';
 
@@ -71,7 +72,7 @@ export interface SiPatrolResult {
 export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult> {
   const db = env.DB;
   const nowIso = new Date().toISOString();
-  const since = new Date(Date.now() - WINDOW_DAYS * 86400_000).toISOString().slice(0, 10);
+  const since = todayMyt(-WINDOW_DAYS);
 
   const res = await db
     .prepare(
@@ -168,7 +169,7 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
         .prepare(
           `INSERT INTO si_agent_findings
              (id, kind, severity, subject, subject_type, metric, summary, payload, status, created_at, last_seen_at)
-           VALUES (?,?,?,?,?,?,?,?, 'OPEN', ?, ?)
+           VALUES (?,?,?,?,?,?,?,?::text::jsonb, 'OPEN', ?, ?)
            ON CONFLICT (kind, subject) WHERE status = 'OPEN' DO NOTHING`,
         )
         .bind(crypto.randomUUID(), f.kind, f.severity, subject, f.subjectType, f.metric, f.summary, JSON.stringify(f.payload), nowIso, nowIso)
@@ -177,7 +178,7 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     } else {
       await db
         .prepare(
-          `UPDATE si_agent_findings SET severity=?, metric=?, summary=?, payload=?, last_seen_at=? WHERE id=? AND status='OPEN'`,
+          `UPDATE si_agent_findings SET severity=?, metric=?, summary=?, payload=?::text::jsonb, last_seen_at=? WHERE id=? AND status='OPEN'`,
         )
         .bind(f.severity, f.metric, f.summary, JSON.stringify(f.payload), nowIso, exId)
         .run();
@@ -222,7 +223,7 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     openAnomalies: desired.size,
   };
   await db
-    .prepare(`INSERT INTO si_agent_briefs (id, generated_at, brief) VALUES (?,?,?)`)
+    .prepare(`INSERT INTO si_agent_briefs (id, generated_at, brief) VALUES (?,?,?::text::jsonb)`)
     .bind(crypto.randomUUID(), nowIso, JSON.stringify(brief))
     .run();
 

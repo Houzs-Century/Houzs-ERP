@@ -15,6 +15,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { Search, Plus, Trash2, Truck, X, ImageOff, Upload, Edit3 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { MergeModelsButton } from './products/MergeModelsDialog';
+import { ShowInactiveModelsToggle, skuCountText, useShowInactiveModels, visibleModels } from './products/modelVisibility';
 import { PageHeader } from '../../components/Layout';
 import { maintActiveValues } from '@2990s/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -98,13 +99,13 @@ export const ProductModels = () => {
     filter === 'all' ? undefined : { category: filter },
   );
 
+  const [showInactive] = useShowInactiveModels();
+  const shown = useMemo(() => visibleModels(models, showInactive), [models, showInactive]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter(
-      (m) => m.model_code.toLowerCase().includes(q) || m.name.toLowerCase().includes(q),
-    );
-  }, [models, search]);
+    if (!q) return shown;
+    return shown.filter((m) => m.model_code.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
+  }, [shown, search]);
 
   /* ── DataGrid conversion (owner request 2026-06-12) ─────────────────
      The per-category <section> tables are replaced by ONE shared DataGrid
@@ -221,9 +222,7 @@ export const ProductModels = () => {
         sortFn: (a, b) => Number(b.active) - Number(a.active),
       },
       {
-        // PR — Wei Siang 2026-06-19: surface SKU count so a 0-SKU orphan Model
-        // (all its SKUs deleted from SKU Master) is visibly flagged. Subtle for
-        // count > 0 (plain muted number); amber "0 SKUs" badge when empty.
+        // Wei Siang 2026-06-19: a 0-SKU orphan Model gets an amber "0 SKUs" badge.
         key: 'sku_count',
         label: 'SKUs',
         width: 96,
@@ -245,7 +244,7 @@ export const ProductModels = () => {
               </span>
             );
           }
-          return <span style={{ color: '#767b6e' }}>{n}</span>;
+          return <span style={{ color: '#767b6e' }}>{skuCountText(m)}</span>;
         },
         searchValue: (m) => String(m.sku_count ?? 0),
         filterValue: (m) => ((m.sku_count ?? 0) === 0 ? '0 SKUs' : String(m.sku_count ?? 0)),
@@ -305,6 +304,7 @@ export const ProductModels = () => {
         }
         actions={
           <>
+            <ShowInactiveModelsToggle hidden={models.length - shown.length} />
             <MergeModelsButton codes={models.map((m) => m.model_code)} />
             <div className={styles.searchBox}>
               <Search {...ICON} />

@@ -632,11 +632,25 @@ export async function applySoAmendment(
          is never blocked by a missing state mapping. */
       const addLineWarehouseId = await soWarehouseIdForDoc(sb, docNo, soCompanyId);
 
+      /* Mig 0165: the SO, DO and invoice list lines by line_no with NULLS LAST,
+         so an added line written without one sank below every numbered line in
+         no fixed order. Continue the order's numbering, as the add-line route
+         does; a pre-0165 order (max NULL) stays un-numbered so its lines keep
+         one ordering regime. Read per ADD so two adds in one amendment take
+         consecutive numbers. */
+      const { data: maxNoRow, error: maxNoErr } = await scopeToCompanyIdOrOpen(
+        sb.from('mfg_sales_order_items').select('line_no').eq('doc_no', docNo),
+        soCompanyId,
+      ).order('line_no', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+      if (maxNoErr) throw new Error(`applySoAmendment: line number read failed: ${maxNoErr.message}`);
+      const maxLineNo = (maxNoRow as { line_no?: number | null } | null)?.line_no;
+
       // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
       // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
       // ADD line explicitly inherits the SO header's company.
       const { data: insRow, error: insErr } = await sb.from('mfg_sales_order_items').insert({
         ...(soCompanyId != null ? { company_id: soCompanyId } : {}),
+        ...(typeof maxLineNo === 'number' ? { line_no: maxLineNo + 1 } : {}),
         doc_no:                  docNo,
         line_date:              todayMyt(),
         item_group:             itemGroup,

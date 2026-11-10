@@ -37,12 +37,14 @@ import {
 } from "../pages/MailCenter/mail-attachments";
 import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
 import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
+import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "../pages/MailCenter/mail-email-frame";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import { MobileVisibility } from "./MobileMailPersonal";
 import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
+import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
@@ -200,12 +202,9 @@ const fmtTime = (iso: string | null | undefined): string => {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(+d)) return "";
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return fmtClock(d);
-  const yest = new Date(now);
-  yest.setDate(now.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  const day = mytDayOf(d.toISOString());
+  if (day === todayMyt()) return fmtClock(d);
+  if (day === todayMyt(-1)) return "Yesterday";
   return fmtDate(d);
 };
 
@@ -1100,7 +1099,7 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
 // resolved falls back to the untouched HTML.
 function HtmlBody({ html, attachments }: { html: string; attachments: Attachment[] }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const [doc, setDoc] = useState<string>(() => emailSrcDoc(html));
+  const [doc, setDoc] = useState<string>(() => emailSrcDoc(html, MOBILE_EMAIL_HEAD));
 
   const inlineImgs = useMemo(
     () => attachments.filter((a) => a.contentId && /^image\//i.test(a.contentType || "")),
@@ -1131,7 +1130,7 @@ function HtmlBody({ html, attachments }: { html: string; attachments: Attachment
           }
         }
       }
-      if (!revoked) setDoc(emailSrcDoc(out));
+      if (!revoked) setDoc(emailSrcDoc(out, MOBILE_EMAIL_HEAD));
     })();
     return () => {
       revoked = true;
@@ -1145,7 +1144,7 @@ function HtmlBody({ html, attachments }: { html: string; attachments: Attachment
       title="Email"
       // allow-same-origin (NOT allow-scripts) — scripts stay blocked, but the
       // frame can be measured on load so it auto-sizes to its content.
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      sandbox={EMAIL_FRAME_SANDBOX_MEASURABLE}
       srcDoc={doc}
       style={{ width: "100%", border: "none", background: "transparent", minHeight: 60 }}
       onLoad={(e) => {
@@ -1812,15 +1811,7 @@ function looksLikeHtml(s: string | undefined): boolean {
   );
 }
 
-// Wrap raw email HTML in a self-contained document with a responsive base style
-// and a new-tab base target, injected into the existing <head> when present.
-// Ported from the desktop Thread.tsx emailSrcDoc.
-function emailSrcDoc(rawHtml: string): string {
-  const inject = `<base target="_blank"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#11140f;word-break:break-word;overflow-x:hidden;background:transparent}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
-  if (/<head[^>]*>/i.test(rawHtml)) return rawHtml.replace(/<head([^>]*)>/i, `<head$1>${inject}`);
-  if (/<html[^>]*>/i.test(rawHtml)) return rawHtml.replace(/<html([^>]*)>/i, `<html$1><head>${inject}</head>`);
-  return `<!doctype html><html><head>${inject}</head><body>${rawHtml}</body></html>`;
-}
+const MOBILE_EMAIL_HEAD = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#11140f;word-break:break-word;overflow-x:hidden;background:transparent}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
 
 // Strip HTML to a readable plain-text fallback when a message has no textBody.
 function stripHtml(html: string): string {

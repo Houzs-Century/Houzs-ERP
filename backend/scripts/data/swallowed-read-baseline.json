@@ -238,7 +238,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 45,
+      "reads": 44,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
@@ -382,7 +382,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
-      "reads": 1,
+      "reads": 0,
       "catches": 1
     },
     "backend/src/scm/routes/scan-so.ts": {

@@ -78,7 +78,7 @@ import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 import {
-  buildPurchaseOrderEmail,
+  buildPurchaseOrderEmail, poReplyTo,
   poSendRefusalForStatus,
   validatePoAttachment,
   PO_RESEND_WINDOW_MS,
@@ -99,10 +99,12 @@ import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
-import { withSoRefPoIds } from '../lib/so-ref-search';
+import { withPoSearchIds } from '../lib/po-item-code-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
 import { grnLineNetReceived } from '../lib/po-net-received';
+import { yymmFor } from '../../services/documentRefs';
+import { mrpPlanStaleRefusal, settleFromSosForMrp } from '../lib/mrp-plan-freshness';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -422,7 +424,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const filters = await withSoRefPoIds(supabase, c, readPoListFilters((k) => c.req.query(k)));
+    const filters = await withPoSearchIds(supabase, c, readPoListFilters((k) => c.req.query(k)));
     const q = filterPoList(
       orderPoList(supabase.from('purchase_orders').select(poListSelect(filters), { count: 'exact' }), filters.sort),
       filters,
@@ -1110,10 +1112,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     }
   }
 
-  const yymm = (() => {
-    const d = new Date();
-    return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  })();
+  const yymm = yymmFor(); // Malaysian month: UTC getMonth() numbered a PO cut before 08:00 on the 1st under last month
 
   // PO# generation: max(suffix)+1 over the month's POs (see lib/doc-no.ts).
   // NOT count+1 — count+1 is non-self-healing (a mid-month delete leaves a gap
@@ -1227,8 +1226,8 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
        PR #157 — now required (see validation above). */
     purchase_location_id: purchaseLocationId,
   };
-  // Optional poDate — if absent, the column default (now()) wins.
-  if (body.poDate) headerInsert.po_date = body.poDate;
+  // Optional poDate, else today in Malaysia (the column's UTC now() default is a day early before 08:00).
+  headerInsert.po_date = body.poDate || todayMyt();
 
   /* Doc-no collision retry (2026-07-14): two buyers cutting a PO in the same
      company + YYMM both read the same max and mint the same po_number; without a
@@ -1432,17 +1431,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        whose supplier matches the PO's supplier), keeping each line's so_item_id
        so a later delete releases the SO quota. */
     targetPoId?: string;
-    /* Commander 2026-05-31 — when the convert is raised from the MRP page the PO
-       line is REFERENCE-ONLY: it does NOT lock the source SO line via
-       po_qty_picked. MRP pools all open PO as supply regardless of SO↔PO linkage,
-       so the same SO line is infinitely convertible from MRP. This flag (a)
-       bypasses the qty_exceeds_remaining cap and (b) tags the PO line from_mrp so
-       the po_qty_picked recount excludes it. The "an MRP-ordered SO disappears
-       from Convert-from-SO" expectation is met by the picker now hiding lines
-       with no pooled shortage (stock+open-PO fully covers) — the from_mrp PO is
-       part of that supply pool — NOT by per-line locking. The ordinary From-SO
-       picker leaves this false → keeps its cap. */
+    /* Commander 2026-05-31 — an MRP convert is REFERENCE-ONLY: MRP pools every open
+       PO as supply whatever its SO link, so this flag (a) bypasses the
+       qty_exceeds_remaining cap and (b) tags the line from_mrp so the po_qty_picked
+       recount excludes it. The duplicate guard on this path is plan freshness
+       (planAsOf). The ordinary From-SO picker leaves this false and keeps its cap. */
     fromMrp?: boolean;
+    planAsOf?: string | null; // MRP plan computedAt (lib/mrp-plan-freshness.ts); absent = unchecked
     /* Land the created POs as DRAFT instead of SUBMITTED (owner 2026-07-17 —
        the Procurement Agent's Stage 1: propose, then approve).
 
@@ -1638,6 +1633,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
         return c.json({ error: 'qty_exceeds_remaining', soItemId: p.soItemId, requested: p.qty, remaining }, 409);
       pickedItems.push({ row, qty: p.qty, pickSupplierId: p.supplierId ?? null });
     }
+    const stale = await mrpPlanStaleRefusal(supabase, activeCompanyId(c) ?? null, ids, fromMrp ? body.planAsOf : null);
+    if (stale) return c.json(stale.body, stale.status);
   } else {
     // Legacy soItems path — kept so old callers don't break.
     const soItems = body.soItems ?? [];
@@ -2229,8 +2226,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   }
 
   // Generate PO numbers + create one PO per supplier.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor(); // Malaysian month, not the Worker's UTC one
   // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
   // delete re-mints a surviving number → UNIQUE collision). Derive the next
   // suffix via mintMonthlyDocNo, then counter starts one below it.
@@ -2302,6 +2298,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       created_by: user.id,
       expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
       purchase_location_id: headerPurchaseLocationId,
+      po_date: todayMyt(), // not the column's UTC now() default: a day early before 08:00
     };
     /* Audit (ported from 2990) — the PO suffix is an in-memory counter off a
        non-locking snapshot, so a CONCURRENT SO→PO convert can mint the same
@@ -2396,6 +2393,7 @@ mfgPurchaseOrders.post('/from-sos', async (c) => {
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
+  settleFromSosForMrp(c, activeCompanyId(c) ?? null, out);
   return c.json(out.body, out.status as 201);
 });
 
@@ -4127,11 +4125,8 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   }
 
   const branding = await getBrandingForCompany(c.env, row.company_id ?? null);
-  const msg = buildPurchaseOrderEmail(
-    row,
-    branding.companyName,
-    typeof body.message === 'string' ? body.message : null,
-  );
+  const note = typeof body.message === 'string' ? body.message : null;
+  const msg = buildPurchaseOrderEmail(row, branding.companyName, note);
   /* Unreachable given the recipient check above — buildPurchaseOrderEmail's only
      null is a bad address. Handled rather than asserted: the two checks are in
      different files and a future edit could separate them. */
@@ -4177,6 +4172,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
     cc: msg.cc.length ? msg.cc : null,
     subject: msg.subject,
     html: msg.html,
+    replyTo: poReplyTo(c.get('houzsUser')),
     purpose: 'purchase_order',
     refType: 'purchase_order',
     // po id is a uuid; email_log.ref_id is INTEGER, so identity lives in the subject.

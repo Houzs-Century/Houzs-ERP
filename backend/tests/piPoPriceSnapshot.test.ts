@@ -125,3 +125,32 @@ describe('piPoPriceSummaryByInvoice — the list marker', () => {
     expect(out.get('B')).toEqual({ linesDiffering: 0, totalDiffSen: 0, comparableLines: 0, lines: 2, poAmountSen: 0 });
   });
 });
+
+describe('piPoNumbersByInvoice — an invoice billing several POs lists them all (owner 2026-11-10)', () => {
+  it('reads each line\'s own PO through attachGrnLineFacts, not the header\'s first PO', async () => {
+    const { piPoNumbersByInvoice } = await import('../src/scm/lib/pi-po-price');
+    const { sb } = stub({
+      grn_items: [
+        { id: 'g1', supplier_sku: null, purchase_order_item_id: 'p1' },
+        { id: 'g2', supplier_sku: null, purchase_order_item_id: 'p2' },
+        { id: 'g3', supplier_sku: null, purchase_order_item_id: 'p3' },
+      ],
+      purchase_order_items: [
+        { id: 'p1', unit_price_sen: 1, purchase_order_id: 'po202', po: { po_number: 'HC-PO-2610-202' } },
+        { id: 'p2', unit_price_sen: 1, purchase_order_id: 'po125', po: { po_number: 'HC-PO-2610-125' } },
+        { id: 'p3', unit_price_sen: 1, purchase_order_id: 'po202', po: { po_number: 'HC-PO-2610-202' } },
+      ],
+    });
+    const items: Array<Record<string, unknown> & { id: string; purchase_invoice_id: string; grn_item_id?: string | null }> = [
+      { id: 'l1', purchase_invoice_id: 'A', grn_item_id: 'g1' },
+      { id: 'l2', purchase_invoice_id: 'A', grn_item_id: 'g2' },
+      { id: 'l3', purchase_invoice_id: 'A', grn_item_id: 'g3' },
+      { id: 'l4', purchase_invoice_id: 'A', grn_item_id: null },
+      { id: 'l5', purchase_invoice_id: 'B', grn_item_id: null },
+    ];
+    await attachGrnLineFacts(sb, items);
+    const out = piPoNumbersByInvoice(items);
+    expect(out.get('A')).toEqual(['HC-PO-2610-125', 'HC-PO-2610-202']);
+    expect(out.get('B')).toEqual([]);
+  });
+});

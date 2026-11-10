@@ -12,7 +12,9 @@ import {
   isoIn,
   timingSafeEqualStr,
   REMEMBER_TTL_SECONDS,
+  SESSION_ORIGIN_FIELD,
 } from "../services/auth";
+import { fieldPinLogin } from "./fieldPinLogin";
 import { bustUserSessions } from "../services/sessionCache";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
 import { userCanWriteScmConfig } from "../services/positionPolicy";
@@ -234,6 +236,14 @@ async function lookupStaffId(env: Env, userId: number): Promise<string | null> {
 }
 
 /**
+ * POST /api/auth/pin-login
+ * Public — crew sign-in with staff code + 6-digit PIN. The whole rule set
+ * (who, how many tries, what the session may reach) is in routes/fieldPinLogin.ts
+ * and services/fieldPin.ts.
+ */
+app.post("/pin-login", fieldPinLogin);
+
+/**
  * POST /api/auth/totp/login
  * Second step of a 2FA login. Body: { challenge, code }. `code` is a 6-digit
  * TOTP or a backup code. On success the challenge is consumed and a session is
@@ -264,9 +274,11 @@ app.post("/totp/login", async (c) => {
     recordFailedLogin(c, null, null, "totp_expired");
     return c.json({ error: "This sign-in attempt expired — start again." }, 401);
   }
-  const [userIdPart, rememberPart] = String(userIdRaw).split(":");
+  const [userIdPart, rememberPart, doorPart] = String(userIdRaw).split(":");
   const userId = parseInt(userIdPart, 10);
   const remember = rememberPart === "1";
+  // A challenge issued at the crew PIN door must end in a field session.
+  const fieldDoor = doorPart === "field";
 
   const row = await c.env.DB.prepare(
     `SELECT totp_secret, totp_enabled, totp_backup_codes, status FROM users WHERE id = ?`,
@@ -316,9 +328,11 @@ app.post("/totp/login", async (c) => {
   await c.env.DB.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`)
     .bind(userId)
     .run();
-  const token = remember
-    ? await createSession(c.env, userId, undefined, REMEMBER_TTL_SECONDS, REMEMBER_TTL_SECONDS)
-    : await createSession(c.env, userId);
+  const token = fieldDoor
+    ? await createSession(c.env, userId, SESSION_ORIGIN_FIELD)
+    : remember
+      ? await createSession(c.env, userId, undefined, REMEMBER_TTL_SECONDS, REMEMBER_TTL_SECONDS)
+      : await createSession(c.env, userId);
   const sessionPass = await mintSessionPass(c.env, token, Date.now());
   // Same staffId contract as /login — the POS email path may be 2FA-gated.
   return c.json({ token, user_id: userId, staffId: await lookupStaffId(c.env, userId), ...(sessionPass ? { session_pass: sessionPass } : {}) });

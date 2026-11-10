@@ -13,6 +13,7 @@
 //   PATCH  /purchase-returns/:id/cancel     — → CANCELLED (if not completed)
 // ----------------------------------------------------------------------------
 
+import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -74,8 +75,7 @@ const ITEM =
   'item_group, variants, created_at';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, 'purchase_returns', 'return_number', `${p}PRT-${yymm}`);
 };
@@ -1188,8 +1188,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   }
 
   // Generate PR number.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const yymm = yymmFor();
   // Minted inside insertWithDocNoRetry below so a concurrent-create collision
   // (23505 on return_number) re-derives the next free number instead of 500ing.
   const p = companyDocPrefix(c);

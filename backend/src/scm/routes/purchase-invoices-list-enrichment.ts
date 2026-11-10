@@ -34,7 +34,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
 import { attachPiAssignedSos, pickPiListMrpEnrichment } from '../lib/pi-assigned-sos';
-import { attachGrnLineFacts, piPoPriceSummaryByInvoice, type PiPoPriceSummary } from '../lib/pi-po-price';
+import { attachGrnLineFacts, piPoNumbersByInvoice, piPoPriceSummaryByInvoice, type PiPoPriceSummary } from '../lib/pi-po-price';
 
 export const purchaseInvoicesListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoicesListEnrichment.use('*', supabaseAuth);
@@ -75,7 +75,7 @@ purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
 
 /* ── PO price vs invoice price, per invoice (owner 2026-09-14) ─────────────
    GET /purchase-invoices/list-po-price?piIds=UUID,UUID
-     -> { summary: { [piId]: { linesDiffering, totalDiffSen, comparableLines, lines } } }
+     -> { summary: { [piId]: { linesDiffering, totalDiffSen, comparableLines, lines, poAmountSen, poNumbers } } }
 
    The marker the list shows so a person can see, without opening an invoice,
    that some lines were billed at a price other than the purchase order's. It
@@ -102,7 +102,8 @@ purchaseInvoicesListEnrichment.get('/list-po-price', async (c) => {
   const items = (lines ?? []) as Array<Record<string, unknown> & { id: string; purchase_invoice_id: string; grn_item_id?: string | null }>;
   await attachGrnLineFacts(sb, items);
 
-  const summary: Record<string, PiPoPriceSummary> = {};
-  for (const [id, s] of piPoPriceSummaryByInvoice(items)) summary[id] = s;
+  const poNumbers = piPoNumbersByInvoice(items);
+  const summary: Record<string, PiPoPriceSummary & { poNumbers: string[] }> = {};
+  for (const [id, s] of piPoPriceSummaryByInvoice(items)) summary[id] = { ...s, poNumbers: poNumbers.get(id) ?? [] };
   return c.json({ summary });
 });

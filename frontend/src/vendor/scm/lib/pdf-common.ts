@@ -428,6 +428,12 @@ export const amountInWordsMyr = (centi: number | null | undefined): string => {
   return `RINGGIT MALAYSIA ${intToWords(rm)}${senPart} ONLY`;
 };
 
+/* The warehouse a DO ships from / a GRN received into (Conts-ERP #717): its
+   name, else its code label; null when the document recorded none, so the row
+   is omitted rather than dashed. */
+export const warehousePrintName = (h: { warehouse_name?: string | null; warehouse_code?: string | null }): string | null =>
+  (h.warehouse_name ?? '').trim() || (h.warehouse_code ?? '').trim() || null;
+
 export const fmtRm = (centi: number | null, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /** Document date → "31/05/2026". Null-safe ("—"). Delegates to the shared
@@ -623,7 +629,7 @@ export function drawInfoColumns(
   doc: import('jspdf').jsPDF,
   startY: number,
   left: { title: string; rows: Array<[string, string | null | undefined]> },
-  right: { title: string; rows: Array<[string, string | null | undefined]> },
+  right: { title: string; rows: Array<[string, string | ReadonlyArray<string> | null | undefined]> },
   marginX = 14,
 ): number {
   const pageW = doc.internal.pageSize.getWidth();
@@ -657,6 +663,16 @@ export function drawInfoColumns(
     }
   }
   for (const [label, value] of right.rows) {
+    /* An array is a value the caller has already broken into lines (a PI's
+       PO list); each element prints on its own line under the first. */
+    if (Array.isArray(value)) {
+      const parts = value.map((p) => p.trim()).filter(Boolean);
+      if (!parts.length) continue;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(110); doc.text(label, midX, ry); doc.setTextColor(0);
+      parts.forEach((p, i) => { doc.text(`${i === 0 ? ':' : ' '} ${p}`, rValX, ry); ry += lh; });
+      continue;
+    }
     const v = (value ?? '').toString().trim();
     if (!v) continue;
     doc.setFont('helvetica', 'normal');

@@ -37,7 +37,8 @@ vi.mock('./accounting-phase1-queries', async (importOriginal) => ({
   usePatchItemGroup: () => ({ mutate: patchMutate, isPending: false, isError: false, error: null }),
 }));
 
-vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   useAccounts: () => ({
     data: {
       sections: [
@@ -55,6 +56,10 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
         /* Noise the picker must HIDE: neither side of trading. */
         { account_code: '100-0000', account_name: 'CAPITAL', account_type: 'EQUITY', section: 'CAPITAL', is_active: true },
         { account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', account_type: 'ASSET', section: 'CURRENT ASSETS', is_active: true },
+        /* Conts #338: a header (its only child retired) and a control special never offered. */
+        { account_code: '600-0000', account_name: 'PURCHASES HEADER', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
+        { account_code: '600-0001', account_name: 'OLD PURCHASES', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: false, parent_code: '600-0000' },
+        { account_code: '630-0000', account_name: 'STOCK CONTROL', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true, special_type: 'SBS' },
       ],
     },
   }),
@@ -153,6 +158,9 @@ describe('the sign-off flow', () => {
     expect(screen.queryByText(/^CAPITAL/)).toBeNull();
     expect(screen.queryByText(/CASH AT BANK/)).toBeNull();
     expect(screen.queryByText(/SALES OF FURNITURE/)).toBeNull();
+    expect(screen.queryByText(/PURCHASES HEADER/)).toBeNull();
+    expect(screen.queryByText(/STOCK CONTROL/)).toBeNull();
+    expect(screen.getAllByText(/PURCHASE OF SOFA/).length).toBeGreaterThan(0);
     fireEvent.blur(purchase);
     const sales = screen.getByLabelText('BEDLINES Sales return account');
     fireEvent.focus(sales);

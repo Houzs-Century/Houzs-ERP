@@ -158,6 +158,58 @@ export function couldBeAcquirers(method: string, provider: string | null | undef
   return method === 'imported';
 }
 
+/**
+ * Which of these payments are already ON THE BANK STATEMENT: their live entry
+ * (SOPAY / SIPAY, posted, not reversed) is held by a POSTED bank line — through
+ * a match row, or as the line's own posted entry. A match row left on an OPEN
+ * line is an older undo's leftover (docs/bugs/0802) and holds nothing.
+ *
+ * Owner 2026-11-09, on Find the sale for a QR line listing 73 Online payments,
+ * 61 of them long matched on the bank statement: 「已经match 的就不应该出现」.
+ * Such a transfer is that customer's own money on the statement and can never
+ * be a QR's. Reads fail closed: "could not tell" is not "nothing is matched".
+ */
+export async function bankHeldPayments(
+  sb: any, companyId: number, payments: ReadonlyArray<{ source: string; id: string }>,
+): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
+  const keys = new Set<string>();
+  if (payments.length === 0) return { ok: true, keys };
+  const wanted = new Set(payments.map((p) => `${p.source}:${p.id}`));
+  const ids = [...new Set(payments.map((p) => p.id))];
+  const jes = await chunkIn<{ je_no: string; source_type: string; source_doc_no: string; reversed: boolean | null }>(ids, (batch, f, t) => sb
+    .from('journal_entries').select('je_no, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId).in('source_type', ['SOPAY', 'SIPAY']).in('source_doc_no', batch).eq('posted', true)
+    .order('je_no').range(f, t));
+  if (jes.error) return { ok: false, reason: `the payments' entries: ${jes.error.message}` };
+  const live = jes.data.filter((e) => e.reversed !== true && wanted.has(`${String(e.source_type)}:${String(e.source_doc_no)}`));
+  if (live.length === 0) return { ok: true, keys };
+  const jeNos = [...new Set(live.map((e) => String(e.je_no)))];
+
+  const matches = await chunkIn<{ bank_line_id: number; je_no: string }>(jeNos, (batch, f, t) => sb
+    .from('acc_bank_statement_matches').select('bank_line_id, je_no')
+    .eq('company_id', companyId).in('je_no', batch).order('id').range(f, t));
+  if (matches.error) return { ok: false, reason: `bank matches: ${matches.error.message}` };
+  const owned = await chunkIn<{ id: number; posted_je_no: string | null }>(jeNos, (batch, f, t) => sb
+    .from('acc_bank_statement_lines').select('id, posted_je_no')
+    .eq('company_id', companyId).eq('state', 'POSTED').in('posted_je_no', batch).order('id').range(f, t));
+  if (owned.error) return { ok: false, reason: `bank lines: ${owned.error.message}` };
+  const lineIds = [...new Set(matches.data.map((m) => Number(m.bank_line_id)))];
+  const posted = lineIds.length === 0
+    ? { data: [] as Array<{ id: number }>, error: null }
+    : await chunkIn<{ id: number }, number>(lineIds, (batch, f, t) => sb
+      .from('acc_bank_statement_lines').select('id')
+      .eq('company_id', companyId).eq('state', 'POSTED').in('id', batch).order('id').range(f, t));
+  if (posted.error) return { ok: false, reason: `bank lines: ${posted.error.message}` };
+
+  const postedIds = new Set(posted.data.map((l) => Number(l.id)));
+  const held = new Set<string>([
+    ...matches.data.filter((m) => postedIds.has(Number(m.bank_line_id))).map((m) => String(m.je_no)),
+    ...owned.data.map((l) => String(l.posted_je_no)),
+  ]);
+  for (const e of live) if (held.has(String(e.je_no))) keys.add(`${String(e.source_type)}:${String(e.source_doc_no)}`);
+  return { ok: true, keys };
+}
+
 const PAYMENT_COLUMNS_SO = 'id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
 const PAYMENT_COLUMNS_SI = 'id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
 
@@ -236,7 +288,7 @@ export async function loadPaymentCandidates(
     .order('id').range(f, t));
   if (soByRef.error) return { ok: false, reason: `SO payments by reference: ${soByRef.error.message}` };
 
-  const soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs);
+  let soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs);
 
   const siAll = await paginateAll<Record<string, any>>((f, t) => sb
     .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
@@ -250,7 +302,19 @@ export async function loadPaymentCandidates(
     .order('id').range(f, t));
   if (siByRef.error) return { ok: false, reason: `SI payments by reference: ${siByRef.error.message}` };
 
-  const siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs);
+  let siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs);
+
+  /* An Online payment already on the bank statement is that customer's own
+     money there, never a QR's (owner 2026-11-09: 已经match 的就不应该出现). */
+  if (opts.online) {
+    const held = await bankHeldPayments(sb, companyId, [
+      ...soRaw.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
+      ...siRaw.map((r) => ({ source: 'SIPAY', id: String(r.id) })),
+    ]);
+    if (!held.ok) return { ok: false, reason: held.reason };
+    soRaw = soRaw.filter((r) => !held.keys.has(`SOPAY:${String(r.id)}`));
+    siRaw = siRaw.filter((r) => !held.keys.has(`SIPAY:${String(r.id)}`));
+  }
 
   /* WHOSE sale it was. The operator is reconciling money against documents,
      and a document number alone does not tell him which customer he is looking
@@ -468,8 +532,19 @@ export async function findPaymentsForRow(
     .eq('company_id', companyId).in('method', methods)
     .order('paid_at', { ascending: false }).order('id').range(f, t));
   if (siRes.error) return { ok: false, status: 'load_failed', reason: `SI payments: ${siRes.error.message}` };
-  const soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
-  const siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+  let soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
+  let siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+  /* A QR line: an Online payment already matched on the bank statement is not
+     offered (owner 2026-11-09: 已经match 的就不应该出现). */
+  if ((rowRaw as { channel?: string | null }).channel === QR_CHANNEL) {
+    const held = await bankHeldPayments(sb, companyId, [
+      ...soRows.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
+      ...siRows.map((r) => ({ source: 'SIPAY', id: String(r.id) })),
+    ]);
+    if (!held.ok) return { ok: false, status: 'load_failed', reason: held.reason };
+    soRows = soRows.filter((r) => !held.keys.has(`SOPAY:${String(r.id)}`));
+    siRows = siRows.filter((r) => !held.keys.has(`SIPAY:${String(r.id)}`));
+  }
 
   /* The customer, off the document — read in chunks, because the name is one
      of the things a person searches by. A read that fails is a refusal. */

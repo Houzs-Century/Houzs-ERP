@@ -94,6 +94,7 @@ import { formatPhone } from "@2990s/shared/phone";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { customerRefOf } from '../../lib/customer-ref';
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
@@ -1105,7 +1106,7 @@ export function MfgDeliveryOrdersListV2() {
       bundles.sort((a, b) => compareDoPrintOrder(a.header as DoPrintHeader, b.header as DoPrintHeader));
       if (how === "one") {
         await generateCombinedDeliveryOrderPdf(bundles as never, {
-          fileName: `delivery-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          fileName: `delivery-orders-${todayMyt()}.pdf`,
           action,
         });
       } else {

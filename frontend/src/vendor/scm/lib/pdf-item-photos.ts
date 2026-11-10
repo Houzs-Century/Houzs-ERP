@@ -297,6 +297,20 @@ export const PDF_THUMB_PX = 1536;
  * ratio lets the caller size it — see drawPhotoTile.
  */
 export async function blobToSquarePdfImage(blob: Blob): Promise<PdfPhotoImage | null> {
+  return blobToPdfImageAt(blob, PDF_THUMB_PX);
+}
+
+/** The emailed PO uses this. A supplier PDF is capped at 5 MB by the send
+ *  route, and at 1536 px a detailed photo costs ~360 kB (measured 2026-11-09),
+ *  so about fourteen of them already pass the cap. 800 px is the Conts value
+ *  and cut the same photo to ~110 kB. */
+export const PDF_EMAIL_PHOTO_PX = 800;
+
+export function pdfImageAt(maxPx: number): (blob: Blob) => Promise<PdfPhotoImage | null> {
+  return (blob) => blobToPdfImageAt(blob, maxPx);
+}
+
+async function blobToPdfImageAt(blob: Blob, maxPx: number): Promise<PdfPhotoImage | null> {
   try {
     if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return null;
     const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -310,7 +324,7 @@ export async function blobToSquarePdfImage(blob: Blob): Promise<PdfPhotoImage | 
       if (!(longest > 0)) return null;
       /* NEVER UPSCALE. A 300px source re-encoded at 1536 is the same 300px of
          detail in nine times the bytes — bigger file, not a better photo. */
-      const scale = Math.min(1, PDF_THUMB_PX / longest);
+      const scale = Math.min(1, maxPx / longest);
       const cw = Math.max(1, Math.round(bitmap.width * scale));
       const ch = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = document.createElement('canvas');

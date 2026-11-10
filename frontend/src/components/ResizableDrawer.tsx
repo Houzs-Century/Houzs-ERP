@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useEscapeLayer } from "../lib/escapeStack";
 
 /* Clamp a width to [min, max], and never wider than the viewport minus a gutter
    so the close/scrim edge stays reachable. Null-safe for SSR (no window). */
@@ -91,11 +92,7 @@ export function ResizableDrawer({
   };
 
   /* Esc closes. */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscapeLayer(onClose, true);
 
   /* Belt-and-braces: drop any in-flight drag listeners on unmount. */
   useEffect(

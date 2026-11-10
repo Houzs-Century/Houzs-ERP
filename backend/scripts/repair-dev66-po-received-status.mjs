@@ -31,6 +31,7 @@
 // RE-RUN: inert. The select is status IN (SUBMITTED, PARTIALLY_RECEIVED), which
 // the write turns into RECEIVED, so a second run selects nothing.
 // ---------------------------------------------------------------------------
+import "./lib/public-log-guard.mjs";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

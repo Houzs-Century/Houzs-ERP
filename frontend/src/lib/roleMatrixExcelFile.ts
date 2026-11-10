@@ -6,6 +6,7 @@
 import { parseCSV } from "./csv";
 import type { CellValue, SheetData, WorkbookData, MatrixSnapshot } from "./roleMatrixExcel";
 import { buildWorkbook } from "./roleMatrixExcel";
+import { todayMyt } from "../vendor/scm/lib/dates";
 
 const WORKBOOK_EXT = /\.(xlsx|xls|xlsm|xlsb)$/i;
 
@@ -84,7 +85,7 @@ function downloadBytes(bytes: ArrayBuffer, fileName: string): void {
 /** One-click export of the whole matrix. The file name carries the date so the
  *  owner can tell versions apart in his Downloads. */
 export async function exportRoleMatrix(snap: MatrixSnapshot): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayMyt();
   const bytes = await workbookToXlsx(buildWorkbook(snap));
   downloadBytes(bytes, `Houzs-RBAC-角色权限矩阵-${today}.xlsx`);
 }

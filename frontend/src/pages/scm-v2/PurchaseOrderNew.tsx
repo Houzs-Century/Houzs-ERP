@@ -36,6 +36,7 @@ import {
   type MaterialKind,
   type OutstandingSoItem,
 } from '../../vendor/scm/lib/suppliers-queries';
+import { defaultSupplierBinding } from '../../vendor/scm/lib/default-supplier-binding';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -243,9 +244,8 @@ export const PurchaseOrderNew = () => {
     if (supplierId) { setPendingItemPick(null); return; }
     if (itemSuppliersQuery.isLoading) return;
     const matches = itemSuppliersQuery.data?.bindings ?? [];
-    const b = matches[0];
-    if (matches.length === 1 && b) {
-      // Exactly one supplier binds this — adopt it + autofill the line.
+    const b = defaultSupplierBinding(matches);
+    if (b) {
       setSupplierId(b.supplier.id);
       setLines((prev) => prev.map((l) => (l.rid === pendingItemPick.rid ? {
         ...l,
@@ -259,7 +259,7 @@ export const PurchaseOrderNew = () => {
       } : l)));
       setPendingItemPick(null);
     }
-    // N > 1 — leave pendingItemPick set so the hint banner renders.
+    // Several suppliers and no single main one — leave pendingItemPick set so the hint banner renders.
     // 0      — keep pendingItemPick so the "no bindings, free entry" hint renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [pendingItemPick, supplierId, itemSuppliersQuery.isLoading, itemSuppliersQuery.data]);

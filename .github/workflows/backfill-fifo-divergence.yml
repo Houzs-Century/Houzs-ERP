@@ -9,8 +9,12 @@ name: Backfill FIFO ledger divergence (repair)
 #
 # !! WRITES to the money-critical FIFO ledger — STAGING-FIRST, owner-run only. !!
 #   * DEFAULT is DRY-RUN: every bucket's repair runs inside a transaction and is
-#     ROLLED BACK, so the run REPORTS the exact change set (qty retro-costed, RM
-#     booked, lots decremented, drift closed) and writes NOTHING.
+#     ROLLED BACK, so the run REPORTS the change set (qty retro-costed, lots
+#     decremented, drift closed) and writes NOTHING.
+#   * Money is HIDDEN in this log ("RM[hidden]", "[hidden] sen"): the repository
+#     is public, so run logs and artifacts are readable outside the company.
+#     The script loads scripts/lib/public-log-guard.mjs; run it locally against
+#     the database to see the RM figures.
 #   * To actually write, set apply = "APPLY" AND confirm = "I HAVE REVIEWED THE
 #     DRY-RUN". Both are required — a single toggle cannot commit by accident.
 #   * The reconcile is idempotent, so a second APPLY run is a no-op.

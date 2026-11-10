@@ -46,6 +46,7 @@
 //
 // ENUM TRAP (inherited from the other audits here): status columns are ENUMS,
 // so COALESCE(col,'') coerces '' INTO the enum and throws. Always ::text first.
+import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;

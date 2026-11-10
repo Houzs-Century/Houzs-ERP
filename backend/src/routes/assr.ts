@@ -63,8 +63,8 @@ import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
-import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
+import { todayMyt } from "../scm/lib/my-time";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1269,7 +1269,7 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     lines.push(fields.map((f) => esc(f === "po_amount" && r[f] != null && Number.isFinite(Number(r[f])) ? Number(r[f]).toFixed(2) : r[f])).join(","));
   }
   const csv = "\uFEFF" + lines.join("\r\n");
-  const date = new Date().toISOString().slice(0, 10);
+  const date = todayMyt();
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
@@ -1871,8 +1871,7 @@ app.post(
         userIds: [row.assigned_to, row.assigned_to_2, row.created_by],
         agentNames: [row.sales_agent],
       });
-      // Customer WhatsApp ack via Houzs Connect (best-effort, create-only; doc_no = SO/ref_1) — see assrConnectAck.ts.
-      await sendServiceCaseReceivedAck(c.env, result.assr_no, row.doc_no, row.customer_name, row.phone);
+      // No customer WhatsApp on create (HC-0222, Operation 2026-11): staff only.
     }
   } catch (e) {
     console.error("[assr.create] notify failed:", (e as Error).message);

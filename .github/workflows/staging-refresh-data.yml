@@ -4,11 +4,17 @@ name: Staging Refresh Data (prod -> staging, masked)
 # against real-shaped documents instead of an empty seed (owner, 2026-09-12:
 # 「data 也是要部署过去」).
 #
-# Two jobs, two environments, on purpose:
-#   dump     runs in `Production` and can see only DATABASE_URL (read-only pg_dump)
-#   restore  runs in `Staging`    and can see only STAGING_DATABASE_URL
-# Neither job holds both secrets, so a mis-scoped step cannot write prod. The
-# dump crosses between them as a 1-day artifact.
+# ONE job, and the production dump never leaves its runner (2026-11-09,
+# docs/staging-dump-artifact-exposure-coe.md). It used to be two jobs with the
+# dump crossing between them as a workflow ARTIFACT — and this repository is
+# PUBLIC, so that unmasked copy was downloadable by any GitHub account. The two
+# jobs bought no isolation either: DATABASE_URL is a REPOSITORY secret, readable
+# from the Staging environment too, so separation was only ever "which step names
+# which secret". That is still how it works: only the dump / capture steps name
+# secrets.DATABASE_URL, both are read-only (pg_dump, one SELECT), and every
+# writing step names STAGING_DATABASE_URL behind the "Assert the target is
+# STAGING" refusal. scripts/check-workflow-dump-artifacts.mjs fails CI if any
+# workflow uploads a dump-shaped artifact without encrypting it first.
 #
 # SAFETY BY CONSTRUCTION, not by configuration: every phone / mobile / email
 # column in the copy is MASKED before the job ends (staff login emails kept so
@@ -45,12 +51,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  dump:
-    name: Dump production data (read-only)
+  refresh:
+    name: Dump production, restore into staging + mask
     if: ${{ inputs.confirm == 'REFRESH-STAGING' }}
     runs-on: ubuntu-latest
-    environment: Production
+    environment: Staging
+    # Same group as staging-migrate.yml and deploy-staging.yml: this job runs
+    # pg-migrate too, and two runners must not write the tracker at once.
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: backend
     steps:
+      # main's migration tree, whatever branch this was dispatched from: a
+      # branch's own migrations must not ride in on a data refresh.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
       - name: Install PostgreSQL 17 client
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -60,8 +86,29 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
-          /usr/lib/postgresql/17/bin/pg_dump --version
+          /usr/lib/postgresql/17/bin/psql --version
 
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in
+            *anogrigyjbduyzclzjgn*) echo "::error::STAGING_DATABASE_URL points at PRODUCTION — refusing"; exit 1;;
+          esac
+          case "$DATABASE_URL" in
+            *minnapsemfzjmtvnnvdd*) echo "target: staging (minnapsemfzjmtvnnvdd)";;
+            *) echo "::error::STAGING_DATABASE_URL is not the staging project — refusing"; exit 1;;
+          esac
+
+      # The production dump is taken HERE, in the same job that loads it, and
+      # never leaves this runner. It used to cross from a separate job as a
+      # workflow artifact, and this repository is PUBLIC: anyone signed in to
+      # GitHub could download that UNMASKED copy for its retention day
+      # (docs/staging-dump-artifact-exposure-coe.md). Masking happens only after
+      # the restore, so nothing before that point may be uploaded anywhere.
+      # scripts/check-workflow-dump-artifacts.mjs fails CI if a dump artifact
+      # comes back.
       - name: Assert the source is PRODUCTION
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -111,69 +158,7 @@ jobs:
              where key in ('scm.write_freeze','scm.migrated_so_lock')
              order by key" > prod-switches.txt
           echo "production switches:"; sed 's/^/  /' prod-switches.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: prod-data
-          path: |
-            prod-data.sql.gz
-            prod-switches.txt
-          retention-days: 1
-          if-no-files-found: error
 
-  restore:
-    name: Restore into staging + mask
-    needs: dump
-    runs-on: ubuntu-latest
-    environment: Staging
-    # Same group as staging-migrate.yml and deploy-staging.yml: this job runs
-    # pg-migrate too, and two runners must not write the tracker at once.
-    concurrency:
-      group: deploy-staging
-      cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      # main's migration tree, whatever branch this was dispatched from: a
-      # branch's own migrations must not ride in on a data refresh.
-      - uses: actions/checkout@v7
-        with:
-          ref: main
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - run: npm ci
-
-      - name: Install PostgreSQL 17 client
-        run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17
-          /usr/lib/postgresql/17/bin/psql --version
-
-      - name: Assert the target is STAGING
-        env:
-          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          case "$DATABASE_URL" in
-            *anogrigyjbduyzclzjgn*) echo "::error::STAGING_DATABASE_URL points at PRODUCTION — refusing"; exit 1;;
-          esac
-          case "$DATABASE_URL" in
-            *minnapsemfzjmtvnnvdd*) echo "target: staging (minnapsemfzjmtvnnvdd)";;
-            *) echo "::error::STAGING_DATABASE_URL is not the staging project — refusing"; exit 1;;
-          esac
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: prod-data
-          path: backend/
 
       # Production applies main's migrations on every deploy, so its dump can
       # carry a column staging has not got yet (run 42570685989:
@@ -635,3 +620,9 @@ jobs:
           fi
           echo "staging refreshed from production at $(date -u +%FT%TZ) (masked: ${{ inputs.mask_pii }})" >> "$GITHUB_STEP_SUMMARY"
           echo "$out" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Destroy the unmasked dump on the runner
+        if: always()
+        run: |
+          rm -f prod-data.sql prod-data.sql.gz prod-data.filtered.sql prod-switches.txt
+          echo "unmasked production dump removed from the runner"

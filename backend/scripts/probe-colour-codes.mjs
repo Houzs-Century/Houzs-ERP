@@ -2,6 +2,7 @@
 // unresolved pillow lines live, if anywhere? Searches scm.fabric_colours and
 // scm.fabric_trackings (company 1) by a loose pattern per code, and prints the
 // colour-related fields of the ten sales-order lines. RE-RUN: idempotent.
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 try { await sql`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`; } catch { /* SELECT only */ }

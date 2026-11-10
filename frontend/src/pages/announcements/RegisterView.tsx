@@ -27,6 +27,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
 import type { Department } from "../../types";
 import type { DocumentTypeOption } from "./announcementModel";
+import { todayMyt } from "../../vendor/scm/lib/dates";
 
 export type RegisteredDocument = {
   id: string;
@@ -55,12 +56,6 @@ const COMPOSED_TYPE = "ANN";
 
 const FIELD = "h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[12.5px] text-ink outline-none focus:border-primary";
 const LABEL = "text-[11px] font-semibold uppercase tracking-wider text-ink-muted";
-
-function todayIso(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOption[]; className?: string }) {
   const { can, user } = useAuth();
@@ -93,7 +88,7 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
   const [docType, setDocType] = useState<string>("");
   const [title, setTitle] = useState("");
   const [deptId, setDeptId] = useState<string>(myDeptId ? String(myDeptId) : "");
-  const [memoDate, setMemoDate] = useState(todayIso());
+  const [memoDate, setMemoDate] = useState(todayMyt());
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<{ r2Key: string; name: string; mime: string; size: number } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -146,7 +141,7 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
       setTitle("");
       setNotes("");
       setFile(null);
-      setMemoDate(todayIso());
+      setMemoDate(todayMyt());
       setOpen(false);
       listQ.reload();
     } catch (e) {

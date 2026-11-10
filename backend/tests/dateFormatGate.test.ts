@@ -257,6 +257,63 @@ describe("the one-date-format gate", () => {
     }
   });
 
+  /* "Today" read off the UTC clock is yesterday in Malaysia before 08:00 (a PO,
+     a service-case leg or a lorry part change made in the morning was dated the
+     day before). todayMyt() is the fix; this proves a new UTC "today" fails. */
+  test("FAILS on a planted UTC 'today' and passes with todayMyt()", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-utc-today-"));
+    try {
+      const planted = path.join(dir, "PlantedToday.ts");
+      for (const line of [
+        "export const today = new Date().toISOString().slice(0, 10);",
+        "export const since = new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10);",
+        "export const day = new Date().toISOString().split('T')[0];",
+      ]) {
+        fs.writeFileSync(planted, line + "\n");
+        const bad = run(dir);
+        expect(bad.code, `expected a FAILURE for ${line}, got:\n${bad.out.slice(-3000)}`).toBe(1);
+        expect(bad.out).toContain("utc-today");
+      }
+      fs.writeFileSync(planted, "export const today = todayMyt();\nexport const since = todayMyt(-45);\n");
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* THE CLOCK HELD IN A VARIABLE (owner 2026-11-10: every frontend "today" is
+     the Malaysian day). #5508 fixed what the per-line shapes could see and
+     listed what they could not: the Projects calendars, Delivery Planning,
+     Payment Corrections, lorry expiry, the scan-jobs "is today" check — each
+     a `new Date()` on one line and a day read on another. One planted file per
+     spelling, one spawn for all of them. */
+  test("FAILS on a clock read held in a variable, a default parameter or a copy, and passes with todayMyt()", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-clock-var-"));
+    try {
+      const planted: Record<string, string> = {
+        "PlantVar.ts": "export function f() {\n  const today = new Date();\n  return today.getMonth();\n}\n",
+        "PlantParam.ts": "export const g = (now: Date = new Date()) => now.getFullYear();\n",
+        "PlantCopy.ts": "export function h() {\n  const now = new Date();\n  const t = new Date(now);\n  t.setDate(t.getDate() + 1);\n  return t;\n}\n",
+        "PlantSameDay.ts": "export const s = (d: Date) => {\n  const now = new Date();\n  return d.toDateString() === now.toDateString();\n};\n",
+        "PlantDirect.ts": "export const y = new Date().getUTCFullYear();\n",
+      };
+      for (const [name, src] of Object.entries(planted)) fs.writeFileSync(path.join(dir, name), src);
+      const bad = run(dir);
+      expect(bad.code, `expected a FAILURE, got:\n${bad.out.slice(-3000)}`).toBe(1);
+      for (const name of Object.keys(planted)) expect(bad.out, name).toContain(name);
+      for (const name of Object.keys(planted)) fs.rmSync(path.join(dir, name));
+      fs.writeFileSync(
+        path.join(dir, "Honest.ts"),
+        "export function k() {\n  const today = todayMyt();\n  const d = new Date(`${today}T00:00:00Z`);\n  return d.getUTCDay();\n}\n",
+      );
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   /* The other half of honest. Money is `toLocaleString('en-MY', …)` and row
      counts are `n.toLocaleString()`; there are ~40 of the second kind. If the
      gate fired on those, the next person would delete the gate rather than the

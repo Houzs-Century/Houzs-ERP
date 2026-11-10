@@ -34,6 +34,7 @@
    Verification re-reads on a FRESH connection and asserts the shape: no MYR
    candidate whose invoice is live with money outstanding remains, and the sum
    applied equals the sum the plan expected. */
+import "./lib/public-log-guard.mjs";
 import postgres from "postgres";
 
 const MODE = (process.env.MODE || "plan").toLowerCase();

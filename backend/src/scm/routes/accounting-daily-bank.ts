@@ -86,7 +86,7 @@ export async function loadDailyBankBoard(
        merely prepared one is still the preparer's business. */
     .eq('company_id', co.companyId).eq('status', 'DRAFT')
     .not('checked_at', 'is', null)
-    .lte('checked_at', `${date}T23:59:59.999`);
+    .lt('checked_at', new Date(Date.parse(`${date}T00:00:00+08:00`) + 86_400_000).toISOString());
   if (pErr) return { ok: false, reason: pErr.message };
   let pending = (pendingRaw ?? []) as PendingVoucherRow[];
   /* Each listed voucher reads as the PV list's Description does: what it pays for,

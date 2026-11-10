@@ -44,6 +44,7 @@
  * RE-RUN: idempotent. A second run finds each line already carrying the book's
  * own amount and its discount, plans zero changes and writes nothing.
  */
+import "./lib/public-log-guard.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";

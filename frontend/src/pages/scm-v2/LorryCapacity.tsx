@@ -26,6 +26,7 @@
 import { dailyTotalsByLorry, diffPct, fmtDrive, fmtKm, roadTotalsByLorry, useRoadDaily, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
 import { LorryRoadDaily } from './LorryRoadDaily';
 import { ratePctText, useOnTime } from '../../vendor/scm/lib/on-time-queries';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useMemo, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { fmtSen, fmtDate } from '@2990s/shared';
@@ -95,10 +96,12 @@ type RangePreset = 'last' | 'this' | 'next' | 'custom';
 function isoUTC(y: number, mZeroBased: number, d: number): string {
   return new Date(Date.UTC(y, mZeroBased, d)).toISOString().slice(0, 10);
 }
+/* Counted from the Malaysian day: the UTC month still showed last month for the
+   first eight hours of every 1st (owner 2026-11-09). */
 function monthRange(offset: number): { from: string; to: string } {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth() + offset;
+  const today = todayMyt();
+  const y = Number(today.slice(0, 4));
+  const m = Number(today.slice(5, 7)) - 1 + offset;
   return { from: isoUTC(y, m, 1), to: isoUTC(y, m + 1, 0) };  // day 0 of next month = last day of this
 }
 function rangeForPreset(preset: RangePreset, custom: { from: string; to: string }): { from: string; to: string } {

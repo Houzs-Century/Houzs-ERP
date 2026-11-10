@@ -22,6 +22,8 @@ class FakeQuery {
     return this;
   }
   update(v: Row) { this.op = 'update'; this.patch = v; return this; }
+  insert(v: Row | Row[]) { this.op = 'insert' as never; this.inserted = Array.isArray(v) ? v : [v]; return this; }
+  private inserted: Row[] = [];
   eq(col: string, val: unknown) { this.preds.push((r) => r[col] === val); return this; }
   neq(col: string, val: unknown) { this.preds.push((r) => r[col] !== val); return this; }
   in(col: string, vals: unknown[]) { this.preds.push((r) => vals.includes(r[col])); return this; }
@@ -34,6 +36,7 @@ class FakeQuery {
   gt() { return this; } gte() { return this; } lt() { return this; } lte() { return this; }
   not() { return this; } like() { return this; } or() { return this; }
   private run(): Row[] {
+    if ((this.op as string) === 'insert') { this.rows.push(...this.inserted); return this.inserted; }
     const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
     if (this.op === 'update') for (const r of hit) Object.assign(r, this.patch);
     return hit;
@@ -57,11 +60,23 @@ function revertApp(opts: {
   caps?: string[];
   doStatus?: string;
   hasInvoice?: boolean;
+  hasIssue?: boolean;
+  soStatus?: string;
+  otherDo?: Row;
 }) {
   const tables: Record<string, Row[]> = {
     delivery_orders: [
-      { id: 'do-1', do_number: 'DO-1', company_id: 1, status: opts.doStatus ?? 'LOADED', so_doc_no: 'SO-1', dispatched_at: '2026-08-26T00:00:00Z' },
+      {
+        id: 'do-1', do_number: 'DO-1', company_id: 1, status: opts.doStatus ?? 'LOADED', so_doc_no: 'SO-1',
+        dispatched_at: '2026-08-26T00:00:00Z', delivered_at: '2026-08-27T03:00:00Z', signed_at: null,
+        signature_data: 'data:image/png;base64,AAAA', pod_r2_key: 'pod/a.jpg', pod_photo_keys: ['pod/a.jpg', 'pod/b.jpg'],
+        customer_delivered_date: null,
+      },
+      ...(opts.otherDo ? [opts.otherDo] : []),
     ],
+    delivery_issues: opts.hasIssue ? [{ id: 'iss-1', company_id: 1, delivery_order_id: 'do-1', assr_no: 'SC-9' }] : [],
+    mfg_sales_orders: [{ doc_no: 'SO-1', company_id: 1, status: opts.soStatus ?? 'SHIPPED', version: 1 }],
+    mfg_so_status_changes: [],
     sales_invoices: opts.hasInvoice ? [{ id: 'si-1', delivery_order_id: 'do-1', status: 'DRAFT', invoice_number: 'SI-1' }] : [],
     delivery_returns: [],
     inventory_movements: [],
@@ -116,16 +131,32 @@ describe('DO revert — gating', () => {
   test('the target must be LOADED or DRAFT', async () => {
     const { app } = revertApp({ doStatus: 'DISPATCHED' });
     expect((await bodyOf(await revert(app, 'IN_TRANSIT'))).error).toBe('invalid_target');
+    expect((await bodyOf(await revert(app, 'DELIVERED'))).error).toBe('invalid_target');
     expect((await bodyOf(await revert(app, 'CANCELLED'))).error).toBe('invalid_target');
   });
 });
 
 describe('DO revert — legal transitions', () => {
-  test('a DELIVERED order is not revertable', async () => {
-    const { app } = revertApp({ doStatus: 'DELIVERED' });
-    const res = await revert(app, 'DRAFT');
+  test('a DELIVERED order goes back one step only — not straight to DRAFT or LOADED', async () => {
+    for (const to of ['DRAFT', 'LOADED']) {
+      const { app, tables } = revertApp({ doStatus: 'DELIVERED' });
+      const res = await revert(app, to);
+      expect(res.status).toBe(409);
+      expect((await bodyOf(res)).error).toBe('not_backward');
+      expect(tables.delivery_orders[0].status).toBe('DELIVERED');
+    }
+  });
+
+  test('an INVOICED order is not revertable', async () => {
+    const { app } = revertApp({ doStatus: 'INVOICED' });
+    const res = await revert(app, 'DISPATCHED');
     expect(res.status).toBe(409);
     expect((await bodyOf(res)).error).toBe('not_revertable');
+  });
+
+  test('DISPATCHED is not a target for a not-yet-delivered order', async () => {
+    const { app } = revertApp({ doStatus: 'LOADED' });
+    expect((await bodyOf(await revert(app, 'DISPATCHED'))).error).toBe('not_backward');
   });
 
   test('a DRAFT order is not revertable — nothing to undo', async () => {
@@ -181,5 +212,76 @@ describe('DO revert — downstream lock', () => {
     const b = await bodyOf(res);
     expect(b.to).toBeUndefined();
     expect(b.inventoryReversed).toBeUndefined();
+  });
+});
+
+describe('DO revert — undo a wrong Delivered', () => {
+  test('DELIVERED → DISPATCHED: no stock, stamps cleared, POD kept, audited with the reason', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED' });
+    const res = await revert(app, 'DISPATCHED', 'driver tapped the wrong order');
+    expect(res.status).toBe(200);
+    const b = await bodyOf(res);
+    expect(b.to).toBe('DISPATCHED');
+    expect(b.inventoryReversed).toBe(false);
+    const d = tables.delivery_orders[0];
+    expect(d.status).toBe('DISPATCHED');
+    expect(d.delivered_at).toBeNull();
+    expect(d.signed_at).toBeNull();
+    expect(d.dispatched_at).toBe('2026-08-26T00:00:00Z');
+    expect(d.signature_data).toBe('data:image/png;base64,AAAA');
+    expect(d.pod_photo_keys).toEqual(['pod/a.jpg', 'pod/b.jpg']);
+    expect(tables.inventory_movements).toHaveLength(0);
+  });
+
+  test('SIGNED → DISPATCHED is allowed too (SIGNED reads Delivered)', async () => {
+    const { app, tables } = revertApp({ doStatus: 'SIGNED' });
+    expect((await revert(app, 'DISPATCHED')).status).toBe(200);
+    expect(tables.delivery_orders[0].status).toBe('DISPATCHED');
+  });
+
+  test('the reason is still required', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED' });
+    const res = await revert(app, 'DISPATCHED', '');
+    expect(res.status).toBe(400);
+    expect(tables.delivery_orders[0].status).toBe('DELIVERED');
+  });
+
+  test('a caller without scm.do.revert is refused', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED', caps: ['scm.do.dispatch'] });
+    expect((await revert(app, 'DISPATCHED')).status).toBe(403);
+    expect(tables.delivery_orders[0].status).toBe('DELIVERED');
+  });
+
+  test('refused while a Sales Invoice stands on the delivery', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED', hasInvoice: true });
+    expect((await revert(app, 'DISPATCHED')).status).toBe(409);
+    expect(tables.delivery_orders[0].status).toBe('DELIVERED');
+    expect(tables.delivery_orders[0].delivered_at).toBe('2026-08-27T03:00:00Z');
+  });
+
+  test('refused while the crew reported a delivery issue on it', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED', hasIssue: true });
+    const res = await revert(app, 'DISPATCHED');
+    expect(res.status).toBe(409);
+    const b = await bodyOf(res);
+    expect(b.error).toBe('delivery_issue_reported');
+    expect(b.reason).toContain('SC-9');
+    expect(tables.delivery_orders[0].status).toBe('DELIVERED');
+  });
+
+  test('the sales order this POD delivered steps back to SHIPPED', async () => {
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED', soStatus: 'DELIVERED' });
+    const b = await bodyOf(await revert(app, 'DISPATCHED'));
+    expect(b.salesOrder).toBe('stepped_back');
+    expect(tables.mfg_sales_orders[0].status).toBe('SHIPPED');
+    expect(tables.mfg_so_status_changes[0]).toMatchObject({ from_status: 'DELIVERED', to_status: 'SHIPPED' });
+  });
+
+  test('the sales order stays DELIVERED while another of its deliveries is delivered', async () => {
+    const otherDo = { id: 'do-2', do_number: 'DO-2', company_id: 1, status: 'DELIVERED', so_doc_no: 'SO-1', customer_delivered_date: null };
+    const { app, tables } = revertApp({ doStatus: 'DELIVERED', soStatus: 'DELIVERED', otherDo });
+    const b = await bodyOf(await revert(app, 'DISPATCHED'));
+    expect(b.salesOrder).toBe('still_delivered');
+    expect(tables.mfg_sales_orders[0].status).toBe('DELIVERED');
   });
 });
