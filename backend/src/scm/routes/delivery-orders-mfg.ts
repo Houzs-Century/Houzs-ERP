@@ -64,6 +64,7 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = [], n
   });
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
+import { shippedDoSpecRefusal } from '../lib/do-spec-lock-check';
 import { returnDoUnitsAtCost, returnedAsInRow, describeFailedReturns, type DoUnitReturn } from '../lib/do-resync-return';
 import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
@@ -129,6 +130,7 @@ import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
 import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
 import { withSoRefDocNos } from '../lib/so-ref-search';
+import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -1059,14 +1061,16 @@ export async function resolveDoSourcePosForDos(
   return resolveDoSourcePosForDosImpl(sb, doIds);
 }
 
-async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
+export async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
   // Idempotency guard #1 — has this DO already written OUT movements?
-  const { count: existing } = await sb
+  const { count: existing, error: existingErr } = await sb
     .from('inventory_movements')
     .select('id', { head: true, count: 'exact' })
     .eq('source_doc_type', 'DO')
     .eq('source_doc_id', deliveryOrderId)
     .eq('movement_type', 'OUT');
+  // Every failed read below refuses (lib/failed-read-refusal.ts): null is not "none".
+  if (existingErr) return [unreadableMovementError('the stock already moved for this DO', existingErr)];
   if ((existing ?? 0) > 0) return []; // already deducted — no-op
 
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
@@ -1084,6 +1088,7 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
       .select('do_number, warehouse_id, company_id')
       .eq('id', deliveryOrderId).maybeSingle();
   }
+  if (doHeaderRes.error) return [unreadableMovementError('the delivery order', doHeaderRes.error)];
   const doHeader = doHeaderRes.data;
   /* IDEMPOTENCY GUARD #2, and why #1 is not enough: #1 asks "did this DO write
      an OUT?", and for migrated paperwork the answer is legitimately no, forever
@@ -1091,9 +1096,10 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
      by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and
      shipping it again. lib/migrated-no-stock.ts. */
   if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null } | null)) return [];
-  const { data: items } = await sb.from('delivery_order_items')
+  const { data: items, error: itemsErr } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
+  if (itemsErr) return [unreadableMovementError('the delivery order lines', itemsErr)];
   const headerWarehouseId = (doHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string } | null)?.do_number ?? deliveryOrderId;
   const isDropship = (doHeader as { is_dropship?: boolean } | null)?.is_dropship === true;
@@ -1459,9 +1465,10 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
   //    current active DO lines (mirror of deductInventoryForDo's collapsing).
   //    Each line's warehouse comes from its SO line (0118), not a header default,
   //    so a resync delta lands in the SAME warehouse the first ship debited.
-  const { data: items } = await sb.from('delivery_order_items')
+  const { data: items, error: itemsErr } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
+  if (itemsErr) return noteResyncReadFailure(sb, deliveryOrderId, doHeader, 'the DO lines', itemsErr);
   const lineWh = await resolveDoLineWarehouses(
     sb, (items ?? []) as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
     (doHeader as { company_id?: number | null }).company_id ?? undefined);
@@ -1532,6 +1539,7 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
       .eq('source_doc_type', 'DO')
       .eq('source_doc_id', deliveryOrderId);
   }
+  if (movsRes.error) return noteResyncReadFailure(sb, deliveryOrderId, doHeader, 'the DO stock movements', movsRes.error);
   const movs = movsRes.data;
   type Agg = { out_qty: number; in_qty: number; out_total_cost: number; product_name: string | null; max_seq: number };
   const aggByBucket = new Map<string, Agg>();
@@ -3238,6 +3246,8 @@ deliveryOrdersMfg.post('/', async (c) => {
   let emailNotice: string | null = null;
   if (body.asDraft !== true) {
     movementErrors = await deductInventoryForDo(sb, h.id, user.id);
+    // Lines unreadable = nothing moved: keep the DO as a DRAFT rather than let it read shipped.
+    if (hasUnreadableLines(movementErrors)) return c.json({ id: h.id, doNumber: h.do_number, ...(await revertShipOnUnreadLines(sb, h.id, activeCompanyId(c) ?? 0, 'LOADED', 'DRAFT', {}, null, movementErrors, h.do_number)) }, 503);
 
     /* Requirement #3 (Loo 2026-05-30) — if this DO now fully covers its SO,
        auto-advance the SO to DELIVERED (best-effort, never blocks the DO). The
@@ -3806,6 +3816,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   let emailNotice: string | null = null;
   if (body.asDraft !== true) {
     movementErrors = await deductInventoryForDo(sb, dh.id, user.id);
+    if (hasUnreadableLines(movementErrors)) return c.json({ id: dh.id, doNumber: dh.do_number, ...(await revertShipOnUnreadLines(sb, dh.id, doCompanyId ?? 0, 'LOADED', 'DRAFT', {}, null, movementErrors, dh.do_number)) }, 503);
 
     /* Requirement #3 — a multi-SO DO may complete several SOs at once; check each
        source SO for full coverage and auto-advance to DELIVERED (best-effort). */
@@ -4470,13 +4481,11 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
      pair every write below keys on is caller-supplied: it proves the two belong
      together, never whose they are. A line edit re-prices, re-binds its batch
      and re-syncs inventory. */
-  {
-    const { data: own, error: ownErr } = await scopeToCompany(
-      sb.from('delivery_orders').select('id').eq('id', id), c,
-    ).maybeSingle();
-    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+  const { data: own, error: ownErr } = await scopeToCompany(
+    sb.from('delivery_orders').select('id, status').eq('id', id), c,
+  ).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+  if (!own) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -4500,6 +4509,9 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_sen, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  // Owner 2026-11-10: a shipped line keeps its product and spec (shared/do-spec-lock.ts).
+  const specLock = shippedDoSpecRefusal((own as { status: string | null }).status, prev, it);
+  if (specLock) return c.json(specLock, 409);
 
   /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
      or re-points the code, decides the bucket resyncInventoryForDo will move
@@ -5231,6 +5243,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
     movementErrors = await deductInventoryForDo(sb, id, user.id);
+    if (hasUnreadableLines(movementErrors)) return c.json(await revertShipOnUnreadLines(sb, id, scopeCompanyId, toStatus, prevStatus, ts, (cur as { customer_delivered_date?: string | null }).customer_delivered_date ?? null, movementErrors, null), 503);
     /* Mirror the create path: SO coverage sync on the ship-time hop. PRESHIP set, not
        a DRAFT literal — LOADED→DISPATCHED ships here too, and the DRAFT-only gate left
        goods out with the SO parked and MRP re-ordering them (8-17 class). Best-effort. */

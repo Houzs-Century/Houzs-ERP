@@ -632,6 +632,7 @@ export const ConsignmentOrderDetail = () => {
                      offenders when processingDate is set). Was defaulting to
                      true. */
                   variantsRequired={!!header.processing_date}
+                  specLockedReason={null}
                   lineDateLocked={false}
                   seedSofaLegDefault={true}
                   attachOptions={null}
@@ -648,6 +649,7 @@ export const ConsignmentOrderDetail = () => {
                 canRemove
                 // Same rule as the saved lines above.
                 variantsRequired={!!header.processing_date}
+                specLockedReason={null}
                 lineDateLocked={false}
                 seedSofaLegDefault={true}
                 attachOptions={null}
