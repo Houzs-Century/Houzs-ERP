@@ -123,6 +123,7 @@ async function measure(page: Page, url: string) {
   });
 
   return {
+    rowsInDom: open.rowsInDom,
     ...Object.fromEntries(Object.entries(open).map(([k, v]) => [k, round(v)])),
     ...Object.fromEntries(Object.entries(scroll).map(([k, v]) => [k, round(v)])),
     pollNothingChangedMs: round(median(same)),
