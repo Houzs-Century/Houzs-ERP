@@ -36,6 +36,7 @@ import {
 } from "../../vendor/scm/lib/po-amendment-queries";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { parseMoneyToSen } from "../../lib/money";
+import { useIdempotencyKey } from "../../lib/idempotency";
 
 /* Prices are in centi (1/100 MYR); the editor works in whole MYR for the buyer
    then converts back to centi on submit. */
@@ -82,6 +83,9 @@ export function PoAmendmentCreateModal({
   const notify = useNotify();
   const detail = usePurchaseOrderDetail(poId);
   const create = useCreatePoAmendment();
+  /* One key for this attempt, kept across presses: a retry after a lost reply
+     must reach the server as the same request, or it is a second amendment. */
+  const idempotencyKey = useIdempotencyKey();
 
   const header = detail.data?.purchaseOrder ?? null;
   const items = useMemo<PoItemRow[]>(() => detail.data?.items ?? [], [detail.data]);
@@ -181,7 +185,7 @@ export function PoAmendmentCreateModal({
         reason: reason.trim() || undefined,
         headerChanges: Object.keys(headerChanges).length > 0 ? headerChanges : undefined,
         lines,
-        idempotencyKey: `po-amd-${poId}-${Date.now()}`,
+        idempotencyKey,
       });
       notify({ title: "Amendment raised", body: `${res.amendment.amendment_no ?? poNumber} is now awaiting approval.` });
       onCreated?.(res.amendment.id);
@@ -189,7 +193,7 @@ export function PoAmendmentCreateModal({
     } catch (e) {
       notify({
         title: "Could not raise the amendment",
-        body: `${plainError(e)} Nothing was changed — please try again.`,
+        body: `${plainError(e)} Pressing Submit again is safe: the same request cannot raise the amendment twice.`,
         tone: "error",
       });
     }
