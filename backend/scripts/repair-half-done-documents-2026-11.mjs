@@ -103,7 +103,9 @@ async function grnFacts(c, t) {
   if (!g) return { t, missing: true };
   const lines = await c`
     SELECT gi.id, gi.item_code, gi.item_group, gi.variants, gi.qty_accepted, gi.unit_price_sen, gi.allocated_charge_sen,
-           po.po_number
+           po.po_number, pi.unit_price_sen AS po_price,
+           (SELECT MIN(x.unit_price_sen) FROM scm.purchase_invoice_items x WHERE x.grn_item_id = gi.id) AS pi_price_min,
+           (SELECT MAX(x.unit_price_sen) FROM scm.purchase_invoice_items x WHERE x.grn_item_id = gi.id) AS pi_price_max
       FROM scm.grn_items gi
       LEFT JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
       LEFT JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id AND po.company_id = ${CO}
@@ -133,10 +135,16 @@ async function grnFacts(c, t) {
         const priceOnly = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: 0, qtyAccepted: x.qty_accepted });
         const is = (v) => ins.every((m) => Number(m.unit_cost_sen) === v);
         /* A line ADDED to a posted GRN gets price only (grns.ts line-add); a line posted with the GRN gets the landed cost. */
-        return { code: x.item_code, matches: is(landed) ? 'landed (price + charge)' : is(priceOnly) ? 'price only (line added after post)' : 'neither' };
+        return { code: x.item_code, matches: is(landed) ? 'landed (price + charge)' : is(priceOnly) ? 'price only (line added after post)' : 'neither',
+          poPrice: x.po_price != null && is(Number(x.po_price)), piPrice: x.pi_price_min != null && is(Number(x.pi_price_min)),
+          lineEqPo: x.po_price != null && Number(x.po_price) === Number(x.unit_price_sen) };
       }).filter(Boolean);
       const hasCharge = Number(l.allocated_charge_sen ?? 0) > 0;
-      items.push({ ...base, unitCost, siblings, hasCharge, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
+      const priceAgree = {
+        po: l.po_price != null && Number(l.po_price) === Number(l.unit_price_sen),
+        pi: l.pi_price_min != null && Number(l.pi_price_min) === Number(l.unit_price_sen) && Number(l.pi_price_max) === Number(l.unit_price_sen),
+      };
+      items.push({ ...base, unitCost, siblings, hasCharge, priceAgree, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
     } else {
       const lots = await c`
         SELECT l.id, l.qty_received, l.qty_remaining, l.unit_cost_sen, l.movement_id, l.source_doc_type, l.received_at,
@@ -319,7 +327,8 @@ function printPlan(facts, whName) {
       note(`    ${f.t.downstreamDo} OUT in this bucket: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
       if (f.t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
         note(`    unit cost: the post-time rule (price at the GRN rate + allocated charge per unit, charge ${it.hasCharge ? 'present' : 'none'}): ${it.unitCost == null ? 'NONE' : 'present'}`);
-        note(`    the GRN's other lines with an IN carry: ${it.siblings.map((s) => `${s.code} ${s.matches}`).join(', ') || 'no other line'}`);
+        note(`    this line's price equals its PO line price: ${it.priceAgree.po ? 'yes' : 'NO'}; equals its supplier-bill price: ${it.priceAgree.pi ? 'yes' : 'NO'}`);
+        note(`    the GRN's other lines with an IN carry: ${it.siblings.map((s) => `${s.code} ${s.matches}; IN == PO price ${s.poPrice ? 'yes' : 'no'}, == bill price ${s.piPrice ? 'yes' : 'no'}, line price == PO price ${s.lineEqPo ? 'yes' : 'no'}`).join(', ') || 'no other line'}`);
       } else {
         const s = it.standIn;
         note(`    stand-in lot: ${s ? `${short(s.id)} received ${s.qtyReceived}, left ${s.qtyRemaining}, movement behind it: ${s.hasMovement ? 'YES' : 'none'}, drawn by ${s.consumedBy.join(', ') || '-'}, at ${new Date(s.receivedAt).toISOString()}` : 'NOT FOUND'}`);
