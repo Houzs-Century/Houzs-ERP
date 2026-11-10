@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   KIND, TARGETS, TAG, planGrnInMissingShipUncosted, planGrnInLostOnRepost, planDoOutMissing,
-  planCancelledDoOverReversed, collapseDoLines, grnUnitCost, movementNotes,
+  planCancelledDoOverReversed, collapseDoLines, receiptUnitCost, movementNotes,
 } from '../scripts/lib/half-done-repair-2026-11.mjs';
 import { DO_STOCK_OUT_STATES } from '../scripts/lib/do-shipped-states.mjs';
 
@@ -159,11 +159,15 @@ describe('DO-2610-419: cancelled, ELEPHANE-(K) given back twice', () => {
   });
 });
 
-describe('grnUnitCost and notes', () => {
-  test('price at the GRN rate plus the per-unit allocated charge', () => {
-    expect(grnUnitCost({ unitPriceSen: 1000, exchangeRate: 1, allocatedChargeSen: 200, qtyAccepted: 2 })).toBe(1100);
-    expect(grnUnitCost({ unitPriceSen: 1000, exchangeRate: 4.5, allocatedChargeSen: null, qtyAccepted: 1 })).toBe(4500);
-    expect(grnUnitCost({ unitPriceSen: null, exchangeRate: 1, allocatedChargeSen: 0, qtyAccepted: 1 })).toBeNull();
+describe('receiptUnitCost and notes', () => {
+  test('receiptUnitCost mirrors recostFromGrn: live bill price wins, else GRN price; freight added once as a total', () => {
+    const line = { qtyAccepted: 1, unitPriceSen: 1000, exchangeRate: 1, allocatedChargeSen: 0 };
+    expect(receiptUnitCost({ ...line, bills: [] })).toBe(1000);
+    expect(receiptUnitCost({ ...line, bills: [{ qty: 1, unitPriceSen: 1200, exchangeRate: 1, status: 'POSTED', allocatedChargeSen: 0 }] })).toBe(1200);
+    expect(receiptUnitCost({ ...line, bills: [{ qty: 1, unitPriceSen: 1200, exchangeRate: 1, status: 'CANCELLED', allocatedChargeSen: 0 }] })).toBe(1000);
+    expect(receiptUnitCost({ ...line, bills: [{ qty: 1, unitPriceSen: 0, exchangeRate: 1, status: 'POSTED', allocatedChargeSen: 0 }] })).toBe(1000);
+    expect(receiptUnitCost({ ...line, qtyAccepted: 2, allocatedChargeSen: 50, bills: [{ qty: 2, unitPriceSen: 300, exchangeRate: 2, status: 'POSTED', allocatedChargeSen: 50 }] })).toBe(650);
+    expect(receiptUnitCost({ ...line, unitPriceSen: null, bills: [] })).toBeNull();
   });
 
   test('notes carry the tag and the document, never a figure beyond qty', () => {

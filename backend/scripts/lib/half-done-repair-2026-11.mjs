@@ -61,7 +61,7 @@ export const TARGETS = Object.freeze([
 export const EXPLAIN = Object.freeze({
   [KIND.GRN_IN_MISSING_SHIP_UNCOSTED]:
     'GRN line posted, its stock IN never written; the DO that shipped the unit found no lot, so its OUT is uncosted. '
-    + 'Write the IN (cost from the GRN line), and let that DO OUT draw the new lot, as the receipt-time reconcile would have.',
+    + 'Write the IN at the cost the bill recost gives every GRN lot, and let that DO OUT draw the new lot, as the receipt-time reconcile would have.',
   [KIND.GRN_IN_LOST_ON_REPOST]:
     'GRN posted, cancelled (IN reversed), posted again: the second post wrote no IN (the post guard saw the cancelled IN). '
     + 'A lot with no movement behind it stood in for the receipt and the DO shipped from it. '
@@ -212,14 +212,30 @@ export function planCancelledDoOverReversed(f) {
   return { done: false, refusals, writes: [{ type: 'ADJUSTMENT', qty: -excess, unitCost: 0, closeMintedLot: false }], attach, before: f.bucket, after };
 }
 
-/** Unit cost a GRN IN carries: line price at the GRN rate plus the per-unit allocated charge (grns.ts post). */
-export function grnUnitCost({ unitPriceSen, exchangeRate, allocatedChargeSen, qtyAccepted }) {
-  if (unitPriceSen == null) return null;
-  const rate = exchangeRate == null || Number(exchangeRate) <= 0 ? 1 : Number(exchangeRate);
-  const base = Math.round(Number(unitPriceSen) * rate);
-  const q = num(qtyAccepted);
-  const charge = q > 0 ? Math.round(num(allocatedChargeSen) / q) : 0;
-  return base + charge;
+/**
+ * The cost a GRN line's lot carries once its supplier bill exists — a mirror of
+ * recostFromGrn (src/scm/lib/recost.ts), which re-costs every GRN lot when a
+ * bill is posted: the bill's qty-weighted MYR price (DRAFT / CANCELLED bills and
+ * zero prices ignored), else the GRN price at the GRN rate; plus the GRN's and
+ * the bills' allocated freight as a total over the received qty. null = no price
+ * anywhere (recost leaves such a lot "Pending").
+ * @param {{ qtyAccepted: number, unitPriceSen: number|null, exchangeRate: number|null, allocatedChargeSen: number|null,
+ *           bills: Array<{ qty: number, unitPriceSen: number|null, exchangeRate: number|null, status: string|null, allocatedChargeSen: number|null }> }} l
+ */
+export function receiptUnitCost(l) {
+  const rate = (r) => (r == null || !(Number(r) > 0) ? 1 : Number(r));
+  const live = (l.bills ?? []).filter((b) => !['CANCELLED', 'DRAFT'].includes(String(b.status ?? '').toUpperCase()));
+  let bq = 0;
+  let ba = 0;
+  for (const b of live) { const q = num(b.qty); bq += q; ba += q * Math.round(num(b.unitPriceSen) * rate(b.exchangeRate)); }
+  const billGoods = bq > 0 ? Math.round(ba / bq) : 0;
+  const goods = billGoods > 0 ? billGoods
+    : (num(l.unitPriceSen) > 0 ? Math.round(num(l.unitPriceSen) * rate(l.exchangeRate)) : null);
+  if (goods === null) return null;
+  const q = Math.max(0, num(l.qtyAccepted));
+  if (q === 0) return null;
+  const freight = num(l.allocatedChargeSen) + live.reduce((s, b) => s + num(b.allocatedChargeSen), 0);
+  return Math.round((q * goods + freight) / q);
 }
 
 /** The movement notes: the tag, the document, what this row is. No money, no names. */

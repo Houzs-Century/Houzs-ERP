@@ -49,7 +49,7 @@ import { compareDocItems, cancelledResidue } from './lib/half-done-documents.mjs
 import {
   CONFIRM_PHRASE, TAG, KIND, TARGETS, EXPLAIN,
   planGrnInMissingShipUncosted, planGrnInLostOnRepost, planDoOutMissing, planCancelledDoOverReversed,
-  grnUnitCost, movementNotes,
+  receiptUnitCost, movementNotes,
 } from './lib/half-done-repair-2026-11.mjs';
 
 function resolveUrl() {
@@ -103,9 +103,7 @@ async function grnFacts(c, t) {
   if (!g) return { t, missing: true };
   const lines = await c`
     SELECT gi.id, gi.item_code, gi.item_group, gi.variants, gi.qty_accepted, gi.unit_price_sen, gi.allocated_charge_sen,
-           po.po_number, pi.unit_price_sen AS po_price,
-           (SELECT MIN(x.unit_price_sen) FROM scm.purchase_invoice_items x WHERE x.grn_item_id = gi.id) AS pi_price_min,
-           (SELECT MAX(x.unit_price_sen) FROM scm.purchase_invoice_items x WHERE x.grn_item_id = gi.id) AS pi_price_max
+           po.po_number
       FROM scm.grn_items gi
       LEFT JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
       LEFT JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id AND po.company_id = ${CO}
@@ -126,25 +124,24 @@ async function grnFacts(c, t) {
     const downstream = await doOut(c, t.downstreamDo, g.warehouse_id, code, vk);
     const base = { code, line: l, vk, movVks, grnNetIn, batchNo: l.po_number ?? null, bucket: b, downstream };
     if (t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
-      const unitCost = grnUnitCost({ unitPriceSen: l.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: l.allocated_charge_sen, qtyAccepted: l.qty_accepted });
-      /* The same formula against the GRN's other lines that DID get an IN: yes / no, never the figure. */
+      const bills = await c`
+        SELECT x.grn_item_id, x.qty, x.unit_price_sen, x.allocated_charge_sen, p.status::text AS status, p.exchange_rate
+          FROM scm.purchase_invoice_items x JOIN scm.purchase_invoices p ON p.id = x.purchase_invoice_id
+         WHERE p.company_id = ${CO} AND x.grn_item_id = ANY(${lines.map((x) => x.id)}::uuid[])`;
+      const costOf = (x) => receiptUnitCost({
+        qtyAccepted: x.qty_accepted, unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: x.allocated_charge_sen,
+        bills: bills.filter((b) => b.grn_item_id === x.id).map((b) => ({ qty: b.qty, unitPriceSen: b.unit_price_sen, exchangeRate: b.exchange_rate, status: b.status, allocatedChargeSen: b.allocated_charge_sen })),
+      });
+      const unitCost = costOf(l);
+      const billed = bills.filter((b) => b.grn_item_id === l.id && !['CANCELLED', 'DRAFT'].includes(String(b.status).toUpperCase())).length;
+      /* The same rule against the GRN's other lines that DID get an IN: yes / no, never the figure. */
       const siblings = lines.filter((x) => x.item_code !== code).map((x) => {
         const ins = movs.filter((m) => m.item_code === x.item_code && m.movement_type === 'IN');
         if (ins.length === 0) return null;
-        const landed = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: x.allocated_charge_sen, qtyAccepted: x.qty_accepted });
-        const priceOnly = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: 0, qtyAccepted: x.qty_accepted });
-        const is = (v) => ins.every((m) => Number(m.unit_cost_sen) === v);
-        /* A line ADDED to a posted GRN gets price only (grns.ts line-add); a line posted with the GRN gets the landed cost. */
-        return { code: x.item_code, matches: is(landed) ? 'landed (price + charge)' : is(priceOnly) ? 'price only (line added after post)' : 'neither',
-          poPrice: x.po_price != null && is(Number(x.po_price)), piPrice: x.pi_price_min != null && is(Number(x.pi_price_min)),
-          lineEqPo: x.po_price != null && Number(x.po_price) === Number(x.unit_price_sen) };
+        const v = costOf(x);
+        return { code: x.item_code, same: v != null && ins.every((m) => Number(m.unit_cost_sen) === v) };
       }).filter(Boolean);
-      const hasCharge = Number(l.allocated_charge_sen ?? 0) > 0;
-      const priceAgree = {
-        po: l.po_price != null && Number(l.po_price) === Number(l.unit_price_sen),
-        pi: l.pi_price_min != null && Number(l.pi_price_min) === Number(l.unit_price_sen) && Number(l.pi_price_max) === Number(l.unit_price_sen),
-      };
-      items.push({ ...base, unitCost, siblings, hasCharge, priceAgree, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
+      items.push({ ...base, unitCost, siblings, billed, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
     } else {
       const lots = await c`
         SELECT l.id, l.qty_received, l.qty_remaining, l.unit_cost_sen, l.movement_id, l.source_doc_type, l.received_at,
@@ -271,6 +268,7 @@ function refusalsOf(facts) {
     for (const it of f.items) {
       if (it.missingLine) { out.push(`${f.t.docNo} ${it.code}: no such line`); continue; }
       if (it.movVks && it.movVks.some((v) => v !== it.vk)) out.push(`${f.t.docNo} ${it.code}: the GRN's movements carry another spec than the line`);
+      if ((it.siblings ?? []).some((x) => !x.same)) out.push(`${f.t.docNo} ${it.code}: the cost rule does not reproduce the cost of the GRN's other lines`);
       for (const r of it.plan.refusals) out.push(`${f.t.docNo} ${it.code}: ${r}`);
     }
   }
@@ -326,9 +324,8 @@ function printPlan(facts, whName) {
       if (it.plan.done) { note(`  ALREADY DONE: the GRN's IN for ${it.code} matches the line. Nothing to write.`); continue; }
       note(`    ${f.t.downstreamDo} OUT in this bucket: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
       if (f.t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
-        note(`    unit cost: the post-time rule (price at the GRN rate + allocated charge per unit, charge ${it.hasCharge ? 'present' : 'none'}): ${it.unitCost == null ? 'NONE' : 'present'}`);
-        note(`    this line's price equals its PO line price: ${it.priceAgree.po ? 'yes' : 'NO'}; equals its supplier-bill price: ${it.priceAgree.pi ? 'yes' : 'NO'}`);
-        note(`    the GRN's other lines with an IN carry: ${it.siblings.map((s) => `${s.code} ${s.matches}; IN == PO price ${s.poPrice ? 'yes' : 'no'}, == bill price ${s.piPrice ? 'yes' : 'no'}, line price == PO price ${s.lineEqPo ? 'yes' : 'no'}`).join(', ') || 'no other line'}`);
+        note(`    unit cost: the rule the bill recost applies to every GRN lot (recostFromGrn): ${it.unitCost == null ? 'NONE' : 'present'}; live supplier-bill lines on this GRN line: ${it.billed}`);
+        note(`    the same rule on the GRN's other lines with an IN reproduces their cost: ${it.siblings.map((s) => `${s.code} ${s.same ? 'yes' : 'NO'}`).join(', ') || 'no other line'}`);
       } else {
         const s = it.standIn;
         note(`    stand-in lot: ${s ? `${short(s.id)} received ${s.qtyReceived}, left ${s.qtyRemaining}, movement behind it: ${s.hasMovement ? 'YES' : 'none'}, drawn by ${s.consumedBy.join(', ') || '-'}, at ${new Date(s.receivedAt).toISOString()}` : 'NOT FOUND'}`);
