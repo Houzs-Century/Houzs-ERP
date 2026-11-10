@@ -213,9 +213,57 @@ describe('the statement table', () => {
     const tax = cellsOf('Taxation');
     expect(tax.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['50.002.5%', null], ['50.00', '2']]);
     expect(tax[1]!.className).toMatch(/cellAcross/);
-    expect(cellsOf('Finance cost').map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['7.00—', null], ['-', '2']]);
-    /* No rule between a month's two columns; the month ends with one. */
+    /* A month without the line: one empty cell across it (owner 2026-11-10: the dashes made it busy). */
+    expect(cellsOf('Finance cost').map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['7.00—', null], ['', '2']]);
+    /* No full rule between a month's two columns; the month ends with one. */
     expect(screen.getByRole('columnheader', { name: 'Settlement' }).className).not.toMatch(/colRule/);
+  });
+
+  /* Owner 2026-11-10 (the Cash Flow's Settlement / Deposit view: 这个顺便可以做好看一点吗? → 做, on the
+     mock): every other month on a faint band, a firm rule between months and a faint dashed one
+     between Settlement | Deposit, the month's name underlined across its two columns, a petrol mark
+     before Settlement and a gold one before Deposit, no dash where a share is nil (Total keeps its
+     dash), and a block title as a shaded band rather than a row of empty cells. */
+  test('the Settlement / Deposit look: month bands, rules, marks, empty shares, title bands', () => {
+    const oct = { key: '2026-10', label: 'Oct 2026' };
+    const sep = { key: '2026-09', label: 'Sep 2026' };
+    const part = (month: typeof oct, p: 'S' | 'D'): StatementColumn => ({
+      key: `${month.key}:${p}`, label: p === 'S' ? 'Settlement' : 'Deposit', kind: 'period', from: `${month.key}-01`, to: `${month.key}-28`,
+      pct: false, group: month, mark: p === 'S' ? 'petrol' : 'gold',
+    });
+    const cols: StatementColumn[] = [COLS[0]!, part(oct, 'S'), part(oct, 'D'), part(sep, 'S'), part(sep, 'D')];
+    const lines: StatementLine[] = [
+      { id: 'blk:in', label: 'CASH IN', kind: 'block' as const, depth: 0, cells: {} },
+      { id: 'dep', label: 'Deposit received', kind: 'row' as const, depth: 1, cells: { total: { amountSen: 9_000, pct: 100 }, '2026-10:D': { amountSen: 4_000, pct: null }, '2026-09:D': { amountSen: 5_000, pct: null } } },
+      { id: 'adv', label: 'Supplier advances', kind: 'row' as const, depth: 1, cells: { '2026-10:S': { amountSen: 300, pct: null } }, spans: { '2026-10:S': 2, '2026-09:S': 2 } },
+    ];
+    render(<Grid columns={cols} lines={lines} />);
+    const table = screen.getByRole('table', { name: 'Cash flow' });
+    expect(table.className).toMatch(/tableGrouped/);
+
+    const [top, parts] = screen.getAllByRole('rowgroup')[0]!.querySelectorAll('tr');
+    /* The newest month on the band, the next one plain, and so on. */
+    const monthHeads = [...top!.querySelectorAll('th[data-group]')];
+    expect(monthHeads.map((h) => [h.getAttribute('data-group'), /band/.test(h.className)])).toEqual([['2026-10', true], ['2026-09', false]]);
+    /* Each column's mark, beside a name that still reads plainly. */
+    expect([...parts!.querySelectorAll('[data-mark]')].map((m) => m.getAttribute('data-mark'))).toEqual(['petrol', 'gold', 'petrol', 'gold']);
+    expect(screen.getAllByRole('columnheader', { name: 'Settlement' })).toHaveLength(2);
+
+    const tds = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')];
+    const dep = tds('Deposit received');
+    /* Total, Oct S, Oct D, Sep S, Sep D: a nil share is empty, the money where it belongs. */
+    expect(dep.map((td) => td.textContent)).toEqual(['90.00100.0%', '', '40.00', '', '50.00']);
+    expect(dep.map((td) => /band/.test(td.className))).toEqual([false, true, true, false, false]);
+    /* Inside a month a faint dashed rule, a firm one where the month ends (none after the last). */
+    expect(dep.map((td) => (/partRule/.test(td.className) ? 'part' : /groupRule/.test(td.className) ? 'month' : ''))).toEqual(['', 'part', 'month', 'part', '']);
+    /* A line with no Total keeps the Total's dash; across a month with nothing, an empty cell. */
+    const adv = tds('Supplier advances');
+    expect(adv.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['--', null], ['3.00', '2'], ['', '2']]);
+    expect(/band/.test(adv[1]!.className)).toBe(true);
+    /* The block title is a band of its own: no month band through it. */
+    const block = screen.getByText('CASH IN').closest('tr')!;
+    expect(block.className).toMatch(/rowBlock/);
+    expect([...block.querySelectorAll('td')].some((td) => /band/.test(td.className))).toBe(false);
   });
 });
 

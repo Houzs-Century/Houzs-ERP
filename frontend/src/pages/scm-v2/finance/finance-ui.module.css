@@ -14,6 +14,9 @@
   --fin-input: #c2c6bd;
   --fin-paper: #f4f6f3;
   --fin-row: #f9faf8;
+  /* A wash, not a fill: every other month of a statement whose months share a heading
+     (the Cash Flow's Settlement / Deposit, owner 2026-11-10), over whatever a row wears. */
+  --fin-band: rgba(17, 20, 15, 0.03);
   --fin-surface: #ffffff;
   --fin-petrol: #16695f;
   --fin-petrol-ink: #0c3f39;
