@@ -58,6 +58,7 @@ import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCre
 import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
 import { mirrorRefundBestEffort, removeMirrorRowsBestEffort } from '../lib/so-payment-row';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
+import { matchBankLinesNamingVoucher } from './accounting-bank';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
 import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
@@ -986,6 +987,23 @@ paymentVouchers.patch('/:id/text', updatePaymentVoucherTextHandler);
 /* Exported for the same reason cancelPaymentVoucherHandler is: the supabaseAuth
    bridge cannot run in the vitest harness, so the tests mount the handler on a bare
    Hono app with a fake PostgREST client (precedent: tests/companyScopeHardening.test.ts). */
+/** Best-effort: a voucher is posted whatever its bank line says — a bank read
+    that fails leaves the line for "Match the obvious ones now", and says why
+    in the log. */
+const matchVoucherOnBankBestEffort = async (
+  sb: any, companyId: number | null, pvNumber: string | null, creditAccountCode: string | null, actor: string | null,
+): Promise<void> => {
+  if (companyId == null) return;
+  try {
+    const r = await matchBankLinesNamingVoucher(sb, companyId, { pvNumber, creditAccountCode }, actor);
+    // eslint-disable-next-line no-console
+    if (!r.ok) console.error('[payment-vouchers] bank line not matched after post:', pvNumber, r.reason);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[payment-vouchers] bank line not matched after post:', pvNumber, err instanceof Error ? err.message : String(err));
+  }
+};
+
 export const postPaymentVoucherHandler = async (c: any) => {
   /* The approve key implies the post door — approval IS the posting now
      (owner 2026-09-02: 当approved 了才会进gl), and approvePaymentVoucherHandler
@@ -1148,6 +1166,11 @@ export const postPaymentVoucherHandler = async (c: any) => {
       fieldChange('postedTotalSen', null, totalSen),
     ]),
   });
+
+  /* Its payment may already be on a bank statement, the line naming this
+     voucher or the Draft number it went out under: matched now, as an upload
+     would have (owner 2026-11-10: 直接配那张 PV，不管差几天). */
+  await matchVoucherOnBankBestEffort(sb, companyId, pv.pv_number, pv.credit_account_code, approvalActor(c));
 
   /* PV→PI settlement (migration 0202) — a SUPPLIER_PAYMENT PV decrements each
      linked PI's paid_sen at FACE VALUE. Runs EXACTLY ONCE (the active-JE

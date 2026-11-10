@@ -12,7 +12,7 @@ describe('SO -> PO carries a Sofa Accessory colour', () => {
     const variants = { fabricId: 'NICCA', fabricCode: 'NICCA-07', colourLabel: 'NICCA-07', extraAddonNote: 'Col:Nicca-07' };
     const row = poConvertLineRow('po-1', {
       itemCode: code, itemName: code, qty: 1, supplierSku: code, unitPriceSen: 0, warehouseId: null,
-      deliveryDate: null, itemGroup: 'fabric_accessory', variants, soItemId: 'so-line-1', photoUrls: [],
+      deliveryDate: null, itemGroup: 'fabric_accessory', variants, soItemId: 'so-line-1', photoUrls: [], notes: null,
     }, true, 'fabric_accessory');
     expect(row.item_group).toBe('fabric_accessory');
     expect(row.so_item_id).toBe('so-line-1');
@@ -25,7 +25,7 @@ describe('SO -> PO carries a Sofa Accessory colour', () => {
     const variants = { fabricCode: 'BO315-28', extraAddonNote: 'BO315-28 SKY x2' };
     const row = poConvertLineRow('po-1', {
       itemCode: 'SQUARE PILLOW', itemName: 'SQUARE PILLOW', qty: 1, supplierSku: 'SQUARE PILLOW', unitPriceSen: 0, warehouseId: null,
-      deliveryDate: null, itemGroup: 'fabric_accessory', variants, soItemId: 'so-line-1', photoUrls: [],
+      deliveryDate: null, itemGroup: 'fabric_accessory', variants, soItemId: 'so-line-1', photoUrls: [], notes: null,
     }, true, 'fabric_accessory');
     expect(row.description2).toBe('BO315-28 / SPECIAL: BO315-28 SKY x2');
   });

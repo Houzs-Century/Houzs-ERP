@@ -1553,6 +1553,19 @@ export function notThisOf(v: unknown): string[] {
   return Array.isArray(v) ? v.map(String) : [];
 }
 
+const PAYMENT_KEY = /^(SOPAY|SIPAY):[A-Za-z0-9_-]{1,64}$/;
+/** The most payments one press may name — a guess is one payment or one small set. */
+export const MAX_TURNED_DOWN = 50;
+
+/** The payments a "Not this" press names, from its request body: a list of
+    "SOPAY:<id>" / "SIPAY:<id>" keys, or nothing. Null = not that shape. */
+export function turnedDownKeysOf(v: unknown): string[] | null {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > MAX_TURNED_DOWN) return null;
+  if (!v.every((k) => typeof k === 'string' && PAYMENT_KEY.test(k))) return null;
+  return [...new Set(v as string[])];
+}
+
 /** "Not this" (owner 2026-11-03, batch 3 d2: 「可以」). The machine matched an
     UNCONFIRMED line to a payment — by its reference, at upload or on a rematch —
     and a person says it is not that sale. The line goes back to the deciding
@@ -1564,9 +1577,15 @@ export function notThisOf(v: unknown): string[] {
 
     The line is written before the links go: a press that stops between the two
     leaves the memory and the bucket right and the links still there, and the
-    next press finishes; the other order would lose the memory. */
+    next press finishes; the other order would lose the memory.
+
+    THE SYSTEM'S GUESS (owner 2026-11-10: 这个 system guess 的，如果我确定了不是有
+    没有按钮可以按不是了). A guess is no link — the report works it out each time
+    it is read — so the screen names the payments it showed (`guessed`) and
+    those are what the line remembers. A line holding a link releases the link,
+    whatever the screen names: the link is what the machine decided. */
 export async function releaseSettlementRow(
-  sb: any, companyId: number, rowId: number,
+  sb: any, companyId: number, rowId: number, guessed: readonly string[] = [],
 ): Promise<{ ok: true; released: string[] } | { ok: false; status: string; reason: string }> {
   const { data: rowRaw, error } = await sb.from('acc_settlement_rows')
     .select('id, confirmed_at, bucket, not_this').eq('id', rowId).eq('company_id', companyId).maybeSingle();
@@ -1582,17 +1601,24 @@ export async function releaseSettlementRow(
   const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
     .select('payment_source, payment_id').eq('company_id', companyId).eq('settlement_row_id', row.id);
   if (lErr) return { ok: false, status: 'load_failed', reason: lErr.message };
-  const released = ((linkRaw ?? []) as Array<{ payment_source: string; payment_id: string }>)
+  const links = ((linkRaw ?? []) as Array<{ payment_source: string; payment_id: string }>)
     .map((l) => `${l.payment_source}:${l.payment_id}`);
+  const released = links.length > 0 ? links : [...new Set(guessed)];
   if (released.length === 0) {
     return { ok: false, status: 'nothing_matched', reason: 'This line holds no payment — there is nothing to release.' };
   }
+  /* A released link sends the line back to be chosen. A turned-down guess only
+     adds to the memory: the line's own pile (to choose, no sale) stays its own —
+     unless it was filed as MATCHED, which no line without its link is. */
+  const backToChoose = links.length > 0 || row.bucket === 'MATCHED';
   const { error: upErr } = await sb.from('acc_settlement_rows').update({
-    bucket: 'NEEDS_CONFIRM', match_reason: null,
+    ...(backToChoose ? { bucket: 'NEEDS_CONFIRM', match_reason: null } : {}),
     not_this: [...new Set([...notThisOf(row.not_this), ...released])],
     updated_at: new Date().toISOString(),
   }).eq('id', row.id).eq('company_id', companyId);
   if (upErr) return { ok: false, status: 'update_failed', reason: upErr.message };
+  /* A guess held no link: the memory is the whole of it. */
+  if (links.length === 0) return { ok: true, released };
   const { error: delErr } = await sb.from('acc_settlement_matches').delete()
     .eq('company_id', companyId).eq('settlement_row_id', row.id);
   if (delErr) {
