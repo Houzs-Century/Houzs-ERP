@@ -56,13 +56,14 @@ import {
 import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
+import { useBandedBoard, useBoardCounts, sumDelivered } from '../../vendor/scm/lib/delivery-board-bands';
+import { BoardLoadStatus, stillLoadingMessage } from '../../vendor/scm/components/BoardLoadStatus';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator, mergeShownOrder } from '../../vendor/scm/lib/delivery-row-order';
 import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
 import {
-  useDeliveryPlanning,
   useConvertSosToDo,
   useCancelDpOrder,
   useScheduleDelivery,
@@ -268,17 +269,20 @@ export const DeliveryPlanning = () => {
      click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
      locally it is instant and the region chip no longer triggers a load. */
   /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
-     every edit - 2026-10-26); All and Delivered still read every row. */
+     every edit - 2026-10-26). Rows arrive in date bands, within 15 days of today
+     first, the rest in the background; counts come first (delivery-board-bands.ts). */
   // Others' changes show within 30 s, only the changed orders re-read (board-change-poll.ts).
   useBoardChangePoll();
   const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
-  const { data, isLoading: firstLoad, isPlaceholderData, error } = useDeliveryPlanning({ region: 'ALL', state: needsDelivered ? 'ALL' : 'OPEN' });
-  const isLoading = firstLoad || (needsDelivered && isPlaceholderData);
+  const bands = useBandedBoard({ state: needsDelivered ? 'ALL' : 'OPEN', first: 1 });
+  const serverCounts = useBoardCounts(true).data?.counts_by_region;
+  const isLoading = bands.firstLoading;
+  const error = bands.parts.length === 0 && bands.failed ? bands.failed.error : null;
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
      returned the list yet. */
-  const regionTabs = useMemo(() => regionTabsFrom(data?.regions), [data?.regions]);
+  const regionTabs = useMemo(() => regionTabsFrom(bands.regions), [bands.regions]);
   const activeRegionLabel = regionTabs.find((r) => r.key === activeRegion)?.label ?? 'All';
 
   const setState = (s: string) => {
@@ -303,7 +307,7 @@ export const DeliveryPlanning = () => {
   /* Every fetched order (all regions). The active region chip filters this
      locally; valid region keys come from the chip list (an unknown/stale key is
      a defensive no-op, never an empty board). */
-  const fetchedOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
+  const fetchedOrders = bands.orders;
   const regionKeys = useMemo(() => new Set(regionTabs.map((r) => r.key)), [regionTabs]);
   const allOrders = useMemo<PlanningOrder[]>(
     () => filterOrdersByRegion(fetchedOrders, activeRegion, regionKeys),
@@ -312,12 +316,16 @@ export const DeliveryPlanning = () => {
   /* State-tab badges over the region-filtered set, so they reflect the active
      region exactly as the server's region-scoped counts did. */
   const counts = useMemo<PlanningCounts>(() => {
+    // Until every band is in, the server's counts (every order, counted before the rows).
+    const server = serverCounts?.[regionKeys.has(activeRegion) ? activeRegion : 'ALL'];
+    if (!bands.complete && server) return server;
     const c = planningCountsFrom(allOrders);
-    if (!data?.delivered_by_region) return c;
-    // OPEN fetch: Delivered rows were left out, their per-region count came along.
-    const delivered = activeRegion === 'ALL' ? data.counts.DELIVERED : (data.delivered_by_region[activeRegion] ?? 0);
+    if (needsDelivered) return c;
+    // OPEN bands: Delivered rows were left out, each band counted its own.
+    const d = sumDelivered(bands.parts);
+    const delivered = activeRegion === 'ALL' ? d.total : (d.byRegion[activeRegion] ?? 0);
     return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
-  }, [allOrders, data, activeRegion]);
+  }, [allOrders, serverCounts, bands.complete, bands.parts, activeRegion, regionKeys, needsDelivered]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all
@@ -573,9 +581,11 @@ export const DeliveryPlanning = () => {
         }
       />
 
+      <BoardLoadStatus updatedAt={bands.updatedAt} bands={bands} />
       <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={allOrders}
+        emptyMessage={stillLoadingMessage(bands, 'No orders need delivering in this view.')}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         onApplyLayoutPreset={(id) => {

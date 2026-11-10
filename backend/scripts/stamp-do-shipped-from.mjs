@@ -20,7 +20,12 @@
    ship-from warehouse -> the rack(s) the GRN line recorded (grn_item_racks split,
    else grn_items.rack_id), oldest GRN first, capped at the line qty (owner rule
    2026-11-10). A PO whose GRN recorded no rack gets no rack.
-   A line about which nothing is known stays NULL and keeps the worked-out answer.
+   ONLY A COMPLETE LINE IS LOCKED (owner decision 2026-11-10): a rack known for
+   the full line qty AND a PO (or stock-adjustment lot) known for the full line
+   qty. Any other line stays NULL, keeps the worked-out answer, and is retried by
+   the nightly pass (scm/lib/do-shipped-from-retry.ts) until its GRN gets a rack.
+   The plan prints per line either "lock" or "leave open: no rack for N of M" /
+   "no PO for N of M".
 
    MODE=plan (default) prints, per DO, what each line would lock and writes nothing.
    MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN" and writes one line at a
@@ -97,19 +102,19 @@ async function main() {
     assertNoShimGaps(d.do_number);
     if (!plan) { bad(`  ${d.do_number}: lines unreadable, skipped`); continue; }
     const open = plan.lines.filter((l) => !l.shipped_from && Number(l.qty) > 0);
-    note(`  ${d.do_number} (${d.status}, company ${d.company_id}): ${plan.stamps.size} of ${open.length} unstamped line(s) can be locked`);
+    note(`  ${d.do_number} (${d.status}, company ${d.company_id}): ${plan.stamps.size} of ${open.length} unstamped line(s) complete, will lock`);
     for (const l of open) {
       const s = plan.stamps.get(l.id);
       if (s) {
-        note(`      ${String(l.item_code ?? "-").padEnd(24)} qty ${l.qty}  ${describe(s)}`);
+        note(`      ${String(l.item_code ?? "-").padEnd(24)} qty ${l.qty}  lock  ${describe(s)}`);
         writes.push({ doNo: d.do_number, companyId: d.company_id, lineId: l.id, stamp: s });
       } else {
         unknownLines += 1;
-        note(`      ${String(l.item_code ?? "-").padEnd(24)} qty ${l.qty}  nothing known (service line, or no lot / rack trail) - left unstamped`);
+        note(`      ${String(l.item_code ?? "-").padEnd(24)} qty ${l.qty}  leave open: ${plan.open.get(l.id) || "nothing known"}`);
       }
     }
   }
-  note(`\n  lines to lock: ${writes.length}   left unstamped: ${unknownLines}`);
+  note(`\n  lines to lock: ${writes.length}   left open: ${unknownLines}`);
 
   if (!APPLY) {
     note(`\nPLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);

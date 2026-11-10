@@ -64,6 +64,7 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = [], n
   });
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
+import { returnDoUnitsAtCost, returnedAsInRow, describeFailedReturns, type DoUnitReturn } from '../lib/do-resync-return';
 import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
@@ -126,7 +127,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
-import { stampDoShippedFrom, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
+import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1179,11 +1180,11 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-ship failed:', e); }
   }
   /* REC P4 — physical RACK stock-out (counterpart of the GRN placement), then lock each line's PO(s) and rack(s)
-     onto it (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
+     onto it after the response (lib/do-shipped-from-stamp.ts, write-once). Both best-effort; neither blocks the ship. */
   try {
     await stockOutDoLinesFromRacks(sb, deliveryOrderId, doNo, performedBy, lineWh, items as Array<Record<string, unknown>>, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] stock-out failed:', e); }
-  await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
   return movementErrors;
 }
 
@@ -1371,9 +1372,8 @@ export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, do
 
    Why DELTA inserts instead of UPDATE in place: the FIFO trigger (migration
    0053) fires AFTER INSERT, not UPDATE. Updating qty on an existing OUT row
-   would leave the lot/consumption ledger stale. A fresh IN insert lets the
-   trigger create a new lot at the original cost basis; a fresh OUT insert lets
-   it consume more lots.
+   would leave the lot/consumption ledger stale. A return restores the lots that
+   paid (lib/do-resync-return.ts, never a new lot); a fresh OUT consumes more.
 
    HOW THE DELTA ROWS ESCAPE THE PER-BUCKET UNIQUE (migration 0279).
    Production carries a PARTIAL UNIQUE index on this path's own key. Until 0279
@@ -1559,15 +1559,10 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
   const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (mig 0291, file says 0286), not through
-     `writes`: the function writes its own balancing IN, and restoring the lots
-     and writing that row must be one transaction. Collected here so a failure
-     can fall back to the legacy blended row. */
-  const returns: Array<{
-    warehouse_id: string; item_code: string; variant_key: string;
-    batch_no: string | null; qty: number; correction_seq: number;
-    fallback: MovOut;
-  }> = [];
+  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (lib/do-resync-return.ts),
+     not through `writes`: the function writes its own balancing IN, and restoring
+     the lots and writing that row must be one transaction. */
+  const returns: DoUnitReturn[] = [];
   for (const k of allKeys) {
     const t = targetByBucket.get(k);
     const a = aggByBucket.get(k) ?? { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: null, max_seq: 0 };
@@ -1605,74 +1600,23 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
         ...(batch_no ? { batch_no } : {}),
       });
     } else {
-      /* delta < 0 — a line qty was reduced or the line deleted. Give the stock
-         back AT ORIGINAL COST: fn_return_do_units_at_cost (mig 0291) returns each
-         unit to the lot that paid for it and writes its own balancing IN at
-         cost 0, so a priced row here would double-count the value.
-         The fallback is the old blended-average IN, which mixes costed with
-         uncosted units ("ship anyway" leaves short units at cost 0) and is wrong
-         either way. Kept only for a database without 0286, where posting nothing
-         would leave shipped stock permanently deducted. */
-      const unit_cost_sen = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
-      returns.push({
-        warehouse_id, item_code, variant_key, batch_no,
-        qty: -delta,
-        correction_seq,
-        fallback: {
-          movement_type: 'IN',
-          warehouse_id,
-          item_code, variant_key, product_name,
-          qty: -delta,
-          unit_cost_sen,
-          source_doc_type: 'DO',
-          source_doc_id: deliveryOrderId,
-          source_doc_no: doNo,
-          correction_seq,
-          performed_by: performedBy,
-          notes: 'Resync: line qty reduced / line deleted (shipped DO).',
-          ...(batch_no ? { batch_no } : {}),
-        },
-      });
+      /* delta < 0 — a line qty was reduced, the line deleted, or its spec changed.
+         Each unit goes back to the lot that paid for it, at that lot's cost; the
+         function writes its own balancing IN at cost 0. */
+      returns.push({ warehouse_id, item_code, variant_key, batch_no, qty: -delta, correction_seq });
     }
   }
 
-  /* Run the qty RETURNS first (0286): a bucket that succeeds contributes nothing
-     to `writes`, one that fails falls back to its blended row. Per-bucket try —
-     the buckets are independent, so one failure must not abandon the rest.
-     rpcHandled holds the buckets that succeeded. They are NOT in `writes`, but
-     they DID re-open lots, so they must still reach reconcileUncostedAfterIn (a
-     restored lot retro-costs an earlier "ship anyway" OUT just as a fresh IN
-     does) and still count as "the ledger changed" below — gating that on
-     `writes.length` alone would skip every reduction the function handled. */
-  const rpcHandled: MovOut[] = [];
-  for (const r of returns) {
-    let handled = false;
-    try {
-      const { error: rtErr } = await sb.rpc('fn_return_do_units_at_cost', {
-        p_do_id: deliveryOrderId,
-        p_warehouse_id: r.warehouse_id,
-        p_item_code: r.item_code,
-        p_variant_key: r.variant_key,
-        p_batch_no: r.batch_no,
-        p_qty: r.qty,
-        p_correction_seq: r.correction_seq,
-        p_performed_by: performedBy ?? null,
-        p_notes: 'Resync: line qty reduced / line deleted (shipped DO).',
-      });
-      if (!rtErr) handled = true;
-      else if (!(rtErr.message ?? '').includes('fn_return_do_units_at_cost')) {
-        /* eslint-disable-next-line no-console */
-        console.error('[do-resync] return-at-cost fn failed (falling back to blended IN):', rtErr.message);
-      }
-    } catch (e) {
-      /* eslint-disable-next-line no-console */
-      console.error('[do-resync] return-at-cost fn exception (falling back to blended IN):', e);
-    }
-    if (handled) rpcHandled.push(r.fallback);
-    else writes.push(r.fallback);
-  }
+  /* Returns first. If any bucket could not go back to its lots, NO delta is
+     written: a spec change must not take the new bucket's units while the old
+     bucket's are still out, and the next save retries the whole delta. Returned
+     buckets re-opened lots, so they still reach reconcileUncostedAfterIn and
+     count as "the ledger changed" below. */
+  const { handled, failed } = await returnDoUnitsAtCost(sb, deliveryOrderId, returns, performedBy ?? null);
+  const rpcHandled = handled.map(returnedAsInRow);
+  if (failed.length > 0) writes.length = 0;
 
-  if (writes.length > 0 || rpcHandled.length > 0) {
+  if (writes.length > 0 || rpcHandled.length > 0 || failed.length > 0) {
     // Multi-company: resync movements inherit the DO's company.
     const wrote = writes.length > 0
       ? await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null)
@@ -1685,9 +1629,12 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
        best-effort (an edit must not be rolled back for a ledger hiccup), but a
        failure now leaves an audit row naming the DO, the buckets and the reason,
        so /inventory/reconcile and a human have something to find. */
-    if (!wrote.ok) {
+    const failNote = !wrote.ok
+      ? `the resync delta movements were NOT written (${writes.length} row(s)): ${wrote.reason ?? 'unknown'}`
+      : failed.length > 0 ? `stock could not be returned to its lots, so no delta was written: ${describeFailedReturns(failed)}` : null;
+    if (failNote) {
       /* eslint-disable-next-line no-console */
-      console.error(`[do-resync] movement write FAILED for DO ${deliveryOrderId}: ${wrote.reason ?? 'unknown'}`);
+      console.error(`[do-resync] DO ${deliveryOrderId}: ${failNote}`);
       try {
         // Same shape as the GRN recount-failure precedent (grns.ts): the edit
         // stands, the trail records that the ledger did not follow it.
@@ -1698,15 +1645,11 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
           action: 'RECOUNT_FAILED',
           companyId: (doHeader as { company_id?: number | null }).company_id ?? null,
           source: 'resyncInventoryForDo',
-          note:
-            `Line edit committed on a shipped DO but the resync delta movements were NOT written ` +
-            `(${writes.length} row(s)): ${wrote.reason ?? 'unknown'}. The ledger does not reflect this edit ` +
-            `until /inventory/reconcile or a re-save repairs it.`,
+          note: `Line edit committed on a shipped DO but ${failNote}. The ledger does not reflect this edit until a re-save repairs it.`,
         });
       } catch { /* audit is best-effort too — the console line above still stands */ }
-      // Nothing changed in the ledger, so the downstream re-costing steps would
-      // only re-read the stale state — skip them.
-      return;
+      // Nothing (else) changed in the ledger, so re-costing would re-read stale state.
+      if (!wrote.ok || rpcHandled.length === 0) return;
     }
     /* Oversell retro-cost (0154) — a reduced / deleted line on a shipped DO gives
        stock BACK (a lot-opening IN), so a prior "ship anyway" DO that went out at
@@ -1717,7 +1660,7 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     /* Costing C — line set changed → re-derive each line's actual FIFO cost
        from the now-current movements (ship OUT + these resync deltas). */
     await restampDoActualCost(sb, deliveryOrderId);
-    await stampDoShippedFrom(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
+    await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
     /* Resync changed stock — re-walk SO allocation. Best-effort. */
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');

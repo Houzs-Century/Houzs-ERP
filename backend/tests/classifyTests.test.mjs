@@ -225,6 +225,10 @@ test("the real backend tree classifies, and the split is not degenerate", async 
    So the protection is stated here rather than left to a side effect. Adding a
    suite to this list is a claim that its assertion must stop a MERGE. */
 const MUST_GATE_MERGE = [
+  /* The DO-return RPC and the SQL function it calls must agree by parameter and
+     column name. Both drifted (2026-08-18 and 0291), every shipped-DO edit then
+     minted a lot with no PO, and no deploy check notices: the call just fails. */
+  "tests/doResyncReturnContract.test.ts",
   "tests/sofaAccessoryIngress.test.ts",
   "tests/sofaQuickPickLayouts.test.ts",
   "src/scm/lib/sofa-accessory-order.test.ts",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { pickDisplayCrew } from '../src/scm/lib/crew-display';
+import { pickDisplayCrew } from '../src/scm/routes/delivery-planning-fields';
 
 /* Regression: a Sales Order can carry several delivery orders and crew is a
    per-DO snapshot, so the driver the planner assigned lived on one DO. The board
