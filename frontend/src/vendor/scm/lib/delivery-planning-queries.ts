@@ -294,6 +294,9 @@ export type PlanningOrder = {
     driver_2_name: string | null;
     helper_1_name: string | null; helper_2_name: string | null;
     lorry_plate: string | null;
+    /** True when the driver was only TYPED on the DO form: no fleet record, so no
+     *  IC / phone. The board asks for the real driver to be picked. */
+    driver_1_typed?: boolean;
   } | null;
   delivery_orders: Array<{ id: string; do_number: string; status: string }>;
   /* ── Arrangement pipeline (owner spec 2026-08-07) — DERIVED server-side by

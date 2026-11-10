@@ -132,6 +132,7 @@ export const SKIP_LABEL: Record<string, string> = {
 /** The per-customer block reasons, phrased for the operator. */
 const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> = {
   no_driver: 'No driver on these orders — set the Driver column on the row first.',
+  not_linked: 'This driver was typed on the delivery order, not picked from Fleet, so there is no IC or phone. Pick the driver in the Driver column first.',
   no_contact: 'This driver has no contact on file — add it in Fleet first.',
   no_time: 'No Time Slot on the row — type a delivery time to send this customer.',
 };

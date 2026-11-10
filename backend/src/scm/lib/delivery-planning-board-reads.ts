@@ -53,8 +53,11 @@ export function kickOffBoardReads(
   );
   const doRowsReadP = chunkIn<DeliveryOrderExecRow>(docNos, (batch, from, to) =>
     sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
-      .in('so_doc_no', batch).order('id').range(from, to),
+      .select('id, do_number, so_doc_no, status, driver_id, driver_name, vehicle, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
+      // Oldest first, so "the last DO" (whose crew the row shows and the crew cells
+      // write) is the NEWEST one, the same DO latestLiveDoIdForSo picks; by id alone
+      // it was whichever UUID sorted last.
+      .in('so_doc_no', batch).order('created_at').order('id').range(from, to),
   );
   return { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP };
 }
