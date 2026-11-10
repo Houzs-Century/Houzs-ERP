@@ -25,6 +25,7 @@ import { Save, Trash2, X, Send } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { useCreatePaymentVoucher, useSubmitPaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { aiReadStageNote } from '../../vendor/scm/lib/ai-read-job';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
@@ -271,7 +272,7 @@ export const PaymentVoucherNew = () => {
         name: f.name, mime: docFileMime(f),
         dataBase64: await fileToBase64(f),
       })));
-      const res = await extract.mutateAsync([{ files }]);
+      const res = await extract.mutateAsync({ bills: [{ files }], onStage: (_i, stage) => { setScanNote(aiReadStageNote(stage, 'the bill')); } });
       const bill = res.bills[0];
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
@@ -445,7 +446,10 @@ export const PaymentVoucherNew = () => {
      on the request's event, under the account this vendor was last paid from;
      the bill's number and date join the notes; a total that differs from the
      amount asked is said out loud. The payee stays the one the requester named. */
-  const extractRequest = useExtractRequestBill();
+  const extractRequest = useExtractRequestBill((stage) => {
+    const r = requestQ.data?.request;
+    if (r) setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. ${aiReadStageNote(stage, 'its bill')}`);
+  });
   const requestRead = useRef(false);
   useEffect(() => {
     const r = requestQ.data?.request;

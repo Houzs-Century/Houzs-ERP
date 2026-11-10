@@ -53,7 +53,7 @@
 // 503 anthropic_key_missing and never breaks the worker or tsc.
 // ---------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId } from '../lib/companyScope';
@@ -70,6 +70,7 @@ import { slipBindings, expiresInOneHour } from '../lib/slip';
 import { buildSlipKey, type SlipMime } from '../lib/r2';
 import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
+import { aiReadEnqueue, aiReadPoll, type AiReadSplit } from '../lib/ai-read-jobs';
 
 // scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase).
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -377,7 +378,7 @@ async function persistReceiptAsSlip(
 // ===========================================================================
 // POST /scan-payment/extract
 // ===========================================================================
-scanPayment.post('/extract', async (c) => {
+export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>): Promise<Response> => {
   const timer = scanTimer('payment');
   const apiKey = c.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -573,6 +574,26 @@ scanPayment.post('/extract', async (c) => {
       slipError: slip.ok ? null : slip.error,
     },
   });
-});
+};
+scanPayment.post('/extract', extractPaymentHandler);
+
+/* The same read on the scan queue (lib/ai-read-jobs.ts): the receipt is stored
+   and the answer is polled, so the Payments panel never holds a request open. */
+const firstReceipt: AiReadSplit = async (c) => {
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch (e) {
+    return { ok: false, resp: c.json({ error: 'bad_request', reason: `Invalid multipart body: ${(e as Error).message}` }, 400) };
+  }
+  for (const [, v] of formData.entries() as Iterable<[string, unknown]>) {
+    if (v instanceof File && v.size > 0) {
+      return { ok: true, bodies: [{}], file: { bytes: await v.arrayBuffer(), name: v.name || 'receipt', type: v.type || '' } };
+    }
+  }
+  return { ok: false, resp: c.json({ error: 'bad_request', reason: 'No file uploaded.' }, 400) };
+};
+scanPayment.post('/extract/enqueue', aiReadEnqueue('pay_extract', () => true, firstReceipt));
+scanPayment.get('/extract/jobs', aiReadPoll('pay_extract', () => true));
 
 export default scanPayment;

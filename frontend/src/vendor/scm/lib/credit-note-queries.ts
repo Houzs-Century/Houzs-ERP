@@ -8,6 +8,7 @@ import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
+import { runOneAiRead, type AiReadStage } from './ai-read-job';
 
 export type NoteKind = 'CN' | 'DN' | 'SCN' | 'OCN';
 export type NoteStatus = 'DRAFT' | 'POSTED' | 'CANCELLED';
@@ -222,10 +223,10 @@ export const usePostCreditNote = () => {
 };
 
 /** Read a supplier credit note (its pages) — POST /credit-notes/scan. */
-export const useScanSupplierCreditNote = () => useMutation({
-  mutationFn: (files: PvFilePayload[]) => authedFetch<ScnScan>('/credit-notes/scan', {
-    method: 'POST', body: JSON.stringify({ files: files.map((f) => ({ name: f.name, mime: f.mime, dataBase64: f.dataBase64 })) }),
-  }),
+export const useScanSupplierCreditNote = (onStage: ((stage: AiReadStage) => void) | null = null) => useMutation({
+  mutationFn: (files: PvFilePayload[]) => runOneAiRead<ScnScan>('/credit-notes/scan', {
+    files: files.map((f) => ({ name: f.name, mime: f.mime, dataBase64: f.dataBase64 })),
+  }, onStage),
 });
 
 /* The note's paper (2026-10-01, mig 20261001T2355): the scanned credit note and

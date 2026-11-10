@@ -71,7 +71,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
-import { extractBillsHandler, splitPdfHandler } from './pv-extract';
+import { extractBillsHandler, splitPdfHandler, enqueueBillReadsHandler, pollBillReadsHandler } from './pv-extract';
 import { HEADER, SUPPLIER_EMBED, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
 import { describeVouchers, payToFields, payToUpdates, PAY_TO_AUDIT_FIELDS } from './payment-vouchers-describe';
 import { paymentListingHandler } from './payment-vouchers-listing';
@@ -1950,6 +1950,8 @@ paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 /* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
 export { extractBillsHandler, splitPdfHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
+paymentVouchers.post('/extract/enqueue', enqueueBillReadsHandler);
+paymentVouchers.get('/extract/jobs', pollBillReadsHandler);
 paymentVouchers.post('/split-pdf', splitPdfHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).

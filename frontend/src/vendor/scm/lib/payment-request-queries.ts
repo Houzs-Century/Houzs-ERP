@@ -13,6 +13,7 @@ import { writeFailedAs } from './mutation-error';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 import type { EventSuggestion } from './event-queries';
 import { fmtSen } from '../../shared/format';
+import { runOneAiRead, type AiReadStage } from './ai-read-job';
 
 export type RequestStage =
   | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
@@ -236,9 +237,9 @@ export type ReadBillResult =
 /** Read the bill as it is attached — before the request exists ({ files }) or
     a request's stored bill ({ requestId }). Writes nothing; a reader that
     cannot read says so (ok: false) and the request still goes. */
-export const useReadRequestBill = () => useMutation({
+export const useReadRequestBill = (onStage: ((stage: AiReadStage) => void) | null = null) => useMutation({
   mutationFn: (body: { files: PvFilePayload[] } | { requestId: string }) =>
-    authedFetch<ReadBillResult>('/payment-requests/read-bill', { method: 'POST', body: JSON.stringify(body) }),
+    runOneAiRead<ReadBillResult>('/payment-requests/read-bill', body, onStage),
 });
 
 /** Finance's voucher form asks the same question of a typed bill number and date

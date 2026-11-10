@@ -4428,6 +4428,9 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
   const coRaw = r.companyId ?? r.company_id;
   const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+  // An AI read (ai-read-jobs.ts) rides { aiRead }, never { jobId }; coercing
+  // its type would mis-run it as an SO scan.
+  if (String(r.documentType ?? r.document_type ?? '').startsWith('AI_')) return;
   // Legacy rows predating the column read back null -> coerce to 'SO'.
   const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
@@ -4602,6 +4605,7 @@ scanSo.get('/jobs', async (c) => {
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('company_id', activeCompanyId(c))
+    .not('document_type', 'like', 'AI_%') // AI reads share the table; they are not scans
     .order('created_at', { ascending: false })
     .limit(20);
   if (rep) q = q.ilike('salesperson', ilikeExact(rep));

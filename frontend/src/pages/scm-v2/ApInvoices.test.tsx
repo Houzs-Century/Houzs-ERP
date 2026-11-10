@@ -121,7 +121,7 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   },
 }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
-  useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useExtractBills: () => ({ mutateAsync: (input: unknown) => extractAsync(Array.isArray(input) ? input : (input as { bills: unknown }).bills), isPending: false }),
   useExtractRequestBill: () => ({ mutateAsync: extractRequestAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   PV_FILE_ACCEPT: 'image/jpeg,image/png,image/webp,application/pdf',

@@ -15,6 +15,7 @@ import { X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
+import { aiReadStageNote } from '../../vendor/scm/lib/ai-read-job';
 import { useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
@@ -270,7 +271,7 @@ export const ApInvoiceForm = ({
     setScanNote('Reading the bill…');
     try {
       const files = await Promise.all([...list].map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
-      const res = await extract.mutateAsync([{ files }]);
+      const res = await extract.mutateAsync({ bills: [{ files }], onStage: (_i, stage) => { setScanNote(aiReadStageNote(stage, 'the bill')); } });
       const bill = res.bills.at(0);
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }

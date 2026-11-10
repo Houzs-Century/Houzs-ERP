@@ -63,7 +63,7 @@ export function BillInstalments({ family, currentId }: { family: BillFamily; cur
     every one still the requester's to change (自动填了资料还能手动改). */
 export function BillReadPanel({ state, filled }: { state: BillReadState; filled: string[] }) {
   if (state.status === 'idle') return null;
-  if (state.status === 'reading') return <div role="status" style={box('note')}>Reading the bill…</div>;
+  if (state.status === 'reading') return <div role="status" style={box('note')}>{state.stage === 'queued' ? 'Queued — the bill is waiting for the reader…' : 'Reading the bill…'}</div>;
   if (state.status === 'failed') {
     return <div role="status" style={box('note')}>The bill could not be read ({state.reason}). Send it anyway — Finance reads it again.</div>;
   }

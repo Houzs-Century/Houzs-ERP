@@ -17,6 +17,7 @@
 
 import { useSyncExternalStore } from 'react';
 import type { ExtractedBill, PvFilePayload } from './payment-voucher-queries';
+import type { AiReadStage } from './ai-read-job';
 
 export type PileTarget = 'pv' | 'ap';
 /** `page`: the page number when the file was cut from a PDF of several bills (HC-0204). */
@@ -36,12 +37,14 @@ export type PileState = {
   progress: { done: number; total: number } | null;
   /** Failed bills being read again. */
   rereading: number[];
+  /** Where each sent bill is on the scan queue until its answer lands (by index). */
+  stages: Record<number, AiReadStage>;
   /** The run a landing answer must belong to. */
   run: number;
 };
 
 export const EMPTY_PILE: PileState = {
-  picked: [], billGroups: [], results: null, billFiles: [], opened: [], progress: null, rereading: [], run: 0,
+  picked: [], billGroups: [], results: null, billFiles: [], opened: [], progress: null, rereading: [], stages: {}, run: 0,
 };
 
 const piles = new Map<string, PileState>();
