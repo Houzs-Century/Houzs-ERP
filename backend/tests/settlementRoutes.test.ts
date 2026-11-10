@@ -997,6 +997,63 @@ describe('"Not this" — a matched line the person says is not that sale', () =>
   });
 });
 
+/* ── "Not this" on the system's GUESS (owner 2026-11-10: 这个 system guess 的，如果
+   我确定了不是有没有按钮可以按不是了 → 做) ─────────────────────────────────────
+   A guess holds no link: it is worked out each time the report is read. So the
+   screen names the payments it shows, and the line remembers them. */
+describe('"Not this" on the system\'s guess', () => {
+  const GHL_LINE = { acquirerCode: 'GHL', fileName: 'ghl.csv', content: 'Txn Date,Gross,MDR\n01/08/2026,1000.00,15.00' };
+  type Shown = { id: number; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; clue: string | null };
+  const lineOf = async (app: Hono, batchId: number): Promise<Shown> =>
+    ((await (await app.request(`/settlement/batches/${batchId}`)).json()) as { rows: Shown[] }).rows[0]!;
+
+  test('the guessed payment is remembered, never offered to that line again, and nothing posts', async () => {
+    const { app, sb } = harness({ acc_acquirers: [GHL], mfg_sales_order_payments: [soPayment({ merchant_provider: 'GHL' })] });
+    const up = await (await upload(app, GHL_LINE)).json() as { batchId: number };
+    const before = await lineOf(app, up.batchId);
+    expect(before.suggested.map((p) => p.id)).toEqual(['p1']);
+
+    const res = await post(app, `/settlement/rows/${before.id}/release`, { payments: ['SOPAY:p1'] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, released: ['SOPAY:p1'] });
+    expect(sb.tables.acc_settlement_rows[0]).toMatchObject({ bucket: 'NEEDS_CONFIRM', not_this: ['SOPAY:p1'] });
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+
+    /* Not ticked, not offered, and the line does not still call it "the only payment". */
+    const after = await lineOf(app, up.batchId);
+    expect(after.suggested).toEqual([]);
+    expect(after.candidates.map((p) => p.id)).not.toContain('p1');
+    expect(after.clue).toMatch(/^Not SO-2608-001 — you said so/);
+
+    /* A person may still pick it by hand. */
+    const byHand = await post(app, `/settlement/rows/${before.id}/confirm`, {
+      matchReason: 'manual', payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }],
+    });
+    expect(byHand.status).toBe(200);
+  });
+
+  test('what it names must be payments, and a line the machine linked still releases its link', async () => {
+    const { app, sb } = harness({ acc_acquirers: [GHL], mfg_sales_order_payments: [soPayment({ merchant_provider: 'GHL' })] });
+    const up = await (await upload(app, GHL_LINE)).json() as { batchId: number };
+    const line = await lineOf(app, up.batchId);
+    for (const payments of [['p1'], 'SOPAY:p1', [42], ['SOPAY:'], Array.from({ length: 51 }, (_, i) => `SOPAY:x${i}`)]) {
+      const bad = await post(app, `/settlement/rows/${line.id}/release`, { payments });
+      expect(bad.status, JSON.stringify(payments)).toBe(400);
+      expect(await bad.json()).toMatchObject({ error: 'bad_payments' });
+    }
+    expect(sb.tables.acc_settlement_rows[0]!.not_this ?? []).toEqual([]);
+
+    /* MBB linked its line by reference: the link is what is released, whatever the body says. */
+    const mbb = harness({ mfg_sales_order_payments: [soPayment()] });
+    await upload(mbb.app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const linked = mbb.sb.tables.acc_settlement_rows.find((r) => r.bucket === 'MATCHED')!;
+    const res = await post(mbb.app, `/settlement/rows/${linked.id}/release`, { payments: ['SOPAY:other'] });
+    expect(await res.json()).toMatchObject({ ok: true, released: ['SOPAY:p1'] });
+    expect(mbb.sb.tables.acc_settlement_rows.find((r) => r.id === linked.id)).toMatchObject({ not_this: ['SOPAY:p1'] });
+  });
+});
+
 describe('the batch detail and the watchlists', () => {
   test('the detail names the bank this merchant pays THIS company into', async () => {
     const { app } = harness({
