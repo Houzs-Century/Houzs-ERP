@@ -290,7 +290,10 @@ const CEILINGS = {
   // PO fix (PR #5496) adds no eager module (PurchaseInvoiceFromGrn and its
   // search helper are lazy) and crossed it by bytes in the merge queue, the
   // renamed lazy-chunk hashes in the entry's map. Same mechanism as above.
-  INITIAL_JS_GZIP: 180 * KB,
+  // 180 -> 181 on 2026-11-10: main sat AT 180.0 again; the Duplicate supplier
+  // bills page (PR #5555) is lazy, and its route, manifest and breadcrumb
+  // entries put the entry at 180.1 in the merge queue. Same mechanism as above.
+  INITIAL_JS_GZIP: 181 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
