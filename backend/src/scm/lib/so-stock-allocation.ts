@@ -63,6 +63,7 @@ import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
+import { isDocumentHeld } from './document-hold';
 
 /* Only the variant-bearing categories run bound. Owner 2026-08-10:
    "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
@@ -278,9 +279,9 @@ async function runSoStockAllocation(
        nothing the JS sort does not already decide. */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; on_hold: boolean | null; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
+      .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, on_hold, ${SO_PROCESSING_DATE_COLUMN}`)
       /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
          eight audit scripts and mrp.ts used to re-type this same six-status
          set under four different names, each promising in a comment to track
@@ -292,7 +293,7 @@ async function runSoStockAllocation(
       .range(from, to));
     if (orderError) throw new Error(`allocation order load failed: ${orderError.message}`);
     const orders = (orderRows ?? []) as Array<{
-      doc_no: string; status: string; created_at: string;
+      doc_no: string; status: string; on_hold: boolean | null; created_at: string;
       customer_delivery_date: string | null; amended_delivery_date: string | null;
       company_id: number | null;
       processing_date: string | null;
@@ -360,8 +361,13 @@ async function runSoStockAllocation(
        replicates whatever 2990 sends, including a stamp, through applyMap. Both
        end for good with the column; see "RETIRING THE SECOND STORAGE" in
        shared/so-processing-date.ts. */
+    /* A HELD order is gated the same way (sister review P3 follow-up): the hold
+       never writes status, so the terminal-state lens above cannot see it, and
+       MRP already drops held demand with the same `isDocumentHeld` reader. Its
+       stock goes back to the queue on the next sweep; releasing the hold
+       enqueues a sweep that gives it back if it is still there. */
     const allocGated = new Set(
-      orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
+      orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN] || isDocumentHeld(o)).map((o) => o.doc_no),
     );
     /* Which company each document belongs to — the pooled walk needs it to
        enforce HARD_BOUND_COMPANY_ID's exclusivity (see the constant's note). */
@@ -1069,6 +1075,10 @@ async function runSoStockAllocation(
     for (const docNo of touchedDocs) {
       const order = orderByDoc.get(docNo);
       if (!order) continue;
+      /* A held order's header is left where it is. Its lines gave their stock
+         back above, but a hold never moves status (document-hold.ts), so the
+         readiness move waits for the release, whose sweep re-judges it. */
+      if (isDocumentHeld(order)) continue;
       const docLines = lines.filter((l) => l.doc_no === docNo);
       /* Re-evaluate readiness using the live target status. B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
