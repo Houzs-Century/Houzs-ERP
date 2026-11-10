@@ -7,9 +7,8 @@
 // variants (fabricCode), so it is carried on the open line as `colours`.
 // ---------------------------------------------------------------------------
 
+import { fabricCodeOf } from './fabric-supplier-code';
 import { liveColour } from '../shared/variant-summary';
-
-const COLOUR_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor', 'fabricSupplierCode'] as const;
 
 /** The colour codes a PO line's variants carry (our code, and the supplier's own
  *  code for it when stamped), as written. */
@@ -18,7 +17,8 @@ export function lineColours(variants: unknown): string[] {
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return []; } }
   if (!v || typeof v !== 'object') return [];
   const rec = v as Record<string, unknown>;
-  const out = COLOUR_KEYS.map((k) => (typeof rec[k] === 'string' ? liveColour((rec[k] as string).trim()) : '')).filter(Boolean);
+  const supplier = typeof rec.fabricSupplierCode === 'string' ? rec.fabricSupplierCode.trim() : '';
+  const out = [fabricCodeOf(rec), supplier].map(liveColour).filter(Boolean);
   return [...new Set(out)];
 }
 
