@@ -1,0 +1,40 @@
+name: Settlement receipts that took the whole outstanding (read-only)
+
+# A bank-settlement receipt typed as "3,500.00" reached the server as null and
+# was journaled as the FULL outstanding (fix/sister-g1). This counts, per
+# company, the hand-keyed receipts that took the whole remaining amount (an
+# upper bound: a deliberately blank box looks the same), how many of those a
+# matched bank-statement line contradicts, and how many receipts were undone.
+#
+# One SELECT, no writes. The verdict is the output; exit 0 for every answer.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-settlement-full-outstanding-receipts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-settlement-full-outstanding-receipts.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

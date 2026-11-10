@@ -13,6 +13,7 @@ import { BreakdownFiles } from "./FleetHealthBreakdownFiles";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
+import { parseMoneyToSen } from "../lib/money";
 import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
@@ -1525,12 +1526,14 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
 
   const fit = async () => {
     if (busy) return;
+    const priceParsed = parseMoneyToSen(price, "The purchase price");
+    if (!priceParsed.ok) { setErr(priceParsed.message); return; }
     setBusy(true); setErr(null);
     try {
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/components`, {
         componentType: type, position, brand: brand.trim() || undefined, serial: serial.trim() || undefined,
         fittedKm: fittedKm ? Number(fittedKm) : undefined, fittedDate: todayMyt(),
-        purchasePriceSen: price ? Math.round(Number(price) * 100) : undefined, warrantyUntil: warranty || undefined,
+        purchasePriceSen: priceParsed.empty ? undefined : priceParsed.sen, warrantyUntil: warranty || undefined,
       });
       setAdding(false); setBrand(""); setSerial(""); setPrice(""); setWarranty(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
@@ -1751,6 +1754,8 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
   const [savedId, setSavedId] = useState<string | null>(null);
   const save = async () => {
     if (!savedId && !expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    const costParsed = parseMoneyToSen(cost, "The cost");
+    if (!costParsed.ok) { setErr(costParsed.message); return; }
     setBusy(true);
     setErr(null);
     let id = savedId;
@@ -1764,7 +1769,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
             issueDate: issueDate || null,
             expiryDate: expiryDate || null,
             documentRef: documentRef || null,
-            costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+            costSen: costParsed.empty ? null : costParsed.sen,
             owner: owner || null,
             ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
           },

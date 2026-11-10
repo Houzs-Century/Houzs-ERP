@@ -133,3 +133,68 @@ describe('the camera keeps decoding', () => {
     expect(pending.length).toBeGreaterThan(0);
   });
 });
+
+function StatusHarness() {
+  const s = useQrScanner(() => {});
+  return (
+    <div>
+      <video ref={s.videoRef} />
+      <button onClick={() => void s.start()}>start</button>
+      <button onClick={() => s.stop()}>stop</button>
+    </div>
+  );
+}
+
+function stubCamera(getUserMedia: () => Promise<unknown>) {
+  vi.stubGlobal('navigator', { ...navigator, mediaDevices: { getUserMedia: vi.fn(getUserMedia) } });
+}
+
+describe('the camera is released', () => {
+  test('closing the page stops every track', async () => {
+    const track = { stop: vi.fn(), getCapabilities: () => ({}), applyConstraints: vi.fn() };
+    stubCamera(async () => ({ getVideoTracks: () => [track], getTracks: () => [track] }));
+    const { getByText, unmount } = render(<StatusHarness />);
+    await act(async () => { getByText('start').click(); });
+    expect(track.stop).not.toHaveBeenCalled();
+    unmount();
+    expect(track.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('a camera that answers AFTER the scanner closed is stopped, not kept', async () => {
+    const track = { stop: vi.fn(), getCapabilities: () => ({}), applyConstraints: vi.fn() };
+    let answer: (v: unknown) => void = () => {};
+    stubCamera(() => new Promise((r) => { answer = r; }));
+    const { getByText, unmount } = render(<StatusHarness />);
+    act(() => { getByText('start').click(); });
+    unmount();
+    await act(async () => { answer({ getVideoTracks: () => [track], getTracks: () => [track] }); });
+    expect(track.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('a second tap while the camera is still opening does not open a second one', async () => {
+    const track = { stop: vi.fn(), getCapabilities: () => ({}), applyConstraints: vi.fn() };
+    let answer: (v: unknown) => void = () => {};
+    const gum = vi.fn(() => new Promise((r) => { answer = r; }));
+    vi.stubGlobal('navigator', { ...navigator, mediaDevices: { getUserMedia: gum } });
+    const { getByText } = render(<StatusHarness />);
+    act(() => { getByText('start').click(); getByText('start').click(); });
+    await act(async () => { answer({ getVideoTracks: () => [track], getTracks: () => [track] }); });
+    expect(gum).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a read confirms itself', () => {
+  test('vibrates once per physical scan, not once per frame', async () => {
+    const vibrate = vi.fn();
+    const track = { stop: vi.fn(), getCapabilities: () => ({}), applyConstraints: vi.fn() };
+    vi.stubGlobal('navigator', {
+      ...navigator, vibrate,
+      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [track], getTracks: () => [track] })) },
+    });
+    const { getByText } = render(<Harness onDecoded={() => {}} />);
+    await act(async () => { getByText('start').click(); });
+    frames = Array.from({ length: 6 }, () => 'HZRACK:L1.1');
+    await tickFrames(6, 100);
+    expect(vibrate).toHaveBeenCalledTimes(1);
+  });
+});
