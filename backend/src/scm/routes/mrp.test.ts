@@ -1175,6 +1175,47 @@ describe('computeMrp — an order with no Processing Date is not demand', () => 
   });
 });
 
+/* A held order claims nothing (sister review P3). Hold is a marker that never
+   writes status, so the SO_DONE filter alone let a held order keep its claim on
+   stock and keep asking for a PO that firstUnorderableSo would then refuse. */
+describe('computeMrp — an order on hold is not demand', () => {
+  test('a held order with the EARLIER delivery date takes nothing; the live one gets the unit', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', on_hold: true }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01', on_hold: false }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock' });
+    const bucket = mrpStockAssignment(res).get(stockAssignmentKey('W1', 'BF-100', 'fabriccode=red'))!;
+    expect(bucket.claims.map((c) => c.soDocNo)).toEqual(['SO-2']);
+  });
+
+  test('a legacy ON_HOLD status is held too', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', status: 'ON_HOLD' }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock' });
+  });
+
+  test('a bucket whose only demand is held has no row and no shortage', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', on_hold: true }),
+      demandFor('SO-2', { customer_delivery_date: '2026-11-01', on_hold: true }),
+    );
+
+    const res = await computeMrp(asSb(sb), { ...opts, includeUndated: true });
+
+    expect(res.skus).toHaveLength(0);
+    expect(res.totals.shortageSkuCount).toBe(0);
+  });
+});
+
 /* HARD BINDING, COMPANY 1 (owner 2026-08-31, option 甲: 「甲 可是针对的是 co1 而已
    目前而已」).
 

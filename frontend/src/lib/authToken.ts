@@ -63,6 +63,17 @@ if (typeof window !== "undefined") {
   });
 }
 
+/** True when the current token lives in the remembered (localStorage) store, so
+ *  a token that REPLACES it mid-session (a required password change) keeps the
+ *  sign-in choice the member made. A tab-only token answers false. */
+export function authTokenIsPersistent(): boolean {
+  try {
+    return !sessionStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return false;
+  }
+}
+
 /** Store a token in exactly one backing store, then notify session-scoped caches. */
 export function writeAuthToken(token: string, persistent = true): void {
   try {

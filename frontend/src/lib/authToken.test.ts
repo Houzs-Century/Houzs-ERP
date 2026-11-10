@@ -3,6 +3,7 @@ import {
   AUTH_TOKEN_KEY,
   AUTH_PASS_KEY,
   authSessionFingerprint,
+  authTokenIsPersistent,
   clearAuthToken,
   readAuthToken,
   readAuthPass,
@@ -121,5 +122,14 @@ describe("signed staff pass storage (stage 2)", () => {
 
   it("no pass reads as empty string, never throws", () => {
     expect(readAuthPass()).toBe("");
+  });
+});
+
+describe("authTokenIsPersistent", () => {
+  it("is true for a remembered token and false for a tab-only one", () => {
+    writeAuthToken("remembered", true);
+    expect(authTokenIsPersistent()).toBe(true);
+    writeAuthToken("tab-only", false);
+    expect(authTokenIsPersistent()).toBe(false);
   });
 });

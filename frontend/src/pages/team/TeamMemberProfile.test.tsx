@@ -176,10 +176,19 @@ describe("TeamMemberProfile — Account access", () => {
     expect(success).toHaveBeenCalledWith(expect.stringContaining("Reset link emailed"));
   });
 
+  test("Require password change posts to the member and reports the sessions it ended", async () => {
+    post.mockResolvedValueOnce({ ok: true, sessions_ended: 2 });
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Require password change" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/users/151/require-password-change"));
+    await waitFor(() => expect(success).toHaveBeenCalledWith(expect.stringContaining("2 sessions ended")));
+  });
+
   test("a viewer who cannot manage members has no account-access controls", () => {
     mount({ canManage: false });
     expect(screen.queryByRole("button", { name: "Set password" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Send reset link" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Require password change" })).toBeNull();
   });
 });
 

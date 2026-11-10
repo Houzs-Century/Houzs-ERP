@@ -91,6 +91,42 @@ For drivers and helpers with no usable email (issue #5459 R3).
   `/api/auth/totp/login`. If the Title stops being crew, every live PIN session
   is refused 401 on its next request.
 
+## Required password change
+
+After staff password hashes were exposed (`docs/staging-dump-artifact-exposure-coe.md`),
+the owner approved forcing admins and finance staff onto a new password (2026-11-10).
+
+- **Flag:** `users.password_change_required_at` (migration
+  `20261110T1500_users_password_change_required.sql`). NULL = nothing required.
+- **Sign-in with the flag set:** a correct password at `POST /api/auth/login` (or
+  `/api/auth/totp/login` after the 2FA code) returns `password_change_required: true`
+  and a 30-minute session with `sessions.origin = 'password_change'` — no signed
+  pass, no staffId. A wrong password is refused exactly as before.
+- **What that session reaches — enforced on the SERVER:** `middleware/auth.ts`
+  `passwordChangeSessionRefusal` answers 403 `password_change_required` on every
+  `/api/*` path behind the gate, on both the signed-pass and DB paths. `/api/auth/*`
+  is outside the gate, so `GET /me` (returns `password_change_required: true`),
+  `POST /logout` and `POST /me/password` work; `PATCH /me` refuses it.
+- **The change:** `POST /api/auth/me/password {current, next, remember}`. With the
+  flag set, `next` must differ from `current`. Success clears the flag; from a
+  restricted session it ends EVERY session the member holds and returns a fresh
+  ordinary `token` (+ `session_pass`). A redeemed reset link (`POST /api/auth/reset/:token`)
+  also clears the flag.
+- **Screen:** `frontend/src/auth/AuthGate.tsx` shows `ForcedPasswordChangeScreen`
+  (`AuthScreens.tsx`) instead of either app shell while `/me` says
+  `password_change_required` — one screen for desktop and phone.
+- **Admin:** `POST /api/users/:id/require-password-change` (`users.manage` + the
+  company rule) sets the flag and ends every session the member holds (audited
+  `user.require_password_change`, with the count ended); `DELETE` on the same path
+  clears a flag set by mistake (audited `.clear`). Button "Require password change"
+  on the desktop profile (`TeamMemberProfile.tsx`) and on mobile
+  (`MemberAccountActions.tsx`), both via `lib/requirePasswordChange.ts`.
+- **Bulk:** `backend/scripts/require-password-change.mjs` (run via `run-script.yml`,
+  plan by default). Population rules live in
+  `backend/scripts/lib/password-change-population.mjs`.
+- **Not affected:** crew PIN and POS PIN sign-in never ask for the password, so the
+  flag does not apply to them (a field-door 2FA challenge stays a field session).
+
 ## Rules that must not break
 
 - Invite links (`token` / `invite_url`) are live credentials — never give
