@@ -15,11 +15,15 @@
 //
 // WHAT IT PRINTS (window = DAYS, default 7):
 //   A. per route + method: count, p50, p95, p99, max ms, share over 3 s, total
-//      Worker seconds — ordered by total time (slow x used)
+//      Worker seconds, average database ms and round trips per request —
+//      ordered by total time (slow x used)
 //   B. the same routes ordered by p95, among routes with >= MIN_COUNT requests
-//   C. the slowest individual requests: time, route, status, ms, request id
-//      (company is not in the AE point; a request id finds the log line)
+//   C. the slowest individual requests: time, route, status, company, ms,
+//      database ms and round trips, request id (it finds the log line)
 //   D. browser waits by API path, by page and by company
+//   E. write routes (POST/PATCH/PUT/DELETE) per company, same columns as A
+//   The database and company columns exist only on points written after
+//   requestLog.ts started filling them; older points show '-'.
 //
 // Strictly reads: SELECTs inside a READ ONLY transaction, and AE SQL (which is
 // read-only by construction). Exits 0 for every real answer, including "the
@@ -30,12 +34,12 @@
 // Run: Actions -> "Run a backend script on production", script
 // check-slow-routes.mjs, mode plan. Optional env: DAYS=7;LIMIT=40;MIN_COUNT=20
 // Needs CLOUDFLARE_API_TOKEN (Account Analytics: Read) + CLOUDFLARE_ACCOUNT_ID
-// for parts A-C, DATABASE_URL for part D; the runner passes all three.
+// for parts A-C and E, DATABASE_URL for part D; the runner passes all three.
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 
 import {
-  parseDays, routeSql, slowestSql, totalsSql, readAeAnswer, routeLines, table, pivotBrowserSlow, SLOW_MS,
+  parseDays, routeSql, slowestSql, totalsSql, writeRouteCompanySql, readAeAnswer, routeLines, slowestLines, table, pivotBrowserSlow, SLOW_MS,
 } from './lib/slow-routes.mjs';
 
 const notice = (msg) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
@@ -110,8 +114,17 @@ async function analyticsEngine() {
     broke = true;
     return;
   }
-  console.log('\n-- C. Slowest 20 requests (company is not recorded in AE; request_id finds the Workers log line) --');
-  console.log(table(slowest.rows.map((r) => ({ at: r.timestamp, method: r.method, route: r.route, status: r.status, ms: Math.round(r.ms), request_id: r.request_id }))));
+  console.log('\n-- C. Slowest 20 requests (request_id finds the Workers log line; db_ms = summed database round trips) --');
+  console.log(table(slowestLines(slowest.rows)));
+
+  const byCompany = await ae(writeRouteCompanySql(DAYS, LIMIT));
+  if (byCompany.kind !== 'ok') {
+    console.error(`AE write-route-by-company query failed: ${byCompany.message}`);
+    broke = true;
+    return;
+  }
+  console.log(`\n-- E. Top ${LIMIT} write routes per company by total Worker time --`);
+  console.log(table(routeLines(byCompany.rows)));
 
   const all = routes.rows.reduce((a, r) => ({ n: a.n + r.n, slow: a.slow + r.over_slow }), { n: 0, slow: 0 });
   if (all.n > 0) notice(`requests over ${SLOW_MS} ms: ${Math.round(all.slow)} / ${Math.round(all.n)} (${((100 * all.slow) / all.n).toFixed(2)}%)`);

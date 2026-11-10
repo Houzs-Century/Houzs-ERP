@@ -48,6 +48,7 @@
 import { computeVariantKey } from '../shared';
 import { restampDoActualCost } from '../routes/delivery-orders-mfg';
 import { toMyrSen } from './fx';
+import { timed } from '../../lib/step-timing';
 
 /* Re-derive a Sales Invoice header's per-category revenue/cost totals from its
    line items. Mirror of the SI route's recomputeTotals (kept in lockstep).
@@ -110,7 +111,10 @@ async function recomputeSiTotals(sb: any, salesInvoiceId: string) {
    line that bills it. SI lines link to DO lines via sales_invoice_items.
    do_item_id (migration 0103). Mirrors the DO→SI cost copy in the SI route's
    convert-from-DO, but as an in-place re-stamp. */
-export async function restampSiFromDo(sb: any, deliveryOrderId: string) {
+export async function restampSiFromDo(sb: any, deliveryOrderId: string): Promise<void> {
+  return timed('restamp-si', () => restampSiFromDoInner(sb, deliveryOrderId));
+}
+async function restampSiFromDoInner(sb: Parameters<typeof restampSiFromDo>[0], deliveryOrderId: string) {
   try {
     const { data: doItems } = await sb.from('delivery_order_items')
       .select('id, unit_cost_sen')
@@ -208,7 +212,10 @@ async function poNumberByGrnItem(
    Re-derive authoritative cost for one GRN's received buckets and cascade it
    to lots → consumptions → movements → DO → SI. Idempotent (a bucket whose lot
    already carries the authoritative cost is skipped). Best-effort. */
-export async function recostFromGrn(sb: any, grnId: string) {
+export async function recostFromGrn(sb: any, grnId: string): Promise<void> {
+  return timed('recost', () => recostFromGrnInner(sb, grnId));
+}
+async function recostFromGrnInner(sb: Parameters<typeof recostFromGrn>[0], grnId: string) {
   try {
     // 1. GRN lines — the received buckets + their GR (fallback) price.
     //    Migration 0082 — also read allocated_charge_sen + qty_accepted so the

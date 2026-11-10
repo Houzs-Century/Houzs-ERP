@@ -64,6 +64,7 @@ import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
+import { timed } from '../../lib/step-timing';
 import { isDocumentHeld } from './document-hold';
 
 /* Only the variant-bearing categories run bound. Owner 2026-08-10:
@@ -199,7 +200,7 @@ export async function recomputeSoStockAllocation(
   sb: any,
   scopeToDocNo?: string,
 ): Promise<AllocationResult> {
-  const result = await runSoStockAllocation(sb, scopeToDocNo);
+  const result = await timed(scopeToDocNo ? 'alloc-recompute-scoped' : 'alloc-recompute', () => runSoStockAllocation(sb, scopeToDocNo));
   const finished = result.ok
     && result.reason !== 'another_recompute_in_progress'
     && !(result.deferredDocNos && result.deferredDocNos.length > 0);

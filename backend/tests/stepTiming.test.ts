@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loggedStepClock, recordStep, stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
+import { dbTotals, loggedStepClock, recordStep, stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
 import { pgTransactionSupabase } from '../src/scm/lib/pg-supabase-transaction';
 
 /* HC-0002: steps a handler times reach the request's Server-Timing header;
@@ -58,6 +58,20 @@ describe('step timing', () => {
     });
     expect(stepTimingEntries(marks)).toEqual(['s-db-rest;dur=100;desc="2x"', 's-db-sql;dur=5;desc="1x"']);
     expect(() => recordStep('db-sql', 1)).not.toThrow();
+  });
+
+  /* The access log's Analytics Engine point carries these as double2/double3
+     (requestLog.ts): database round trips only, never laps or markers. */
+  it('dbTotals counts database round trips and their time, not laps or markers', () => {
+    expect(dbTotals([
+      { name: 'db-rest', ms: 40 },
+      { name: 'db-pg', ms: 25 },
+      { name: 'db-sql', ms: 5 },
+      { name: 'db-agg-skip', ms: 0 },
+      { name: 'alloc-recompute', ms: 4000 },
+      { name: 'grn-post', ms: 5000 },
+    ])).toEqual({ ms: 70, n: 3 });
+    expect(dbTotals([])).toEqual({ ms: 0, n: 0 });
   });
 
   it('sums repeats per name, slowest first, as header-safe tokens', () => {
