@@ -117,13 +117,16 @@ describe("the two side-views fold the stage, never re-derive it", () => {
    `?raw` is expanded by Vite at TRANSFORM time, in Node, so the file contents
    are baked into the bundle — this suite runs in workerd, where fs throws. Same
    technique, and same reason, as tests/tripReconcile.test.ts. */
-const sources = import.meta.glob("../src/scm/routes/delivery-planning.ts", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
+/* The board's SO rows and their per-order reads moved out of the route into
+   lib/delivery-board-so-rows.ts and lib/delivery-board-maps.ts (both read paths
+   share them), so the pins read those files (and the SQL statement). */
+const sources = import.meta.glob(
+  ["../src/scm/routes/delivery-planning.ts", "../src/scm/lib/delivery-board-so-rows.ts", "../src/scm/lib/delivery-board-maps.ts", "../src/scm/lib/delivery-board-sql.ts"],
+  { query: "?raw", import: "default", eager: true },
+) as Record<string, string>;
+const sourceOf = (suffix: string): string => Object.entries(sources).find(([k]) => k.endsWith(suffix))?.[1] ?? "";
 
-const boardSource = Object.values(sources)[0] ?? "";
+const boardSource = Object.values(sources).join(String.fromCharCode(10));
 
 function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -137,7 +140,8 @@ describe("delivery-planning.ts — the board stamps the stage, one rule, no fork
 
   test("the stage is computed by the shared lib, never an inline re-derivation", () => {
     const stripped = stripComments(boardSource);
-    expect(stripped).toContain("from '../lib/arrangement-stage'");
+    expect(stripComments(sourceOf("routes/delivery-planning.ts"))).toContain("from '../lib/arrangement-stage'");
+    expect(stripComments(sourceOf("lib/delivery-board-so-rows.ts"))).toContain("from './arrangement-stage'");
     /* Stamped for the SO rows AND the DP union (the two row types in the
        pipeline) — 2 call sites. ASSR / project rows are stamped null literally
        (they land PENDING_DELIVERY, outside the pipeline). */
@@ -163,20 +167,25 @@ describe("delivery-planning.ts — the board stamps the stage, one rule, no fork
        to chunkIn still has to be doIds / tripIds. Matching only `batch` would
        have let the read be pointed at some other set without a word. */
     expect(stripped).toContain(".select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)");
-    expect(stripped).toContain("chunkIn<StopRow>(doIds,");
+    expect(stripped).toContain("chunkIn<BoardStopRow>(dos.doIds,");
+    expect(stripped).toContain(".select('id, trip_no, trip_date, status').in('id', batch)");
+    expect(stripped).toContain("chunkIn<BoardTripRow>(tripIds,");
+    /* The SQL path keys the same way: stops of the live DOs, trips of those stops. */
+    const sqlText = stripComments(sourceOf("lib/delivery-board-sql.ts"));
+    expect(sqlText).toContain("FROM scm.trip_stops WHERE do_id IN (SELECT id FROM live_dos)");
+    expect(sqlText).toContain("FROM scm.trips WHERE id IN (SELECT trip_id FROM stops)");
     /* A CANCELLED trip is no arrangement: the reverse reconcile already returns
-       such orders to the queue, and the stage must agree with it. */
-    const tripJoinIdx = stripped.indexOf(".select('id, trip_no, trip_date, status').in('id', batch)");
-    expect(tripJoinIdx).toBeGreaterThan(-1);
-    expect(stripped).toContain("chunkIn<Record<string, unknown>>(tripIds,");
-    const after = stripped.slice(tripJoinIdx, tripJoinIdx + 600);
-    expect(after).toContain("'CANCELLED'");
+       such orders to the queue, and the stage must agree with it. Both paths fold
+       stops and trips through foldStops. */
+    const maps = stripComments(sourceOf("lib/delivery-board-maps.ts"));
+    const fold = maps.slice(maps.indexOf("export function foldStops("), maps.indexOf("export function stopTripIds("));
+    expect(fold).toContain("'CANCELLED'");
   });
 
   test("the stamped row carries the trip ref beside the stage (trip_id / trip_no / trip_date)", () => {
     const stripped = stripComments(boardSource);
-    expect(stripped).toContain("trip_id: tripByDoc.get(docNo)?.id ?? null");
-    expect(stripped).toContain("trip_no: tripByDoc.get(docNo)?.trip_no ?? null");
-    expect(stripped).toContain("trip_date: tripByDoc.get(docNo)?.trip_date ?? null");
+    expect(stripped).toContain("trip_id: m.tripByDoc.get(docNo)?.id ?? null");
+    expect(stripped).toContain("trip_no: m.tripByDoc.get(docNo)?.trip_no ?? null");
+    expect(stripped).toContain("trip_date: m.tripByDoc.get(docNo)?.trip_date ?? null");
   });
 });
