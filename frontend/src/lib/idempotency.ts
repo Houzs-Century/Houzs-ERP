@@ -120,3 +120,15 @@ export function useIdempotencyKey(): string {
   const [key] = useState(newIdempotencyKey);
   return key;
 }
+
+/** useIdempotencyKey for a form whose screen outlives it: one key per `intent`
+ *  (e.g. "copy:<source id>"). A screen that stays mounted while the operator
+ *  opens the same form again on another document gets a new key with it, so a
+ *  second, genuine receipt is never replayed as the first. */
+export function useIdempotencyKeyFor(intent: string): string {
+  const [held, setHeld] = useState(() => ({ intent, key: newIdempotencyKey() }));
+  if (held.intent === intent) return held.key;
+  const next = { intent, key: newIdempotencyKey() };
+  setHeld(next);
+  return next.key;
+}

@@ -8,6 +8,9 @@ import { recordStep } from '../../lib/step-timing';
 
 type QueryResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
 type Predicate = { sql: string; values: unknown[] };
+/* The schemas a command may name. `public` only for the masters the SCM client
+   reaches with `.schema('public')` (companies — doc-no.ts jePrefixForCompany). */
+type TxSchema = 'scm' | 'public';
 const txQueues = new WeakMap<object, Promise<void>>();
 const pendingReleases = new WeakMap<object, Promise<unknown>>();
 const SLOW_STATEMENT_MS = 1000;
@@ -165,7 +168,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
   private conflictColumns: string[] = [];
   private ignoreDuplicates = false;
 
-  constructor(private readonly sql: Sql, private readonly table: string) {}
+  constructor(private readonly sql: Sql, private readonly table: string, private readonly schema: TxSchema) {}
 
   select(columns = '*', options?: { count?: string; head?: boolean }) {
     this.projection = columns;
@@ -190,6 +193,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
   gte(column: string, value: unknown) { return this.where(column, '>=', value); }
   lt(column: string, value: unknown) { return this.where(column, '<', value); }
   lte(column: string, value: unknown) { return this.where(column, '<=', value); }
+  like(column: string, pattern: string) { return this.where(column, 'LIKE', pattern); }
   is(column: string, value: unknown) {
     this.predicates.push({ sql: `${columnExpr(column)} IS ${value === null ? 'NULL' : value === true ? 'TRUE' : value === false ? 'FALSE' : 'NULL'}`, values: [] });
     return this;
@@ -272,7 +276,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
   }
 
   private async execute(): Promise<QueryResult<any>> {
-    const table = `scm.${ident(this.table)}`;
+    const table = `${this.schema}.${ident(this.table)}`;
     let text = '';
     let values: unknown[] = [];
     if (this.operation === 'select') {
@@ -377,7 +381,11 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
 
 export const pgTransactionSupabase = (sql: Sql) => ({
   __atomicCommand: true,
-  from: (table: string) => new PgPostgrestQuery(sql, table),
+  from: (table: string) => new PgPostgrestQuery(sql, table, 'scm'),
+  schema: (name: string) => {
+    if (name !== 'scm' && name !== 'public') throw new Error(`Unsupported SCM transaction schema: ${name}`);
+    return { from: (table: string) => new PgPostgrestQuery(sql, table, name) };
+  },
   rpc: async (name: string, args: Record<string, unknown> = {}) => {
     if (name === 'pg_try_advisory_lock') {
       const rows = await sql.unsafe<Array<{ locked: boolean }>>(

@@ -41,6 +41,10 @@ AUTOCOUNT_SYNC_DISABLED = "false"
 #   "sql"    = serve from two SQL statements (falls back to PostgREST if SQL fails)
 # Flip to "shadow" first; to "sql" only once the shadow table shows no unexplained differences.
 DP_BOARD_SOURCE = "rest"
+# Receipt bank move (acc/rebank-transaction.ts):
+#   "atomic"   = each receipt's contra and new entry in ONE database transaction (the default; any other value means this too)
+#   "two-step" = the old path: the contra commits before the new entry is written. Rollback switch for one release only.
+RECEIPT_REBANK_MODE = "atomic"
 # ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
 # settings above, which are the legacy inbound pull). Base URL of AcSyncService,
 # the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
@@ -342,6 +346,8 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 AUTOCOUNT_SYNC_DISABLED = "true"
 # Delivery Planning board reads; see the prod [vars] block. Rehearse "shadow" / "sql" here first.
 DP_BOARD_SOURCE = "rest"
+# Receipt bank move; see the prod [vars] block.
+RECEIPT_REBANK_MODE = "atomic"
 # Cost/margin DISPLAY switch — ON in staging too (mirrors prod). See the prod
 # [vars] block for what "false" does. Set "false" here to rehearse the hidden
 # state before flipping prod.

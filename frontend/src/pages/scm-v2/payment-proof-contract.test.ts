@@ -150,7 +150,7 @@ describe('unsaved payment rows are legible as unsaved', () => {
   test('the commit control carries a word, not just a glyph', () => {
     expect(tableSource).toContain('className={paymentsStyles.saveBtn}');
     /* A too-old slip turns the same button into "Request approval" (2026-09-30). */
-    expect(tableSource).toContain("{addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}");
+    expect(tableSource).toContain("{addPayment.isPending || raiseBackdate.isPending || rowLock.isLocked(d.uid) ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}");
   });
 
   test('the row is marked, and the mark reaches the summary line too', () => {
@@ -229,7 +229,7 @@ describe('PaymentsTable persisted-row proof uploader', () => {
     // commitEdit (the PATCH) still must not carry a slip — that route is locked.
     const commitEdit = tableSource.slice(
       tableSource.indexOf('const commitEdit ='),
-      tableSource.indexOf('const commitDraft ='),
+      tableSource.indexOf('const commitDraftOnce ='),
     );
     expect(commitEdit).not.toContain('uploadSessionId');
   });

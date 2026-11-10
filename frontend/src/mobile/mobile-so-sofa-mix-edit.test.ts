@@ -31,9 +31,9 @@ const read = (rel: string): string => readFileSync(resolve(process.cwd(), rel), 
 const mobileSource = read('src/mobile/MobileNewSO.tsx');
 const desktopDetailSource = read('src/pages/scm-v2/SalesOrderDetail.tsx');
 
-/** Body of `async function save(` up to the next top-level declaration. */
+/** Body of `async function saveOnce(` (the save behind the one-press lock) up to the next top-level declaration. */
 const saveBody = (): string => {
-  const start = mobileSource.indexOf('async function save(asDraft = false) {');
+  const start = mobileSource.indexOf('async function saveOnce(asDraft: boolean) {');
   expect(start, 'MobileNewSO save() anchor not found').toBeGreaterThan(-1);
   const end = mobileSource.indexOf('const patchLine = (key: string', start);
   expect(end, 'MobileNewSO save() end anchor not found').toBeGreaterThan(start);
