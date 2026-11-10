@@ -203,6 +203,34 @@ describe("dedup upsert", () => {
     expect(rows[0].count).toBe(10);
   });
 
+  test("a repeat the browser already counted adds its count", async () => {
+    const { bearer } = await seedUser();
+    const base = eventBody().events[0];
+    const res = await post(bearer, { events: [{ ...base, count: 7 }, base] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { stored: number }).stored).toBe(8);
+    expect((await post(bearer, { events: [{ ...base, count: 2 }] })).status).toBe(200);
+    const rows = await allRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0].count).toBe(10);
+  });
+
+  test("a batch of 15 distinct events stores 15 rows (more than one statement)", async () => {
+    const { bearer } = await seedUser();
+    const events = Array.from({ length: 15 }, (_, i) => ({ message: `distinct ${i}`, route: "/x" }));
+    const res = await post(bearer, { events });
+    expect(res.status).toBe(200);
+    const rows = await allRows();
+    expect(rows.length).toBe(15);
+    expect(rows.every((r) => r.count === 1)).toBe(true);
+  });
+
+  test("a count outside 1..1000 is refused", async () => {
+    const { bearer } = await seedUser();
+    expect((await post(bearer, eventBody({ count: 0 }))).status).toBe(400);
+    expect((await post(bearer, eventBody({ count: 1001 }))).status).toBe(400);
+  });
+
   test("same error from two users -> two rows; summary reports affected_users=2", async () => {
     const a = await seedUser();
     const b = await seedUser();

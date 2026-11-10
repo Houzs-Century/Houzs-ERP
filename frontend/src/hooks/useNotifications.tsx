@@ -130,6 +130,8 @@ const NotificationsTickContext = createContext<number>(0);
 // guard below already suppresses no-op renders, so freshness up to 60s costs
 // nothing a user notices.
 const POLL_INTERVAL_MS = 60_000;
+/** Returning to the tab re-reads only an answer at least this old. */
+const RETURN_MIN_AGE_MS = 15_000;
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -149,8 +151,24 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
      must not itself cause a render. */
   const lastPayloadSigRef = useRef<string | null>(null);
 
-  const fetchOnce = useCallback(async () => {
+  /* One request at a time, and none sooner than RETURN_MIN_AGE_MS after the
+     last answer when the tab is merely looked at again. Without this a slow
+     read plus a few alt-tabs stacked several identical reads on the server. */
+  const inFlightRef = useRef(false);
+  /* A reload asked for while a read is in flight (a mark-read finishing) runs
+     right after it, so its answer cannot be the pre-write one. */
+  const againRef = useRef(false);
+  const lastSettledAtRef = useRef(0);
+
+  /** `afterWrite`: the caller just changed what the answer should be, so a read
+   *  already in flight does not count — queue one more instead of dropping. */
+  const fetchOnce = useCallback(async (afterWrite = false): Promise<void> => {
     if (!user?.id) return;
+    if (inFlightRef.current) {
+      if (afterWrite) againRef.current = true;
+      return;
+    }
+    inFlightRef.current = true;
     try {
       // Bell shows unread-only. /notifications page fetches its own
       // unfiltered feed separately; the unread_by_project map returned
@@ -195,6 +213,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
          lets the inbox say "we couldn't load this" instead of asserting that
          there is nothing waiting. Silence and emptiness are different answers. */
       setLoadFailed(true);
+    } finally {
+      inFlightRef.current = false;
+      lastSettledAtRef.current = Date.now();
+    }
+    if (againRef.current) {
+      againRef.current = false;
+      await fetchOnce(true);
     }
   }, [user?.id]);
 
@@ -209,7 +234,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       lastPayloadSigRef.current = null;
       return;
     }
-    fetchOnce();
+    void fetchOnce();
     function schedule() {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (document.hidden) return;
@@ -220,8 +245,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
     schedule();
     function onVis() {
-      if (!document.hidden) {
-        fetchOnce();
+      if (!document.hidden && Date.now() - lastSettledAtRef.current >= RETURN_MIN_AGE_MS) {
+        void fetchOnce();
       }
       schedule();
     }
@@ -262,9 +287,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
        `void`: the refresh is fire-and-forget on purpose. Its own failure path
        is `loadFailed`, which the feed already renders; making the caller wait
        on it would tie the mark-read result to an unrelated poll. */
-    void fetchOnce();
+    void fetchOnce(true);
     return { ok: results.length - failed, failed };
   }, [unreadByProject, fetchOnce]);
+
+  // A consumer reloads because something it did changed the answer.
+  const reload = useCallback(() => void fetchOnce(true), [fetchOnce]);
 
   const value = useMemo<Ctx>(
     () => ({
@@ -272,13 +300,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       unreadByProject,
       totalUnread,
       loadFailed,
-      reload: fetchOnce,
+      reload,
       markAllRead,
       pointsBalance,
       giftingBalance,
       currentStreak,
     }),
-    [feed, unreadByProject, totalUnread, loadFailed, fetchOnce, markAllRead, pointsBalance, giftingBalance, currentStreak],
+    [feed, unreadByProject, totalUnread, loadFailed, reload, markAllRead, pointsBalance, giftingBalance, currentStreak],
   );
 
   return (
