@@ -14,12 +14,17 @@
    - Every COUNTS_CHECK_MS, ?counts_only=1 is compared with the counts of the
      loaded rows; a difference re-reads every band.
    - Nothing polls while the tab is hidden; on becoming visible the change feed
-     runs once at once. A failed poll is retried next tick and never shown. */
+     runs once at once. A failed poll is retried next tick and never shown.
+   - Another tab's write that covers the board's rows (lib/cross-tab-sync) runs
+     the change feed at once instead of re-reading every band; `others` then
+     re-reads in full, since a write just happened. A screen without the 30 s
+     feed reads its cursor on the first such write (and re-reads in full once). */
 import { useEffect, useMemo, useRef } from 'react';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { scheduleRowRefresh } from './board-row-refresh';
 import { todayMY } from '../../shared/format';
+import { claimCrossTabRefresh } from '../../../lib/cross-tab-sync';
 import { loadedBoardCounts } from './delivery-board-bands';
 import type { PlanningCounts } from './delivery-planning-queries';
 
@@ -61,8 +66,10 @@ export type BoardRefreshDeps = {
   today: () => string;
   visible: () => boolean;
   fullReread: () => void;
-  /** null = this screen does not run the change feed. */
+  /** null = this screen has no change feed (another tab's write re-reads in full). */
   feed: { read: (after: number | null) => Promise<BoardChanges>; rows: (ch: BoardChanges) => void } | null;
+  /** false = the feed runs only on another tab's write, never on the 30 s tick. */
+  pollFeed: boolean;
   /** null = no counts check. `loaded` is null while bands are loading or refetching. */
   counts: { read: () => Promise<PlanningCounts | null>; loaded: () => PlanningCounts | null } | null;
 };
@@ -71,6 +78,7 @@ export type BoardRefreshDeps = {
 export function createBoardRefresher(d: BoardRefreshDeps) {
   let cursor: number | null = null;
   let feedBusy = false;
+  let nudgeAgain = false;
   let timer: ReturnType<typeof setInterval> | null = null;
   let lastFullAt = d.now();
   let lastCountsAt = d.now();
@@ -80,7 +88,7 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
   const full = () => { lastFullAt = d.now(); day = d.today(); d.fullReread(); };
 
   const runFeed = async () => {
-    if (!d.feed || feedBusy) return;
+    if (!d.feed || !d.pollFeed || feedBusy) return;
     feedBusy = true;
     try {
       const ch = await d.feed.read(cursor);
@@ -93,6 +101,25 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
       /* retried next tick */
     } finally {
       feedBusy = false;
+      if (nudgeAgain) { nudgeAgain = false; void nudge(); }
+    }
+  };
+
+  /* Another tab wrote something the board shows. */
+  const nudge = async (): Promise<void> => {
+    if (!d.feed) { full(); return; }
+    if (feedBusy) { nudgeAgain = true; return; }
+    feedBusy = true;
+    try {
+      const first = cursor == null;
+      const ch = await d.feed.read(cursor);
+      cursor = ch.cursor;
+      if (first || ch.full || ch.others) full(); else d.feed.rows(ch);
+    } catch {
+      full();
+    } finally {
+      feedBusy = false;
+      if (nudgeAgain) { nudgeAgain = false; void nudge(); }
     }
   };
 
@@ -136,7 +163,13 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     stop: stopTimer,
     onVisibility,
     refreshNow: full,
+    nudge: () => { void nudge(); },
   };
+}
+
+/** A cached board slice or band: the queries the row refresh merges into. */
+export function isBoardRows(q: Query): boolean {
+  return q.queryKey[0] === 'delivery-planning' && Array.isArray((q.state.data as { orders?: unknown } | undefined)?.orders);
 }
 
 const isVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
@@ -154,12 +187,11 @@ export function useBoardRefresh(opts: { changeFeed: boolean; countsState: 'ALL' 
       today: todayMY,
       visible: isVisible,
       fullReread: () => { void qc.invalidateQueries({ queryKey: ['delivery-planning'] }); },
-      feed: opts.changeFeed
-        ? {
-            read: (after) => authedFetch<BoardChanges>(`/delivery-planning/changes${after == null ? '' : `?after=${after}`}`),
-            rows: (ch) => refreshChangedRows(qc, ch),
-          }
-        : null,
+      feed: {
+        read: (after) => authedFetch<BoardChanges>(`/delivery-planning/changes${after == null ? '' : `?after=${after}`}`),
+        rows: (ch) => refreshChangedRows(qc, ch),
+      },
+      pollFeed: opts.changeFeed,
       counts: withCounts
         ? {
             read: async () => {
@@ -173,8 +205,9 @@ export function useBoardRefresh(opts: { changeFeed: boolean; countsState: 'ALL' 
     });
     api.current = r;
     r.start();
+    const release = claimCrossTabRefresh({ owns: isBoardRows, refresh: r.nudge });
     document.addEventListener('visibilitychange', r.onVisibility);
-    return () => { r.stop(); document.removeEventListener('visibilitychange', r.onVisibility); api.current = null; };
+    return () => { r.stop(); release(); document.removeEventListener('visibilitychange', r.onVisibility); api.current = null; };
   }, [qc, opts.changeFeed, withCounts]);
   return useMemo(() => ({ refreshNow: () => api.current?.refreshNow() }), []);
 }

@@ -16,7 +16,8 @@ const {
 const counts = (all: number): PlanningCounts =>
   ({ ALL: all, PENDING_DELIVERY: all, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 });
 
-function rig(o: { feed?: boolean; server?: PlanningCounts; loaded?: PlanningCounts | null } = {}) {
+function rig(o: { feed?: boolean; poll?: boolean; server?: PlanningCounts; loaded?: PlanningCounts | null } = {}) {
+  const rows = vi.fn();
   let visible = true;
   let today = '2026-11-10';
   const fullReread = vi.fn();
@@ -27,11 +28,12 @@ function rig(o: { feed?: boolean; server?: PlanningCounts; loaded?: PlanningCoun
     today: () => today,
     visible: () => visible,
     fullReread,
-    feed: o.feed === false ? null : { read: fetchChanges, rows: vi.fn() },
+    feed: o.feed === false ? null : { read: fetchChanges, rows },
+    pollFeed: o.poll ?? true,
     counts: o.server ? { read: fetchCounts, loaded: () => (o.loaded === undefined ? counts(5) : o.loaded) } : null,
   });
   return {
-    r, fullReread, fetchChanges, fetchCounts,
+    r, fullReread, fetchChanges, fetchCounts, rows,
     setDay: (d: string) => { today = d; },
     hide: () => { visible = false; r.onVisibility(); },
     show: () => { visible = true; r.onVisibility(); },
@@ -198,5 +200,45 @@ describe('countsDiffer', () => {
   it('compares every tab', () => {
     expect(countsDiffer(counts(5), counts(5))).toBe(false);
     expect(countsDiffer(counts(5), { ...counts(5), DELIVERED: 1 })).toBe(true);
+  });
+});
+
+describe('another tab wrote something the board shows', () => {
+  it('runs the change feed and re-reads only the changed orders, not every band', async () => {
+    const t = rig();
+    t.r.start();
+    await vi.waitFor(() => expect(t.fetchChanges).toHaveBeenCalledTimes(1));
+    t.fetchChanges.mockResolvedValueOnce({ cursor: 900, docs: ['SO-7'], others: false, full: false });
+    t.r.nudge();
+    await vi.waitFor(() => expect(t.rows).toHaveBeenCalledWith({ cursor: 900, docs: ['SO-7'], others: false, full: false }));
+    expect(t.fullReread).not.toHaveBeenCalled();
+    t.r.stop();
+  });
+
+  it('a service / DP / project change re-reads in full at once', async () => {
+    const t = rig();
+    t.r.start();
+    await vi.waitFor(() => expect(t.fetchChanges).toHaveBeenCalledTimes(1));
+    t.fetchChanges.mockResolvedValueOnce({ cursor: 900, docs: [], others: true, full: false });
+    t.r.nudge();
+    await vi.waitFor(() => expect(t.fullReread).toHaveBeenCalledTimes(1));
+    t.r.stop();
+  });
+
+  it('a screen without the 30 s feed polls nothing, re-reads in full on the first write, by rows after', async () => {
+    vi.useFakeTimers();
+    const t = rig({ poll: false });
+    t.r.start();
+    await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS * 3);
+    expect(t.fetchChanges).not.toHaveBeenCalled();
+    t.r.nudge();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.fullReread).toHaveBeenCalledTimes(1);
+    t.fetchChanges.mockResolvedValueOnce({ cursor: 5000, docs: ['SO-9'], others: false, full: false });
+    t.r.nudge();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.rows).toHaveBeenCalledTimes(1);
+    expect(t.fullReread).toHaveBeenCalledTimes(1);
+    t.r.stop();
   });
 });
