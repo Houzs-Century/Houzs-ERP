@@ -14,6 +14,8 @@ import {
   groupTopErrors,
 } from "../scripts/lib/top-client-errors.mjs";
 
+const ALL = { kind: null, byPage: true };
+
 test("classifyKind reads the reporter's bracketed labels", () => {
   assert.equal(classifyKind("[slow 2s+] GET /api/projects"), "slow");
   assert.equal(classifyKind("[timeout] POST /api/x"), "timeout");
@@ -60,7 +62,7 @@ test("groupTopErrors merges builds and pages, counts users without listing them"
     { dedup_hash: "a2", message: "TypeError: x", route: "/p/2", build_id: "b2", n: "3", first_seen: "2026-10-30T00:00:00Z", last_seen: "2026-11-05T00:00:00Z", users: [8, 9], stack: "TypeError: x\n at f (a.js:1:1)" },
     { dedup_hash: "c1", message: "[slow 2s+] GET /api/x", route: "/home", build_id: "b2", n: 4, first_seen: "2026-11-01T00:00:00Z", last_seen: "2026-11-01T00:00:00Z", users: [1], stack: null },
   ];
-  const { top, totals } = groupTopErrors(rows, 15);
+  const { top, totals } = groupTopErrors(rows, 15, ALL);
   assert.equal(top.length, 2);
   assert.deepEqual(
     { kind: top[0].kind, count: top[0].count, users: top[0].distinctUsers, builds: top[0].distinctBuilds, page: top[0].page },
@@ -74,5 +76,19 @@ test("groupTopErrors merges builds and pages, counts users without listing them"
   assert.equal(totals.distinctUsers, 4);
   assert.deepEqual(totals.byKind, { js: 8, slow: 4 });
   assert.ok(!("users" in top[0]));
-  assert.equal(groupTopErrors(rows, 1).top.length, 1);
+  assert.equal(groupTopErrors(rows, 1, ALL).top.length, 1);
+});
+
+test("groupTopErrors KIND filter keeps totals whole; byPage=false merges pages", () => {
+  const rows = [
+    { dedup_hash: "r1", message: "[rbac 403] POST /trips/:id/location", route: "/", build_id: "b", n: 3, first_seen: "a", last_seen: "b", users: [1], stack: null },
+    { dedup_hash: "r2", message: "[rbac 403] POST /trips/:id/location", route: "/trips", build_id: "b", n: 2, first_seen: "a", last_seen: "b", users: [2], stack: null },
+    { dedup_hash: "s1", message: "[slow 2s+] GET /api/x", route: "/", build_id: "b", n: 9, first_seen: "a", last_seen: "b", users: [1], stack: null },
+  ];
+  const { top, totals } = groupTopErrors(rows, 15, { kind: "rbac-403", byPage: false });
+  assert.equal(top.length, 1);
+  assert.equal(top[0].count, 5);
+  assert.equal(top[0].distinctUsers, 2);
+  assert.equal(top[0].page, "(any)");
+  assert.equal(totals.occurrences, 14);
 });
