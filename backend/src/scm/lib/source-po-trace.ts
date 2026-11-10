@@ -145,6 +145,7 @@ type LotClass = { po: string | null; adjustment: boolean };
    minted this lot (lib/do-resync-return.ts has the story). Its origin is the lot
    the same DO consumed in the same bucket, newest consumption first (the order
    the return unwinds in). Returns returnLotId -> originLotId. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST shim every reader in this file takes
 async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const ret = rows.filter((l) => !l.batch_no && (l.source_doc_type ?? '').toUpperCase() === 'DO' && l.source_doc_id && l.item_code);
@@ -166,8 +167,8 @@ async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<s
         .filter((c) => c.source_doc_id === l.source_doc_id && c.item_code === l.item_code
           && (c.variant_key ?? '') === (l.variant_key ?? '') && (!l.warehouse_id || c.warehouse_id === l.warehouse_id)
           && c.lot_id !== l.id)
-        .sort(newestFirst)[0];
-      if (hit) out.set(l.id, hit.lot_id);
+        .sort(newestFirst);
+      if (hit.length > 0) out.set(l.id, hit[0].lot_id);
     }
   } catch { /* consumptions unreadable — the return lot stays unclassified */ }
   return out;
