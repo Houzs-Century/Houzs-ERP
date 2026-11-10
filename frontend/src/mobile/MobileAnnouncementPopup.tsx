@@ -50,14 +50,12 @@ export function MobileAnnouncementPopup({ onOpenList }: {
   /** Push the Announcements screen — the "View details" / "Read SOP" journey. */
   onOpenList: () => void;
 }) {
-  // 30s, matching every other announcement read on the phone (the list, the
-  // bell, the badge) — and sharing their cache entry, so the pop-up costs no
-  // extra request.
+  // The shared cadence (3 min while visible, once on return to the app), and the
+  // shared cache entry, so the pop-up costs no extra request. It was 30s, which
+  // made the phone the heaviest banner reader; the server caches the feed per
+  // user for 5 min and drops that cache when a notice is published.
   const { current, mustAcknowledge, ack, dismissSession, hideForNavigation } =
-    useAnnouncementBanner({
-      scope: "human",
-      pollMs: 30_000,
-    });
+    useAnnouncementBanner({ scope: "human" });
   const lang = useMobileLang();
 
   if (!current) return null;

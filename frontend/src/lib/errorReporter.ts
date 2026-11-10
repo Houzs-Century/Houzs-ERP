@@ -39,10 +39,16 @@
 // tokens. Identity is NOT sent -- the server stamps user/company from the
 // session and ignores anything else.
 //
-// TRANSPORT: batch + debounce. Events queue and flush after 10s or at 10
-// queued, POSTed with the same bearer + company header the app's fetch layer
-// uses, keepalive:true so a tab close doesn't lose the batch. A flush failure
-// drops the batch silently -- this is telemetry, not business data.
+// TRANSPORT: batch + debounce. Events queue and flush after 60s or at 10
+// queued (and whenever the tab is hidden or closed), POSTed with the same
+// bearer + company header the app's fetch layer uses, keepalive:true so a tab
+// close doesn't lose the batch. A repeat of an event already queued rides on it
+// as `count` instead of a second event. A flush failure drops the batch
+// silently -- this is telemetry, not business data.
+//
+// WHY 60s (2026-11-10, was 10s): the reports are mostly "slow request" notes,
+// and a slow server made every open tab post one every 10 s — 23,309 POSTs in
+// a week at p50 675 ms, load added exactly when the server was struggling.
 //
 // STORM CONTROL (client side; the server dedups again on top):
 //   - per-signature cap: the same message+route reports at most 10 times per
@@ -62,7 +68,7 @@ import { correlatedFetch } from "./requestCorrelation";
 import { BUILD_ID } from "./buildId";
 
 
-const FLUSH_MS = 10_000;
+const FLUSH_MS = 60_000;
 const FLUSH_AT = 10; // queue length that triggers an immediate flush
 const MAX_STACK = 4000; // server re-caps at 4096
 const MAX_MESSAGE = 500;
@@ -76,6 +82,8 @@ interface ErrorEventPayload {
   buildId: string;
   userAgent: string;
   occurredAt: string;
+  /** Times seen since it was queued; absent means once. */
+  count?: number;
 }
 
 const queue: ErrorEventPayload[] = [];
@@ -129,6 +137,15 @@ function enqueue(message: string, stack: string | undefined): void {
   if (n >= PER_SIGNATURE_CAP) return;
   signatureCounts.set(sig, n + 1);
   sessionCount++;
+
+  /* Already waiting in this batch: count it there. Same message and route is
+     the same signature the cap uses, and the server's dedup hash covers the
+     same two (plus the build, which cannot differ within one page load). */
+  const queued = queue.find((q) => q.message === msg && q.route === route);
+  if (queued) {
+    queued.count = (queued.count ?? 1) + 1;
+    return;
+  }
 
   queue.push({
     message: msg,

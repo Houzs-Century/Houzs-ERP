@@ -23,7 +23,7 @@ const MIN_TICK_GAP_MS = 30_000;
  * Tracks who else is currently using the workspace via a 60-second heartbeat.
  * The browser pings POST /api/presence/heartbeat to mark itself "alive", and
  * polls GET /api/presence on the same cadence to fetch the current active list.
- * The heartbeat only fires while the tab is visible.
+ * Both only fire while the tab is visible.
  *
  * SINGLETON: usePresence is mounted by more than one component at once
  * (PresenceIndicator in the top bar + PresencePanel in the sidebar). Previously
@@ -84,13 +84,18 @@ async function beat(): Promise<void> {
 }
 
 async function tick(): Promise<void> {
+  /* A hidden tab neither beats nor reads (2026-11-10). It used to skip only the
+     heartbeat and still GET the list every minute, which nobody can see:
+     production showed 95,445 GET /api/presence against 20,773 heartbeats in a
+     week, so ~3 of every 4 reads went to hidden tabs. onVisibility re-ticks the
+     moment the tab is looked at again. */
+  if (document.visibilityState === "hidden") return;
   // Collapse duplicate triggers: anything asking again within the gap is
   // serving data that is still fresh enough (staleTime, in query terms).
   const now = Date.now();
   if (now - lastTickAt < MIN_TICK_GAP_MS) return;
   lastTickAt = now;
-  // Only beat when the tab is visible — invisible tabs shouldn't count.
-  if (document.visibilityState === "visible") await beat();
+  await beat();
   await fetchActive();
 }
 

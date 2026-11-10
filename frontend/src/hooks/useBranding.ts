@@ -34,7 +34,10 @@ interface BrandingResponse {
 export type BrandingWithCompany = Branding & { companyCode: string };
 
 const BRANDING_KEY = "/api/branding";
-const BRANDING_STALE_MS = 10 * 60_000;
+/* 60 min (was 10). Company identity changes a few times a year, Settings
+   invalidates it on save, and the server answers an unchanged copy with a 304
+   (pollEtag), so a longer life only removes requests. */
+const BRANDING_STALE_MS = 60 * 60_000;
 
 function fetchBranding(): Promise<BrandingResponse> {
   return api.get<BrandingResponse>(BRANDING_KEY);
@@ -98,7 +101,7 @@ export function useBranding(): BrandingWithCompany {
   // Company identity is effectively static, so cache it well past the 30s
   // default to keep it out of the per-navigation waterfall. NOT Infinity on
   // purpose: a bounded staleTime keeps a self-healing net — worst case the
-  // chrome shows old branding for <=10min, never "stuck until reload". Edits
+  // chrome shows old branding for <=60min, never "stuck until reload". Edits
   // are rare and the editor sees their own change immediately.
   //
   // The key is now EXPLICIT, so an edit in Settings that force-refetches via
