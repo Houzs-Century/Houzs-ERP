@@ -388,17 +388,40 @@ lorries.delete('/:id', async (c) => {
 
 // DEV-42: each lorry's latest Velocity fix in the last 24 h (scm/lib/velocity-poll.ts
 // writes them every 5 min). Unified fleet like GET / — not scoped by company.
+export type LatestFix = {
+  lorry_id: string; lat: number; lng: number; speed_kmh: number | null; heading: number | null;
+  ignition: boolean | null; street: string | null; recorded_at: string; received_at: string | null;
+};
+
+/* Newest fix per lorry since `since`. PAGED: a moving lorry writes 12 fixes an
+   hour, so the newest 1,000 rows (all one plain select returns) covered only the
+   last few hours of a 4+ lorry fleet, and a lorry parked since the morning
+   silently dropped off the map. `truncated` = more than 50,000 fixes in the
+   window (about 170 lorries), reported, not hidden. */
+export async function latestFixPerLorry(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
+  sb: any,
+  since: string,
+): Promise<{ data: LatestFix[]; error: string | null; truncated: boolean }> {
+  // ponytail: reads 24 h of rows (288 per tracked lorry); a DISTINCT ON view if the fleet grows large.
+  const { data, error, truncated } = await paginateAll<LatestFix>((f, t) => sb.from('lorry_positions')
+    .select('lorry_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, received_at')
+    .gte('recorded_at', since)
+    .order('recorded_at', { ascending: false }).order('id')
+    .range(f, t));
+  if (error) return { data: [], error: error.message, truncated: false };
+  const latest = new Map<string, LatestFix>();
+  for (const r of data ?? []) if (!latest.has(r.lorry_id)) latest.set(r.lorry_id, r);
+  return { data: [...latest.values()], error: null, truncated };
+}
+
 lorries.get('/positions/latest', async (c) => {
   const sb = c.get('supabase');
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
-  // ponytail: scans 24 h of rows (288 per tracked lorry); a DISTINCT ON view if the fleet grows large.
-  const { data, error } = await sb.from('lorry_positions')
-    .select('lorry_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, received_at')
-    .gte('recorded_at', since)
-    .order('recorded_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const latest = new Map<string, NonNullable<typeof data>[number]>();
-  for (const r of data) if (!latest.has(r.lorry_id)) latest.set(r.lorry_id, r);
+  const { data: fixes, error, truncated } = await latestFixPerLorry(sb, since);
+  if (error) return c.json({ error: 'load_failed', reason: error }, 500);
+  if (truncated) return c.json({ error: 'too_many_fixes', reason: 'More GPS fixes in 24 hours than one read can take; the map would miss lorries.' }, 500);
+  const latest = new Map(fixes.map((r) => [r.lorry_id, r]));
   if (!latest.size) return c.json({ positions: [] });
   const { data: plates, error: pErr } = await sb.from('lorries').select('id, plate').in('id', [...latest.keys()]);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);

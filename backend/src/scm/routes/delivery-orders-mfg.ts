@@ -64,6 +64,7 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = [], n
   });
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
+import { shippedDoSpecRefusal } from '../lib/do-spec-lock-check';
 import { returnDoUnitsAtCost, returnedAsInRow, describeFailedReturns, type DoUnitReturn } from '../lib/do-resync-return';
 import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
@@ -4470,13 +4471,11 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
      pair every write below keys on is caller-supplied: it proves the two belong
      together, never whose they are. A line edit re-prices, re-binds its batch
      and re-syncs inventory. */
-  {
-    const { data: own, error: ownErr } = await scopeToCompany(
-      sb.from('delivery_orders').select('id').eq('id', id), c,
-    ).maybeSingle();
-    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+  const { data: own, error: ownErr } = await scopeToCompany(
+    sb.from('delivery_orders').select('id, status').eq('id', id), c,
+  ).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+  if (!own) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -4500,6 +4499,9 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_sen, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  // Owner 2026-11-10: a shipped line keeps its product and spec (shared/do-spec-lock.ts).
+  const specLock = shippedDoSpecRefusal((own as { status: string | null }).status, prev, it);
+  if (specLock) return c.json(specLock, 409);
 
   /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
      or re-points the code, decides the bucket resyncInventoryForDo will move

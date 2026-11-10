@@ -830,6 +830,15 @@ describe('the month in six tabs', () => {
     expect(screen.getByText('Earlier month · 2026/08')).toBeTruthy();
   });
 
+  /* Owner 2026-11-10 (2990 October): 我希望这里也可以点开so, 点开后也可以返回这里. */
+  test("an order in an entry's document opens the whole order; the receipt stays text", () => {
+    setUp({ lines: [MATCHED] });
+    state.entries = [{ jeNo: 'JE-2609-0093', entryDate: '2026-09-07', sourceType: 'SOPAY', sourceDocNo: 'p-1', debitSen: 210000, creditSen: 0, reference: '2990-DraftOR-2609-019 · 2990-SO-2609-016', who: 'Kum Chee Meng' }];
+    show('/scm/bank-recon?account=310-0020&month=2026-09&tab=not-on-bank');
+    expect(screen.getByRole('link', { name: '2990-SO-2609-016' }).getAttribute('href')).toBe('/scm/sales-orders/2990-SO-2609-016');
+    expect(screen.queryByRole('link', { name: '2990-DraftOR-2609-019' })).toBeNull();
+  });
+
   test('the walk opens the tab it names', () => {
     setUp({ lines: [MATCHED], recon: { ...RECON, outstandingReceipts: { count: 1, sen: 300000 } } });
     state.entries = [{ jeNo: 'JE-2609-0041', entryDate: '2026-09-01', sourceType: 'OR', sourceDocNo: 'OR-2609-004', debitSen: 300000, creditSen: 0, reference: 'OR-2609-004', who: 'Tan Wei Ming' }];

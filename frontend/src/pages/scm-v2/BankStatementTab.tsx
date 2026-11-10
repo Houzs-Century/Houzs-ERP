@@ -36,6 +36,8 @@ import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
+import { EntryDocument, entryDocText } from './bank-entry-doc';
+import { useReturnScroll } from '../../lib/returnScroll';
 
 export const BankStatementTab = ({ onUpload }: { onUpload?: () => void }) => {
   const [statementId, setStatementId] = useState<number | null>(null);
@@ -167,6 +169,8 @@ const RefileAsMonth = ({ statement }: { statement: { id: number; period_from: st
 const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   const q = useBankStatement(id);
   const [showDone, setShowDone] = useState(false);
+  /* Back from an order opened here lands on the same spot (bank-entry-doc). */
+  useReturnScroll(q.data != null);
 
   const statement = q.data?.statement ?? null;
   const lines = q.data?.lines ?? [];
@@ -178,7 +182,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   const entries = q.data?.unmatchedEntries ?? [];
 
   return (
-    <ReconcilePickProvider lines={ordered} entries={entries}>
+    <ReconcilePickProvider lines={ordered} entries={entries} ready={q.data != null}>
     <section className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
@@ -276,7 +280,7 @@ export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
               </td>
               <td>{e.jeNo}{e.carried ? <span className={grid.sub}> · earlier month</span> : null}</td>
               <td>{fmtDateOrDash(e.entryDate)}</td>
-              <td>{e.reference ?? ([e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—')}</td>
+              <td><EntryDocument text={entryDocText(e)} /></td>
               <td>{e.who ?? e.partyName ?? e.notes ?? '—'}</td>
               <DrCr debitSen={e.debitSen} creditSen={e.creditSen} />
             </tr>
@@ -795,7 +799,7 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
                   {e.daysApart > 0 && <span className={grid.sub}> ({e.daysApart}d apart)</span>}
                   {(e.reference ?? e.who ?? e.sourceType ?? e.sourceDocNo ?? e.partyName) && (
                     <div className={grid.sub}>
-                      {e.reference ?? [e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ')}
+                      <EntryDocument text={e.reference ?? [e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ')} />
                       {(e.who ?? e.partyName) ? ` · ${e.who ?? e.partyName}` : ''}
                     </div>
                   )}

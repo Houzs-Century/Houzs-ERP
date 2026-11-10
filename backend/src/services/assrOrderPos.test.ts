@@ -23,6 +23,8 @@ function fakeSb(tables: Record<string, Row[]>, seen: string[] = []) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
     }
+    order() { return this; }
+    range(from: number, to: number) { this.rows = this.rows.slice(from, to + 1); return this; }
     then<T>(onF: (v: { data: Row[]; error: null }) => T) {
       return Promise.resolve({ data: this.rows, error: null }).then(onF);
     }

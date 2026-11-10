@@ -30,6 +30,7 @@ import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../
 import { setChecklistStatus, getUserPhasesOnProject } from '../../services/projects';
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 import { todayMyt } from '../lib/my-time';
+import { paginateAll } from '../lib/paginate-all';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
@@ -224,20 +225,36 @@ export async function startTripIfPlanned(sb: any, tripId: string | null): Promis
 /* GET /progress?since=YYYY-MM-DD — every job's progress touched since that day,
    so the run-sheet and the board can show On the way / Arrived / Done on
    non-DO rows without one read per row. Times and photo keys only, no party
-   data; the window is capped at 62 days. */
+   data; the window is capped at 62 days.
+   PAGED: a bare `.limit(5000)` is still cut at PostgREST's 1,000 rows, so past
+   ~22 legs a day over the 45-day window the oldest jobs silently lost their
+   Arrived / Done. `truncated` (over 50,000 legs) is refused, not hidden. */
+export async function loadJobProgressSince(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
+  sb: any,
+  since: string,
+  companyIds: number[] | undefined,
+): Promise<{ ok: true; rows: Record<string, unknown>[] } | { ok: false; reason: string }> {
+  const { data, error, truncated } = await paginateAll<Record<string, unknown>>((from, to) => {
+    let q = sb.from('job_progress')
+      .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
+      .gte('updated_at', since);
+    // The allowed companies, plus legs whose project / case carries no company (still the caller's run-sheet).
+    if (companyIds !== undefined) q = companyIds.length ? q.or(`company_id.in.(${companyIds.join(',')}),company_id.is.null`) : q.is('company_id', null);
+    return q.order('id').range(from, to);
+  });
+  if (error) return { ok: false, reason: error.message };
+  if (truncated) return { ok: false, reason: 'More job progress rows than one read can take; narrow the window.' };
+  return { ok: true, rows: data ?? [] };
+}
+
 deliveryJobProgress.get('/progress', async (c) => {
   const since = c.req.query('since') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) return c.json({ error: 'invalid_since', reason: 'since must be YYYY-MM-DD.' }, 400);
   const floor = todayMyt(-62);
-  let q = c.get('supabase').from('job_progress')
-      .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
-      .gte('updated_at', since < floor ? floor : since);
-  // The allowed companies, plus legs whose project / case carries no company (still the caller's run-sheet).
-  const ids = allowedCompanyIds(c);
-  if (ids !== undefined) q = ids.length ? q.or(`company_id.in.(${ids.join(',')}),company_id.is.null`) : q.is('company_id', null);
-  const { data, error } = await q.limit(5000);
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ progress: data ?? [] });
+  const r = await loadJobProgressSince(c.get('supabase'), since < floor ? floor : since, allowedCompanyIds(c));
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  return c.json({ progress: r.rows });
 });
 
 deliveryJobProgress.get('/:sourceType/:sourceId/:leg', async (c) => {
