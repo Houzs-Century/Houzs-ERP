@@ -37,6 +37,7 @@ import { unionSoLineChips } from './source-po-trace';
 import { warehouseLabel } from './warehouse-label';
 import { soDeliverableRemaining, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from '../routes/delivery-orders-mfg';
 import { derivePlanningState } from '../routes/delivery-planning';
+import { soReopenable } from './so-reopen';
 
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
 export type SoDeliverableMap = Awaited<ReturnType<typeof soDeliverableRemaining>>;
@@ -489,6 +490,10 @@ export async function buildSoListRows(
       /* BUG-51 repoint: the REAL AutoCount sales-exemption expiry for the SO list
          column (blank when the order is not in AutoCount). */
       (r as Record<string, unknown>).ac_sales_exemption_expiry = acExemptionByDoc.get(docNo) ?? null;
+      /* Reopen is offered only where the status PATCH will take it: a CANCELLED
+         order carried over from AutoCount. A cancel the ERP ran itself is final
+         (so_cancelled_final in routes/mfg-sales-orders.ts). */
+      (r as Record<string, unknown>).reopenable = soReopenable((r as Record<string, unknown>).status as string | null, linkedAcByDoc.get(docNo) ?? null);
       if (!perGroup) {
         (r as Record<string, unknown>).ready_categories = [];
         (r as Record<string, unknown>).is_fully_ready = false;
