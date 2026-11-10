@@ -14,11 +14,13 @@
 //     ones (merge-orphan-models.mjs);
 //   - the TICKETS of data/duplicate-model-merges.json: keep / drops by Model code
 //     in the group's category (merge-duplicate-models.mjs writes no Model audit).
-// A pair acts only when the folded Model is OFF and holds no SKU, and the kept
-// Model is ON. A folded Model claimed by two kept Models is refused.
+// A pair acts only when the folded Model is OFF and holds no ACTIVE SKU, and the
+// kept Model is ON. Its INACTIVE (merged-away) SKUs are left where they are: SKU
+// rows are the merge's business, not this script's, so mfg_products is skipped. A folded Model claimed by two kept Models is refused.
 //
 // WHICH TABLES. Every column with a foreign key to scm.product_models, plus every
-// column named model_id in scm / public, found in the live catalogue at run time.
+// column named model_id in scm / public, found in the live catalogue at run time,
+// except mfg_products (see above).
 //
 // DUPLICATES. A row is SKIPPED, and listed, when moving it would collide with a
 // row already on the kept Model (or one moved earlier in this run) under any
@@ -95,7 +97,7 @@ async function readPairs(sql) {
   const ids = [...new Set(claims.flatMap((c) => [c.old, c.kept]))];
   const models = ids.length === 0 ? [] : await sql`
     SELECT m.id::text AS id, m.model_code, m.active,
-           (SELECT COUNT(*)::int FROM scm.mfg_products p WHERE p.company_id = m.company_id AND p.model_id = m.id) AS skus
+           (SELECT COUNT(*)::int FROM scm.mfg_products p WHERE p.company_id = m.company_id AND p.model_id = m.id AND p.status = 'ACTIVE') AS skus
       FROM scm.product_models m WHERE m.company_id = ${CO} AND m.id::text = ANY(${inList(sql, ids)})`;
   const byId = new Map(models.map((m) => [m.id, m]));
   const pairs = [];
@@ -108,7 +110,7 @@ async function readPairs(sql) {
     if (keeps.length > 1) refused.push(`"${name}": claimed by ${keeps.length} kept Models`);
     else if (!o || !k) refused.push(`"${name}": Model not found in company ${CO}`);
     else if (o.active) refused.push(`"${name}": still ON`);
-    else if (o.skus > 0) refused.push(`"${name}": still holds ${o.skus} SKU(s)`);
+    else if (o.skus > 0) refused.push(`"${name}": still holds ${o.skus} ACTIVE SKU(s)`);
     else if (!k.active) refused.push(`"${name}" -> "${k.model_code}": kept Model is OFF`);
     else pairs.push({ old, kept: k.id, oldCode: o.model_code, keptCode: k.model_code });
   }
@@ -128,7 +130,7 @@ async function readRefColumns(sql) {
        AND table_name IN (SELECT table_name FROM information_schema.tables t WHERE t.table_schema = columns.table_schema AND t.table_type = 'BASE TABLE')
      ORDER BY 1, 2, 3`;
   const cols = [];
-  for (const r of rows) {
+  for (const r of rows.filter((x) => x.tbl !== "mfg_products")) {
     const fq = `${r.schema}.${r.tbl}`;
     const meta = await sql`
       SELECT bool_or(column_name = 'company_id') AS has_co, bool_or(column_name = 'id') AS has_id
