@@ -14,7 +14,9 @@
 // one group's full text, look up its sample hash privately (Supabase MCP,
 // read-only): SELECT message, stack FROM client_errors WHERE dedup_hash LIKE '<hash>%'.
 //
-// Inputs (runner `env`, all optional): DAYS=7 (1-30), LIMIT=15 (1-50).
+// Inputs (runner `env`, all optional): DAYS=7 (1-30), LIMIT=15 (1-50),
+// KIND=js|slow|timeout|api-5xx|rbac-403 (top list of that kind only),
+// BY_PAGE=0 (merge a signature across pages).
 //
 // One SELECT inside a READ ONLY transaction. Exits 0 for every real answer,
 // including an empty window. Only an unreachable database or a query error
@@ -47,6 +49,13 @@ if (!url) {
 
 const DAYS = intEnv("DAYS", 7, 1, 30);
 const LIMIT = intEnv("LIMIT", 15, 1, 50);
+const KINDS = ["js", "slow", "timeout", "api-5xx", "rbac-403"];
+const KIND = KINDS.includes(process.env.KIND ?? "") ? process.env.KIND : null;
+if (process.env.KIND && !KIND) {
+  console.error(`KIND must be one of ${KINDS.join(", ")}; got something else. Aborting.`);
+  process.exit(1);
+}
+const BY_PAGE = process.env.BY_PAGE !== "0";
 const cutoff = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000).toISOString();
 
 const notice = (msg) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
@@ -73,11 +82,13 @@ try {
        GROUP BY dedup_hash`;
   });
 
-  console.log(`client_errors, last ${DAYS} day(s) (last_seen_at >= ${cutoff})`);
+  console.log(
+    `client_errors, last ${DAYS} day(s) (last_seen_at >= ${cutoff}), kind=${KIND ?? "all"}, by_page=${BY_PAGE}`,
+  );
   if (rows.length === 0) {
     notice(`No client errors recorded in the last ${DAYS} day(s).`);
   } else {
-    const { top, totals } = groupTopErrors(rows, LIMIT);
+    const { top, totals } = groupTopErrors(rows, LIMIT, { kind: KIND, byPage: BY_PAGE });
     const kinds = Object.entries(totals.byKind)
       .sort((a, b) => b[1] - a[1])
       .map(([k, n]) => `${k}=${n}`)

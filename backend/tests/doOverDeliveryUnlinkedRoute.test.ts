@@ -97,7 +97,7 @@ const confirm = (app: Hono, id: string) =>
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ status: 'LOADED' }),
-  });
+  }, { DO_SHIP_MODE: 'two-step' }); // no database behind these stubs; doShipAtomic.test.ts covers atomic
 
 async function overDeliveryRefusal(res: Response): Promise<{ error?: string; conflicts?: string[] } | null> {
   if (res.status !== 409) return null;
