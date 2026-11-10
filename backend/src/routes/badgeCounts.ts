@@ -82,9 +82,8 @@ export async function readBadgeCount(res: Response): Promise<number | null> {
   }
 }
 
-export function badgeCountsRouter(dispatch: BadgeDispatch) {
-  const app = new Hono<{ Bindings: Env }>();
-  app.get("/", async (c) => {
+export function badgeCountsHandler(dispatch: BadgeDispatch) {
+  return async (c: Context<{ Bindings: Env }>) => {
     const sources = parseBadgeSources(c.req.query("sources"));
     const headers = forwardedHeaders(c.req.raw.headers);
     const origin = new URL(c.req.url).origin;
@@ -103,6 +102,30 @@ export function badgeCountsRouter(dispatch: BadgeDispatch) {
     );
     c.header("Cache-Control", "private, no-store");
     return c.json({ counts: Object.fromEntries(pairs) as Partial<Record<BadgeSource, number | null>> });
-  });
-  return app;
+  };
 }
+
+/** A router over any dispatcher (tests pass a fake one). */
+export function badgeCountsRouter(dispatch: BadgeDispatch) {
+  const router = new Hono<{ Bindings: Env }>();
+  router.get("/", badgeCountsHandler(dispatch));
+  return router;
+}
+
+/* The mounted router. index.ts hands it the app's own fetch at startup
+   (setBadgeDispatch); it is a named import there so the route inventory
+   (scripts/generate-route-capability-matrix.mjs) can resolve it. Until then
+   every source answers null — no badge, never a wrong one. */
+let appDispatch: BadgeDispatch | null = null;
+export function setBadgeDispatch(dispatch: BadgeDispatch): void {
+  appDispatch = dispatch;
+}
+const badgeCounts = new Hono<{ Bindings: Env }>();
+badgeCounts.get(
+  "/",
+  badgeCountsHandler((c, req) => {
+    if (!appDispatch) return Promise.reject(new Error("badge dispatch not wired"));
+    return appDispatch(c, req);
+  }),
+);
+export default badgeCounts;

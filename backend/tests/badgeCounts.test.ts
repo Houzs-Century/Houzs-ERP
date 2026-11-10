@@ -110,9 +110,11 @@ describe("GET /api/badge-counts", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const index = readFileSync(resolve(__dirname, "../src/index.ts"), "utf8");
-    const mount = index.indexOf('"/api/badge-counts"');
+    const mount = index.indexOf('app.route("/api/badge-counts", badgeCounts);');
     expect(mount).toBeGreaterThan(0);
     expect(index.indexOf('app.use("/api/*", auth);')).toBeLessThan(mount);
-    expect(index.slice(mount, mount + 400)).toContain("app.fetch(req, c.env, ctx)");
+    const wiring = index.indexOf("setBadgeDispatch(");
+    expect(wiring).toBeGreaterThan(0);
+    expect(index.slice(wiring, mount)).toContain("app.fetch(req, c.env, ctx)");
   });
 });

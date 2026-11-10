@@ -40,7 +40,7 @@ import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
-import { badgeCountsRouter } from "./routes/badgeCounts";
+import badgeCounts, { setBadgeDispatch } from "./routes/badgeCounts";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
@@ -518,18 +518,17 @@ app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
 // Every sidebar count in one request: each source is re-dispatched through THIS
 // app with the caller's headers, so it passes the same gates as a direct call.
-app.route(
-  "/api/badge-counts",
-  badgeCountsRouter((c, req) => {
-    let ctx: Parameters<typeof app.fetch>[2];
-    try {
-      ctx = c.executionCtx;
-    } catch {
-      ctx = undefined;
-    }
-    return Promise.resolve(app.fetch(req, c.env, ctx));
-  }),
-);
+setBadgeDispatch((c, req) => {
+  let ctx: Parameters<typeof app.fetch>[2];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  return Promise.resolve(app.fetch(req, c.env, ctx));
+});
+app.route("/api/badge-counts", badgeCounts);
+
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
 // IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
