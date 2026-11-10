@@ -154,10 +154,12 @@ async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<s
     const doIds = [...new Set(ret.map((l) => l.source_doc_id as string))];
     const cons: Array<{ id: string; lot_id: string; source_doc_id: string; warehouse_id: string | null; item_code: string | null; variant_key: string | null; consumed_at: string | null }> = [];
     for (let i = 0; i < doIds.length; i += CHUNK) {
-      const { data } = await sb.from('inventory_lot_consumptions')
+      const { data, error } = await sb.from('inventory_lot_consumptions')
         .select('id, lot_id, source_doc_id, warehouse_id, item_code, variant_key, consumed_at')
         .eq('source_doc_type', 'DO')
         .in('source_doc_id', doIds.slice(i, i + CHUNK));
+      // A half-read must not name an origin: leave every return lot unclassified.
+      if (error) return new Map();
       for (const c of (data ?? []) as typeof cons) cons.push(c);
     }
     const newestFirst = (a: typeof cons[number], b: typeof cons[number]) =>
