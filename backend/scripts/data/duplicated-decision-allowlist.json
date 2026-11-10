@@ -192,8 +192,8 @@
     },
     {
       "check": "D1",
-      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER|frontend/src/components/GlobalSearch.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number. Grew from ten to sixteen hit types 2026-11-10 (suppliers, customers, credit notes, receipts, delivery returns, payment vouchers); every map is typed Record<SearchHitType, ...>, so a type missing from one fails to compile."
+      "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER|frontend/src/components/GlobalSearchPalette.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number. Grew from ten to sixteen hit types 2026-11-10 (suppliers, customers, credit notes, receipts, delivery returns, payment vouchers); every map is typed Record<SearchHitType, ...>, so a type missing from one fails to compile. The desktop order moved with the overlay from GlobalSearch.tsx to GlobalSearchPalette.tsx the same day."
     },
     {
       "check": "D1",
