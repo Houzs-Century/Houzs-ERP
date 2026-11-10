@@ -8,6 +8,9 @@ name: Merge duplicate Product Models (PLAN unless applied)
 # fold. APPLY needs the CONFIRM phrase that plan printed; the phrase carries the
 # counts, so a phrase from an older run cannot fire.
 #
+# REPORT runs backend/scripts/report-model-merge.mjs instead: what each Model of
+# the ticket holds now. Read-only in every mode.
+#
 # Manual trigger only, own concurrency group.
 on:
   workflow_dispatch:
@@ -17,11 +20,11 @@ on:
         required: true
         type: string
       mode:
-        description: "plan (writes nothing) or apply"
+        description: "plan (writes nothing), apply, or report (read-only per-Model listing)"
         required: true
         default: "plan"
         type: choice
-        options: [plan, apply]
+        options: [plan, apply, report]
       confirm:
         description: "On apply only: the phrase the plan printed"
         required: false
@@ -46,7 +49,15 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/merge-duplicate-models.mjs
+      - if: ${{ inputs.mode == 'report' }}
+        run: node scripts/report-model-merge.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TICKET: ${{ inputs.ticket }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.mode != 'report' }}
+        run: node scripts/merge-duplicate-models.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TICKET: ${{ inputs.ticket }}
