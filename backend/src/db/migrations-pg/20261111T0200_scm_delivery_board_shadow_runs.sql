@@ -1,4 +1,4 @@
--- 20261111T0100_scm_delivery_board_shadow_runs.sql
+-- 20261111T0200_scm_delivery_board_shadow_runs.sql
 --
 -- WHY. The Delivery Planning board is moving from ~800-1,400 PostgREST reads to
 -- two SQL statements (lib/delivery-board-sql.ts). Accuracy is the owner's first

@@ -183,7 +183,7 @@ describePg('Delivery Planning board, SQL path on real Postgres', () => {
     client = postgres(url, { max: 1, onnotice: () => undefined, types: { bigint: { to: 20, from: [20], parse: (x: string) => Number(x), serialize: (x: number) => String(x) } } });
     h.client = client;
     await client.unsafe(DDL);
-    await client.unsafe(readFileSync(new URL('../src/db/migrations-pg/20261111T0100_scm_delivery_board_shadow_runs.sql', import.meta.url), 'utf8'));
+    await client.unsafe(readFileSync(new URL('../src/db/migrations-pg/20261111T0200_scm_delivery_board_shadow_runs.sql', import.meta.url), 'utf8'));
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(FIXED_NOW);
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warnings.push(a.map(String).join(' ')); });
   });
