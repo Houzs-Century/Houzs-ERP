@@ -13,14 +13,16 @@
 //              match row on a line that is not POSTED is nobody's claim
 //              (docs/bugs/0802).
 //
-// A card payment its merchant matched is not done until the report's money is
-// in a bank (owner 2026-11-10: 如果merchant 对的上但bank 还有没有对的上要分开 …
-// 因为可以是另外一笔卡着 → 做): booked bank credits must cover the report — Cash
-// Flow's own rule, acc/card-in-bank inBankShares, so the two screens agree on
-// what is in the bank. Until then it is CARD_NOT_IN_BANK, naming its report:
-// still holding lines to reconcile (no bank line is offered it until every
-// line is done — acc/bank loadPayableBatches), or done and its credit not
-// matched, or paid in part.
+// A card payment its merchant matched is DONE on this list (owner 2026-11-10,
+// on the three lists: 所以这里的unmatch payment，已经match 了就不要出现 … 会不会
+// duplicate → 做). What can still be open after that is not the payment's: the
+// report's other lines (on Merchant report lines) and the report's payout not
+// matched to a bank credit (on Bank money in). Earlier that day each such
+// payment stayed listed as "merchant matched, bank not yet", which said every
+// one of those twice.
+//
+// A transfer carries its entry's number, so the screen can name the bank line
+// Bank money in offers that entry to — the same thing seen from the bank.
 //
 // Not listed, on purpose:
 //   cash      — it books to the cash account, which takes no statement, so
@@ -39,7 +41,6 @@
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { PAYMENT_METHOD_CODES, type PaymentMethodCode } from '../scm/shared/payment-methods';
 import { jeNosOf } from './bank';
-import { inBankShares, paymentKey } from './card-in-bank';
 import { keyedAs, merchantNamesOf } from './merchant-names';
 
 export type PaymentSource = 'SOPAY' | 'SIPAY';
@@ -50,8 +51,6 @@ export type UnmatchedState =
   | 'CARD_NOT_REPORTED'
   /** A merchant report line claims it; nobody has confirmed that line. */
   | 'CARD_TO_CONFIRM'
-  /** The merchant matched it (a confirmed line); the report's money is not in a bank yet. */
-  | 'CARD_NOT_IN_BANK'
   /** Its bank is not one of this company's active merchants, so no report can ever claim it. */
   | 'CARD_NO_MERCHANT'
   /** The transfer has no live journal entry — the Self-check card's business. */
@@ -61,15 +60,13 @@ export type UnmatchedState =
   /** No bank statement covering its day has been uploaded yet. */
   | 'TRANSFER_NO_STATEMENT';
 
-/** The merchant report a card payment's line is on, as the bank side sees it. */
+/** The merchant report a card payment's line is on. */
 export type UnmatchedReport = {
   batchId: number;
   fileName: string | null;
   acquirerCode: string;
-  /** Its lines nobody has confirmed or set aside — while any, no bank line is offered it. */
+  /** Its lines nobody has confirmed or set aside. */
   waitingLines: number;
-  /** The share (0..1) of its money booked bank credits hold today. */
-  bankShare: number;
 };
 
 export type UnmatchedPayment = {
@@ -95,6 +92,8 @@ export type UnmatchedPayment = {
       account's uploaded statements reach (null = none uploaded). */
   bankAccountCode: string | null;
   statementUpTo: string | null;
+  /** transfer: its live journal entry's number — the entry Bank money in offers a bank line to. */
+  jeNo: string | null;
   /** card: the report its line is on, when a line claims it. */
   report: UnmatchedReport | null;
 };
@@ -117,12 +116,10 @@ export type PaymentFact = {
 
 /** What the two reconciliations have said, keyed `${source}:${id}` where a payment is meant. */
 export type MatchFacts = {
-  /** The merchant report line claiming a card payment: whether it is confirmed,
-      its report, and the share of that report's money booked in a bank (absent
-      = all of it, for a caller that does not read the bank). */
-  cardClaims: Map<string, { confirmed: boolean; batchId?: number | null; bankShare?: number }>;
+  /** The merchant report line claiming a card payment: whether it is confirmed, and its report. */
+  cardClaims: Map<string, { confirmed: boolean; batchId?: number | null }>;
   /** The reports those lines are on, by batch id. */
-  reports?: Map<number, Omit<UnmatchedReport, 'batchId' | 'bankShare'>>;
+  reports?: Map<number, Omit<UnmatchedReport, 'batchId'>>;
   /** Every name this company's ACTIVE merchants answer to — display names and
       their other names (Pinelabs, Public) — compared without case. */
   activeMerchants: Set<string>;
@@ -166,20 +163,16 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       amountSen: p.amountSen,
       reference: tagOf(p.approvalCode),
       ageDays: dayGap(p.paidOn, today),
+      jeNo: null,
       report: null,
     };
     if (CARD_METHODS.has(p.method)) {
       const claim = facts.cardClaims.get(key);
+      /* Merchant matched is matched: what is left is the report's, listed on its own (header). */
+      if (claim?.confirmed) continue;
       const tag = tagOf(p.merchantProvider);
       const on = claim?.batchId == null ? undefined : facts.reports?.get(claim.batchId);
-      const report: UnmatchedReport | null = claim?.batchId != null && on
-        ? { batchId: claim.batchId, ...on, bankShare: claim.bankShare ?? 1 }
-        : null;
-      if (claim?.confirmed) {
-        if ((claim.bankShare ?? 1) >= 1) continue;
-        out.push({ ...base, kind: 'card', channel: tag, state: 'CARD_NOT_IN_BANK', bankAccountCode: null, statementUpTo: null, report });
-        continue;
-      }
+      const report: UnmatchedReport | null = claim?.batchId != null && on ? { batchId: claim.batchId, ...on } : null;
       /* A line already claims it: that decides, whatever the tag says now. An
          untagged payment is every merchant's candidate (couldBeAcquirers), so
          only a tag NO active merchant carries means no report can ever take it. */
@@ -204,6 +197,7 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       state: upTo != null && upTo >= p.paidOn ? 'TRANSFER_NOT_MATCHED' : 'TRANSFER_NO_STATEMENT',
       bankAccountCode: entry.accountCode,
       statementUpTo: upTo,
+      jeNo: entry.jeNo,
     });
   }
   return out.sort((a, b) => b.ageDays - a.ageDays || a.docNo.localeCompare(b.docNo));
@@ -280,9 +274,8 @@ async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Prom
 
 /** What Merchant Recon has said about the card payments: which line claims
     each one, whether that line is confirmed, and which merchants are active —
-    and, for the report each line is on, its lines still waiting and the share
-    of its money booked in a bank by `today` (Cash Flow's rule). */
-async function readCardFacts(sb: any, companyId: number, cardIds: string[], today: string): Promise<{
+    and, for the report each line is on, its lines still waiting. */
+async function readCardFacts(sb: any, companyId: number, cardIds: string[]): Promise<{
   ok: true; cardClaims: MatchFacts['cardClaims']; activeMerchants: MatchFacts['activeMerchants']; reports: NonNullable<MatchFacts['reports']>;
 } | Fail> {
   const { data: acq, error: acqErr } = await sb.from('acc_acquirers')
@@ -311,36 +304,18 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[], toda
     .map((r) => Number(r.id)));
   const batchOfLine = new Map(lines.data.map((r) => [Number(r.id), Number(r.batch_id)]));
 
-  /* The reports those lines are on: their own lines (what still waits), what
-     each pays and the bank credits booked against it. */
+  /* The reports those lines are on, and their own lines still waiting. */
   const batchIds = [...new Set([...batchOfLine.values()].filter((n) => Number.isInteger(n)))];
-  const [batchRows, receiptRows, reportLines] = await Promise.all([
+  const [batchRows, reportLines] = await Promise.all([
     chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_batches')
-      .select('id, file_name, acquirer_code, stated_net_sen, net_sen')
+      .select('id, file_name, acquirer_code')
       .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi)),
-    chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_receipts')
-      .select('id, batch_id, received_on, amount_sen, charge_sen, je_no')
-      .eq('company_id', companyId).in('batch_id', batch).order('id').range(lo, hi)),
     chunkIn<Record<string, any>, number>(batchIds, (batch, lo, hi) => sb.from('acc_settlement_rows')
       .select('id, batch_id, confirmed_at, bucket')
       .eq('company_id', companyId).in('batch_id', batch).order('id').range(lo, hi)),
   ]);
   if (batchRows.error) return { ok: false, reason: `merchant reports: ${batchRows.error.message}` };
-  if (receiptRows.error) return { ok: false, reason: `merchant report credits: ${receiptRows.error.message}` };
   if (reportLines.error) return { ok: false, reason: `merchant report lines: ${reportLines.error.message}` };
-  const shares = inBankShares({
-    matches: links.data.map((l) => ({ payment_source: String(l.payment_source), payment_id: String(l.payment_id), settlement_row_id: Number(l.settlement_row_id) })),
-    rows: lines.data.map((r) => ({ id: Number(r.id), batch_id: Number(r.batch_id), confirmed_at: r.confirmed_at ?? null })),
-    batches: batchRows.data.map((b) => ({
-      id: Number(b.id),
-      stated_net_sen: b.stated_net_sen == null ? null : Number(b.stated_net_sen),
-      net_sen: b.net_sen == null ? null : Number(b.net_sen),
-    })),
-    receipts: receiptRows.data.map((r) => ({
-      batch_id: Number(r.batch_id), received_on: String(r.received_on ?? ''), amount_sen: Number(r.amount_sen ?? 0),
-      charge_sen: r.charge_sen == null ? null : Number(r.charge_sen), je_no: r.je_no ?? null,
-    })),
-  }, today);
   const waiting = new Map<number, number>();
   for (const r of reportLines.data) {
     if (r.confirmed_at != null || String(r.bucket ?? '') === 'IGNORED') continue;
@@ -363,7 +338,6 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[], toda
     cardClaims.set(key, {
       confirmed: confirmed || (had?.confirmed ?? false),
       batchId: batchId === undefined || !Number.isInteger(batchId) ? null : batchId,
-      bankShare: shares.get(paymentKey(String(l.payment_source), String(l.payment_id))) ?? 0,
     });
   }
   return { ok: true, cardClaims, activeMerchants, reports };
@@ -470,7 +444,7 @@ export async function loadUnmatchedPayments(
   const cardIds = [...new Set(facts.filter((f) => CARD_METHODS.has(f.method)).map((f) => f.id))];
   const transferKeys = facts.filter((f) => f.method === 'transfer').map((f) => ({ source: f.source, id: f.id }));
   const card = cardIds.length > 0
-    ? await readCardFacts(sb, companyId, cardIds, window.today)
+    ? await readCardFacts(sb, companyId, cardIds)
     : { ok: true as const, cardClaims: new Map(), activeMerchants: new Set<string>(), reports: new Map() };
   if (!card.ok) return card;
   const bank = transferKeys.length > 0

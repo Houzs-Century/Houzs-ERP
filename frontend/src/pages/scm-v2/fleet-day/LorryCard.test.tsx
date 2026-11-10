@@ -4,7 +4,7 @@
    pill and the delivered fold without crashing. */
 import { describe, expect, test } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { LorryCard } from './LorryCard';
+import { LorryCard, StopNo } from './LorryCard';
 import type { DocRowVM, LorryRunVM } from './vm';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 
@@ -37,6 +37,7 @@ describe('LorryCard', () => {
   test('renders plate, crew, progress, an undelivered LATE row and the delivered fold', () => {
     render(
       <LorryCard
+        routeColor="#2563eb"
         run={run}
         visibleDocs={run.docs}
         filtersActive={false}
@@ -76,6 +77,7 @@ describe('LorryCard', () => {
     };
     render(
       <LorryCard
+        routeColor="#2563eb"
         run={jobRun} visibleDocs={jobRun.docs} filtersActive={false} searchActive={false}
         actionable focused={false} selectedKey={null} remarkKeys={new Set()} road={null} legByRef={new Map()} mapNoByRef={new Map()}
         onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}}
@@ -91,7 +93,7 @@ describe('a finished stop shows its road and site time', () => {
   test('on the road from setting off to arrived, on site from arrived to completed', () => {
     const timed = { ...run, docs: [doc({ soDocNo: 'B', status: 'done', departedAt: '2026-11-01T02:00:00Z', arrivedAt: '2026-11-01T02:30:00Z', deliveredAt: '2026-11-01T03:10:00Z' })] };
     render(
-      <LorryCard run={timed} visibleDocs={timed.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
+      <LorryCard routeColor="#2563eb" run={timed} visibleDocs={timed.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
         remarkKeys={new Set()} road={null} legByRef={new Map()} mapNoByRef={new Map()} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
     expect(screen.getByText(/^Drive time 30 min · Arrived .+ · On-site time 40 min$/)).toBeTruthy();
@@ -101,7 +103,7 @@ describe('a finished stop shows its road and site time', () => {
 describe('the run by road', () => {
   test('shows the road distance and driving time on the card', () => {
     render(
-      <LorryCard run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
+      <LorryCard routeColor="#2563eb" run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
         remarkKeys={new Set()} road="86.4 km · 3 h 10 min" legByRef={new Map()} mapNoByRef={new Map()} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
     expect(screen.getByText('86.4 km · 3 h 10 min')).toBeTruthy();
@@ -111,7 +113,7 @@ describe('the run by road', () => {
 describe('each order by road from the stop before', () => {
   test('an order on the run shows how far the lorry drives to reach it', () => {
     render(
-      <LorryCard run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
+      <LorryCard routeColor="#2563eb" run={run} visibleDocs={run.docs} filtersActive={false} searchActive={false} actionable focused={false} selectedKey={null}
         remarkKeys={new Set()} road={null} legByRef={new Map([['A', '12.0 km · 18 min']])} mapNoByRef={new Map()}
         onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
@@ -122,11 +124,22 @@ describe('each order by road from the stop before', () => {
 describe('each row carries its map pin number', () => {
   test('a delivered stop shows the number its pin has on the map', () => {
     render(
-      <LorryCard run={run} visibleDocs={run.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
+      <LorryCard routeColor="#2563eb" run={run} visibleDocs={run.docs} filtersActive={false} searchActive actionable focused={false} selectedKey={null}
         remarkKeys={new Set()} road={null} legByRef={new Map()} mapNoByRef={new Map([['A', 4], ['B', 7]])}
         onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}} />,
     );
     expect(screen.getByText('4')).toBeTruthy();
     expect(screen.getByText('7')).toBeTruthy();
+  });
+
+  test('a done stop number is solid in the lorry colour, a stop still to deliver is a light tint of it', () => {
+    const { container } = render(<><StopNo no={1} color="#2563eb" done /><StopNo no={2} color="#2563eb" done={false} /></>);
+    const [done, open] = Array.from(container.querySelectorAll<HTMLElement>('[data-done]'));
+    expect(done!.dataset.done).toBe('true');
+    expect(done!.style.backgroundColor).toBe('rgb(37, 99, 235)');
+    expect(done!.style.color).toBe('rgb(255, 255, 255)');
+    expect(open!.dataset.done).toBe('false');
+    expect(open!.style.color).toBe('rgb(37, 99, 235)');
+    expect(open!.style.backgroundColor).not.toBe('rgb(37, 99, 235)');
   });
 });

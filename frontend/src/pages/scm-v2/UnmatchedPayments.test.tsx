@@ -4,8 +4,10 @@
      • three lists, each a tile with its count and money: the merchant report
        lines nobody reconciled, the payments not matched, the bank's money with
        no entry; the address says which is open;
-     • every row says where it is stuck and links the screen that unsticks it —
-       a card the merchant matched but the bank has not paid names its report;
+     • every row says where it is stuck and links the screen that unsticks it; a
+       card the merchant matched is matched, not listed (owner 2026-11-10: 已经match
+       了就不要出现), and a payment names the same money waiting on another list —
+       the report line that guesses it, the bank line offered its entry (会不会duplicate);
      • each list's chips carry their counts and narrow the list and its sentence;
      • Export all writes EVERY row of the three, whatever chip is on, a sheet or
        a part each, with the columns each table shows; one list's PDF prints it;
@@ -24,14 +26,12 @@ const row = (over: Partial<UnmatchedPayment>): UnmatchedPayment => ({
 });
 const ROWS: UnmatchedPayment[] = [
   row({}),
-  row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28' }),
-  row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28' }),
+  row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0031' }),
+  row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0099' }),
   row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED', collectedByName: null }),
-  /* Owner 2026-11-10: the merchant matched them; the bank has not. */
-  row({ paymentId: 'p5', docNo: '2990-SO-2610-011', channel: 'MBB', amountSen: 100_000, ageDays: 20, state: 'CARD_NOT_IN_BANK',
-    report: { batchId: 31, fileName: 'mbb-1001.csv', acquirerCode: 'MBB', waitingLines: 2, bankShare: 0 } }),
-  row({ paymentId: 'p6', docNo: '2990-SO-2610-012', channel: 'MBB', amountSen: 200_000, ageDays: 18, state: 'CARD_NOT_IN_BANK',
-    report: { batchId: 32, fileName: 'mbb-1002.csv', acquirerCode: 'MBB', waitingLines: 0, bankShare: 0 } }),
+  /* The sale MBB's 01/11 report line 19 guesses (GUESS below): the same money, from the books' side. */
+  row({ paymentId: 'g1', docNo: '2990-SO-2611-021', customerName: 'Alice Ong', channel: 'MBB', amountSen: 164_000, reference: '080405',
+    paidOn: '2026-11-04', ageDays: 6, state: 'CARD_NOT_REPORTED' }),
 ];
 
 /* Merchant Recon's own reports: two open lines in the window, one decided, one outside it. */
@@ -58,6 +58,10 @@ const BANK: UnmatchedBankLine[] = [
   { lineId: 102, statementId: 1, accountCode: '310-0020', bankName: 'Hong Leong', bookedOn: '2026-10-07', month: '2026-10', description: 'MBB MERCHANT SETTLEMENT',
     reference: null, amountSen: 100_000, what: 'CARD', kind: 'PAYOUT_NO_BATCH', acquirerCode: 'MBB', entryCount: 0, entries: [], ageDays: 34,
     note: 'MBB paid RM 1,000.00, and no reconciled report of theirs is waiting for money. Reconcile the merchant report first.' },
+  { lineId: 103, statementId: 1, accountCode: '310-0020', bankName: 'Hong Leong', bookedOn: '2026-09-21', month: '2026-09', description: 'IBG CHONG HUI WEN',
+    reference: null, amountSen: 143_300, what: 'TRANSFER', kind: 'OTHER', acquirerCode: null, entryCount: 1, ageDays: 50,
+    entries: [{ jeNo: 'JE-2609-0031', entryDate: '2026-09-20', doc: '2990-SO-2609-031', who: 'Chong Hui Wen', daysApart: 1 }],
+    note: 'One entry of this amount: 2990-SO-2609-031 · Chong Hui Wen, 20/09/2026 — match it on Bank statements.' },
 ];
 
 const asked: Array<[string, string]> = [];
@@ -90,7 +94,8 @@ vi.mock('../../vendor/scm/lib/unmatched-payments-pdf', () => ({ generateUnmatche
 import { UnmatchedPayments } from './UnmatchedPayments';
 
 const draw = (at = '/scm/unmatched-payments') => render(<MemoryRouter initialEntries={[at]}><UnmatchedPayments /></MemoryRouter>);
-const rowOf = (text: string): HTMLElement => screen.getByText(text).closest('tr') as HTMLElement;
+/* The row on the list that is open: the other two stay mounted, hidden, and may name the same document. */
+const rowOf = (text: string): HTMLElement => screen.getAllByText(text).find((el) => el.closest('[hidden]') == null)!.closest('tr') as HTMLElement;
 const tab = (name: RegExp) => screen.getByRole('tab', { name });
 
 /* The window is today's: pin today, so the lines below stay inside it. */
@@ -106,8 +111,8 @@ describe('three lists on one page', () => {
   test('each list is a tile with its count and money; Payments opens first, the address picks another', () => {
     draw();
     expect(tab(/^Merchant report lines\s*2/).getAttribute('aria-selected')).toBe('false');
-    expect(tab(/^Payments\s*6/).getAttribute('aria-selected')).toBe('true');
-    expect(tab(/^Bank money in\s*2/).textContent).toContain('RM 1,777.00');
+    expect(tab(/^Payments\s*5/).getAttribute('aria-selected')).toBe('true');
+    expect(tab(/^Bank money in\s*3/).textContent).toContain('RM 3,210.00');
     fireEvent.click(tab(/^Bank money in/));
     expect(tab(/^Bank money in/).getAttribute('aria-selected')).toBe('true');
   });
@@ -149,25 +154,33 @@ describe('Payments', () => {
     expect(untagged.getByText('Not on a merchant report yet')).toBeTruthy();
   });
 
-  /* Owner 2026-11-10: 如果merchant 对的上但bank 还有没有对的上要分开 … 因为可以是另外一笔卡着. */
-  test('a card the merchant matched but the bank has not paid says which report holds it', () => {
+  /* Owner 2026-11-10: 已经match 了就不要出现 / 会不会duplicate. */
+  test('a payment names the same money waiting on another list, and opens it', () => {
     draw();
-    const held = within(rowOf('2990-SO-2610-011'));
-    expect(held.getByText('Merchant matched — mbb-1001.csv still has 2 lines to reconcile, so the bank cannot be matched yet')).toBeTruthy();
-    expect(held.getByText('Merchant reports').getAttribute('href')).toBe('/scm/merchant-recon?acq=MBB&batch=31');
-    const credit = within(rowOf('2990-SO-2610-012'));
-    expect(credit.getByText('Merchant matched — the bank credit for mbb-1002.csv is not matched yet')).toBeTruthy();
-    expect(credit.getByText('Bank statements').getAttribute('href')).toBe('/scm/bank-recon');
+    const guessed = within(rowOf('2990-SO-2611-021'));
+    const report = guessed.getByText('Merchant report line · MBB · 2026/11/01 · line 19');
+    expect(report.getAttribute('href')).toBe('/scm/merchant-recon?acq=MBB&batch=7&tab=to-choose');
+    const transfer = within(rowOf('2990-SO-2609-031'));
+    const bankLine = transfer.getByText('Bank money in · 2026/09/21 · RM 1,433.00');
+    expect(bankLine.getAttribute('href')).toBe('/scm/bank-recon?account=310-0020&month=2026-09');
+    /* Nothing on another list: nothing named. */
+    expect(within(rowOf('2990-SO-2608-069')).queryByText(/^(Merchant report line|Bank money in) · /)).toBeNull();
+  });
+
+  test('there is no stage for a card the merchant matched — it is matched', () => {
+    draw();
+    expect(screen.queryByRole('button', { name: /merchant matched/ })).toBeNull();
+    expect(screen.queryByText(/^Merchant matched — /)).toBeNull();
   });
 
   test('the stages carry their counts, and the list and its sentence follow the choice', () => {
     draw();
-    expect(screen.getByRole('button', { name: 'All (6)' })).toBeTruthy();
-    expect(screen.getByText(/^6 payments not matched, .*9,673\.00 in total\. Card 4 \(.*6,740\.00\) · Transfer 2 \(.*2,933\.00\)\./)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Card · merchant matched, bank not yet (2)' }));
+    expect(screen.getByRole('button', { name: 'All (5)' })).toBeTruthy();
+    expect(screen.getByText(/^5 payments not matched, .*8,313\.00 in total\. Card 3 \(.*5,380\.00\) · Transfer 2 \(.*2,933\.00\)\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
     expect(screen.queryByText('2990-SO-2609-045')).toBeNull();
-    expect(screen.getByText('2990-SO-2610-011')).toBeTruthy();
-    expect(screen.getByText(/^2 payments not matched, .*3,000\.00 in total\.$/)).toBeTruthy();
+    expect(rowOf('2990-SO-2611-021')).toBeTruthy();
+    expect(screen.getByText(/^2 payments not matched, .*2,140\.00 in total\.$/)).toBeTruthy();
     /* A stage with nothing in it is not offered. */
     expect(screen.queryByRole('button', { name: /Transfer · not in the books/ })).toBeNull();
   });
@@ -225,17 +238,18 @@ describe('Bank money in', () => {
 describe('Export', () => {
   test('Export all writes every row of the three lists, a sheet each, whatever chip is on', async () => {
     draw();
-    fireEvent.click(screen.getByRole('button', { name: 'Card · merchant matched, bank not yet (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
     fireEvent.click(screen.getByRole('button', { name: /Export all · Excel/ }));
     await waitFor(() => expect(writeBook).toHaveBeenCalledTimes(1));
     const [sheets, fileName] = writeBook.mock.calls[0]! as [Array<{ name: string; matrix: { header: string[]; body: unknown[][] } }>, string];
-    expect(sheets.map((s) => [s.name, s.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 6], ['Bank money in', 2]]);
+    expect(sheets.map((s) => [s.name, s.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 5], ['Bank money in', 3]]);
     expect(fileName).toMatch(/^payments-not-matched-all-\d{4}-\d{2}-\d{2}\.xlsx$/);
     /* The columns each table shows: Collected by, not the hidden Salesperson. */
     const payments = sheets[1]!.matrix.header;
     expect(payments).toContain('Collected by');
     expect(payments).not.toContain('Salesperson');
     expect(payments).toContain('Where it is stuck');
+    expect(payments).toContain('Possibly the same as');
   });
 
   test('a column the reader hid stays out of Export all — on a list not even open', async () => {
@@ -261,18 +275,18 @@ describe('Export', () => {
     fireEvent.click(screen.getByRole('button', { name: /Export all · PDF/ }));
     await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
     const [parts, opts] = printPdf.mock.calls[0]! as [Array<{ title: string; view: { matrix: { body: unknown[][] } } }>, { subtitle: string }];
-    expect(parts.map((p) => [p.title, p.view.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 6], ['Bank money in', 2]]);
+    expect(parts.map((p) => [p.title, p.view.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 5], ['Bank money in', 3]]);
     expect(opts.subtitle).toMatch(/^Dated .* to .* · every row of the three lists$/);
   });
 
   test('one list\'s PDF prints what that list shows, and says which chip', async () => {
     draw();
-    fireEvent.click(screen.getByRole('button', { name: 'Card · merchant matched, bank not yet (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
     const payments = screen.getAllByRole('button', { name: /^PDF$/ });
     fireEvent.click(payments[0]!);
     await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
     const [parts, opts] = printPdf.mock.calls[0]! as [Array<{ title: string; view: { matrix: { body: unknown[][] } } }>, { subtitle: string }];
     expect(parts.map((p) => [p.title, p.view.matrix.body.length])).toEqual([['Payments', 2]]);
-    expect(opts.subtitle).toMatch(/ · Card · merchant matched, bank not yet$/);
+    expect(opts.subtitle).toMatch(/ · Card · not on a report$/);
   });
 });

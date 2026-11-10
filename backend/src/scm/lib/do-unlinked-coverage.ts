@@ -231,8 +231,24 @@ export async function loadUnlinkedDoCoverage(
   soLines: CoverageSoLine[],
   linkedDeliveredBySoItem: Map<string, number>,
 ): Promise<AttributedDelivery[]> {
+  if (soLines.length === 0) return [];
+  return attributeUnlinkedDoLines(soLines, linkedDeliveredBySoItem, await readUnlinkedDoLinesUnder(sb, soDocNos));
+}
+
+/**
+ * The READ half of loadUnlinkedDoCoverage: the shipped `so_item_id IS NULL` DO
+ * lines whose DO header names one of `soDocNos`, in read order (attribution
+ * fills in that order). [] on any read failure, logged. Split out so
+ * soDeliverableRemaining can START it beside its own reads — it needs only the
+ * doc numbers, not the linked sum it is later attributed against.
+ */
+export async function readUnlinkedDoLinesUnder(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  soDocNos: string[],
+): Promise<UnlinkedDoLine[]> {
   const docs = [...new Set(soDocNos.filter(Boolean))];
-  if (docs.length === 0 || soLines.length === 0) return [];
+  if (docs.length === 0) return [];
   try {
     /* TWO PLAIN READS, NOT ONE EMBEDDED-FILTER READ, deliberately. The elegant
        version is `.select('…, parent:delivery_orders!inner(so_doc_no, status)')`
@@ -280,7 +296,7 @@ export async function loadUnlinkedDoCoverage(
       if (!docNo) continue;
       unlinked.push({ id: r.id, docNo, itemCode: r.item_code, qty: Number(r.qty ?? 0) });
     }
-    return attributeUnlinkedDoLines(soLines, linkedDeliveredBySoItem, unlinked);
+    return unlinked;
   } catch (e) {
     /* Degrade to the previous link-only answer rather than 500 a planning page
        — but SAY SO. Swallowed silently, a broken read here reads as "this order

@@ -83,40 +83,33 @@ describe('classifyUnmatched', () => {
     expect(byId['same-day']).toMatchObject({ state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28' });
     expect(byId.after).toMatchObject({ state: 'TRANSFER_NO_STATEMENT', statementUpTo: '2026-09-28' });
     expect(byId['no-account']).toMatchObject({ state: 'TRANSFER_NO_STATEMENT', statementUpTo: null });
+    /* Its entry's number, so the screen can name the bank line offering that entry (owner 2026-11-10). */
+    expect(byId['same-day']).toMatchObject({ jeNo: 'JE-2' });
+    expect(byId.unbooked).toMatchObject({ jeNo: null });
   });
 
-  /* Owner 2026-11-10 (如果merchant 对的上但bank 还有没有对的上要分开 … 因为可以是另外一笔
-     卡着 → 做): a confirmed merchant line is not the end of a card payment — its
-     report's money still has to reach a bank. In the bank = Cash Flow's own rule
-     (acc/card-in-bank inBankShares): booked credits cover the report. */
-  test('a card payment the merchant matched stays listed until its report\'s money is in the bank', () => {
+  /* Owner 2026-11-10, later the same day (所以这里的unmatch payment，已经match 了就不要出现 /
+     会不会duplicate → 做): a card payment is matched once its merchant line is confirmed.
+     What is left after that — the report's other lines, its payout — is on Merchant report
+     lines and Bank money in, each once; listing the payment as well said it twice. */
+  test('a card payment the merchant matched is matched: not listed, whatever its report\'s bank side', () => {
     const report = (n: number, waitingLines: number) => ({ fileName: `mbb-${n}.csv`, acquirerCode: 'MBB', waitingLines });
     const rows = classifyUnmatched([
-      fact({ id: 'banked' }),
       fact({ id: 'held' }),
       fact({ id: 'no-credit' }),
-      fact({ id: 'part' }),
       fact({ id: 'to-confirm' }),
     ], facts({
       cardClaims: new Map([
-        ['SOPAY:banked', { confirmed: true, batchId: 1, bankShare: 1 }],
-        ['SOPAY:held', { confirmed: true, batchId: 2, bankShare: 0 }],
-        ['SOPAY:no-credit', { confirmed: true, batchId: 3, bankShare: 0 }],
-        ['SOPAY:part', { confirmed: true, batchId: 4, bankShare: 0.4 }],
-        ['SOPAY:to-confirm', { confirmed: false, batchId: 2, bankShare: 0 }],
+        ['SOPAY:held', { confirmed: true, batchId: 2 }],
+        ['SOPAY:no-credit', { confirmed: true, batchId: 3 }],
+        ['SOPAY:to-confirm', { confirmed: false, batchId: 2 }],
       ]),
-      reports: new Map([[1, report(1, 0)], [2, report(2, 3)], [3, report(3, 0)], [4, report(4, 0)]]),
+      reports: new Map([[2, report(2, 3)], [3, report(3, 0)]]),
     }), '2026-09-30');
-    const byId = Object.fromEntries(rows.map((r) => [r.paymentId, r]));
-    expect(Object.keys(byId).sort()).toEqual(['held', 'no-credit', 'part', 'to-confirm']);
-    expect(byId.held).toMatchObject({
-      kind: 'card', state: 'CARD_NOT_IN_BANK',
-      report: { batchId: 2, fileName: 'mbb-2.csv', acquirerCode: 'MBB', waitingLines: 3, bankShare: 0 },
-    });
-    expect(byId['no-credit']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 3, waitingLines: 0, bankShare: 0 } });
-    expect(byId.part).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 4, bankShare: 0.4 } });
-    /* The line still waiting for you names its report too, so the screen can open it. */
-    expect(byId['to-confirm']).toMatchObject({ state: 'CARD_TO_CONFIRM', report: { batchId: 2, fileName: 'mbb-2.csv' } });
+    expect(rows.map((r) => r.paymentId)).toEqual(['to-confirm']);
+    /* The line still waiting for you names its report, so the screen can open it. */
+    expect(rows[0]).toMatchObject({ state: 'CARD_TO_CONFIRM', report: { batchId: 2, fileName: 'mbb-2.csv', acquirerCode: 'MBB', waitingLines: 3 } });
+    expect(rows[0]).toMatchObject({ jeNo: null });
   });
 
   test('a payment no line claims names no report', () => {
@@ -156,6 +149,8 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       pay({ id: 'p-card-held', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-04' }),
       pay({ id: 'p-card-no-credit', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-05' }),
       pay({ id: 'p-card-part', method: 'merchant', merchant_provider: 'MBB', amount_sen: 100000, paid_at: '2026-09-06' }),
+      /* Paid in full once the charge PBB kept, booked on its advice day, is counted (owner 2026-11-10). */
+      pay({ id: 'p-card-kept', method: 'merchant', merchant_provider: 'PBB', amount_sen: 336500, paid_at: '2026-09-06' }),
       pay({ id: 'p-tr-matched', amount_sen: 162000 }),
       pay({ id: 'p-tr-named', amount_sen: 598000, paid_at: '2026-09-20' }),
       pay({ id: 'p-tr-open-line', amount_sen: 143300, paid_at: '2026-09-20', approval_code: '260920CE0DB5C26' }),
@@ -190,6 +185,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-held', settlement_row_id: 3 },
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-no-credit', settlement_row_id: 6 },
       { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-part', settlement_row_id: 7 },
+      { company_id: CO, payment_source: 'SOPAY', payment_id: 'p-card-kept', settlement_row_id: 8 },
     ],
     acc_settlement_rows: [
       { id: 1, batch_id: 1, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S1', bucket: 'MATCHED' },
@@ -200,6 +196,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { id: 5, batch_id: 3, company_id: CO, confirmed_at: null, posted_je_no: null, bucket: 'IGNORED' },
       { id: 6, batch_id: 4, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S6', bucket: 'MATCHED' },
       { id: 7, batch_id: 5, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S7', bucket: 'MATCHED' },
+      { id: 8, batch_id: 6, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S8', bucket: 'MATCHED' },
     ],
     acc_settlement_batches: [
       { id: 1, company_id: CO, file_name: 'ghl-0901.csv', acquirer_code: 'GHL', net_sen: 166800, stated_net_sen: null },
@@ -207,6 +204,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { id: 3, company_id: CO, file_name: 'mbb-0904.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
       { id: 4, company_id: CO, file_name: 'mbb-0905.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
       { id: 5, company_id: CO, file_name: 'mbb-0906.csv', acquirer_code: 'MBB', net_sen: 100000, stated_net_sen: null },
+      { id: 6, company_id: CO, file_name: 'pbb-0906.csv', acquirer_code: 'PBB', net_sen: 334818, stated_net_sen: null },
     ],
     acc_settlement_receipts: [
       /* Report 1 is in the bank, its credit booked. */
@@ -214,6 +212,11 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       /* A credit keyed but never booked is not money in the bank. */
       { id: 2, company_id: CO, batch_id: 4, received_on: '2026-09-07', amount_sen: 100000, charge_sen: 0, je_no: null },
       { id: 3, company_id: CO, batch_id: 5, received_on: '2026-09-08', amount_sen: 40000, charge_sen: 0, je_no: 'JE-R5' },
+      { id: 4, company_id: CO, batch_id: 6, received_on: '2026-09-08', amount_sen: 302418, charge_sen: 0, je_no: 'JE-R6' },
+    ],
+    /* The RM 324 PBB kept off that payout, booked on its advice day (acc/payout-charge). */
+    acc_settlement_payout_batches: [
+      { id: 4, company_id: CO, payout_id: 3, batch_id: 6, settled_on: '2026-09-06', net_sen: 302418, charge_sen: 32400, charge_je_no: 'JE-C4' },
     ],
     journal_entries: [
       je('je-1', 'JE-1', 'p-tr-matched'),
@@ -273,8 +276,11 @@ describe('GET /unmatched-payments', () => {
     const body = await res.json() as any;
     expect(body).toMatchObject({ from: '2026-09-01', to: '2026-09-30' });
     const byId = Object.fromEntries((body.rows as any[]).map((r) => [r.paymentId, r]));
+    /* Merchant matched (a confirmed line) is matched, whatever its report's bank side —
+       held by the report's other line, its credit not booked, paid in part or in full with
+       a kept charge (owner 2026-11-10: 已经match 了就不要出现). */
     expect(Object.keys(byId).sort()).toEqual([
-      'p-card-cimb', 'p-card-confirm', 'p-card-held', 'p-card-no-credit', 'p-card-part', 'p-card-waiting',
+      'p-card-cimb', 'p-card-confirm', 'p-card-waiting',
       'p-tr-late', 'p-tr-open-line', 'p-tr-reversed', 'p-tr-unbooked',
       'si-pay-1',
     ]);
@@ -283,15 +289,10 @@ describe('GET /unmatched-payments', () => {
       docNo: 'SO-A', customerName: 'Chong Hui Wen', salespersonName: 'Nico',
       report: { batchId: 2, fileName: 'pbb-0902.csv', acquirerCode: 'PBB', waitingLines: 1 },
     });
-    /* Merchant matched; the bank not yet — held by the report's other line, its
-       credit not booked, or paid in part. Report 1's credit is booked: matched. */
-    expect(byId['p-card-held']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 3, fileName: 'mbb-0904.csv', acquirerCode: 'MBB', waitingLines: 1, bankShare: 0 } });
-    expect(byId['p-card-no-credit']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 4, waitingLines: 0, bankShare: 0 } });
-    expect(byId['p-card-part']).toMatchObject({ state: 'CARD_NOT_IN_BANK', report: { batchId: 5, waitingLines: 0, bankShare: 0.4 } });
     expect(byId['p-card-waiting']).toMatchObject({ state: 'CARD_NOT_REPORTED', channel: 'MBB', customerName: 'Poon How kei', salespersonName: null });
     expect(byId['p-card-cimb']).toMatchObject({ state: 'CARD_NO_MERCHANT', channel: 'CIMB' });
     /* A match row on an OPEN line claims nothing; the statement reaches its day. */
-    expect(byId['p-tr-open-line']).toMatchObject({ kind: 'transfer', state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', reference: '260920CE0DB5C26' });
+    expect(byId['p-tr-open-line']).toMatchObject({ kind: 'transfer', state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', reference: '260920CE0DB5C26', jeNo: 'JE-3' });
     expect(byId['p-tr-late']).toMatchObject({ state: 'TRANSFER_NO_STATEMENT', channel: 'TNG', statementUpTo: '2026-09-28' });
     expect(byId['p-tr-unbooked']).toMatchObject({ state: 'TRANSFER_NOT_BOOKED' });
     /* Its only entry was reversed: nothing live for a bank to claim. */

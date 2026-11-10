@@ -13,6 +13,14 @@
 // it would pay), capped at all of it. A payment no statement claims is not in
 // the bank.
 //
+// What the bank kept is booked in one of two places: on the credit itself
+// (acc_settlement_receipts.charge_sen), or on the payout's ADVICE DAY
+// (acc_settlement_payout_batches.charge_sen, acc/payout-charge — PBB's 06/06
+// "Offset Amount" of RM 324 he booked on 2026-09-10). Both count, the advice
+// day's once its report has a credit in the bank: kept off that payout, it
+// settles with it (owner 2026-11-10: 应该是324，那时说了是手续费不是？ — the
+// report had read "the bank has paid 90%").
+//
 // Merchant matched is its own answer, never "in the bank": the acquirer has said
 // it will pay, and it does, usually within 3 days, but at a month end that money
 // can be a third of the month's swipes (2990 on 31/08), and the report's bank
@@ -27,6 +35,8 @@ export type CardPayoutFacts = {
   rows: Array<{ id: number; batch_id: number; confirmed_at: string | null }>;
   batches: Array<{ id: number; stated_net_sen: number | null; net_sen: number | null }>;
   receipts: Array<{ batch_id: number; received_on: string; amount_sen: number; charge_sen: number | null; je_no: string | null }>;
+  /** What the bank kept off a payout, booked on its advice day; a caller that reads no advice days passes none. */
+  dayCharges?: Array<{ batch_id: number; charge_sen: number | null; charge_je_no: string | null }>;
 };
 
 export const paymentKey = (source: string, paymentId: string): string => `${source.replace(/_REVERSAL$/, '')}:${paymentId}`;
@@ -40,6 +50,14 @@ export function inBankShares(facts: CardPayoutFacts, asOf: string): Map<string, 
     if (!r.je_no || String(r.received_on).slice(0, 10) > asOf) continue;
     const id = Number(r.batch_id);
     received.set(id, (received.get(id) ?? 0) + Number(r.amount_sen) + Number(r.charge_sen ?? 0));
+  }
+  /* A charge booked on the advice day settles with the payout it was kept off: counted
+     once its report has a credit in the bank by `asOf`, and only when it is posted. */
+  for (const d of facts.dayCharges ?? []) {
+    const id = Number(d.batch_id);
+    const kept = Number(d.charge_sen ?? 0);
+    if (!d.charge_je_no || kept <= 0 || !received.has(id)) continue;
+    received.set(id, (received.get(id) ?? 0) + kept);
   }
   const shareOfBatch = (id: number): number => {
     const due = payable.get(id) ?? 0;
@@ -74,17 +92,24 @@ export function merchantMatched(facts: CardPayoutFacts): Set<string> {
 /* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
-/** The company's whole settlement history — four small tables, read once. */
+/** The company's whole settlement history — five small tables, read once. */
 export async function loadCardPayoutFacts(sb: Sb, companyId: number): Promise<{ ok: true; facts: CardPayoutFacts } | { ok: false; reason: string }> {
   const read = <T>(table: string, cols: string) => paginateAll<T>((f, t) => sb.from(table).select(cols).eq('company_id', companyId).order('id').range(f, t));
-  const [matches, rows, batches, receipts] = await Promise.all([
+  const [matches, rows, batches, receipts, dayCharges] = await Promise.all([
     read<CardPayoutFacts['matches'][number]>('acc_settlement_matches', 'payment_source, payment_id, settlement_row_id'),
     read<CardPayoutFacts['rows'][number]>('acc_settlement_rows', 'id, batch_id, confirmed_at'),
     read<CardPayoutFacts['batches'][number]>('acc_settlement_batches', 'id, stated_net_sen, net_sen'),
     read<CardPayoutFacts['receipts'][number]>('acc_settlement_receipts', 'batch_id, received_on, amount_sen, charge_sen, je_no'),
+    read<NonNullable<CardPayoutFacts['dayCharges']>[number]>('acc_settlement_payout_batches', 'batch_id, charge_sen, charge_je_no'),
   ]);
-  for (const [name, r] of [['matches', matches], ['lines', rows], ['statements', batches], ['credits', receipts]] as const) {
+  for (const [name, r] of [['matches', matches], ['lines', rows], ['statements', batches], ['credits', receipts], ['advice days', dayCharges]] as const) {
     if (r.error) return { ok: false, reason: `card settlement ${name}: ${String((r.error as { message?: string }).message ?? r.error)}` };
   }
-  return { ok: true, facts: { matches: matches.data ?? [], rows: rows.data ?? [], batches: batches.data ?? [], receipts: receipts.data ?? [] } };
+  return {
+    ok: true,
+    facts: {
+      matches: matches.data ?? [], rows: rows.data ?? [], batches: batches.data ?? [], receipts: receipts.data ?? [],
+      dayCharges: (dayCharges.data ?? []).map((d) => ({ batch_id: Number(d.batch_id), charge_sen: d.charge_sen == null ? null : Number(d.charge_sen), charge_je_no: d.charge_je_no ?? null })),
+    },
+  };
 }

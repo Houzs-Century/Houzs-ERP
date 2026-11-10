@@ -13,25 +13,8 @@ import { createPortal } from "react-dom";
 import { TableLoadError } from "./TableLoadError";
 import { scrollPanelNearRow } from "./dataTableScrollToRow";
 import {
-  Download,
-  Upload,
-  Search,
-  ArrowUp,
-  ArrowDown,
-  ArrowDownAZ,
-  ArrowUpAZ,
-  ChevronsUpDown,
-  ChevronRight,
-  LayoutList,
-  Table as TableIcon,
-  Pin,
-  PinOff,
-  EyeOff,
-  Eye,
-  MoveHorizontal,
-  Filter,
-  Rows3,
-  WrapText,
+  Download, Upload, Search, ArrowUp, ArrowDown, ArrowDownAZ, ArrowUpAZ, ChevronsUpDown, ChevronRight, LayoutList,
+  Table as TableIcon, Pin, PinOff, EyeOff, Eye, MoveHorizontal, Filter, Rows3, WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
@@ -44,6 +27,7 @@ import { DataTableExportItems, HEADER_MENU_ITEM_CLASS, sheetExportLabel } from "
 import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
 import { useInRouterContext } from "react-router-dom";
 import { ResetFiltersButton } from "./ResetFiltersButton";
+import { ActiveFiltersChip, FilteredEmptyNotice, activeFilterSummary } from "./DataTableFilterNotice";
 import { TableSkeleton } from "./Skeleton";
 import {
   CUSTOM_FIELDS_GROUP,
@@ -1822,6 +1806,14 @@ function DataTableInner<T, L>({
     const searched = searchBlobs && q ? rows.filter((r) => (searchBlobs.get(r) ?? "").includes(q)) : rows;
     return applyColumnFilters(searched, colFilters, allColumns);
   }, [rows, colFilters, allColumns, searchBlobs, clientQuery]);
+  /* Rows exist but the funnels / search hide every one: say so and name them,
+     never the page's "nothing here" label (DP Overdue, owner 2026-11-10). */
+  const activeFilters = useMemo(() => activeFilterSummary(colFilters, allColumns), [colFilters, allColumns]);
+  const clearFunnelsAndSearch = () => { setColFilters({}); if (clientQueryActive) setClientQuery(""); };
+  const hiddenByFilters = (rows?.length ?? 0) > 0 && filteredRows?.length === 0 && (activeFilters.length > 0 || clientQueryActive);
+  const emptyContent = hiddenByFilters
+    ? <FilteredEmptyNotice hiddenCount={rows?.length ?? 0} filters={activeFilters} query={clientQueryActive ? clientQuery.trim() : null} onClear={clearFunnelsAndSearch} />
+    : emptyLabel;
 
   const sortedRows = useMemo(
     () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort), defaultSort ?? null) : filteredRows),
@@ -2204,6 +2196,7 @@ function DataTableInner<T, L>({
             onReset={handleResetFilters}
             label={resetFilters?.label}
           />
+          <ActiveFiltersChip filters={activeFilters} onClear={() => setColFilters({})} />
           <div className="flex items-center gap-2 text-[11px] font-medium text-ink-secondary">
             {caption && (
               <>
@@ -2688,7 +2681,7 @@ function DataTableInner<T, L>({
                     colSpan={totalColSpan}
                     className="px-3 py-20 text-center text-sm text-ink-muted"
                   >
-                    {emptyLabel}
+                    {emptyContent}
                   </td>
                 </tr>
               )}
@@ -3018,7 +3011,7 @@ function DataTableInner<T, L>({
         )}
         {!effectiveLoading && !error && sortedRows && sortedRows.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-12 text-center text-sm text-ink-muted">
-            {emptyLabel}
+            {emptyContent}
           </div>
         )}
         {!effectiveLoading && !error && sortedRows && sortedRows.length > 0 && (

@@ -117,7 +117,9 @@ describe('the 409 and the routes', () => {
 
   test('both create paths ask, and both honour confirmNotReady', () => {
     const src = routeSrc as string;
-    expect(src.match(/if \(!body\.confirmNotReady\) \{\s*const notReady = await findNotReadySoLines/g)).toHaveLength(2);
+    /* The read STARTS with the create's read wave (only when not confirmed) and is gated where it always was. */
+    expect(src.match(/const notReadyProm = body\.confirmNotReady \? null : eager\(findNotReadySoLines/g)).toHaveLength(2);
+    expect(src.match(/if \(notReadyProm\) \{\s*const notReady = \(await notReadyProm\)\(\);/g)).toHaveLength(2);
     expect(src.match(/return c\.json\(itemsNotReadyResponse\(notReady\), 409\)/g)).toHaveLength(2);
   });
 });
