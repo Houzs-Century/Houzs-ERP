@@ -68,6 +68,8 @@ if (!(Number.isInteger(CO) && CO > 0)) { bad('COMPANY_ID must be a positive inte
 
 const short = (id) => String(id ?? '').slice(0, 8);
 const vkOf = (v) => v || '-';
+/* A date column as YYYY-MM-DD (the driver hands back a Date at UTC midnight). */
+const ymd = (d) => (d == null ? '-' : d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
 
 /* ---------------------------------------------------------------- reads */
 
@@ -127,10 +129,14 @@ async function grnFacts(c, t) {
       const siblings = lines.filter((x) => x.item_code !== code).map((x) => {
         const ins = movs.filter((m) => m.item_code === x.item_code && m.movement_type === 'IN');
         if (ins.length === 0) return null;
-        const f = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: x.allocated_charge_sen, qtyAccepted: x.qty_accepted });
-        return { code: x.item_code, same: ins.every((m) => Number(m.unit_cost_sen) === f) };
+        const landed = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: x.allocated_charge_sen, qtyAccepted: x.qty_accepted });
+        const priceOnly = grnUnitCost({ unitPriceSen: x.unit_price_sen, exchangeRate: g.exchange_rate, allocatedChargeSen: 0, qtyAccepted: x.qty_accepted });
+        const is = (v) => ins.every((m) => Number(m.unit_cost_sen) === v);
+        /* A line ADDED to a posted GRN gets price only (grns.ts line-add); a line posted with the GRN gets the landed cost. */
+        return { code: x.item_code, matches: is(landed) ? 'landed (price + charge)' : is(priceOnly) ? 'price only (line added after post)' : 'neither' };
       }).filter(Boolean);
-      items.push({ ...base, unitCost, siblings, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
+      const hasCharge = Number(l.allocated_charge_sen ?? 0) > 0;
+      items.push({ ...base, unitCost, siblings, hasCharge, plan: planGrnInMissingShipUncosted({ lineQty: Number(l.qty_accepted), grnNetIn, bucket: b, unitCost, downstream }) });
     } else {
       const lots = await c`
         SELECT l.id, l.qty_received, l.qty_remaining, l.unit_cost_sen, l.movement_id, l.source_doc_type, l.received_at,
@@ -305,14 +311,15 @@ function printPlan(facts, whName) {
       }
       continue;
     }
-    note(`  FINDING: status ${f.g.status}, received ${String(f.g.received_at ?? '').slice(0, 10)} at ${whName(f.g.warehouse_id)}`);
+    note(`  FINDING: status ${f.g.status}, received ${ymd(f.g.received_at)} at ${whName(f.g.warehouse_id)}`);
     for (const it of f.items) {
       if (it.missingLine) { bad(`  ${it.code}: no such line`); continue; }
       note(`  ${it.code} line qty ${it.line.qty_accepted}, spec [${vkOf(it.vk)}], PO ${it.batchNo ?? '-'}: GRN net IN ${it.grnNetIn}`);
       if (it.plan.done) { note(`  ALREADY DONE: the GRN's IN for ${it.code} matches the line. Nothing to write.`); continue; }
       note(`    ${f.t.downstreamDo} OUT in this bucket: ${it.downstream ? `x${it.downstream.outQty}, lot-backed ${it.downstream.consumed}` : 'none'}`);
       if (f.t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED) {
-        note(`    unit cost from the GRN line: ${it.unitCost == null ? 'NONE' : 'present'}; same formula on the GRN's lines that have an IN: ${it.siblings.map((s) => `${s.code} ${s.same ? 'matches' : 'DIFFERS'}`).join(', ') || 'no other line'}`);
+        note(`    unit cost: the post-time rule (price at the GRN rate + allocated charge per unit, charge ${it.hasCharge ? 'present' : 'none'}): ${it.unitCost == null ? 'NONE' : 'present'}`);
+        note(`    the GRN's other lines with an IN carry: ${it.siblings.map((s) => `${s.code} ${s.matches}`).join(', ') || 'no other line'}`);
       } else {
         const s = it.standIn;
         note(`    stand-in lot: ${s ? `${short(s.id)} received ${s.qtyReceived}, left ${s.qtyRemaining}, movement behind it: ${s.hasMovement ? 'YES' : 'none'}, drawn by ${s.consumedBy.join(', ') || '-'}, at ${new Date(s.receivedAt).toISOString()}` : 'NOT FOUND'}`);
@@ -382,7 +389,7 @@ async function applyAll(tx, facts) {
             product_name: await productName(tx, it.code), qty: w.qty, unit_cost_sen: w.unitCost,
             source_doc_type: 'GRN', source_doc_id: f.g.id, source_doc_no: f.t.docNo, batch_no: it.batchNo,
             notes: movementNotes({ docNo: f.t.docNo, kind: f.t.kind, what: `missing stock IN for ${it.code} x${w.qty}` }), company_id: CO,
-          }, f.g.received_at ? `'${String(new Date(f.g.received_at).toISOString()).slice(0, 10)}'::date` : TODAY_MYT);
+          }, /^\d{4}-\d{2}-\d{2}$/.test(ymd(f.g.received_at)) ? `'${ymd(f.g.received_at)}'::date` : TODAY_MYT);
           const minted = await tx`SELECT id FROM scm.inventory_lots WHERE movement_id = ${id} AND company_id = ${CO} AND qty_received = ${w.qty}`;
           if (minted.length !== 1) throw new Error(`${f.t.docNo} ${it.code}: expected one lot opened by the IN, found ${minted.length}`);
           if (w.closeMintedLot) await tx`UPDATE scm.inventory_lots SET qty_remaining = 0 WHERE id = ${minted[0].id} AND company_id = ${CO}`;
