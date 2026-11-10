@@ -22,7 +22,7 @@ import { PAYMENT_SLIP_WINDOW_DAYS, shiftIsoDay } from "../lib/payment-slip-date"
 import { humanApiError } from "../lib/authed-fetch";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = (rel: string) => readFileSync(resolve(HERE, rel), "utf8");
+const src = (rel: string) => rel.split("+").map((r) => readFileSync(resolve(HERE, r), "utf8")).join(" "); // "a+b" = one surface split over two files
 
 const TODAY = "2026-09-23";
 const OUT = shiftIsoDay(TODAY, -(PAYMENT_SLIP_WINDOW_DAYS + 1));
@@ -52,7 +52,7 @@ describe("every surface that keys a payment date bounds its own field", () => {
   const surfaces: Array<[string, string, boolean]> = [
     ["the desktop payments panel", "./PaymentsTable.tsx", true],
     ["the mobile payments sheet", "../../../mobile/RecordedPayments.tsx", true],
-    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx", true],
+    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx+../../../mobile/MobileSoPayCard.tsx", true], // the form + its payment row
   ];
 
   for (const [name, rel, requests] of surfaces) {
