@@ -51,7 +51,7 @@ import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines } from '../../lib/soCopyLines';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines, soCopyHeaderSeed } from '../../lib/soCopyLines';
 import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
@@ -73,6 +73,7 @@ import { SaveBlockedIndicator } from '../../vendor/scm/components/SaveBlockedInd
 import { useSoValidate } from '../../vendor/scm/lib/use-so-validate';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { settleMutation, useSubmitLock } from '../../lib/submitLock';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
@@ -176,6 +177,8 @@ export const SalesOrderNew = () => {
      that REPLAYS the first docNo instead of raising a second order, and the
      payment drafts carry their own per-draft keys so they don't double either. */
   const idemKey  = useIdempotencyKey();
+  /* Held from the press until the payments and photos after the create have settled (lib/submitLock). */
+  const saveLock = useSubmitLock();
   const addPayment = useAddSalesOrderPayment();
   const uploadPhoto = useUploadSoItemPhoto();
   // onlySales=true — owner 2026-07-22: the salesperson dropdown was showing
@@ -347,24 +350,12 @@ export const SalesOrderNew = () => {
     const h = copySource.data?.salesOrder;
     const srcItems = copySource.data?.items;
     if (!h) return;
-    setDebtorCode(h.debtor_code ?? '');
-    setDebtorName(h.debtor_name ?? '');
-    setPhone(h.phone ?? '');
-    setEmail(h.email ?? '');
-    setSalespersonId(h.salesperson_id ?? '');
-    setCustomerType(h.customer_type ?? '');
-    setBuildingType(h.building_type ?? '');
-    setNote(h.note ?? '');
-    setAddress1(h.address1 ?? '');
-    setAddress2(h.address2 ?? '');
-    setAddress3(h.address3 ?? '');
-    setAddress4(h.address4 ?? '');
-    setState(h.customer_state ?? '');
-    setCity(h.city ?? h.address3 ?? '');
-    setPostcode(h.postcode ?? h.address4 ?? '');
-    setEmergencyName(h.emergency_contact_name ?? '');
-    setEmergencyRel(h.emergency_contact_relationship ?? '');
-    setEmergencyPhone(h.emergency_contact_phone ?? '');
+    const seed = soCopyHeaderSeed(h); // one rule with the phone form (lib/soCopyLines)
+    setDebtorCode(seed.debtorCode); setDebtorName(seed.debtorName); setPhone(seed.phone); setEmail(seed.email);
+    setSalespersonId(seed.salespersonId); setCustomerType(seed.customerType); setBuildingType(seed.buildingType); setNote(seed.note);
+    setAddress1(seed.address1); setAddress2(seed.address2); setAddress3(seed.address3); setAddress4(seed.address4);
+    setState(seed.state); setCity(seed.city); setPostcode(seed.postcode);
+    setEmergencyName(seed.emergencyName); setEmergencyRel(seed.emergencyRel); setEmergencyPhone(seed.emergencyPhone);
     const copyKept = copySeedLines(srcItems, h.status, (n) => void notify(n));
     if (copyKept.length > 0) {
       setLines(copyKept.map((it: any) => ({
@@ -1488,7 +1479,7 @@ export const SalesOrderNew = () => {
      The two header buttons both call onSave; only the flag differs. When the
      form was opened from a scan (fromScan), "Save as Draft" is the primary
      button so scanned orders default to draft for operator review. */
-  const onSave = async (asDraft = false) => {
+  const runSave = async (asDraft: boolean) => {
     if (createdDocNo) {
       const intents = paymentIntents();
       if (intents.length === 0) {
@@ -1597,7 +1588,7 @@ export const SalesOrderNew = () => {
     const pendingDepositSen = paymentIntents()
       .reduce((sum, d) => sum + d.amountSen, 0);
 
-    create.mutate(
+    await settleMutation(create.mutate,
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
@@ -1747,6 +1738,7 @@ export const SalesOrderNew = () => {
       },
     );
   };
+  const onSave = (asDraft = false) => saveLock.run(() => runSave(asDraft));
 
   return (
     <FormTouchScope onTouch={markTouched}>
@@ -1787,10 +1779,10 @@ export const SalesOrderNew = () => {
             <Button
               variant={fromScan ? 'secondary' : 'primary'}
               onClick={() => { void onSave(false); }}
-              disabled={create.isPending}
+              disabled={create.isPending || saveLock.locked}
             >
               <Save {...ICON} />
-              {create.isPending
+              {create.isPending || saveLock.locked
                 ? 'Saving…'
                 : createdDocNo
                   ? (paymentIntents().length > 0 ? 'Continue payment retry' : 'Open created order')
@@ -1799,10 +1791,10 @@ export const SalesOrderNew = () => {
             <Button
               variant={fromScan ? 'primary' : 'secondary'}
               onClick={() => { void onSave(true); }}
-              disabled={create.isPending || !!createdDocNo}
+              disabled={create.isPending || saveLock.locked || !!createdDocNo}
             >
               <Save {...ICON} />
-              {create.isPending ? 'Saving…' : 'Save as Draft'}
+              {create.isPending || saveLock.locked ? 'Saving…' : 'Save as Draft'}
             </Button>
           </>
         }

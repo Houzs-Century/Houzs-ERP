@@ -27,7 +27,7 @@ import { SoListFilterBar } from "./SoListFilterBar";
 import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, withSoFunnelSeeds, type SoServerFunnels } from "./so-list-server-funnels";
 import { useProjectBrands } from "../../vendor/scm/lib/product-models-queries";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
-import { salesOrderRowMenu } from "./row-menus";
+import { salesOrderRowMenu, soOffersReopen, SO_REOPEN_FINAL_HINT } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CancelledMoneyActions } from "./CancelledMoneyActions";
@@ -54,6 +54,7 @@ import { salesOrderPrintChain } from "../../lib/printChain";
 import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
+import { MrpAsOf } from "../../components/MrpAsOf";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
 import { coverageStateOf } from "../../components/coverage-state";
 import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
@@ -173,6 +174,8 @@ type SoRow = HoldFields & {
   delivery_state?: "none" | "partial" | "full" | null;
   /** Server-derived (lib/so-list-rows.ts): something is still left to put on a DO. */
   has_undelivered?: boolean | null;
+  /** Server-decided: a CANCELLED order the status PATCH will reopen (backend so-reopen.ts). */
+  reopenable?: boolean | null;
   lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
@@ -748,17 +751,24 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                // Reopen a cancelled SO back to CONFIRMED so it can proceed
-                // again (2990 MfgSalesOrdersList "Reopen SO" parity).
+                // Reopen a cancelled SO back to CONFIRMED — only where the
+                // server will take it (soOffersReopen); otherwise the button
+                // stays, disabled, with the reason beside it.
                 if (s === "cancelled" || s === "cancel") {
+                  const reopenable = soOffersReopen(row);
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<RotateCcw size={14} />}
-                      onClick={onReopen}
-                    >
-                      Reopen
-                    </Button>
+                    <>
+                      {!reopenable && <span className="text-xs text-ink-muted">{SO_REOPEN_FINAL_HINT}</span>}
+                      <Button
+                        variant="primary"
+                        icon={<RotateCcw size={14} />}
+                        onClick={onReopen}
+                        disabled={!reopenable}
+                        title={reopenable ? undefined : SO_REOPEN_FINAL_HINT}
+                      >
+                        Reopen
+                      </Button>
+                    </>
                   );
                 }
                 return null;
@@ -1154,7 +1164,7 @@ export function MfgSalesOrdersListV2() {
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
   // wrong on a partial page).
-  const rows = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
+  const { rows, mrp: mrpStatus } = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
   const total = data?.total ?? 0;
   /* A deep-linked or stale ?page= past the filtered set's last page (page 70 of
      a 3-page filter) falls back to the last page once the real total is in. */
@@ -2041,6 +2051,8 @@ export function MfgSalesOrdersListV2() {
                 : []),
             ]}
           />
+
+          <MrpAsOf status={mrpStatus} className="mb-2" />
 
           {/* No data-freeze-anchor here: the owner revised the SO ruling to
               match Service Cases — cards + status pills scroll away, and the

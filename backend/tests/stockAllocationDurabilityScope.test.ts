@@ -5,6 +5,7 @@ import consignmentReturns from '../src/scm/routes/consignment-returns.ts?raw';
 import deliveryOrdersMfg from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import deliveryReturns from '../src/scm/routes/delivery-returns.ts?raw';
 import grns from '../src/scm/routes/grns.ts?raw';
+import grnPostTail from '../src/scm/lib/grn-post-tail.ts?raw';
 import inventoryAdjustments from '../src/scm/routes/inventory-adjustments.ts?raw';
 import { soRouterSource } from './lib/so-router-source';
 import purchaseConsignmentReceives from '../src/scm/routes/purchase-consignment-receives.ts?raw';
@@ -103,7 +104,10 @@ const LEDGER: Array<{
      commit together. Four GRN routes remain (header PATCH, line add, line edit,
      and the create paths), with postGrnHandler deliberately last.
      docs/ALLOCATION-DURABILITY-PLAN.md. */
-  { module: 'routes/grns.ts', source: grns, inline: 4, durable: 2, deferred: 0 },
+  { module: 'routes/grns.ts', source: grns, inline: 3, durable: 2, deferred: 0 },
+  /* 2026-11-10: the GRN post's recompute moved, unchanged and still inline, into
+     the post's after-commit tail (GRN_POST_MODE, lib/stock-post-tx.ts). */
+  { module: 'lib/grn-post-tail.ts', source: grnPostTail, inline: 1, durable: 0, deferred: 0 },
   /* inventory-adjustments.ts went 1 -> 2 inline on 2026-10-07 (BUG-66): the
      adjustment became an editable document, and an edit that changes a
      bucket's net moves stock, so it re-walks the allocation like the create. */

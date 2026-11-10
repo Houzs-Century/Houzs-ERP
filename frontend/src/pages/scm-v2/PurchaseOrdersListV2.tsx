@@ -40,6 +40,7 @@ import { PoLineImportModal } from "../../components/scm-v2/PoLineImportModal";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { PageHeader } from "../../components/Layout";
+import { MrpAsOf } from "../../components/MrpAsOf";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -877,7 +878,7 @@ export function PurchaseOrdersListV2() {
   // a beat later and are merged in here, so opening the list no longer waits on a
   // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
   const serverRows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
-  const rows = useEnrichedPoListRows(serverRows, !listLoading);
+  const { rows, mrp: mrpStatus } = useEnrichedPoListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -1526,6 +1527,8 @@ export function PurchaseOrdersListV2() {
             ]}
           />
         </div>
+
+        <MrpAsOf status={mrpStatus} className="mb-2" />
 
         {/* Stat strip */}
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">

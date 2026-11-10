@@ -121,8 +121,16 @@ export type Env = {
   AUTOCOUNT_API_KEY: string;
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
+  // Stock posts: atomic (default) | two-step (the old non-atomic path, rollback only). scm/lib/stock-post-tx.ts. Set in wrangler.toml [vars].
+  GRN_POST_MODE?: string;
+  DO_SHIP_MODE?: string;
   // Delivery Planning board reads: rest | shadow | sql (scm/lib/delivery-board-source.ts). Set in wrangler.toml [vars].
   DP_BOARD_SOURCE?: string;
+  // Receipt bank move: atomic (default) | two-step (the old non-atomic path, rollback only). acc/rebank-transaction.ts. Set in wrangler.toml [vars].
+  RECEIPT_REBANK_MODE?: string;
+  // Returns, atomic (default) | two-step (rollback only), scm/lib/stock-post-tx.ts: customer returns and supplier returns. Set in wrangler.toml [vars].
+  DELIVERY_RETURN_MODE?: string;
+  PURCHASE_RETURN_MODE?: string;
   // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
   // which are the legacy inbound pull) ───────────────────────────────────────
   // Base URL of AcSyncService, the write-back service that runs ON the AutoCount

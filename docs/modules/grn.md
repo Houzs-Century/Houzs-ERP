@@ -17,14 +17,17 @@ go through `/api/scm/grns`.
 - `POSTED`: set by create-as-posted, `PATCH /:id/post`, or the from-PO converts —
   all funnel through the one chokepoint `postGrnAndRollup` (`grns.ts`), which flips
   status first (atomic CAS on the status the caller saw) and only then recounts the PO's
-  `received_qty`, so this GRN's own lines are included.
+  `received_qty`, so this GRN's own lines are included. `GRN_POST_MODE=atomic` (default):
+  flip, recount, landed allocation and stock IN are ONE transaction (`lib/stock-post-tx.ts`);
+  any failure rolls all back, 503 "Nothing was posted". Reconciles, racks, SO allocation run
+  after commit (`lib/grn-post-tail.ts`). `two-step` = old path, rollback switch only.
 - `CANCELLED`: `PATCH /:id/cancel`. A DRAFT writes no stock OUT. A POSTED GRN
   reverses the IN per line and is blocked if the stock was already consumed
   downstream. Both recount the PO's `received_qty` and queue the SO allocation
   re-walk (a bound SO line is lit by its PO's `received_qty`).
 - The recount (`recomputePoReceived`) stops before writing when any of its reads
   fails and returns `{ ok: false, reason }`; the stored `received_qty` and PO
-  status stay as they were. Post records it as `RECOUNT_FAILED` on the GRN's audit
+  status stay as they were. Atomic post rolls back on it; two-step records `RECOUNT_FAILED` on the GRN's audit
   trail, cancel returns it in `cancelErrors`. Before 2026-10-16 a failed read was
   taken as "no receipts" and wrote 0 (READY audit F2).
 - `CLOSED`: nothing in the backend writes this anymore; it is a read-only legacy

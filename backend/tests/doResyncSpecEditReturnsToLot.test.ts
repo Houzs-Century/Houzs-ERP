@@ -60,11 +60,14 @@ class FakeQuery {
 }
 
 const SHIPPED = { fabricCode: 'BF-01', gap: '12"', divanHeight: '8"', legHeight: '4"' };
-const EDITED = { ...SHIPPED, totalHeight: '24"' };
+/* DO-016's own edit (adding Total 24) is no longer a bucket change: the total is
+   derived and stays out of the key (shared/variant-key.ts). A real spec edit, a
+   different leg, still is, and still goes back through the return function. */
+const EDITED = { ...SHIPPED, legHeight: '6"' };
 const VK_SHIPPED = computeVariantKey('bedframe', SHIPPED);
 const VK_EDITED = computeVariantKey('bedframe', EDITED);
 
-function fixture(returnError: { message: string } | null) {
+function fixture(returnError: { message: string } | null, editedVariants: Row = EDITED) {
   const tables: Record<string, Row[]> = {
     delivery_orders: [{
       id: 'do-016', company_id: 2, do_number: '2990-DO-2611-016', status: 'LOADED',
@@ -72,7 +75,7 @@ function fixture(returnError: { message: string } | null) {
     }],
     delivery_order_items: [{
       id: 'di-016', delivery_order_id: 'do-016', so_item_id: null, item_code: 'CODY-(K)',
-      description: 'CODY King', qty: 1, item_group: 'bedframe', variants: EDITED,
+      description: 'CODY King', qty: 1, item_group: 'bedframe', variants: editedVariants,
       committed_po_batch_no: null, company_id: 2,
     }],
     inventory_movements: [{
@@ -128,5 +131,22 @@ describe('resyncInventoryForDo — a spec edit on a shipped DO (2990-DO-2611-016
     const audits = Object.values(tables).flat().filter((r) => r.action === 'RECOUNT_FAILED');
     expect(audits.length).toBe(1);
     expect(String(audits[0].note)).toMatch(/could not be returned to its lots/);
+  });
+});
+
+describe('resyncInventoryForDo — adding a derived Total Height is the same bucket', () => {
+  test('DO-016 replayed: no return, no new OUT', async () => {
+    const { tables, sb, rpcCalls } = fixture(null, { ...SHIPPED, totalHeight: '24"' });
+    await resyncInventoryForDo(sb, 'do-016', 'u-1');
+    expect(rpcCalls.filter((r) => r.fn === 'fn_return_do_units_at_cost')).toEqual([]);
+    expect(written(tables)).toEqual([]);
+  });
+
+  test('a DO shipped under an old key with the total, edited without it, is not re-booked', async () => {
+    const { tables, sb, rpcCalls } = fixture(null, SHIPPED);
+    tables.inventory_movements![0]!.variant_key = `${VK_SHIPPED}|totalheight=24"`;
+    await resyncInventoryForDo(sb, 'do-016', 'u-1');
+    expect(rpcCalls.filter((r) => r.fn === 'fn_return_do_units_at_cost')).toEqual([]);
+    expect(written(tables)).toEqual([]);
   });
 });

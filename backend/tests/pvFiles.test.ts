@@ -12,6 +12,7 @@ import { PDFDocument } from 'pdf-lib';
 import { sha256Hex } from '../src/scm/lib/scan-ocr';
 import {
   uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler,
+  BUNDLE_FILE_CONCURRENCY,
 } from '../src/scm/routes/pv-files';
 
 type Row = Record<string, any>;
@@ -196,6 +197,80 @@ describe('PV attachments — the bill lives with its voucher', () => {
     });
     expect(missing.status).toBe(404);
     expect((await missing.json() as { message: string }).message).toContain('nothing was printed');
+  });
+
+  test('print-bundle loads in parallel but prints in the sequential order: voucher, its files, the files of the AP invoices it pays, next voucher; every file fetched once, in-flight capped', async () => {
+    /* Each stored file is a one-page PDF whose WIDTH names it, so the merged
+       page widths spell the print order. The fake R2 answers out of order
+       (later keys faster) to prove order does not come from completion. */
+    const onePage = async (w: number) => {
+      const d = await PDFDocument.create(); d.addPage([w, 800]);
+      const b = await d.save();
+      return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+    };
+    const tables: Record<string, Row[]> = {
+      payment_vouchers: [PV({ id: 'pv-a', pv_number: 'PV-A' }), PV({ id: 'pv-b', pv_number: 'PV-B' })],
+      acc_pv_files: [], acc_ap_invoice_files: [], ap_invoices: [], pv_allocations: [],
+    };
+    const r2 = fakeR2();
+    const fetchedKeys: string[] = [];
+    let inFlight = 0; let maxInFlight = 0;
+    const baseGet = r2.get;
+    let calls = 0;
+    r2.get = async (k: string) => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      const delay = 20 - (calls++ % 5) * 4;
+      await new Promise((r) => setTimeout(r, delay));
+      fetchedKeys.push(k);
+      inFlight--;
+      return baseGet(k);
+    };
+    const put = async (key: string, w: number) => r2.store.set(key, { bytes: await onePage(w), contentType: 'application/pdf' });
+    const pvFile = async (pv: string, n: number, w: number) => {
+      const key = `pv-files/1/${pv}/${n}.pdf`;
+      tables.acc_pv_files.push({ id: `${pv}-${n}`, company_id: CO, pv_id: pv, file_key: key, file_name: `${n}.pdf`, mime: 'application/pdf', sort_no: n });
+      await put(key, w);
+    };
+    const apFile = async (ap: string, n: number, w: number) => {
+      const key = `ap-invoice-files/1/${ap}/${n}.pdf`;
+      tables.acc_ap_invoice_files.push({ id: `${ap}-${n}`, company_id: CO, ap_invoice_id: ap, file_key: key, file_name: `${n}.pdf`, mime: 'application/pdf', sort_no: n });
+      await put(key, w);
+    };
+    /* The fake's order() is a no-op: rows go in sort order. */
+    await pvFile('pv-a', 1, 301); await pvFile('pv-a', 2, 302);
+    await apFile('ap-1', 1, 311); await apFile('ap-1', 2, 312);
+    await apFile('ap-2', 1, 321);
+    await pvFile('pv-b', 1, 401);
+    await apFile('ap-3', 1, 411);
+    tables.ap_invoices.push(
+      { id: 'ap-1', company_id: CO, invoice_number: 'AP-1' }, { id: 'ap-2', company_id: CO, invoice_number: 'AP-2' },
+      { id: 'ap-3', company_id: CO, invoice_number: 'AP-3' },
+    );
+    tables.pv_allocations.push(
+      { company_id: CO, pv_id: 'pv-a', ap_invoice_id: 'ap-1', created_at: '1' },
+      { company_id: CO, pv_id: 'pv-a', ap_invoice_id: 'ap-2', created_at: '2' },
+      { company_id: CO, pv_id: 'pv-b', ap_invoice_id: 'ap-3', created_at: '1' },
+    );
+    const { app } = harness(tables, r2);
+    const voucherB64 = async (w: number) => {
+      const d = await PDFDocument.create(); d.addPage([w, 800]);
+      return btoa(String.fromCharCode(...(await d.save())));
+    };
+
+    const res = await app.request('/print-bundle', {
+      method: 'POST',
+      body: JSON.stringify({ parts: [{ pvId: 'pv-a', voucherBase64: await voucherB64(100) }, { pvId: 'pv-b', voucherBase64: await voucherB64(200) }] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toContain('payment-vouchers.pdf');
+    const merged = await PDFDocument.load(await res.arrayBuffer());
+    expect(merged.getPages().map((p) => Math.round(p.getWidth()))).toEqual([100, 301, 302, 311, 312, 321, 200, 401, 411]);
+
+    expect([...fetchedKeys].sort()).toEqual([...r2.store.keys()].sort());
+    expect(fetchedKeys).toHaveLength(7);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(BUNDLE_FILE_CONCURRENCY);
   });
 
   test('delete works while DRAFT-unchecked and removes the R2 object too', async () => {

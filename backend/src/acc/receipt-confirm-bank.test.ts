@@ -15,6 +15,7 @@ import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { postSoPayment, type SoPaymentRow } from './payments';
 import { formaliseReceipt } from './receipts';
 import { rebankCandidates } from './receipt-rebank';
+import { fakeRebankTx } from './fake-rebank-tx';
 
 const CO = 1;
 const HLB = '310-0020';
@@ -62,7 +63,7 @@ const liveBanks = (sb: Awaited<ReturnType<typeof world>>, paymentId: string) =>
     }));
 
 const confirm = (sb: Awaited<ReturnType<typeof world>>, receiptId: number, accountCode: string) =>
-  formaliseReceipt(sb, { companyId: CO, companyCode: 'HOUZS', receiptId, accountCode, actor: 'Finance' });
+  formaliseReceipt(sb, { companyId: CO, companyCode: 'HOUZS', receiptId, accountCode, actor: 'Finance', rebankTx: fakeRebankTx(sb, null) });
 
 describe('confirming a transfer into a chosen bank', () => {
   it('moves the entry to the chosen bank, on its own date, then stamps the receipt', async () => {

@@ -231,6 +231,10 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   calendar (`useIdleSessionFilter`, non-URL state) carry a **1-hour idle TTL**:
   the filter clears an hour after the last change, not on mere navigation, and
   logout sweeps `filters:*` (AuthContext) — owner 2026-09-30.
+- Calendar search covers ALL dates: Previous / Next match and the match list read
+  `GET /api/projects/calendar/search` (capped at 300, says so when cut); visibility
+  is shared with the month feed via `routes/lib/calendar-visibility.ts`. Its match
+  rule mirrors `projectMatchesCalendarFilters` (frontend) - change both together.
 - Do not reintroduce PIC- or brand-based row filtering — that ACL
   (`projectAcl.ts`) was deliberately deleted 2026-08-19; row visibility is
   company scope plus crew scoping only.

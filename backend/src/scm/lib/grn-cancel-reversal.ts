@@ -15,6 +15,7 @@
    so folding the two together would silently change its behaviour. Unifying
    them is a separate decision with its own evidence. */
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { ownBucketKey } from './stock-bucket-key';
 
 /** The GRN line columns the reversal reads. */
 export type GrnCancelLine = {
@@ -60,12 +61,16 @@ export function buildGrnCancelReversals(
   /** purchase_order_item_id -> source PO number. `resolvePoBatchByItem`. */
   batchByItem: ReadonlyMap<string, string>,
   ctx: GrnCancelReversalContext,
+  /** The GRN's own IN keys by canonical form (lib/stock-bucket-key.ts
+   *  loadOwnBucketKeys). Each OUT reverses the exact bucket the IN wrote, even
+   *  under an older spelling of the spec. Null = use the computed key. */
+  ownInKeys: ReadonlyMap<string, string> | null,
 ) {
   return lines
     .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
     .filter((it) => (it.qty_accepted ?? 0) > 0)
     .map((it) => {
-      const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
+      const variant_key = ownBucketKey(ownInKeys, it.item_code, computeVariantKey(it.item_group, it.variants ?? null));
       const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
       return {
         movement_type: 'OUT' as const,

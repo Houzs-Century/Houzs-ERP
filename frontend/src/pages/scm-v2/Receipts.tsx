@@ -46,6 +46,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
 import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
@@ -482,6 +483,8 @@ function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: 
   const create = useCreateReceipt();
   const update = useUpdateReceipt();
   const createDebtor = useCreateDebtorReceipt();
+  /* One key per opened form: a double press books one receipt (lib/idempotency.ts). */
+  const idemKey = useIdempotencyKey();
   const [error, setError] = useState<string | null>(null);
   const accounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
@@ -508,7 +511,7 @@ function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: 
       });
       return;
     }
-    create.mutate(v, {
+    create.mutate({ ...v, idempotencyKey: idemKey }, {
       onSuccess: (res) => {
         onSaved();
         toast?.success(`${res.receipt.receiptNumber} posted · ${fmtSen(res.receipt.totalSen)}`);
@@ -520,7 +523,7 @@ function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: 
   };
   const onDebtor = (v: DebtorSubmit) => {
     setError(null);
-    createDebtor.mutate({ ...v, postNow: true }, {
+    createDebtor.mutate({ ...v, postNow: true, idempotencyKey: idemKey }, {
       onSuccess: (res) => { onSaved(); toast?.success(`${res.receipt.receiptNumber} posted · bills knocked off`); onClose(); },
       onError: (e) => setError(errText(e)),
     });

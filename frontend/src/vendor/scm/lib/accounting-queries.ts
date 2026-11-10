@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { idempotentInit } from '../../../lib/idempotency';
 import { writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { DebtorPartyColumns, DebtorPartyValues } from './debtor-party';
@@ -524,11 +525,12 @@ export const useCancelDebtorBill = () => {
 export const useCreateDebtorReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ debtorId, ...body }: {
-      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string; postNow?: boolean;
+    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press books one receipt. */
+    mutationFn: ({ debtorId, idempotencyKey, ...body }: {
+      debtorId: string; idempotencyKey: string | null; receiptDate?: string; bankAccountCode: string; notes?: string; postNow?: boolean;
       allocations: Array<{ billId: string; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen?: number }; posted?: boolean; jeNo?: string }>(
-      `/other-debtors/${debtorId}/receipts`, { method: 'POST', body: JSON.stringify(body) },
+      `/other-debtors/${debtorId}/receipts`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) }),
     ),
     onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
@@ -601,11 +603,12 @@ export const useReceipts = (month?: string, kind?: ReceiptRow['kind']) => {
 export const useCreateReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press books one receipt. */
+    mutationFn: ({ idempotencyKey, ...body }: {
+      idempotencyKey: string | null; payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen: number } }>(
-      `/receipts`, { method: 'POST', body: JSON.stringify(body) },
+      `/receipts`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) }),
     ),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });

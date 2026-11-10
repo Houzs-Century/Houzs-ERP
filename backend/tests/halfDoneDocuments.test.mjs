@@ -106,7 +106,7 @@ describe("strandedRebanks", () => {
 
   it("matches the contra receipt-rebank.ts writes", () => {
     const src = readFileSync(new URL("../src/acc/receipt-rebank.ts", import.meta.url), "utf8");
-    expect(src).toContain("moved from ${c.fromAccount} to ${fresh.target}");
+    expect(src).toContain("moved from ${c.fromAccount} to ${target}");
     const rules = readFileSync(new URL("../src/acc/rules.ts", import.meta.url), "utf8");
     expect(rules).toMatch(/SOPAY: 'SOPAY_REVERSAL'/);
     expect(rules).toMatch(/SIPAY: 'SIPAY_REVERSAL'/);

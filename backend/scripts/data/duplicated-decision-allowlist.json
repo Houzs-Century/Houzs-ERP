@@ -652,8 +652,8 @@
     },
     {
       "check": "D1",
-      "key": "P.DISMANTLE_DRIVER_USER_ID = ?,P.DISMANTLE_HELPER_1_ID = ?,P.DISMANTLE_HELPER_2_ID = ?,P.SETUP_DRIVER_USER_ID = ?,P.SETUP_HELPER_1_ID = ?,P.SETUP_HELPER_2_ID = ?|backend/src/routes/projects.ts backend/src/services/projects.ts",
-      "why": "THE SIX CREW COLUMNS a project's setup/dismantle assignment can live in, written as SQL fragments in the route and again in the service. Same question — is this user crewed on this event — with the answer spelled out twice in SQL. Out of reach of every check in this repo (limit 2 in the header: a rule expressed in SQL)."
+      "key": "P.DISMANTLE_DRIVER_USER_ID = ?,P.DISMANTLE_HELPER_1_ID = ?,P.DISMANTLE_HELPER_2_ID = ?,P.SETUP_DRIVER_USER_ID = ?,P.SETUP_HELPER_1_ID = ?,P.SETUP_HELPER_2_ID = ?|backend/src/routes/lib/calendar-visibility.ts backend/src/services/projects.ts",
+      "why": "THE SIX CREW COLUMNS a project's setup/dismantle assignment can live in, written as SQL fragments in the calendar visibility helper (routes/lib/calendar-visibility.ts, moved out of routes/projects.ts so the calendar feed and the all-dates calendar search share one copy) and again in the service. Same question — is this user crewed on this event — with the answer spelled out twice in SQL. Out of reach of every check in this repo (limit 2 in the header: a rule expressed in SQL)."
     },
     {
       "check": "D1",
@@ -1759,6 +1759,26 @@
       "check": "D2",
       "key": "CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED ~ CREDIT_NOTED,REFUNDED,REJECTED",
       "why": "Two different questions. DeliveryReturnDetail's LOCKED_STATUSES is when the return's LINES stop being editable (cancelled included). flow-doc-files.ts names when an attached FILE stops being removable; a cancelled return is handled there as 'closed' (no new files) by its own rule. Pinned by tests/flowDocFiles.test.ts."
+    },
+    {
+      "check": "D1",
+      "key": ",DEFAULT,N/A,NA,NIL,NONE,NULL,UNDEFINED|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: PLACEHOLDERS, the values canonicalVariantKey treats as an absent variant field when comparing two stock keys (PR #5609 follow-up). One decision, one home per side."
+    },
+    {
+      "check": "D1",
+      "key": "COLORCODE,COLOURCODE,DEPTH,DIVANHEIGHT,FABRICCODE,FABRICCOLOR,GAP,LEGHEIGHT,SEATHEIGHT,SEATSIZE,SOFALEGHEIGHT,SPECIALS,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: VARIANT_SPEC_FIELDS, the variants-jsonb keys a DO line linked to an SO line copies from the SO line on the server (lib/do-so-spec.ts). One decision, one home per side."
+    },
+    {
+      "check": "D1",
+      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,SEATHEIGHT,SPECIAL,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: SLUG_ORDER, the order canonicalVariantKey re-emits key slugs in so the comparison form is deterministic. It follows ATTRS_BY_GROUP in the same file; a slug it does not list sorts last, so a divergence changes only order, never equality."
+    },
+    {
+      "check": "D2",
+      "key": "COLORCODE,COLOURCODE,DEPTH,DIVANHEIGHT,FABRICCODE,FABRICCOLOR,GAP,LEGHEIGHT,SEATHEIGHT,SEATSIZE,SOFALEGHEIGHT,SPECIALS,TOTALHEIGHT ~ COLORCODE,COLOURCODE,DEPTH,DIVANHEIGHT,FABRICCODE,FABRICCOLOR,GAP,LEGHEIGHT,SEATHEIGHT,SOFALEGHEIGHT",
+      "why": "TWO DIFFERENT QUESTIONS. sku-category.ts COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME lists the attributes the stock key composes only for a sofa or bedframe group, used to warn when a line's group will ignore them; specials compose for every group and totalHeight/seatSize are not warned on. variant-key.ts VARIANT_SPEC_FIELDS is every spec field a DO line copies from its SO line, which must include specials, the derived totalHeight (kept for pricing and print) and the seatSize alias. Divergence costs a missing warning, never a wrong key."
     }
   ]
 }

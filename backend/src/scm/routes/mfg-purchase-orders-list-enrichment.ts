@@ -9,9 +9,12 @@
 // immediately WITHOUT those four columns, and the client calls THIS endpoint
 // once, for the page it just rendered, to heal them a beat later:
 //
-//   GET /mfg-purchase-orders/list-mrp-enrichment?poIds=UUID,UUID,UUID
+//   GET /mfg-purchase-orders/list-mrp-enrichment?poIds=UUID,UUID,UUID[&refresh=1]
 //     -> { enrichment: { [poId]: { assigned_sos, assigned_so_linked,
-//                                   assigned_so_provenance, delivered_dos } } }
+//                                   assigned_so_provenance, delivered_dos } },
+//          mrp: ListMrpMeta }
+//
+// The MRP run is the 15-min list snapshot, not a live run (lib/list-mrp-source.ts).
 //
 // It re-reads the requested PO ids under the SAME company scope the list applies
 // (the tenant boundary — a spoofed id from another company yields nothing), then
@@ -34,6 +37,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
 import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
+import { resolveListMrp, wantsListMrpRefresh } from '../lib/list-mrp-source';
 export { LIST_MRP_ENRICHMENT_KEYS } from '../lib/list-mrp-enrichment-keys';
 
 export const mfgPurchaseOrdersListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -50,6 +54,7 @@ mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const raw = (c.req.query('poIds') ?? '').trim();
   const poIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (poIds.length === 0) return c.json({ enrichment: {} });
+  const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
   /* Re-read the ids under the company predicate — the tenant boundary. The ids
      come from a page the client already received, so this is also defence in
@@ -60,12 +65,12 @@ mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
 
   const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
-  if (ids.length === 0) return c.json({ enrichment: {} });
+  if (ids.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
 
   /* The SAME two resolvers the list used to run inline (assigned + delivered).
      Neither consumes the other's result, so both go out as one wave. */
   const [assignedByPo, deliveredByPo] = await Promise.all([
-    resolvePoSoCoverageForPos(sb, c, ids),
+    resolvePoSoCoverageForPos(sb, c, ids, listMrp),
     resolveDeliveredDosForPos(sb, c, ids),
   ]);
 
@@ -78,5 +83,5 @@ mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       delivered_dos: deliveredByPo.get(id)?.deliveredDos ?? [],
     };
   }
-  return c.json({ enrichment });
+  return c.json({ enrichment, mrp: (await listMrp).meta });
 });

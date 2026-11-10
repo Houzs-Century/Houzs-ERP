@@ -141,6 +141,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
 import { soLineRemark } from '../lib/so-line-remark';
 import { moneySkipsCancelled, NOT_CANCELLED_OR } from '../lib/list-money-cancelled';
+import { SO_CANCELLED_FINAL_REASON } from '../lib/so-reopen';
 import { fromSoList, orderSoList, prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { buildSoListRows } from '../lib/so-list-rows';
 import { attachSoLines } from '../lib/so-list-lines';
@@ -202,7 +203,7 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
 import { amendmentMixRefusal, createMixRefusal, lineMixRefusal, mixesSofaWithOtherMain } from '../lib/main-mix';
-import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { noWriteUntilMarked, refuseWithoutWriting, writesFromHere } from '../lib/no-write-refusal';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -5077,7 +5078,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       && !(prev as { linked_ac_docno?: string | null }).linked_ac_docno) {
     return c.json({
       error: 'so_cancelled_final',
-      reason: 'A cancelled Sales Order cannot be reactivated — its deposit was already converted to customer credit. Create a new SO instead.',
+      reason: SO_CANCELLED_FINAL_REASON,
     }, 409);
   }
 
@@ -10527,6 +10528,10 @@ export const postSoPaymentHandler = async (c: any) => {
     if (!g.ok) return c.json({ error: g.error, message: g.message }, g.status);
     plan = g.plan;
   }
+  /* Everything above only READ, so each refusal there released the form's
+     Idempotency-Key (noWriteUntilMarked) and its corrected Save can go through.
+     From here on a retry under the same key replays — never a second payment. */
+  writesFromHere(c);
   /* Insert + ADD_PAYMENT audit — the factored recordSoPaymentRow core (shared
      with the background scan job). Same derivation, same insert, same audit
      shape as the pre-factoring inline code. */
@@ -10578,7 +10583,7 @@ export const postSoPaymentHandler = async (c: any) => {
   /* ADD_PAYMENT audit already appended inside recordSoPaymentRow. */
   return c.json({ payment }, 201);
 };
-mfgSalesOrders.post('/:docNo/payments', postSoPaymentHandler);
+mfgSalesOrders.post('/:docNo/payments', noWriteUntilMarked, postSoPaymentHandler);
 
 /* Owner 2026-07-13 — SAME-DAY payment EDIT. A payment recorded TODAY can be
    corrected within the same Malaysia (UTC+8) calendar day; after MYT midnight it
