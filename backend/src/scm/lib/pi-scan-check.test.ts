@@ -180,7 +180,7 @@ describe('a waiting copy with no stored read rebuilds from its own rows', () => 
   });
   const review = {
     v: 4, supplierId: null, supplierRead: 'HOOKKA INDUSTRIES SDN BHD', invoiceNumber: 'INV-2610-097', invoiceDate: '2026-10-22',
-    doNo: 'DO-2610-090', poNo: null, notes: null, taxNote: null,
+    doNo: 'DO-2610-090', poNo: null, notes: null, taxNote: null, lineTier: null,
     lines: [row('1007-(Q)', 1, 1, 425), row('1007-(Q)', 1, 1, 425), row('1013-(Q)', 2, 3, 305), row('1013-(Q)', 1, 3, 305)],
   };
   test('keeps the supplier name, D.O. and every printed row with its own pieces', () => {

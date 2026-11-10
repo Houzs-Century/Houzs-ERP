@@ -7,8 +7,8 @@ import {
   useMfgDeliveryOrdersPaged,
   useUpdateMfgDeliveryOrderStatus,
 } from "../vendor/scm/lib/delivery-order-queries";
-import { uploadFieldPhoto } from "../vendor/scm/lib/slip";
-import { useFieldPhotos } from "../lib/fieldPhotos";
+import { fieldPhotoContext, uploadFieldPhoto } from "../vendor/scm/lib/slip";
+import { serverFieldPhotoRestore, useFieldPhotos } from "../lib/fieldPhotos";
 import { FieldPhotos } from "../components/FieldPhotos";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
@@ -159,7 +159,14 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
   // A delivery takes several photos (goods off the lorry, installed, the signed note).
   // Each uploads as soon as it is taken; the backend claims at most 20 per POD (pod-photo-claim.ts MAX_POD_KEYS).
-  const photos = useFieldPhotos({ stampLabel: docNo, max: 20, upload: (file) => uploadFieldPhoto({ file }) });
+  // After a page reload the photos already uploaded for this DO come back from the server.
+  const photoContext = doId ? fieldPhotoContext({ kind: "do", doId }) : null;
+  const photos = useFieldPhotos({
+    stampLabel: docNo,
+    max: 20,
+    upload: (file) => uploadFieldPhoto({ file, context: photoContext }),
+    restore: photoContext && h && canComplete && !isDelivered(h.status) && !isCancelled(h.status) ? serverFieldPhotoRestore(photoContext) : null,
+  });
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);

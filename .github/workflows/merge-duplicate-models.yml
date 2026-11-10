@@ -1,0 +1,67 @@
+name: Merge duplicate Product Models (PLAN unless applied)
+
+# Runs backend/scripts/merge-duplicate-models.mjs for ONE ticket of
+# backend/scripts/data/duplicate-model-merges.json. The script has the rules,
+# what it writes and what it never touches.
+#
+# PLAN (default) writes nothing and prints, per group, what would merge, move and
+# fold. APPLY needs the CONFIRM phrase that plan printed; the phrase carries the
+# counts, so a phrase from an older run cannot fire.
+#
+# REPORT runs backend/scripts/report-model-merge.mjs instead: what each Model of
+# the ticket holds now. Read-only in every mode.
+#
+# Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      ticket:
+        description: "A key of duplicate-model-merges.json (e.g. OWNER-2026-11-10-TIFANNY)"
+        required: true
+        type: string
+      mode:
+        description: "plan (writes nothing), apply, or report (read-only per-Model listing)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply, report]
+      confirm:
+        description: "On apply only: the phrase the plan printed"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-duplicate-models
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - if: ${{ inputs.mode == 'report' }}
+        run: node scripts/report-model-merge.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TICKET: ${{ inputs.ticket }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.mode != 'report' }}
+        run: node scripts/merge-duplicate-models.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TICKET: ${{ inputs.ticket }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
