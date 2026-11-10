@@ -41,6 +41,7 @@ vi.mock("../../hooks/useQuery", () => ({
     data: key === "/api/projects/overview" ? { projects: PROJECTS } : null,
     loading: false, fetching: false, placeholder: false, error: null, reload: () => {},
   }),
+  buildQueryKey: (key: string) => ["uq", key],
 }));
 vi.mock("../../components/scm-v2/Charts", async (orig) => ({
   ...(await orig<typeof import("../../components/scm-v2/Charts")>()),
@@ -48,6 +49,7 @@ vi.mock("../../components/scm-v2/Charts", async (orig) => ({
 }));
 vi.mock("./ProjectOverviewParts", () => ({ ProjectStuckPanel: () => null, ProjectDataGapsPanel: () => null }));
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ProjectOverviewPage } from "./ProjectOverviewPage";
 import { projectBackTo } from "./projectOverviewView";
 
@@ -56,7 +58,9 @@ function Where() {
   return <output data-testid="where">{l.search}</output>;
 }
 const show = (search: string) => render(
-  <MemoryRouter initialEntries={[`/projects${search}`]}><ProjectOverviewPage /><Where /></MemoryRouter>,
+  <QueryClientProvider client={new QueryClient()}>
+    <MemoryRouter initialEntries={[`/projects${search}`]}><ProjectOverviewPage /><Where /></MemoryRouter>
+  </QueryClientProvider>,
 );
 const PERIOD = "?view=finances&af_from=2026-10-01&af_to=2026-10-31";
 const projectsTable = () => screen.getByText("Sales Orders Daily?").closest("table") as HTMLTableElement;

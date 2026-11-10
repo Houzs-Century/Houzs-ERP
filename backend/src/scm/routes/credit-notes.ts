@@ -61,6 +61,7 @@ import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNo
 import { fmtSen } from '../shared/format';
 import { openingDocumentRefusal } from '../../acc/books-opening';
 import { checkReturnLines, loadReturnCredit, type ReturnCredit } from '../lib/cn-from-return';
+import { noWriteUntilMarked, writesFromHere } from '../lib/no-write-refusal';
 
 type Row = Record<string, any>;
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
@@ -469,6 +470,7 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     if (!checked.ok) return c.json({ error: checked.refusal.error, message: checked.refusal.message }, checked.refusal.status);
   }
 
+  writesFromHere(c);
   const raised = await insertCreditNote(sb, {
     companyId: co.companyId,
     docPrefix: companyDocPrefix(c),
@@ -818,7 +820,9 @@ export const creditNotes = new Hono();
    scoped client. */
 creditNotes.use('*', supabaseAuth);
 creditNotes.get('/', listCreditNotesHandler);
-creditNotes.post('/', createCreditNoteHandler);
+/* Every refusal of a create comes before its first write (insertCreditNote), so the
+   per-mount Idempotency-Key is released on each and a corrected Save goes through. */
+creditNotes.post('/', noWriteUntilMarked, createCreditNoteHandler);
 creditNotes.post('/scan', scanSupplierCreditNoteHandler);
 /* Before /:id, or 'knock-off' would be read as a note id. */
 creditNotes.get('/knock-off', supplierKnockOffHandler);
