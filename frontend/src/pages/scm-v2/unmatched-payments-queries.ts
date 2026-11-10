@@ -12,8 +12,6 @@ import { retryUnlessClientError } from '../../lib/retryPolicy';
 export type UnmatchedState =
   | 'CARD_NOT_REPORTED'
   | 'CARD_TO_CONFIRM'
-  /** The merchant matched it; its report's money is not in a bank yet. */
-  | 'CARD_NOT_IN_BANK'
   | 'CARD_NO_MERCHANT'
   | 'TRANSFER_NOT_BOOKED'
   | 'TRANSFER_NOT_MATCHED'
@@ -24,10 +22,8 @@ export type UnmatchedReport = {
   batchId: number;
   fileName: string | null;
   acquirerCode: string;
-  /** Its lines nobody has confirmed or set aside — while any, no bank line is offered it. */
+  /** Its lines nobody has confirmed or set aside. */
   waitingLines: number;
-  /** The share (0..1) of its money booked bank credits hold. */
-  bankShare: number;
 };
 
 export type UnmatchedPayment = {
@@ -50,6 +46,8 @@ export type UnmatchedPayment = {
       account's uploaded statements reach (null = none uploaded). */
   bankAccountCode: string | null;
   statementUpTo: string | null;
+  /** transfer: its entry's number — the entry Bank money in may offer a bank line to. */
+  jeNo?: string | null;
   /** card: the report its line is on, when a line claims it. */
   report?: UnmatchedReport | null;
 };

@@ -28,10 +28,10 @@ import { fmtDate } from '../../vendor/shared/format';
 import { danger, fmt, softText } from './settlement-ui';
 import top from './MerchantReports.module.css';
 import { useSettlementBatchDetails, useSettlementBatches } from './settlement-queries';
-import { useUnmatchedBankLines, useUnmatchedPayments, type UnmatchedBankLine, type UnmatchedPayment } from './unmatched-payments-queries';
+import { useUnmatchedBankLines, useUnmatchedPayments, type UnmatchedBankLine } from './unmatched-payments-queries';
 import {
-  BANK_COLUMNS, BANK_KINDS, LISTS, PAYMENT_COLUMNS, PAYMENT_STAGES, REPORT_COLUMNS, REPORT_STATUSES, reportLinesOf,
-  type ListKey, type ReportLineRow,
+  BANK_COLUMNS, BANK_KINDS, LISTS, PAYMENT_COLUMNS, PAYMENT_STAGES, REPORT_COLUMNS, REPORT_STATUSES, reportLinesOf, withSameMoney,
+  type ListKey, type PaymentRow, type ReportLineRow,
 } from './unmatchedLists';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -48,9 +48,9 @@ const ABOUT: Record<ListKey, string> = {
   reports: 'Lines on a merchant report that are not reconciled to their sale yet, read as Merchant Recon reads them. '
     + '“No sale in the ERP” is card money nobody keyed a sale for — key it, or find it on the report.',
   payments: 'Every card and transfer payment on a sales order or invoice that is not matched yet. A card payment is matched once '
-    + 'the merchant report line claiming it is confirmed and that report’s money is matched to a bank line; a transfer once a bank '
-    + 'statement line is matched to it. Not listed: cash (there is nothing to match it against), payments carried over from '
-    + 'AutoCount, and cancelled orders.',
+    + 'the merchant report line claiming it is confirmed — what may still be open after that is on the other two lists; a transfer '
+    + 'once a bank statement line is matched to it. Where the same money waits on another list, the row says so. Not listed: cash '
+    + '(there is nothing to match it against), payments carried over from AutoCount, and cancelled orders.',
   bank: 'Money in on an uploaded bank statement that no entry in the books is matched to yet: a card payout waiting for its report, '
     + 'DuitNow QR money, and transfers — each with the entries of the same amount it could be.',
 };
@@ -72,8 +72,8 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
 /** The columns a table has showing, or — before it has said — its own default view. */
 const shownOr = <T,>(shown: Column<T>[] | null, all: Column<T>[]): Column<T>[] => shown ?? all.filter((c) => !c.defaultHidden);
 
-type Shown = { reports: Column<ReportLineRow>[] | null; payments: Column<UnmatchedPayment>[] | null; bank: Column<UnmatchedBankLine>[] | null };
-type Seen = { reports: ReportLineRow[] | null; payments: UnmatchedPayment[] | null; bank: UnmatchedBankLine[] | null };
+type Shown = { reports: Column<ReportLineRow>[] | null; payments: Column<PaymentRow>[] | null; bank: Column<UnmatchedBankLine>[] | null };
+type Seen = { reports: ReportLineRow[] | null; payments: PaymentRow[] | null; bank: UnmatchedBankLine[] | null };
 
 export const UnmatchedPayments = () => {
   const today = myt();
@@ -100,19 +100,21 @@ export const UnmatchedPayments = () => {
     : reportLinesOf(openBatches, detailQ.details, from, to, today)),
   [backwards, reportsFailed, batchesQ.isLoading, detailQ.loading, detailQ.details, openBatches, from, to, today]);
   const payQ = useUnmatchedPayments(from, to, !backwards);
-  const payments = backwards ? null : payQ.data?.rows ?? null;
   const bankQ = useUnmatchedBankLines(from, to, !backwards);
   const bank = backwards ? null : bankQ.data?.rows ?? null;
+  /* Each payment with the same money on another list, where one waits (owner 2026-11-10: 会不会duplicate). */
+  const payRows = backwards ? null : payQ.data?.rows ?? null;
+  const payments = useMemo(() => (payRows ? withSameMoney(payRows, reports ?? [], bank ?? []) : null), [payRows, reports, bank]);
 
   /* What each table shows — its columns, and its rows after its own funnels —
      for Export all and the PDF button. Refs: told on every render, read on a press. */
   const shown = useRef<Shown>({ reports: null, payments: null, bank: null });
   const seen = useRef<Seen>({ reports: null, payments: null, bank: null });
   const shownReports = useCallback((c: Column<ReportLineRow>[]) => { shown.current.reports = c; }, []);
-  const shownPayments = useCallback((c: Column<UnmatchedPayment>[]) => { shown.current.payments = c; }, []);
+  const shownPayments = useCallback((c: Column<PaymentRow>[]) => { shown.current.payments = c; }, []);
   const shownBank = useCallback((c: Column<UnmatchedBankLine>[]) => { shown.current.bank = c; }, []);
   const seenReports = useCallback((r: ReportLineRow[]) => { seen.current.reports = r; }, []);
-  const seenPayments = useCallback((r: UnmatchedPayment[]) => { seen.current.payments = r; }, []);
+  const seenPayments = useCallback((r: PaymentRow[]) => { seen.current.payments = r; }, []);
   const seenBank = useCallback((r: UnmatchedBankLine[]) => { seen.current.bank = r; }, []);
 
   const chips: Record<ListKey, Chip[]> = {
@@ -284,7 +286,7 @@ export const UnmatchedPayments = () => {
         />
       </div>
       <div hidden={list !== 'payments'}>
-        <DataTable<UnmatchedPayment>
+        <DataTable<PaymentRow>
           tableId="unmatched-payments"
           exportName="payments-not-matched"
           exportXlsx
