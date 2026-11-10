@@ -29,10 +29,10 @@
 //   - PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady — every
 //                        MAIN line READY, and the SO actually HAS lines) but not
 //                        yet fully delivered.
-//   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days
-//                        (owner rule: "3 days before delivery and goods still
-//                        not ready").
-//   - PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
+//   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date (owner
+//                        rule 2026-11-10: the delivery day has arrived or passed
+//                        and the goods are still not ready).
+//   - PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
 // A manual override stored on the SO header (delivery_state) wins when present.
 //
 // DELIVERY-DATE INTEGRITY (owner rule): the customer's ORIGINAL
@@ -278,8 +278,8 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
                           == 0 once any qty has shipped.
      · PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady) but not
                           yet fully delivered.
-     · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days.
-     · PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
+     · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date.
+     · PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
 
    `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
    isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
@@ -305,10 +305,10 @@ export function derivePlanningState(input: {
      parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
-  // NOT ready. OVERDUE once we're within 3 days of (or past) the EFFECTIVE
-  // delivery date (amended ?? original) and the goods still aren't ready.
+  // NOT ready. OVERDUE once the EFFECTIVE delivery date (amended ?? original) is today
+  // or past (owner 2026-11-10). The SQL board path must mirror `daysLeft <= 0`.
   const daysLeft = daysBetween(today, effectiveDD ?? null);
-  return daysLeft != null && daysLeft <= 3 ? 'OVERDUE' : 'PENDING_DELIVERY';
+  return daysLeft != null && daysLeft <= 0 ? 'OVERDUE' : 'PENDING_DELIVERY';
 }
 
 /* Filter assembled board rows down to a self-scoped caller's OWN jobs. A no-op
