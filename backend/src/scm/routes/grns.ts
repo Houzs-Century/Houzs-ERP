@@ -14,7 +14,7 @@ import type { Env, Variables } from '../env';
 import { createDraftGrnsFromPoItemsCore, type GrnFromPoItemsContext } from '../lib/grn-from-po-core';
 import { getSupabaseService } from '../../db/supabase';
 import { noteGrnScanAccepted } from '../lib/grn-scan-review';
-import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
+import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { isPoLineOverReceived, qtyCapRefusal } from '../lib/qty-cap';
@@ -26,11 +26,12 @@ import { grnReverseWouldGoNegative } from '../lib/grn-reverse-guard';
 import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
 import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { isStockTxFailure, STOCK_TX_ROLLED_BACK, stockTxFailureBody, stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { isoDayOf, runGrnPostTail, type GrnPostTail } from '../lib/grn-post-tail';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -391,7 +392,22 @@ async function checkGrnZeroCost(
    the single chokepoint that writes inventory IN and rolls PO received_qty, so
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
-async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
+/* `tx` is REQUIRED for the same reason: it decides whether the post is one
+   transaction. The runner from stockTxFor(env, 'GRN_POST_MODE') runs the core
+   (flip, recount, allocation, stock IN) all-or-nothing, then the after-commit
+   tail (lib/grn-post-tail.ts) on `sb`. null = the old two-step path. */
+type GrnPostResult = { ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal; detail?: string };
+export async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number, expectedStatus: string, tx: StockTx | null): Promise<GrnPostResult> {
+  const core = tx
+    ? await tx((t) => postGrnCore(t, grnId, userId, companyId, expectedStatus, true))
+    : await postGrnCore(sb, grnId, userId, companyId, expectedStatus, false);
+  if (!core.ok) return core;
+  await runGrnPostTail(sb, core.tail);
+  return { ok: true, movementErrors: core.movementErrors, recountError: core.recountError };
+}
+/* `atomic`: a failed recount or stock IN answers !ok so the runner rolls the
+   flip back with it; two-step keeps the old "post stands, report the gap". */
+async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: string, userId: string, companyId: number, expectedStatus: string, atomic: boolean): Promise<(GrnPostResult & { ok: false }) | { ok: true; movementErrors?: string[]; recountError?: string; tail: GrnPostTail }> {
   const { data: grnHeader, error: headErr } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
@@ -445,11 +461,14 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   if (expectedNorm === 'CANCELLED' || expectedNorm === 'CLOSED') {
     return { ok: false, reason: `grn_${expectedNorm.toLowerCase()}`, status: 409 };
   }
+  /* The transaction client THROWS a refused statement; read it as `error` so the
+     DB cap still answers qty_exceeds_remaining. */
   const { data, error } = await scopeToCompanyId(sb.from('grns').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', grnId), companyId).eq('status', expectedStatus).select('id, status, posted_at').maybeSingle();
+  }).eq('id', grnId), companyId).eq('status', expectedStatus).select('id, status, posted_at').maybeSingle()
+    .then((r: unknown) => r as { data: unknown; error: { message: string; code?: string } | null }, (e: { message: string; code?: string }) => ({ data: null, error: e }));
   // HC-0004: the DB cap (mig 20261014T1600) refused a post past a PO line's qty.
   if (isPoLineOverReceived(error)) return { ok: false, reason: 'qty_exceeds_remaining', status: 409 };
   if (error) return { ok: false, reason: error.message, status: 500 };
@@ -462,6 +481,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const touchedPoItemIds = (items ?? [])
     .map((it: { purchase_order_item_id: string | null }) => it.purchase_order_item_id);
   const recount = await recomputePoReceived(sb, touchedPoItemIds);
+  if (!recount.ok && atomic) return { ok: false, reason: STOCK_TX_ROLLED_BACK, status: 503, detail: `PO received recount: ${recount.reason ?? 'unknown'}` };
   /* THE GAP THIS CLOSES (2026-07-31). Everything above already committed: the
      GRN is POSTED and the stock IN follows below. If the recount did not run,
      its POs now under-report what was received — they keep offering the same
@@ -498,6 +518,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
 
   // ── Inventory IN per item — best effort, doesn't roll back the post. ─
   const movementErrors: string[] = [];
+  let booked: GrnPostTail['booked'] = null;
   const grnNo = (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId;
   let warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
     /* Per-company default (2026-08-03) — this used to be a company-blind draw
@@ -567,7 +588,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         source_doc_type: 'GRN' as const,
         source_doc_id: grnId,
         // movement_date = the RECEIVED date (GL item 4): a late-keyed GRN counts in its own month.
-        source_doc_no: grnNo, movement_date: String((grnHeader as { received_at?: string | null } | null)?.received_at ?? '').slice(0, 10) || undefined,
+        source_doc_no: grnNo, movement_date: isoDayOf((grnHeader as { received_at?: unknown } | null)?.received_at) ?? undefined,
         // Production batch = source PO number (migration 0120). NULL for free GRNs.
         batch_no: it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null,
         performed_by: userId,
@@ -594,94 +615,22 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
          stock IN (was silently swallowed — GRN flipped POSTED with stock NOT
          booked and the caller never told). No rollback; just make it loud. */
       const res = await writeMovements(sb, movements, grnHeader?.company_id ?? null);
+      if (!res.ok && atomic) return { ok: false, reason: STOCK_TX_ROLLED_BACK, status: 503, detail: `stock IN ${grnNo}: ${res.reason ?? 'unknown'}` };
       if (!res.ok) movementErrors.push(`IN ${grnNo}: ${res.reason ?? 'unknown'}`);
-      /* Receipt cutoff for the retro-cost reconciles below: the moment the IN rows
-         posted. Only OUTs that shipped BEFORE this are eligible to draw on the
-         arriving lots — a later order consumes them through the normal FIFO trigger
-         at its own ship time (coverage-theft guard, migration 0154). */
-      const receiptCutoffTs = new Date().toISOString();
-      /* Drop-ship receipt reconcile (mig 0057) — the IN just created fresh
-         batched lots. If a sofa was drop-shipped against this batch before
-         receipt, its OUT consumed no lot; consume that outstanding shortfall
-         from the new lots now so coverage + valuation don't double-count the
-         already-shipped units. Ledger-driven + idempotent; best-effort (never
-         rolls back the post). Only batched (sofa) lines have drop-ship semantics. */
-      const reconcile = await reconcileDropshipBatches(
-        sb,
-        movements.map((m) => ({
-          warehouse_id: m.warehouse_id,
-          item_code: m.item_code,
-          variant_key: m.variant_key,
-          batch_no: m.batch_no ?? null,
-        })),
-        userId,
-      );
-      /* COGS — the reconcile bumped each drop-ship DO OUT movement's cost from
-         the arriving lot. Re-stamp those DO lines (+ their Sales Invoices) so
-         margins reflect the real cost, exactly like a normal short-ship that
-         later receives stock. Best-effort; restamp is idempotent + bucket-keyed. */
-      if (reconcile.affectedDoIds.length > 0) {
-        try {
-          const { restampDoActualCost } = await import('./delivery-orders-mfg');
-          const { restampSiFromDo } = await import('../lib/recost');
-          for (const doId of reconcile.affectedDoIds) {
-            await restampDoActualCost(sb, doId);
-            try { await restampSiFromDo(sb, doId); } catch { /* best-effort */ }
-          }
-        } catch (e) { /* eslint-disable-next-line no-console */ console.error('[dropship] DO restamp failed:', e); }
-      }
-      /* Oversell retro-cost (migration 0154) — NORMAL (non-drop-ship) DO short-
-         ships. When a DO oversold via the soft "ship anyway" path, its short units
-         shipped UNBATCHED and UNCOSTED (fn_consume_fifo discarded the qty_short) and
-         inventory_balances went negative. The arriving lots let us retro-cost that
-         outstanding shortfall now (plain FIFO, real lot cost) so COGS catches up and
-         the signed-balance vs lot-value views re-converge. Scoped to prior shipments
-         only (receiptCutoffTs) + non-drop-ship + non-cancelled + idempotent; drop-
-         ship shorts are owned by the batched reconcile above (0088). Best-effort. */
-      const oversell = await reconcileUncostedOuts(
-        sb,
-        movements.map((m) => ({
-          warehouse_id: m.warehouse_id,
-          item_code: m.item_code,
-          variant_key: m.variant_key,
-        })),
-        receiptCutoffTs,
-        userId,
-      );
-      if (oversell.affectedDoIds.length > 0) {
-        try {
-          const { restampDoActualCost } = await import('./delivery-orders-mfg');
-          const { restampSiFromDo } = await import('../lib/recost');
-          for (const doId of oversell.affectedDoIds) {
-            await restampDoActualCost(sb, doId);
-            try { await restampSiFromDo(sb, doId); } catch { /* best-effort */ }
-          }
-        } catch (e) { /* eslint-disable-next-line no-console */ console.error('[oversell] DO restamp failed:', e); }
-      }
+      /* Receipt cutoff for the retro-cost reconciles (after commit, lib/grn-post-tail.ts):
+         only OUTs that shipped BEFORE the IN rows may draw on the arriving lots
+         (coverage-theft guard, migration 0154). */
+      booked = {
+        buckets: movements.map((m) => ({ warehouse_id: m.warehouse_id, item_code: m.item_code, variant_key: m.variant_key, batch_no: m.batch_no ?? null })),
+        receiptCutoffTs: new Date().toISOString(),
+      };
     }
   }
-  /* Physical rack placement — lines that chose a rack on the GRN form get
-     placed onto that rack (separate ledger, migration 0151). Best-effort. */
-  try {
-    const { placeGrnLinesOnRacks } = await import('../lib/grn-rack-sync');
-    await placeGrnLinesOnRacks(sb, grnId, grnNo, userId);
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-rack] place failed:', e); }
-  /* Which open orders the stock-PO lines of this receipt serve, earliest
-     delivery first, kept for the lead-time figures (owner 2026-10-19). Best-effort. */
-  try {
-    const { recordReceiptAssignments } = await import('../lib/receipt-so-assignment');
-    await recordReceiptAssignments(sb, grnId, companyId);
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[receipt-so] post-grn failed:', e); }
-  /* B2C SO auto-allocation — stock just came in, re-walk every PENDING SO line
-     and flip to READY where the new inventory covers it. Best-effort. */
-  try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn failed:', e); }
   return {
     ok: true,
     movementErrors: movementErrors.length ? movementErrors : undefined,
     recountError: recount.ok ? undefined : (recount.reason ?? 'unknown'),
+    tail: { grnId, grnNo, companyId, userId, booked },
   };
 }
 
@@ -1651,7 +1600,7 @@ grns.post('/', async (c) => {
      single chokepoint that writes inventory IN + rolls up the PO received_qty.
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
-  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'DRAFT');
+  if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'DRAFT', stockTxFor(c.env, 'GRN_POST_MODE'));
   /* ATOMIC CREATE — the row was inserted DRAFT, so any post failure means the
      chokepoint did NOT flip it: it is still DRAFT with no stock and no PO
      rollup. Roll the whole create back rather than leave a half-made document.
@@ -1668,6 +1617,7 @@ grns.post('/', async (c) => {
     }
     if (postRes.reason === 'qty_exceeds_remaining') return c.json({ error: 'qty_exceeds_remaining', message: 'Another receipt already covers this Purchase Order line. Refresh and check the remaining qty.' }, 409);
     if (postRes.reason === LINES_UNREADABLE) return c.json(linesUnreadableBody('the receipt lines', 'posted', null), 503);
+    if (isStockTxFailure(postRes)) return refuseWithoutWriting(c, stockTxFailureBody('posted', postRes), 503);
     return c.json({ error: 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
@@ -1707,7 +1657,7 @@ grns.post('/', async (c) => {
 /* Exported so the company-scope tests can drive it without supabaseAuth, which
    cannot run in the vitest harness. The registration below is unchanged. */
 export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
-  const sb = c.get('supabase'); const user = c.get('user');
+  const sb = c.get('supabase'); const user = c.get('user'); const grnTx = stockTxFor(c.env, 'GRN_POST_MODE');
   let body: { purchaseOrderIds?: string[]; deliveryNoteRef?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const poIds = body.purchaseOrderIds ?? [];
@@ -1825,9 +1775,10 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     exchange_rate: batchFx.exchange_rate,
     allocation_method: normalizeAllocationMethod((body as { allocationMethod?: unknown }).allocationMethod),
     notes: `Batch-converted from ${poList.length} POs: ${poNumbersJoined}${body.notes ? ` · ${body.notes}` : ''}`,
-    /* PR-DRAFT-removal — auto-POSTED on create. */
-    status: 'POSTED',
-    posted_at: new Date().toISOString(),
+    /* PR-DRAFT-removal — auto-POSTED on create. Atomic mode inserts DRAFT, as
+       POST / does: the post flips it, so a rolled-back post leaves an inert draft. */
+    status: grnTx ? 'DRAFT' : 'POSTED',
+    posted_at: grnTx ? null : new Date().toISOString(),
     created_by: user.id,
     }).select('id, grn_number, company_id').single(),
   );
@@ -1897,12 +1848,15 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   }
 
   /* PR-DRAFT-removal — auto-rollup + inventory IN after items insert. */
-  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, 'POSTED');
+  const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id, grnTx ? 'DRAFT' : 'POSTED', grnTx);
   /* ZERO-COST refusal — same rollback as POST /: this path also inserts POSTED
-     before calling the chokepoint, so the document must not survive a refusal. */
-  if (!postRes.ok && (postRes.zeroCost || postRes.reason === LINES_UNREADABLE)) {
+     before calling the chokepoint, so the document must not survive a refusal.
+     Atomic: ANY failure took nothing with it but this draft, so it goes too. */
+  if (!postRes.ok && (postRes.zeroCost || postRes.reason === LINES_UNREADABLE || grnTx)) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
+    if (isStockTxFailure(postRes)) return refuseWithoutWriting(c, stockTxFailureBody('posted', postRes), 503);
+    if (!postRes.zeroCost && postRes.reason !== LINES_UNREADABLE) return c.json({ error: postRes.reason === 'qty_exceeds_remaining' ? postRes.reason : 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
     if (!postRes.zeroCost) return c.json(linesUnreadableBody('the receipt lines', 'posted', null), 503);
     return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
@@ -1996,7 +1950,7 @@ export const postGrnHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'POST', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  const res = await postGrnAndRollup(sb, id, user.id, co.companyId, row.status);
+  const res = await postGrnAndRollup(sb, id, user.id, co.companyId, row.status, stockTxFor(c.env, 'GRN_POST_MODE'));
   /* Honour the chokepoint's own status. A lost confirm race (409
      'already_posting') is a normal outcome — the other call committed the stock —
      not a server fault; it used to surface as a 500 because res.status was
@@ -2007,6 +1961,7 @@ export const postGrnHandler = async (c: any) => {
        goods-received document. Nothing was written, so the GRN is still DRAFT
        and re-confirmable once the prices are in. */
     if (res.zeroCost) return refuseZeroCostReceipt(c, res.zeroCost, { nothingWritten: true });
+    if (isStockTxFailure(res)) return refuseWithoutWriting(c, stockTxFailureBody('posted', res), 503);
     if (res.status === 409) {
       const { data: now } = await scopeToCompanyId(sb.from('grns')
         .select('id, status, posted_at, total_sen').eq('id', id), co.companyId).maybeSingle();
@@ -2101,11 +2056,12 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   const overReceipt = coreRes.overReceipt;
   let zeroCostRefusal: ZeroCostRefusal | null = null;
   let dbCapRefused = false;
+  const grnTx = stockTxFor(c.env, 'GRN_POST_MODE'); // atomic: a bucket whose post rolls back stays an inert DRAFT
 
   for (const draft of coreRes.created) {
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
     // The UI create is auto-posted; the draft-only core left this to the handler.
-    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId, 'DRAFT');
+    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId, 'DRAFT', grnTx);
     /* ZERO-COST refusal — the core inserted this draft, so roll it back exactly
        like the over-receipt branch inside the core and carry the refusal out of
        the loop. Buckets that received cleanly keep their documents; only the

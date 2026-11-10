@@ -90,6 +90,10 @@ const RELEASES_PAST_A_WRITE: Record<string, string> = {
     'PATCH /:id/post: postGrnAndRollup returns lines_unreadable only when its header / lines / PO-warehouse read failed, which it checks before the CAS status flip, so the GRN is still DRAFT and nothing moved.',
   'return refuseZeroCostReceipt(c, { ...zeroCostRefusal, created }, { nothingWritten: created.length === 0 });':
     'POST /from-po-items: one GRN per supplier bucket, so this one is CONDITIONAL — an earlier bucket can have committed its document, its stock IN and its AutoCount conversion, and `created` is empty exactly when every bucket rolled back.',
+  "if (isStockTxFailure(postRes)) return refuseWithoutWriting(c, stockTxFailureBody('posted', postRes), 503);":
+    'POST / and POST /from-pos (GRN_POST_MODE=atomic): the flip, the PO recount, the allocation and the stock IN rolled back as ONE transaction, and the deletes above it remove the draft the create inserted.',
+  "if (isStockTxFailure(res)) return refuseWithoutWriting(c, stockTxFailureBody('posted', res), 503);":
+    'PATCH /:id/post (GRN_POST_MODE=atomic): the flip, the PO recount, the allocation and the stock IN rolled back as ONE transaction, so the GRN is still DRAFT and nothing moved.',
   'if (childLock) return refuseWithoutWriting(c, childLock, 409);':
     'PATCH /:id/cancel: only the DRAFT short-circuit above writes, and it RETURNS. Reaching this line means the GRN was not DRAFT and the status flip is still below.',
   "if (linesErr) return refuseWithoutWriting(c, linesUnreadableBody('the receipt lines', 'cancelled', linesErr), 503);":

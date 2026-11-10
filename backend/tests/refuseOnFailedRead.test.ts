@@ -114,8 +114,10 @@ function grnTables(status: 'DRAFT' | 'POSTED', poLinked = false): Record<string,
   };
 }
 
+/* Two-step: this fake has no database. The atomic path refuses on the same
+   reads (grnPostAtomic.test.ts). */
 const confirmGrn = (a: Hono) =>
-  a.request('/grns/g-1/post', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' });
+  a.request('/grns/g-1/post', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' }, { GRN_POST_MODE: 'two-step' });
 
 describe('GRN post refuses when a read in front of it fails', () => {
   const cases: Array<[string, FailWhen, boolean]> = [
