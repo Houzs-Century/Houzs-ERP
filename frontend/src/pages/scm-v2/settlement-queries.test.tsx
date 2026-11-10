@@ -12,7 +12,7 @@ vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailedAs: () => () 
 
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
-  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
+  useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch, useSettlementBatchRow, BATCH_DETAIL_STALE_MS,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, usePayouts, useUploadPayoutAdvice,
 } from './settlement-queries';
@@ -123,6 +123,68 @@ describe('the writes', () => {
     const [path, init] = mockedFetch.mock.calls[1]!;
     expect(path).toBe('/accounting/settlement/rows/11/ignore');
     expect(JSON.parse(String(init?.body))).toMatchObject({ restore: false, notes: 'duplicate' });
+  });
+});
+
+/* Two people made ~1,300 report reads a day: the work list mounts one report
+   read per row, the read was never fresh (staleTime 0), and every posting
+   marked every report stale — so each return to the list re-read all of them. */
+describe('how often a report is re-read', () => {
+  const sharedWrapper = (qc: QueryClient) => ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  const detail = { batch: {}, acquirer: {}, buckets: {}, rows: [] };
+  const readsOf = (id: number) => mockedFetch.mock.calls.filter((c) => c[0] === `/accounting/settlement/batches/${id}`).length;
+
+  test('a list row serves the cached read while it is fresh; the report a person opens is always re-read', async () => {
+    mockedFetch.mockResolvedValue(detail);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const w = sharedWrapper(qc);
+    const first = renderHook(() => useSettlementBatchRow(5), { wrapper: w });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    first.unmount();
+    /* Back on the list: no second read. */
+    const again = renderHook(() => useSettlementBatchRow(5), { wrapper: w });
+    await waitFor(() => expect(again.result.current.isSuccess).toBe(true));
+    expect(readsOf(5)).toBe(1);
+    expect(qc.getQueryCache().find({ queryKey: ['settlement-batch', 5] })?.options).toMatchObject({ staleTime: BATCH_DETAIL_STALE_MS });
+    expect(BATCH_DETAIL_STALE_MS).toBe(5 * 60_000);
+    /* Opened: read fresh, as docs/bugs/0833 promises. */
+    const opened = renderHook(() => useSettlementBatch(5), { wrapper: w });
+    await waitFor(() => expect(readsOf(5)).toBe(2));
+    expect(opened.result.current.isSuccess).toBe(true);
+  });
+
+  test('a posting re-reads the report on screen, and leaves a report off screen as read', async () => {
+    mockedFetch.mockImplementation(async (path: string) => (path.includes('/confirm') ? { ok: true, status: 'confirmed' } : detail));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const w = sharedWrapper(qc);
+    const offScreen = renderHook(() => useSettlementBatchRow(6), { wrapper: w });
+    await waitFor(() => expect(offScreen.result.current.isSuccess).toBe(true));
+    offScreen.unmount();
+    const onScreen = renderHook(() => useSettlementBatch(7), { wrapper: w });
+    await waitFor(() => expect(onScreen.result.current.isSuccess).toBe(true));
+    expect(readsOf(7)).toBe(1);
+
+    const confirm = renderHook(() => useConfirmSettlementRow(), { wrapper: w });
+    confirm.result.current.mutate({ rowId: 70, matchReason: 'manual', payments: [] });
+    await waitFor(() => expect(confirm.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(readsOf(7)).toBe(2));
+    expect(qc.getQueryState(['settlement-batch', 6])?.isInvalidated).toBe(false);
+    expect(readsOf(6)).toBe(1);
+  });
+
+  test('"Confirm all" on a report off screen still marks THAT report for re-reading', async () => {
+    mockedFetch.mockImplementation(async (path: string) => (path.includes('/confirm-matched') ? { attempted: 1, confirmed: 1, failed: [] } : detail));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const w = sharedWrapper(qc);
+    const row = renderHook(() => useSettlementBatchRow(8), { wrapper: w });
+    await waitFor(() => expect(row.result.current.isSuccess).toBe(true));
+    row.unmount();
+    const bulk = renderHook(() => useConfirmMatched(), { wrapper: w });
+    bulk.result.current.mutate(8);
+    await waitFor(() => expect(bulk.result.current.isSuccess).toBe(true));
+    expect(qc.getQueryState(['settlement-batch', 8])?.isInvalidated).toBe(true);
   });
 });
 

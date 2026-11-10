@@ -272,36 +272,34 @@ export async function loadPaymentCandidates(
      three months, so a single read stopped in late September and every October
      card payment was simply absent (owner 2026-10-21: 为什么看没有10月的
      payment). Every read below pages (paginateAll) or chunks (chunkIn). */
-  const soAll = await paginateAll<Record<string, any>>((f, t) => sb
-    .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
-    .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
-    .order('id').range(f, t));
+  /* Run together; each failure is still reported, in the order it always was. */
+  const [soAll, soByRef, siAll, siByRef] = await Promise.all([
+    paginateAll<Record<string, any>>((f, t) => sb
+      .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
+      .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
+      .order('id').range(f, t)),
+    /* The same payments again, by reference, with no date bound. A read that
+       FAILS is a failure, not "no references matched" — a silently empty result
+       here would put the module back where it started, with the payment present
+       and the screen saying it is not. */
+    wanted.length === 0 ? Promise.resolve({ data: [] as Array<Record<string, any>>, error: null }) : chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
+      .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
+      .eq('company_id', companyId).in('approval_code', batch)
+      .order('id').range(f, t)),
+    paginateAll<Record<string, any>>((f, t) => sb
+      .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
+      .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
+      .order('id').range(f, t)),
+    wanted.length === 0 ? Promise.resolve({ data: [] as Array<Record<string, any>>, error: null }) : chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
+      .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
+      .eq('company_id', companyId).in('approval_code', batch)
+      .order('id').range(f, t)),
+  ]);
   if (soAll.error) return { ok: false, reason: `SO payments: ${soAll.error.message}` };
-
-  /* The same payments again, by reference, with no date bound. A read that
-     FAILS is a failure, not "no references matched" — a silently empty result
-     here would put the module back where it started, with the payment present
-     and the screen saying it is not. */
-  const soByRef = wanted.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
-    .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
-    .eq('company_id', companyId).in('approval_code', batch)
-    .order('id').range(f, t));
   if (soByRef.error) return { ok: false, reason: `SO payments by reference: ${soByRef.error.message}` };
-
   let soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs);
-
-  const siAll = await paginateAll<Record<string, any>>((f, t) => sb
-    .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
-    .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
-    .order('id').range(f, t));
   if (siAll.error) return { ok: false, reason: `SI payments: ${siAll.error.message}` };
-
-  const siByRef = wanted.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
-    .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
-    .eq('company_id', companyId).in('approval_code', batch)
-    .order('id').range(f, t));
   if (siByRef.error) return { ok: false, reason: `SI payments by reference: ${siByRef.error.message}` };
-
   let siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs);
 
   /* An Online payment already on the bank statement is that customer's own
@@ -335,6 +333,10 @@ export async function loadPaymentCandidates(
      never somebody else's. */
   const staffOfDoc = new Map<string, string>();
   const staffName = new Map<string, string>();
+  /* The invoices' names are read while the orders' are. */
+  const siRead = siIds.length === 0 ? null : chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null }>(siIds, (batch, f, t) => sb
+    .from('sales_invoices').select('id, invoice_number, debtor_name')
+    .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
   if (soDocs.length > 0) {
     /* Chunked: a busy window names hundreds of orders, and one IN list of them
        outgrows the request line before it outgrows the row cap. */
@@ -357,10 +359,8 @@ export async function loadPaymentCandidates(
       for (const r of people.data) if (r.name) staffName.set(String(r.id), r.name);
     }
   }
-  if (siIds.length > 0) {
-    const { data, error } = await chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null }>(siIds, (batch, f, t) => sb
-      .from('sales_invoices').select('id, invoice_number, debtor_name')
-      .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
+  if (siRead) {
+    const { data, error } = await siRead;
     if (error) return { ok: false, reason: `SI customers: ${error.message}` };
     for (const r of data) {
       if (r.debtor_name) customerOf.set(`SI:${r.id}`, r.debtor_name);
@@ -715,6 +715,35 @@ export async function loadSettledKeys(
   const keys = new Set<string>();
   for (const r of data ?? []) {
     keys.add(`${r.payment_source}:${r.payment_id}`);
+  }
+  return { ok: true, keys };
+}
+
+/** loadSettledKeys asked only about the payments a caller holds. Its readers
+    (matchStatement, recordedNotArrived) only ask about payments in their own
+    list, so other payments' claims never change a result — and reading them
+    paged the whole link table on every open. Per source, for the unique index. */
+export async function loadSettledKeysFor(
+  sb: any,
+  companyId: number,
+  payments: ReadonlyArray<{ source: string; id: string }>,
+): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
+  const idsBySource = new Map<string, Set<string>>();
+  for (const p of payments) {
+    const ids = idsBySource.get(p.source) ?? new Set<string>();
+    ids.add(String(p.id));
+    idsBySource.set(p.source, ids);
+  }
+  const reads = await Promise.all([...idsBySource].map(([source, ids]) => chunkIn<{ payment_source: string; payment_id: string }>(
+    [...ids], (batch, f, t) => sb
+      .from('acc_settlement_matches').select('payment_source, payment_id')
+      .eq('company_id', companyId).eq('payment_source', source).in('payment_id', batch)
+      .order('id').range(f, t),
+  )));
+  const keys = new Set<string>();
+  for (const r of reads) {
+    if (r.error) return { ok: false, reason: r.error.message };
+    for (const m of r.data) keys.add(`${m.payment_source}:${m.payment_id}`);
   }
   return { ok: true, keys };
 }

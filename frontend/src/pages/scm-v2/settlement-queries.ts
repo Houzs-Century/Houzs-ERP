@@ -329,6 +329,15 @@ export const useSettlementBatches = () => useQuery({
   retryDelay: 800,
 });
 
+/* HOW LONG A READ REPORT STAYS FRESH. It was 0, and the work list mounts one
+   detail per report: every return from a report to the list re-read every
+   report on it (one heavy request each), which is how two people made ~1,300
+   detail requests a day. A posting still refreshes the report it touched at
+   once (invalidateAfterPosting), and the report a person OPENS is always read
+   fresh (useSettlementBatch) — the "opening it refreshes it" of docs/bugs/0833.
+   What may be up to this old is another report's row on a list. */
+export const BATCH_DETAIL_STALE_MS = 5 * 60_000;
+
 const settlementBatchQuery = (batchId: number | null) => ({
   queryKey: ['settlement-batch', batchId],
   queryFn: () => authedFetch<{
@@ -339,15 +348,21 @@ const settlementBatchQuery = (batchId: number | null) => ({
     /** Unconfirmed links re-read their payment as the report opens (docs/bugs/0833): what moved. */
     refreshedLinks?: RefreshedLink[];
   }>(`/accounting/settlement/batches/${batchId}`),
-  staleTime: 0,
+  staleTime: BATCH_DETAIL_STALE_MS,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
 
+/** The report a person has OPENED: read fresh every time it is opened. */
 export const useSettlementBatch = (batchId: number | null) => useQuery({
   ...settlementBatchQuery(batchId),
   enabled: batchId != null,
+  refetchOnMount: 'always' as const,
 });
+
+/** One report's lines as a ROW of a list: the cached read while it is fresh, so
+    coming back to the list does not re-read every report on it. */
+export const useSettlementBatchRow = (batchId: number) => useQuery(settlementBatchQuery(batchId));
 
 /** Several reports' lines on one screen (Payments not matched yet's merchant report
     lines): each report read exactly as Merchant Recon reads it, so the two say the
@@ -410,8 +425,13 @@ export const useUploadStatement = () => {
   });
 };
 
-const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>) => {
-  void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
+/** `postedTo`: the reports the write posted to by id, on screen or not. */
+const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>, postedTo: readonly number[]) => {
+  /* The reports ON SCREEN, and the ones posted to. Any other report is left as
+     read: re-read when it is opened, or once its read is older than
+     BATCH_DETAIL_STALE_MS, instead of all of them on the next visit to a list. */
+  void qc.invalidateQueries({ queryKey: ['settlement-batch'], type: 'active' });
+  for (const id of postedTo) void qc.invalidateQueries({ queryKey: ['settlement-batch', id] });
   /* The LIST too, not just the open report. Its rows carry the counts every
      screen reads — how many are ready to confirm, how many are still open —
      and leaving them stale is what left "Confirm all 4 matched" on screen
@@ -435,7 +455,7 @@ export const useConfirmSettlementRow = () => {
     }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
       `/accounting/settlement/rows/${rowId}/confirm`, { method: 'POST', body: JSON.stringify(body) },
     ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: () => invalidateAfterPosting(qc, []),
   });
 };
 
@@ -451,7 +471,7 @@ export const useConfirmSettlementGroup = () => {
     }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
       '/accounting/settlement/rows/confirm-together', { method: 'POST', body: JSON.stringify(body) },
     ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: () => invalidateAfterPosting(qc, []),
   });
 };
 
@@ -466,7 +486,7 @@ export const useReleaseSettlementRow = () => {
     mutationFn: ({ rowId, payments }: { rowId: number; payments: string[] }) => authedFetch<{ ok: boolean; released: string[] }>(
       `/accounting/settlement/rows/${rowId}/release`, { method: 'POST', body: JSON.stringify({ payments }) },
     ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: () => invalidateAfterPosting(qc, []),
   });
 };
 
@@ -479,7 +499,7 @@ export const useUnconfirmSettlementRow = () => {
     mutationFn: (rowId: number) => authedFetch<{ ok: boolean; reversalJeNo?: string }>(
       `/accounting/settlement/rows/${rowId}/unconfirm`, { method: 'POST', body: '{}' },
     ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: () => invalidateAfterPosting(qc, []),
   });
 };
 
@@ -500,14 +520,14 @@ export const confirmMatchedBatch = (batchId: number) => authedFetch<ConfirmMatch
 /** Refresh everything a posting moves, once. */
 export const useInvalidateAfterPosting = () => {
   const qc = useQueryClient();
-  return () => invalidateAfterPosting(qc);
+  return (postedTo: readonly number[]) => invalidateAfterPosting(qc, postedTo);
 };
 
 export const useConfirmMatched = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: confirmMatchedBatch,
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: (_r, batchId) => invalidateAfterPosting(qc, [batchId]),
     onError: writeFailedAs('Settlements not confirmed'),
   });
 };
@@ -523,7 +543,7 @@ export const useMarkBatchReceived = () => {
         `/accounting/settlement/batches/${batchId}/received`,
         { method: 'POST', body: JSON.stringify({ receivedOn, amountSen }) },
       ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: (_r, v) => invalidateAfterPosting(qc, [v.batchId]),
   });
 };
 
@@ -536,7 +556,7 @@ export const useUndoReceipt = () => {
       authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
         `/accounting/settlement/receipts/${receiptId}/undo`, { method: 'POST', body: '{}' },
       ),
-    onSuccess: () => invalidateAfterPosting(qc),
+    onSuccess: () => invalidateAfterPosting(qc, []),
     onError: writeFailedAs('Credit not removed'),
   });
 };
@@ -675,7 +695,7 @@ export const useIgnoreSettlementRow = () => {
       authedFetch<{ ok: boolean }>(`/accounting/settlement/rows/${rowId}/ignore`, {
         method: 'POST', body: JSON.stringify({ restore: restore === true, notes: notes ?? null }),
       }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batch'] }); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batch'], type: 'active' }); },
     onError: writeFailedAs('Line not updated'),
   });
 };
