@@ -18,7 +18,8 @@ type Plan = {
   foldModels: string[];
   keptOff: boolean;
   leftInactive: number;
-  totals: { pairs: number; moves: number; folds: number };
+  inactiveMoved: number;
+  totals: { pairs: number; moves: number; inactive: number; folds: number };
   confirm: string;
 };
 
@@ -82,7 +83,7 @@ export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose
     } finally { setBusy(false); }
   };
 
-  const work = plan ? plan.totals.pairs + plan.totals.moves + plan.totals.folds + (plan.keptOff ? 1 : 0) : 0;
+  const work = plan ? plan.totals.pairs + plan.totals.moves + plan.totals.inactive + plan.totals.folds + (plan.keptOff ? 1 : 0) : 0;
   const canMerge = plan !== null && plan.refusals.length === 0 && work > 0;
   return (
     <Modal title="Merge models" onClose={onClose} width="min(760px, 100%)">
@@ -117,6 +118,7 @@ export const MergeModelsDialog = ({ codes, onClose }: { codes: string[]; onClose
           {plan.fills.map((f) => <div key={`${f.code}-${f.field}`} style={mono}>{f.code} takes {f.field} from {f.from}</div>)}
           {plan.addSizes.length > 0 && <div>Sizes added to the kept Model: {plan.addSizes.join(', ')}</div>}
           {plan.foldModels.map((m) => <div key={m} style={mono}>{m} switches off</div>)}
+          {plan.inactiveMoved > 0 && <div>{plan.inactiveMoved} switched-off SKU(s) move under the kept Model.</div>}
           {plan.leftInactive > 0 && <div style={hint}>{plan.leftInactive} inactive SKU(s) stay as they are.</div>}
           {plan.refusals.length === 0 && work === 0 && <div>Nothing to do: these Models are already merged.</div>}
         </div>
