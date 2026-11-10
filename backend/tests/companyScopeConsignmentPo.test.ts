@@ -118,7 +118,7 @@ const jsonPatch = (app: Hono, url: string, body?: Row) =>
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body ?? {}),
-  });
+  }, { PURCHASE_RETURN_MODE: 'two-step' }); // no database behind these fakes; purchaseReturnAtomic.test.ts covers atomic
 
 // ── A2 — mfg-purchase-orders.ts: confirms (DRAFT -> SUBMITTED) a PO ───────────
 // The A2 module has NO mirror guard, so this is the most real of the set.

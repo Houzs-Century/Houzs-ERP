@@ -57,9 +57,11 @@ The code is stored in the EXISTING `reason` column — no migration, no rewrite.
 
 ## Rules that must not break
 
+- `PURCHASE_RETURN_MODE=atomic` (default, `lib/stock-post-tx.ts`): a create's stock OUT (+ repair IN), the GRN line `returned_qty` / `returned_closed_qty` and the PO line `received_qty` recount commit in ONE transaction; any failure rolls all of it back, the just-created return is deleted and the answer is 503 "Nothing was returned". A cancel's flip, reversing IN and recount are one transaction too (503 "Nothing was cancelled"). SO allocation and retro-cost run after commit. `two-step` = old path, rollback switch only. Line add / edit / delete movements are still best-effort.
+
 - The PO-sourced pool must never fall back to matching receipts by `grns.purchase_order_id` alone — that is the read that hid a fully received PO's units. Only an UNLINKED line may be claimed by the header.
 - A return raised from the PO saves `grn_id` NULL (its lines can span several receipts), so anything that finds returns must read the LINE link (`purchase_return_items.grn_item_id`) as well as the header. The relationship map read the header only and HC-PO-010114's map showed no return for HC-PRT-2610-001 (HC-0139).
-- A REPAIR return must never chase a credit note, and its stock must land somewhere: the OUT/IN pair is written together in `writePurchaseReturnMovements`, and a failed IN is REPORTED (goods left the warehouse and landed nowhere is the one outcome a repair must not hide).
+- A REPAIR return must never chase a credit note, and its stock must land somewhere: the OUT/IN pair is written together in `prStockOutCore` (`lib/purchase-return-stock.ts`), and a failed IN is REPORTED (goods left the warehouse and landed nowhere is the one outcome a repair must not hide).
 - The reason must stay a code from the shared catalogue, validated on the server. A second list — in the route, in the form, in a test fixture — is the drift this pattern exists to prevent (same shape as the stock-adjustment reasons).
 - `PATCH /:id/post` must stay idempotent — re-running it on an already-POSTED/COMPLETED row must never re-write movements (double-debits inventory).
 - `writeMovements` never throws; every inventory-touching write must read its result and surface `movementErrors` rather than assume success from a clean HTTP status.
@@ -93,6 +95,7 @@ Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a purchase return keeps atta
 
 - `backend/src/scm/routes/purchase-returns.ts` — main API surface.
 - `backend/src/scm/routes/purchase-return-exports.ts` — line-level export.
+- `backend/src/scm/lib/purchase-return-stock.ts` — the stock OUT, the GRN returned / PO received recount, the atomic create and cancel.
 - `backend/src/scm/lib/return-unlinked-lines.ts` — unlinked-line detection.
 - `backend/src/scm/lib/line-link-item-identity.ts` — same-product link guard.
 - `backend/src/scm/lib/purchase-return-list-read.ts` — list read shape.

@@ -50,6 +50,11 @@ DP_BOARD_SOURCE = "rest"
 #   "atomic"   = each receipt's contra and new entry in ONE database transaction (the default; any other value means this too)
 #   "two-step" = the old path: the contra commits before the new entry is written. Rollback switch for one release only.
 RECEIPT_REBANK_MODE = "atomic"
+# Returns in ONE database transaction (scm/lib/stock-post-tx.ts), same values as GRN_POST_MODE:
+#   DELIVERY_RETURN_MODE: customer return create (stock IN) and cancel (status + stock drain)
+#   PURCHASE_RETURN_MODE: supplier return create and cancel (status, stock OUT / IN, GRN returned + PO received recount)
+DELIVERY_RETURN_MODE = "atomic"
+PURCHASE_RETURN_MODE = "atomic"
 # ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
 # settings above, which are the legacy inbound pull). Base URL of AcSyncService,
 # the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
@@ -355,6 +360,9 @@ GRN_POST_MODE = "atomic"
 DP_BOARD_SOURCE = "rest"
 # Receipt bank move; see the prod [vars] block.
 RECEIPT_REBANK_MODE = "atomic"
+# Returns in one transaction; see the prod [vars] block.
+DELIVERY_RETURN_MODE = "atomic"
+PURCHASE_RETURN_MODE = "atomic"
 # Cost/margin DISPLAY switch — ON in staging too (mirrors prod). See the prod
 # [vars] block for what "false" does. Set "false" here to rehearse the hidden
 # state before flipping prod.

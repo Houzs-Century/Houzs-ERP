@@ -127,6 +127,9 @@ export type Env = {
   DP_BOARD_SOURCE?: string;
   // Receipt bank move: atomic (default) | two-step (the old non-atomic path, rollback only). acc/rebank-transaction.ts. Set in wrangler.toml [vars].
   RECEIPT_REBANK_MODE?: string;
+  // Returns, atomic (default) | two-step (rollback only), scm/lib/stock-post-tx.ts: customer returns and supplier returns. Set in wrangler.toml [vars].
+  DELIVERY_RETURN_MODE?: string;
+  PURCHASE_RETURN_MODE?: string;
   // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
   // which are the legacy inbound pull) ───────────────────────────────────────
   // Base URL of AcSyncService, the write-back service that runs ON the AutoCount
