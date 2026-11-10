@@ -18,6 +18,15 @@
 // Any upload of sealed/ also needs the seal step before it, so plaintext cannot
 // be copied into that folder and pass.
 //
+// The same holds for a BUCKET upload (aws s3 cp/sync, s3api put-object, rclone,
+// wrangler r2 object put, s3cmd, mc) in a job that runs pg_dump/mysqldump, or
+// whose command line names a dump-shaped file: an encryption step must come
+// earlier in the job, and no dump-shaped token on the line may be plaintext.
+// A bucket is outside this repo, but a leaked R2/S3 key is all it then takes
+// (nightly-db-backup.yml). A source held in a shell variable cannot be read
+// from here, so for that shape the check proves only that encryption ran
+// first; the workflow itself refuses to upload anything not ending .enc.
+//
 // The only escape is a VISIBLE marker inside the step, with a reason:
 //   # dump-artifact-ok: <why this holds no rows>
 // e.g. a schema-only dump. A marker without a reason is refused.
@@ -40,6 +49,8 @@ const ENCRYPT_STEP = [
   /gpg\s+[^\n]*(--encrypt|\s-e\b|--symmetric|\s-c\b)/,
   /\bage\s+[^\n]*(-r\b|--recipient|-p\b|--passphrase)/,
 ];
+const BUCKET_UPLOAD = /\baws\s+s3\s+(cp|mv|sync)\b|\baws\s+s3api\s+(put-object|upload-part)\b|\brclone\s+(copy|copyto|move|moveto|sync|rcat)\b|\bwrangler\s+r2\s+object\s+put\b|\bs3cmd\s+(put|sync)\b|\bmc\s+(cp|mirror)\b/;
+const DB_DUMP = /\b(pg_dump|pg_dumpall|mysqldump|mongodump)\b/;
 const MARKER = /#[ \t]*dump-artifact-ok:[ \t]*(\S.*)?$/m;
 
 const indentOf = (l) => l.length - l.trimStart().length;
@@ -100,7 +111,29 @@ export function scanWorkflow(text) {
     const plain = paths.filter((p) => !CIPHERTEXT.test(p));
     if (plain.length) findings.push({ line: s + 1, why: `encrypts, but still uploads plaintext path(s): ${plain.join(", ")}` });
   }
-  return { uploads, findings };
+  let bucketUploads = 0;
+  for (let k = 0; k < lines.length; k++) {
+    const line = lines[k];
+    if (line.trim().startsWith("#") || !BUCKET_UPLOAD.test(line)) continue;
+    bucketUploads++;
+    let j = k - 1;
+    while (j >= 0 && !(/^\s*steps:\s*$/.test(lines[j]) && indentOf(lines[j]) < indentOf(line))) j--;
+    const stepsIndent = j >= 0 ? indentOf(lines[j]) : -1;
+    let end = k + 1;
+    while (end < lines.length && (lines[end].trim() === "" || indentOf(lines[end]) > stepsIndent)) end++;
+    const job = lines.slice(j + 1, end).join("\n");
+    const before = lines.slice(j + 1, k).join("\n");
+    const tokens = line.trim().split(/\s+/).map((t) => t.replace(/^['"]+|['"]+$/g, ""));
+    const dumpTokens = tokens.filter(looksLikeDump);
+    if (!DB_DUMP.test(job) && !dumpTokens.length) continue;
+    if (!ENCRYPT_STEP.some((re) => re.test(before))) {
+      findings.push({ line: k + 1, why: `uploads to a bucket in a job that dumps a database, with no encryption step before it` });
+      continue;
+    }
+    const plain = dumpTokens.filter((t) => !CIPHERTEXT.test(t));
+    if (plain.length) findings.push({ line: k + 1, why: `encrypts, but the bucket upload names plaintext: ${plain.join(", ")}` });
+  }
+  return { uploads, bucketUploads, findings };
 }
 
 const PROBES = [
@@ -228,13 +261,61 @@ jobs:
           name: po-dump-1
           path: po-dump/
 `],
+  ["bucket: pg_dump then a plaintext upload to R2", 1, `
+jobs:
+  backup:
+    steps:
+      - run: pg_dump "$DATABASE_URL" -Fc -f db.dump
+      - run: aws s3 cp db.dump s3://bucket/db.dump --endpoint-url "$E"
+`],
+  ["bucket: pg_dump, seal, upload the ciphertext", 0, `
+jobs:
+  backup:
+    steps:
+      - run: pg_dump "$DATABASE_URL" -Fc -f backup/db.dump
+      - uses: ./.github/actions/seal-artifact
+        with:
+          mode: seal
+          paths: backup/
+      - run: |
+          for f in sealed/*.enc; do
+            aws s3 cp "$f" "s3://$B/nightly/$(basename "$f")" --endpoint-url "$E"
+          done
+`],
+  ["bucket: encrypted, but the plaintext is uploaded too", 1, `
+jobs:
+  backup:
+    steps:
+      - run: pg_dump "$DATABASE_URL" -Fc -f db.dump && openssl enc -aes-256-cbc -pass file:k -in db.dump -out db.dump.enc
+      - run: rclone copy db.dump r2:bucket/
+`],
+  ["bucket: encryption AFTER the upload does not count", 1, `
+jobs:
+  backup:
+    steps:
+      - run: pg_dump "$DATABASE_URL" -Fc -f db.dump
+      - run: aws s3api put-object --bucket b --key k --body "$F"
+      - run: openssl enc -aes-256-cbc -pass file:k -in db.dump -out db.dump.enc
+`],
+  ["bucket: a dump-shaped file with no pg_dump in the job", 1, `
+jobs:
+  x:
+    steps:
+      - run: npx wrangler r2 object put files/prod.sql.gz --file prod.sql.gz
+`],
+  ["bucket: an ordinary static-asset upload", 0, `
+jobs:
+  site:
+    steps:
+      - run: aws s3 sync frontend/dist s3://site/ --delete
+`],
 ];
 
 export function selfTest() {
   const bad = [];
   for (const [label, want, text] of PROBES) {
-    const { uploads, findings } = scanWorkflow(text);
-    if (uploads !== 1 || findings.length !== want) bad.push(`${label}: expected ${want} finding(s), got ${findings.length} (uploads seen ${uploads})`);
+    const { uploads, bucketUploads, findings } = scanWorkflow(text);
+    if (uploads + bucketUploads !== 1 || findings.length !== want) bad.push(`${label}: expected ${want} finding(s), got ${findings.length} (uploads seen ${uploads + bucketUploads})`);
   }
   return bad;
 }
@@ -250,13 +331,15 @@ function main() {
   const dir = path.join(root, ".github", "workflows");
   const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort();
   let uploads = 0;
+  let bucketUploads = 0;
   const out = [];
   for (const f of files) {
     const r = scanWorkflow(fs.readFileSync(path.join(dir, f), "utf8"));
     uploads += r.uploads;
+    bucketUploads += r.bucketUploads;
     for (const x of r.findings) out.push(`  .github/workflows/${f}:${x.line}  ${x.why}`);
   }
-  console.log(`check-workflow-dump-artifacts: ${files.length} workflows, ${uploads} upload-artifact steps, ${PROBES.length} self-test probes passed`);
+  console.log(`check-workflow-dump-artifacts: ${files.length} workflows, ${uploads} upload-artifact steps, ${bucketUploads} bucket uploads, ${PROBES.length} self-test probes passed`);
   if (uploads === 0) {
     console.error("no upload-artifact step found at all - the scan matched nothing, refusing to call that a pass");
     process.exit(2);
@@ -267,7 +350,7 @@ function main() {
     console.error("\nEncrypt with ./.github/actions/seal-artifact (mode: check early, mode: seal before upload) and upload sealed/ only.");
     process.exit(1);
   }
-  console.log("no unencrypted dump, backup or export is uploaded as an artifact");
+  console.log("no unencrypted dump, backup or export is uploaded as an artifact or to a bucket");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

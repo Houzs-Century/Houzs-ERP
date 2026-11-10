@@ -213,6 +213,13 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `others`: active staff of the company not on it; adding one (`POST
   /:id/sales-attendees { user_id }`) puts them on the roster without changing their
   department (`ensureSalesRepForUser`, owner 2026-10-19).
+- `GET /projects/attachments/:key` streams from the shared `POD_BUCKET`, so the key
+  is checked first (`refuseForeignAttachmentKey`, `routes/lib/project-company-gate.ts`):
+  a key another module writes (`mail-outbox/`, `mail/`, `hr-punch/`, `user/`,
+  `memos/`, `assr/`, `announcements/`, `fleet/`, `branding/`) is 404; a
+  `projects/<id>/`, `project-phase-photos/<id>/` or `task-attach/<itemId>/` key must
+  be in the caller's company. A new `POD_BUCKET` writer outside this module must add
+  its prefix there; `backend/tests/projectAttachmentKeyGate.test.ts` fails until it does.
 
 ## Gotchas
 

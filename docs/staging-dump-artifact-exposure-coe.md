@@ -6,8 +6,9 @@ PUBLIC repository's Actions runs expose, the coordinator saw that every run of
 *Staging Refresh Data (prod -> staging, masked)* left an artifact called `prod-data`
 of about 235 MB.
 **Status:** the leak path is closed in this PR, and a CI check now refuses any
-workflow that uploads a dump, backup or export without encrypting it. The copies
-already uploaded are NOT deleted — that is the owner's decision (Deferred).
+workflow that uploads a dump, backup or export without encrypting it. The 28
+copies already uploaded (5 `prod-data` + 23 backups) were DELETED on the owner's
+instruction on 2026-11-10 (see section 5).
 
 ## 1. What happened, in plain words
 
@@ -127,11 +128,16 @@ Proof the check catches the original: run against `main`'s versions it reports
 
 ## 5. Deferred — owner decisions
 
-1. **Delete the 5 `prod-data` artifacts now** (ids above) — they expire on their own
-   by 2026-11-10 06:29Z, but every hour is exposure. Owner: delete or wait.
-2. **Delete or download-then-delete the 23 backup artifacts** in section 1. They are
-   restore copies of real rows; if any may still be needed, download it privately
-   first. Owner.
+1. **DONE 2026-11-10 (owner: "马上删掉").** The 5 `prod-data` artifacts were deleted
+   with `DELETE /repos/Houzs-Century/Houzs-ERP/actions/artifacts/{id}`; each id then
+   answered 404, and `GET .../actions/artifacts?name=prod-data` returned 0.
+2. **DONE 2026-11-10 (owner: "一起删掉").** The 23 backup artifacts were deleted the
+   same way after matching each by name (10 `migrated-grns-before-prod`, 4
+   `golive-hc-backup*`, 3 `reseed-pre-balance-*`, 2 `so-po-dedication-dump-*`, 2
+   `po-dump-HC-PO-*`, 2 `hc-test-docs-backup-*`); all 23 then answered 404.
+   STILL PRESENT and not ruled on: about 30 smaller tool-output artifacts (repair
+   plans, AutoCount party-code census, supplier binding proposals, sofa worklists)
+   that LIKELY carry business rows but no password hashes.
 3. **Staff password resets.** Password hashes were in every copy. A reset for staff
    (at least admins and anyone with finance access) closes the risk that a hash is
    cracked. Owner.
@@ -141,7 +147,8 @@ Proof the check catches the original: run against `main`'s versions it reports
 5. **Make the repository private.** This incident, the money-in-logs sweep and the
    rule that forbids Supabase keys in Actions all exist only because the repository
    is public. Private ends the whole class. Private repositories pay for Actions
-   minutes; what that costs on this account's plan is UNKNOWN. Owner.
+   minutes; what that costs on this account's plan is UNKNOWN. Owner: 2026-11-10,
+   "先不要" (not now); the repository stays public.
 6. **Verify the refresh end to end.** It was not dispatched for real after the
    change, because a run replaces all of staging's data (see the PR). Coordinator.
 
