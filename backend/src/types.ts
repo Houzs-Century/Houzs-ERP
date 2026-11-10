@@ -125,6 +125,8 @@ export type Env = {
   GRN_POST_MODE?: string;
   // Delivery Planning board reads: rest | shadow | sql (scm/lib/delivery-board-source.ts). Set in wrangler.toml [vars].
   DP_BOARD_SOURCE?: string;
+  // Receipt bank move: atomic (default) | two-step (the old non-atomic path, rollback only). acc/rebank-transaction.ts. Set in wrangler.toml [vars].
+  RECEIPT_REBANK_MODE?: string;
   // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
   // which are the legacy inbound pull) ───────────────────────────────────────
   // Base URL of AcSyncService, the write-back service that runs ON the AutoCount
