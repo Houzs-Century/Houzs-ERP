@@ -245,9 +245,19 @@ async function call(method: 'GET' | 'POST', path: string, body?: unknown) {
 }
 
 /* Strip the per-run noise (dates minted from today) so the snapshot holds the
-   decisions, not the clock. */
-const stable = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (k, val) =>
-  (['do_date', 'created_at', 'updated_at', 'confirmed_at'].includes(k) && typeof val === 'string' ? '<date>' : val)));
+   decisions, not the clock. A default delivery date is also minted from today,
+   and it lands under generic keys (an audit row's `to`), so any value that IS
+   today's calendar date - UTC or Malaysia, which differ for eight hours a day -
+   is masked too. Without this the snapshot written on 2026-11-10 failed every
+   PR from midnight on. */
+const TODAY_VALUES = new Set(
+  [0, 8].map((h) => new Date(Date.now() + h * 3_600_000).toISOString().slice(0, 10)),
+);
+const stable = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (k, val) => {
+  if (typeof val !== 'string') return val;
+  if (['do_date', 'created_at', 'updated_at', 'confirmed_at'].includes(k)) return '<date>';
+  return TODAY_VALUES.has(val) ? '<today>' : val;
+}));
 
 describe('soDeliverableRemaining — pinned', () => {
   it('answers the same descriptor for every line of the requested orders', async () => {

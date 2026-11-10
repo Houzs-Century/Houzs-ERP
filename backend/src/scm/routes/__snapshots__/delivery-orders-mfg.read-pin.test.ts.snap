@@ -504,7 +504,7 @@ exports[`POST / (create DO) — pinned > draft success 1`] = `
             {
               "field": "doDate",
               "from": null,
-              "to": "2026-11-10",
+              "to": "<today>",
             },
             {
               "field": "currency",
@@ -802,7 +802,7 @@ exports[`POST /from-sos — pinned > draft success over two lines of one order 1
           "created_by": "00000000-0000-4000-8000-000000000001",
           "currency": "MYR",
           "customer_country": null,
-          "customer_delivery_date": "2026-11-10",
+          "customer_delivery_date": "<today>",
           "customer_state": null,
           "customer_type": null,
           "debtor_code": "D1",
@@ -813,7 +813,7 @@ exports[`POST /from-sos — pinned > draft success over two lines of one order 1
           "emergency_contact_name": null,
           "emergency_contact_phone": null,
           "emergency_contact_relationship": null,
-          "expected_delivery_at": "2026-11-10",
+          "expected_delivery_at": "<today>",
           "is_dropship": false,
           "phone": null,
           "postcode": null,
@@ -960,17 +960,17 @@ exports[`POST /from-sos — pinned > draft success over two lines of one order 1
             {
               "field": "doDate",
               "from": null,
-              "to": "2026-11-10",
+              "to": "<today>",
             },
             {
               "field": "customerDeliveryDate",
               "from": null,
-              "to": "2026-11-10",
+              "to": "<today>",
             },
             {
               "field": "expectedDeliveryAt",
               "from": null,
-              "to": "2026-11-10",
+              "to": "<today>",
             },
             {
               "field": "currency",
