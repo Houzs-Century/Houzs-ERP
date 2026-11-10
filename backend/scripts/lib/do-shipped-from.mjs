@@ -22,12 +22,25 @@
  * A line with nothing known (no PO, no stock-adjustment units, no rack) is NOT
  * stamped: an empty stamp would lock in "unknown" and hide the bound-PO fallback.
  *
+ * RACK WHEN THE DO NEVER TOOK GOODS OFF A RACK (owner rule 2026-11-10: "看拿什么PO
+ * 的货，然后看是什么GR，然后看在GR的什么rack"). A line that got no dispatch
+ * STOCK_OUT rack at all (DOs before the rack stock-out, or goods never placed)
+ * follows its stamped PO(s) to the GRN line(s) of that PO with the same item code
+ * (and variant key when the GRN line carries one) in the line's ship-from
+ * warehouse, and takes the rack(s) that GRN line recorded, oldest GRN first,
+ * capped at the PO's qty and the line qty. A PO whose GRN recorded no rack leaves
+ * that qty without a rack: nothing is invented. A line with any dispatch rack
+ * keeps only those. Each rack entry says which way it was found (`via`).
+ *
  * Stamp shape (scm.delivery_order_items.shipped_from, mig 20261110T2300):
  *   { v: 1, at, src: 'ship' | 'backfill', item_code, qty,
  *     pos: [{ po, qty }],            qty null only when the PO came from the
  *                                    hard-bound rule and several POs share a line
  *     adj_qty,                       units from a PO-less stock adjustment lot
- *     racks: [{ rack_id, label, qty }],
+ *     racks: [{ rack_id, label, qty, via: 'dispatch' }        the DO's own STOCK_OUT
+ *           | { rack_id, label, qty, via: 'grn', po, grn }],  PO -> GRN line rack
+ *                                    (a stamp written before `via` existed has
+ *                                    neither; readers use only label / rack_id)
  *     returns?: [{ at, why, reshipped_at? }] }   appended by revert / cancel only
  */
 
@@ -83,15 +96,17 @@ function drain(pool, keyOf, entries) {
 
 /**
  * @param {object} input
- * @param {Array<{ id: string, item_code: string, variant_key: string, qty: number, rack_id: string|null, goods: boolean, shipped_from: object|null }>} input.lines  in line order
+ * @param {Array<{ id: string, item_code: string, variant_key: string, qty: number, rack_id: string|null, warehouse_id?: string|null, goods: boolean, shipped_from: object|null }>} input.lines  in line order
  * @param {Array<{ item_code: string, variant_key: string, po: string|null, adjustment: boolean, qty: number }>} input.poUnits  the DO's consumed units, classified
  * @param {Map<string, string[]>} [input.poOverride]  `${code}::${vk}` -> the POs the forward trace names when it differs from the raw lots (BUG-103 hard-bound lines)
  * @param {Array<{ item_code: string, rack_id: string|null, label: string|null, qty: number }>} input.rackOuts  the DO's dispatch STOCK_OUT rack movements
+ * @param {Array<{ po: string, grn: string, grn_at: string, item_code: string, variant_key: string, warehouse_id: string, rack_id: string, label: string|null, qty: number }>} [input.grnRacks]
+ *        what each GRN line of the stamped POs recorded per rack (grn_item_racks split, else grn_items.rack_id x qty_accepted)
  * @param {string} input.at  ISO timestamp
  * @param {'ship'|'backfill'} input.src
  * @returns {Map<string, object>}  line id -> new stamp, only for unstamped lines with something known
  */
-export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, at, src }) {
+export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, grnRacks, at, src }) {
   const goods = lines.filter((l) => l.goods && Number(l.qty) > 0 && l.item_code);
 
   /* PO pool per bucket, aggregated per PO (adjustment units under one key). */
@@ -129,7 +144,15 @@ export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, at, src 
       ...(s.pos ?? []).filter((p) => p.qty != null),
       ...(Number(s.adj_qty) > 0 ? [{ po: null, qty: s.adj_qty }] : []),
     ]);
-    drain(rackPool.get(l.item_code) ?? [], (r) => r.rack_id, s.racks);
+    drain(rackPool.get(l.item_code) ?? [], (r) => r.rack_id, (s.racks ?? []).filter((r) => r.via !== 'grn'));
+  }
+  const grnPool = (grnRacks ?? [])
+    .filter((g) => g.po && g.rack_id && Number(g.qty) > 0)
+    .map((g) => ({ ...g, key: `${g.po}|${g.grn}|${g.rack_id}`, qty: Number(g.qty) }))
+    .sort((a, b) => String(a.grn_at ?? '').localeCompare(String(b.grn_at ?? '')) || numeric(a.grn, b.grn) || numeric(a.label ?? '', b.label ?? ''));
+  for (const l of goods) {
+    if (!l.shipped_from) continue;
+    drain(grnPool, (r) => `${r.po}|${r.grn}|${r.rack_id}`, (l.shipped_from.racks ?? []).filter((r) => r.via === 'grn'));
   }
 
   const open = goods.filter((l) => !l.shipped_from);
@@ -146,7 +169,7 @@ export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, at, src 
     for (const g of got) {
       const cur = merged.get(g.key);
       if (cur) cur.qty += g.qty;
-      else merged.set(g.key, { rack_id: g.key, label: g.label, qty: g.qty });
+      else merged.set(g.key, { rack_id: g.key, label: g.label, qty: g.qty, via: 'dispatch' });
     }
     racksByLine.set(l.id, [...merged.values()].sort((a, b) => numeric(a.label ?? '', b.label ?? '')));
   }
@@ -172,12 +195,37 @@ export function planShippedFrom({ lines, poUnits, poOverride, rackOuts, at, src 
       }
       pos.sort((a, b2) => numeric(a.po, b2.po));
     }
-    const racks = racksByLine.get(l.id) ?? [];
+    let racks = racksByLine.get(l.id) ?? [];
+    if (racks.length === 0) racks = grnRacksFor(grnPool, l, pos);
     if (pos.length === 0 && adj <= 0 && racks.length === 0) continue;
     out.set(l.id, {
       v: SHIPPED_FROM_VERSION, at, src, item_code: l.item_code, qty: Number(l.qty),
       pos, adj_qty: adj, racks,
     });
+  }
+  return out;
+}
+
+/* The PO -> GRN -> rack chain for one line that left no dispatch rack. Takes
+   from the shared pool so two lines of one PO do not both claim one shelf. */
+function grnRacksFor(pool, line, pos) {
+  if (!line.warehouse_id) return [];
+  let lineLeft = Number(line.qty);
+  const out = [];
+  for (const p of pos) {
+    let left = Math.min(p.qty == null ? lineLeft : Number(p.qty), lineLeft);
+    for (const e of pool) {
+      if (left <= 0) break;
+      if (e.qty <= 0 || e.po !== p.po || e.item_code !== line.item_code || e.warehouse_id !== line.warehouse_id) continue;
+      if (e.variant_key && e.variant_key !== line.variant_key) continue;
+      const n = Math.min(e.qty, left);
+      e.qty -= n;
+      left -= n;
+      lineLeft -= n;
+      const cur = out.find((o) => o.rack_id === e.rack_id && o.po === e.po && o.grn === e.grn);
+      if (cur) cur.qty += n;
+      else out.push({ rack_id: e.rack_id, label: e.label ?? null, qty: n, via: 'grn', po: e.po, grn: e.grn });
+    }
   }
   return out;
 }
