@@ -179,13 +179,14 @@ async function analyse(sql, movementIds) {
     const bGrn = grnLines.filter((g) => bound.some((p) => p.id === g.poItemId));
     const costing = cons.filter((c) => c.movementId === o.id).map((c) => {
       const origins = originOf.get(c.lotId);
-      if (!origins) return { qty: c.qty, totalSen: Number(c.totalSen), pos: lotPos(c, poByGrnId, poByAcDoc), src: `${c.sourceDocType ?? '-'} ${c.sourceDocNo ?? '-'}` };
+      const zero = Number(c.unitCostSen) === 0;
+      if (!origins) return { qty: c.qty, totalSen: Number(c.totalSen), zero, pos: lotPos(c, poByGrnId, poByAcDoc), src: `${c.sourceDocType ?? '-'} ${c.sourceDocNo ?? '-'}` };
       const posSets = origins.map((x) => lotPos(x, poByGrnId, poByAcDoc).join('+'));
       const ambiguous = new Set(posSets).size > 1;
       const first = origins[0];
       const ac = first ? parseAcDoc(first.movementNotes) : null;
       return {
-        qty: c.qty, totalSen: Number(c.totalSen),
+        qty: c.qty, totalSen: Number(c.totalSen), zero,
         pos: !first || ambiguous ? [] : lotPos(first, poByGrnId, poByAcDoc),
         src: !first ? `${c.sourceDocNo} <- origin not found` : `${c.sourceDocNo} <- ${first.sourceDocType} ${ac ? `AC ${ac.src} ${ac.doc}` : first.sourceDocNo ?? '-'}${ambiguous ? ' (ambiguous origin)' : ''}`,
       };
@@ -199,7 +200,8 @@ async function analyse(sql, movementIds) {
     const costedQty = costing.reduce((s, c) => s + c.qty, 0);
     const ratio = costRatio(costing.reduce((s, c) => s + c.totalSen, 0), costedQty, exp.unitSen);
     return {
-      ...o, group, hardBound, boundPoNos, boundGrns: [...new Set(bGrn.map((g) => `${g.grnNo}${g.migrated ? '(migrated)' : ''}`))],
+      ...o, group, hardBound, boundPoNos, boundGrns: [...new Set(bGrn.map((g) => `${g.grnNo}${g.migrated ? `(migrated, AC ${g.acDoc ?? '-'})` : ''}`))],
+      allZero: costing.length > 0 && costing.every((c) => c.zero),
       costing, costedQty, ...cls, expSource: exp.source, ratio, same: sameCost(ratio),
     };
   });
@@ -207,9 +209,9 @@ async function analyse(sql, movementIds) {
 
 function printRows(rows) {
   for (const r of rows.slice(0, LIMIT)) {
-    console.log(`  ${r.doNo} | ${r.itemCode} @ ${r.wh ?? '-'} | vk "${r.vk}" | qty ${r.qty} costed ${r.costedQty} | ${r.group}${r.hardBound ? ' BOUND' : ''}`);
+    console.log(`  ${r.repair ? '[repair] ' : ''}${r.doNo} | ${r.itemCode} @ ${r.wh ?? '-'} | vk "${r.vk}" | qty ${r.qty} costed ${r.costedQty} | ${r.group}${r.hardBound ? ' BOUND' : ''}`);
     console.log(`      bound PO ${r.boundPoNos.join(', ') || '-'} | GRN ${r.boundGrns.join(', ') || '-'}`);
-    for (const c of r.costing) console.log(`      lot: ${c.qty} from ${c.src} -> PO ${c.pos.join(', ') || '-'}`);
+    for (const c of r.costing) console.log(`      lot: ${c.qty} from ${c.src} -> PO ${c.pos.join(', ') || '-'}${c.zero ? ' [lot at zero]' : ''}`);
     console.log(`      => ${r.verdict}; ratio actual/expected ${r.ratio} (${r.expSource})${r.same === null ? '' : r.same ? ' same cost' : ' DIFFERENT cost'}`);
   }
   if (rows.length > LIMIT) console.log(`  ... ${rows.length - LIMIT} more (raise LIMIT)`);
@@ -222,7 +224,13 @@ function summary(label, rows) {
     if (n) console.log(`    ${String(n).padStart(6)}  ${v} — ${desc}`);
   }
   const priced = rows.filter((r) => r.hardBound && r.same !== null);
-  console.log(`    hard-bound rows with an expected cost: ${priced.length}; same cost ${priced.filter((r) => r.same).length}; different ${priced.filter((r) => !r.same).length}`);
+  const n = (f) => String(rows.filter(f).length);
+  console.log(`    hard-bound rows with a ratio: ${String(priced.length)}; ratio 100% ${String(priced.filter((r) => r.same).length)}; ratio not 100% ${String(priced.filter((r) => !r.same).length)}`);
+  console.log(`    hard-bound rows whose every costing lot is at zero: ${n((r) => r.hardBound && r.allZero)}; pooled rows the same: ${n((r) => !r.hardBound && r.allZero)}`);
+  for (const v of ['match', 'mismatch', 'partial']) {
+    const vr = priced.filter((r) => r.verdict === v);
+    console.log(`    ${v}: ratio 100% ${String(vr.filter((r) => r.same).length)}, not 100% ${String(vr.filter((r) => !r.same).length)}`);
+  }
 }
 
 const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
@@ -242,9 +250,11 @@ try {
         JOIN scm.delivery_orders d ON d.id = m.source_doc_id AND d.company_id = ${CO}
        WHERE m.company_id = ${CO} AND m.movement_type = 'OUT' AND m.source_doc_type = 'DO' AND d.do_number = ANY(${DO_NOS})`).map((r) => r.id);
     notice(`  ${fromRef.length} OUT(s) still consume a ${REF}* lot; ${fromDos.length} OUT(s) on the ${DO_NOS.length} named DO(s)`);
-    const rowsA = await analyse(sql, [...new Set([...fromRef, ...fromDos])]);
+    const refSet = new Set(fromRef);
+    const rowsA = (await analyse(sql, [...new Set([...fromRef, ...fromDos])])).map((r) => ({ ...r, repair: refSet.has(r.id) }));
     rowsA.sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true }) || a.itemCode.localeCompare(b.itemCode));
     summary('A', rowsA);
+    summary('A, repair-costed rows only', rowsA.filter((r) => r.repair));
     console.log(`  distinct DOs: ${new Set(rowsA.map((r) => r.doNo)).size} — ${[...new Set(rowsA.map((r) => r.doNo))].join(', ') || '-'}`);
     printRows(rowsA);
 
