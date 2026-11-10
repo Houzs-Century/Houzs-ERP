@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { uploadFieldPhoto } from "../../vendor/scm/lib/slip";
-import { useFieldPhotos } from "../../lib/fieldPhotos";
+import { fieldPhotoContext, uploadFieldPhoto } from "../../vendor/scm/lib/slip";
+import { serverFieldPhotoRestore, useFieldPhotos } from "../../lib/fieldPhotos";
 import { FieldPhotos } from "../FieldPhotos";
 import {
   jobKey, jobRefOf, LEG_LABEL, detailRows, str, hm, type JobRef, type JobResponse,
@@ -106,10 +106,12 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
      office's, not the photo's. Limits mirror delivery-job-progress.ts: 10 to
      complete, 20 in all once completed. */
   const hadPhotos = q.data?.progress?.pod_photo_keys?.length ?? 0;
+  const photoContext = fieldPhotoContext({ kind: "job", key: jobKey(jobRef) });
   const picked = useFieldPhotos({
     stampLabel: null,
     max: q.data?.progress?.completed_at ? Math.max(0, 20 - hadPhotos) : 10,
-    upload: (file) => uploadFieldPhoto({ file }),
+    upload: (file) => uploadFieldPhoto({ file, context: photoContext }),
+    restore: q.data ? serverFieldPhotoRestore(photoContext) : null,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

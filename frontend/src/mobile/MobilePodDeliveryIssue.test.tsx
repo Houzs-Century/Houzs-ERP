@@ -14,6 +14,9 @@ vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadSlipFull: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
   uploadFieldPhoto: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
+
+  // No photos uploaded earlier for this stop (the re-list after a reload).
+  listFieldPhotos: vi.fn(async () => []),
 }));
 vi.mock("../lib/photoStamp", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/photoStamp")>()),

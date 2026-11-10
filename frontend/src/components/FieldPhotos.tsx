@@ -11,7 +11,9 @@ import { ACCEPTED_PHOTO_TYPES, type FieldPhoto, type FieldPhotosApi } from "../l
    picked). After each shot the sheet comes back with "Take another". With a
    mouse the tile opens the file picker directly. Styles are inline with token
    fallbacks so the block looks right inside the phone shell (.hz-m) and on the
-   desktop page. */
+   desktop page. After a page reload the photos already uploaded come back
+   (lib/fieldPhotos.ts restore); while they are being looked up, or when that
+   failed, the block says so. */
 
 const C = {
   brand: "var(--brand, #16695f)",
@@ -103,6 +105,20 @@ export function FieldPhotos({ api, disabled, title }: {
         <div key={p.id} style={{ fontSize: 11, color: C.red, marginTop: 3 }}>Photo {photos.indexOf(p) + 1}: {p.error}</div>
       ))}
       {api.notice && <div style={{ fontSize: 11, color: C.red, marginTop: 6 }}>{api.notice}</div>}
+      {api.restore.phase === "loading" && (
+        <div style={{ fontSize: 11.5, color: C.mut, marginTop: 6 }}>Checking for photos you already uploaded for this job…</div>
+      )}
+      {api.restore.phase === "failed" && (
+        <div role="alert" style={{ fontSize: 11.5, color: C.red, marginTop: 6 }}>
+          Could not check for photos you already uploaded for this job ({api.restore.error}).
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button type="button" onClick={api.retryRestore} disabled={disabled}
+              style={{ border: `1px solid ${C.brand}`, borderRadius: 8, background: C.card, color: C.brand, fontFamily: "inherit", fontSize: 12, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>Check again</button>
+            <button type="button" onClick={api.skipRestore} disabled={disabled}
+              style={{ border: `1px solid ${C.line}`, borderRadius: 8, background: C.card, color: C.ink, fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "6px 10px", cursor: "pointer" }}>Continue without them</button>
+          </div>
+        </div>
+      )}
 
       <input ref={cameraRef} type="file" accept={accept} capture="environment" style={{ display: "none" }} data-testid="field-photos-camera"
         onChange={(e) => {

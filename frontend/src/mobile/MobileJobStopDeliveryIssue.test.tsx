@@ -10,6 +10,9 @@ vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
 vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadSlipFull: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
+
+  // No photos uploaded earlier for this stop (the re-list after a reload).
+  listFieldPhotos: vi.fn(async () => []),
 }));
 
 import { MobileJobStop } from "./MobileJobStop";
