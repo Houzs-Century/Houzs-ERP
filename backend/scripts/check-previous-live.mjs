@@ -16,7 +16,11 @@ import { settlementWatchlist } from '../src/scm/routes/accounting-settlement.ts'
 if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set.'); process.exit(2); }
 if ((process.env.MODE || 'plan') !== 'plan') { console.error('read-only: run it with mode=plan.'); process.exit(1); }
 const COS = String(process.env.COMPANY_IDS || '1,2').split(',').map((s) => Number(s.trim())).filter((n) => n > 0);
-const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+const sql = postgres(process.env.DATABASE_URL, {
+  max: 1, prepare: false,
+  /* A date column read as text, as PostgREST sends it (a Date object would fail every day check). */
+  types: { date: { to: 1082, from: [1082], serialize: (x) => x, parse: (x) => x } },
+});
 const row = (...parts) => console.log(`ROW|${parts.join('|')}`);
 const yn = (b) => (b ? 'yes' : 'no');
 
