@@ -186,6 +186,14 @@ describe('planSofaSetPoConflicts — a sofa SET binds ONE PO, not one per module
     ]);
   });
 
+  test('two models of one order on two POs are two sets, not a split (HC-SO-2610-104)', () => {
+    expect(planSofaSetPoConflicts([
+      mod({ lineRef: 'a', itemCode: '8030-1A(LHF)', boundBatchNo: 'PO-HOOKKA' }),
+      mod({ lineRef: 'b', itemCode: '8030-1A(RHF)', boundBatchNo: 'PO-HOOKKA' }),
+      mod({ lineRef: 'c', itemCode: '8069-1A(LHF)', boundBatchNo: 'PO-DORSETT' }),
+    ])).toEqual([]);
+  });
+
   test('every module on the SAME PO is fine — that is the whole point', () => {
     expect(planSofaSetPoConflicts([
       mod({ lineRef: 'a', boundBatchNo: 'PO-A' }),

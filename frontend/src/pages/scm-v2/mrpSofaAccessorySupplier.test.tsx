@@ -88,7 +88,7 @@ describe('MRP sofa tab — one supplier per sofa set, modules only', () => {
     });
   });
 
-  test('two sofa modules of one order on different suppliers are still refused', () => {
+  test('two modules of one sofa model on different suppliers are still refused', () => {
     mrpData = base({
       sofaSets: [
         sofaSet('9058-1A(LHF)', 'si-1a', 0, [HOOKKA, DORSETT]),
@@ -96,7 +96,53 @@ describe('MRP sofa tab — one supplier per sofa set, modules only', () => {
       ],
     });
     proceed();
-    expect(screen.getByText('One supplier per sofa set')).toBeTruthy();
+    expect(screen.getByText('One supplier per sofa model')).toBeTruthy();
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('MRP sofa tab — two models on one order may use two suppliers after a confirm (HC-SO-2610-104)', () => {
+  const twoModels = () => base({
+    sofaSets: [
+      sofaSet('8030-1A(LHF)', 'si-8030', 0, [HOOKKA, DORSETT]),
+      sofaSet('8069-1A(LHF)', 'si-8069', 1, [{ ...DORSETT, isMain: true }]),
+    ],
+  });
+
+  test('the popup names each model and its supplier, and Cancel sends nothing', () => {
+    mrpData = twoModels();
+    proceed();
+    expect(screen.getByText('Use more than one supplier?')).toBeTruthy();
+    expect(screen.getByText(/8030 from HOOKKA INDUSTRIES, 8069 from DORSETTLOFT SOFA/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText('Use more than one supplier?')).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  test('Yes leads to the usual Proceed PO step, which sends the confirm flag with each model on its own supplier', () => {
+    mrpData = twoModels();
+    proceed();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, proceed' }));
+    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(mutate).toHaveBeenCalledTimes(1);
+    const body = mutate.mock.calls[0]![0] as { allowSofaSupplierSplit: boolean; picks: Array<{ soItemId: string; supplierId: string }> };
+    expect(body.allowSofaSupplierSplit).toBe(true);
+    expect(Object.fromEntries(body.picks.map((p) => [p.soItemId, p.supplierId]))).toEqual({
+      'si-8030': 'sup-h004', 'si-8069': 'sup-d004',
+    });
+  });
+
+  test('one supplier for the whole order goes straight to Proceed PO without the flag', () => {
+    mrpData = base({
+      sofaSets: [
+        sofaSet('8030-1A(LHF)', 'si-8030', 0, [HOOKKA]),
+        sofaSet('8069-1A(LHF)', 'si-8069', 1, [HOOKKA]),
+      ],
+    });
+    proceed();
+    expect(screen.queryByText('Use more than one supplier?')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect((mutate.mock.calls[0]![0] as { allowSofaSupplierSplit: boolean }).allowSofaSupplierSplit).toBe(false);
   });
 });

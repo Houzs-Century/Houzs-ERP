@@ -520,9 +520,9 @@ async function resolveShipCommitments(
       detectSofaSoItemIds(sb, linked.map((l) => ({
         itemCode: l.itemCode, itemGroup: l.itemGroup, soItemId: l.soItemId,
       })), companyId),
-      /* doc_no comes along because it IS the sofa set's identity — the same
-         definition findIncompleteSofaSets uses (all the READY sofa lines of one
-         Sales Order) — AND the demand tiebreak. line_delivery_date + the SO
+      /* doc_no comes along because, with the item's model, it IS the sofa
+         set's identity (sofaSetKey: one sofa model on one Sales Order) — AND
+         the demand tiebreak. line_delivery_date + the SO
          header's customer_delivery_date give the demand ORDER (mrp.ts §2:
          line date, else header date, nulls last). One read, not a second query;
          the embed is a LEFT join so an orphan SO item still resolves. */
