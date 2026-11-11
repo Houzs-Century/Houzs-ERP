@@ -109,3 +109,34 @@ export function validateMailAttachments(
 
   return { ok: true, totalDecodedBytes: total };
 }
+
+const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  svg: "image/svg+xml",
+  heic: "image/heic",
+  heif: "image/heif",
+  pdf: "application/pdf",
+};
+
+export interface StoredMailAttachment {
+  filename: string;
+  contentType: string;
+  contentBase64: string;
+}
+
+export function toStoredMailAttachments(
+  attachments: Array<{ filename: string; contentBase64: string }>,
+): StoredMailAttachment[] {
+  return attachments.map((attachment) => ({
+    filename: attachment.filename,
+    contentType:
+      CONTENT_TYPE_BY_EXTENSION[fileExtension(attachment.filename.trim())] ??
+      "application/octet-stream",
+    contentBase64: attachment.contentBase64.replace(/^data:[^;]+;base64,/, ""),
+  }));
+}

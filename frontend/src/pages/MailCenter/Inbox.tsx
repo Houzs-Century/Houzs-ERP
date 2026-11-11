@@ -130,6 +130,7 @@ import {
   Rows4,
   PanelRight,
   Square,
+  Paperclip,
 } from "lucide-react";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
 import { mytDayOf, todayMyt } from "../../vendor/scm/lib/dates";
@@ -150,6 +151,7 @@ type MailThreadRow = {
   labels: string[];
   trashedAt: string | null;
   hasOutbound: boolean;
+  hasAttachment: boolean;
 };
 
 type MailAddress = {
@@ -621,7 +623,8 @@ function CompactRow({
           )}
         </span>
       </button>
-      <span className="shrink-0 px-2 text-xs text-ink-muted group-hover:hidden group-focus-within:hidden">
+      <span className="inline-flex shrink-0 items-center gap-1 px-2 text-xs text-ink-muted group-hover:hidden group-focus-within:hidden">
+        {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
         {fmtTime(t.lastMessageAt)}
       </span>
       <div className="hidden group-hover:flex group-focus-within:flex">
@@ -676,7 +679,10 @@ function ComfortableRow({
             <span className={cn("truncate text-sm", unread ? "font-semibold text-ink" : "font-medium text-ink/90")}>
               {senderLabel(t)}
             </span>
-            <span className="shrink-0 text-xs text-ink-muted">{fmtTime(t.lastMessageAt)}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
+              {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
+              {fmtTime(t.lastMessageAt)}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className={cn("truncate text-sm", unread ? "text-ink" : "text-ink-muted")}>

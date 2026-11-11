@@ -55,6 +55,7 @@ import {
   chipStyle,
 } from "./mail-labels";
 import { ComposeDialog } from "./Compose";
+import { PickedAttachmentChip } from "./PickedAttachmentChip";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "./mail-email-frame";
 import {
   ArrowLeft,
@@ -821,23 +822,12 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                   </label>
                   <div className="flex flex-wrap gap-1.5">
                     {files.map((f, i) => (
-                      <span
+                      <PickedAttachmentChip
                         key={`${f.name}-${i}`}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-dim py-1 pl-2 pr-1 text-xs text-ink"
-                      >
-                        <Paperclip className="h-3 w-3 shrink-0 text-ink-muted" />
-                        <span className="truncate">{f.name}</span>
-                        <span className="shrink-0 text-ink-muted">{humanSize(f.size)}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(i)}
-                          disabled={sending}
-                          aria-label={`Remove ${f.name}`}
-                          className="shrink-0 rounded p-0.5 text-ink-muted transition hover:bg-surface hover:text-ink disabled:opacity-50"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
+                        file={f}
+                        isDisabled={sending}
+                        onRemove={() => removeFile(i)}
+                      />
                     ))}
                   </div>
                 </div>
