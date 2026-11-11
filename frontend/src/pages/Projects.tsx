@@ -6646,11 +6646,12 @@ function ScheduleRef({
           <input
             ref={fileRef}
             type="file"
+            multiple
             hidden
             accept="image/*,application/pdf,.heic"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void upload(f);
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              for (const f of files) await upload(f);
             }}
           />
           <button
@@ -6659,7 +6660,7 @@ function ScheduleRef({
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
           >
             <Paperclip size={12} />{" "}
-            {busy ? "Uploading…" : items.length ? "Replace / add screenshot" : "Upload handbook schedule screenshot"}
+            {busy ? "Uploading…" : items.length ? "Replace / add screenshots" : "Upload handbook schedule screenshots"}
           </button>
         </>
       )}
@@ -6763,11 +6764,12 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
           <input
             ref={fileRef}
             type="file"
+            multiple
             hidden
             accept="image/*,video/*,application/pdf,.heic"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void upload(f);
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              for (const f of files) await upload(f);
             }}
           />
           <button
@@ -6775,7 +6777,7 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
             disabled={busy}
             className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
           >
-            <Paperclip size={12} /> {busy ? "Uploading…" : "Add service photo"}
+            <Paperclip size={12} /> {busy ? "Uploading…" : "Add service photos"}
           </button>
         </div>
       )}
