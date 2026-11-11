@@ -181,7 +181,7 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
   const orderDelivery = orderDeliveryOf(c);
 
   return (
-    <div className="hz-m" style={{ position: "fixed", inset: 0, background: "var(--app-bg)", display: "flex", flexDirection: "column" }}>
+    <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)", position: "relative" }}>
       <header className="hdr">
         <div className="hdr-row">
           <button className="back" onClick={onBack}>
@@ -204,7 +204,7 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
         </div>
       </header>
 
-      <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
+      <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 170 }}>
         {isLoading && (
           <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "26px 0" }}>Loading…</div>
         )}
