@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { CostBreakdown, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
+import type { CostBreakdown, RateArea, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { chargingUnit, settingsSentence } from './cardSettings';
 import {
-  COUNT_ERROR, EMPTY_FORM, SOFA_ERROR, groupBreakdown, lineLabel, outstationTowns, pricedTypes, readFacts,
+  COUNT_ERROR, EMPTY_FORM, SOFA_ERROR, destinationGroups, groupBreakdown, lineLabel, outstationTowns, pricedTypes, readFacts,
 } from './priceCheckFacts';
 import { FLAT_ORDER } from './rateCardLayout';
 
@@ -72,6 +72,42 @@ describe('outstationTowns', () => {
       rule({ ruleType: 'OUTSTATION', zone: 'MIRI' }), rule({ ruleType: 'OUTSTATION_TRIP', zone: 'miri' }),
       rule({ ruleType: 'OUTSTATION', zone: 'BAU' }), rule({ ruleType: 'SETUP' }),
     ])).toEqual(['BAU', 'MIRI']);
+  });
+});
+
+describe('areas in Price check (mig 20261111T1000)', () => {
+  const areas: RateArea[] = [
+    { id: 'a-far', cardId: 'c', name: 'Bintulu / Tatau', towns: ['TATAU', 'BINTULU'], sortOrder: 0 },
+    { id: 'a-near', cardId: 'c', name: 'Marudi', towns: ['MARUDI'], sortOrder: 1 },
+  ];
+  const towns = [rule({ ruleType: 'OUTSTATION', zone: 'LABUAN' }), rule({ ruleType: 'OUTSTATION', zone: 'BINTULU' })];
+
+  it('Destination lists each area’s towns under its name, then the towns in no area', () => {
+    expect(destinationGroups(areas, towns)).toEqual([
+      { label: 'Bintulu / Tatau', towns: ['BINTULU', 'TATAU'] },
+      { label: 'Marudi', towns: ['MARUDI'] },
+      { label: 'Other towns', towns: ['LABUAN'] },
+    ]);
+    expect(destinationGroups([], towns)).toEqual([{ label: null, towns: ['BINTULU', 'LABUAN'] }]);
+    expect(destinationGroups([], [])).toEqual([]);
+  });
+
+  it('a town of an area names the area, and still names the town for its own price', () => {
+    const read = readFacts({ ...EMPTY_FORM, town: 'TATAU' }, SET_CARD, new Set(), areas);
+    expect(read).toEqual({ ok: true, facts: { setCount: 1, destinationZone: 'TATAU', areaId: 'a-far' } });
+    const plain = readFacts({ ...EMPTY_FORM, town: 'LABUAN' }, SET_CARD, new Set(), areas);
+    expect(plain).toEqual({ ok: true, facts: { setCount: 1, destinationZone: 'LABUAN' } });
+  });
+
+  it('a line priced in an area keeps the area’s name', () => {
+    const b: CostBreakdown = {
+      subtotalSen: 3, totalSen: 3, area: { id: 'a-far', name: 'Bintulu / Tatau' },
+      lines: [
+        { ruleType: 'POSITIONAL_TIER', label: '1st set · Bintulu / Tatau', amountSen: 2, detail: { position: 1, tierPosition: 1 } },
+        { ruleType: 'OUTSTATION', label: 'Outstation LABUAN', amountSen: 1, detail: { zone: 'LABUAN' } },
+      ],
+    };
+    expect(groupBreakdown(b, 'set').flatMap((g) => g.lines.map((l) => l.label))).toEqual(['1st set · Bintulu / Tatau', 'LABUAN, per order']);
   });
 });
 

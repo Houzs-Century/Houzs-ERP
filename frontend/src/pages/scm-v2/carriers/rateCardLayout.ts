@@ -79,7 +79,7 @@ const tierCells = (tiers: RateRule[], unit: string): PriceCell[] => {
   }));
 };
 
-const sofaLabel = (min: number, max: number | null): string => {
+export const sofaLabel = (min: number, max: number | null): string => {
   if (max == null) return min <= 1 ? 'Any sofa' : `${min} or more`;
   if (max === min) return `${min} ${min === 1 ? 'compartment' : 'compartments'}`;
   return `${min} to ${max} compartments`;
@@ -103,6 +103,13 @@ const flatCells = (rules: RateRule[]): PriceCell[] => markDuplicates(
 /** The block titles a category's flat tiles sit under. */
 export const flatTitle = (category: RateRuleCategory) => (category === 'DELIVERY' ? 'Extras, each' : 'Each time');
 
+/** The title over a block of Delivery tiles; `unit` is what the tier ladder counts. */
+export const ladderTitle = (id: 'tiers' | 'overage' | 'sofa' | 'flat', unit: string): string => (
+  id === 'tiers' ? (unit === 'trip' ? 'Per trip' : `Per ${unit}, by position on the trip`)
+    : id === 'overage' ? 'Beyond the cap'
+      : id === 'sofa' ? 'Sofa, by compartments'
+        : flatTitle('DELIVERY'));
+
 /** Every category, in the taxonomy's order, empty ones included so a rule can
  *  be added to any of them. An unknown rule type lands in Delivery as a flat
  *  charge rather than vanishing. `unit` is what the tier ladder counts. */
@@ -113,17 +120,17 @@ export function layoutRateCard(rules: readonly RateRule[], unit: string): RuleSe
     const blocks: RuleBlock[] = [];
     const tiers = of('POSITIONAL_TIER');
     if (tiers.length) {
-      blocks.push({ kind: 'ladder', id: 'tiers', title: unit === 'trip' ? 'Per trip' : `Per ${unit}, by position on the trip`, cells: tierCells(tiers, unit) });
+      blocks.push({ kind: 'ladder', id: 'tiers', title: ladderTitle('tiers', unit), cells: tierCells(tiers, unit) });
     }
     const overage = of('OVERAGE');
     if (overage.length) {
       blocks.push({
-        kind: 'ladder', id: 'overage', title: 'Beyond the cap',
+        kind: 'ladder', id: 'overage', title: ladderTitle('overage', unit),
         cells: markDuplicates(overage.map((r) => ({ key: 'overage', label: `After ${r.tierPosition ?? 0}, each`, rule: r }))),
       });
     }
     const sofa = of('SOFA_BRACKET');
-    if (sofa.length) blocks.push({ kind: 'ladder', id: 'sofa', title: 'Sofa, by compartments', cells: sofaCells(sofa) });
+    if (sofa.length) blocks.push({ kind: 'ladder', id: 'sofa', title: ladderTitle('sofa', unit), cells: sofaCells(sofa) });
     const flat = mine.filter((r) => !LADDER_TYPES.has(r.ruleType));
     if (flat.length) blocks.push({ kind: 'ladder', id: 'flat', title: flatTitle(category), cells: flatCells(flat) });
 

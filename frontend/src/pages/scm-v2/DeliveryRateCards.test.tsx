@@ -192,6 +192,76 @@ describe('Carriers & Rates', () => {
     expect((await screen.findByRole('tab', { name: /^Service calls/ })).getAttribute('aria-selected')).toBe('true');
   });
 
+  it('areas sit at the top of Outstation with their own prices; one is added, and Price check prices in it (mig 20261111T1000)', async () => {
+    const AREA = { id: 'area-far', cardId: 'card-msj', name: 'Far towns', towns: ['BINTULU', 'LABUAN'], sortOrder: 0 };
+    const rules = [
+      RULE,
+      { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
+      { ...RULE, id: 'ra1', tierPosition: 1, amountSen: 20000, areaId: 'area-far' },
+      { ...RULE, id: 'r-lab', ruleType: 'OUTSTATION', tierPosition: null, zone: 'LABUAN', amountSen: 6000 },
+    ];
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/delivery-rate-cards/card-msj' && !init?.method) return Promise.resolve({ card: CARDS[0], rules, areas: [AREA] });
+      if (path === '/delivery-rate-cards/card-msj/areas' && init?.method === 'POST') {
+        return Promise.resolve({ area: { id: 'area-new', cardId: 'card-msj', name: 'Near towns', towns: ['MARUDI', 'SUBIS'], sortOrder: 0 } });
+      }
+      if (path.endsWith('/compute')) return Promise.resolve({ card: CARDS[0], facts: {}, breakdown: { ...BREAKDOWN, area: { id: 'area-far', name: 'Far towns' } } });
+      return api(path, init);
+    });
+    mount();
+    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    const tab = await screen.findByRole('tab', { name: /^Outstation/ });
+    expect(tab.textContent).toContain('2');
+    fireEvent.click(tab);
+    const out = screen.getByRole('tabpanel', { name: 'Outstation' });
+    const far = within(out).getByRole('region', { name: 'Far towns' });
+    expect(within(far).getByText('BINTULU · LABUAN')).toBeTruthy();
+    expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('LABUAN (Far towns)');
+
+    fireEvent.click(within(far).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
+    fireEvent.change(within(far).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
+    fireEvent.click(within(far).getByRole('button', { name: 'Save 1st set for Far towns' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH' && String(c[0]).includes('/rules/'));
+      expect(patch?.[0]).toBe('/delivery-rate-cards/card-msj/rules/ra1');
+      expect(JSON.parse(String(patch?.[1].body))).toEqual({ amountSen: 25000 });
+    });
+
+    fireEvent.click(within(far).getByRole('button', { name: 'Add 3rd set and after price for Far towns' }));
+    fireEvent.change(within(far).getByLabelText('Amount for 3rd set and after for Far towns'), { target: { value: '50' } });
+    fireEvent.click(within(far).getByRole('button', { name: 'Save 3rd set and after price for Far towns' }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST' && c[0] === '/delivery-rate-cards/card-msj/rules');
+      expect(JSON.parse(String(post?.[1].body))).toEqual({ ruleType: 'POSITIONAL_TIER', tierPosition: 3, areaId: 'area-far', amountSen: 5000 });
+    });
+
+    fireEvent.click(within(out).getByRole('button', { name: 'Add area' }));
+    fireEvent.change(within(out).getByLabelText('Area name'), { target: { value: 'Near towns' } });
+    fireEvent.change(within(out).getByLabelText(/^Towns, separated by commas/), { target: { value: 'marudi, Subis' } });
+    fireEvent.change(within(out).getByLabelText('1st set (RM)'), { target: { value: '150' } });
+    fireEvent.click(within(out).getByRole('button', { name: 'Add area' }));
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter((c) => c[1]?.method === 'POST');
+      const areaPost = posts.find((c) => c[0] === '/delivery-rate-cards/card-msj/areas');
+      expect(JSON.parse(String(areaPost?.[1].body))).toEqual({ name: 'Near towns', towns: ['MARUDI', 'SUBIS'] });
+      const last = posts[posts.length - 1];
+      expect(last[0]).toBe('/delivery-rate-cards/card-msj/rules');
+      expect(JSON.parse(String(last[1].body))).toEqual({ ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountSen: 15000, areaId: 'area-new' });
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Price check/ }));
+    const check = screen.getByRole('tabpanel', { name: 'Price check' });
+    const dest = within(check).getByLabelText('Destination') as HTMLSelectElement;
+    expect(within(dest).getByRole('group', { name: 'Far towns' })).toBeTruthy();
+    expect(within(dest).queryByRole('group', { name: 'Other towns' })).toBeNull();
+    fireEvent.change(dest, { target: { value: 'BINTULU' } });
+    await waitFor(() => {
+      const runs = fetchMock.mock.calls.filter((c) => String(c[0]).endsWith('/compute')).map((c) => JSON.parse(String(c[1].body)));
+      expect(runs.some((f) => f.areaId === 'area-far' && f.destinationZone === 'BINTULU')).toBe(true);
+    });
+    expect(await within(check).findByText('Priced in the area Far towns.')).toBeTruthy();
+  });
+
   it('an add form opened on one tab does not follow to the next', async () => {
     fetchMock.mockImplementation(api);
     mount();

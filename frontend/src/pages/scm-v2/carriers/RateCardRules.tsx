@@ -6,23 +6,25 @@
 // tab (「做多一个categories按钮」, PriceCheck.tsx).
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Calculator, Plus } from 'lucide-react';
-import { fmtSen } from '@2990s/shared';
-import type { RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
+import type { RateArea, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
 import { CATEGORY_HINT, CATEGORY_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
-import { CATEGORY_ORDER, flatTitle, flatTypesOf, type PriceCell, type RuleBlock, type RuleSection } from './rateCardLayout';
-import { AddPriceTile, AddRule, Panel, PriceEditor, panelId, tabId, type RateSection } from './ruleEditors';
+import { CATEGORY_ORDER, flatTitle, flatTypesOf, type RuleBlock, type RuleSection } from './rateCardLayout';
+import { AddPriceTile, AddRule, Panel, PriceTile, TileGrid, panelId, tabId, type RateSection } from './ruleEditors';
 import { OutstationPrices } from './OutstationPrices';
 import { PriceCheck } from './PriceCheck';
 import type { PriceCheckForm } from './priceCheckFacts';
-import { BTN_QUIET, Pill } from './ui';
+import { BTN_QUIET } from './ui';
 
 export type { RateSection } from './ruleEditors';
 const SECTIONS: readonly RateSection[] = [...CATEGORY_ORDER, 'PRICE_CHECK'];
 
 /** The card's tabs, at the foot of its header: each category with how many
- *  prices it holds ("—" for none), then Price check. Arrow keys move along. */
-export const SectionTabs = ({ sections, value, onChange }: { sections: RuleSection[]; value: RateSection; onChange: (s: RateSection) => void }) => {
+ *  prices it holds ("—" for none), then Price check. Arrow keys move along.
+ *  Outstation counts the card's areas with its town prices. */
+export const SectionTabs = ({ sections, areaCount, value, onChange }: {
+  sections: RuleSection[]; areaCount: number; value: RateSection; onChange: (s: RateSection) => void;
+}) => {
   const refs = useRef(new Map<RateSection, HTMLButtonElement>());
   const onKey = (e: KeyboardEvent, from: RateSection) => {
     const i = SECTIONS.indexOf(from);
@@ -51,7 +53,7 @@ export const SectionTabs = ({ sections, value, onChange }: { sections: RuleSecti
   return (
     <div role="tablist" aria-label="Rate card sections" className="no-scrollbar -mx-5 flex items-center overflow-x-auto overflow-y-hidden border-t border-border px-3">
       {CATEGORY_ORDER.map((cat) => {
-        const count = sections.find((s) => s.category === cat)?.count ?? 0;
+        const count = (sections.find((s) => s.category === cat)?.count ?? 0) + (cat === 'OUTSTATION' ? areaCount : 0);
         return tab(cat, (
           <>
             {CATEGORY_LABEL[cat]}
@@ -65,38 +67,6 @@ export const SectionTabs = ({ sections, value, onChange }: { sections: RuleSecti
     </div>
   );
 };
-
-/** A price, read at a glance; a click opens it to change or remove. */
-const PriceTile = ({ cardId, cell }: { cardId: string; cell: PriceCell }) => {
-  const [editing, setEditing] = useState(false);
-  const label = (
-    <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-muted">
-      {cell.label}{cell.duplicate && <Pill tone="amber">Twice</Pill>}
-    </span>
-  );
-  if (editing) {
-    return (
-      <div className="flex min-h-[64px] flex-col gap-1.5 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-primary">
-        {label}
-        <PriceEditor cardId={cardId} rule={cell.rule} name={cell.label} onDone={() => setEditing(false)} />
-      </div>
-    );
-  }
-  return (
-    <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${cell.label}, ${fmtSen(cell.rule.amountSen)}`}
-      className="flex min-h-[64px] flex-col items-start gap-1 rounded-xl bg-surface-2 px-3 py-2.5 text-left hover:ring-1 hover:ring-primary">
-      {label}
-      <span className="text-[18px] font-bold tabular-nums leading-tight text-ink">{fmtSen(cell.rule.amountSen)}</span>
-    </button>
-  );
-};
-
-const TileGrid = ({ title, children }: { title: string; children: ReactNode }) => (
-  <div className="flex flex-col gap-2">
-    <span className="text-[12.5px] font-semibold text-ink-secondary">{title}</span>
-    <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">{children}</div>
-  </div>
-);
 
 type Ladder = Extract<RuleBlock, { kind: 'ladder' }>;
 
@@ -134,16 +104,17 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
 };
 
 /** The open tab's content. */
-export const RateCardSection = ({ card, rules, sections, zones, section, checkForm, onCheckForm }: {
-  card: RateCard; rules: readonly RateRule[]; sections: RuleSection[]; zones: string[]; section: RateSection;
+export const RateCardSection = ({ card, rules, areas, areaRules, unit, sections, zones, section, checkForm, onCheckForm }: {
+  card: RateCard; rules: readonly RateRule[]; areas: readonly RateArea[]; areaRules: readonly RateRule[]; unit: string;
+  sections: RuleSection[]; zones: string[]; section: RateSection;
   checkForm: PriceCheckForm; onCheckForm: (f: PriceCheckForm) => void;
 }) => {
-  if (section === 'PRICE_CHECK') return <PriceCheck card={card} rules={rules} form={checkForm} onForm={onCheckForm} />;
+  if (section === 'PRICE_CHECK') return <PriceCheck card={card} rules={rules} areas={areas} areaRules={areaRules} form={checkForm} onForm={onCheckForm} />;
   const s = sections.find((x) => x.category === section);
   if (!s) return null;
   /* Keyed by category: each tab starts with its own add form closed, rather
      than one tab's open form following the user to the next. */
   return section === 'OUTSTATION'
-    ? <OutstationPrices cardId={card.id} rules={rules} section={s} zones={zones} />
+    ? <OutstationPrices cardId={card.id} rules={rules} areas={areas} areaRules={areaRules} unit={unit} section={s} zones={zones} />
     : <PricesPanel key={section} cardId={card.id} section={s} zones={zones} />;
 };

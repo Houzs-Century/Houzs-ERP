@@ -55,6 +55,17 @@ export type RateRule = {
   areaId?: string | null;
 };
 
+/** One area of a card (mig 20261111T1000): a name and the towns it covers.
+ *  A delivery whose address names one of its towns is priced with the area's
+ *  own prices (rules whose areaId is this area) instead of the card's. */
+export type RateArea = {
+  id: string;
+  cardId: string;
+  name: string;
+  towns: string[];
+  sortOrder: number;
+};
+
 export type RateCardMeta = {
   carriers: { id: string; plate: string; type: string | null; isInternal: boolean }[];
   companies: { id: string; name: string }[];
@@ -68,13 +79,16 @@ export type CostLine = {
   amountSen: number;
   detail?: Record<string, unknown>;
 };
-export type CostBreakdown = { totalSen: number; subtotalSen: number; lines: CostLine[] };
+/** area: the area the delivery was priced in, or null for the card's own prices. */
+export type CostBreakdown = { totalSen: number; subtotalSen: number; lines: CostLine[]; area?: { id: string; name: string } | null };
 
 export type DeliveryFacts = {
   setCount?: number | null;
   itemCount?: number | null;
   sofaCompartments?: number[] | null;
   destinationZone?: string | null;
+  /** The area to price in (Price check names it); otherwise the address decides. */
+  areaId?: string | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -121,7 +135,7 @@ export function useRateCard(id: string | null) {
   return useQuery({
     queryKey: ['delivery-rate-card', id],
     enabled: !!id,
-    queryFn: () => authedFetch<{ card: RateCard; rules: RateRule[] }>(`/delivery-rate-cards/${id}`),
+    queryFn: () => authedFetch<{ card: RateCard; rules: RateRule[]; areas?: RateArea[] }>(`/delivery-rate-cards/${id}`),
     staleTime: 30_000,
   });
 }
@@ -189,6 +203,8 @@ export type NewRateRule = {
   zone?: string | null;
   amountSen: number;
   sortOrder?: number;
+  /** The area this price is for; absent or null = the card's own price. */
+  areaId?: string | null;
 };
 
 export function useCreateRateRule(cardId: string) {
@@ -226,6 +242,51 @@ export function useDeleteRateRule(cardId: string) {
       qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
       qc.invalidateQueries({ queryKey: CARDS_KEY }),
     ]),
+  });
+}
+
+// ── Areas (mig 20261111T1000) ────────────────────────────────────────────────
+export type NewRateArea = { name: string; towns: string[]; sortOrder?: number };
+
+const refreshCard = (qc: ReturnType<typeof useQueryClient>, cardId: string) => Promise.all([
+  qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+  qc.invalidateQueries({ queryKey: CARDS_KEY }),
+]);
+
+export function useUpdateRateArea(cardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<NewRateArea> & { id: string }) =>
+      authedFetch<{ area: RateArea }>(`/delivery-rate-cards/areas/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => refreshCard(qc, cardId),
+  });
+}
+
+export function useDeleteRateArea(cardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true }>(`/delivery-rate-cards/areas/${id}`, { method: 'DELETE' }),
+    /* Its prices go with it, so the carrier list's rule count changes too. */
+    onSuccess: () => refreshCard(qc, cardId),
+  });
+}
+
+/** Adds an area, then its prices one after another, and refreshes the card at
+ *  the end — also when a price fails, so whatever was saved shows. */
+export function useAddAreaWithPrices(cardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ area, prices }: { area: NewRateArea; prices: Omit<NewRateRule, 'areaId'>[] }) => {
+      const { area: saved } = await authedFetch<{ area: RateArea }>(`/delivery-rate-cards/${cardId}/areas`, { method: 'POST', body: JSON.stringify(area) });
+      try {
+        for (const p of prices) {
+          await authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules`, { method: 'POST', body: JSON.stringify({ ...p, areaId: saved.id }) });
+        }
+      } finally {
+        await refreshCard(qc, cardId);
+      }
+      return saved;
+    },
   });
 }
 
