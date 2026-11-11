@@ -57,7 +57,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   // After a page reload the photos already uploaded for this stop come back from the server.
   const photoContext = fieldPhotoContext({ kind: "job", key: jobKey(jobRef) });
   const photos = useFieldPhotos({
-    stampLabel: str(ctx?.ref) ?? (LEG_LABEL[jobRef.leg] ?? jobRef.leg),
+    stampLabel: null, // no time watermark on photos (owner 2026-11-11)
     max: 10,
     upload: (file) => uploadFieldPhoto({ file, context: photoContext }),
     restore: ctx && !done ? serverFieldPhotoRestore(photoContext) : null,
