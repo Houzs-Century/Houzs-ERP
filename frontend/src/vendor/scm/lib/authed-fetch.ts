@@ -83,7 +83,8 @@ export const API_URL =
    30 s on a long bill (owner 2026-10-05: the pile's "That took too long").
    They get the scan wait, and since they WRITE NOTHING a timeout says so
    instead of warning of a duplicate save. */
-export const BILL_READER_PATH = /\/payment-vouchers\/extract$|\/credit-notes\/scan$|\/payment-requests\/read-bill$|\/stock-takes\/[^/]+\/read-sheet$/;
+/* The …/enqueue doors (ai-read-job.ts) carry the same upload, so they keep the long wait. */
+export const BILL_READER_PATH = /\/payment-vouchers\/extract(\/enqueue)?$|\/credit-notes\/scan(\/enqueue)?$|\/payment-requests\/read-bill(\/enqueue)?$|\/stock-takes\/[^/]+\/read-sheet$/;
 /* A document's file upload (POST …/files, …/official-doc) carries the whole
    file as base64 in one body — up to 27 MB for the 20 MB cap — which a slow
    office uplink does not finish in 30 s (owner 2026-10-15: attach 不到 pdf). */

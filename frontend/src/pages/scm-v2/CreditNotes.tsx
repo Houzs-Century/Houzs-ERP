@@ -65,6 +65,7 @@ import {
   useScanSupplierCreditNote, useCreditNoteFiles, useUploadCreditNoteFile, useDeleteCreditNoteFile, fetchCreditNoteFileBlobUrl,
   type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type KnockOffTarget, type NoteKind, type NoteSide, type NoteStatus, type OpeningFilter, type ScnScan,
 } from '../../vendor/scm/lib/credit-note-queries';
+import { aiReadStageNote, type AiReadStage } from '../../vendor/scm/lib/ai-read-job';
 import {
   CustomerKnockOffSection, FormKnockOff, NoteKnockOff, depositPaperLine, pickSen, pickTargets, type KnockOffPick, type KnockOffWho,
 } from './CreditNoteKnockOff';
@@ -273,7 +274,8 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
   const [form, setForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: FormValues; scan?: ScnScan; files?: File[] } | null>(null);
   /* Scan supplier CN: the pages of one credit note → the New note form, filled. */
   const scanRef = useRef<HTMLInputElement>(null);
-  const scan = useScanSupplierCreditNote();
+  const [scanStage, setScanStage] = useState<AiReadStage | null>(null);
+  const scan = useScanSupplierCreditNote(setScanStage);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanFiles = async (picked: File[]) => {
     if (picked.length === 0) return;
@@ -282,7 +284,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
       const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const r = await scan.mutateAsync(pages);
       setForm({ mode: 'new', values: fromScan(r), scan: r, files: picked });
-    } catch (e) { setScanError(errText(e)); }
+    } catch (e) { setScanError(errText(e)); } finally { setScanStage(null); }
   };
   const listQ = useCreditNotes(side, kind, status, opening);
   const rows = listQ.data?.rows ?? [];
@@ -317,7 +319,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
             <input ref={scanRef} type="file" multiple accept={PV_FILE_ACCEPT} style={{ display: 'none' }} aria-label="Supplier credit note pages"
               onChange={(e) => { const picked = [...(e.target.files ?? [])]; e.target.value = ''; void scanFiles(picked); }} />
             <Button variant="ghost" size="sm" onClick={() => scanRef.current?.click()} disabled={scan.isPending}>
-              <FileText size={16} strokeWidth={1.75} /> {scan.isPending ? 'Reading the credit note…' : 'Scan supplier CN · 扫描 CN'}
+              <FileText size={16} strokeWidth={1.75} /> {scan.isPending ? (scanStage ? aiReadStageNote(scanStage, 'the credit note') : 'Sending the credit note…') : 'Scan supplier CN · 扫描 CN'}
             </Button>
           </>
         ) : undefined}

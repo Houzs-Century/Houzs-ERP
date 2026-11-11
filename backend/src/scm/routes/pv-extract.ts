@@ -15,6 +15,7 @@ import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
 import { base64ToBytes } from '../../services/mail-parse';
 import { MAX_SPLIT_PAGES, splitPdfPages } from '../lib/pdf-split';
+import { aiReadEnqueue, aiReadPoll, type AiReadGate, type AiReadSplit } from '../lib/ai-read-jobs';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
    我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
@@ -50,27 +51,8 @@ export const extractBillsHandler = async (c: any) => {
   } else {
     bills = Array.isArray(body.bills) ? body.bills : [];
   }
-  if (bills.length === 0) return c.json({ error: 'no_bills', message: 'Send at least one bill.' }, 400);
-  if (bills.length > MAX_BILLS_PER_CALL) {
-    return c.json({ error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` }, 400);
-  }
-  for (const [i, b] of bills.entries()) {
-    const files = Array.isArray(b?.files) ? b.files : [];
-    if (files.length === 0) return c.json({ error: 'empty_bill', message: `Bill ${i + 1} has no files.` }, 400);
-    if (files.length > MAX_FILES_PER_BILL) {
-      return c.json({ error: 'too_many_pages', message: `Bill ${i + 1} has more than ${MAX_FILES_PER_BILL} pages.` }, 400);
-    }
-    for (const f of files) {
-      const mime = String(f?.mime ?? '');
-      if (!BILL_IMAGE_MIMES.has(mime) && mime !== 'application/pdf') {
-        return c.json({ error: 'bad_file_type', message: `Bill ${i + 1}: ${mime || 'unknown type'} — JPEG / PNG / WebP / PDF only.` }, 400);
-      }
-      const size = Math.floor(String(f?.dataBase64 ?? '').length * 0.75);
-      if (size > MAX_BILL_FILE_BYTES) {
-        return c.json({ error: 'file_too_big', message: `Bill ${i + 1}: a file is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` }, 400);
-      }
-    }
-  }
+  const refused = billsRefusal(bills);
+  if (refused) return c.json(refused, 400);
 
   /* HC-0006: keep each uploaded original + its scan_files row, started with the reads so it adds no wait.
      A fromRequest read is skipped: its files are already kept by the request. */
@@ -165,6 +147,51 @@ export const extractBillsHandler = async (c: any) => {
   timer.done(c.env, null, read.some((r) => r.ok) ? 'ok' : 'error');
   return c.json({ bills: out });
 };
+
+/** The batch's own checks — the bill count, each bill's pages, type and size.
+    The synchronous read and the queued one refuse the same way. */
+export function billsRefusal(bills: unknown[]): { error: string; message: string } | null {
+  if (bills.length === 0) return { error: 'no_bills', message: 'Send at least one bill.' };
+  if (bills.length > MAX_BILLS_PER_CALL) {
+    return { error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` };
+  }
+  for (const [i, b] of bills.entries()) {
+    const raw = (b as { files?: unknown } | null)?.files;
+    const files: Array<{ mime?: unknown; dataBase64?: unknown } | null> = Array.isArray(raw) ? raw : [];
+    if (files.length === 0) return { error: 'empty_bill', message: `Bill ${i + 1} has no files.` };
+    if (files.length > MAX_FILES_PER_BILL) {
+      return { error: 'too_many_pages', message: `Bill ${i + 1} has more than ${MAX_FILES_PER_BILL} pages.` };
+    }
+    for (const f of files) {
+      const mime = String(f?.mime ?? '');
+      if (!BILL_IMAGE_MIMES.has(mime) && mime !== 'application/pdf') {
+        return { error: 'bad_file_type', message: `Bill ${i + 1}: ${mime || 'unknown type'} — JPEG / PNG / WebP / PDF only.` };
+      }
+      const size = Math.floor(String(f?.dataBase64 ?? '').length * 0.75);
+      if (size > MAX_BILL_FILE_BYTES) {
+        return { error: 'file_too_big', message: `Bill ${i + 1}: a file is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` };
+      }
+    }
+  }
+  return null;
+}
+
+/* The same read on the scan queue (lib/ai-read-jobs.ts): one job per bill, so
+   the page shows each bill queued, reading, read or failed. */
+const pvGate: AiReadGate = (c) => hasHouzsPerm(c, 'scm.payment_voucher.create');
+const oneJobPerBill: AiReadSplit = async (c) => {
+  let body: { fromRequest?: unknown; bills?: unknown };
+  try { body = await c.req.json(); } catch { return { ok: false, resp: c.json({ error: 'invalid_json' }, 400) }; }
+  if (typeof body.fromRequest === 'string' && body.fromRequest.trim()) {
+    return { ok: true, bodies: [{ fromRequest: body.fromRequest.trim() }], file: null };
+  }
+  const bills = Array.isArray(body.bills) ? body.bills : [];
+  const refused = billsRefusal(bills);
+  if (refused) return { ok: false, resp: c.json(refused, 400) };
+  return { ok: true, bodies: (bills as Array<{ files: unknown }>).map((b) => ({ bills: [{ files: b.files }] })), file: null };
+};
+export const enqueueBillReadsHandler = aiReadEnqueue('pv_extract', pvGate, oneJobPerBill);
+export const pollBillReadsHandler = aiReadPoll('pv_extract', pvGate);
 
 /* POST /payment-vouchers/split-pdf — one PDF of several bills, cut into one
    PDF per page (HC-0204) for the pile to read one by one. Nothing is kept or

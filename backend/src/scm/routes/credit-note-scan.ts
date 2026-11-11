@@ -20,11 +20,14 @@ import { requestAiTag } from '../../services/aiUsage';
 import { BILL_MODEL } from '../../acc/bill-extract';
 import { pickCreditedDocs, scnAccountFor, spreadToTotal, type PurchaseDoc } from '../lib/scn-scan';
 import { fmtSen } from '../shared/format';
+import { aiReadEnqueue, aiReadPoll, oneJsonBody, type AiReadGate } from '../lib/ai-read-jobs';
 
 type Row = Record<string, any>;
 
+const cnGate: AiReadGate = (c) => hasHouzsPerm(c, 'scm.payment_voucher.create');
+
 export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+  if (!cnGate(c)) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   const co = requireActiveCompanyId(c);
@@ -161,3 +164,8 @@ export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> =
     notes,
   });
 };
+
+/* The same read on the scan queue (lib/ai-read-jobs.ts): the page polls for
+   the answer this handler gives, run unchanged by the queue consumer. */
+export const enqueueCreditNoteScanHandler = aiReadEnqueue('cn_scan', cnGate, oneJsonBody);
+export const pollCreditNoteScanHandler = aiReadPoll('cn_scan', cnGate);

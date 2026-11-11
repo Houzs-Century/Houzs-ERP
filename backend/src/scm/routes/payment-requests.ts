@@ -68,7 +68,7 @@ import { companyHasEvents, parseEventId, unknownEventRefusal } from '../lib/even
 import { eventBillRefusal, findBillMatches, readBillFacts, type BillMatch, type RequestBillFacts } from '../lib/bill-matches';
 import { checklistSourceCheck, parseChecklistItemId } from '../lib/pms-checklist-source';
 import { eventOptionsHandler } from './acc-events';
-import { billMatchesHandler, readRequestBillHandler, uploadOfficialDocHandler } from './payment-request-bill';
+import { billMatchesHandler, readRequestBillHandler, uploadOfficialDocHandler, enqueueRequestBillReadHandler, pollRequestBillReadHandler } from './payment-request-bill';
 import {
   PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, familyFigures, familyRootId, isRequestFinance, liveAnswerOf, requestStage,
   requesterMayChange, type FamilyMember, type InvoiceFacts, type VoucherFacts,
@@ -340,6 +340,8 @@ paymentRequests.get('/event-options', async (c) => {
 
 /* ── The bill read as it is attached, and its matches (before GET /:id) ────── */
 paymentRequests.post('/read-bill', readRequestBillHandler);
+paymentRequests.post('/read-bill/enqueue', enqueueRequestBillReadHandler);
+paymentRequests.get('/read-bill/jobs', pollRequestBillReadHandler);
 paymentRequests.get('/bill-matches', billMatchesHandler);
 
 /* ── The bill — the factory's four handlers, fed this document's rules ────── */
