@@ -1,13 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Check,
   ChevronsUpDown,
   ExternalLink,
   LogOut,
-  Monitor,
-  Moon,
-  Sun,
   UserRound,
   UserRoundCog,
 } from "lucide-react";
@@ -20,7 +17,9 @@ import { RefreshButton } from "./RefreshButton";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
-import { useThemePreference, type ThemePreference } from "../lib/theme";
+
+// Loaded when the account menu opens: keeps it off the first-load budget.
+const ThemeChoice = lazy(() => import("./ThemeChoice"));
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { useDialog } from "../hooks/useDialog";
@@ -444,7 +443,9 @@ function ProfileMenu() {
                 Switch user
               </Link>
             )}
-            <ThemeChoice />
+            <Suspense fallback={null}>
+              <ThemeChoice />
+            </Suspense>
             <button
               type="button"
               role="menuitem"
@@ -457,42 +458,6 @@ function ProfileMenu() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-const THEME_OPTIONS: { value: ThemePreference; label: string; Icon: typeof Sun }[] = [
-  { value: "light", label: "Light", Icon: Sun },
-  { value: "dark", label: "Dark", Icon: Moon },
-  { value: "system", label: "Auto", Icon: Monitor },
-];
-
-function ThemeChoice() {
-  const [pref, setPref] = useThemePreference();
-  return (
-    <div className="mt-0.5 px-2.5 py-2">
-      <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted">
-        Appearance
-      </div>
-      <div role="radiogroup" aria-label="Appearance" className="grid grid-cols-3 gap-1 rounded-md bg-surface-2 p-0.5">
-        {THEME_OPTIONS.map(({ value, label, Icon }) => (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={pref === value}
-            onClick={() => setPref(value)}
-            title={value === "system" ? "Follow this device's setting" : `${label} theme`}
-            className={cn(
-              "flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[11.5px] font-medium transition-colors",
-              pref === value ? "bg-surface text-primary shadow-stone" : "text-ink-muted hover:text-ink",
-            )}
-          >
-            <Icon size={12} className="shrink-0" />
-            {label}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
