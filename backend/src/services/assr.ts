@@ -943,18 +943,14 @@ export async function transitionStage(
   ];
   const binds: any[] = [newStage, newStatus, nowIso, nowIso, newTargetDays];
 
-  // Nick 2026-07-15 — switchable sub-status (小类). Entering a stage
-  // that has sub-states seeds its first one; every other stage clears
-  // the field so a stale value can't leak across stages. Ops switches
-  // it afterwards via PATCH sub_status.
-  // The seed is the stage's FIRST sub-status in the shared list — for Pickup /
-  // Return that is the customer-pickup leg (Nico 2026-09-01): the stage begins by
-  // collecting the item FROM the customer; ops advances the sub to supplier
-  // pickup / return as the item moves.
+  // Nick 2026-07-15 — switchable sub-status (小类): entering a stage with
+  // sub-states seeds its first (Pickup / Return seeds the customer-pickup leg,
+  // Nico 2026-09-01); every other stage clears it; ops switches it after via
+  // PATCH. Landing on the customer-pickup leg with no owner yet also defaults
+  // pickup_by to own team (pushCustomerPickupDefault) so it reaches the board.
   const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
-  // Customer-pickup leg with no owner yet -> own team, so it reaches the board.
   pushCustomerPickupDefault(sets, binds, subDefault, row.pickup_by);
 
   // Both terminal stages stop the SLA clock (closed_at). Only a genuine
@@ -1249,10 +1245,7 @@ export async function patchAssrCase(
     sets.push("company_id = ?");
     binds.push(docCompanyId);
   }
-
-  // Switching onto the customer-pickup leg with no owner yet -> own team (board).
-  if ("sub_status" in body && !("pickup_by" in body))
-    pushCustomerPickupDefault(sets, binds, body.sub_status, beforeSnapshot?.pickup_by);
+  if ("sub_status" in body && !("pickup_by" in body)) pushCustomerPickupDefault(sets, binds, body.sub_status, beforeSnapshot?.pickup_by);
 
   // Mig 081 — when QA sets the verification outcome, server-stamp
   // verified_at + verified_by so the actor can't be spoofed from the
