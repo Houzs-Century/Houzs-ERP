@@ -103,8 +103,7 @@ import {
   useAddressCascade, pickState, pickCity, pickPostcode,
   cityPlaceholder, postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
-import { StatePicker } from '../../vendor/scm/components/StatePicker';
-import { companyNeedsTransportFee, isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from '../../vendor/shared/so-transport-fee';
+import { StatePicker } from '../../vendor/scm/components/StatePicker'; import { TransportFeeField } from '../../vendor/scm/components/TransportFeeField';
 import {
   useSoDropdownOptions, optionsOrFallback, preferredCustomerTypeValue,
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
@@ -871,21 +870,6 @@ export const SalesOrderNew = () => {
     () => (state ? countryForState(locRows, state) : null) ?? 'Malaysia',
     [locRows, state],
   );
-  /* Owner 2026-11-11: a slip writes the transport fee into its total, so the scan
-     never reads it as a line. Typed in the Transport fee box, it becomes the
-     TRANSPORTATION CHARGES line; RM 0 cannot be confirmed for these places. */
-  const feeRegion = companyNeedsTransportFee(branding.companyCode ?? null) ? transportFeeRegion(state || null, country) : null;
-  const transportFeeLine = lines.find((l) => l.itemCode.trim() && isTransportFeeLine({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup }));
-  const [transportFeeText, setTransportFeeText] = useState('');
-  const setTransportFee = (text: string) => {
-    setTransportFeeText(text);
-    const sen = Math.round((parseFloat(text.replace(/,/g, '')) || 0) * 100);
-    setLines((prev) => {
-      const at = prev.findIndex((l) => l.rid === transportFeeLine?.rid);
-      if (at >= 0) return prev.map((l, k) => (k === at ? { ...l, unitPriceSen: sen, priceAuthored: true } : l));
-      return [...prev, { ...newLine(deliveryDate || null), itemCode: TRANSPORT_FEE_ITEM_CODE, itemGroup: 'service', description: TRANSPORT_FEE_ITEM_CODE, qty: 1, unitPriceSen: sen, priceAuthored: true }];
-    });
-  };
 
   // ── Salesperson + Venue resolution ─────────────────────────────────
   /* Commander 2026-05-27: default Salesperson to the current user; the
@@ -1426,8 +1410,7 @@ export const SalesOrderNew = () => {
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
-    customerState: state,
-    customerCountry: country,
+    customerState: state, customerCountry: country,
     processingDate,
     customerDeliveryDate: deliveryDate,
     fillAddressLater,
@@ -2270,19 +2253,7 @@ export const SalesOrderNew = () => {
           })}
 
           <AddLineButton variant="block" onClick={addLine} />
-
-          {feeRegion && (
-            <label className={styles.field} style={{ maxWidth: 260, marginTop: 'var(--space-3)' }}>
-              <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Transport fee to {feeRegion} (RM) <span className={styles.req}>*</span></span>
-              <input
-                className={styles.fieldInput}
-                inputMode="decimal"
-                placeholder="0.00"
-                value={transportFeeLine && transportFeeText === '' ? (transportFeeLine.unitPriceSen / 100).toFixed(2) : transportFeeText}
-                onChange={(e) => setTransportFee(e.target.value)}
-              />
-            </label>
-          )}
+          <TransportFeeField companyCode={branding.companyCode ?? null} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup, amountSen: l.unitPriceSen })} priced={(l, sen) => ({ ...l, unitPriceSen: sen, priceAuthored: true })} make={(sen) => ({ ...newLine(deliveryDate || null), description: 'TRANSPORTATION CHARGES', qty: 1, unitPriceSen: sen, priceAuthored: true })} classes={{ field: styles.field, label: `${styles.fieldLabel} ${styles.fieldLabelReq}`, input: styles.fieldInput }} style={{ maxWidth: 260, marginTop: 'var(--space-3)' }} />
 
           <div style={{
             display: 'flex',

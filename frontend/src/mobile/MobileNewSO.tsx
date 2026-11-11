@@ -64,8 +64,7 @@ import {
   cityPlaceholder,
   postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
-import { StatePicker } from "../vendor/scm/components/StatePicker";
-import { companyNeedsTransportFee, isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from "../vendor/shared/so-transport-fee";
+import { StatePicker } from "../vendor/scm/components/StatePicker"; import { TransportFeeField } from "../vendor/scm/components/TransportFeeField";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
@@ -1233,15 +1232,6 @@ export function MobileNewSO({
     () => (state ? countryForState(locRows, state) : null) ?? "Malaysia",
     [locRows, state],
   );
-  const feeRegion = companyNeedsTransportFee(branding.companyCode ?? null) ? transportFeeRegion(state || null, country) : null;
-  const transportFeeLine = lines.find((l) => l.itemCode.trim() && isTransportFeeLine({ itemCode: l.itemCode, description: l.name, itemGroup: l.itemGroup }));
-  const setTransportFee = (price: string) => setLines((prev) => {
-    const at = prev.findIndex((l) => l.key === transportFeeLine?.key);
-    if (at >= 0) return prev.map((l, k) => (k === at ? { ...l, price, priceAuthored: true } : l));
-    return [...prev, {
-      ...newLine(), itemCode: TRANSPORT_FEE_ITEM_CODE, itemGroup: "service", name: TRANSPORT_FEE_ITEM_CODE, price, priceAuthored: true,
-    }];
-  });
 
   /* ── FIX D2/D3 — processing-date LOCK (mirror the backend + SalesOrderDetail).
      The backend locks an SO once "today (MYT)" is strictly AFTER its processing
@@ -1416,10 +1406,7 @@ export function MobileNewSO({
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
-    customerState: state,
-    customerCountry: country,
-    confirmingDraft: mode === "edit-draft",
-    ...(mode === "edit" ? { origCustomerState: origState } : {}),
+    customerState: state, customerCountry: country, confirmingDraft: mode === "edit-draft", ...(mode === "edit" ? { origCustomerState: origState } : {}),
     processingDate: asDraftFlag ? "" : procDate,
     customerDeliveryDate: asDraftFlag ? "" : delivDate,
     fillAddressLater: false,
@@ -2659,18 +2646,7 @@ export function MobileNewSO({
                     <button className="addline" onClick={() => setLines((p) => [...p, newLine()])}>+ {ADD_LINE_LABEL}</button>
                   </>
                 )}
-                {feeRegion && (
-                  /* Owner 2026-11-11: the slip writes the transport fee into its total, so
-                     the scan never reads it as a line. Typed here, it becomes the
-                     TRANSPORTATION CHARGES line; RM 0 cannot be confirmed. */
-                  <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 9 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>Transport fee to {feeRegion} (RM)</span>
-                    <input className="fld-i" inputMode="decimal" value={transportFeeLine?.price ?? ""} placeholder="0.00"
-                      onChange={(e) => setTransportFee(e.target.value)}
-                      style={{ width: 120, textAlign: "right", borderColor: num(transportFeeLine?.price ?? "") > 0 ? undefined : "var(--hz-c-err)" }} />
-                  </label>
-                )}
-                <div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
+                <TransportFeeField companyCode={branding.companyCode ?? null} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.name, itemGroup: l.itemGroup, amountSen: toSen(l.price) })} priced={(l, _sen, price) => ({ ...l, price, priceAuthored: true })} make={(_sen, price) => ({ ...newLine(), name: "TRANSPORTATION CHARGES", price, priceAuthored: true })} classes={{ input: "fld-i" }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 9, fontSize: 12, fontWeight: 700 }} /><div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
                 <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>Prices are recomputed by the system when you save.</div>
               </div>
             </div>

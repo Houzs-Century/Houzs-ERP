@@ -6,6 +6,11 @@
       "why": "The same shared file on both sides: the page recomputes a region's lorry figures in the browser. Pinned by tests/logisticPeriod.test.ts, the region rule."
     },
     {
+      "check": "D1",
+      "key": "KELANTAN,LABUAN,PERLIS,SABAH,SARAWAK,SINGAPORE,TERENGGANU,TRENGGANU|backend/src/scm/shared/so-transport-fee.ts frontend/src/vendor/shared/so-transport-fee.ts",
+      "why": "The same shared file on both sides: the server refuses an order with no transport fee and the New SO forms show the Transport fee box from it. Pinned byte-identical by frontend/src/vendor/shared/so-transport-fee.canonical.test.ts."
+    },
+    {
       "check": "D2",
       "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER ~ CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER",
       "why": "TWO DIFFERENT QUESTIONS about the global-search hit types, differing by ASSR_CASE / PROJECT / USER on purpose: routes/search.ts SCM_SOURCE_TYPES is the subset read through the SCM PostgREST client (marked degraded together when that client cannot be built); the three public-schema sources run through env.DB and fail the request instead. The frontend maps are the PRESENTATION of every hit type. Divergence costs a missing name in the degraded notice, never a wrong result."
