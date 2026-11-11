@@ -263,6 +263,7 @@ export async function ingestInboundEmail(
   let mailbox = "";
   const matchOrder = [...deliveredTo, ...to, ...cc];
   for (const r of matchOrder) {
+    // company-scope: INBOUND (no session). The address is the routing key and is unique across companies; the owning company is resolved from it just below.
     const hit = await db
       .prepare(
         `SELECT address FROM email_addresses WHERE lower(address) = lower(?) LIMIT 1`,
@@ -363,6 +364,7 @@ export async function ingestInboundEmail(
   } else {
     // Re-open a closed thread when a new inbound message lands. last_inbound_at
     // is the ERP's receipt time, which each person's read_at is compared with.
+    // company-scope: threadId came from threadForReferences(db, refs, co), which is already limited to this mail's company.
     await db
       .prepare(
         `UPDATE email_threads
@@ -890,6 +892,7 @@ app.get("/threads", async (c) => {
     if (!Number.isFinite(page) || page < 1) page = 1;
     const offset = (page - 1) * pageSize;
 
+    // company-scope: whereSql carries "company_id = ?" (the active company), pushed where the filters are built.
     const countRow = await c.env.DB.prepare(
       `SELECT COUNT(*) AS n FROM email_threads t ${whereSql}`,
     )
@@ -897,6 +900,7 @@ app.get("/threads", async (c) => {
       .first<{ n: number }>();
     const total = Number(countRow?.n ?? 0);
 
+    // company-scope: selectSql ends in the same whereSql (company_id = ? for the active company).
     const res = await c.env.DB.prepare(
       selectSql + orderSql + " LIMIT ? OFFSET ?",
     )
@@ -939,7 +943,7 @@ app.get("/threads/:id", async (c) => {
   const msgs = await c.env.DB.prepare(
     `SELECT m.*, o.status AS outbox_status FROM email_messages m
        LEFT JOIN email_outbox o ON o.id = m.outbox_id
-      WHERE m.thread_id = ? ORDER BY m.created_at ASC`,
+      WHERE m.thread_id = ?${activeCompanySql(c, "m.company_id")} ORDER BY m.created_at ASC`,
   )
     .bind(id)
     .all<MessageRow>();
@@ -1004,7 +1008,7 @@ app.get("/attachments/:id", async (c) => {
        FROM email_attachments a
        JOIN email_messages m ON m.id = a.message_id
        JOIN email_threads t ON t.id = m.thread_id
-      WHERE a.id = ? LIMIT 1`,
+      WHERE a.id = ?${activeCompanySql(c, "t.company_id")} LIMIT 1`,
   )
     .bind(id)
     .first<{
@@ -1424,7 +1428,7 @@ async function renameThreadLabel(
         next.push(l);
       }
     }
-    await c.env.DB.prepare(`UPDATE email_threads SET labels = ? WHERE id = ?`)
+    await c.env.DB.prepare(`UPDATE email_threads SET labels = ? WHERE id = ?${activeCompanySql(c)}`)
       .bind(JSON.stringify(next), r.id)
       .run();
   }
@@ -1571,6 +1575,7 @@ app.post("/addresses", async (c) => {
       )
       .run();
   } catch (e) {
+    // company-scope: the address is UNIQUE across companies (it is the inbound routing key), so "already exists" must look at every company.
     const existing = await c.env.DB.prepare(
       `SELECT * FROM email_addresses WHERE lower(address) = ? LIMIT 1`,
     )
@@ -1584,7 +1589,7 @@ app.post("/addresses", async (c) => {
   }
 
   const row = await c.env.DB.prepare(
-    `SELECT * FROM email_addresses WHERE id = ? LIMIT 1`,
+    `SELECT * FROM email_addresses WHERE id = ?${activeCompanySql(c)} LIMIT 1`,
   )
     .bind(id)
     .first<AddressRow>();
@@ -1910,7 +1915,7 @@ app.post("/threads/:id/reply", async (c) => {
   if (toList.length === 0 || (body.replyAll && recipientList(body.cc).length === 0)) {
     const lastInbound = await c.env.DB.prepare(
       `SELECT from_address, to_addresses, cc_addresses FROM email_messages
-        WHERE thread_id = ? AND direction = 'inbound'
+        WHERE thread_id = ? AND direction = 'inbound'${activeCompanySql(c)}
         ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1`,
     )
       .bind(id)
@@ -2023,7 +2028,7 @@ app.post("/threads/:id/reply", async (c) => {
     `UPDATE email_threads
         SET last_message_at = ?, last_direction = 'outbound',
             last_snippet = ?, message_count = message_count + 1
-      WHERE id = ?`,
+      WHERE id = ?${activeCompanySql(c)}`,
   )
     .bind(now, snippet, id)
     .run();
@@ -2256,10 +2261,10 @@ app.patch("/threads/:id", async (c) => {
   if (sets.length === 0 && body.unread === undefined) {
     return c.json({ error: "no fields to update" }, 400);
   }
-  if (sets.length) await c.env.DB.prepare(`UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
+  if (sets.length) await c.env.DB.prepare(`UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?${activeCompanySql(c)}`).bind(...binds, id).run();
 
   const row = await c.env.DB.prepare(
-    `SELECT * FROM email_threads WHERE id = ? LIMIT 1`,
+    `SELECT * FROM email_threads WHERE id = ?${activeCompanySql(c)} LIMIT 1`,
   )
     .bind(id)
     .first<ThreadRow>();

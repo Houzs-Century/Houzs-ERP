@@ -337,7 +337,7 @@ import { registerCustomerCreditRoutes } from './mfg-sales-orders/customer-credit
 import { registerHistoryRoutes } from './mfg-sales-orders/history';
 import { registerPaymentsListRoutes } from './mfg-sales-orders/payments-list';
 import { registerDebtorSearchRoutes } from './mfg-sales-orders/debtor-search';
-import { linesUnreadableBody } from '../lib/failed-read-refusal'; import { readOverrideLineCost } from '../lib/so-override-cost';
+import { linesUnreadableBody } from '../lib/failed-read-refusal'; import { readFailure } from '../lib/read-failure'; import { readOverrideLineCost } from '../lib/so-override-cost';
 import { stepClock } from '../../lib/step-timing';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1621,6 +1621,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
+  // A failed line read is not an order with no lines.
+  if (i.error) return c.json(readFailure('so_lines', i.error), 500);
   /* TEMPORARY (Loo 2026-06-10, Backend SO emergency hatch) — self-scoped
      selling roles may open only their OWN SO; another salesperson's doc_no
      answers 404 (not 403) so it's indistinguishable from a nonexistent one.
@@ -1666,11 +1668,13 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   let paidLedgerSen = 0;
   let depositInLedger = false;
   {
-    const { data: payRows } = await sb
+    const { data: payRows, error: payErr } = await sb
       .from('mfg_sales_order_payments')
       .select('amount_sen, is_deposit')
       .eq('so_doc_no', docNo);
-    for (const p of (payRows ?? []) as Array<{ amount_sen: number; is_deposit?: boolean | null }>) {
+    // A failed read would print "paid 0.00" and the whole total as owing.
+    if (payErr) return c.json(readFailure('so_payments', payErr), 500);
+    for (const p of payRows as Array<{ amount_sen: number; is_deposit?: boolean | null }>) {
       paidLedgerSen += p.amount_sen ?? 0;
       if (p.is_deposit) depositInLedger = true;
     }
@@ -1720,7 +1724,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        over an SO's life, so a bare newest-N read could push the one genuinely
        OPEN row past the limit. (lane IS NULL OR status = REQUESTED) AND status
        NOT IN (SENT, REJECTED) returns at most 2 lane rows + any legacy chain. */
-    const { data: amRows } = await scopeToCompany(sb
+    const { data: amRows, error: amErr } = await scopeToCompany(sb
       .from('so_amendments')
       .select('id, status, amendment_no, lane')
       .eq('so_doc_no', docNo), c)
@@ -1728,7 +1732,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       .or('lane.is.null,status.eq.REQUESTED')
       .order('created_at', { ascending: false })
       .limit(4);
-    openAmendments = ((amRows ?? []) as Array<Record<string, unknown>>)
+    // A failed read would show "no amendment pending" on an order awaiting one.
+    if (amErr) return c.json(readFailure('so_amendments', amErr), 500);
+    openAmendments = (amRows as Array<Record<string, unknown>>)
       .map((am) => ({
         // Postgres.js/PostgREST may surface columns camelCased; dual-read to be safe.
         id: String(am.id ?? ''),
@@ -1811,7 +1817,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      read-back order (usually the cart order). */
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      (i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string; qty?: number | null }>,
+      i.data as unknown as Array<Record<string, unknown> & { id: string; item_code: string; qty?: number | null }>,
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -2017,6 +2023,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
+  if (i.error) return c.json(readFailure('so_lines', i.error), 500);
   /* Same tiering as the detail (lib/salesScope.ts): view-all roles pass; POS
      sellers pass only their own; other reps are held to their subtree. An
      out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
@@ -2030,7 +2037,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   // → services, each build walked left-to-right; see the detail's note).
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      (i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string; qty?: number | null }>,
+      i.data as unknown as Array<Record<string, unknown> & { id: string; item_code: string; qty?: number | null }>,
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -10460,7 +10467,8 @@ export const postSoPaymentHandler = async (c: any) => {
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   // Ensure the SO exists before inserting a child row (gives a cleaner 404 than a deferred FK violation).
-  const { data: so } = await sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo).maybeSingle();
+  const { data: so, error: soErr } = await sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo).maybeSingle();
+  if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   if (!so) return c.json({ error: 'sales_order_not_found' }, 404);
 
   let body: unknown;
@@ -10645,7 +10653,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   // Load the row (need every method-scoped column + created_at for the lock).
-  const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
+  const { data: row, error: rowErr } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
+  if (rowErr) return c.json(readFailure('so_payments', rowErr), 500);
   if (!row) return c.json({ error: 'not_found' }, 404);
   const before = row as {
     so_doc_no: string; created_at: string; paid_at: string;
@@ -10663,11 +10672,12 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      and both screens (scm/shared/so-field-policy.ts, paymentRowMutable): DRAFT
      fluid → RECONCILED shut to everyone → same day fluid → the amend right →
      shut. paymentMayChange() feeds it the reconciliation the server reads. */
-  const { data: soRow } = await sb
+  const { data: soRow, error: soRowErr } = await sb
     .from('mfg_sales_orders')
     .select('status')
     .eq('doc_no', docNo)
     .maybeSingle();
+  if (soRowErr) return c.json(readFailure('sales_orders', soRowErr), 500);
   if (typeof before.created_at !== 'string' || Number.isNaN(new Date(before.created_at).getTime())) {
     return c.json({
       error: 'payment_created_at_unreadable',
@@ -10859,7 +10869,8 @@ export const deleteSoPaymentHandler = async (c: any) => {
 
   // Guard: only delete if the row belongs to this docNo. Prevents a
   // mis-routed call from nuking another SO's payment.
-  const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
+  const { data: row, error: rowErr } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
+  if (rowErr) return c.json(readFailure('so_payments', rowErr), 500);
   if (!row) return c.json({ error: 'not_found' }, 404);
   const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_sen: number; approval_code: string | null; version: number };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
@@ -10878,11 +10889,12 @@ export const deleteSoPaymentHandler = async (c: any) => {
      missing button in the clients is the courtesy, this is the control. Since
      2026-09-10 the amend right opens it and a RECONCILED payment shuts it to
      everyone (docs/bugs/0780); paymentMayChange() below asks both. */
-  const { data: soStatusRow } = await sb
+  const { data: soStatusRow, error: soStatusErr } = await sb
     .from('mfg_sales_orders')
     .select('status')
     .eq('doc_no', docNo)
     .maybeSingle();
+  if (soStatusErr) return c.json(readFailure('sales_orders', soStatusErr), 500);
   const soIsDraft = (soStatusRow?.status as string | undefined) === 'DRAFT';
   const soIsCancelled = (soStatusRow?.status as string | undefined) === 'CANCELLED';
   const createdAtRaw = (row as { created_at?: unknown }).created_at;

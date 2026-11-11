@@ -238,7 +238,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 39,
+      "reads": 30,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
@@ -258,7 +258,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/document-flow.ts": {
-      "reads": 47,
+      "reads": 39,
       "catches": 0
     },
     "backend/src/scm/routes/dp-orders.ts": {
@@ -278,7 +278,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 36,
+      "reads": 32,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -306,11 +306,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 41,
+      "reads": 37,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 72,
+      "reads": 65,
       "catches": 2
     },
     "backend/src/scm/routes/mfg-sales-orders/cross-category.ts": {

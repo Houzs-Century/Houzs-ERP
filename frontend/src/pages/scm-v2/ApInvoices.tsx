@@ -56,6 +56,7 @@ import {
 } from '../../vendor/scm/lib/ap-invoice-queries';
 import { fileToBase64, PV_FILE_ACCEPT, useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useCancelCreditNote, usePostCreditNote, useScanSupplierCreditNote, type ScnScan } from '../../vendor/scm/lib/credit-note-queries';
+import { aiReadStageNote, type AiReadStage } from '../../vendor/scm/lib/ai-read-job';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { NoteForm, emptyForm as emptyNoteForm, fromScan, type FormValues as NoteFormValues } from './CreditNotes';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
@@ -170,7 +171,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const [noteForm, setNoteForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: NoteFormValues; scan?: ScnScan; files?: File[] } | null>(null);
   const postNote = usePostCreditNote();
   const cancelNote = useCancelCreditNote();
-  const scnScan = useScanSupplierCreditNote();
+  const [scnStage, setScnStage] = useState<AiReadStage | null>(null);
+  const scnScan = useScanSupplierCreditNote(setScnStage);
   const scnInput = useRef<HTMLInputElement>(null);
   const scanCreditNote = async (picked: File[]) => {
     if (picked.length === 0) return;
@@ -180,6 +182,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       setNoteForm({ mode: 'new', values: fromScan(read), scan: read, files: picked });
     } catch (e) {
       void notify({ title: 'The credit note was not read', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setScnStage(null);
     }
   };
 
@@ -209,7 +213,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const fromRequest = searchParams.get('fromRequest');
   const requestQ = usePaymentRequest(fromRequest);
-  const extractRequest = useExtractRequestBill();
+  const [requestStage, setRequestStage] = useState<AiReadStage | null>(null);
+  const extractRequest = useExtractRequestBill(setRequestStage);
   const requestTaken = useRef<string | null>(null);
   const [readingRequest, setReadingRequest] = useState<string | null>(null);
   useEffect(() => {
@@ -470,7 +475,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             <input ref={scnInput} type="file" multiple accept={PV_FILE_ACCEPT} style={{ display: 'none' }} aria-label="Supplier credit note pages"
               onChange={(e) => { const picked = [...(e.target.files ?? [])]; e.target.value = ''; void scanCreditNote(picked); }} />
             <Button variant="secondary" size="sm" onClick={() => scnInput.current?.click()} disabled={scnScan.isPending}>
-              <FileText {...ICON} /> {scnScan.isPending ? 'Reading the credit note…' : 'Scan credit note'}
+              <FileText {...ICON} /> {scnScan.isPending ? (scnStage ? aiReadStageNote(scnStage, 'the credit note') : 'Sending the credit note…') : 'Scan credit note'}
             </Button>
             <Button variant="secondary" size="sm" onClick={() => setNoteForm({ mode: 'new', values: emptyNoteForm('SCN') })}>
               <Plus {...ICON} /> New credit note
@@ -483,7 +488,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
         ) : undefined}
       />}
 
-      {readingRequest && <div style={soft} role="status">Reading the bill on {readingRequest}…</div>}
+      {readingRequest && <div style={soft} role="status">{requestStage === 'queued' ? `Queued — the bill on ${readingRequest} is waiting for the reader…` : `Reading the bill on ${readingRequest}…`}</div>}
       {!debitNotes && (
         <SupplierBillsList
           apRows={listQ.data?.rows ?? null}

@@ -50,6 +50,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { fmtSen } from '../shared/format';
+import { readFailure } from '../lib/read-failure';
 
 export const documentFlow = new Hono<{ Bindings: Env; Variables: Variables }>();
 documentFlow.use('*', supabaseAuth);
@@ -746,15 +747,19 @@ documentFlow.get('/:type/:id', async (c) => {
   }
 
   // ── 1. SO headers + lines ───────────────────────────────────────────────
-  const { data: soHeaders } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', rootSos);
-  for (const s of (soHeaders ?? []) as any[]) {
+  /* The sales-chain reads below answer 500 when they fail. Drawing the map
+     without them would show an order with no delivery, invoice or payment. */
+  const { data: soHeaders, error: soHeadersErr } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', rootSos);
+  if (soHeadersErr) return c.json(readFailure('document_flow', soHeadersErr), 500);
+  for (const s of soHeaders as any[]) {
     const k = keyOf('so', s.doc_no);
     nodes.set(k, { key: k, type: 'so', id: s.doc_no, label: s.doc_no, status: s.status ?? null, isAnchor: k === anchorKey });
   }
-  const { data: soLines } = await sb.from('mfg_sales_order_items').select('id, doc_no, qty').in('doc_no', rootSos);
+  const { data: soLines, error: soLinesErr } = await sb.from('mfg_sales_order_items').select('id, doc_no, qty').in('doc_no', rootSos);
+  if (soLinesErr) return c.json(readFailure('document_flow', soLinesErr), 500);
   const soItemQty = new Map<string, number>();   // soItemId → qty
   const soItemToDoc = new Map<string, string>(); // soItemId → SO doc_no
-  for (const l of (soLines ?? []) as any[]) {
+  for (const l of soLines as any[]) {
     soItemQty.set(l.id, Number(l.qty ?? 0));
     soItemToDoc.set(l.id, l.doc_no);
   }
@@ -764,17 +769,19 @@ documentFlow.get('/:type/:id', async (c) => {
   const doLinesBySoItem = soItemIds.length
     ? (await sb.from('delivery_order_items').select('id, delivery_order_id, so_item_id, qty').in('so_item_id', soItemIds)).data ?? []
     : [];
-  const { data: doByHeader } = await sb.from('delivery_orders').select('id, do_number, status, so_doc_no').in('so_doc_no', rootSos);
+  const { data: doByHeader, error: doByHeaderErr } = await sb.from('delivery_orders').select('id, do_number, status, so_doc_no').in('so_doc_no', rootSos);
+  if (doByHeaderErr) return c.json(readFailure('document_flow', doByHeaderErr), 500);
   const doIds = uniq([
-    ...((doByHeader ?? []) as any[]).map((d) => d.id),
+    ...(doByHeader as any[]).map((d) => d.id),
     ...((doLinesBySoItem) as any[]).map((l) => l.delivery_order_id),
   ]);
   const doHeaderById = new Map<string, any>();
-  for (const d of (doByHeader ?? []) as any[]) doHeaderById.set(d.id, d);
+  for (const d of doByHeader as any[]) doHeaderById.set(d.id, d);
   const missingDoIds = doIds.filter((d) => !doHeaderById.has(d));
   if (missingDoIds.length) {
-    const { data: more } = await sb.from('delivery_orders').select('id, do_number, status, so_doc_no').in('id', missingDoIds);
-    for (const d of (more ?? []) as any[]) doHeaderById.set(d.id, d);
+    const { data: more, error: moreErr } = await sb.from('delivery_orders').select('id, do_number, status, so_doc_no').in('id', missingDoIds);
+    if (moreErr) return c.json(readFailure('document_flow', moreErr), 500);
+    for (const d of more as any[]) doHeaderById.set(d.id, d);
   }
   // do line id → { doId, qty, soItemId } ; and per-DO coverage vs SO
   const doItemMeta = new Map<string, { doId: string; qty: number; soItemId: string | null }>();
@@ -807,17 +814,19 @@ documentFlow.get('/:type/:id', async (c) => {
   const siByHeaderDo = doIds.length
     ? (await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('delivery_order_id', doIds)).data ?? []
     : [];
-  const { data: siBySoDoc } = await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('so_doc_no', rootSos);
+  const { data: siBySoDoc, error: siBySoDocErr } = await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('so_doc_no', rootSos);
+  if (siBySoDocErr) return c.json(readFailure('document_flow', siBySoDocErr), 500);
   const siLineLinks = doItemIds.length
     ? (await sb.from('sales_invoice_items').select('sales_invoice_id, do_item_id, so_item_id, qty').in('do_item_id', doItemIds)).data ?? []
     : [];
   const siById = new Map<string, any>();
-  for (const s of [...(siByHeaderDo as any[]), ...((siBySoDoc ?? []) as any[])]) siById.set(s.id, s);
+  for (const s of [...(siByHeaderDo as any[]), ...(siBySoDoc as any[])]) siById.set(s.id, s);
   // pull SIs reachable only through line links
   const lineSiIds = uniq((siLineLinks as any[]).map((l) => l.sales_invoice_id)).filter((sid) => !siById.has(sid));
   if (lineSiIds.length) {
-    const { data: more } = await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('id', lineSiIds);
-    for (const s of (more ?? []) as any[]) siById.set(s.id, s);
+    const { data: more, error: moreErr } = await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('id', lineSiIds);
+    if (moreErr) return c.json(readFailure('document_flow', moreErr), 500);
+    for (const s of more as any[]) siById.set(s.id, s);
   }
   for (const s of siById.values()) {
     const k = keyOf('si', s.id);
@@ -856,9 +865,10 @@ documentFlow.get('/:type/:id', async (c) => {
   // ── 4. AR Payments ──────────────────────────────────────────────────────
   const siIds = [...siById.keys()];
   if (siIds.length) {
-    const { data: pays } = await sb.from('sales_invoice_payments')
+    const { data: pays, error: paysErr } = await sb.from('sales_invoice_payments')
       .select('id, sales_invoice_id, method, approval_code, amount_sen').in('sales_invoice_id', siIds);
-    for (const p of (pays ?? []) as any[]) {
+    if (paysErr) return c.json(readFailure('document_flow', paysErr), 500);
+    for (const p of pays as any[]) {
       const k = keyOf('payment', p.id);
       const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${fmtSen(Number(p.amount_sen ?? 0))}`;
       nodes.set(k, { key: k, type: 'payment', id: p.id, label, status: null, isAnchor: k === anchorKey });
@@ -871,9 +881,10 @@ documentFlow.get('/:type/:id', async (c) => {
   // mirroring how a GRN hangs off its PO. Coverage compares returned qty to the
   // DO line qty (a full return greys out blue, a partial one red).
   if (doIds.length) {
-    const { data: drByHeader } = await sb.from('delivery_returns')
+    const { data: drByHeader, error: drByHeaderErr } = await sb.from('delivery_returns')
       .select('id, return_number, status, delivery_order_id').in('delivery_order_id', doIds);
-    const drIds = uniq((drByHeader ?? []).map((d: any) => d.id));
+    if (drByHeaderErr) return c.json(readFailure('document_flow', drByHeaderErr), 500);
+    const drIds = uniq(drByHeader.map((d: any) => d.id));
     const drLineLinks = drIds.length
       ? (await sb.from('delivery_return_items').select('delivery_return_id, do_item_id, qty_returned').in('delivery_return_id', drIds)).data ?? []
       : [];
@@ -887,7 +898,7 @@ documentFlow.get('/:type/:id', async (c) => {
       agg.parentItems.add(l.do_item_id);
       doToDr.set(k, agg);
     }
-    for (const d of (drByHeader ?? []) as any[]) {
+    for (const d of drByHeader as any[]) {
       const k = keyOf('dr', d.id);
       nodes.set(k, { key: k, type: 'dr', id: d.id, label: d.return_number ?? d.id, status: d.status ?? null, isAnchor: k === anchorKey });
       if (d.delivery_order_id) {

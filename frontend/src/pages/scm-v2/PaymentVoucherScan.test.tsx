@@ -22,8 +22,17 @@ import { BackToPile } from '../../vendor/scm/components/BackToPile';
 
 type Bills = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
 const extractAsync = vi.fn(async (_bills: Bills) => ({ bills: [] as ExtractedBill[] }));
+/* Each bill's place on the scan queue, as the page is told it (ai-read-job.ts). */
+let stageFor: ((index: number, stage: 'queued' | 'reading') => void) | null = null;
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
-  useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useExtractBills: () => ({
+    mutateAsync: (input: Bills | { bills: Bills; onStage: (index: number, stage: 'queued' | 'reading') => void }) => {
+      if (Array.isArray(input)) return extractAsync(input);
+      stageFor = input.onStage;
+      return extractAsync(input.bills);
+    },
+    isPending: false,
+  }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
 }));
 /* The same bill elsewhere (owner 2026-10-05: 提醒也加), answered by number|date. */
@@ -494,6 +503,31 @@ describe('many bills at once', () => {
     expect(extractAsync.mock.calls.every(([bills]) => bills.length === 1)).toBe(true);
     /* In pile order, whatever order they were answered in. */
     expect(screen.getAllByText(/^INV-[A-D]$/).map((el) => el.textContent)).toEqual(['INV-A', 'INV-B', 'INV-C', 'INV-D']);
+  });
+
+  test('while the pile is read, each bill says where it is: waiting to be sent, queued, reading, read or failed', async () => {
+    const waiting: Array<(ok: boolean) => void> = [];
+    extractAsync.mockImplementation((bills: Bills) => new Promise<{ bills: ExtractedBill[] }>((resolve) => {
+      const no = bills[0]!.files[0]!.name.replace('.pdf', '').toUpperCase();
+      waiting.push((ok) => { resolve({ bills: [ok ? { ...readBill(0, { invoiceNumber: no, totalSen: 10000 }, null), index: 0 } : { index: 0, ok: false, reason: 'The reader is busy.' }] }); });
+    }));
+    drawApPile();
+    add('inv-a.pdf', 'inv-b.pdf', 'inv-c.pdf', 'inv-d.pdf');
+    fireEvent.click(screen.getByText('Read 4 bill(s)'));
+    await waitFor(() => expect(waiting).toHaveLength(3));
+    expect(screen.getByText('Bill 4 (inv-d.pdf): waiting to be sent')).toBeTruthy();
+    await act(async () => { stageFor!(0, 'queued'); });
+    expect(screen.getByText('Bill 3 (inv-c.pdf): queued, waiting for the reader')).toBeTruthy();
+    await act(async () => { stageFor!(0, 'reading'); });
+    expect(screen.getByText('Bill 3 (inv-c.pdf): reading…')).toBeTruthy();
+    await act(async () => { waiting[0]!(true); waiting[1]!(false); });
+    await waitFor(() => expect(screen.getByText('Bill 1 (inv-a.pdf): read')).toBeTruthy());
+    expect(screen.getByText('Bill 2 (inv-b.pdf): could not be read — The reader is busy.')).toBeTruthy();
+    await act(async () => { waiting.slice(2).forEach((go) => { go(true); }); });
+    await waitFor(() => expect(waiting).toHaveLength(4));
+    await act(async () => { waiting[3]!(true); });
+    await readDone(4);
+    expect(screen.queryByLabelText("Each bill's read")).toBeNull();
   });
 
   test('a bill that cannot be read names its file and is read again on its own; the rest stand', async () => {
