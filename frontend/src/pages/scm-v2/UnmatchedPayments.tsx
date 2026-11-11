@@ -5,13 +5,17 @@
 // 现有的记录收钱了，但没有对应的卡机报告或收款记录，如果银行那边的收款有，也没有对应
 // 的transaction 也可以显示 / 要支持可以export 全部 / 也要支持pdf → 做):
 //   Merchant report lines — on a merchant report, no sale reconciled;
-//   Payments              — money recorded on an order or invoice, not matched;
-//   Bank money in         — in the bank, no entry in the books matched.
-// Each list exports what it shows, to Excel or PDF. Export all writes every row
-// of the three in the range, whatever list or chip is open, each with the
-// columns its table has showing — so the three tables stay mounted, the hidden
-// ones too, and tell the page their columns. Every row links the screen that
-// unsticks it. Words and columns: unmatchedLists.tsx; the rules are the server's.
+//   Bank money in         — in the bank, no entry in the books matched;
+//   Payments              — money recorded on an order or invoice, not matched.
+// (that order: owner 2026-11-11, Merchant Report Line -> Bank Money In -> Payment).
+// Each list exports what it shows, to Excel or PDF, under the title the owner
+// gave it (export 出来时注明是 …). Export all writes the three in one file, each
+// as its table shows it — its chip, its column filters, its columns (owner
+// 2026-11-11: 我filter 了三个card 的东西，但是export 了还是全部) — and says the
+// filter above it; nothing narrowed, every row. So the three tables stay mounted,
+// the hidden ones too, and tell the page their columns, rows and filters. Every
+// row links the screen that unsticks it. Words and columns: unmatchedLists.tsx;
+// the rules are the server's.
 // ----------------------------------------------------------------------------
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -24,6 +28,7 @@ import {
   buildLineExportMatrix, exportableColumns, tablePdfViewOf, writeLineExportBook, type TablePdfView,
 } from '../../components/dataTableLineExport';
 import { DateField } from '../../vendor/scm/components/DateField';
+import type { UnmatchedPdfPart } from '../../vendor/scm/lib/unmatched-payments-pdf';
 import { fmtDate } from '../../vendor/shared/format';
 import { danger, fmt, softText } from './settlement-ui';
 import top from './MerchantReports.module.css';
@@ -41,7 +46,14 @@ const daysBefore = (day: string, n: number): string =>
   new Date(Date.parse(`${day}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
 
 const asList = (v: string | null): ListKey => LISTS.find((l) => l.key === v)?.key ?? 'payments';
-const titleOf = (k: ListKey): string => LISTS.find((l) => l.key === k)!.label;
+const listOf = (k: ListKey) => LISTS.find((l) => l.key === k)!;
+const titleOf = (k: ListKey): string => listOf(k).label;
+/** Each list's column names, to say a column filter in words. */
+const COLUMN_LABELS: Record<ListKey, ReadonlyMap<string, string>> = {
+  reports: new Map(REPORT_COLUMNS.map((c) => [c.key, c.label])),
+  payments: new Map(PAYMENT_COLUMNS.map((c) => [c.key, c.label])),
+  bank: new Map(BANK_COLUMNS.map((c) => [c.key, c.label])),
+};
 
 /** What each list is, said once above it. */
 const ABOUT: Record<ListKey, string> = {
@@ -117,6 +129,11 @@ export const UnmatchedPayments = () => {
   const seenReports = useCallback((r: ReportLineRow[]) => { seen.current.reports = r; }, []);
   const seenPayments = useCallback((r: PaymentRow[]) => { seen.current.payments = r; }, []);
   const seenBank = useCallback((r: UnmatchedBankLine[]) => { seen.current.bank = r; }, []);
+  /* Each table's column filters, so its export can say them. */
+  const funnels = useRef<Record<ListKey, Record<string, string[]>>>({ reports: {}, payments: {}, bank: {} });
+  const funnelReports = useCallback((f: Record<string, string[]>) => { funnels.current.reports = f; }, []);
+  const funnelPayments = useCallback((f: Record<string, string[]>) => { funnels.current.payments = f; }, []);
+  const funnelBank = useCallback((f: Record<string, string[]>) => { funnels.current.bank = f; }, []);
 
   const chips: Record<ListKey, Chip[]> = {
     reports: chipsOf(reports ?? [], (r) => r.grossSen, REPORT_STATUSES, (r) => r.status),
@@ -144,38 +161,59 @@ export const UnmatchedPayments = () => {
   const [exportError, setExportError] = useState<string | null>(null);
   const failed = (e: unknown) => setExportError(`The file could not be made — ${e instanceof Error ? e.message : 'something went wrong.'}`);
 
-  /** One list on paper: what its table shows. */
+  /** What narrows a list on the screen — its chip, its column filters — in words, for
+      its export (owner 2026-11-11: 我filter 了三个card 的东西，但是export 了还是全部). */
+  const narrowing = (k: ListKey, shownN: number): string => {
+    const columnWords = Object.entries(funnels.current[k]).filter(([, v]) => v.length > 0)
+      .map(([key, v]) => `${COLUMN_LABELS[k].get(key) ?? key}: ${v.slice(0, 3).join(', ')}${v.length > 3 ? ` +${v.length - 3}` : ''}`);
+    const words = [chipLabel(k), ...columnWords].filter((w): w is string => w != null);
+    const chipN = rowsOn[k]?.length ?? 0;
+    if (columnWords.length === 0 && shownN < chipN) words.push(`table filter: ${shownN} of ${chipN} rows`);
+    return words.length === 0 ? 'No filter — every row' : `Filter: ${words.join(' · ')}`;
+  };
+  /** Above a list's Excel table: what the list is, then the dates and what narrowed it. */
+  const headingOf = (k: ListKey, shownN: number): string[] => [listOf(k).exportTitle, `${range} · ${narrowing(k, shownN)}`];
+  const partOf = <T,>(k: ListKey, view: TablePdfView<T>): UnmatchedPdfPart =>
+    ({ title: listOf(k).exportTitle, label: listOf(k).sheet, note: narrowing(k, view.rows.length), view });
+
+  /** One list on paper: what its table shows, under its export title. */
   const printList = async <T,>(k: ListKey, view: TablePdfView<T>) => {
     setExportError(null);
     try {
       const { generateUnmatchedPdf } = await import('../../vendor/scm/lib/unmatched-payments-pdf');
-      const narrowed = chipLabel(k);
-      await generateUnmatchedPdf([{ title: titleOf(k), view }], { subtitle: narrowed ? `${range} · ${narrowed}` : range });
+      await generateUnmatchedPdf([partOf(k, view)], { subtitle: range });
     } catch (e) { failed(e); }
   };
 
-  /** Every row of the three lists in the range, each with the columns its table shows. */
+  /** The three lists in one file, in the owner's order, each as its table shows it — its
+      chip, its column filters, its columns — under its export title (owner 2026-11-11).
+      Nothing narrowed: every row. */
   const exportAll = async (how: 'excel' | 'pdf') => {
     if (!reports || !payments || !bank) return;
     setExportError(null);
     const r = shownOr(shown.current.reports, REPORT_COLUMNS);
     const p = shownOr(shown.current.payments, PAYMENT_COLUMNS);
     const b = shownOr(shown.current.bank, BANK_COLUMNS);
+    /* What each table shows now; before it has said, its chip's rows. */
+    const rows = {
+      reports: seen.current.reports ?? rowsOn.reports ?? [],
+      payments: seen.current.payments ?? rowsOn.payments ?? [],
+      bank: seen.current.bank ?? rowsOn.bank ?? [],
+    };
     try {
       if (how === 'excel') {
-        await writeLineExportBook([
-          { name: titleOf('reports'), matrix: buildLineExportMatrix(reports, () => [], exportableColumns(r)) },
-          { name: titleOf('payments'), matrix: buildLineExportMatrix(payments, () => [], exportableColumns(p)) },
-          { name: titleOf('bank'), matrix: buildLineExportMatrix(bank, () => [], exportableColumns(b)) },
-        ], `payments-not-matched-all-${today}.xlsx`);
+        const sheet = <T,>(k: ListKey, list: readonly T[], cols: Column<T>[]) =>
+          ({ name: listOf(k).sheet, heading: headingOf(k, list.length), matrix: buildLineExportMatrix(list, () => [], exportableColumns(cols)) });
+        await writeLineExportBook([sheet('reports', rows.reports, r), sheet('bank', rows.bank, b), sheet('payments', rows.payments, p)],
+          `payments-not-matched-${today}.xlsx`);
         return;
       }
       const { generateUnmatchedPdf } = await import('../../vendor/scm/lib/unmatched-payments-pdf');
       await generateUnmatchedPdf([
-        { title: titleOf('reports'), view: tablePdfViewOf(reports, r) },
-        { title: titleOf('payments'), view: tablePdfViewOf(payments, p) },
-        { title: titleOf('bank'), view: tablePdfViewOf(bank, b) },
-      ], { subtitle: `${range} · every row of the three lists` });
+        partOf('reports', tablePdfViewOf(rows.reports, r)),
+        partOf('bank', tablePdfViewOf(rows.bank, b)),
+        partOf('payments', tablePdfViewOf(rows.payments, p)),
+      ], { subtitle: range });
     } catch (e) { failed(e); }
   };
   const allReady = loaded.reports && loaded.payments && loaded.bank;
@@ -223,11 +261,11 @@ export const UnmatchedPayments = () => {
           <DateField value={to} onChange={(v) => { if (v) setTo(v); }} aria-label="Dated to" />
           <span className={top.grow} />
           <Button variant="secondary" size="sm" disabled={!allReady} onClick={() => void exportAll('excel')}
-            title="Every row of the three lists in these dates, a sheet each, with the columns each list shows">
+            title="The three lists in these dates, a sheet each — each as it is filtered, with the columns it shows">
             <Download {...ICON} /> Export all · Excel
           </Button>
           <Button variant="secondary" size="sm" disabled={!allReady} onClick={() => void exportAll('pdf')}
-            title="Every row of the three lists in these dates, a part each, with the columns each list shows">
+            title="The three lists in these dates, a part each — each as it is filtered, with the columns it shows">
             <FileText {...ICON} /> Export all · PDF
           </Button>
         </div>
@@ -272,12 +310,14 @@ export const UnmatchedPayments = () => {
       <div hidden={list !== 'reports'}>
         <DataTable<ReportLineRow>
           tableId="unmatched-report-lines"
-          exportName="merchant-report-lines-not-reconciled"
+          exportName={listOf('reports').file}
           exportXlsx
+          exportSheet={(rows) => ({ name: listOf('reports').sheet, heading: headingOf('reports', rows.length) })}
           onExportPdf={(view) => void printList('reports', view)}
           toolbarExtra={pdfButton(() => void printList('reports', tablePdfViewOf(seen.current.reports ?? rowsOn.reports ?? [], shownOr(shown.current.reports, REPORT_COLUMNS))), !loaded.reports)}
           onShownColumnsChange={shownReports}
           onFilteredRowsChange={seenReports}
+          onColFiltersChange={funnelReports}
           columns={REPORT_COLUMNS}
           rows={rowsOn.reports}
           loading={!backwards && !reportsFailed && reports == null}
@@ -286,38 +326,42 @@ export const UnmatchedPayments = () => {
           getRowKey={(r) => r.key}
         />
       </div>
-      <div hidden={list !== 'payments'}>
-        <DataTable<PaymentRow>
-          tableId="unmatched-payments"
-          exportName="payments-not-matched"
-          exportXlsx
-          onExportPdf={(view) => void printList('payments', view)}
-          toolbarExtra={pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
-          onShownColumnsChange={shownPayments}
-          onFilteredRowsChange={seenPayments}
-          columns={PAYMENT_COLUMNS}
-          rows={rowsOn.payments}
-          loading={!backwards && payQ.isLoading}
-          error={errorOf('payments')}
-          emptyLabel="Every card and transfer payment in these dates is matched."
-          getRowKey={(r) => `${r.source}:${r.paymentId}`}
-        />
-      </div>
       <div hidden={list !== 'bank'}>
         <DataTable<UnmatchedBankLine>
           tableId="unmatched-bank-lines"
-          exportName="bank-money-in-not-matched"
+          exportName={listOf('bank').file}
           exportXlsx
+          exportSheet={(rows) => ({ name: listOf('bank').sheet, heading: headingOf('bank', rows.length) })}
           onExportPdf={(view) => void printList('bank', view)}
           toolbarExtra={pdfButton(() => void printList('bank', tablePdfViewOf(seen.current.bank ?? rowsOn.bank ?? [], shownOr(shown.current.bank, BANK_COLUMNS))), !loaded.bank)}
           onShownColumnsChange={shownBank}
           onFilteredRowsChange={seenBank}
+          onColFiltersChange={funnelBank}
           columns={BANK_COLUMNS}
           rows={rowsOn.bank}
           loading={!backwards && bankQ.isLoading}
           error={errorOf('bank')}
           emptyLabel="Every bank line in these dates is matched."
           getRowKey={(r) => r.lineId}
+        />
+      </div>
+      <div hidden={list !== 'payments'}>
+        <DataTable<PaymentRow>
+          tableId="unmatched-payments"
+          exportName={listOf('payments').file}
+          exportXlsx
+          exportSheet={(rows) => ({ name: listOf('payments').sheet, heading: headingOf('payments', rows.length) })}
+          onExportPdf={(view) => void printList('payments', view)}
+          toolbarExtra={pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
+          onShownColumnsChange={shownPayments}
+          onFilteredRowsChange={seenPayments}
+          onColFiltersChange={funnelPayments}
+          columns={PAYMENT_COLUMNS}
+          rows={rowsOn.payments}
+          loading={!backwards && payQ.isLoading}
+          error={errorOf('payments')}
+          emptyLabel="Every card and transfer payment in these dates is matched."
+          getRowKey={(r) => `${r.source}:${r.paymentId}`}
         />
       </div>
     </div>

@@ -44,6 +44,24 @@ describe('Payments not matched yet on paper', () => {
     expect(b!.totalSen).toBe(0);
   });
 
+  /* Owner 2026-11-11: export 出来时注明是 … / 我filter 了 … export 了还是全部. */
+  test('a part can say what narrowed it, under its title; one without a note has none', () => {
+    const [p, b] = unmatchedPdfTables([
+      { ...PAYMENTS, title: 'Record Payment Received, Bank CANNOT Found', label: 'Payment recorded', note: 'Filter: Card · not on a report' },
+      BANK,
+    ]);
+    expect(p!.title).toBe('Record Payment Received, Bank CANNOT Found — 2 rows');
+    expect(p!.note).toBe('Filter: Card · not on a report');
+    expect(b!.note).toBeNull();
+  });
+
+  test('a part with a note still prints on its own page', async () => {
+    await generateUnmatchedPdf([{ ...PAYMENTS, label: 'Payment recorded', note: 'No filter — every row' }, { ...BANK, note: 'No filter — every row' }],
+      { subtitle: 'Dated 2026/09/01 to 2026/11/10', action: 'print' });
+    const [doc] = deliver.mock.calls[0]! as [jsPDF];
+    expect(doc.getNumberOfPages()).toBe(2);
+  });
+
   test('one landscape listing, a page per part', async () => {
     await generateUnmatchedPdf([PAYMENTS, BANK], { subtitle: 'Dated 2026/09/01 to 2026/11/10', action: 'print' });
     expect(deliver).toHaveBeenCalledTimes(1);

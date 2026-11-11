@@ -12,23 +12,26 @@ import type { PdfAction } from './pdf-common';
 import { fmtSenPlain, todayMY } from '../../shared/format';
 import { LISTING_MARGIN, closeListing, listingDress, openListing, screenTable, type FootCell, type ScreenTableView } from './listing-pdf';
 
-export type UnmatchedPdfPart = { title: string; view: ScreenTableView };
+/** `title` heads the part; `label` is its short name in the header's summary (a long
+    title would run into the document's name); `note` says what narrowed it (owner
+    2026-11-11: export 出来时注明是 … / 我filter 了 … export 了还是全部). */
+export type UnmatchedPdfPart = { title: string; label?: string; note?: string; view: ScreenTableView };
 
 /** Each part exactly as drawn: pure, so a test reads the cells and the totals without a PDF. */
 export function unmatchedPdfTables(parts: readonly UnmatchedPdfPart[]): Array<{
-  title: string; head: string[]; body: string[][]; foot: FootCell[] | null; totalSen: number | null; figures: boolean[];
+  title: string; note: string | null; head: string[]; body: string[][]; foot: FootCell[] | null; totalSen: number | null; figures: boolean[];
 }> {
   return parts.map((p) => {
     const t = screenTable(p.view);
     const figures = p.view.matrix.formats.map((f) => f === 'money' || f === 'number');
-    return { title: `${p.title} — ${t.body.length} row${t.body.length === 1 ? '' : 's'}`, ...t, figures };
+    return { title: `${p.title} — ${t.body.length} row${t.body.length === 1 ? '' : 's'}`, note: p.note ?? null, ...t, figures };
   });
 }
 
 export async function generateUnmatchedPdf(parts: readonly UnmatchedPdfPart[], opts: { subtitle: string; action?: PdfAction }): Promise<void> {
   const tables = unmatchedPdfTables(parts);
   const meta = tables.map((t, i) => ({
-    label: parts[i]!.title,
+    label: parts[i]!.label ?? parts[i]!.title,
     value: t.totalSen == null ? String(t.body.length) : `${t.body.length} · RM ${fmtSenPlain(t.totalSen)}`,
   }));
   const { doc, startY } = await openListing('PAYMENTS NOT MATCHED YET', meta, opts.subtitle, tables);
@@ -37,6 +40,12 @@ export async function generateUnmatchedPdf(parts: readonly UnmatchedPdfPart[], o
     if (i > 0) { doc.addPage(); y = 16; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(0);
     doc.text(t.title, LISTING_MARGIN, y);
+    if (t.note) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(90);
+      doc.text(t.note, LISTING_MARGIN, y + 4.5, { maxWidth: doc.internal.pageSize.getWidth() - LISTING_MARGIN * 2 });
+      doc.setTextColor(0);
+      y += 4.5;
+    }
     autoTable(doc, {
       ...listingDress(7.5),
       startY: y + 3,
