@@ -220,7 +220,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
   const supplierLine = (co: RateCardMeta['companies'][number]) => (co.supplier
     ? [co.supplier.code, co.supplier.name].filter(Boolean).join(' · ')
     : 'No supplier linked');
-  const supplierTone = (co: RateCardMeta['companies'][number]) => (co.supplier ? 'text-ink-muted' : 'text-[#80501c]');
+  const supplierTone = (co: RateCardMeta['companies'][number]) => (co.supplier ? 'text-ink-muted' : 'text-[#80501c] dark:text-[color:var(--hz-dk-warning-text)]');
   const inactive = (c: RateCard) => (c.isActive ? null : <Pill tone="grey">Inactive</Pill>);
   const row = (key: string, on: boolean, name: string, sub: string | null, subTone: string, badge: ReactNode, onClick: () => void) => (
     <button key={key} type="button" onClick={onClick} aria-current={on ? 'true' : undefined}
@@ -281,7 +281,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
             {group('Needs a carrier')}
             {others.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name,
               cardKind(c, listed) === 'removed' ? 'Carrier removed' : 'Carrier inactive',
-              'font-semibold text-[#80501c]', <Pill tone="amber">Fix</Pill>, () => onSelect({ kind: 'card', id: c.id })))}
+              'font-semibold text-[#80501c] dark:text-[color:var(--hz-dk-warning-text)]', <Pill tone="amber">Fix</Pill>, () => onSelect({ kind: 'card', id: c.id })))}
           </>
         )}
       </div>

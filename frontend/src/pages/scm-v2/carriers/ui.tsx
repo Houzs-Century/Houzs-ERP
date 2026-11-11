@@ -14,10 +14,10 @@ export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-
 export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50';
 
 const TONE = {
-  green: 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]',
+  green: 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43] dark:text-[color:var(--hz-dk-synced)]',
   red: 'bg-[color:var(--hz-dk-err-bg,#f6dcdc)] text-[color:var(--hz-dk-err,#8a2c2c)]',
-  amber: 'bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000]',
-  blue: 'bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75]',
+  amber: 'bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000] dark:text-[color:var(--hz-dk-warning-text)]',
+  blue: 'bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75] dark:text-[#9cc3e6]',
   grey: 'bg-surface-2 text-ink-muted',
 } as const;
 export type Tone = keyof typeof TONE;
@@ -38,7 +38,7 @@ export const Kpi = ({ label, value, sub, tone }: { label: string; value: ReactNo
   <div className={cn(CARD, 'flex min-w-0 flex-col gap-1 px-4 py-3.5')}>
     <span className={EYEBROW}>{label}</span>
     <span className={cn('text-[22px] font-bold tabular-nums leading-tight',
-      tone === 'red' ? 'text-[color:var(--hz-dk-err,#8a2c2c)]' : tone === 'amber' ? 'text-[#7a5000]' : tone === 'green' ? 'text-[#1f5c43]' : 'text-ink')}>{value}</span>
+      tone === 'red' ? 'text-[color:var(--hz-dk-err,#8a2c2c)]' : tone === 'amber' ? 'text-[#7a5000] dark:text-[color:var(--hz-dk-warning-text)]' : tone === 'green' ? 'text-[#1f5c43] dark:text-[color:var(--hz-dk-synced)]' : 'text-ink')}>{value}</span>
     {sub != null && <span className={HINT}>{sub}</span>}
   </div>
 );

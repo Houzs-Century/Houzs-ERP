@@ -239,6 +239,8 @@ describe('Carriers & Rates', () => {
     expect(within(areasTable(out)).getByText('Far towns')).toBeTruthy();
     expect(within(townRow(out, 'Bintulu')).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' })).toBeTruthy();
     expect(within(townRow(out, 'Labuan')).queryAllByRole('button')).toHaveLength(0);
+    /* Its other towns stay blank: a dash there would read as "no price". */
+    expect(townRow(out, 'Labuan').textContent).toBe('Labuan');
     expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
     /* The pencil opens the area's name and towns under the table. */

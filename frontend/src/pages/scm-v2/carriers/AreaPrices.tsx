@@ -81,6 +81,10 @@ interface AreaLine { key: string; group: string; area: RateArea | null; town: st
 /** The group of the card's own prices; an area's group is its id. */
 const OWN = 'own';
 
+/* A cell left empty on purpose: an area's prices are not repeated under its
+   first town, and DataTable draws a dash ("no price") in a null cell. */
+const BLANK = <span aria-hidden="true" />;
+
 const areaLines = (areas: readonly RateArea[]): AreaLine[] => [
   { key: OWN, group: OWN, area: null, town: '', first: true },
   ...areas.flatMap((a) => {
@@ -170,7 +174,7 @@ export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, add
             const own = priceOf(r, c.key);
             return <span className="tabular-nums text-ink-secondary">{own ? centiToRM(own.amountSen) : '—'}</span>;
           }
-          if (!r.first) return null;
+          if (!r.first) return BLANK;
           const rule = priceOf(r, c.key);
           return rule == null
             ? <AddPriceCell cardId={cardId} rule={{ ...c.rule, areaId: r.area.id }} label={c.label} scope={r.area.name} />
@@ -182,7 +186,7 @@ export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, add
         renderHeader: () => <span className="sr-only">Change the area</span>,
         render: (r) => {
           const area = r.area;
-          if (!area || !r.first) return null;
+          if (!area || !r.first) return BLANK;
           return (
             <button type="button" className="-my-1 inline-grid h-7 w-7 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-primary"
               onClick={() => setEditing(area.id)} aria-label={`Change ${area.name}`} aria-pressed={editing === area.id}>
