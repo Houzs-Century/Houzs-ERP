@@ -6,11 +6,13 @@
 // amount a bill is tallied against is the one the list then shows.
 // ----------------------------------------------------------------------------
 import { scopeToCompanyId } from './companyScope';
-import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress } from './zone-classify';
+import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
 import { doFacts } from './threepl-do-charge';
 import { areaOut, cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
+import { loadPlacesFor } from '../routes/delivery-places';
+import { MAP_COLS, toPrefixMap, type MapRow } from '../routes/delivery-zones';
 
 type Row = Record<string, unknown>;
 // The 3PL tables are not in the generated Supabase types; same narrow bridge as
@@ -22,15 +24,21 @@ const str = (v: unknown) => (v == null || v === '' ? null : String(v));
 export type CarrierCards = {
   carrierName: Map<string, string>;
   specByCarrier: Map<string, { name: string; spec: RateCardSpec }>;
+  /** The paying company's zone map (Delivery Zones): an order's zone by its postcode. */
+  zoneMap: ZonePrefixRule[];
 };
 
 /** The paying company's carriers and the active rate card of each. */
 export async function loadCarrierCards(sb: unknown, companyId: number): Promise<{ ok: true; cards: CarrierCards } | { ok: false; reason: string }> {
-  const [{ data: carriers, error: e1 }, { data: cardRows, error: e2 }] = await Promise.all([
+  const [{ data: carriers, error: e1 }, { data: cardRows, error: e2 }, { data: mapRows, error: eMap }, places] = await Promise.all([
     scopeToCompanyId(db(sb).from('threepl_companies').select('id, name'), companyId),
     scopeToCompanyId(db(sb).from('delivery_rate_cards').select('*'), companyId).eq('is_active', true),
+    /* The company's zone map and places (Delivery Zones): a town on a card counts only inside its zone. */
+    scopeToCompanyId(db(sb).from('delivery_zone_postcodes').select(MAP_COLS), companyId).order('id'),
+    loadPlacesFor(sb, companyId),
   ]);
-  if (e1 || e2) return { ok: false, reason: (e1 ?? e2).message };
+  if (e1 || e2 || eMap) return { ok: false, reason: (e1 ?? e2 ?? eMap).message };
+  if (!places.ok) return { ok: false, reason: places.reason };
   const carrierName = new Map<string, string>(((carriers ?? []) as Row[]).map((r) => [String(r.id), String(r.name ?? '')]));
   const cards = ((cardRows ?? []) as Row[]).map(cardOut).filter((cd) => cd.carrierCompanyId);
   const [{ data: ruleRows, error: e3 }, { data: areaRows, error: e4 }] = cards.length
@@ -43,8 +51,8 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
   if (e3 || e4) return { ok: false, reason: (e3 ?? e4).message };
   const rules = ((ruleRows ?? []) as Row[]).map(ruleOut);
   const areas = ((areaRows ?? []) as Row[]).map(areaOut);
-  const specByCarrier = new Map(cards.map((cd) => [cd.carrierCompanyId as string, { name: cd.name, spec: toCardSpec(cd, rules.filter((r) => r.cardId === cd.id), areas) }]));
-  return { ok: true, cards: { carrierName, specByCarrier } };
+  const specByCarrier = new Map(cards.map((cd) => [cd.carrierCompanyId as string, { name: cd.name, spec: toCardSpec(cd, rules.filter((r) => r.cardId === cd.id), areas, places.places) }]));
+  return { ok: true, cards: { carrierName, specByCarrier, zoneMap: toPrefixMap((mapRows ?? []) as MapRow[]).map } };
 }
 
 /** Narrows a read to the companies whose orders may be priced — the caller's
@@ -54,7 +62,10 @@ export type CompanyScopeFn = <Q>(query: Q) => Q;
 
 /** Each DO's facts for the rate card, read from its order: the order's lines
  *  (sets / items) and its address (zone). A DO with no order has none. */
-export async function loadDoFacts(scope: CompanyScopeFn, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>): Promise<{ ok: true; facts: Map<string, DeliveryFacts> } | { ok: false; reason: string }> {
+export async function loadDoFacts(
+  scope: CompanyScopeFn, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>,
+  zoneMap: readonly ZonePrefixRule[] = DEFAULT_ZONE_PREFIX_MAP,
+): Promise<{ ok: true; facts: Map<string, DeliveryFacts> } | { ok: false; reason: string }> {
   const soDocs = [...new Set(dos.map((d) => d.soDocNo).filter((x): x is string => !!x))];
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
@@ -77,7 +88,7 @@ export async function loadDoFacts(scope: CompanyScopeFn, sb: unknown, dos: Reado
     for (const so of (soRows ?? []) as Row[]) {
       /* The words a town surcharge or a rate card area is found by: the whole address and its city. */
       addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.address3), str(so.address4), str(so.city), str(so.postcode)].filter(Boolean).join(' '));
-      zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, [...DEFAULT_ZONE_PREFIX_MAP]).zone);
+      zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone);
     }
   }
   const facts = new Map<string, DeliveryFacts>();

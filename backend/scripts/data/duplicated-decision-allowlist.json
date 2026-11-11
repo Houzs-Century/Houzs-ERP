@@ -567,8 +567,18 @@
     },
     {
       "check": "D1",
-      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
+      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,LABUAN,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG,SABAH,SARAWAK|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
       "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it on the map; the Delivery Zones page names and colours it (zoneModel.ts, pinned to zone-classify.ts by backend/tests/zoneModelPin.test.ts). Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+    },
+    {
+      "check": "D1",
+      "key": "LABUAN,SABAH,SARAWAK|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts",
+      "why": "THE EAST MALAYSIA ZONES (owner 2026-11-11: the 3PL rate cards use the Delivery Zones areas). zone-classify.ts THREEPL_ONLY_ZONES keeps them off the own-lorry auto-propose; the Delivery Zones page groups them as 3PL only (EAST_MALAYSIA_ZONES). Same three zones, two jobs, pinned by backend/tests/zoneModelPin.test.ts; a zone missing on the page only mislabels its tile."
+    },
+    {
+      "check": "D2",
+      "key": "LABUAN,SABAH,SARAWAK ~ LABUAN,SABAH,SARAWAK,WPLABUAN",
+      "why": "TWO DIFFERENT QUESTIONS. logistics-cost.ts EM_STATES reads STATE NAMES as an address spells them (WP LABUAN included) to put a cost in the East Malaysia region; THREEPL_ONLY_ZONES / EAST_MALAYSIA_ZONES are the ZONE CODES a postcode maps to. WPLABUAN is a spelling, not a zone."
     },
     {
       "check": "D1",

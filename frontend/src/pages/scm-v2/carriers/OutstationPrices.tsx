@@ -12,6 +12,7 @@ import { cn } from '../../../lib/utils';
 import { hiddenZoneRules, priceBands, type PriceBand, type RuleBlock, type RuleSection, type TownPrice } from './rateCardLayout';
 import { AddRule, Panel, PriceEditor } from './ruleEditors';
 import { AreaPrices } from './AreaPrices';
+import { usePlaces } from '../../../vendor/scm/lib/delivery-places-queries';
 import { areaTemplate, surchargesInAreas, townLabel, townsInTwoAreas } from './rateCardAreas';
 import { BTN_QUIET, HINT, Pill } from './ui';
 
@@ -86,6 +87,12 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
   const onTop = surchargesInAreas(areas, rules);
   const twice = townsInTwoAreas(areas);
   const rows = section.blocks.find((b): b is Zones => b.kind === 'zones')?.rows ?? [];
+  /* A town price names a zone or a town filed under one (Delivery Zones places). */
+  const places = usePlaces();
+  const suggestions = useMemo(
+    () => [...new Set([...zones, ...(places.data?.places ?? []).map((p) => p.name)])].sort((a, b) => a.localeCompare(b)),
+    [zones, places.data],
+  );
   const perOrder = priceBands(rows, 'perOrder');
   const perTrip = priceBands(rows, 'perTrip');
   const hidden = hiddenZoneRules(rules, rows);
@@ -156,7 +163,7 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
         </div>
       )}
       {adding !== null && (
-        <AddRule key={adding} cardId={cardId} category="OUTSTATION" zones={zones} initialType={adding} onDone={() => setAdding(null)} />
+        <AddRule key={adding} cardId={cardId} category="OUTSTATION" zones={suggestions} initialType={adding} onDone={() => setAdding(null)} />
       )}
     </Panel>
   );

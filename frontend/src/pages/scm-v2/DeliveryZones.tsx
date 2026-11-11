@@ -7,6 +7,9 @@
 // Until a rule is in use the classifier falls back to the built-in Malaysian
 // map, so the page shows that map and offers to load it as editable rules.
 // The page logic that mirrors the classifier lives in delivery-zones/zoneModel.ts.
+//
+// Each zone also lists its PLACES (mig 20261111T1100): the towns 3PL rate cards
+// price there, read only for addresses whose postcode is in that zone.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -25,6 +28,7 @@ import {
   effectiveMap, pad2, prefixText, rangeText, zoneByPrefix, zoneColour, zoneName, type RuleForm,
 } from './delivery-zones/zoneModel';
 import { ZoneMapCard } from './delivery-zones/ZoneMapCard';
+import { UnplacedTowns } from './delivery-zones/ZonePlaces';
 import { ZoneRuleDrawer, type DrawerTarget } from './delivery-zones/ZoneRuleDrawer';
 import { LockedDays } from './delivery-zones/LockedDays';
 
@@ -129,6 +133,8 @@ export const DeliveryZones = () => {
       />
 
       {zoneMap.isError && <p className="rounded-xl bg-[color:var(--hz-dk-err-bg,#f6dcdc)] px-4 py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The zone map could not be loaded. {zoneMap.error instanceof Error ? zoneMap.error.message : ''}</p>}
+
+      <UnplacedTowns />
 
       {!zoneMap.isError && <ZoneMapCard rows={rows} map={eff.map} usingDefault={eff.usingDefault} byPrefix={byPrefix}
         selected={selected} onSelect={(k) => setParam('zone', k, 'KL')}

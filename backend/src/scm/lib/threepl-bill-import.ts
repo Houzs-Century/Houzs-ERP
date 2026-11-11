@@ -199,11 +199,10 @@ function resolverFor(r: Resolved) {
 
 /** The rate card amount of each DO on one 3PL's card (null without a card). */
 async function pricer(deps: BillDeps, carrierId: string | null, dos: readonly DoCandidate[]): Promise<{ ok: true; expectedOf: (doId: string) => number | null } | { ok: false; reason: string }> {
-  const [cards, facts] = await Promise.all([
-    loadCarrierCards(deps.sb, deps.companyId),
-    loadDoFacts(scopeOf(deps), deps.sb, dos.map((d) => ({ id: d.id, soDocNo: d.soDocNo }))),
-  ]);
+  const cards = await loadCarrierCards(deps.sb, deps.companyId);
   if (!cards.ok) return cards;
+  /* Orders are zoned by the paying company's map, the one its cards' places sit in. */
+  const facts = await loadDoFacts(scopeOf(deps), deps.sb, dos.map((d) => ({ id: d.id, soDocNo: d.soDocNo })), cards.cards.zoneMap);
   if (!facts.ok) return facts;
   const spec = carrierId ? cards.cards.specByCarrier.get(carrierId)?.spec ?? null : null;
   return { ok: true, expectedOf: (doId) => { const f = facts.facts.get(doId); return f ? expectedSen(spec, f) : null; } };

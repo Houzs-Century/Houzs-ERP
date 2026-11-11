@@ -16,9 +16,12 @@
 // (geocode.ts) or leaves the order UNZONED for the dispatcher, never guessing.
 // ---------------------------------------------------------------------------
 
-/** The 14 area zones the owner clusters deliveries into. Free-text on the wire
- *  (the map table stores a TEXT zone so the owner can add more), but a write is
- *  validated against this canonical set so a typo can't create a phantom zone. */
+/** The 14 area zones the owner clusters deliveries into, and East Malaysia
+ *  (owner 2026-11-11: the 3PL rate cards use these zones, 做) — priced on the
+ *  carriers' cards, never planned on the own lorries (THREEPL_ONLY_ZONES).
+ *  Free-text on the wire (the map table stores a TEXT zone so the owner can add
+ *  more), but a write is validated against this canonical set so a typo can't
+ *  create a phantom zone. */
 export const ZONES = [
   // Klang Valley (mix freely on one trip)
   'KL', 'PJ', 'KLANG', 'KAJANG', 'RAWANG', 'PUCHONG',
@@ -28,6 +31,8 @@ export const ZONES = [
   'PENANG', 'KEDAH', 'PERAK',
   // Outer
   'PAHANG', 'EAST',
+  // East Malaysia (3PL only)
+  'SABAH', 'SARAWAK', 'LABUAN',
 ] as const;
 
 export type Zone = (typeof ZONES)[number];
@@ -41,6 +46,16 @@ const KV_SET: ReadonlySet<string> = new Set(KLANG_VALLEY_ZONES);
 
 export function isKlangValleyZone(zone: string | null | undefined): boolean {
   return zone != null && KV_SET.has(zone);
+}
+
+/** East Malaysia: a 3PL carries it, priced on its rate card by these zones. The
+ *  auto-propose never packs these orders onto the own lorries; it leaves them
+ *  for the dispatcher, as it did when they had no zone. */
+export const THREEPL_ONLY_ZONES: readonly Zone[] = ['SABAH', 'SARAWAK', 'LABUAN'];
+const THREEPL_ONLY_SET: ReadonlySet<string> = new Set(THREEPL_ONLY_ZONES);
+
+export function isThreePlOnlyZone(zone: string | null | undefined): boolean {
+  return zone != null && THREEPL_ONLY_SET.has(zone);
 }
 
 /** One postcode-prefix -> zone rule. `prefixStart`..`prefixEnd` are the FIRST TWO
@@ -60,7 +75,8 @@ export interface ZonePrefixRule {
  *  it out in the editor when they want Puchong as its own trip cluster. */
 export const DEFAULT_ZONE_PREFIX_MAP: readonly ZonePrefixRule[] = [
   // Northern
-  { zone: 'KEDAH', prefixStart: 5, prefixEnd: 9 },   // 05xxx–09xxx Kedah/Perlis
+  { zone: 'KEDAH', prefixStart: 1, prefixEnd: 2 },   // 01xxx–02xxx Perlis
+  { zone: 'KEDAH', prefixStart: 5, prefixEnd: 9 },   // 05xxx–09xxx Kedah
   { zone: 'PENANG', prefixStart: 10, prefixEnd: 14 }, // 10xxx–14xxx Pulau Pinang
   { zone: 'PERAK', prefixStart: 30, prefixEnd: 36 },  // 30xxx–36xxx Perak
   // East coast
@@ -73,6 +89,8 @@ export const DEFAULT_ZONE_PREFIX_MAP: readonly ZonePrefixRule[] = [
   { zone: 'PJ', prefixStart: 40, prefixEnd: 40 },     // 40xxx Shah Alam (Petaling district)
   { zone: 'KLANG', prefixStart: 41, prefixEnd: 42 },  // 41–42 Klang
   { zone: 'KAJANG', prefixStart: 43, prefixEnd: 43 }, // 43xxx Kajang/Semenyih
+  { zone: 'KLANG', prefixStart: 45, prefixEnd: 45 },  // 45xxx Kuala Selangor
+  { zone: 'KAJANG', prefixStart: 64, prefixEnd: 64 }, // 64xxx KLIA
   { zone: 'PJ', prefixStart: 46, prefixEnd: 47 },     // 46–47 PJ / Subang / (Puchong lives here until split out)
   { zone: 'RAWANG', prefixStart: 48, prefixEnd: 48 }, // 48xxx Rawang
   { zone: 'KL', prefixStart: 50, prefixEnd: 60 },     // 50–60 Kuala Lumpur
@@ -81,6 +99,10 @@ export const DEFAULT_ZONE_PREFIX_MAP: readonly ZonePrefixRule[] = [
   { zone: 'NS', prefixStart: 70, prefixEnd: 73 },     // 70–73 Negeri Sembilan / Seremban
   { zone: 'MELAKA', prefixStart: 75, prefixEnd: 78 }, // 75–78 Melaka
   { zone: 'JOHOR', prefixStart: 79, prefixEnd: 86 },  // 79–86 Johor
+  // East Malaysia (3PL only)
+  { zone: 'LABUAN', prefixStart: 87, prefixEnd: 87 }, // 87xxx Labuan
+  { zone: 'SABAH', prefixStart: 88, prefixEnd: 91 },  // 88–91 Sabah
+  { zone: 'SARAWAK', prefixStart: 93, prefixEnd: 98 }, // 93–98 Sarawak
 ];
 
 /** Pull a 5-digit Malaysian postcode out of a free-text value or address. PURE.

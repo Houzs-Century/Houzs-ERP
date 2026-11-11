@@ -51,6 +51,7 @@ const sql = postgres(DSN, { ssl: /localhost|127\.0\.0\.1/.test(DSN) ? false : "r
 
 // [zone, prefixStart, prefixEnd] — mirror of DEFAULT_ZONE_PREFIX_MAP.
 const DEFAULT_MAP = [
+  ["KEDAH", 1, 2],
   ["KEDAH", 5, 9],
   ["PENANG", 10, 14],
   ["PERAK", 30, 36],
@@ -62,6 +63,8 @@ const DEFAULT_MAP = [
   ["PJ", 40, 40],
   ["KLANG", 41, 42],
   ["KAJANG", 43, 43],
+  ["KLANG", 45, 45],
+  ["KAJANG", 64, 64],
   ["PJ", 46, 47],
   ["RAWANG", 48, 48],
   ["KL", 50, 60],
@@ -69,6 +72,9 @@ const DEFAULT_MAP = [
   ["NS", 70, 73],
   ["MELAKA", 75, 78],
   ["JOHOR", 79, 86],
+  ["LABUAN", 87, 87],
+  ["SABAH", 88, 91],
+  ["SARAWAK", 93, 98],
 ];
 const key = (co, z, s, e) => `${co}|${z}|${s}|${e}`;
 
