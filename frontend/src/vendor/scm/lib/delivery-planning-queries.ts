@@ -220,6 +220,10 @@ export type PlanningOrder = {
      (AutoCount Ref, e.g. pg0791; the delivery sheet's Ref column). NOT `referral`,
      which is the HC referral channel and is empty on every order. SO rows only. */
   so_ref?: string | null;
+  /* A Service-Case row's ORIGINAL order DO numbers, back-filled (owner 2026-11-11):
+     the DO No. column shows these when the row has no DO of its own. ASSR rows only
+     (null on SO/DP/project). An SO row's own DOs stay in delivery_orders. */
+  related_do_nos?: string[] | null;
   /* PO No. (owner 2026-09-15) — the purchase orders RAISED from this SO, the
      SO list's raised-PO chips. SO rows only; absent on ASSR / DP / project rows. */
   po_nos?: string[];

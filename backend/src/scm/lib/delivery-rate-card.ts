@@ -25,6 +25,15 @@
 // bracket, exactly as the owner's worked example prices "1st set + 2nd set + sofa
 // 3-comp" (the sofa is not a third set). The caller derives the facts; this
 // module only prices them.
+//
+// AREAS (mig 20261111T1000; owner 2026-11-11 on the 3PL quotations: 做). A
+// carrier prices each area with its own ladder — "RM X the first 2 sets, RM Y
+// each item after, sofa RM Z" for each group of towns — not the city ladder plus
+// one surcharge. A card may carry areas (a name and its towns); a
+// rule may name one. A delivery in an area prices each rule type the area
+// carries with the area's rules and every other type with the card's own, so a
+// card with no area prices exactly as before. Town surcharges (OUTSTATION,
+// OUTSTATION_TRIP) stay the card's own and add on top, as Labuan's customs fee does.
 // ---------------------------------------------------------------------------
 
 /** The card-level dimensions the calculator needs (a subset of the stored card). */
@@ -53,6 +62,16 @@ export interface RateCardSpec {
   capSen?: number | null;
   rounding?: 'NONE' | 'NEAREST_10C' | 'NEAREST_RM' | null;
   rules: readonly RateRuleSpec[];
+  /** The card's priced areas (see AREAS above). Absent or empty: none. */
+  areas?: readonly RateAreaSpec[];
+}
+
+/** One priced area of a card: the towns it covers, each matched as a whole word
+ *  in the delivery address, as a town OUTSTATION rule is. */
+export interface RateAreaSpec {
+  id: string;
+  name: string;
+  towns: readonly string[];
 }
 
 export type RateRuleType =
@@ -80,6 +99,8 @@ export interface RateRuleSpec {
   bracketMax?: number | null;
   /** OUTSTATION: destination area zone this surcharge applies to. */
   zone?: string | null;
+  /** The area this rule prices in (RateAreaSpec.id); null or absent = the card's own rule. */
+  areaId?: string | null;
   /** The price, integer sen. */
   amountSen: number;
 }
@@ -117,6 +138,9 @@ export interface DeliveryFacts {
    *  "Seremban RM40"); it applies when that town appears as a word here. Two
    *  towns in one Klang Valley postcode zone could not be told apart otherwise. */
   addressText?: string | null;
+  /** The area to price in, when the caller knows it (the Price check names one);
+   *  otherwise the address decides (areaOf). */
+  areaId?: string | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -140,6 +164,8 @@ export interface CostBreakdown {
   /** The sum BEFORE the min/cap/rounding envelope — the raw priced lines. */
   subtotalSen: number;
   lines: CostLine[];
+  /** The area the delivery was priced in, when the card has one for it. */
+  area?: { id: string; name: string } | null;
 }
 
 function intOf(v: number | null | undefined): number {
@@ -265,6 +291,40 @@ export function townsInAddress(
     });
 }
 
+const asWords = (v: unknown): string => ` ${String(v ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()} `;
+
+/**
+ * The area a delivery is priced in, or null. PURE.
+ *
+ * Named by the caller (facts.areaId) when it knows it. Otherwise the area one of
+ * whose towns appears as a whole word in the delivery address. When the address
+ * names towns of two areas — a trip's several addresses — the area whose first
+ * charging unit costs most: as farthestZone reads "farthest" off a surcharge,
+ * the dearest area is the farthest one, priced once.
+ */
+export function areaOf(
+  card: Pick<RateCardSpec, 'areas' | 'rules'>,
+  facts: Pick<DeliveryFacts, 'areaId' | 'addressText'>,
+): RateAreaSpec | null {
+  const areas = card.areas ?? [];
+  if (areas.length === 0) return null;
+  if (facts.areaId) return areas.find((a) => a.id === facts.areaId) ?? null;
+  const text = asWords(facts.addressText);
+  if (!text.trim()) return null;
+  let best: RateAreaSpec | null = null;
+  let bestSen = -1;
+  for (const a of areas) {
+    if (!a.towns.some((t) => asWords(t).trim() !== '' && text.includes(asWords(t)))) continue;
+    const first = (card.rules ?? [])
+      .filter((r) => r.areaId === a.id && r.ruleType === 'POSITIONAL_TIER')
+      .sort((x, y) => intOf(x.tierPosition) - intOf(y.tierPosition))[0];
+    const sen = first ? intOf(first.amountSen) : 0;
+    /* Ties keep the first area listed, so a re-run prices the same. */
+    if (sen > bestSen) { best = a; bestSen = sen; }
+  }
+  return best;
+}
+
 /** How the caller is pricing: one DROP, or a whole TRIP. */
 export interface CostOptions {
   /**
@@ -293,9 +353,18 @@ export interface CostOptions {
  */
 export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, opts: CostOptions = {}): CostBreakdown {
   const lines: CostLine[] = [];
-  const rules = card.rules ?? [];
+  /* The card's own rules; town surcharges below read only these. */
+  const rules = (card.rules ?? []).filter((r) => r.areaId == null);
+  const area = areaOf(card, facts);
+  const inArea = area ? (card.rules ?? []).filter((r) => r.areaId === area.id) : [];
 
-  const rulesOf = (t: RateRuleType) => rules.filter((r) => r.ruleType === t);
+  /* A rule type the area prices is the area's; any other type is the card's own. */
+  const rulesOf = (t: RateRuleType) => {
+    const mine = inArea.filter((r) => r.ruleType === t);
+    return mine.length > 0 ? mine : rules.filter((r) => r.ruleType === t);
+  };
+  /* A line priced by the area says so: "1st set · Bintulu / Tatau". */
+  const at = (r: RateRuleSpec): string => (area && r.areaId === area.id ? ` · ${area.name}` : '');
 
   // ── Charging-unit positional tiers (+ cap/overage) ────────────────────────
   const unitCount = chargingUnitCount(card, facts);
@@ -308,7 +377,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     if (cap !== null && n > cap) {
       lines.push({
         ruleType: 'OVERAGE',
-        label: `Overage ${ordinal(n)} ${unitLabel} (beyond cap ${cap})`,
+        label: `Overage ${ordinal(n)} ${unitLabel} (beyond cap ${cap})${at(overage!)}`,
         amountSen: intOf(overage!.amountSen),
         detail: { position: n, cap },
       });
@@ -318,7 +387,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     if (tier) {
       lines.push({
         ruleType: 'POSITIONAL_TIER',
-        label: `${ordinal(n)} ${unitLabel}`,
+        label: `${ordinal(n)} ${unitLabel}${at(tier)}`,
         amountSen: intOf(tier.amountSen),
         detail: { position: n, tierPosition: intOf(tier.tierPosition) },
       });
@@ -339,7 +408,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       const hi = bracket.bracketMax === null || bracket.bracketMax === undefined ? '+' : `-${intOf(bracket.bracketMax)}`;
       lines.push({
         ruleType: 'SOFA_BRACKET',
-        label: `Sofa ${c}-compartment (${intOf(bracket.bracketMin)}${hi} band)`,
+        label: `Sofa ${c}-compartment (${intOf(bracket.bracketMin)}${hi} band)${at(bracket)}`,
         amountSen: intOf(bracket.amountSen),
         detail: { compartments: c, bracketMin: intOf(bracket.bracketMin), bracketMax: bracket.bracketMax ?? null },
       });
@@ -382,7 +451,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     const each = intOf(rule.amountSen);
     lines.push({
       ruleType: type,
-      label: count > 1 ? `${label} x${count}` : label,
+      label: `${count > 1 ? `${label} x${count}` : label}${at(rule)}`,
       amountSen: each * count,
       detail: { count, eachSen: each },
     });
@@ -436,7 +505,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  return { totalSen: total, subtotalSen, lines };
+  return { totalSen: total, subtotalSen, lines, area: area ? { id: area.id, name: area.name } : null };
 }
 
 // ── WS4c: fixed per-TRIP outstation surcharge ────────────────────────────────

@@ -78,7 +78,11 @@ const CARD_COLS =
   'id, name, carrier_lorry_id, carrier_company_id, carrier_label, is_own_fleet, basis, aggregation, ' +
   'min_charge_sen, cap_sen, rounding, is_active, notes, created_at, updated_at';
 const RULE_COLS =
-  'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_sen, params, sort_order';
+  'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, area_id, amount_sen, params, sort_order';
+/* A card's priced areas (mig 20261111T1000; owner 2026-11-11 on the 3PL quotations). */
+const AREA_COLS = 'id, card_id, name, towns, sort_order';
+/* Town surcharges stay the card's own: an area prices the ladder and the charges. */
+const CARD_ONLY_TYPES: ReadonlySet<string> = new Set(['OUTSTATION', 'OUTSTATION_TRIP']);
 
 type Row = Record<string, unknown>;
 const s = (v: unknown): string | null => (v == null ? null : String(v));
@@ -121,11 +125,26 @@ export function ruleOut(r: Row) {
     bracketMin: n(r.bracket_min),
     bracketMax: n(r.bracket_max),
     zone: s(r.zone),
+    areaId: s(r.area_id),
     amountSen: Number(r.amount_sen ?? 0),
     params: (r.params ?? null) as Record<string, unknown> | null,
     sortOrder: Number(r.sort_order ?? 0),
   };
 }
+
+export function areaOut(r: Row) {
+  return {
+    id: String(r.id),
+    cardId: String(r.card_id),
+    name: String(r.name ?? ''),
+    towns: Array.isArray(r.towns) ? (r.towns as unknown[]).map(String) : [],
+    sortOrder: Number(r.sort_order ?? 0),
+  };
+}
+
+/** A typed town list as stored: upper case, single spaces, no blanks, no repeats. */
+export const townsOf = (towns: readonly string[]): string[] =>
+  [...new Set(towns.map((t) => t.toUpperCase().replace(/\s+/g, ' ').trim()).filter((t) => t !== ''))];
 
 /** A card's stored rules -> the pure calculator's RateRuleSpec[]. */
 function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
@@ -135,11 +154,14 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
     bracketMin: r.bracketMin,
     bracketMax: r.bracketMax,
     zone: r.zone,
+    areaId: r.areaId,
     amountSen: r.amountSen,
   }));
 }
 
-export function toCardSpec(card: ReturnType<typeof cardOut>, rules: ReturnType<typeof ruleOut>[]): RateCardSpec {
+export function toCardSpec(
+  card: ReturnType<typeof cardOut>, rules: ReturnType<typeof ruleOut>[], areas: ReturnType<typeof areaOut>[] = [],
+): RateCardSpec {
   return {
     basis: card.basis,
     aggregation: card.aggregation,
@@ -147,7 +169,20 @@ export function toCardSpec(card: ReturnType<typeof cardOut>, rules: ReturnType<t
     capSen: card.capSen,
     rounding: card.rounding as RateCardSpec['rounding'],
     rules: toRuleSpecs(rules),
+    areas: areas.filter((a) => a.cardId === card.id).map((a) => ({ id: a.id, name: a.name, towns: a.towns })),
   };
+}
+
+/** The areas of these cards, scoped to the request's company. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadAreas(c: any, cardIds: string[]): Promise<{ ok: true; areas: ReturnType<typeof areaOut>[] } | { ok: false; reason: string }> {
+  if (cardIds.length === 0) return { ok: true, areas: [] };
+  const { data, error } = await paginateAll<Row>((lo, hi) =>
+    scopeToCompany(rc(c.get('supabase')).from('delivery_rate_areas').select(AREA_COLS), c).in('card_id', cardIds)
+      .order('sort_order', { ascending: true }).order('name', { ascending: true }).range(lo, hi),
+  );
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, areas: (data ?? []).map(areaOut) };
 }
 
 // ── GET /meta — carriers (lorries) + known zones for the editor selects. ─────
@@ -354,6 +389,8 @@ const ruleCreateSchema = z.object({
   bracketMin: z.number().int().min(0).nullable().optional(),
   bracketMax: z.number().int().min(0).nullable().optional(),
   zone: z.string().trim().max(40).nullable().optional(),
+  /* The area this rule prices in; null = the card's own rule. */
+  areaId: z.string().trim().min(1).max(64).nullable().optional(),
   amountSen: z.number().int().min(0),
   params: z.record(z.string(), z.unknown()).nullable().optional(),
   sortOrder: z.number().int().optional(),
@@ -363,6 +400,22 @@ async function loadCardForWrite(c: any, id: string, companyId: number) {
   const sb = c.get('supabase');
   const { data } = await scopeToCompanyId(rc(sb).from('delivery_rate_cards').select('id').eq('id', id), companyId).maybeSingle();
   return !!data;
+}
+
+/** Why a rule cannot name this area, or null: the area must be this card's,
+    and a town surcharge stays the card's own. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function areaRefusal(c: any, cardId: string, companyId: number, areaId: string | null | undefined, ruleType: string | null) {
+  if (!areaId) return null;
+  if (ruleType && CARD_ONLY_TYPES.has(ruleType)) {
+    return { status: 400 as const, body: { error: 'area_not_for_surcharge', reason: 'A town surcharge belongs to the whole card. An area prices its own sets, sofas and charges.' } };
+  }
+  const { data, error } = await scopeToCompanyId(
+    rc(c.get('supabase')).from('delivery_rate_areas').select('id').eq('id', areaId).eq('card_id', cardId), companyId,
+  ).maybeSingle();
+  if (error) return { status: 500 as const, body: { error: 'fetch_failed', reason: error.message } };
+  if (!data) return { status: 404 as const, body: { error: 'area_not_found', reason: 'That area is not on this card.' } };
+  return null;
 }
 
 // POST /:id/rules — add a rule to a card.
@@ -376,6 +429,8 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
+  const noArea = await areaRefusal(c, id, co.companyId, p.areaId, p.ruleType);
+  if (noArea) return c.json(noArea.body, noArea.status);
   const sb = c.get('supabase');
   const { data, error } = await rc(sb).from('delivery_rate_rules').insert({
     company_id: co.companyId,
@@ -385,6 +440,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
     bracket_min: p.bracketMin ?? null,
     bracket_max: p.bracketMax ?? null,
     zone: (p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
+    area_id: p.areaId ?? null,
     amount_sen: p.amountSen,
     params: p.params ?? null,
     sort_order: p.sortOrder ?? 0,
@@ -415,6 +471,29 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   if (p.bracketMin !== undefined) updates.bracket_min = p.bracketMin;
   if (p.bracketMax !== undefined) updates.bracket_max = p.bracketMax;
   if (p.zone !== undefined) updates.zone = p.zone ? p.zone.toUpperCase() : null;
+  if (p.areaId !== undefined) {
+    /* The rule's type decides whether an area may hold it: the new type when it changes, else the stored one. */
+    let ruleType: string | null = p.ruleType ?? null;
+    if (!ruleType && p.areaId) {
+      const { data: held, error: heldErr } = await scopeToCompanyId(
+        rc(c.get('supabase')).from('delivery_rate_rules').select('rule_type').eq('id', ruleId).eq('card_id', id), co.companyId,
+      ).maybeSingle();
+      if (heldErr) return c.json({ error: 'read_failed', reason: heldErr.message }, 500);
+      ruleType = held ? String((held as Row).rule_type) : null;
+    }
+    const noArea = await areaRefusal(c, id, co.companyId, p.areaId, ruleType);
+    if (noArea) return c.json(noArea.body, noArea.status);
+    updates.area_id = p.areaId;
+  } else if (p.ruleType !== undefined && CARD_ONLY_TYPES.has(p.ruleType)) {
+    /* Turning an area's rule into a town surcharge would leave a surcharge inside an area. */
+    const { data: held, error: heldErr } = await scopeToCompanyId(
+      rc(c.get('supabase')).from('delivery_rate_rules').select('area_id').eq('id', ruleId).eq('card_id', id), co.companyId,
+    ).maybeSingle();
+    if (heldErr) return c.json({ error: 'read_failed', reason: heldErr.message }, 500);
+    if (held && (held as Row).area_id != null) {
+      return c.json({ error: 'area_not_for_surcharge', reason: 'A town surcharge belongs to the whole card. Move the rule off its area first.' }, 400);
+    }
+  }
   if (p.amountSen !== undefined) updates.amount_sen = p.amountSen;
   if (p.params !== undefined) updates.params = p.params;
   if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
@@ -450,12 +529,91 @@ deliveryRateCards.delete('/:id/rules/:ruleId', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Areas (mig 20261111T1000) ────────────────────────────────────────────────
+// A card's priced areas: a name and its towns. Rules name an area to price
+// deliveries there (see the rule routes above and scm/lib/delivery-rate-card.ts).
+const areaSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  towns: z.array(z.string().trim().max(40)).max(80),
+  sortOrder: z.number().int().optional(),
+});
+const areaPatchSchema = areaSchema.partial();
+
+const areaWriteFailed = (error: { code?: string; message?: string }) => (error.code === '23505'
+  ? { status: 409 as const, body: { error: 'duplicate_area', reason: 'This card already has an area with that name.' } }
+  : { status: 500 as const, body: { error: 'save_failed', reason: error.message ?? 'unknown' } });
+
+// POST /:id/areas — add an area to a card.
+deliveryRateCards.post('/:id/areas', async (c) => {
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = areaSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
+  const { data, error } = await rc(c.get('supabase')).from('delivery_rate_areas').insert({
+    company_id: co.companyId,
+    card_id: id,
+    name: parsed.data.name,
+    towns: townsOf(parsed.data.towns),
+    sort_order: parsed.data.sortOrder ?? 0,
+  }).select(AREA_COLS).single();
+  if (error) { const f = areaWriteFailed(error); return c.json(f.body, f.status); }
+  return c.json({ area: areaOut(data as Row) }, 201);
+});
+
+// PATCH /areas/:areaId — rename an area, change its towns or its place.
+deliveryRateCards.patch('/areas/:areaId', async (c) => {
+  const areaId = c.req.param('areaId');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = areaPatchSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  const p = parsed.data;
+  const updates: Record<string, unknown> = {};
+  if (p.name !== undefined) updates.name = p.name;
+  if (p.towns !== undefined) updates.towns = townsOf(p.towns);
+  if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
+  if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
+  updates.updated_at = new Date().toISOString();
+  const { data, error } = await scopeToCompanyId(
+    rc(c.get('supabase')).from('delivery_rate_areas').update(updates).eq('id', areaId), co.companyId,
+  ).select(AREA_COLS).maybeSingle();
+  if (error) { const f = areaWriteFailed(error); return c.json(f.body, f.status); }
+  if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  return c.json({ area: areaOut(data as Row) });
+});
+
+// DELETE /areas/:areaId — remove an area and the prices it carried.
+deliveryRateCards.delete('/areas/:areaId', async (c) => {
+  const areaId = c.req.param('areaId');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  /* Its rules go with it — the foreign key cascades; deleting them first says so
+     here too, and leaves nothing behind should the area be gone already. */
+  const { error: rErr } = await scopeToCompanyId(rc(sb).from('delivery_rate_rules').delete().eq('area_id', areaId), co.companyId);
+  if (rErr) return c.json({ error: 'delete_failed', reason: rErr.message }, 500);
+  const { data: deleted, error } = await scopeToCompanyId(
+    rc(sb).from('delivery_rate_areas').delete().eq('id', areaId), co.companyId,
+  ).select('id').maybeSingle();
+  if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
+  if (!deleted) return c.json(NOT_THIS_COMPANY, 404);
+  return c.json({ ok: true });
+});
+
 // ── POST /:id/compute — run the pure calculator against a card for given facts.
 const factsSchema = z.object({
   setCount: z.number().int().min(0).nullable().optional(),
   itemCount: z.number().int().min(0).nullable().optional(),
   sofaCompartments: z.array(z.number().int().min(0)).nullable().optional(),
   destinationZone: z.string().trim().max(40).nullable().optional(),
+  /* The Price check names the area to price in. */
+  areaId: z.string().trim().min(1).max(64).nullable().optional(),
   disposeCount: z.number().int().min(0).nullable().optional(),
   setupCount: z.number().int().min(0).nullable().optional(),
   dismantleCount: z.number().int().min(0).nullable().optional(),
@@ -479,8 +637,10 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   const { data: rules } = await paginateAll<Row>((lo, hi) =>
     scopeToCompany(rc(sb).from('delivery_rate_rules').select(RULE_COLS), c).eq('card_id', id).range(lo, hi),
   );
+  const areas = await loadAreas(c, [id]);
+  if (!areas.ok) return c.json({ error: 'fetch_failed', reason: areas.reason }, 500);
   const cardO = cardOut(card as Row);
-  const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut));
+  const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut), areas.areas);
   /* perTrip: the calculator on the Rate Cards page could NEVER show an
      OUTSTATION_TRIP line — the rules editor let you create one and this
      endpoint never applied it, so the figure on screen silently disagreed
@@ -562,6 +722,8 @@ deliveryRateCards.get('/reconcile', async (c) => {
     arr.push(ro);
     rulesByCard.set(ro.cardId, arr);
   }
+  const cardAreas = await loadAreas(c, cards.map((x) => x.id));
+  if (!cardAreas.ok) return c.json({ error: 'load_failed', reason: cardAreas.reason }, 500);
 
   // 3) Stops -> SO doc numbers per trip, then SO lines for set/zone derivation.
   const tripIds = trips.map((t) => String(t.id));
@@ -605,7 +767,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       linesBySo.set(doc, arr);
     }
     const { data: soRows } = await paginateAll<Row>((lo, hi) =>
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
+      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
     );
     for (const so of soRows ?? []) {
       const doc = String(so.doc_no ?? '');
@@ -619,7 +781,9 @@ deliveryRateCards.get('/reconcile', async (c) => {
       const where = [s(so.address1), s(so.address2), s(so.postcode)]
         .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
       customerKeyBySo.set(doc, `${who}@@${where}`);
-      addressBySo.set(doc, where);
+      /* The words a town surcharge or an area is found by: the whole address and its city. */
+      addressBySo.set(doc, [s(so.address1), s(so.address2), s(so.address3), s(so.address4), s(so.city), s(so.postcode)]
+        .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase());
     }
   }
 
@@ -654,7 +818,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
     let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
-      const spec = toCardSpec(card, rulesByCard.get(card.id) ?? []);
+      const spec = toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas);
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
@@ -701,5 +865,7 @@ deliveryRateCards.get('/:id', async (c) => {
     scopeToCompany(rc(sb).from('delivery_rate_rules').select(RULE_COLS), c).eq('card_id', id)
       .order('rule_type', { ascending: true }).order('sort_order', { ascending: true }).range(lo, hi),
   );
-  return c.json({ card: cardOut(card as Row), rules: (rules ?? []).map(ruleOut) });
+  const areas = await loadAreas(c, [id]);
+  if (!areas.ok) return c.json({ error: 'fetch_failed', reason: areas.reason }, 500);
+  return c.json({ card: cardOut(card as Row), rules: (rules ?? []).map(ruleOut), areas: areas.areas });
 });

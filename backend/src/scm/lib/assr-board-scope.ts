@@ -227,14 +227,23 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_message_status AS pickup_message_status,
               assr_cases.inspection_message_status AS inspection_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
-              so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country
+              so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country,
+              so.ref AS so_ref_src, so.customer_so_no AS so_custso_src, dos.do_nos AS related_do_nos
          FROM assr_cases
          LEFT JOIN LATERAL (
-              SELECT o.customer_state, o.postcode, o.customer_country
+              SELECT o.customer_state, o.postcode, o.customer_country, o.ref, o.customer_so_no, o.doc_no AS order_doc_no
                 FROM scm.mfg_sales_orders o
                WHERE o.doc_no = assr_cases.doc_no OR o.linked_ac_docno = assr_cases.doc_no
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
+         LEFT JOIN LATERAL (
+              -- The original order's delivery orders (DO No. column) + its Ref No., back-filled
+              -- onto the Service-Case row (owner 2026-11-11). Keyed on the RESOLVED order doc_no
+              -- (so.order_doc_no), falling back to the case's own doc_no when no order matched;
+              -- an old case whose order predates the ERP matches neither and stays blank.
+              SELECT string_agg(dd.do_number, ' | ' ORDER BY dd.do_number) AS do_nos
+                FROM scm.delivery_orders dd
+               WHERE dd.so_doc_no = COALESCE(so.order_doc_no, assr_cases.doc_no)) dos ON TRUE
         WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
                OR assr_cases.sched_pickup_date IS NOT NULL OR assr_cases.sched_delivery_date IS NOT NULL
                OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own')
