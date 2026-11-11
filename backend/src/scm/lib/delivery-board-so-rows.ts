@@ -126,6 +126,10 @@ export function assembleSoOrders(soRows: SoHeaderRow[], m: SoBoardMaps, x: SoRow
       row_type: 'so' as 'so' | 'assr' | 'dp' | 'project',
       ref: null as string | null,
       so_ref: ((r.ref as string | null) || (r.customer_so_no as string | null)) ?? null, // the order's reference, customer-ref.ts rule (AutoCount Ref, e.g. pg0791) - the board's "Reference" column
+      // Only a Service-Case row back-fills its ORIGINAL order's DO numbers here (the DO No.
+      // column shows this when the row has no DO of its own); an SO row carries its own DOs
+      // in delivery_orders, so this stays null (union parity).
+      related_do_nos: null as string[] | null,
       job_kind: null as 'customer_pickup' | 'delivery' | 'inspection' | null,
       // DP-Order job type (DELIVERY/PICKUP/SERVICE/SETUP/DISMANTLE/SUPPLIER_PICKUP)
       // — only 'dp' rows carry it; SO/ASSR rows are null (union parity).
