@@ -47,10 +47,11 @@ const titleOf = (k: ListKey): string => LISTS.find((l) => l.key === k)!.label;
 const ABOUT: Record<ListKey, string> = {
   reports: 'Lines on a merchant report that are not reconciled to their sale yet, read as Merchant Recon reads them. '
     + '“No sale in the ERP” is card money nobody keyed a sale for — key it, or find it on the report.',
-  payments: 'Every card and transfer payment on a sales order or invoice that is not matched yet. A card payment is matched once '
-    + 'the merchant report line claiming it is confirmed — what may still be open after that is on the other two lists; a transfer '
-    + 'once a bank statement line is matched to it. Where the same money waits on another list, the row says so. Not listed: cash '
-    + '(there is nothing to match it against), payments carried over from AutoCount, and cancelled orders.',
+  payments: 'Every card and transfer payment on a sales order or invoice that is not matched yet. A card payment — or a DuitNow QR '
+    + 'sale keyed as a transfer — is matched once the merchant report line claiming it is confirmed; what may still be open after '
+    + 'that is on the other two lists. Any other transfer is matched once a bank statement line is matched to it. Where the same '
+    + 'money waits on another list, the row says so. Not listed: cash (there is nothing to match it against), payments carried over '
+    + 'from AutoCount, and cancelled orders.',
   bank: 'Money in on an uploaded bank statement that no entry in the books is matched to yet: a card payout waiting for its report, '
     + 'DuitNow QR money, and transfers — each with the entries of the same amount it could be.',
 };
