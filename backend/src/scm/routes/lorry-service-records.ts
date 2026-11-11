@@ -85,6 +85,7 @@ function intField(v: unknown): { ok: true; value: number | null } | { ok: false 
 // caller today, and the index is on (lorry_id, service_date) so it would be a
 // seq scan the moment the history grows.
 lorryServiceRecords.get('/', async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - a lorry's service history is shared across companies like the lorry itself; see the file header.
   const lorryId = c.req.query('lorryId');
   if (!lorryId) return c.json({ error: 'lorry_id_required' }, 400);
   const sb = c.get('supabase');
@@ -298,6 +299,7 @@ lorryServiceRecords.put('/:id/invoice', async (c) => {
 // 72-102), so accepting a caller-supplied key would be a read primitive over
 // every other module's objects.
 lorryServiceRecords.get('/:id/invoice', async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - the service record belongs to the shared lorry, not to one company's book; see the file header.
   const id = c.req.param('id');
   if (!c.env.SO_ITEM_PHOTOS) return c.json({ error: 'photo_bucket_not_configured' }, 500);
 
