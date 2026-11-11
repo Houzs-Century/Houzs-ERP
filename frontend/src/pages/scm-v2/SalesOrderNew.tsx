@@ -103,7 +103,7 @@ import {
   useAddressCascade, pickState, pickCity, pickPostcode,
   cityPlaceholder, postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
-import { StatePicker } from '../../vendor/scm/components/StatePicker';
+import { StatePicker } from '../../vendor/scm/components/StatePicker'; import { TransportFeeField } from '../../vendor/scm/components/TransportFeeField';
 import {
   useSoDropdownOptions, optionsOrFallback, preferredCustomerTypeValue,
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
@@ -1402,7 +1402,7 @@ export const SalesOrderNew = () => {
   const buildValidateDraft = useCallback((asDraftFlag: boolean) => ({
     debtorName,
     phone,
-    items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty, description: l.description, unitPriceSen: l.unitPriceSen, discountSen: l.discountSen })),
     asDraft: asDraftFlag,
     hasVenue: !!effectiveVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), {}),
@@ -1410,7 +1410,7 @@ export const SalesOrderNew = () => {
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
-    customerState: state,
+    customerState: state, customerCountry: country,
     processingDate,
     customerDeliveryDate: deliveryDate,
     fillAddressLater,
@@ -1424,7 +1424,7 @@ export const SalesOrderNew = () => {
       convertedFromDocNo: d.convertedFromDocNo,
       amountSen: d.amountSen,
     })),
-  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, autoFair.why, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, autoFair.why, salespersonId, branding.companyCode, salesLocation, state, country, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
 
   /* Live "Can't save — N to fix" list, asked of the backend as the operator
      types (debounced). Based on the CONFIRMED create (asDraft:false), which is
@@ -2253,6 +2253,7 @@ export const SalesOrderNew = () => {
           })}
 
           <AddLineButton variant="block" onClick={addLine} />
+          <TransportFeeField companyCode={branding.companyCode} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup, amountSen: l.unitPriceSen })} priced={(l, sen) => ({ ...l, unitPriceSen: sen, priceAuthored: true })} make={(sen) => ({ ...newLine(deliveryDate || null), description: 'TRANSPORTATION CHARGES', qty: 1, unitPriceSen: sen, priceAuthored: true })} classes={{ field: styles.field, label: `${styles.fieldLabel} ${styles.fieldLabelReq}`, input: styles.fieldInput }} style={{ maxWidth: 260, marginTop: 'var(--space-3)' }} />
 
           <div style={{
             display: 'flex',
