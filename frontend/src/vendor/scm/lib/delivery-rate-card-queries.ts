@@ -49,6 +49,10 @@ export type RateRule = {
   amountSen: number;
   params: Record<string, unknown> | null;
   sortOrder: number;
+  /** Set when the price belongs to one AREA of the card (its own towns), absent
+   *  or null for the card's own price. Area prices are shown with their area,
+   *  never among the card's tiers. */
+  areaId?: string | null;
 };
 
 export type RateCardMeta = {

@@ -65,6 +65,15 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
   </section>
 );
 
+/** A labelled box: label over the control, an optional hint under it. */
+export const Field = ({ label, hint, className, children }: { label: string; hint?: string; className?: string; children: ReactNode }) => (
+  <label className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+    <span className={LABEL}>{label}</span>
+    {children}
+    {hint && <span className={HINT}>{hint}</span>}
+  </label>
+);
+
 /** The filters over a tab: one quiet bar. */
 export const FilterBar = ({ children }: { children: ReactNode }) => (
   <div className={cn(CARD, 'flex flex-wrap items-end gap-3 bg-surface-2/40 px-4 py-3')}>{children}</div>
