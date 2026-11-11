@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { loadOpenTallies, type OpenTallyRow } from './bank-statement-open';
+import { loadOpenTallies, openTallySql, type OpenTallyRow } from './bank-statement-open';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { readFailure } from '../scm/lib/read-failure';
 
@@ -82,5 +82,10 @@ describe('loadOpenTallies — the statements list "still to decide" figures', ()
     errSpy.mockRestore();
     expect(body.error).toBe('load_failed');
     expect(body.stage).toBe('bank_open_lines');
+  });
+
+  it('with no Worker bindings or no database URL, SQL steps aside for the paged read', async () => {
+    await expect(openTallySql(undefined, OURS)).resolves.toBeNull();
+    await expect(openTallySql({ DATABASE_URL: '' }, OURS)).resolves.toBeNull();
   });
 });

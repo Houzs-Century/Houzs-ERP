@@ -28,11 +28,14 @@ type OpenLine = { statement_id: number | string; kind: string | null; amount_sen
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a supabase client or the test fake; the read is built here
 type Sb = { from: (table: string) => any };
 
-/** The grouped read, through the repo's SQL door. Null = take the paged fallback. */
+/** The grouped read, through the repo's SQL door. Null = take the paged fallback.
+ *  `env` is undefined when a route runs without Worker bindings (the route
+ *  tests' `app.request`), which means the same as no database URL. */
 export function openTallySql(
-  env: { HYPERDRIVE?: { connectionString: string }; DATABASE_URL?: string },
+  env: { HYPERDRIVE?: { connectionString: string }; DATABASE_URL?: string } | undefined,
   companyId: number,
 ): Promise<OpenTallyRow[] | null> {
+  if (!env) return Promise.resolve(null);
   return trySql(env, 'bank-statement-open', async (sql) => {
     const rows = await sql<OpenTallyRow[]>`
       SELECT statement_id,
