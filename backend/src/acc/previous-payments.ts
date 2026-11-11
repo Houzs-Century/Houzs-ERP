@@ -44,6 +44,10 @@ export async function loadPreviousKeys(sb: Sb, companyId: number): Promise<{ ok:
   return { ok: true, keys: new Set((read.data ?? []).map((r) => previousKey(String(r.payment_source), String(r.payment_id)))) };
 }
 
+/** A filter for one payment table's rows: keeps those not marked a previous record. */
+export const notPrevious = (keys: ReadonlySet<string>, source: PaymentSource) =>
+  (r: { id?: unknown }): boolean => !keys.has(previousKey(source, String(r.id)));
+
 /** Why a payment cannot be marked, in the words the screen shows. */
 export type PreviousRefusal = PaymentRef & { docNo: string | null; reason: 'not_found' | 'merchant_line' | 'in_the_books'; message: string };
 

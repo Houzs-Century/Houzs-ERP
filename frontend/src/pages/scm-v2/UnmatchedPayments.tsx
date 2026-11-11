@@ -16,6 +16,10 @@
 // the hidden ones too, and tell the page their columns, rows and filters. Every
 // row links the screen that unsticks it. Words and columns: unmatchedLists.tsx;
 // the rules are the server's.
+//
+// A fourth list, apart from the three: Previous records — payments the owner
+// ticked and marked as the previous system's (owner 2026-11-11: 我检查确定后，就
+// 直接说这个是之前record), with Undo. Not part of Export all, nor of the order.
 // ----------------------------------------------------------------------------
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -33,7 +37,8 @@ import { fmtDate } from '../../vendor/shared/format';
 import { danger, fmt, softText } from './settlement-ui';
 import top from './MerchantReports.module.css';
 import { useSettlementBatchDetails, useSettlementBatches } from './settlement-queries';
-import { useUnmatchedBankLines, useUnmatchedPayments, type UnmatchedBankLine } from './unmatched-payments-queries';
+import { usePreviousPayments, useUnmatchedBankLines, useUnmatchedPayments, type UnmatchedBankLine } from './unmatched-payments-queries';
+import { MarkPreviousButton, PressNote, PreviousRecordsList, usePaymentTicks, type PressResult } from './previousRecords';
 import {
   BANK_COLUMNS, BANK_KINDS, LISTS, PAYMENT_COLUMNS, PAYMENT_STAGES, REPORT_COLUMNS, REPORT_STATUSES, reportLinesOf, withSameMoney,
   type ListKey, type PaymentRow, type ReportLineRow,
@@ -67,6 +72,8 @@ const ABOUT: Record<ListKey, string> = {
   bank: 'Money in on an uploaded bank statement that no entry in the books is matched to yet: a card payout waiting for its report, '
     + 'DuitNow QR money, and transfers — each with the entries of the same amount it could be.',
 };
+const PREVIOUS_ABOUT = 'Payment records you checked and marked as the previous system’s. They show up on no list here, in Merchant Recon '
+  + 'or in the Cash Flow, and no merchant or bank line is offered them; nothing was posted. Tick one and press Undo to put it back.';
 
 type Chip = { key: string; label: string; n: number; sen: number };
 const total = <T,>(rows: readonly T[], sen: (r: T) => number): number => rows.reduce((s, r) => s + sen(r), 0);
@@ -95,11 +102,15 @@ export const UnmatchedPayments = () => {
   const backwards = from > to;
   const [params, setParams] = useSearchParams();
   const list = asList(params.get('list'));
-  const choose = (k: ListKey) => setParams((prev) => {
+  /* The fourth list: the payments marked as the previous system's. */
+  const showPrevious = params.get('list') === 'previous';
+  const choose = (k: ListKey | 'previous') => setParams((prev) => {
     const next = new URLSearchParams(prev);
     next.set('list', k);
     return next;
   }, { replace: true });
+  const previousQ = usePreviousPayments();
+  const [markResult, setMarkResult] = useState<PressResult | null>(null);
   const [chip, setChip] = useState<Record<ListKey, string>>({ reports: 'all', payments: 'all', bank: 'all' });
 
   /* The merchant report lines: each open report read as Merchant Recon reads it. */
@@ -152,6 +163,8 @@ export const UnmatchedPayments = () => {
     bank: Math.max(0, ...(bank ?? []).map((r) => r.ageDays)),
   };
   const loaded: Record<ListKey, boolean> = { reports: reports != null, payments: payments != null, bank: bank != null };
+  /* Ticks on Payments, for "Previous record". */
+  const payTicks = usePaymentTicks((rowsOn.payments ?? []).map((r) => `${r.source}:${r.paymentId}`));
 
   const range = `Dated ${fmtDate(from)} to ${fmtDate(to)}`;
   const chipLabel = (k: ListKey): string | null => {
@@ -275,8 +288,8 @@ export const UnmatchedPayments = () => {
           {LISTS.map((l) => {
             const all = chips[l.key][0]!;
             return (
-              <button key={l.key} type="button" role="tab" aria-selected={list === l.key}
-                className={`${top.card} ${list === l.key ? top.cardOn : ''}`} onClick={() => choose(l.key)}>
+              <button key={l.key} type="button" role="tab" aria-selected={!showPrevious && list === l.key}
+                className={`${top.card} ${!showPrevious && list === l.key ? top.cardOn : ''}`} onClick={() => choose(l.key)}>
                 <div className={top.cardHead}><span className={top.cardName}>{l.label}</span></div>
                 <div className={`${top.count} ${loaded[l.key] && all.n === 0 ? top.countZero : ''}`}>
                   {loaded[l.key] ? all.n : '…'}
@@ -290,10 +303,19 @@ export const UnmatchedPayments = () => {
               </button>
             );
           })}
+          <button type="button" role="tab" aria-selected={showPrevious}
+            className={`${top.card} ${showPrevious ? top.cardOn : ''}`} onClick={() => choose('previous')}>
+            <div className={top.cardHead}><span className={top.cardName}>Previous records</span></div>
+            <div className={`${top.count} ${previousQ.data?.rows.length === 0 ? top.countZero : ''}`}>
+              {previousQ.data ? previousQ.data.rows.length : '…'}
+            </div>
+            <div className={top.countLabel}>the previous system’s, marked by you · shown nowhere</div>
+          </button>
         </div>
 
-        <div style={softText}>{ABOUT[list]}</div>
-        {loaded[list] && (
+        {showPrevious && <div style={softText}>{PREVIOUS_ABOUT}</div>}
+        {!showPrevious && <div style={softText}>{ABOUT[list]}</div>}
+        {!showPrevious && loaded[list] && (
           <div className={top.headRow} role="group" aria-label={`${titleOf(list)} filter`}>
             {chips[list].map((c) => (
               <button key={c.key} type="button" aria-pressed={on(list) === c.key}
@@ -304,10 +326,13 @@ export const UnmatchedPayments = () => {
             ))}
           </div>
         )}
-        {loaded[list] && <div style={softText} aria-live="polite">{summary[list]}</div>}
+        {!showPrevious && loaded[list] && <div style={softText} aria-live="polite">{summary[list]}</div>}
+        {!showPrevious && list === 'payments' && <PressNote result={markResult} />}
       </div>
 
-      <div hidden={list !== 'reports'}>
+      {showPrevious && <PreviousRecordsList />}
+
+      <div hidden={showPrevious || list !== 'reports'}>
         <DataTable<ReportLineRow>
           tableId="unmatched-report-lines"
           exportName={listOf('reports').file}
@@ -326,7 +351,7 @@ export const UnmatchedPayments = () => {
           getRowKey={(r) => r.key}
         />
       </div>
-      <div hidden={list !== 'bank'}>
+      <div hidden={showPrevious || list !== 'bank'}>
         <DataTable<UnmatchedBankLine>
           tableId="unmatched-bank-lines"
           exportName={listOf('bank').file}
@@ -345,14 +370,20 @@ export const UnmatchedPayments = () => {
           getRowKey={(r) => r.lineId}
         />
       </div>
-      <div hidden={list !== 'payments'}>
+      <div hidden={showPrevious || list !== 'payments'}>
         <DataTable<PaymentRow>
           tableId="unmatched-payments"
           exportName={listOf('payments').file}
           exportXlsx
           exportSheet={(rows) => ({ name: listOf('payments').sheet, heading: headingOf('payments', rows.length) })}
           onExportPdf={(view) => void printList('payments', view)}
-          toolbarExtra={pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
+          selection={payTicks.selection}
+          toolbarExtra={(
+            <>
+              {pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
+              <MarkPreviousButton refs={payTicks.refs} onDone={payTicks.clear} onResult={setMarkResult} />
+            </>
+          )}
           onShownColumnsChange={shownPayments}
           onFilteredRowsChange={seenPayments}
           onColFiltersChange={funnelPayments}
