@@ -382,8 +382,8 @@
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/routes/mail-center.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: INLINE_SAFE. Divergence costs a refused upload, never money or stock."
+      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/routes/mail-center.ts frontend/src/pages/MailCenter/mail-attach-preview.ts",
+      "why": "THE INLINE-SAFE PREVIEW LIST: types that may open in a browser tab without running script (no SVG/HTML). 3 homes: INLINE_SAFE on the two attachment streams, and PREVIEWABLE_CONTENT_TYPES in the Mail Center picker, which previews a file in the browser BEFORE it is uploaded, so it cannot import the server list. Divergence costs a missing preview link, never money or stock."
     },
     {
       "check": "D1",

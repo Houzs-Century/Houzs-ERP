@@ -256,3 +256,52 @@ describe("A7: a failed send with an attachment is retried with it", () => {
     expect(Number(outbound?.n)).toBe(0);
   });
 });
+
+describe("a sent email keeps its files on the thread", () => {
+  test("a reply's PDF is stored, listed on the message, and flags the thread", async () => {
+    const first = await inbound("<cust-6@example.com>");
+    reply(200, { id: "prov-sent-1" });
+    const res = await app.request(
+      `/api/mail-center/threads/${first.threadId}/reply`,
+      authed({
+        text: "Revised PO attached.",
+        fromAddress: MAILBOX,
+        attachments: [{ filename: "PO-2611-136-R1.pdf", contentBase64: btoa("%PDF-1.4 revised po") }],
+      }),
+      liveEnv,
+    );
+    expect(res.status).toBe(200);
+
+    const view = await app.request(
+      `/api/mail-center/threads/${first.threadId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      liveEnv,
+    );
+    const detail = (await view.json()) as {
+      messages: Array<{ direction: string; attachments: Array<{ filename: string; contentType: string; sizeBytes: number }> }>;
+    };
+    const sent = detail.messages.find((message) => message.direction === "outbound");
+    expect(sent?.attachments).toEqual([
+      expect.objectContaining({ filename: "PO-2611-136-R1.pdf", contentType: "application/pdf", sizeBytes: 19 }),
+    ]);
+
+    const list = await app.request(
+      `/api/mail-center/threads`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      liveEnv,
+    );
+    const threads = (await list.json()) as Array<{ id: string; hasAttachment: boolean }>;
+    expect(threads.find((thread) => thread.id === first.threadId)?.hasAttachment).toBe(true);
+  });
+
+  test("a thread with no files is not flagged", async () => {
+    const first = await inbound("<cust-7@example.com>");
+    const list = await app.request(
+      `/api/mail-center/threads`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      liveEnv,
+    );
+    const threads = (await list.json()) as Array<{ id: string; hasAttachment: boolean }>;
+    expect(threads.find((thread) => thread.id === first.threadId)?.hasAttachment).toBe(false);
+  });
+});
