@@ -12,6 +12,7 @@ import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
 import { assrSubStatusLabelOf, assrSubStatusSeed } from "../scm/shared/assr-sub-statuses";
+import { pushCustomerPickupDefault } from "../scm/lib/assr-pickup-default";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
@@ -873,21 +874,6 @@ export async function getAssrDetail(env: Env, id: number) {
 
 // ── Stage transition ──────────────────────────────────────────
 
-/** The Pickup / Return stage begins on the customer-pickup leg (collect the item
- *  FROM the customer). That leg reaches Delivery Planning and the HC Delivery sheet
- *  only when its own-team marker `pickup_by='customer'` is set (service-case.md).
- *  So when a case lands on that leg and nobody has yet named WHO collects, default
- *  it to our own team, so the pickup surfaces as a driver job instead of sitting
- *  invisible on the board. An explicit supplier / 3PL choice is never overridden. */
-export function customerPickupOwnTeamDefault(
-  newSubStatus: string | null | undefined,
-  currentPickupBy: string | null | undefined,
-): "customer" | null {
-  return newSubStatus === "pending_customer_pickup" && !String(currentPickupBy ?? "").trim()
-    ? "customer"
-    : null;
-}
-
 export async function transitionStage(
   env: Env,
   id: number,
@@ -938,14 +924,10 @@ export async function transitionStage(
   const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
-
-  // Landing on the customer-pickup leg with no pickup owner yet -> our own team,
-  // so the collection surfaces on Delivery Planning as a driver job. Supplier /
-  // 3PL legs already chosen are left untouched (customerPickupOwnTeamDefault).
-  if (customerPickupOwnTeamDefault(subDefault, row.pickup_by)) {
-    sets.push("pickup_by = ?");
-    binds.push("customer");
-  }
+  // Landing on the customer-pickup leg with no owner yet -> own team, so the
+  // collection surfaces on Delivery Planning as a driver job (board + HC sheet
+  // gate on pickup_by='customer'). An explicit supplier/3PL leg is untouched.
+  pushCustomerPickupDefault(sets, binds, subDefault, row.pickup_by);
 
   // Both terminal stages stop the SLA clock (closed_at). Only a genuine
   // 'completed' stamps completion_date + feeds the satisfaction survey;
@@ -1240,18 +1222,11 @@ export async function patchAssrCase(
     binds.push(docCompanyId);
   }
 
-  // Switching the case onto the customer-pickup leg without naming who collects
-  // defaults it to our own team, so the pickup shows up on Delivery Planning
-  // (service-case.md). Skipped when the caller set pickup_by in the same request,
-  // or a supplier / 3PL leg was already chosen (customerPickupOwnTeamDefault).
-  if (
-    "sub_status" in body &&
-    !("pickup_by" in body) &&
-    customerPickupOwnTeamDefault(body.sub_status, beforeSnapshot?.pickup_by)
-  ) {
-    sets.push("pickup_by = ?");
-    binds.push("customer");
-  }
+  // Switching onto the customer-pickup leg with no owner yet -> own team, so it
+  // reaches Delivery Planning. Skipped when the caller set pickup_by in the same
+  // request, or a supplier/3PL leg was already chosen (pushCustomerPickupDefault).
+  if ("sub_status" in body && !("pickup_by" in body))
+    pushCustomerPickupDefault(sets, binds, body.sub_status, beforeSnapshot?.pickup_by);
 
   // Mig 081 — when QA sets the verification outcome, server-stamp
   // verified_at + verified_by so the actor can't be spoofed from the
