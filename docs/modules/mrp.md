@@ -26,8 +26,10 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   and can legitimately disagree with `allocSourceOf` on a line that is short
   but still names a covering PO.
 - **A sofa set is one batch or nothing** (owner: 1 PO = 1 batch, never split).
-  On the pooled (company-2) sofa path a set — every sofa line of one SO at
-  one warehouse — is planned from ONE batch (= PO number): a received batch
+  A set is one sofa MODEL on one SO at one warehouse (`sofaSetKey`, shared by
+  the PO convert, this plan, the stock allocator and the DO pick and split
+  gate); two models on one SO are two sets. On the pooled (company-2) sofa
+  path a set is planned from ONE batch (= PO number): a received batch
   whose open lots (`v_inventory_lots_open`, `batch_no`) hold every module
   covers it from `stock` (FIFO-oldest); else one open PO whose lots + open
   qty hold every module covers it as `po` (set ETA = its last module); else
@@ -42,10 +44,11 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   Sets the allocator locked (`allocated_batch_no` on every line, batch
   still covering) keep their batch first. Unbatched on-hand never covers a
   sofa set — the same rule the stored allocator applies. `SofaSet.batchNo`
-  names the batch. The Sofa tab's Proceed PO refuses a set whose modules
-  carry different suppliers or whose set already names a PO, and
-  `POST /from-sos` refuses a sofa set resolving to two suppliers
-  (`409 sofa_set_supplier_split`).
+  names the batch. One model on two suppliers is refused (Sofa tab, and
+  `POST /from-sos` `409 sofa_set_supplier_split`); so is a set that already
+  names a PO. Two models of one SO on two suppliers ask "Use 2 suppliers?"
+  first; `/from-sos` refuses it without `allowSofaSupplierSplit: true`
+  (`409 sofa_set_suppliers_unconfirmed`).
 - Company-1 hard-bound categories (bedframe, sofa, Sofa Accessory /
   `fabric_accessory`, `dining`, `(SP)` mattress) cover **only** from their own
   dedicated PO line — never the pooled bucket, in either direction (a bound

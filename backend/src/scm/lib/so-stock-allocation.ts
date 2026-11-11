@@ -60,6 +60,7 @@ import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
+import { sofaSetKey } from '../shared/sofa-set-identity';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
@@ -866,10 +867,10 @@ async function runSoStockAllocation(
     if (sofaLineRecs.length > 0) {
       const sofaStock = await loadSofaBatchStock(sb, sofaLineRecs.map((s) => s.item_code));
 
-      // Group sofa lines into per-SO sets (within a warehouse).
-      const setLines = new Map<string, SofaLineRec[]>(); // key = `${wh}|${docNo}`
+      // Group sofa lines into per-SO, per-model sets (within a warehouse).
+      const setLines = new Map<string, SofaLineRec[]>(); // key = `${wh}|${docNo}|${model}`
       for (const s of sofaLineRecs) {
-        const key = `${s.whId ?? WH_NONE}|${s.doc_no}`;
+        const key = `${s.whId ?? WH_NONE}|${sofaSetKey(s.doc_no, s.item_code)}`;
         const arr = setLines.get(key) ?? [];
         arr.push(s); setLines.set(key, arr);
       }

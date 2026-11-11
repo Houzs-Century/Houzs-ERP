@@ -30,6 +30,7 @@ import {
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
+import { findSofaSetSupplierSplits } from '../shared/sofa-set-identity';
 import { computeMfgPoUnitCost, type MfgFabricTier, type MaintenanceConfig, type PoPriceMatrix } from '../shared/mfg-pricing';
 import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
@@ -1442,6 +1443,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        raise a PO for review — see the header insert below for why a DRAFT is the
        right fuse rather than a new parallel mechanism. */
     asDraft?: boolean;
+    /* The operator confirmed that an order's sofa models go to different
+       suppliers (one PO per supplier). One model on two suppliers is refused
+       regardless: that model is one dye lot. */
+    allowSofaSupplierSplit?: boolean;
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poMode: 'combined' | 'per-so' = body.mode === 'per-so' ? 'per-so' : 'combined';
@@ -2072,23 +2077,27 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
-  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): one
-     order's sofa set must land in ONE purchase order. The grouping below keys
-     on supplier, so modules resolved to two suppliers would become two POs —
-     two dye lots that can never ship as one set. Refused before any write. */
-  const sofaSupplierBySo = new Map<string, Set<string>>();
-  for (const it of soItems) {
-    if ((it.itemGroup ?? '').trim().toLowerCase() !== 'sofa') continue;
-    const set = sofaSupplierBySo.get(it.soDocNo) ?? new Set<string>();
-    set.add(effectiveBindingFor(it)!.supplier_id);
-    sofaSupplierBySo.set(it.soDocNo, set);
-  }
-  const splitSofaSets = [...sofaSupplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
-  if (splitSofaSets.length > 0) {
+  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): a
+     sofa set (one model on one order) must land in ONE purchase order. The
+     grouping below keys on supplier, so a model resolved to two suppliers would
+     become two POs, two dye lots that can never ship as one set. Two models on
+     two suppliers are two sets: allowed once the operator confirms. Refused
+     before any write. */
+  const sofaSplits = findSofaSetSupplierSplits(soItems
+    .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
+    .map((it) => ({ soDocNo: it.soDocNo, itemCode: it.itemCode, supplierId: effectiveBindingFor(it)!.supplier_id })));
+  if (sofaSplits.sameModel.length > 0) {
     return c.json({
       error: 'sofa_set_supplier_split',
-      reason: `A sofa set ships from one batch, so every module of one order goes on ONE purchase order. Pick one supplier for all modules of: ${splitSofaSets.join(', ')}.`,
-      soDocNos: splitSofaSets,
+      reason: `A sofa model ships from one batch, so every module of one model on one order goes on ONE purchase order. Pick one supplier for each model of: ${sofaSplits.sameModel.join(', ')}.`,
+      soDocNos: sofaSplits.sameModel,
+    }, 409);
+  }
+  if (sofaSplits.crossModel.length > 0 && body.allowSofaSupplierSplit !== true) {
+    return c.json({
+      error: 'sofa_set_suppliers_unconfirmed',
+      reason: `These orders put different sofa models on different suppliers, which raises one PO per supplier. Confirm to proceed: ${sofaSplits.crossModel.join(', ')}.`,
+      soDocNos: sofaSplits.crossModel,
     }, 409);
   }
   for (const it of soItems) {

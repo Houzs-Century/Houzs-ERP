@@ -28,6 +28,7 @@
 
 import { computeVariantKey, effectiveDelivery } from '../shared';
 import type { OutstandingCommitment } from './ship-commitment';
+import { sofaSetKey } from '../shared/sofa-set-identity';
 import { pgrestIn } from './pgrest-in-list';
 
 /** One open PO line's remaining supply, bucketed the way MRP pools it. */
@@ -255,9 +256,10 @@ export function allocateExpectedBatches(
     if (!(Number(d.shipQty) > 0)) continue;
 
     if (d.isSofa && d.soDocNo) {
-      if (setDone.has(d.soDocNo)) continue;
-      setDone.add(d.soDocNo);
-      const modules = ordered.filter((m) => m.isSofa && m.soDocNo === d.soDocNo);
+      const setKey = sofaSetKey(d.soDocNo, d.itemCode);
+      if (setDone.has(setKey)) continue;
+      setDone.add(setKey);
+      const modules = ordered.filter((m) => m.isSofa && m.soDocNo != null && sofaSetKey(m.soDocNo, m.itemCode) === setKey);
       const needs = new Map<string, number>();
       for (const m of modules) {
         if (m.allocatedBatchNo || !(Number(m.shipQty) > 0)) continue;
