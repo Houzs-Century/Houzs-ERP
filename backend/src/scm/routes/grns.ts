@@ -48,7 +48,7 @@ import {
   parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
-import { refuseWithoutWriting } from '../lib/no-write-refusal'; import { LINES_UNREADABLE, linesUnreadableBody } from '../lib/failed-read-refusal';
+import { refuseWithoutWriting } from '../lib/no-write-refusal'; import { LINES_UNREADABLE, linesUnreadableBody } from '../lib/failed-read-refusal'; import { grnReceiptBooked } from '../lib/grn-receipt-booked';
 import { grnPostRefusal } from '../lib/grn-post-capability';
 import { getGrnItemRacksHandler, grnRackSplitPostRefusal, putGrnItemRacksHandler } from '../lib/grn-line-racks';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
@@ -594,22 +594,17 @@ async function postGrnCore(sb: Parameters<typeof writeMovements>[0], grnId: stri
         batch_no: it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null,
         performed_by: userId,
       }));
-    /* GUARD 2 — has this GRN already booked its receipt? Direct mirror of
-       deductInventoryForDo's idempotency guard #1 (delivery-orders-mfg.ts). The
-       CAS above closes the concurrent-confirm race for callers that go through
-       the status flip; this defends EVERY caller of the chokepoint, including a
-       re-entry on an already-POSTED row (where the CAS legitimately matches and
-       changes nothing). Post-time is the only moment a GRN has zero IN rows —
-       the line-add / line-edit delta INs are written later, on an already-POSTED
-       GRN, so they cannot make this guard fire early. */
+    /* GUARD 2 — has this GRN already booked its receipt? Mirror of
+       deductInventoryForDo's idempotency guard #1; it defends EVERY caller of the
+       chokepoint, including a re-entry on an already-POSTED row. Booked = NET IN
+       (IN minus the GRN's own reversing OUTs), so a receipt taken back out by a
+       cancel / line-delete reversal no longer reads as booked; a failed read
+       refuses rather than book twice (lib/grn-receipt-booked.ts). */
     let alreadyBooked = false;
     if (movements.length > 0) {
-      const { count: existingIn } = await sb.from('inventory_movements')
-        .select('id', { head: true, count: 'exact' })
-        .eq('source_doc_type', 'GRN')
-        .eq('source_doc_id', grnId)
-        .eq('movement_type', 'IN');
-      alreadyBooked = (existingIn ?? 0) > 0;
+      const booked = await grnReceiptBooked(sb, grnId);
+      if (!booked.ok) return { ok: false, reason: LINES_UNREADABLE, status: 503, detail: `stock already booked for ${grnNo}: ${booked.error.message}` };
+      alreadyBooked = booked.booked;
     }
     if (movements.length > 0 && !alreadyBooked) {
       /* Capture the best-effort write result so the caller can surface a failed
