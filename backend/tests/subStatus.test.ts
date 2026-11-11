@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, beforeEach } from "vitest";
-import { transitionStage, patchAssrCase, customerPickupOwnTeamDefault } from "../src/services/assr";
+import { transitionStage, patchAssrCase } from "../src/services/assr";
+import { customerPickupOwnTeamDefault } from "../src/scm/lib/assr-pickup-default";
 
 // Switchable sub-status (小类, Nick 2026-07-15): entering Verification /
 // Supplier seeds the first sub-state, other stages clear it, and a
