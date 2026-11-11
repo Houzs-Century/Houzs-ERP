@@ -41,7 +41,10 @@
 //   imported  — AutoCount carry-overs, never booked here;
 //   converted — money moved between two orders, not money received;
 //   cancelled orders — the watch list's rule (owner 2026-09-12: cancel SO 就
-//               cancel 不显示; docs/bugs/0837).
+//               cancel 不显示; docs/bugs/0837);
+//   previous records — a payment the owner checked and marked as the previous
+//               system's (owner 2026-11-11; acc/previous-payments), listed on
+//               its own instead.
 //
 // The decision is `classifyUnmatched`, a pure function; `loadUnmatchedPayments`
 // only gathers the facts it decides from. Every read fails CLOSED — a list
@@ -53,6 +56,7 @@ import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { PAYMENT_METHOD_CODES, type PaymentMethodCode } from '../scm/shared/payment-methods';
 import { jeNosOf } from './bank';
 import { keyedAs, merchantNamesOf } from './merchant-names';
+import { loadPreviousKeys, previousKey } from './previous-payments';
 
 export type PaymentSource = 'SOPAY' | 'SIPAY';
 
@@ -427,8 +431,9 @@ export async function loadUnmatchedPayments(
   companyId: number,
   window: { from: string; to: string; today: string },
 ): Promise<{ ok: true; rows: UnmatchedPayment[] } | Fail> {
-  const pay = await readPayments(sb, companyId, window.from, window.to);
+  const [pay, previous] = await Promise.all([readPayments(sb, companyId, window.from, window.to), loadPreviousKeys(sb, companyId)]);
   if (!pay.ok) return pay;
+  if (!previous.ok) return previous;
   const parties = await readParties(sb, companyId, pay.so, pay.si);
   if (!parties.ok) return parties;
 
@@ -436,6 +441,8 @@ export async function loadUnmatchedPayments(
   const take = (source: PaymentSource, r: Record<string, any>, docNo: string, customer: string | null, salesperson: string | null) => {
     const paidOn = isoDay(r.paid_at);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
+    /* The previous system's, by the owner's mark: listed on its own (header). */
+    if (previous.keys.has(previousKey(source, String(r.id)))) return;
     facts.push({
       source, id: String(r.id), docNo, customerName: customer, salespersonName: salesperson,
       collectedByName: parties.staffName.get(String(r.collected_by ?? '')) ?? null, paidOn,

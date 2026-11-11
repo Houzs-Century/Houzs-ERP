@@ -8,11 +8,13 @@
 // One dated on or before the opening journal's day is inside the opening
 // balances already (AutoCount's position on that day), so it is in the books
 // and not named. A cancelled order's is left out, as the ledger leaves out a
-// cancelled order's own payments.
+// cancelled order's own payments, and so is one the owner marked a previous
+// record (owner 2026-11-11: 我哪里都不会take-in; acc/previous-payments).
 // ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { OPENING_SOURCE } from './opening-balance';
+import { loadPreviousKeys, previousKey } from './previous-payments';
 
 export type AutoCountReceipt = {
   id: string; docNo: string; paidOn: string; amountSen: number; party: string | null; note: string | null;
@@ -37,9 +39,12 @@ export async function loadAutoCountReceipts(
     .gte('paid_at', from).lte('paid_at', `${to}T23:59:59`)
     .order('paid_at').order('id').range(f, t));
   if (error) return { ok: false, reason: `AutoCount payments: ${error.message}` };
+  const previous = await loadPreviousKeys(sb, companyId);
+  if (!previous.ok) return previous;
   const inPeriod = (data ?? []).filter((p) => {
     const on = day(p.paid_at);
-    return on >= from && on <= to && (openedOn == null || on > openedOn) && Number(p.amount_sen ?? 0) !== 0;
+    return on >= from && on <= to && (openedOn == null || on > openedOn) && Number(p.amount_sen ?? 0) !== 0
+      && !previous.keys.has(previousKey('SOPAY', String(p.id)));
   });
   if (inPeriod.length === 0) return { ok: true, payments: [] };
 
