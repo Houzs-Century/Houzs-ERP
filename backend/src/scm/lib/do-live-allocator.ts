@@ -175,8 +175,8 @@ export type AllocatorDemandLine = {
   shipQty: number;
   /** Sofa modules resolve as a whole SET (one dye lot); everything else per bucket. */
   isSofa: boolean;
-  /** mfg_sales_order_items.doc_no — the sofa SET's identity AND the demand
-   *  tiebreak (owner: "SO1 比 SO2 优先"). */
+  /** mfg_sales_order_items.doc_no — with itemCode's model, the sofa SET's
+   *  identity (sofaSetKey), AND the demand tiebreak (owner: "SO1 比 SO2 优先"). */
   soDocNo: string | null;
   /** A PHYSICALLY RECEIVED batch the stock allocator already locked. The line
    *  ships normally (it draws no incoming supply and gets NO pick here), but

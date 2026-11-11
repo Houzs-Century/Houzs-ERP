@@ -157,9 +157,9 @@ export function planShipCommitments(lines: ShipLineFact[]): ShipCommitmentDecisi
  *  for it and the batch the allocator had already locked. */
 export type SofaSetModule = {
   lineRef: string;
-  /** mfg_sales_order_items.doc_no — the SET's identity. A sofa set is "all the
-   *  READY sofa lines of ONE Sales Order" (sofa-batch-guard.findIncompleteSofaSets),
-   *  and the DO's own sofa lines for that doc_no are the modules being shipped. */
+  /** mfg_sales_order_items.doc_no — with itemCode's model, the SET's identity
+   *  (sofaSetKey: one sofa model on one Sales Order). The DO's own sofa lines
+   *  for that doc_no and model are the modules being shipped. */
   soDocNo: string | null;
   itemCode: string;
   isSofa: boolean;

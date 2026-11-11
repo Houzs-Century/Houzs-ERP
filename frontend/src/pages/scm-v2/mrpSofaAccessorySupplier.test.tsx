@@ -112,17 +112,17 @@ describe('MRP sofa tab — two models on one order may use two suppliers after a
   test('the popup names each model and its supplier, and Cancel sends nothing', () => {
     mrpData = twoModels();
     proceed();
-    expect(screen.getByText('Use 2 suppliers?')).toBeTruthy();
+    expect(screen.getByText('Use more than one supplier?')).toBeTruthy();
     expect(screen.getByText(/8030 from HOOKKA INDUSTRIES, 8069 from DORSETTLOFT SOFA/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByText('Use 2 suppliers?')).toBeNull();
+    expect(screen.queryByText('Use more than one supplier?')).toBeNull();
     expect(mutate).not.toHaveBeenCalled();
   });
 
   test('Yes leads to the usual Proceed PO step, which sends the confirm flag with each model on its own supplier', () => {
     mrpData = twoModels();
     proceed();
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, use 2 suppliers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, proceed' }));
     expect(mutate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -141,7 +141,7 @@ describe('MRP sofa tab — two models on one order may use two suppliers after a
       ],
     });
     proceed();
-    expect(screen.queryByText('Use 2 suppliers?')).toBeNull();
+    expect(screen.queryByText('Use more than one supplier?')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect((mutate.mock.calls[0]![0] as { allowSofaSupplierSplit: boolean }).allowSofaSupplierSplit).toBe(false);
   });

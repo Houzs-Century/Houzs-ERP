@@ -1182,7 +1182,7 @@ export const Mrp = () => {
       {dialog && dialog.kind === 'suppliers' && (
         <div className={styles.dialogBackdrop} onClick={() => setDialog(null)}>
           <div className={styles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-            <h2 className={styles.dialogTitle}>Use 2 suppliers?</h2>
+            <h2 className={styles.dialogTitle}>Use more than one supplier?</h2>
             <p className={styles.dialogBody}>{dialog.body}</p>
             <div className={styles.dialogActions}>
               <Button type="button" variant="secondary" onClick={() => setDialog(null)}>Cancel</Button>
@@ -1194,7 +1194,7 @@ export const Mrp = () => {
                   setDialog({ kind: 'confirm', picks, orderedCodes, count, units, allowSofaSupplierSplit: true });
                 }}
               >
-                Yes, use 2 suppliers
+                Yes, proceed
               </Button>
             </div>
           </div>

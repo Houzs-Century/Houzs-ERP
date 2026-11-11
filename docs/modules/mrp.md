@@ -46,7 +46,7 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   sofa set — the same rule the stored allocator applies. `SofaSet.batchNo`
   names the batch. One model on two suppliers is refused (Sofa tab, and
   `POST /from-sos` `409 sofa_set_supplier_split`); so is a set that already
-  names a PO. Two models of one SO on two suppliers ask "Use 2 suppliers?"
+  names a PO. Two models of one SO on two suppliers ask "Use more than one supplier?"
   first; `/from-sos` refuses it without `allowSofaSupplierSplit: true`
   (`409 sofa_set_suppliers_unconfirmed`).
 - Company-1 hard-bound categories (bedframe, sofa, Sofa Accessory /

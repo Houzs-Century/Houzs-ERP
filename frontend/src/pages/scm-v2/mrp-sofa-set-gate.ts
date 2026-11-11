@@ -61,7 +61,7 @@ export function checkSofaSetsBeforePo(
   if (crossModel.length > 0) {
     return {
       kind: 'confirmSuppliers',
-      body: `These orders put different sofa models on different suppliers, so each supplier gets its own purchase order:\n${crossModel.map((soDocNo) => describeSuppliersPerModel(lines, soDocNo, supplierNameOf)).join('\n')}\n\nDo you really want to use 2 suppliers for this order?`,
+      body: `These orders put different sofa models on different suppliers, so each supplier gets its own purchase order:\n${crossModel.map((soDocNo) => describeSuppliersPerModel(lines, soDocNo, supplierNameOf)).join('\n')}\n\nDo you really want more than one supplier for these sofas?`,
     };
   }
   return { kind: 'ok' };

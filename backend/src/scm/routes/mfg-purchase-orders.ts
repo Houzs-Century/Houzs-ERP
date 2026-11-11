@@ -1443,10 +1443,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        raise a PO for review — see the header insert below for why a DRAFT is the
        right fuse rather than a new parallel mechanism. */
     asDraft?: boolean;
-    /* The operator confirmed that an order's sofa models go to different
-       suppliers (one PO per supplier). One model on two suppliers is refused
-       regardless: that model is one dye lot. */
-    allowSofaSupplierSplit?: boolean;
+    allowSofaSupplierSplit?: boolean; // operator confirmed two sofa models on two suppliers
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poMode: 'combined' | 'per-so' = body.mode === 'per-so' ? 'per-so' : 'combined';
@@ -2077,14 +2074,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
-  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): a
-     sofa set (one model on one order) must land in ONE purchase order. The
-     grouping below keys on supplier, so a model resolved to two suppliers would
-     become two POs, two dye lots that can never ship as one set. Two models on
-     two suppliers are two sets: allowed once the operator confirms. Refused
-     before any write. */
-  const sofaSplits = findSofaSetSupplierSplits(soItems
-    .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
+  /* 1 PO = 1 batch (owner 2026-10-05): a sofa set (one model on one order) is
+     one dye lot, so it must land in ONE purchase order. Two models on two
+     suppliers are two sets, allowed once the operator confirms. */
+  const sofaSplits = findSofaSetSupplierSplits(soItems.filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
     .map((it) => ({ soDocNo: it.soDocNo, itemCode: it.itemCode, supplierId: effectiveBindingFor(it)!.supplier_id })));
   if (sofaSplits.sameModel.length > 0) {
     return c.json({
@@ -2094,11 +2087,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     }, 409);
   }
   if (sofaSplits.crossModel.length > 0 && body.allowSofaSupplierSplit !== true) {
-    return c.json({
-      error: 'sofa_set_suppliers_unconfirmed',
-      reason: `These orders put different sofa models on different suppliers, which raises one PO per supplier. Confirm to proceed: ${sofaSplits.crossModel.join(', ')}.`,
-      soDocNos: sofaSplits.crossModel,
-    }, 409);
+    const reason = `These orders put different sofa models on different suppliers, which raises one PO per supplier. Confirm to proceed: ${sofaSplits.crossModel.join(', ')}.`;
+    return c.json({ error: 'sofa_set_suppliers_unconfirmed', reason, soDocNos: sofaSplits.crossModel }, 409);
   }
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;
