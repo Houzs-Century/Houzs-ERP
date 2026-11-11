@@ -48,7 +48,7 @@ const OVERRUN_STYLE = {
   fontSize: 10,
   fontWeight: 600,
   color: '#a1442e',
-  background: '#fbeae6',
+  background: 'var(--hz-dk-err-bg, #fbeae6)',
   border: '1px solid #efc9c0',
   borderRadius: 6,
   padding: '1px 5px',

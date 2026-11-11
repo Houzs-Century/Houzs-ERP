@@ -75,7 +75,7 @@ export function OrderSlipPhoto({
             alt={alt}
             style={{
               maxWidth, width: '100%', height: 'auto', cursor: 'zoom-in',
-              border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: '#fff',
+              border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: 'var(--hz-c-surface)',
             }}
           />
         </a>

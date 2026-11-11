@@ -23,19 +23,17 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { stampDoLineSoRefs } from '../lib/so-ref-lookup';
-import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { traceDoShipmentSources } from '../lib/source-po-trace';
-import { shippedBatchOf } from '../lib/return-line-batch';
 import { warehouseLabel } from '../lib/warehouse-label';
-import { computeVariantKey, type VariantAttrs } from '../shared';
 import { doLineRemaining, returnableRemainingFrom, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
-import { isServiceLine } from '../shared';
+import { cancelDrAtomically, drResyncCore, drStockFailureBody, drStockInCore, isDrFlipMiss, receiveCreatedDrAtomically, resolveDrLineWarehouses, type DrFlipResult, type DrStockResult } from '../lib/delivery-return-stock';
+import { stockTxFor } from '../lib/stock-post-tx';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
@@ -156,89 +154,58 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
   }
 }
 
-/* INCREASE inventory for a DR exactly once. ROBUST: fires on create (goods are
-   received back the moment the return is created). IDEMPOTENT: a pre-insert
-   existence check on the DR id skips re-increasing, and the partial UNIQUE
-   index uq_inv_mov_dr_source (migration 0102) is the hard backstop against a
-   race. Best-effort — a movement failure never rolls back the create (audit-DLQ
-   pattern, same as the rest of inventory-movements + the DO deduction).
-
-   This is the MIRROR IMAGE of delivery-orders-mfg.ts deductInventoryForDo: it
-   writes IN movements (the FIFO trigger from migration 0053/0095 creates a lot
-   per IN row), one row per (item_code, variant_key) bucket. The lot's unit
-   cost is seeded from the line's unit_cost_sen (sen) so returned stock
-   re-enters at its original cost rather than zero. */
-/* ── resolveDrLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
-   PER-WAREHOUSE CORRECTNESS for the RETURNS side. A Delivery Return must put
-   stock BACK into the SAME warehouse the Delivery Order took it OUT of — never a
-   single DR-header default. The DO took it from its SO line's warehouse
-   (migration 0118), so each DR line resolves its warehouse by tracing
-   do_item_id → delivery_order_items.so_item_id → mfg_sales_order_items.
-   warehouse_id.
-
-   Resolution order per DR line:
-     1. the linked DO line's SO-line warehouse (do_item_id → … → SO line)
-     2. the linked DO header's warehouse_id
-     3. the DR header's warehouse_id (free/ad-hoc lines — none exist now that
-        "no DO, no return" is enforced, but kept as a safety net)
-     4. the return's OWN company's default warehouse (last-resort fallback)
-
-   Returns a map of delivery_return_items.id → warehouse_id (or null when even
-   the fallbacks are absent — the caller skips those lines). */
-async function resolveDrLineWarehouses(
-  sb: any,
-  items: Array<{ id: string; do_item_id?: string | null }>,
-  drHeaderWarehouseId: string | null,
-  /* The return's company (2026-08-03) — step 4 is per company. It used to be a
-     company-blind draw across every company's is_default warehouses, decided by
-     alphabetical `code` order. */
-  companyId: number | undefined,
-): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const doItemIds = [...new Set(items
-    .map((it) => it.do_item_id ?? null)
-    .filter((x): x is string => !!x))];
-
-  // do_item_id → { so_item_id, do header warehouse }
-  const doLineMeta = new Map<string, { soItemId: string | null; doWarehouseId: string | null }>();
-  const soItemIds = new Set<string>();
-  if (doItemIds.length > 0) {
-    const { data: doLines } = await sb.from('delivery_order_items')
-      .select('id, so_item_id, delivery_order_id').in('id', doItemIds);
-    const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; delivery_order_id: string }>;
-    const doIds = [...new Set(doRows.map((r) => r.delivery_order_id).filter(Boolean))];
-    const doHeaderWh = new Map<string, string | null>();
-    if (doIds.length > 0) {
-      const { data: doHeaders } = await sb.from('delivery_orders')
-        .select('id, warehouse_id').in('id', doIds);
-      for (const d of (doHeaders ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
-        doHeaderWh.set(d.id, d.warehouse_id ?? null);
-      }
-    }
-    for (const r of doRows) {
-      if (r.so_item_id) soItemIds.add(r.so_item_id);
-      doLineMeta.set(r.id, { soItemId: r.so_item_id ?? null, doWarehouseId: doHeaderWh.get(r.delivery_order_id) ?? null });
-    }
-  }
-
-  // so_item_id → warehouse_id (the authoritative ship-from, 0118).
-  const soWh = new Map<string, string | null>();
-  if (soItemIds.size > 0) {
-    const { data: soRows } = await sb.from('mfg_sales_order_items')
-      .select('id, warehouse_id').in('id', [...soItemIds]);
-    for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
-      soWh.set(r.id, r.warehouse_id ?? null);
-    }
-  }
-
-  const fallback = drHeaderWarehouseId ?? (await defaultWarehouseId(sb, companyId));
-  for (const it of items) {
-    const meta = it.do_item_id ? doLineMeta.get(it.do_item_id) : undefined;
-    const fromSo = meta?.soItemId ? (soWh.get(meta.soItemId) ?? null) : null;
-    out.set(it.id, fromSo ?? meta?.doWarehouseId ?? fallback);
-  }
-  return out;
+/* The stock writes live in lib/delivery-return-stock.ts. These are the
+   non-atomic entry points (line edit / delete, and create / cancel under
+   DELIVERY_RETURN_MODE=two-step): the core on `sb`, then the after-commit work. */
+async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
+  const core = await drStockInCore(sb, deliveryReturnId, performedBy);
+  await afterDrStockIn(sb, core.written, performedBy);
+  return core.errors;
 }
+/* Oversell retro-cost (0154): returned goods are a stock IN like any other, so a
+   prior "ship anyway" DO that went out at RM0 in this warehouse can now be costed
+   from the re-opened lots. Needs the committed lots; best-effort. */
+async function afterDrStockIn(sb: any, written: DrStockResult['written'], performedBy: string): Promise<void> {
+  if (written.length > 0) await reconcileUncostedAfterIn(sb, written, performedBy);
+}
+
+/* The create's stock IN. DELIVERY_RETURN_MODE=atomic (default): one transaction;
+   a rollback deletes the just-created return and answers 503, and the
+   idempotency claim is released so the retry runs again. */
+async function bookCreatedDrStock(c: any, sb: any, h: { id: string; return_number: string }, userId: string): Promise<{ refused: Response } | { movementErrors: string[] }> {
+  const drTx = stockTxFor(c.env, 'DELIVERY_RETURN_MODE');
+  if (!drTx) return { movementErrors: await increaseInventoryForReturn(sb, h.id, userId) };
+  const got = await receiveCreatedDrAtomically(drTx, sb, h.id, h.return_number, activeCompanyId(c) ?? null, userId);
+  if (!got.ok) {
+    if (got.removed) markIdempotencyNoWrite(c);
+    return { refused: c.json(got.body, 503) };
+  }
+  await afterDrStockIn(sb, got.written, userId);
+  return { movementErrors: [] };
+}
+
+async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
+  const core = await drResyncCore(sb, deliveryReturnId, performedBy);
+  await afterDrResync(sb, deliveryReturnId, core.written, performedBy);
+  return core.errors;
+}
+async function afterDrResync(sb: any, deliveryReturnId: string, written: DrStockResult['written'], performedBy: string): Promise<void> {
+  if (written.length > 0) {
+    /* A resync that RAISES the returned qty opens a lot: same retro-cost as the
+       create (negative deltas are filtered out inside). */
+    await reconcileUncostedAfterIn(sb, written, performedBy);
+    /* Returned-stock level changed → re-walk SO allocation. Best-effort. */
+    try {
+      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
+      await recomputeSoStockAllocation(sb);
+    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-resync failed:', e); }
+  }
+  /* DR 3B — the return qty changed, so the SO's NET delivered changed too:
+     re-open it (DELIVERED → READY_TO_SHIP) or re-cover it. Unconditional, so the
+     SO status always tracks the lines. */
+  await reopenSoFromReturn(sb, deliveryReturnId, performedBy);
+}
+
 
 /* warehouseCodeMap (Agent D 2026-05-31, TASK #32) — warehouse_id → display
    CODE for the per-line Warehouse column on the DR detail GET. Read-only. */
@@ -256,333 +223,6 @@ async function warehouseCodeMap(
   return out;
 }
 
-/* resolveDrLineBatches (Stage 4, Commander 2026-06-01) — sofa batch per DR line.
-   Returned sofa modules must re-enter the SAME dye-lot batch they shipped from,
-   so the batch view + batch-scoped consume stay consistent. Trace
-   do_item_id → delivery_order_items.so_item_id → mfg_sales_order_items.
-   allocated_batch_no. Best-effort: absent column (pre-0121) / non-sofa → no
-   entry → plain non-batched IN, identical to the old behaviour.
-   A sofa line takes the batch its DO actually shipped from first (2990-0011):
-   allocated_batch_no is cleared once the SO is delivered, so a return booked
-   after that came back un-batched and MRP could not see it. */
-async function resolveDrLineBatches(
-  sb: any,
-  items: Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const doItemIds = [...new Set(items.map((it) => it.do_item_id ?? null).filter((x): x is string => !!x))];
-  if (doItemIds.length === 0) return out;
-  const { data: doLines } = await sb.from('delivery_order_items')
-    .select('id, so_item_id, delivery_order_id').in('id', doItemIds);
-  const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; delivery_order_id: string | null }>;
-  const soByDoLine = new Map<string, string>();
-  const doByDoLine = new Map<string, string>();
-  const soItemIds = new Set<string>();
-  for (const r of doRows) {
-    if (r.so_item_id) { soByDoLine.set(r.id, r.so_item_id); soItemIds.add(r.so_item_id); }
-    if (r.delivery_order_id) doByDoLine.set(r.id, r.delivery_order_id);
-  }
-  const isSofa = (it: { item_group?: string | null }) => String(it.item_group ?? '').toUpperCase().includes('SOFA');
-  const sofaDoIds = [...new Set(items.filter(isSofa).map((it) => (it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined)).filter((x): x is string => !!x))];
-  const shipped = sofaDoIds.length > 0 ? (await traceDoShipmentSources(sb, sofaDoIds)).byBucket : new Map();
-  const batchBySo = new Map<string, string>();
-  if (soItemIds.size > 0) {
-    try {
-      const { data: soRows, error } = await sb.from('mfg_sales_order_items')
-        .select('id, allocated_batch_no').in('id', [...soItemIds]);
-      if (!error) for (const r of (soRows ?? []) as Array<{ id: string; allocated_batch_no: string | null }>) {
-        if (r.allocated_batch_no) batchBySo.set(r.id, r.allocated_batch_no);
-      }
-    } catch { /* column absent pre-0121 — no batches */ }
-  }
-  for (const it of items) {
-    const doId = it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined;
-    const fromShip = doId && it.item_code && isSofa(it)
-      ? shippedBatchOf(shipped, doId, it.item_code, computeVariantKey(it.item_group ?? null, it.variants ?? null))
-      : null;
-    const so = it.do_item_id ? soByDoLine.get(it.do_item_id) : undefined;
-    const batch = fromShip ?? (so ? batchBySo.get(so) : undefined);
-    if (batch) out.set(it.id, batch);
-  }
-  return out;
-}
-
-async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
-  // Idempotency guard #1 — has this DR already written IN movements?
-  const { count: existing } = await sb
-    .from('inventory_movements')
-    .select('id', { head: true, count: 'exact' })
-    .eq('source_doc_type', 'DR')
-    .eq('source_doc_id', deliveryReturnId)
-    .eq('movement_type', 'IN');
-  if ((existing ?? 0) > 0) return []; // already increased — no-op
-
-  const { data: drHeader } = await sb.from('delivery_returns')
-    .select('return_number, warehouse_id, company_id')
-    .eq('id', deliveryReturnId).maybeSingle();
-  const { data: items } = await sb.from('delivery_return_items')
-    .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
-    .eq('delivery_return_id', deliveryReturnId);
-  const drHeaderWarehouseId = (drHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
-  const drNo = (drHeader as { return_number: string } | null)?.return_number ?? deliveryReturnId;
-  if (!items) return [];
-
-  // Per-line warehouse — each returned line re-enters the warehouse the DO line
-  // shipped from (its SO line's warehouse, 0118), not a single DR-header default.
-  const lineWh = await resolveDrLineWarehouses(
-    sb,
-    items as Array<{ id: string; do_item_id?: string | null }>,
-    drHeaderWarehouseId,
-    (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
-  );
-  // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
-  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>);
-
-  /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
-     into one IN row. A DR can list the same product across two lines AND across
-     two warehouses (multi-DO merge); bucketing by warehouse keeps each
-     warehouse's increase correct + idempotency-safe. batch_no joins the key so a
-     returned sofa module re-opens a lot tagged with its own dye-lot batch. Unit
-     cost carried from the first line in the bucket (returned stock re-enters at
-     its original per-unit cost). */
-  const byKey = new Map<string, {
-    warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
-  }>();
-  for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>)) {
-    /* P1 SO-SKU spec §4.6 — depth guard: a SERVICE line must never write stock
-       IN. The route guards reject them at create/edit; this keeps any line
-       that slips through (legacy data, direct DB write) inventory-neutral. */
-    if (isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })) continue;
-    const qty = Number(it.qty_returned ?? 0);
-    if (qty <= 0) continue;
-    const warehouseId = lineWh.get(it.id) ?? null;
-    if (!warehouseId) continue; // no resolvable warehouse — skip rather than guess
-    const variantKey = computeVariantKey(it.item_group ?? null, it.variants ?? null);
-    const batchNo = lineBatch.get(it.id) ?? null;
-    const k = `${warehouseId}::${it.item_code}::${variantKey}::${batchNo ?? ''}`;
-    const cur = byKey.get(k);
-    if (cur) { cur.qty += qty; }
-    else byKey.set(k, {
-      warehouse_id: warehouseId,
-      item_code: it.item_code,
-      variant_key: variantKey,
-      product_name: it.description,
-      qty,
-      unit_cost_sen: Number(it.unit_cost_sen ?? 0),
-      batch_no: batchNo,
-    });
-  }
-  const movements = [...byKey.values()].map((m) => ({
-    movement_type: 'IN' as const,
-    warehouse_id: m.warehouse_id,
-    item_code: m.item_code,
-    variant_key: m.variant_key,
-    product_name: m.product_name,
-    qty: m.qty,
-    // Seed the FIFO lot's per-unit cost so returned stock re-enters at its
-    // original cost (the DO deduction leaves OUT rows costless — the trigger
-    // computes the consumed cost — but IN rows must carry the lot cost).
-    unit_cost_sen: m.unit_cost_sen,
-    source_doc_type: 'DR' as const,
-    source_doc_id: deliveryReturnId,
-    source_doc_no: drNo,
-    performed_by: performedBy,
-    ...(m.batch_no ? { batch_no: m.batch_no } : {}),
-  }));
-  const movementErrors: string[] = [];
-  if (movements.length > 0) {
-    /* Capture the best-effort write result so the caller can surface a failed
-       stock IN (was silently swallowed — DR created with goods NOT booked back
-       and the caller never told). No rollback; just make it loud. */
-    const res = await writeMovements(sb, movements, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
-    if (!res.ok) movementErrors.push(`IN ${drNo}: ${res.reason ?? 'unknown'}`);
-    /* Oversell retro-cost (0154) — a customer return puts goods back on the
-       shelf, which is a stock IN like any other. A prior "ship anyway" DO that
-       went out at RM0 in this warehouse can now be costed from the re-opened
-       lots. Wired 2026-07-29; before that only a GRN reconciled (COE §2).
-       Best-effort — never fails the return. */
-    if (res.ok) await reconcileUncostedAfterIn(sb, movements, performedBy);
-  }
-  return movementErrors;
-}
-
-/* ── resyncInventoryForReturn (2026-06-01 — DR line-edit/delete/cancel rollback) ──
-   A DR books goods BACK INTO stock on create (increaseInventoryForReturn writes
-   IN rows under source_doc_type 'DR'). But a later LINE EDIT (qty reduced) or
-   LINE DELETE left those IN rows untouched → on-hand stayed permanently inflated
-   by the removed qty. This helper re-derives the DR's intended net stock impact
-   from its CURRENT lines and writes a single signed ADJUSTMENT delta per bucket
-   to close the gap — the exact mirror of resyncInventoryForDo on the DO side.
-
-   It also SUBSUMES the old cancel reversal: when the DR is CANCELLED the target
-   is zero, so the delta removes the full remaining net — one code path for every
-   rollback (edit / delete / cancel), so the three can't drift.
-
-   BATCH-AWARE (Stage 4): the forward IN rows carry batch_no for sofa/dye-lot
-   items (resolveDrLineBatches). A negative delta on a batched bucket is written
-   as an OUT carrying that batch_no so the FIFO/lot consumer removes stock from
-   the EXACT lot it re-entered (keeping inventory_lots truthful); a positive delta
-   on a batched bucket re-opens the lot with an IN. Non-batched buckets use a
-   FIFO-neutral signed ADJUSTMENT. Either way the row is tagged
-   source_doc_type='ADJUSTMENT' so it sidesteps uq_inv_mov_dr_source (scoped to
-   source_doc_type='DR', migration 0102).
-
-   We write the delta as a FIFO-neutral ADJUSTMENT (movement_type 'ADJUSTMENT',
-   source_doc_type 'ADJUSTMENT', source_doc_id = DR id). The inventory_balances
-   view treats ADJUSTMENT as signed (migration 0095), and the DR source key's
-   UNIQUE index (uq_inv_mov_dr_source, 0102) does NOT cover ADJUSTMENT rows, so
-   any number of delta rows coexist. IDEMPOTENT by construction: re-running finds
-   delta 0 (the prior ADJUSTMENT already closed the gap) → no write. Best-effort:
-   a movement failure never blocks the edit/cancel. */
-/* Returns the movement-write failures, [] when clean - the SAME contract as
-   increaseInventoryForReturn above, whose own comment records why: a swallowed
-   result meant the DR was created with the goods NOT booked back and the caller
-   was never told. That fix landed on the CREATE path only. writeMovements never
-   throws, so the four best-effort try/catch callers below caught nothing. */
-async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
-  const { data: drHeader } = await sb.from('delivery_returns')
-    .select('return_number, status, warehouse_id, company_id')
-    .eq('id', deliveryReturnId).maybeSingle();
-  if (!drHeader) return [];
-  const drStatus = ((drHeader as { status: string | null }).status ?? '').toUpperCase();
-  const drHeaderWarehouseId = (drHeader as { warehouse_id: string | null }).warehouse_id ?? null;
-  const drNo = (drHeader as { return_number: string }).return_number ?? deliveryReturnId;
-
-  // 1. TARGET net IN per (warehouse, product, variant, batch_no) bucket = sum of
-  //    the DR's CURRENT lines (mirror of increaseInventoryForReturn's bucketing,
-  //    batch_no included so a sofa line targets its OWN dye-lot). A CANCELLED DR
-  //    has a target of zero — every bucket must drain back out.
-  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
-  const targetByBucket = new Map<string, Bucket>();
-  if (drStatus !== 'CANCELLED') {
-    const { data: items } = await sb.from('delivery_return_items')
-      .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
-      .eq('delivery_return_id', deliveryReturnId);
-    const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>;
-    const lineWh = await resolveDrLineWarehouses(
-      sb,
-      lineRows as Array<{ id: string; do_item_id?: string | null }>,
-      drHeaderWarehouseId,
-      (drHeader as { company_id?: number | null }).company_id ?? undefined,
-    );
-    const lineBatch = await resolveDrLineBatches(sb, lineRows);
-    for (const it of lineRows) {
-      /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote IN on create, so they
-         stay out of the resync TARGET too (else the delta walk would write a
-         phantom IN to "catch up"). */
-      if (isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })) continue;
-      const qty = Number(it.qty_returned ?? 0);
-      if (qty <= 0) continue;
-      const warehouseId = lineWh.get(it.id) ?? null;
-      if (!warehouseId) continue; // unresolvable warehouse — skip rather than guess
-      const variant_key = computeVariantKey(it.item_group ?? null, it.variants ?? null);
-      const batch_no = lineBatch.get(it.id) ?? null;
-      const k = `${warehouseId}::${it.item_code}::${variant_key}::${batch_no ?? ''}`;
-      const cur = targetByBucket.get(k);
-      if (cur) { cur.qty += qty; }
-      else targetByBucket.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_sen ?? 0) });
-    }
-  }
-
-  // 2. CURRENT net IN already booked for this DR = Σ IN/OUT rows (source 'DR')
-  //    plus Σ prior resync rows (source 'ADJUSTMENT' — signed ADJUSTMENT for
-  //    plain buckets, or IN/OUT carrying batch_no for sofa buckets). Bucketing by
-  //    batch_no keeps each dye-lot's delta independent. Forward-compat: pre-0120
-  //    the batch_no column doesn't exist → retry without it (every batch '').
-  type Agg = { net_in: number; product_name: string | null };
-  const aggByBucket = new Map<string, Agg>();
-  const addMov = (m: { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
-    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
-    let agg = aggByBucket.get(k);
-    if (!agg) { agg = { net_in: 0, product_name: m.product_name }; aggByBucket.set(k, agg); }
-    const q = Number(m.qty ?? 0);
-    if (m.movement_type === 'IN') agg.net_in += q;
-    else if (m.movement_type === 'OUT') agg.net_in -= q;
-    else if (m.movement_type === 'ADJUSTMENT') agg.net_in += q; // already signed
-    if (!agg.product_name) agg.product_name = m.product_name;
-  };
-  const readDrMovs = async (sourceType: string) => {
-    const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, product_name';
-    let res = await sb.from('inventory_movements').select(sel)
-      .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
-    if (res.error && (res.error.message ?? '').includes('batch_no')) {
-      res = await sb.from('inventory_movements')
-        .select('movement_type, warehouse_id, item_code, variant_key, qty, product_name')
-        .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
-    }
-    return (res.data ?? []) as any[];
-  };
-  for (const m of await readDrMovs('DR')) addMov(m);
-  for (const m of await readDrMovs('ADJUSTMENT')) addMov(m);
-
-  // 3. Per-bucket delta = target − current_net. delta > 0 adds stock back (a line
-  //    qty was raised); delta < 0 removes over-booked stock (line reduced /
-  //    deleted / DR cancelled). BATCHED bucket → write an IN/OUT carrying batch_no
-  //    so the FIFO/lot consumer touches the EXACT dye-lot (keeping inventory_lots
-  //    truthful). PLAIN bucket → FIFO-neutral signed ADJUSTMENT. Either way the
-  //    row is source_doc_type='ADJUSTMENT' (uq_inv_mov_dr_source is scoped to
-  //    source_doc_type='DR', so no collision).
-  const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
-  type MovOut = Parameters<typeof writeMovements>[1][number];
-  const writes: MovOut[] = [];
-  for (const k of allKeys) {
-    const t = targetByBucket.get(k);
-    const a = aggByBucket.get(k) ?? { net_in: 0, product_name: null };
-    const delta = (t?.qty ?? 0) - a.net_in;
-    if (delta === 0) continue;
-    const parts = k.split('::');
-    const batchNo = parts[3] || null;
-    const note = drStatus === 'CANCELLED'
-      ? `Delivery return ${drNo} cancelled — reversing return (stock removed)`
-      : `Delivery return ${drNo} line edited — resyncing returned stock`;
-    const base = {
-      warehouse_id: parts[0] ?? '',
-      item_code: parts[1] ?? '',
-      variant_key: parts[2] ?? '',
-      product_name: t?.product_name ?? a.product_name ?? null,
-      source_doc_type: 'ADJUSTMENT' as const,
-      source_doc_id: deliveryReturnId,
-      source_doc_no: drNo,
-      performed_by: performedBy,
-      notes: note,
-    };
-    if (batchNo) {
-      // Sofa/dye-lot: move the exact lot. + re-opens it (IN), − consumes it (OUT).
-      writes.push(delta > 0
-        ? { ...base, movement_type: 'IN', qty: delta, unit_cost_sen: t?.unit_cost_sen ?? 0, batch_no: batchNo }
-        : { ...base, movement_type: 'OUT', qty: -delta, batch_no: batchNo });
-    } else {
-      writes.push({
-        ...base,
-        movement_type: 'ADJUSTMENT',
-        qty: delta, // signed: + adds stock, − removes it
-        unit_cost_sen: delta > 0 ? (t?.unit_cost_sen ?? 0) : 0,
-      });
-    }
-  }
-  const resyncErrors: string[] = [];
-  if (writes.length > 0) {
-    const wrote = await writeMovements(sb, writes, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
-    if (!wrote.ok) resyncErrors.push('return resync: ' + (wrote.reason ?? 'unknown'));
-    /* Oversell retro-cost (0154) — a resync that RAISES the returned qty writes a
-       lot-opening IN / positive ADJUSTMENT, so it is a stock IN and gets the same
-       retro-cost as the create path. Negative deltas are filtered out. */
-    await reconcileUncostedAfterIn(sb, writes, performedBy);
-    /* Returned-stock level changed → re-walk SO allocation. Best-effort. */
-    try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
-    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-resync failed:', e); }
-  }
-  /* DR 3B — the return qty just changed (line edited / deleted / cancelled), so
-     the SO's NET delivered (delivered − returned) changed too. Reconcile the
-     SO's stored delivery status: a return un-covers a fully-delivered SO and
-     releases it DELIVERED → READY_TO_SHIP so the operator can re-ship; a
-     cancelled/reduced return re-covers it back to DELIVERED. Run unconditionally
-     (not gated on inventory writes) so the status always tracks the lines. */
-  await reopenSoFromReturn(sb, deliveryReturnId, performedBy);
-  return resyncErrors;
-}
 
 /* DR 3B (Wei Siang 2026-06-01) — reconcile the Sales Order(s) behind a Delivery
    Return. A return brings goods back, so the SO is no longer fully delivered and
@@ -1214,8 +854,10 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
 
   /* A DR = goods received back on creation → increase stock now (idempotent:
      the existence check + UNIQUE index mean this never double-increases even
-     if the create is retried). */
-  const movementErrors = await increaseInventoryForReturn(sb, h.id, user.id);
+     if the create is retried). Atomic: all or nothing, or the create is undone. */
+  const booked = await bookCreatedDrStock(c, sb, h, user.id);
+  if ('refused' in booked) return booked.refused;
+  const { movementErrors } = booked;
 
   /* B2C SO auto-allocation — returned goods re-enter stock; another customer's
      pending SO might now be fulfillable. Best-effort. */
@@ -1468,8 +1110,10 @@ export const convertDoLinesToReturn = async (c: any) => {
     }
   }
 
-  // Goods received back → increase stock (idempotent).
-  const movementErrors = await increaseInventoryForReturn(sb, h.id, user.id);
+  // Goods received back → increase stock (idempotent; atomic: all or nothing, or the create is undone).
+  const booked = await bookCreatedDrStock(c, sb, h, user.id);
+  if ('refused' in booked) return booked.refused;
+  const { movementErrors } = booked;
 
   /* DR 3B (Wei Siang 2026-06-01) — re-open the SO this return came from
      (DELIVERED → READY_TO_SHIP) so the returned qty can be re-shipped on a
@@ -1867,9 +1511,23 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
      REFUNDED with the stock already drained (Hookka #1130 sister). Two cancels
      racing: Postgres serialises the UPDATEs, one wins and fires the single
      reversal, the loser re-reads CANCELLED and echoes without reversing. */
-  const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
+  const write = (db: any): Promise<DrFlipResult> => scopeToCompanyId(db.from('delivery_returns')
     .update(ts).eq('id', id), co.companyId).eq('status', prevStatus)
-    .select('id, status').maybeSingle();
+    .select('id, status').maybeSingle()
+    .then((r: unknown) => r as DrFlipResult, (e: { message: string; code?: string }) => ({ data: null, error: e }));
+  /* DELIVERY_RETURN_MODE=atomic: a cancel's flip and its stock drain are ONE
+     transaction (lib/delivery-return-stock.ts); a flip that matched nothing comes
+     back as `flip` and is answered below exactly like the two-step write. */
+  const drTx = toStatus === 'CANCELLED' ? stockTxFor(c.env, 'DELIVERY_RETURN_MODE') : null;
+  let drained: DrStockResult['written'] | null = null;
+  let flipped: DrFlipResult;
+  if (drTx) {
+    const out = await cancelDrAtomically(drTx, id, user.id, write);
+    if (out.ok) { flipped = { data: out.data, error: null }; drained = out.written; }
+    else if (isDrFlipMiss(out)) flipped = out.flip;
+    else return c.json(drStockFailureBody('cancelled', out), 503);
+  } else flipped = await write(sb);
+  const { data: updated, error } = flipped;
   if (toStatus === 'CANCELLED' && isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!updated) {
@@ -1904,8 +1562,11 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
        failed stock resync returned a clean 200. Same contract the CREATE path
        already uses. */
     resyncErrs = [];
-    try { resyncErrs = await resyncInventoryForReturn(sb, id, user.id); }
-    catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
+    if (drained) await afterDrResync(sb, id, drained, user.id); // atomic: the drain already committed with the flip
+    else {
+      try { resyncErrs = await resyncInventoryForReturn(sb, id, user.id); }
+      catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
+    }
     /* DR cancel pulled stock back out → other READY SOs that relied on it may
        now regress to PENDING. Re-walk allocation. Best-effort. */
     try {

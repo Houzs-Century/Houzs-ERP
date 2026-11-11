@@ -45,9 +45,9 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 const STATUS_PILL: Record<PosReceiptStatus, string> = {
-  PAID: "bg-emerald-100 text-emerald-800",
-  VOID: "bg-rose-100 text-rose-800",
-  RETURN: "bg-sky-100 text-sky-800",
+  PAID: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300",
+  VOID: "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300",
+  RETURN: "bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300",
 };
 
 /** Write the filtered bills as one .xlsx sheet; the library loads lazily so
@@ -128,7 +128,7 @@ function ReceiptRow({ r, open, onToggle }: { r: PosReceipt; open: boolean; onTog
           {r.salesman_name ? (
             <>
               {r.salesman_name}{" "}
-              <span className="rounded border border-violet-500/40 bg-violet-100 px-1 text-[9px] font-semibold text-violet-800" title="Part-timer credited with this bill">PT</span>
+              <span className="rounded border border-violet-500/40 bg-violet-100 dark:bg-violet-900/40 px-1 text-[9px] font-semibold text-violet-800 dark:text-violet-300" title="Part-timer credited with this bill">PT</span>
             </>
           ) : (
             <span className="text-ink-muted">Booth</span>
@@ -165,14 +165,14 @@ function ReceiptRow({ r, open, onToggle }: { r: PosReceipt; open: boolean; onTog
                     <td className="px-1 py-0.5">
                       <span className="font-mono text-[10px] text-ink-secondary">{l.item_code}</span> {l.description}
                       {l.original_price_sen != null && (
-                        <span className="ml-1 text-[9.5px] text-amber-800" title={l.override_reason ?? "Price override"}>
+                        <span className="ml-1 text-[9.5px] text-amber-800 dark:text-amber-300" title={l.override_reason ?? "Price override"}>
                           (was {fmtSen(l.original_price_sen)})
                         </span>
                       )}
                     </td>
                     <td className="px-1 py-0.5 text-right font-mono">{l.qty} {l.uom}</td>
                     <td className="px-1 py-0.5 text-right font-mono">{fmtSen(l.unit_price_sen)}</td>
-                    <td className={cn("px-1 py-0.5 text-right font-mono", l.disc_label !== "--" && "text-amber-800")}>{l.disc_label}</td>
+                    <td className={cn("px-1 py-0.5 text-right font-mono", l.disc_label !== "--" && "text-amber-800 dark:text-amber-300")}>{l.disc_label}</td>
                     <td className="px-1 py-0.5 text-right font-mono">{fmtSen(l.amount_sen)}</td>
                   </tr>
                 ))}
@@ -190,7 +190,7 @@ function ReceiptRow({ r, open, onToggle }: { r: PosReceipt; open: boolean; onTog
               {r.payments.map((p, i) => (
                 <span key={i}>{posMethodLabel(p.method)} <b className="font-mono">{fmtSen(p.amount_sen)}</b>{p.reference ? ` (${p.reference})` : ""}</span>
               ))}
-              {status === "VOID" && <span className="text-rose-800">Void: {r.void_reason || "no reason"}{r.void_by ? ` by ${r.void_by}` : ""}</span>}
+              {status === "VOID" && <span className="text-rose-800 dark:text-rose-300">Void: {r.void_reason || "no reason"}{r.void_by ? ` by ${r.void_by}` : ""}</span>}
               {r.customer_phone && <span>Phone {r.customer_phone}</span>}
             </div>
           </td>
@@ -294,7 +294,7 @@ export function ProjectPosSalesSection({
               type="button"
               onClick={setTotalSales}
               disabled={!totals || busy !== null}
-              className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-emerald-600/40 bg-emerald-100 px-2 text-[10.5px] font-semibold text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
+              className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 px-2 text-[10.5px] font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800/50 disabled:opacity-50"
               title="Write the net POS takings as this project's Total Sales (Project List, dashboard and Google Sheet read it)"
             >
               <Plus size={11} /> Total Sales

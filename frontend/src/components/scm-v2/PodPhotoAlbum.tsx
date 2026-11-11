@@ -113,14 +113,14 @@ export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
           </button>
         </div>
       </div>
-      {pdfError && <div role="alert" className="mb-2 text-[12.5px] text-red-600">{pdfError}</div>}
+      {pdfError && <div role="alert" className="mb-2 text-[12.5px] text-red-600 dark:text-red-300">{pdfError}</div>}
       <div className="grid max-w-[420px] grid-cols-3 gap-2">
         {blobs.map((b, i) => (
           <button key={paths[i]} type="button" onClick={() => setOpen(i)} aria-label={`Open photo ${i + 1} of ${total}`}
             className="relative aspect-square overflow-hidden rounded border border-border bg-surface-dim">
             {b.data && <img src={b.data} alt={`POD photo ${i + 1}`} className="h-full w-full object-cover" />}
             {b.isPending && <span className="absolute inset-0 grid place-items-center text-[11px] text-ink-muted">Loading…</span>}
-            {b.error && <span className="absolute inset-0 grid place-items-center p-1 text-center text-[11px] text-red-600">Could not load</span>}
+            {b.error && <span className="absolute inset-0 grid place-items-center p-1 text-center text-[11px] text-red-600 dark:text-red-300">Could not load</span>}
           </button>
         ))}
       </div>

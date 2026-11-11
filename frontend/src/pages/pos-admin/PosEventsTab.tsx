@@ -91,7 +91,7 @@ export function PosEventsTab() {
                   <div key={t.id}><span className="font-mono">{t.code}</span> {t.prepared_at ? <Pill tone="ok">PAIRED</Pill> : <Pill tone="warn">NOT PAIRED</Pill>}{t.last_sync_at && <span className="ml-1 text-ink-muted">sync {formatDateTime(t.last_sync_at)}</span>}</div>
                 ))}
               </td>
-              <td className={cn(td, "text-[10.5px]")}>{e.link ? (e.link.cashiers.length === 0 ? <span className="text-amber-800">none assigned</span> : e.link.cashiers.map((c) => c.name).join(", ")) : <span className="text-ink-muted">--</span>}</td>
+              <td className={cn(td, "text-[10.5px]")}>{e.link ? (e.link.cashiers.length === 0 ? <span className="text-amber-800 dark:text-amber-300">none assigned</span> : e.link.cashiers.map((c) => c.name).join(", ")) : <span className="text-ink-muted">--</span>}</td>
               <td className={cn(td, "font-mono text-[10.5px]")}>{e.link ? <>v{e.link.catalog_version}{e.link.pushed_at && <div className="text-[9.5px] text-ink-muted">{formatDateTime(e.link.pushed_at)}</div>}</> : "--"}</td>
               <td className={cn(td, "whitespace-nowrap")} onClick={(ev) => ev.stopPropagation()}>
                 {e.link

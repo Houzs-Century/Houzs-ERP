@@ -130,6 +130,7 @@ import {
   Rows4,
   PanelRight,
   Square,
+  Paperclip,
 } from "lucide-react";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
 import { mytDayOf, todayMyt } from "../../vendor/scm/lib/dates";
@@ -150,6 +151,7 @@ type MailThreadRow = {
   labels: string[];
   trashedAt: string | null;
   hasOutbound: boolean;
+  hasAttachment: boolean;
 };
 
 type MailAddress = {
@@ -340,7 +342,7 @@ export function ThreadList({
             </p>
             <button
               onClick={onInjectTest}
-              className="mt-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+              className="mt-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-[11px] font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
             >
               Inject a test email (verify inbox)
             </button>
@@ -511,9 +513,9 @@ function RowLead({
         }}
         aria-label={starred ? "Unstar" : "Star"}
         title={starred ? "Unstar" : "Star"}
-        className="flex items-center px-1 text-ink-muted/40 hover:text-amber-500"
+        className="flex items-center px-1 text-ink-muted/40 hover:text-amber-500 dark:hover:text-amber-400"
       >
-        <Star className={cn("h-4 w-4", starred && "fill-amber-400 text-amber-500")} />
+        <Star className={cn("h-4 w-4", starred && "fill-amber-400 text-amber-500 dark:text-amber-400")} />
       </button>
     </>
   );
@@ -621,7 +623,8 @@ function CompactRow({
           )}
         </span>
       </button>
-      <span className="shrink-0 px-2 text-xs text-ink-muted group-hover:hidden group-focus-within:hidden">
+      <span className="inline-flex shrink-0 items-center gap-1 px-2 text-xs text-ink-muted group-hover:hidden group-focus-within:hidden">
+        {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
         {fmtTime(t.lastMessageAt)}
       </span>
       <div className="hidden group-hover:flex group-focus-within:flex">
@@ -676,7 +679,10 @@ function ComfortableRow({
             <span className={cn("truncate text-sm", unread ? "font-semibold text-ink" : "font-medium text-ink/90")}>
               {senderLabel(t)}
             </span>
-            <span className="shrink-0 text-xs text-ink-muted">{fmtTime(t.lastMessageAt)}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
+              {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
+              {fmtTime(t.lastMessageAt)}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className={cn("truncate text-sm", unread ? "text-ink" : "text-ink-muted")}>
@@ -714,7 +720,7 @@ function ComfortableRow({
             </span>
           )}
           {t.status === "closed" && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200">
               <Check className="h-3 w-3" />
               Archived
             </span>
@@ -1431,7 +1437,7 @@ export function MailInbox() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
           {error}
         </div>
       )}
@@ -1782,11 +1788,11 @@ export default MailInbox;
 function outboxStatusTone(status: string): string {
   switch (status.toUpperCase()) {
     case "SENT":
-      return "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200";
+      return "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200";
     case "FAILED":
       return "bg-err-bg text-err ring-1 ring-inset ring-err/20";
     default:
-      return "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200"; // PENDING
+      return "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-200"; // PENDING
   }
 }
 
@@ -1906,7 +1912,7 @@ function OutboxPanel({ q }: { q: string }) {
           </div>
         </div>
         <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+          <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200">
             {counts.sent} sent
           </span>
           {counts.failed > 0 && (
@@ -1915,7 +1921,7 @@ function OutboxPanel({ q }: { q: string }) {
             </span>
           )}
           {counts.pending > 0 && (
-            <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+            <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-200">
               {counts.pending} pending
             </span>
           )}
@@ -2158,7 +2164,7 @@ export function OutboxReaderModal({
             <iframe
               title="email body"
               sandbox={EMAIL_FRAME_SANDBOX}
-              className="h-[60vh] w-full border-0 bg-white"
+              className="h-[60vh] w-full border-0 bg-surface"
               srcDoc={emailSrcDoc(data.bodyHtml)}
             />
           ) : (
@@ -2291,7 +2297,7 @@ function ViewSettingsMenu({ prefs }: { prefs: MailViewPrefs }) {
                 prefs.categoryTabs ? "bg-primary" : "bg-ink-muted/30",
               )}
             >
-              <span className={cn("h-3 w-3 rounded-full bg-white transition-transform", prefs.categoryTabs && "translate-x-3")} />
+              <span className={cn("h-3 w-3 rounded-full bg-surface transition-transform", prefs.categoryTabs && "translate-x-3")} />
             </span>
           </button>
           <p className="mt-2 px-1 text-[10px] leading-snug text-ink-muted/70">

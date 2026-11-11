@@ -20,7 +20,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 .button:focus-visible {
-  outline: 2px solid #16695f;
+  outline: 2px solid var(--hz-c-primary);
   outline-offset: 2px;
 }
 .button:active:not(:disabled) {
@@ -33,7 +33,7 @@
 
 /* Variants */
 .variant-primary {
-  background: #16695f;
+  background: var(--hz-c-primary);
   color: #ffffff;
 }
 .variant-primary:hover:not(:disabled) {
@@ -41,13 +41,13 @@
 }
 
 .variant-secondary {
-  background: #fff;
+  background: var(--hz-c-surface);
   color: var(--c-ink);
   border-color: var(--line);
 }
 .variant-secondary:hover:not(:disabled) {
-  border-color: #16695f;
-  color: #16695f;
+  border-color: var(--hz-c-primary);
+  color: var(--hz-c-primary);
 }
 
 .variant-ghost {

@@ -324,7 +324,7 @@ export const PurchaseConsignmentOrderDetail = () => {
         ))}
         <div style={{
           fontSize: 'var(--fs-11)', marginTop: 1,
-          color: remaining > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
+          color: remaining > 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-secondary-a, #2F5D4F)',
         }}>
           {remaining > 0 ? `Balance ${remaining}` : 'Fully received'}
         </div>
@@ -687,7 +687,7 @@ export const PurchaseConsignmentOrderDetail = () => {
                     <td className={styles.priceCell}>{fmtRm(it.line_total_sen, po.currency)}</td>
                     <td className={styles.tableRight}>{it.delivery_date ?? '—'}</td>
                     <td>{renderReceived(it)}</td>
-                    <td className={styles.tableRight} style={{ fontWeight: balance > 0 ? 600 : 400, color: balance > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+                    <td className={styles.tableRight} style={{ fontWeight: balance > 0 ? 600 : 400, color: balance > 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--fg-muted)' }}>
                       {balance > 0 ? balance : '—'}
                     </td>
                   </tr>

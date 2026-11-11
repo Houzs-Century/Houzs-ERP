@@ -38,7 +38,7 @@ export function PoPriceReference({ poUnitPriceSen, piUnitPriceSen, fmt, align = 
       <span style={{ ...muted, fontVariantNumeric: 'tabular-nums' }}>PO {fmt(poUnitPriceSen)}</span>
       {cmp.differs && cmp.diffSen != null && (
         <span
-          style={{ fontSize: 11, fontWeight: 600, color: '#a16a2e', fontVariantNumeric: 'tabular-nums' }}
+          style={{ fontSize: 11, fontWeight: 600, color: 'var(--hz-c-accent)', fontVariantNumeric: 'tabular-nums' }}
           title="The invoice price is different from the purchase order's price. For reference only."
         >
           {cmp.diffSen > 0 ? '+' : '−'}{fmt(Math.abs(cmp.diffSen))} vs PO

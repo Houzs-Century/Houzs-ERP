@@ -27,7 +27,10 @@ import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
   pinsFromGeoPoints, geoTotals, zoneSummary, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
-import { useDeliveryPlanning, type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
+import { type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
+import { useBandedBoard, bandOfDay } from '../../vendor/scm/lib/delivery-board-bands';
+import { useBoardRefresh } from '../../vendor/scm/lib/board-change-poll';
+import { BoardLoadStatus } from '../../vendor/scm/components/BoardLoadStatus';
 import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isLastMileJobRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
 import { regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
@@ -89,12 +92,14 @@ export function FleetDay() {
   // ── Feeds ────────────────────────────────────────────────────────────────
   const query = useFleetDay({ date, warehouseId: warehouseId || null });
   const trips = useMemo(() => query.data?.trips ?? [], [query.data]);
-  const board = useDeliveryPlanning({ region: 'ALL', state: 'ALL' });
+  // The board in date bands: the band holding this day first, the rest after (delivery-board-bands.ts).
+  const board = useBandedBoard({ state: 'ALL', first: bandOfDay(date, todayMY()) });
+  const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
   const boardOrders = useMemo<PlanningOrder[]>(
-    () => (board.data?.orders ?? []).filter(
+    () => board.orders.filter(
       (o) => !isEastMalaysiaOrSingaporeStop({ region: o.region, state: o.customer_state, country: o.customer_country }),
     ),
-    [board.data],
+    [board.orders],
   );
   const { data: drivers = [] } = useDrivers();
   const { data: helpers = [] } = useHelpers();
@@ -192,8 +197,8 @@ export function FleetDay() {
   }, [filteredDocs, runForDoc]);
 
   const regionTabs = useMemo(
-    () => regionTabsFrom(board.data?.regions).filter((t) => t.key !== 'EM').map((t) => ({ key: t.key, label: t.label })),
-    [board.data?.regions],
+    () => regionTabsFrom(board.regions).filter((t) => t.key !== 'EM').map((t) => ({ key: t.key, label: t.label })),
+    [board.regions],
   );
   const salespeople = useMemo(() => {
     const m = new Map<string, string>();
@@ -301,6 +306,7 @@ export function FleetDay() {
     <LorryCard
       key={r.trip?.id ?? `lorry:${platekey(r.plate)}`}
       run={r}
+      routeColor={colorForPlate(platekey(r.plate))}
       visibleDocs={active ? (filteredByCard.get(platekey(r.plate)) ?? []) : r.docs}
       filtersActive={active}
       searchActive={filters.query.trim().length >= 2}
@@ -434,9 +440,10 @@ export function FleetDay() {
         />
       )}
 
-      {board.error && (
+      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} onRefresh={boardRefresh.refreshNow} />
+      {board.failed && board.parts.length === 0 && (
         <p className="rounded-md border border-err/40 bg-err-bg p-4 text-[13px] text-err">
-          Could not load the day's orders. {board.error instanceof Error ? board.error.message : ''}
+          Could not load the day's orders. {board.failed.error instanceof Error ? board.failed.error.message : ''}
         </p>
       )}
 

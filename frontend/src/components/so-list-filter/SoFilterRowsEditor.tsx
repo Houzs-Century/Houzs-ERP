@@ -87,7 +87,7 @@ export function SoFilterRowsEditor({
               <button type="button" className={valueBtn} aria-expanded={openRow === i} aria-label={`Edit ${def?.label ?? row.field} value`}
                 style={skin === "mobile" ? { flex: 1, minWidth: 0, justifyContent: "space-between", padding: "9px 10px", ...(complete ? null : { borderColor: "var(--gold)" }) } : undefined}
                 onClick={() => setOpenRow(openRow === i ? null : i)}>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12.5, color: complete ? undefined : "#a16a2e" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12.5, color: complete ? undefined : "var(--hz-c-accent)" }}>
                   {soFilterSummary(row, lookups.labels)}
                 </span>
                 <Caret />

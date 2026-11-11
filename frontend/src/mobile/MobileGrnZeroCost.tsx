@@ -57,11 +57,11 @@ const rm = (sen: number): string => fmtSen(sen);
 
 const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", height: 40, padding: "0 11px", borderRadius: 10,
-  border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 14, color: "var(--ink)",
+  border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)", fontFamily: "inherit", fontSize: 14, color: "var(--ink)",
 };
 const labelStyle: React.CSSProperties = {
   fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase",
-  color: "#9aa093", marginBottom: 5, display: "block",
+  color: "var(--hz-c-ink-soft)", marginBottom: 5, display: "block",
 };
 
 /**
@@ -126,7 +126,7 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
         className="hz-m"
         role="dialog"
         aria-label="Receipt needs a cost"
-        style={{ width: "100%", maxHeight: "86vh", overflowY: "auto", background: "#fff", borderRadius: "18px 18px 0 0", padding: "18px 16px calc(env(safe-area-inset-bottom) + 16px)", boxShadow: "0 -8px 28px rgba(0,0,0,0.16)" }}
+        style={{ width: "100%", maxHeight: "86vh", overflowY: "auto", background: "var(--hz-c-surface)", borderRadius: "18px 18px 0 0", padding: "18px 16px calc(env(safe-area-inset-bottom) + 16px)", boxShadow: "0 -8px 28px rgba(0,0,0,0.16)" }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)" }}>Receipt needs a cost</div>
@@ -140,7 +140,7 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
         </p>
 
         {unaddressable.length > 0 && (
-          <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.5, color: "#b23a3a" }}>
+          <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.5, color: "var(--hz-c-err)" }}>
             {unaddressable.length} refused line{unaddressable.length === 1 ? "" : "s"} came back without a line id, so
             {unaddressable.length === 1 ? " it" : " they"} cannot be corrected from here. Open this receipt on desktop.
           </p>
@@ -150,9 +150,9 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
           const k = keyOf(line, i);
           const d = decisionOf(k);
           return (
-            <div key={k} style={{ border: "1px solid #e3e6e0", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+            <div key={k} style={{ border: "1px solid var(--hz-c-border-subtle)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>{line.itemCode} × {line.qtyAccepted}</div>
-              <div style={{ fontSize: 11, color: "#767b6e", marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", marginBottom: 10 }}>
                 normally about {rm(line.knownUnitCostSen)} each
               </div>
 
@@ -195,11 +195,11 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
         })}
 
         {error && (
-          <div style={{ fontSize: 11.5, color: "#b23a3a", marginBottom: 12, whiteSpace: "pre-wrap" }}>{error}</div>
+          <div style={{ fontSize: 11.5, color: "var(--hz-c-err)", marginBottom: 12, whiteSpace: "pre-wrap" }}>{error}</div>
         )}
 
         {!allAnswered && unaddressable.length === 0 && (
-          <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "#767b6e", textAlign: "center" }}>
+          <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--hz-c-ink-muted)", textAlign: "center" }}>
             Give every line above a unit price, or tick "Received free" on it.
           </p>
         )}

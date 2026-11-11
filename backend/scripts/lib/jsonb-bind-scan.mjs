@@ -234,6 +234,18 @@ export function textAfterQuestionMark(sqlText, n) {
  *
  * @returns {Array<{file:string, line:number, kind:'template'|'unsafe'|'bind', snippet:string}>}
  */
+/** A bare identifier naming a `const X = \`...\`` (or '...' / "...") in the same
+ *  file resolves to that literal's text; anything else is returned unchanged. */
+export function resolveSqlConst(fileText, expr) {
+  const name = expr.trim();
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return expr;
+  const m = new RegExp(String.raw`(?:const|let|var)\s+` + name + String.raw`\s*=\s*([\x60'"])`).exec(fileText);
+  if (!m) return expr;
+  const start = m.index + m[0].length;
+  const end = fileText.indexOf(m[1], start);
+  return end === -1 ? expr : fileText.slice(start, end);
+}
+
 export function scanSource(file, rawText, opts = { strictBind: false }) {
   const findings = [];
   // Comments are blanked position-for-position: a prose WARNING about this trap
@@ -318,7 +330,10 @@ export function scanSource(file, rawText, opts = { strictBind: false }) {
     if (close === -1) continue;
     const args = splitTopLevel(text, open, close);
     if (args.length < 2) { unsafeRe.lastIndex = open + 1; continue; }
-    const sqlText = args[0].text;
+    /* `.unsafe(BOARD_SQL, [...])`: the statement is a constant declared in this file.
+       Read the funnel off its text; without this every such call was a finding
+       whatever its SQL said, and the only "fix" left was hiding the stringify. */
+    const sqlText = resolveSqlConst(text, args[0].text);
     // The params argument is an array literal; if it is a variable we cannot
     // index it, so fall back to flagging any stringify inside it.
     const paramsSpan = args[1];

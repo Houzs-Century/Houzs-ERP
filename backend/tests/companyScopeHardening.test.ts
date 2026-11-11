@@ -112,12 +112,15 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   return { app, log };
 }
 
-const jsonPatch = (app: Hono, url: string, body?: Row) =>
+const jsonPatch = (app: Hono, url: string, body?: Row, env?: Row) =>
   app.request(url, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body ?? {}),
-  });
+  }, env);
+/* These stubs have no database, so the GRN post runs its two-step path; the
+   atomic path's scope is proven in grnPostAtomic.test.ts and the pg suite. */
+const TWO_STEP = { GRN_POST_MODE: 'two-step' };
 
 // ── Item 3 — grns.ts: posts stock IN against another company's GRN ───────────
 describe('item 3 — GRN confirm (writes inventory IN + rolls up the PO)', () => {
@@ -138,7 +141,7 @@ describe('item 3 — GRN confirm (writes inventory IN + rolls up the PO)', () =>
 
   test('A CAN still confirm its own GRN', async () => {
     const t = { grns: grns() };
-    const res = await jsonPatch(harness(t, CO_A).app, '/grns/g-a/post');
+    const res = await jsonPatch(harness(t, CO_A).app, '/grns/g-a/post', undefined, TWO_STEP);
     expect(res.status).toBe(200);
     expect(t.grns.find((g) => g.id === 'g-a')!.status).toBe('POSTED');
   });

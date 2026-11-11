@@ -88,9 +88,9 @@ function ApproverBadge({ row }: { row: AmendmentQueueRow }) {
 
 const cardBtn: React.CSSProperties = {
   fontSize: 12, fontWeight: 700, padding: "7px 12px", borderRadius: 8,
-  border: "1px solid var(--line, #d9d5cd)", background: "var(--card, #fff)", color: "var(--ink, #221f20)",
+  border: "1px solid var(--line, #d9d5cd)", background: "var(--card, var(--hz-c-surface))", color: "var(--ink, #221f20)",
 };
-const cardDangerBtn: React.CSSProperties = { ...cardBtn, borderColor: "var(--red, #B8331F)", color: "var(--red, #B8331F)" };
+const cardDangerBtn: React.CSSProperties = { ...cardBtn, borderColor: "var(--red, #B8331F)", color: "var(--red, var(--hz-dk-festive-b, #B8331F))" };
 
 export function MobileAmendments({
   onBack,

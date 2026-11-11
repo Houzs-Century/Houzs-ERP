@@ -127,7 +127,7 @@ export function BalanceForm({ request, onDone, onCancel }: { request: PaymentReq
         </label>
       </div>
       {over && (
-        <div role="alert" style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>
+        <div role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-12)' }}>
           More than is left to ask on the bill ({fmtSen(left)}) — it still goes, and Finance sees it.
         </div>
       )}

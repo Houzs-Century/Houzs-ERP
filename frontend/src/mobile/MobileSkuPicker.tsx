@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
+import { isServiceCategory } from "../vendor/shared/service-sku";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -56,6 +57,7 @@ export type PickedSku = {
 
 export function MobileSkuPicker({
   initialCat,
+  serviceOnly,
   onPick,
   onPickMany,
   onClose,
@@ -64,6 +66,9 @@ export function MobileSkuPicker({
      line opens pre-filtered to bedframes — but the operator can switch to
      "All" or any other chip, so it never BLOCKS selecting another category. */
   initialCat?: SkuPickerCat;
+  /* Only SERVICE SKUs (DEV-32: after a Delivery Order a Sales Order takes charge
+     lines only, desktop SoLineCard chargeOnly). The catalog lists them at once. */
+  serviceOnly: boolean;
   onPick: (sku: PickedSku) => void;
   /* Optional multi-select. When provided, rows become toggleable and a footer
      "Add N products" button hands back every selected SKU at once. When absent,
@@ -100,7 +105,7 @@ export function MobileSkuPicker({
   // no category chip we prompt instead of listing arbitrary rows, and RENDER_CAP
   // still bounds the DOM so a wide match can't freeze the sheet.
   const trimmedSearch = search.trim();
-  const gateOpen = trimmedSearch.length >= 2 || cat !== "";
+  const gateOpen = serviceOnly || trimmedSearch.length >= 2 || cat !== "";
   const productsQ = useMfgProducts({ enabled: true });
 
   const rows = useMemo<MfgProductRow[]>(() => {
@@ -108,10 +113,11 @@ export function MobileSkuPicker({
     return (productsQ.data ?? []).filter(
       (p) =>
         p.status !== "INACTIVE" &&
-        (!cat || p.category === cat) &&
+        (!cat || serviceOnly || p.category === cat) &&
+        (!serviceOnly || isServiceCategory(p.category)) &&
         (trimmedSearch.length < 2 || matchesProductQuery(p, trimmedSearch)),
     );
-  }, [productsQ.data, gateOpen, cat, trimmedSearch]);
+  }, [productsQ.data, gateOpen, cat, trimmedSearch, serviceOnly]);
   // Cap the DOM to RENDER_CAP rows so an "All / no search" set can't freeze the
   // sheet; the hint below tells the operator to narrow when rows are hidden.
   const shown = useMemo(() => rows.slice(0, RENDER_CAP), [rows]);
@@ -123,8 +129,8 @@ export function MobileSkuPicker({
         <div className="grab" />
         <div className="sheet-head">
           <div>
-            <div className="ey" style={{ color: "#a16a2e" }}>Catalog</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Pick a product</div>
+            <div className="ey" style={{ color: "var(--hz-c-accent)" }}>Catalog</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2 }}>Pick a product</div>
           </div>
           <button className="sheet-x" onClick={onClose}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
@@ -141,7 +147,7 @@ export function MobileSkuPicker({
               autoFocus
             />
           </div>
-          <div className="chips">
+          {!serviceOnly && <div className="chips">
             {CAT_CHIPS.map((c) => (
               <button
                 key={c.value || "all"}
@@ -151,18 +157,18 @@ export function MobileSkuPicker({
                 {c.label}
               </button>
             ))}
-          </div>
+          </div>}
         </div>
 
         <div className="sheet-scroll" style={{ gap: 7 }}>
           {!gateOpen ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>Type at least 2 characters, or pick a category, to browse the catalog.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>Type at least 2 characters, or pick a category, to browse the catalog.</div>
           ) : productsQ.isLoading ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>Loading catalog{"…"}</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>Loading catalog{"…"}</div>
           ) : productsQ.isError ? (
-            <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "28px 0" }}>Couldn{"’"}t load the catalog. Pull down and try again.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-err)", fontSize: 12, padding: "28px 0" }}>Couldn{"’"}t load the catalog. Pull down and try again.</div>
           ) : rows.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "28px 0" }}>No products match{search.trim() ? ` "${search.trim()}"` : ""}.</div>
+            <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "28px 0" }}>No products match{search.trim() ? ` "${search.trim()}"` : ""}.</div>
           ) : (
             <>
             {shown.map((p) => {
@@ -195,7 +201,7 @@ export function MobileSkuPicker({
                   style={{
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     border: `1px solid ${isOn ? "#0c3f39" : "rgba(34,31,32,.12)"}`, borderRadius: 11,
-                    background: isOn ? "#f0f6f2" : "#fff",
+                    background: isOn ? "var(--hz-dk-surface-2, #f0f6f2)" : "var(--hz-c-surface)",
                     padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
                     display: "flex", alignItems: "center", gap: 10,
                   }}
@@ -206,7 +212,7 @@ export function MobileSkuPicker({
                       style={{
                         flex: "none", width: 18, height: 18, borderRadius: 5,
                         border: `1.6px solid ${isOn ? "#0c3f39" : "rgba(34,31,32,.28)"}`,
-                        background: isOn ? "#0c3f39" : "#fff",
+                        background: isOn ? "#0c3f39" : "var(--hz-c-surface)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}
                     >
@@ -224,18 +230,18 @@ export function MobileSkuPicker({
                       row's full width and WRAPS instead of truncating; category
                       stays available as the chip filter above. skuOf() still
                       binds p.code / p.category on tap — display-only change. */}
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#11140f", overflowWrap: "anywhere" }}>{p.name}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)", overflowWrap: "anywhere" }}>{p.name}</span>
                   {repeatable && count > 0 && (
                     <>
-                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "#0c3f39" }}>{"×"}{count}</span>
+                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{"×"}{count}</span>
                       <span
                         role="button"
                         aria-label={`Remove one ${p.name}`}
                         onClick={(e) => { e.stopPropagation(); setPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
                         style={{
                           flex: "none", width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(34,31,32,.2)",
-                          background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 16, fontWeight: 800, color: "#11140f",
+                          background: "var(--hz-c-surface)", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)",
                         }}
                       >
                         {"−"}
@@ -246,7 +252,7 @@ export function MobileSkuPicker({
               );
             })}
             {hiddenCount > 0 && (
-              <div style={{ textAlign: "center", color: "#9aa093", fontSize: 11, padding: "10px 0 4px" }}>
+              <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 11, padding: "10px 0 4px" }}>
                 Showing the first {RENDER_CAP} of {rows.length} products — narrow by search or category.
               </div>
             )}
@@ -256,7 +262,7 @@ export function MobileSkuPicker({
 
         {multi && (
           <div className="sheet-foot">
-            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: picked.length ? "#11140f" : "#9aa093" }}>
+            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: picked.length ? "var(--hz-c-ink)" : "var(--hz-c-ink-soft)" }}>
               {picked.length} selected
             </span>
             <button

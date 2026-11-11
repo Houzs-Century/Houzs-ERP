@@ -623,8 +623,8 @@ function PurchaseReturnDetailV2ReadOnly() {
                     value={supplierReplaces ? "Yes — the PO stays open for it" : "No — the PO is done"}
                   />
                   {effectiveOf(purchaseReturn) !== "cancelled" && (
-                    <Button variant="ghost" onClick={doToggleReplacement} disabled={updateHeader.isPending}>
-                      Change
+                    <Button variant="secondary" icon={<Edit3 size={14} />} onClick={doToggleReplacement} disabled={updateHeader.isPending}>
+                      Change answer
                     </Button>
                   )}
                 </div>

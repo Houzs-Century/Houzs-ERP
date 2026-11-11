@@ -264,7 +264,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
         {parts.brand && <span style={{ flexShrink: 0, fontWeight: 600 }}>[{hl(parts.brand)}]</span>}
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {hl(parts.title)}
-          {parts.state && <span style={{ color: 'var(--c-muted, #767b6e)' }}> · {hl(parts.state)}</span>}
+          {parts.state && <span style={{ color: 'var(--c-muted, var(--hz-c-ink-muted))' }}> · {hl(parts.state)}</span>}
         </span>
       </span>
     );
@@ -726,7 +726,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   />
                 )}
                 {entry.key === 'ASSR_INSPECTION' && (
-                  <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+                  <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
                     An inspection reaches the board only when the case is inspected by our
                     own team — on a supplier-inspected case the date is kept but no fleet
                     job appears, because we do not dispatch for someone else's inspection.
@@ -745,7 +745,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           <>
 
           <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.label} <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional</span></div>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.label} <span style={{ textTransform: 'none', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>— optional</span></div>
             {sourceControl === 'supplier-picker' ? (
               <SearchableSelect
                 value={form.source}
@@ -788,7 +788,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 value={form.source} onChange={(e) => set('source', e.target.value)} />
             )}
             {sourceControl === 'project-picker' && form.source !== '' && (
-              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
                 Venue address + PIC contact auto-fill from the project on create.
               </div>
             )}
@@ -817,7 +817,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   ariaLabel="Lorry going in"
                 />
               )}
-              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
                 Scheduling this job takes that lorry off the road for the day —
                 it stops being offered on the board and counts as a repair day.
               </div>
@@ -832,7 +832,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           {form.jobType === 'TRANSFER' && (
             <div style={{ ...fieldRow, padding: 'var(--space-3)', border: '1px solid var(--border, rgba(34,31,32,0.12))', borderRadius: '6px' }}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
-                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional, for a partner / point-to-point move</span>
+                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>— optional, for a partner / point-to-point move</span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
                 <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
@@ -1001,7 +1001,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   />
                 )
               )}
-              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
                 {form.destKind === 'warehouse'
                   ? 'The warehouse master carries no contact — fill one in below if the driver needs someone to call on arrival.'
                   : form.destKind === 'threepl'

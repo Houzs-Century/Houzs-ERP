@@ -431,7 +431,7 @@ export const ApInvoiceForm = ({
               <AddLineButton variant="ghost" onClick={() => addLine(true)} />
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
             </td>
-            <td style={{ ...td, ...right, fontWeight: 700, color: belowPaid ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>
+            <td style={{ ...td, ...right, fontWeight: 700, color: belowPaid ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : undefined }}>Total {fmtSen(total)}</td>
             <td />
             <td />
           </tr>
@@ -439,7 +439,7 @@ export const ApInvoiceForm = ({
       </table>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', alignItems: 'center' }}>
-        {belowPaid && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>The total cannot fall below the {fmtSen(paidSen)} already paid.</span>}
+        {belowPaid && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>The total cannot fall below the {fmtSen(paidSen)} already paid.</span>}
         <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button variant={canPost && mode !== 'edit' ? 'secondary' : 'primary'} size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles)} disabled={saving || !ready}>

@@ -1,6 +1,9 @@
 // ----------------------------------------------------------------------------
 // Inventory variant key — the canonical "attribute composition" identity.
 //
+// MIRRORED BYTE FOR BYTE to frontend/src/vendor/shared/variant-key.ts
+// (backend/tests/canonicalVariantKey.test.ts is the referee).
+//
 // Stock is bucketed by (warehouse_id, item_code, variant_key). Two lines
 // with identical physical attributes produce the SAME key, so they pool into
 // the same on-hand bucket; any difference produces a different key, so they
@@ -21,12 +24,6 @@
 // Legacy / unclassified stock carries an empty key (''). A brand-new line with
 // no physical attributes set also resolves to '' so it does not fragment away
 // from the unclassified bucket.
-//
-// HOUZS VENDOR — Inventory/StockCard wave. Copied verbatim from
-// @2990s/shared/variant-key.ts. The Inventory hub + Stock Card only call
-// formatVariantKey. It imports one pure sibling helper (normaliseTypographicQuotes
-// from ./mfg-pricing) so the key folds typographic inch marks exactly as pricing
-// does; otherwise vendored whole to stay byte-for-byte with the source key contract.
 // ----------------------------------------------------------------------------
 
 import { normaliseTypographicQuotes } from './mfg-pricing';
@@ -153,6 +150,99 @@ export function computeVariantKey(
   return parts.join('|');
 }
 
+/** The variant fields that make up a line's SPEC (identity plus the derived
+ *  total and the aliases). A DO line linked to an SO line takes exactly these
+ *  from the SO line on the server. */
+export const VARIANT_SPEC_FIELDS = [
+  'fabricCode', 'colorCode', 'colourCode', 'fabricColor',
+  'seatHeight', 'depth', 'seatSize',
+  'gap', 'divanHeight', 'legHeight', 'sofaLegHeight', 'totalHeight',
+  'specials',
+] as const;
+
+/* ── Bucket IDENTITY (PR #5609 follow-up) ─────────────────────────────────────
+   computeVariantKey above is unchanged: it is the key every reader and every
+   company-1 writer has always computed. What follows only COMPARES keys.
+
+   Two keys name the same physical spec when their canonical forms are equal:
+   placeholders ("default", "none", "n/a", blank) are absent; a bedframe's
+   derived `totalheight` does not count when gap, divan or leg is present; inch
+   marks and words, spaces and hyphens are ignored; specials are order-free.
+   Used only for companies that track stock by variant (lib/stock-bucket-key.ts
+   decides which): a write there carries a canonically equal stocked bucket's
+   own string, because the FIFO trigger matches variant_key exactly. */
+
+const SLUG_ORDER = ['fabriccode', 'seatheight', 'gap', 'divanheight', 'legheight', 'totalheight', 'special'];
+
+const PLACEHOLDERS = new Set(['', 'default', 'none', 'na', 'n/a', 'nil', 'null', 'undefined']);
+
+/** Identity value form: lowercased, quote-folded, inch words and marks, spaces and hyphens removed. */
+const identityValue = (v: unknown): string =>
+  norm(v)
+    .replace(/(\d)\s*(?:inches|inch|in)\b\.?/g, '$1')
+    .replace(/["']/g, '')
+    .replace(/[\s-]+/g, '');
+
+/**
+ * The comparison IDENTITY of any stored or computed key. Idempotent. Two keys
+ * name the same stock bucket exactly when their canonical forms are equal.
+ * Applies the field rules a key string can carry (placeholders, the derived
+ * total) and the value normalisation (inch marks/words, spaces, hyphens).
+ */
+export function canonicalVariantKey(key: string | null | undefined): string {
+  if (!key) return '';
+  const values = new Map<string, string>();
+  for (const part of String(key).split('|')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const slug = part.slice(0, eq).trim().toLowerCase();
+    const raw = part.slice(eq + 1);
+    if (slug === 'special') {
+      const sp = raw.split(',').map(identityValue).filter((s) => !PLACEHOLDERS.has(s)).sort().join(',');
+      if (sp) values.set(slug, sp);
+      continue;
+    }
+    const val = identityValue(raw);
+    if (PLACEHOLDERS.has(val)) continue;
+    values.set(slug, val);
+  }
+  if (values.has('gap') || values.has('divanheight') || values.has('legheight')) values.delete('totalheight');
+  const ordered = [...values.keys()].sort((x, y) => {
+    const ix = SLUG_ORDER.indexOf(x); const iy = SLUG_ORDER.indexOf(y);
+    return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy) || x.localeCompare(y);
+  });
+  return ordered.map((slug) => `${slug}=${values.get(slug)}`).join('|');
+}
+
+/** True when two keys name the same stock bucket. */
+export function sameVariantBucket(a: string | null | undefined, b: string | null | undefined): boolean {
+  return canonicalVariantKey(a) === canonicalVariantKey(b);
+}
+
+/**
+ * Which stored key a write should use, given the buckets that already exist for
+ * the same (warehouse, item_code).
+ *
+ * The FIFO trigger matches `variant_key` as an exact string, so a new movement
+ * that is canonically equal to a stocked bucket must carry THAT bucket's string,
+ * or it lands in an empty bucket and goes negative. Order:
+ *   1. a bucket with exactly the wanted key — keep it (reversals stay exact);
+ *   2. canonically equal buckets — the one holding the most stock, ties by key;
+ *   3. none — the wanted key, a new bucket.
+ */
+export function pickStockBucketKey(
+  wanted: string,
+  existing: ReadonlyArray<{ variantKey: string | null; qty: number }>,
+): string {
+  const w = wanted;
+  if (existing.some((e) => (e.variantKey ?? '') === w)) return w;
+  const id = canonicalVariantKey(w);
+  const same = existing
+    .filter((e) => canonicalVariantKey(e.variantKey) === id)
+    .sort((x, y) => y.qty - x.qty || String(x.variantKey ?? '').localeCompare(String(y.variantKey ?? '')));
+  return same[0] ? (same[0].variantKey ?? '') : w;
+}
+
 /** Human-readable labels for the canonical key's attribute slugs. */
 const VARIANT_LABELS: Record<string, string> = {
   fabriccode: 'Fabric',
@@ -173,7 +263,9 @@ const VARIANT_LABELS: Record<string, string> = {
  * bedframe/sofa labels). Empty / unclassified -> '' (caller decides how to
  * show it, e.g. "Standard").
  *
- * Was: "Fabric BF-16 · Gap 16 · Leg 2" (labelled + " · ") — retired.
+ * Was: "Fabric BF-16 · Gap 16 · Leg 2" (labelled + " · ") — retired. (This BE
+ * copy had drifted behind the FE vendored copy's 2026-07-23 format update —
+ * re-synced 2026-07-24 so the pair renders identically again.)
  *
  * Owner 2026-07-24 ("全部包裹 stocks 你也是要看到 supplier 的 fabric code"):
  * optional `fabricSupplierCode` — the supplier's own code for the key's

@@ -10,12 +10,13 @@
  * come through the same /activity feed but we filter to action === "note" so
  * the mobile card stays a chat thread. The project detail already surfaces the
  * system rows elsewhere. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { relativeTime } from "../lib/utils";
+import { salesReportFormatIssues, type SalesReportFormatIssue } from "../lib/salesReportFormatIssues";
 
 type NoteActivity = {
   id: number;
@@ -107,18 +108,18 @@ export function MobileProjectChat({
             match every chat app the floor already uses. */}
         <div
           style={{
-            border: "1px solid #eceee9",
+            border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
             borderRadius: 10,
             overflow: "hidden",
             maxHeight: "60vh",
             overflowY: "auto",
-            background: "#fafbf8",
+            background: "var(--hz-dk-surface-2, #fafbf8)",
           }}
         >
           {isLoading ? (
-            <div style={{ padding: 12, fontSize: 12, color: "#9aa093" }}>Loading…</div>
+            <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>Loading…</div>
           ) : notes.length === 0 ? (
-            <div style={{ padding: 12, fontSize: 12, color: "#9aa093" }}>No messages yet.</div>
+            <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No messages yet.</div>
           ) : (
             notes.map((n, i) => {
               const mine = user?.id != null && n.user_id === user.id;
@@ -134,16 +135,16 @@ export function MobileProjectChat({
                     alignItems: mine ? "flex-end" : "flex-start",
                   }}
                 >
-                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 10.5, color: "#767b6e" }}>
-                    <span style={{ fontWeight: 700, color: "#414539" }}>{n.user_name || "Unknown"}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 10.5, color: "var(--hz-c-ink-muted)" }}>
+                    <span style={{ fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>{n.user_name || "Unknown"}</span>
                     <span>{relativeTime(n.created_at)}</span>
                   </div>
                   <div
                     style={{
                       fontSize: 13,
-                      color: "#11140f",
-                      background: mine ? "#e5f4ec" : "#fff",
-                      border: "1px solid #eceee9",
+                      color: "var(--hz-c-ink)",
+                      background: mine ? "var(--hz-dk-synced-bg, #e5f4ec)" : "var(--hz-c-surface)",
+                      border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
                       borderRadius: 10,
                       padding: "8px 11px",
                       maxWidth: "88%",
@@ -154,6 +155,11 @@ export function MobileProjectChat({
                   >
                     {n.note ?? ""}
                   </div>
+                  {/* Format hints (owner 2026-11-10 "bagi warning kalau sales
+                      person kurang satu format or salah format"). Shared helper
+                      with the desktop ProjectChat so both surfaces read a paste
+                      the same way. Hidden entirely for regular chat. */}
+                  <FormatHints note={n.note} align={mine ? "end" : "start"} />
                 </div>
               );
             })
@@ -198,7 +204,7 @@ export function MobileProjectChat({
                 height: 40,
                 padding: 0,
                 borderRadius: 10,
-                color: "#16695f",
+                color: "var(--hz-c-primary)",
                 borderColor: "#bcdcd7",
               }}
             >
@@ -208,9 +214,47 @@ export function MobileProjectChat({
         )}
 
         {failed && (
-          <div style={{ fontSize: 11, color: "#b23a3a", marginTop: 6 }}>{failed}</div>
+          <div style={{ fontSize: 11, color: "var(--hz-c-err)", marginTop: 6 }}>{failed}</div>
         )}
       </div>
     </details>
+  );
+}
+
+/** Inline format hints under a sales-report message — the mobile mirror of
+ *  the desktop ChatBubble's FormatHints, keyed to the paste through the
+ *  shared `salesReportFormatIssues` helper so both surfaces say the same
+ *  thing about the same text. */
+function FormatHints({ note, align }: { note: string | null; align: "start" | "end" }) {
+  const issues: SalesReportFormatIssue[] = useMemo(() => salesReportFormatIssues(note), [note]);
+  if (issues.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        marginTop: 4,
+        maxWidth: "88%",
+        alignSelf: align === "end" ? "flex-end" : "flex-start",
+      }}
+    >
+      {issues.map((it, i) => (
+        <div
+          key={i}
+          style={{
+            fontSize: 11,
+            lineHeight: 1.4,
+            padding: "5px 8px",
+            borderRadius: 7,
+            border: it.tone === "warn" ? "1px solid #f4d9a8" : "1px solid #dde1d8",
+            background: it.tone === "warn" ? "#fdf5e4" : "#f3f5f0",
+            color: it.tone === "warn" ? "#8a4e0e" : "var(--hz-c-ink-secondary)",
+          }}
+        >
+          {it.message}
+        </div>
+      ))}
+    </div>
   );
 }

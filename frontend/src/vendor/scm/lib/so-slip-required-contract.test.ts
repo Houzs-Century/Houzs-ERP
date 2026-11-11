@@ -28,7 +28,8 @@ const read = (rel: string): string =>
   readFileSync(resolve(process.cwd(), rel), 'utf8');
 
 const desktopSource = read('src/pages/scm-v2/SalesOrderNew.tsx');
-const mobileSource = read('src/mobile/MobileNewSO.tsx');
+// The phone New SO is two files: the form, and its payment row (MobileSoPayCard).
+const mobileSource = read('src/mobile/MobileNewSO.tsx') + read('src/mobile/MobileSoPayCard.tsx');
 const sheetSource = read('src/mobile/RecordedPayments.tsx');
 const tableSource = read('src/vendor/scm/components/PaymentsTable.tsx');
 
@@ -63,7 +64,7 @@ describe('slipMissingProblem (lib/payment-slip-gate) — the rule plus the three
 
 describe('every keying surface gates on the one rule', () => {
   test('desktop panel: the per-row Save, the batch commit and the button all ask it', () => {
-    expect(sliceFrom(tableSource, 'const commitDraft = ', 'const commitAllDrafts = ')).toContain('slipMissingProblem(d)');
+    expect(sliceFrom(tableSource, 'const commitDraftOnce = ', 'const commitAllDrafts = ')).toContain('slipMissingProblem(d)');
     expect(sliceFrom(tableSource, 'const commitAllDrafts = ', 'const paidSen = isSaved')).toContain('slipMissingProblem(d)');
     const button = sliceFrom(tableSource, 'const noAmount = d.amountSen <= 0;', 'onClick={() => commitDraft(d)}');
     expect(button).toContain('const noSlip   = slipMissingProblem(d);');
@@ -127,7 +128,7 @@ describe('the writers are still blind to the slip — the gate is before the sav
 
   test('desktop: the create-time deposit gate counts exactly the rows the flush will post', () => {
     expect(desktopSource).toContain('const pendingDepositSen = paymentIntents()');
-    const gate = sliceFrom(desktopSource, 'const pendingDepositSen = paymentIntents()', 'create.mutate(');
+    const gate = sliceFrom(desktopSource, 'const pendingDepositSen = paymentIntents()', 'settleMutation(create.mutate,');
     expect(gate).not.toContain('slipUploadSessionId');
   });
 });

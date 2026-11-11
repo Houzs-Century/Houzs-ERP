@@ -965,7 +965,7 @@ export const StockTakeDetail = () => {
                             title={rackUnknown(ln) ? 'Not a rack of this warehouse' : undefined}
                             style={{
                               fontSize: 'var(--fs-12)', fontFamily: 'var(--font-mono)',
-                              ...(rackUnknown(ln) ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : {}),
+                              ...(rackUnknown(ln) ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' } : {}),
                             }}
                           />
                         ) : (
@@ -1106,7 +1106,7 @@ export const StockTakeDetail = () => {
                               fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600,
                               color: groupVariance == null || groupVariance === 0
                                 ? 'var(--fg-muted)'
-                                : groupVariance > 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)',
+                                : groupVariance > 0 ? 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))' : 'var(--c-festive-b, #B8331F)',
                             }}>
                           {groupVariance == null ? '—' : `${groupVariance > 0 ? '+' : ''}${fmtQty(groupVariance)}`}
                         </td>
@@ -1302,7 +1302,7 @@ function BucketSplit({ lines }: { lines: LineDraft[] }) {
   if (plus === 0 || minus === 0) return null;
   return (
     <div title="Stock sits on some variants and is negative on others"
-      style={{ fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-festive-b, #B8331F)', whiteSpace: 'nowrap' }}>
+      style={{ fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', whiteSpace: 'nowrap' }}>
       +{fmtQty(plus)} / −{fmtQty(-minus)}
     </div>
   );

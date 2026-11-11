@@ -838,7 +838,7 @@ export const GoodsReceivedDetail = () => {
                             background: 'transparent',
                             border: 'none',
                             cursor: 'pointer',
-                            color: 'var(--c-festive-b, #B8331F)',
+                            color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                             padding: 4,
                             display: 'inline-flex',
                           }}
@@ -1272,7 +1272,7 @@ export const GoodsReceivedDetail = () => {
                 </div>
 
                 {addError && (
-                  <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>{addError}</div>
+                  <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>{addError}</div>
                 )}
 
                 <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>

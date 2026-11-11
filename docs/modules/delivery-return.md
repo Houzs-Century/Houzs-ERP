@@ -27,6 +27,8 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 
 ## Rules that must not break
 
+- `DELIVERY_RETURN_MODE=atomic` (default, `lib/stock-post-tx.ts`, `lib/delivery-return-stock.ts`): a create's stock IN commits in ONE transaction or not at all (rolled back = the return is deleted, 503 "Nothing was received"); a cancel's CAS flip and its drain are one transaction (503 "Nothing was cancelled", the return stays as it was). Retro-cost, SO allocation and SO re-open run after commit. `two-step` = old path, rollback switch only. Line edit / delete resyncs are still best-effort.
+
 - Every non-service return line with `qty_returned > 0` moves stock IN — this is not paperwork.
 - Returnable quantity per DO line = `delivered − returned`, **independent of invoicing**: a fully-invoiced — even fully-paid — DO can still have a Delivery Return raised against it. Only prior returns and total delivered cap it. Computed by `doReturnableRemaining` → `returnableRemainingFrom` (`do-line-remaining.ts`); the invoice pool stays `delivered − invoiced − returned` and is untouched, so returned goods still cannot be invoiced.
 - A return moves **stock only** — posting it does **not** reduce the linked Sales Invoice, its AR, or GL revenue; `sales_invoice_id`, `refund_centi` and the `CREDIT_NOTED` status are display/state only. The money side is a **customer credit note raised from the return** (backlog A1, 2026-11-09; `docs/modules/accounting.md`): Finance opens it from the return's page (**Create credit note** → `/scm/credit-notes?form=new&fromReturn=<id>`), each returned line priced at what the issued invoice charged per unit (line total after discount and tax ÷ qty), never the return line's list price.
@@ -34,8 +36,9 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 - A return line's units on a live (draft or posted) credit note hold the return: cancelling the return, deleting that line, or cutting its qty below the credited units is refused (409 `dr_credit_noted`; 503 `credit_check_failed` when the notes cannot be read) — cancel the credit note first.
 - A line naming no DO line (`do_item_id` null) is refused outright on create and add-item (409 `do_link_required`) — the column stays nullable in the DDL for legacy rows only.
 - `resyncInventoryForReturn` is a delta walk to a computed TARGET per `(warehouse, product, variant_key, batch_no)`, not an incremental adjustment — a CANCELLED return's target is zero, draining every bucket back out.
+- A returned company-1 hard-bound line (not sofa) re-enters under the `batch_no` its DO OUT was stamped with (its bound PO); a DO shipped un-batched returns un-batched.
 - SERVICE lines never write stock IN, checked via `isServiceLine` (item_group + code) with a catalog fallback (`findServiceLineCodes`); if that check itself fails, all four write paths refuse the line (409 `service_check_failed`) rather than admit it unchecked.
-- `variant_key` is built from the line's stored `item_group`, which write paths rewrite server-side from `mfg_products.category` (company-scoped) rather than trusting the request — keeps a return's stock in the same bucket the goods left from.
+- `variant_key` is built from the line's stored `item_group`, which write paths rewrite server-side from `mfg_products.category` (company-scoped) rather than trusting the request — keeps a return's stock in the same bucket the goods left from. For a variant-tracked company (`lib/binding-mode.ts`, not company 1) `lib/stock-bucket-key.ts` also writes a canonically equal stocked bucket's own string.
 - Every write path accepting a `do_item_id` must confirm the linked DO line is the SAME PRODUCT (409 `link_material_mismatch`), checked before any quantity cap — a valid but wrong-product link would draw down the wrong source line.
 - Source-cost reads and the "live documents" pickers (`checkCrOverRemaining`, returnable/deliverable line lists) must be company-scoped and paginated — an unpaged or unscoped read can leak another tenant's cost or let an over-return guard silently pass.
 - The incoming status is normalised (trim + uppercase) once before any gate reads it — comparing the raw request value against gates that expect the persisted (already-normalised) shape misses the idempotent CANCEL echo entirely.
@@ -65,6 +68,7 @@ Since 2026-11-09 (backlog A3, sister Conts-ERP#278) a delivery return keeps atta
 
 - `backend/src/scm/routes/delivery-returns.ts` — main API surface.
 - `backend/src/scm/routes/delivery-return-exports.ts` — line-level export.
+- `backend/src/scm/lib/delivery-return-stock.ts` — the stock IN, the resync / drain, the line warehouse and batch resolvers, the atomic runs.
 - `backend/src/scm/lib/return-unlinked-lines.ts` — unlinked-line detection.
 - `backend/src/scm/lib/line-link-item-identity.ts` — same-product link guard.
 - `backend/src/scm/lib/delivery-return-list-read.ts` — list read shape.

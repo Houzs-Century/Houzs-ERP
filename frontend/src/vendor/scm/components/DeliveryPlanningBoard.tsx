@@ -28,6 +28,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
+import { crewSaveFailed } from '../lib/crew-save-error';
 import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
 import { MarkDeliveredCell } from './MarkDeliveredCell';
@@ -80,7 +81,7 @@ const SUBSTATUS_TONE: Record<string, string> = {
   'Request Hold': '#0c3f39',
 };
 function SubstatusPill({ value }: { value: string | null }) {
-  if (!value) return <span style={{ color: '#767b6e' }}>—</span>;
+  if (!value) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
   const tone = SUBSTATUS_TONE[value] ?? '#767b6e';
   return (
     <span style={{
@@ -126,11 +127,11 @@ function PodCell({ o }: { o: PlanningOrder }) {
 /* Company badge for the SHARED cross-company queue — a small code chip
    (HOUZS / 2990). null (e.g. ASSR rows / unresolved) renders a muted dash. */
 function CompanyBadge({ code }: { code: string | null }) {
-  if (!code) return <span style={{ color: '#767b6e' }}>—</span>;
+  if (!code) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
   return (
     <span style={{
       display: 'inline-block', padding: '1px 8px', borderRadius: 999,
-      border: '1px solid #2f5d4f', color: '#2f5d4f',
+      border: '1px solid #2f5d4f', color: 'var(--hz-dk-secondary-a, #2f5d4f)',
       fontSize: 'var(--fs-10)', fontWeight: 700, letterSpacing: '0.04em',
       whiteSpace: 'nowrap',
     }}>{code}</span>
@@ -215,7 +216,7 @@ function TypeChip({ order }: { order: PlanningOrder }) {
 
 /* A muted em-dash cell — the shared "not applicable" render for columns that
    don't apply to an ASSR row (stock, driver, lorry). */
-const NotApplicable = () => <span style={{ color: '#767b6e' }}>—</span>;
+const NotApplicable = () => <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
 
 /* ── SO-list type ramp (owner 2026-08-19: "要和 sales order design 设计,字体,
    颜色一样") — the three cell voices the DataTable lists speak, mirrored here:
@@ -224,12 +225,12 @@ const NotApplicable = () => <span style={{ color: '#767b6e' }}>—</span>;
    usual vendor-cascade reason (several --c-* tokens resolve differently here). */
 const DOCNO_STYLE: CSSProperties = {
   fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace",
-  fontSize: 12.5, fontWeight: 600, color: '#11140f',
+  fontSize: 12.5, fontWeight: 600, color: 'var(--hz-c-ink)',
 };
-const MONEY_STYLE: CSSProperties = { fontSize: 13, fontWeight: 600, color: '#11140f' };
-const strong = (v: ReactNode) => <span style={{ fontSize: 13, fontWeight: 600, color: '#11140f' }}>{v}</span>;
+const MONEY_STYLE: CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--hz-c-ink)' };
+const strong = (v: ReactNode) => <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--hz-c-ink)' }}>{v}</span>;
 const detail = (v: ReactNode) => (
-  <span style={{ fontSize: 12.5, color: '#414539', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+  <span style={{ fontSize: 12.5, color: 'var(--hz-c-ink-secondary)', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
 );
 
 /* Region chips — CONFIG-DRIVEN buckets (migration 0053) classified by customer
@@ -314,7 +315,7 @@ const fieldNotSaved = (err: unknown) => serviceNotify({
 });
 
 /* An option inherits the select's chip colour unless it sets its own. */
-const plainOption = { backgroundColor: '#fff', color: '#11140f' };
+const plainOption = { backgroundColor: 'var(--hz-c-surface)', color: 'var(--hz-c-ink)' };
 
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
@@ -483,7 +484,7 @@ function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false,
 type CrewSeatWrite = (order: PlanningOrder, seat: {
   driver1Id?: string | null; driver2Id?: string | null;
   helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null;
-}) => boolean;
+}, onFail?: () => void) => boolean;
 
 /* Driver — a type-to-search picker (owner 2026-09-26: 可以输入搜索). SO rows write
    the DO crew (delivery_order_crew) via useAssignDoCrew, which snapshots the
@@ -509,10 +510,15 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
   // A DP job writes its RUN's crew via useDpCrew (writeSeat below), which puts a
   // trip-less job on a run first — so the cell is editable with or without a trip
   // (owner 2026-10-31), like an SO row.
-  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
+  if (isProject(order)) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
+  // Typed on the DO form, not a fleet record: no IC / phone, so the Driver Info
+  // message cannot send. Flag it here, where the real driver is picked.
+  const typed = !!order.crew?.driver_1_typed;
   return (
-    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0, alignItems: 'center', gap: 4 }}
+      title={typed ? 'Typed on the delivery order, not picked from Fleet: no IC or phone. Pick the driver here.' : undefined}>
+      {typed && <span aria-label="Driver not linked to Fleet" style={{ color: 'var(--c-burnt)', fontWeight: 700 }}>!</span>}
       <SearchCombo
         fill aria-label="Driver" placeholder="— pick a driver —"
         options={options}
@@ -527,7 +533,7 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
             onSchedule({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, driverId, driverNameOptimistic });
             return;
           }
-          setVal(writeSeat(order, { driver1Id: driverId }) ? picked : chosen);
+          setVal(writeSeat(order, { driver1Id: driverId }, () => setVal(chosen)) ? picked : chosen);
         }}
       />
     </span>
@@ -551,7 +557,7 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   // lorry puts a trip-less job on a run and mints its DP number, so the cell is
   // editable with or without a trip (owner 2026-10-31), like an SO row.
   // Project rows are a read-only PMS mirror (edit in Projects).
-  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
+  if (isProject(order)) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
@@ -569,7 +575,7 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
             onSchedule({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, lorryId, lorryPlateOptimistic });
             return;
           }
-          setVal(writeSeat(order, { lorryId }) ? picked : chosen);
+          setVal(writeSeat(order, { lorryId }, () => setVal(chosen)) ? picked : chosen);
         }}
       />
     </span>
@@ -594,7 +600,7 @@ function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
   useEffect(() => { setVal(chosen); }, [chosen]);
   // Project rows are a read-only PMS mirror — show the helper the project crewed
   // (owner 2026-10-21), like the Driver / Lorry cells.
-  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
+  if (isProject(order)) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>{currentName || '—'}</span>;
   // A DP job's helper is set on its RUN via useDpCrew (writeSeat below), which puts
   // a trip-less job on a run first — editable with or without a trip (owner 2026-10-31).
   const assrLeg = isAssr(order);
@@ -617,7 +623,7 @@ function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
             return;
           }
           const seat = slot === 1 ? { helper1Id: helperId } : { helper2Id: helperId };
-          setVal(writeSeat(order, seat) ? picked : chosen);
+          setVal(writeSeat(order, seat, () => setVal(chosen)) ? picked : chosen);
         }}
       />
     </span>
@@ -708,7 +714,7 @@ const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#0c3f39' }}>{it.item_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary-ink)' }}>{it.item_code ?? '—'}</span>,
     searchValue: (it) => it.item_code ?? '',
     sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
@@ -726,7 +732,7 @@ const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
     key: 'description2', label: 'Description 2', width: 220, minWidth: 160,
     accessor: (it) => {
       const summary = buildVariantSummary(it.item_group, it.variants);
-      return summary ? <div>{summary}</div> : <span style={{ color: '#767b6e' }}>—</span>;
+      return summary ? <div>{summary}</div> : <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
     },
     searchValue: (it) => buildVariantSummary(it.item_group, it.variants),
   },
@@ -740,14 +746,14 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
   const q = useDeliveryPlanningLines(docNo);
   if (q.isLoading) {
     return (
-      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: '#767b6e' }}>
+      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)' }}>
         Loading lines for {docNo}…
       </div>
     );
   }
   if (q.error) {
     return (
-      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: '#b8331f' }}>
+      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--hz-dk-festive-b, #b8331f)' }}>
         Failed to load lines: {q.error instanceof Error ? q.error.message : String(q.error)}
       </div>
     );
@@ -759,7 +765,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
 
   if (items.length === 0) {
     return (
-      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: '#767b6e' }}>
+      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)' }}>
         No line items.
       </div>
     );
@@ -768,7 +774,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
   return (
     <div style={{
       padding: 'var(--space-2) var(--space-3) var(--space-2) 40px',
-      background: '#fff',
+      background: 'var(--hz-c-surface)',
     }}>
       <DataGridCompat<DrillItem>
         rows={items}
@@ -855,9 +861,8 @@ export type DeliveryPlanningBoardProps = {
   layoutPresets?: LayoutSeed[];
   /* Picking one of `layoutPresets` — the page moves the region chip to match. */
   onApplyLayoutPreset?: (presetId: string) => void;
-  /* First-page row cap (owner 2026-09-26): the full board renders this many rows
-     with a "Load more" for the rest; passed only by the main Delivery Planning
-     page. Omitted on the sub-pages (they render their whole, narrower queue). */
+  /* First-page row cap with a "Load more" for the rest. No board page passes it
+     any more: the grid mounts only the rows on screen, so every row scrolls in. */
   initialRowLimit?: number;
   /* Drag-to-reorder the board rows (owner 2026-09-26): called with the new order
      of the displayed rows. Passed only by the main Delivery Planning page, whose
@@ -956,7 +961,7 @@ export function DeliveryPlanningBoard({
      other seats. No DO yet → nothing to write, so say so and leave the picker.
      Stable identity (reads the mutations through refs) so it lives in a column
      accessor without re-triggering the columns memo. */
-  const writeCrewSeat = useCallback<CrewSeatWrite>((order, seat) => {
+  const writeCrewSeat = useCallback<CrewSeatWrite>((order, seat, onFail) => {
     /* A DP job has no DO: its crew IS its RUN's crew. The endpoint puts a trip-less
        job on a run first (owner 2026-10-31), so the cell writes with or without a
        trip — no "Schedule…" drawer. A DP run has one driver, so driver2Id is n/a. */
@@ -969,7 +974,7 @@ export function DeliveryPlanningBoard({
         ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}),
       }, {
         onSuccess: (res) => { if (res.tripStop.failed) void notifyRef.current({ title: 'Crew saved', body: `The crew saved but the job was NOT attached to its run: ${res.tripStop.reason ?? 'unknown error'}.`, tone: 'error' }); },
-        onError: (e) => void notifyRef.current({ title: 'Crew not saved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+        onError: (e) => crewSaveFailed(notifyRef.current, onFail, e),
       });
       return true;
     }
@@ -978,7 +983,7 @@ export function DeliveryPlanningBoard({
       void notifyRef.current({ title: 'Create a delivery order first', body: 'This order has no delivery order yet, so crew cannot be saved. Create a DO first.' });
       return false;
     }
-    assignCrewRef.current.mutate({ doId, ...seat });
+    assignCrewRef.current.mutate({ doId, ...seat }, { onError: (e) => crewSaveFailed(notifyRef.current, onFail, e) });
     return true;
   }, []);
   /* HC-0191 Copy / Paste crew: copy the one ticked row's lorry + driver(s) + helper(s),
@@ -1605,17 +1610,19 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'driver_ic', label: 'Driver IC', width: 140, defaultHidden: true,
-      accessor: (o) => o.crew?.driver_1_ic || <span style={{ color: '#767b6e' }}>—</span>,
+      accessor: (o) => o.crew?.driver_1_ic || (o.crew?.driver_1_typed
+        ? <span style={{ color: 'var(--c-burnt)' }} title="The driver was typed on the delivery order, not picked from Fleet. Pick the driver to fill the IC.">Pick driver</span>
+        : <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>),
       searchValue: (o) => o.crew?.driver_1_ic ?? '',
     },
     {
       key: 'driver_contact', label: 'Driver Contact', width: 150, defaultHidden: true,
-      accessor: (o) => (o.crew?.driver_1_contact ? formatPhone(o.crew.driver_1_contact) || o.crew.driver_1_contact : <span style={{ color: '#767b6e' }}>—</span>),
+      accessor: (o) => (o.crew?.driver_1_contact ? formatPhone(o.crew.driver_1_contact) || o.crew.driver_1_contact : <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>),
       searchValue: (o) => o.crew?.driver_1_contact ?? '',
     },
     {
       key: 'driver_2', label: 'Driver 2', width: 150, defaultHidden: true,
-      accessor: (o) => o.crew?.driver_2_name || <span style={{ color: '#767b6e' }}>—</span>,
+      accessor: (o) => o.crew?.driver_2_name || <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>,
       searchValue: (o) => o.crew?.driver_2_name ?? '',
     },
     {
@@ -1666,7 +1673,7 @@ export function DeliveryPlanningBoard({
       accessor: (o) => (
         <span style={{
           ...MONEY_STYLE,
-          color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#11140f' : '#767b6e',
+          color: liveBalance(o) < 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : liveBalance(o) > 0 ? '#11140f' : '#767b6e',
         }}>
           {fmtSen(liveBalance(o))}
         </span>

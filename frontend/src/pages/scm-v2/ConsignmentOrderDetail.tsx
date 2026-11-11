@@ -88,7 +88,7 @@ const EMERGENCY_HEADER_NOTE_STYLE: CSSProperties = {
 const DATES_XOR_WARN_STYLE: CSSProperties = {
   background: 'rgba(184, 51, 31, 0.08)',
   border: '1px solid var(--c-festive-b, #B8331F)',
-  color: 'var(--c-festive-b, #B8331F)',
+  color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
   padding: '4px var(--space-2)',
   borderRadius: 'var(--radius-sm)',
   fontSize: 'var(--fs-11)',
@@ -209,7 +209,7 @@ export const ConsignmentOrderDetail = () => {
         ))}
         <div style={{
           fontSize: 'var(--fs-11)', marginTop: 1,
-          color: remaining > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
+          color: remaining > 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-secondary-a, #2F5D4F)',
         }}>
           {remaining > 0 ? `Balance ${remaining}` : 'Fully delivered'}
         </div>
@@ -632,6 +632,7 @@ export const ConsignmentOrderDetail = () => {
                      offenders when processingDate is set). Was defaulting to
                      true. */
                   variantsRequired={!!header.processing_date}
+                  specLockedReason={null}
                   lineDateLocked={false}
                   seedSofaLegDefault={true}
                   attachOptions={null}
@@ -648,6 +649,7 @@ export const ConsignmentOrderDetail = () => {
                 canRemove
                 // Same rule as the saved lines above.
                 variantsRequired={!!header.processing_date}
+                specLockedReason={null}
                 lineDateLocked={false}
                 seedSofaLegDefault={true}
                 attachOptions={null}

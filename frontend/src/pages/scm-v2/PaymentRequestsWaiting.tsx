@@ -22,7 +22,7 @@ export function PaymentRequestsWaiting() {
       aria-label="Payment requests waiting for Finance"
       style={{
         display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap',
-        padding: '10px 14px', borderRadius: 10, border: '1px solid var(--c-orange)', background: 'var(--c-paper, #f4f6f3)',
+        padding: '10px 14px', borderRadius: 10, border: '1px solid var(--c-orange)', background: 'var(--c-paper, var(--hz-c-surface-2))',
       }}
     >
       <HandCoins size={18} strokeWidth={1.75} aria-hidden="true" style={{ color: 'var(--c-orange)' }} />

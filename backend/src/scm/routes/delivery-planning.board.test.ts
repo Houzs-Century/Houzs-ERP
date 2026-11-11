@@ -472,13 +472,38 @@ describe('GET /delivery-planning — the SO header read pages on a total order',
 /* Owner 2026-10-26: right-click "Move to Pending Schedule" arranges an order before
    its goods are ready; once it is delivered it must still leave the queue. */
 describe('derivePlanningState — a manual Pending Schedule', () => {
-  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-27', today: '2026-10-26' };
+  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-26', today: '2026-10-26' };
   it('puts a not-ready (even overdue) order in Pending Schedule', () => {
     expect(derivePlanningState({ ...base, storedOverride: null, delivered: 0, remaining: 1 })).toBe('OVERDUE');
     expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 0, remaining: 1 })).toBe('PENDING_SCHEDULE');
   });
   it('gives way to Delivered', () => {
     expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 1, remaining: 0 })).toBe('DELIVERED');
+  });
+});
+
+/* Owner 2026-11-10: an order is Overdue only once its delivery day has arrived,
+   not 3 days early. The SQL board path must mirror `daysLeft <= 0`. */
+describe('derivePlanningState — Overdue starts on the delivery day', () => {
+  const notReady = { storedOverride: null, status: 'CONFIRMED', readiness: { isShipReady: false }, delivered: 0, remaining: 1, today: '2026-11-10' };
+  it('due in 3 days and not ready is Pending Delivery', () => {
+    expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-13' })).toBe('PENDING_DELIVERY');
+    expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-11' })).toBe('PENDING_DELIVERY');
+  });
+  it('due today and not ready is Overdue', () => {
+    expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-10' })).toBe('OVERDUE');
+  });
+  it('due yesterday and not ready is Overdue', () => {
+    expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-09' })).toBe('OVERDUE');
+  });
+  it('a ready order is Pending Schedule whatever the date', () => {
+    for (const effectiveDD of ['2026-11-09', '2026-11-10', '2026-11-13']) {
+      expect(derivePlanningState({ ...notReady, readiness: { isShipReady: true }, effectiveDD })).toBe('PENDING_SCHEDULE');
+    }
+  });
+  it('a stored manual override still wins', () => {
+    expect(derivePlanningState({ ...notReady, storedOverride: 'PENDING_DELIVERY', effectiveDD: '2026-11-09' })).toBe('PENDING_DELIVERY');
+    expect(derivePlanningState({ ...notReady, storedOverride: 'OVERDUE', effectiveDD: '2026-11-13' })).toBe('OVERDUE');
   });
 });
 

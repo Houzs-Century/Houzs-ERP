@@ -77,7 +77,7 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
   onChange: (v: T) => void;
 }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex flex-wrap gap-0.5 rounded-[9px] bg-[#ebe7dd] p-[3px]">
+    <div role="group" aria-label={label} className="inline-flex flex-wrap gap-0.5 rounded-[9px] bg-[color:var(--hz-dk-warning-bg,#ebe7dd)] p-[3px]">
       {options.map((o) => (
         <button
           key={o.value}
@@ -106,8 +106,8 @@ export const BTN_SEC = "inline-flex h-[34px] items-center gap-1.5 whitespace-now
 export const BTN_GHOST = "inline-flex h-[34px] items-center gap-1 whitespace-nowrap rounded-[7px] px-2.5 text-[13px] font-semibold text-primary hover:bg-primary-soft disabled:opacity-50";
 export const INPUT = "h-[42px] w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[14px] text-ink focus:border-primary focus:outline-none disabled:bg-surface-2";
 export const LABEL = "mb-1 block text-[12.5px] font-semibold text-ink-secondary";
-export const INSET = "rounded-[14px] bg-[#faf9f6] p-4";
-export const TILE = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-[#f6f4ee] px-3.5 py-3";
+export const INSET = "rounded-[14px] bg-[color:var(--hz-dk-surface-2,#faf9f6)] p-4";
+export const TILE = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-[color:var(--hz-dk-surface-2,#f6f4ee)] px-3.5 py-3";
 export const EMPTY = "py-2 text-[13.5px] text-ink-muted";
 
 const NOT_SET = "Not set";

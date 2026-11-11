@@ -104,7 +104,7 @@ export function MobileLogin() {
         </div>
 
         {!challenge && crew ? (
-          <div className="hz-lg-item" style={{ ...delay(3), marginTop: 18, background: "#fff", borderRadius: 14, padding: 16 }}>
+          <div className="hz-lg-item" style={{ ...delay(3), marginTop: 18, background: "var(--hz-c-surface)", borderRadius: 14, padding: 16 }}>
             <CrewPinForm onTotp={(c) => { setChallenge(c); setCrew(false); }} onBack={() => setCrew(false)} />
           </div>
         ) : !challenge ? (

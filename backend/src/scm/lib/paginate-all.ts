@@ -50,19 +50,27 @@ const MAX_PAGES = 50;
 
 export type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
 
+/* `truncated` is true when the MAX_PAGES guard stopped the read on a FULL page,
+   so more rows may exist. That stop used to be silent: a month of GPS fixes on
+   Lorry Capacity lost its last days with no error. A caller that presents its
+   answer as complete must check it and fail or tell the user. */
+export type PagedResult<T> = PageResult<T> & { truncated: boolean };
+
 export async function paginateAll<T = Record<string, unknown>>(
   makeQuery: (from: number, to: number) => PromiseLike<PageResult<T>>,
-): Promise<PageResult<T>> {
+): Promise<PagedResult<T>> {
   const all: T[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * PAGE;
     const { data, error } = await makeQuery(from, from + PAGE - 1);
-    if (error) return { data: null, error };
+    if (error) return { data: null, error, truncated: false };
     const rows = data ?? [];
     all.push(...rows);
-    if (rows.length < PAGE) break; // short page → last page
+    if (rows.length < PAGE) return { data: all, error: null, truncated: false }; // short page → last page
   }
-  return { data: all, error: null };
+  // eslint-disable-next-line no-console
+  console.warn(`[paginateAll] stopped at ${MAX_PAGES} pages (${all.length} rows); result truncated`);
+  return { data: all, error: null, truncated: true };
 }
 
 // chunkIn — split a code list into ≤size batches so a `.in(col, codes)` filter
@@ -198,10 +206,10 @@ export async function chunkIn<T = Record<string, unknown>, V extends InValue = s
   codes: readonly V[],
   makeQuery: (batch: V[], from: number, to: number) => PromiseLike<PageResult<T>>,
   size = chunkSizeForUrl(codes),
-): Promise<{ data: T[]; error: { message: string; code?: string } | null }> {
+): Promise<{ data: T[]; error: { message: string; code?: string } | null; truncated: boolean }> {
   const batches: V[][] = [];
   for (let i = 0; i < codes.length; i += size) batches.push(codes.slice(i, i + size));
-  if (batches.length === 0) return { data: [], error: null };
+  if (batches.length === 0) return { data: [], error: null, truncated: false };
 
   /* mapBounded returns results in INPUT order, never completion order, so the
      concatenation below is byte-identical to what the sequential loop produced.
@@ -217,9 +225,11 @@ export async function chunkIn<T = Record<string, unknown>, V extends InValue = s
      already run here — that is the only difference, and it costs a discarded
      result, never a wrong one. */
   const merged: T[] = [];
-  for (const { data, error } of results) {
-    if (error) return { data: merged, error };
-    merged.push(...(data ?? []));
+  let truncated = false;
+  for (const r of results) {
+    if (r.error) return { data: merged, error: r.error, truncated };
+    merged.push(...(r.data ?? []));
+    truncated ||= r.truncated;
   }
-  return { data: merged, error: null };
+  return { data: merged, error: null, truncated };
 }

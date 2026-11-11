@@ -74,7 +74,8 @@ supplier's GRN holding most rows, then the oldest, never between two equally goo
 AI call per invoice (`lib/pi-scan-ai-match.ts`, feature `scan_pi_match`): only high confidence, a listed SKU and
 the same size are kept, shown "AI match, please check". All of these arrive `suggested`. Raising
 `PI_REVIEW_VERSION` re-matches waiting copies on the next load: tied rows stay, untied rows take the new tie.
-PO Amount sums the tied rows ("N lines not matched") and turns red only against the invoice's amount for those rows. Create
+A row printed at RM 0 (an exchange / replacement) is never auto-tied to a receipt line that costs money (code, name, AI, proposal; only a line priced 0), says so on the row, and a waiting copy's such tie is re-matched. A PO ref marked `EX-`/`EX `/`EXCH-` anchors to the order it replaces (`docRefsOf`) and the banner says it is an exchange.
+PO Amount sums the tied rows that bill money ("N lines not matched"; RM 0 rows count on neither side) and turns red only against the invoice's amount for those rows. Create
 is `createDraftPiFromGrnItems`: DRAFT only, from posted GRN lines, at the supplier's printed price (the receipt's when none was read), never over what
 is left to bill. A printed price that differs is shown on the row. `duplicateOf` = a non-cancelled PI of the
 supplier with that `supplier_invoice_ref`. Codes confirmed are saved in `supplier_scan_codes`, shared with

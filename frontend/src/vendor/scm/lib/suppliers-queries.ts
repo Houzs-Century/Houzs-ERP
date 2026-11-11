@@ -7,12 +7,14 @@
 // is verbatim.
 
 import { useMemo } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useListMrpEnrichmentChunks } from './list-mrp-enrichment-chunks';
+import type { ListMrpStatus } from '../../../lib/listMrpStatus';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { poListParams, type PoListFilterParams } from './po-list-export';
 import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
-import { writeFailed, writeFailedAs } from './mutation-error';
+import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -756,49 +758,22 @@ export function usePoListFacets(f: PoListFilterParams) {
    Delivered) the list no longer computes on its critical path (see
    listMrpEnrichment.ts). Fired AFTER the list renders, for the POs it just
    showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
-   request stays bounded; each chunk is cached independently. The backend runs
-   ONE company-wide computeMrp per request regardless of chunk size. */
+   request stays bounded; each chunk is cached independently. The backend answers from the 15-min stored MRP snapshot
+   (list-mrp-enrichment-chunks.ts). */
 const PO_ENRICH_CHUNK = 100;
 
 export function usePoListMrpEnrichmentMap(
   poIds: string[],
   enabled: boolean,
-): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean } {
-  const chunks = useMemo(() => {
-    const uniq = [...new Set(poIds.filter(Boolean))].sort();
-    const out: string[][] = [];
-    for (let i = 0; i < uniq.length; i += PO_ENRICH_CHUNK) out.push(uniq.slice(i, i + PO_ENRICH_CHUNK));
-    return out;
-  }, [poIds]);
-
-  const results = useQueries({
-    queries: chunks.map((chunk) => ({
-      enabled: enabled && chunk.length > 0,
-      queryKey: ['mfg-purchase-orders-list-mrp-enrichment', chunk.join(',')],
-      queryFn: ({ signal }: { signal?: AbortSignal }) =>
-        authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
-          `/mfg-purchase-orders/list-mrp-enrichment?poIds=${encodeURIComponent(chunk.join(','))}`,
-          { signal },
-        ),
-      staleTime: 30_000,
-      retry: retryUnlessClientError,
-      retryDelay: 800,
-    })),
+): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean; mrp: ListMrpStatus } {
+  const { byId, isFetching, mrp } = useListMrpEnrichmentChunks<ListMrpEnrichment>({
+    ids: poIds,
+    enabled,
+    queryKeyPrefix: 'mfg-purchase-orders-list-mrp-enrichment',
+    urlPrefix: '/mfg-purchase-orders/list-mrp-enrichment?poIds=',
+    chunkSize: PO_ENRICH_CHUNK,
   });
-
-  const sig = results.map((r) => r.dataUpdatedAt).join('|');
-  const isFetching = results.some((r) => r.isFetching);
-  const byId = useMemo(() => {
-    const map = new Map<string, ListMrpEnrichment>();
-    for (const r of results) {
-      const e = r.data?.enrichment;
-      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
-    }
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
-  }, [sig]);
-
-  return { byId, isFetching };
+  return { byId, isFetching, mrp };
 }
 
 /* The overlay the PO list applies: take the rows the list endpoint returned
@@ -807,16 +782,17 @@ export function usePoListMrpEnrichmentMap(
 export function useEnrichedPoListRows<T extends EnrichableMrpRow>(
   rows: T[],
   enabled: boolean,
-): T[] {
-  const poIds = useMemo(
+): { rows: T[]; mrp: ListMrpStatus } {
+  const ids = useMemo(
     () => rows.map((r) => r.id).filter((x): x is string => !!x),
     [rows],
   );
-  const { byId } = usePoListMrpEnrichmentMap(poIds, enabled);
-  return useMemo(
+  const { byId, mrp } = usePoListMrpEnrichmentMap(ids, enabled);
+  const healed = useMemo(
     () => rows.map((r) => applyListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
     [rows, byId],
   );
+  return { rows: healed, mrp };
 }
 
 export function usePurchaseOrderDetail(id: string | null) {
@@ -994,10 +970,12 @@ export function useCreateGrnsFromPoItems() {
       notes?: string;
     }) =>
       authedFetch<{
-        created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number }>;
+        created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number } & InBandFailure>;
         total: number;
       }>(`/grns/from-po-items`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      /* Each receipt is auto-posted and carries its own stock / PO-recount failure. */
+      for (const g of data.created) reportInBandFailure(`GRN ${g.grnNumber} created, but not everything was recorded`, g);
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });

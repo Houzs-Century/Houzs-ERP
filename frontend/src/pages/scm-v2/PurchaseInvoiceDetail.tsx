@@ -1114,7 +1114,7 @@ const GrnLinePickerModal = ({
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--space-4)',
     }}>
       <div role="dialog" aria-label="Transfer lines from GRN" style={{
-        background: 'var(--c-paper, #fff)', borderRadius: 'var(--radius-md)',
+        background: 'var(--c-paper, var(--hz-c-surface))', borderRadius: 'var(--radius-md)',
         border: '1px solid var(--line)', width: 'min(720px, 96vw)', maxHeight: '86vh',
         display: 'flex', flexDirection: 'column',
       }}>

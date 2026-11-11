@@ -922,7 +922,7 @@ export const PurchaseInvoiceNew = () => {
                       )}
                     </span>
                     <button type="button" onClick={() => dropLine(l.rid)} title="Remove line"
-                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, #B8331F)', padding: 4, display: 'inline-flex' }}>
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', padding: 4, display: 'inline-flex' }}>
                       <Trash2 {...SM_ICON} />
                     </button>
                   </div>

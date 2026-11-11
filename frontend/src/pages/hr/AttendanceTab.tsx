@@ -136,7 +136,7 @@ export function AttendanceTab() {
       render: (r) => (
         <span>
           {r.employee.name}
-          {!r.employee.linked && <span className="ml-1 text-[10px] text-amber-800">(no ERP account)</span>}
+          {!r.employee.linked && <span className="ml-1 text-[10px] text-amber-800 dark:text-amber-300">(no ERP account)</span>}
         </span>
       ),
     },
@@ -220,7 +220,7 @@ export function AttendanceTab() {
         )}
       </div>
       {q.data && q.data.sitesConfigured === 0 && (
-        <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900">
+        <div className="mb-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11.5px] text-amber-900 dark:text-amber-300">
           No punch site is set up, so phone punches record their GPS but are not checked against a location. Add the warehouses in the Punch Sites tab.
         </div>
       )}

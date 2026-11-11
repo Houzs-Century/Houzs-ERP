@@ -46,9 +46,9 @@
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--hz-c-surface);
   flex-wrap: wrap;
 }
 
@@ -64,22 +64,22 @@
   text-transform: uppercase;
   white-space: nowrap;
   background: transparent;
-  color: #414539;
+  color: var(--hz-c-ink-secondary);
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .regionChip:hover {
-  background: #e1efed;
-  color: #16695f;
+  background: var(--hz-c-primary-soft);
+  color: var(--hz-c-primary);
 }
 
 .regionChipActive {
-  background: #16695f;
+  background: var(--hz-c-primary);
   color: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 .regionChipActive:hover {
-  background: #16695f;
+  background: var(--hz-c-primary);
   color: #fff;
 }
 
@@ -88,15 +88,15 @@
 .regionChipSg {
   border: 1px dashed #2f5d4f;
   padding: 5px 13px; /* border eats 1px — keep the pill height level */
-  color: #2f5d4f;
+  color: var(--hz-dk-secondary-a, #2f5d4f);
 }
 .regionChipSg:hover {
   background: rgba(47, 93, 79, 0.08);
-  color: #2f5d4f;
+  color: var(--hz-dk-secondary-a, #2f5d4f);
 }
 .regionChipSg.regionChipActive {
   border-color: #2f5d4f;
-  background: #2f5d4f;
+  background: var(--hz-dk-secondary-a, #2f5d4f);
   color: #fff;
 }
 
@@ -135,18 +135,18 @@
   background: transparent;
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: #11140f;
+  color: var(--hz-c-ink);
   cursor: pointer;
   appearance: auto;
 }
 .inlineEdit:hover {
-  border-color: #d6d9d2;
-  background: #f4f6f3;
+  border-color: var(--hz-c-border);
+  background: var(--hz-c-surface-2);
 }
 .inlineEdit:focus {
   outline: none;
   border-color: #0c3f39;
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
 }
 .inlineEdit:disabled { opacity: 0.6; cursor: default; }
 
@@ -180,25 +180,25 @@
   gap: var(--space-2);
   flex-wrap: wrap;
   padding: var(--space-2) var(--space-3);
-  background: #e1efed;
-  border: 1px solid #16695f;
+  background: var(--hz-c-primary-soft);
+  border: 1px solid var(--hz-c-primary);
   border-radius: var(--radius-md);
 }
-.bulkCount { font-weight: 600; color: #0c3f39; white-space: nowrap; }
-.bulkSep { color: #767b6e; }
-.bulkLabel { font-size: var(--fs-12); color: #767b6e; }
+.bulkCount { font-weight: 600; color: var(--hz-c-primary-ink); white-space: nowrap; }
+.bulkSep { color: var(--hz-c-ink-muted); }
+.bulkLabel { font-size: var(--fs-12); color: var(--hz-c-ink-muted); }
 /* The bar's own field / value controls — bordered (they sit on tint, not in a
    cell), but share the inlineEdit type ramp. */
 .bulkControl {
   height: 26px;
   min-width: 120px;
   padding: 0 6px;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: var(--radius-sm, 4px);
-  background: #fff;
+  background: var(--hz-c-surface);
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: #11140f;
+  color: var(--hz-c-ink);
   cursor: pointer;
 }
 .bulkControl:focus { outline: none; border-color: #0c3f39; }

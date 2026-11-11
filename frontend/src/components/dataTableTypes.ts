@@ -261,6 +261,9 @@ export interface DataTableProps<T, L = never> {
   /** Export the on-screen rows as .xlsx (each column's `exportFormat` kept)
    *  instead of CSV — what the SCM DataGrid lists always wrote. */
   exportXlsx?: boolean;
+  /** With `exportXlsx`: the sheet's name and the lines above its table (a title, what
+   *  narrowed it), asked at the press with the rows being written. Default "Sheet1", none. */
+  exportSheet?: (rows: readonly T[]) => { name: string; heading?: readonly string[] };
   /** A table that prints: the header's right-click menu offers Export to PDF, and this
    *  receives the cells the Excel would hold, for the same rows and the visible columns. */
   onExportPdf?: (view: TablePdfView<T>) => void;

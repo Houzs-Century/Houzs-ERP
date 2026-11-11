@@ -3,6 +3,7 @@
 // overview contributes what it found; the list ranks them, says why each
 // matters, and opens the page that shows the detail. A module the viewer cannot
 // read contributes nothing (its data is null).
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { fmtSen } from "../../vendor/shared/format";
 import { formatCurrency } from "../../lib/utils";
@@ -58,7 +59,8 @@ export function watchItems(w: WatchInputs): Item[] {
   return out.sort((a, b) => (a.level === b.level ? 0 : a.level === "bad" ? -1 : 1));
 }
 
-export function ManagementWatch({ inputs, loading }: { inputs: WatchInputs; loading: boolean }) {
+/** `stamp`: when the overviews behind the list computed their figures, and a Refresh (they are kept up to 2 h). */
+export function ManagementWatch({ inputs, loading, stamp }: { inputs: WatchInputs; loading: boolean; stamp: ReactNode }) {
   const navigate = useNavigate();
   const items = watchItems(inputs);
   const bad = items.filter((i) => i.level === "bad").length;
@@ -67,6 +69,7 @@ export function ManagementWatch({ inputs, loading }: { inputs: WatchInputs; load
       <div className="mb-3 flex flex-wrap items-baseline gap-2">
         <h2 className="text-[15px] font-bold text-ink">Where the business needs attention</h2>
         <span className="text-[12px] text-ink-muted">{loading ? "checking…" : `${bad} urgent · ${items.length - bad} to fix`}</span>
+        {stamp && <span className="ml-auto">{stamp}</span>}
       </div>
       {!loading && items.length === 0 && <div className="py-4 text-center text-[12.5px] text-ink-muted">Nothing the overviews you can see would flag.</div>}
       <ul className="grid gap-2 lg:grid-cols-2">

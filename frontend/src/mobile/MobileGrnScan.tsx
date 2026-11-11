@@ -90,7 +90,7 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
   const btn = (primary: boolean): React.CSSProperties => ({
     height: 48, padding: "0 22px", borderRadius: 12,
     border: primary ? "none" : "1px solid #16695f",
-    background: primary ? "#16695f" : "#fff", color: primary ? "#fff" : "#16695f",
+    background: primary ? "var(--hz-c-primary)" : "var(--hz-c-surface)", color: primary ? "#fff" : "var(--hz-c-primary)",
     fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
   });
 
@@ -103,14 +103,14 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
           </button>
         </div>
         <div className="scr-title" style={{ marginTop: 2 }}>Scan delivery order</div>
-        <div style={{ fontSize: 11, color: "#767b6e", marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", marginTop: 2 }}>
           Snap the supplier delivery order — we read it in the background and create a draft goods receipt from the matching PO for you to review and post.
         </div>
       </header>
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {error && (
-          <div style={{ background: "#fdecec", color: "#a33", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
+          <div style={{ background: "var(--hz-dk-err-bg, #fdecec)", color: "#a33", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
         )}
 
         <input ref={camInputRef} type="file" accept={ACCEPT} capture="environment" style={{ display: "none" }}
@@ -121,7 +121,7 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
         {files.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             {files.map((f, i) => (
-              <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, marginBottom: 6, fontSize: 12.5 }}>
+              <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10, marginBottom: 6, fontSize: 12.5 }}>
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
                 {!submitting && (
                   <button onClick={() => setFiles((cur) => cur.filter((_, k) => k !== i))} style={{ border: "none", background: "none", color: "#a33", fontSize: 12, cursor: "pointer" }}>Remove</button>
@@ -146,9 +146,9 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
 
         {enqueuedJobIds.length > 0 && (
           <div style={{ marginTop: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#767b6e", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>Scanned this session</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--hz-c-ink-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>Scanned this session</div>
             {trackedJobs.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "#767b6e" }}>Uploading — the reading finishes in the background.</div>
+              <div style={{ fontSize: 12.5, color: "var(--hz-c-ink-muted)" }}>Uploading — the reading finishes in the background.</div>
             )}
             {trackedJobs.map((j) => {
               const active = isActiveJob(j);
@@ -157,14 +157,14 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
               const color = done ? (needsReview ? "#a16a2e" : "#16695f") : j.status === "error" ? "#a33" : "#767b6e";
               const label = active ? (j.status === "running" ? "Reading…" : "Queued") : done ? (needsReview ? "Review" : "Draft") : j.status === "error" ? "Failed" : j.status;
               return (
-                <div key={j.id} style={{ display: "flex", gap: 10, padding: "10px 12px", background: "#fff", borderRadius: 10, marginBottom: 6 }}>
+                <div key={j.id} style={{ display: "flex", gap: 10, padding: "10px 12px", background: "var(--hz-c-surface)", borderRadius: 10, marginBottom: 6 }}>
                   <span style={{ flex: "none", fontSize: 11, fontWeight: 700, color }}>{label}</span>
-                  <div style={{ flex: 1, fontSize: 12.5, color: "#11140f", lineHeight: 1.45 }}>
+                  <div style={{ flex: 1, fontSize: 12.5, color: "var(--hz-c-ink)", lineHeight: 1.45 }}>
                     {done
                       ? (j.linkedDocNo
                           ? (j.linkedDocId
                               ? <>Draft goods receipt{" "}
-                                  <button type="button" onClick={() => onOpenGrn(j.linkedDocId as string)} style={{ padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline" }}>{j.linkedDocNo}</button>
+                                  <button type="button" onClick={() => onOpenGrn(j.linkedDocId as string)} style={{ padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "var(--hz-c-primary)", textDecoration: "underline" }}>{j.linkedDocNo}</button>
                                   {" "}— tap to check the lines, set racks and post.</>
                               : `Draft goods receipt ${j.linkedDocNo} — open it from Goods Receipts to review and post.`)
                           : (j.error || "Needs review — open the PO and receive by hand."))
@@ -172,20 +172,20 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
                         ? (j.error || "Couldn't read the delivery order.")
                         : "Reading the delivery order…"}
                     {done && j.linkedDocNo && j.error && (
-                      <div style={{ marginTop: 4, color: "#a16a2e" }}>{j.error}</div>
+                      <div style={{ marginTop: 4, color: "var(--hz-c-accent)" }}>{j.error}</div>
                     )}
                     {done && (
-                      <button type="button" onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)} style={{ display: "block", marginTop: 6, padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline", minHeight: 32 }}>
+                      <button type="button" onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)} style={{ display: "block", marginTop: 6, padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "var(--hz-c-primary)", textDecoration: "underline", minHeight: 32 }}>
                         {codesOpen === j.id ? "Hide supplier codes" : "Match supplier codes"}
                       </button>
                     )}
                     {done && codesOpen === j.id && <ScanCodesPanel jobId={j.id} jobsQueryKey={["mobile-grn-scan-jobs"]} />}
                   </div>
-                  <span style={{ flex: "none", fontSize: 11, color: "#9aa093" }}>{jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ""}</span>
+                  <span style={{ flex: "none", fontSize: 11, color: "var(--hz-c-ink-soft)" }}>{jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ""}</span>
                 </div>
               );
             })}
-            <div style={{ fontSize: 11, color: "#767b6e", marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", marginTop: 8 }}>
               Draft receipts land in the Goods Receipt list — open each to review every line, then post to receive stock.
             </div>
           </div>

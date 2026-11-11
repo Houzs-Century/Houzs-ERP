@@ -72,7 +72,7 @@ export const SavedLocations = ({ embedded = false }: { embedded?: boolean } = {}
       )}
       <ListToolbar search={q} onSearch={setQ} placeholder="Search name, area or address" shown={shown.length} total={all.length}
         onExport={doExport} newLabel="New location" onNew={() => setOpen({ mode: 'new' })} />
-      {list.isError && <p className="text-[13px] text-[#8a2c2c]">The saved locations could not be loaded.</p>}
+      {list.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The saved locations could not be loaded.</p>}
       {list.isLoading && <p className="text-[13px] text-ink-muted">Loading saved locations…</p>}
       {!list.isLoading && !list.isError && shown.length === 0 && (
         <NoMatch text={all.length === 0 ? 'No saved locations came back. Add one, then pick it as a From or To when you raise a transfer.' : 'No saved location matches this search.'}
@@ -168,7 +168,7 @@ function PlaceForm({ place, onDone }: { place: SavedLocationRow | null; onDone: 
         {text('state', 'State', '', true)}
         {text('notes', 'Notes', 'e.g. Loading bay closes at 5pm, call the guard first', true)}
       </div>
-      {problem && f.name !== '' && <p className="text-[12.5px] text-[#8a2c2c]">{problem}</p>}
+      {problem && f.name !== '' && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? 'Saving…' : place ? 'Save changes' : 'Add location'}</button>
         <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>

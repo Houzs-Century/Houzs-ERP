@@ -51,7 +51,8 @@
 // ----------------------------------------------------------------------------
 
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
-import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
+import { HARD_BOUND_COMPANY_ID, variantTrackedCompany } from './binding-mode';
+import { canonicalVariantKey, computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { summariseReadiness } from './so-readiness';
 import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-set-coverage';
 import { paginateAll, chunkIn } from './paginate-all';
@@ -63,6 +64,7 @@ import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
+import { timed } from '../../lib/step-timing';
 import { isDocumentHeld } from './document-hold';
 
 /* Only the variant-bearing categories run bound. Owner 2026-08-10:
@@ -115,7 +117,7 @@ export function isHardBoundLine(
    pools. When company-1 stock has grown variants and the migrated blanks have
    washed out, the owner's stated plan is to switch this company to the pooled
    model too — that switch is THIS constant. */
-export const HARD_BOUND_COMPANY_ID = 1;
+export { HARD_BOUND_COMPANY_ID } from './binding-mode';
 
 export type AllocationResult = {
   ok: boolean;
@@ -198,7 +200,7 @@ export async function recomputeSoStockAllocation(
   sb: any,
   scopeToDocNo?: string,
 ): Promise<AllocationResult> {
-  const result = await runSoStockAllocation(sb, scopeToDocNo);
+  const result = await timed(scopeToDocNo ? 'alloc-recompute-scoped' : 'alloc-recompute', () => runSoStockAllocation(sb, scopeToDocNo));
   const finished = result.ok
     && result.reason !== 'another_recompute_in_progress'
     && !(result.deferredDocNos && result.deferredDocNos.length > 0);
@@ -617,7 +619,12 @@ async function runSoStockAllocation(
         });
         continue;
       }
-      const bucket = `${whId ?? WH_NONE}::${l.item_code}::${variant_key}`;
+      /* A variant-tracked company (binding-mode.ts) matches the canonical form on
+         both sides (here and the balance map below): a bucket written as
+         `...|totalheight=24"` or `legheight=default` is the same goods as this
+         line keyed without them. Company 1 keeps the exact string. */
+      const bucketVk = variantTrackedCompany(companyByDoc.get(l.doc_no) || null) ? canonicalVariantKey(variant_key) : variant_key;
+      const bucket = `${whId ?? WH_NONE}::${l.item_code}::${bucketVk}`;
       needs.push({
         id: l.id, doc_no: l.doc_no, bucket, whId,
         need: remaining, current: l.stock_status,
@@ -675,13 +682,13 @@ async function runSoStockAllocation(
     }).filter(Boolean))];
     // chunkIn — itemCodes can exceed 1000 and balances can exceed the 1000-row
     // cap; batch + page so on-hand isn't understated → lines wrongly PENDING.
-    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>(itemCodes, (batch, from, to) => pgrestIn(sb
+    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number; company_id: number | null }>(itemCodes, (batch, from, to) => pgrestIn(sb
       .from('inventory_balances')
-      .select('warehouse_id, item_code, variant_key, qty'), 'item_code', batch)
+      .select('warehouse_id, item_code, variant_key, qty, company_id'), 'item_code', batch)
       .range(from, to));
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();
-    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
+    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number; company_id?: number | null }>) {
       /* Display / showroom / service stock never enters the pool. This is the
          BELT — the decisive gate is per LINE, at the walk below, because BOUND
          MODE and the sofa matcher never read this map at all. Both are kept:
@@ -689,7 +696,7 @@ async function runSoStockAllocation(
          a bucket key is built, which is the failure the per-line gate cannot
          see. */
       if (!warehouseCanPromise(r.warehouse_id, nonSellingIds)) continue;
-      const v = r.variant_key ?? '';
+      const v = variantTrackedCompany(r.company_id ?? null) ? canonicalVariantKey(r.variant_key) : (r.variant_key ?? '');
       const qty = Number(r.qty ?? 0);
       const whKey = `${r.warehouse_id}::${r.item_code}::${v}`;
       onHandByBucket.set(whKey, (onHandByBucket.get(whKey) ?? 0) + qty);

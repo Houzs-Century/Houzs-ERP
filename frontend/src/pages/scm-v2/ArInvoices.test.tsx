@@ -156,7 +156,7 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     /* What a customer's credit notes knocked off it (owner 2026-11-03), apart from what was paid. */
     expect(within(si).getByText('RM 300.00')).toBeTruthy();
     expect(within(si).getByText('RM 3,500.00')).toBeTruthy();
-    expect(si.getAttribute('style') ?? '').toContain('252, 247, 236');
+    expect(si.getAttribute('style') ?? '').toMatch(/#fcf7ec|252, 247, 236/);
     /* A bill part paid; a debit note paid, its own tag. */
     expect(row('HC-ODB-2609-001').textContent).toContain('Partly paid');
     expect(row('HC-ODN-2610-001').textContent).toContain('Debit note');

@@ -37,7 +37,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderHeader,
-  useUpdateMfgSalesOrderStatus,
+  useUpdateMfgSalesOrderStatus, useOverrideSoLock,
   useAddMfgSalesOrderItem,
   useUpdateMfgSalesOrderItem,
   useDeleteMfgSalesOrderItem,
@@ -189,7 +189,7 @@ const LOCK_BANNER_INNER_STYLE: CSSProperties = {
 const VARIANT_WARN_BANNER_STYLE: CSSProperties = {
   background: 'rgba(184, 51, 31, 0.08)',
   border: '1px solid var(--c-festive-b, #B8331F)',
-  color: 'var(--c-festive-b, #B8331F)',
+  color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
   padding: 'var(--space-3) var(--space-4)',
   borderRadius: 'var(--radius-md)',
   fontSize: 'var(--fs-13)',
@@ -198,7 +198,7 @@ const VARIANT_WARN_LIST_STYLE: CSSProperties = { marginTop: 4, fontSize: 'var(--
 const DATES_XOR_WARN_STYLE: CSSProperties = {
   background: 'rgba(184, 51, 31, 0.08)',
   border: '1px solid var(--c-festive-b, #B8331F)',
-  color: 'var(--c-festive-b, #B8331F)',
+  color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
   padding: '4px var(--space-2)',
   borderRadius: 'var(--radius-sm)',
   fontSize: 'var(--fs-11)',
@@ -517,7 +517,7 @@ export const SalesOrderDetail = () => {
   const addLineHandoff = useAddLineHandoff();  // top-level: see useAddLineHandoff
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
-  const updateStatus = useUpdateMfgSalesOrderStatus();
+  const updateStatus = useUpdateMfgSalesOrderStatus(); const overrideLock = useOverrideSoLock(); // unlocks only when the server kept the reason
   const requestCancel = useCancelRequestAction('so');
   const deleteDraft = useDiscardDraftAction();
   const askConfirm = useConfirm();
@@ -1947,7 +1947,7 @@ export const SalesOrderDetail = () => {
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"
                 onClick={handleCancelSo} disabled={updateStatus.isPending}
-                style={{ color: 'var(--c-festive-b, #B8331F)' }}>
+                style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
                 <Ban {...ICON} />
                 <span>Request cancellation</span>
               </Button>
@@ -2060,7 +2060,7 @@ export const SalesOrderDetail = () => {
             <Button variant="ghost"
               onClick={handleDiscardDraft}
               disabled={deleteDraft.isPending || updateStatus.isPending}
-              style={{ color: 'var(--c-festive-b, #B8331F)' }}>
+              style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
               <Trash2 {...ICON} />
               <span>{deleteDraft.isPending ? 'Discarding…' : 'Discard draft'}</span>
             </Button>
@@ -2083,7 +2083,7 @@ export const SalesOrderDetail = () => {
 
       {/* ── Lock banner + the DEV-32 after-DO notice ───────────── */}
       <SoLockBanner status={header.status} cancelled={isCancelled} migratedReason={migratedLocked ? soMigratedReason(header) : null} overridden={unlockOverride}
-        onOverride={() => { updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status }); setUnlockOverride(true); }}
+        onOverride={(reason) => overrideLock.mutate({ docNo: header.doc_no, status: header.status, reason }, { onSuccess: () => setUnlockOverride(true) })}
         onRelock={() => setUnlockOverride(false)} afterDo={afterDo} afterDoTargetId={afterDoTargetId} onPickTarget={setAfterDoTargetId} />
 
       {/* ── Amendment-mode banner (Phase 1-C) ─────────────────────────
@@ -2299,7 +2299,7 @@ export const SalesOrderDetail = () => {
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
-                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} specLockedReason={null} seedSofaLegDefault={true}
                     attachOptions={attachOptionsById[it.id] ?? null}
                   />
                 </div>
@@ -2325,7 +2325,7 @@ export const SalesOrderDetail = () => {
                     onChange={cb?.onChange ?? ((patch) => patchAddingDraft(staged.key, patch))}
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
                     canRemove={true} chargeOnly={chargeAdds}
-                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} specLockedReason={null} seedSofaLegDefault={true}
                     attachOptions={attachOptionsById[staged.key] ?? null}
                   />
                 </div>
@@ -2444,7 +2444,7 @@ export const SalesOrderDetail = () => {
                             {typeof it.remaining_qty === 'number' && (
                               <div style={{
                                 fontSize: 'var(--fs-11)', marginTop: 1,
-                                color: it.remaining_qty > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
+                                color: it.remaining_qty > 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-secondary-a, #2F5D4F)',
                               }}>
                                 {it.remaining_qty > 0 ? `Balance ${it.remaining_qty}` : 'Fully delivered'}
                               </div>
@@ -2563,7 +2563,7 @@ export const SalesOrderDetail = () => {
             <img
               src={header.signature_b64}
               alt="Customer signature captured at handover"
-              style={{ maxWidth: 360, width: '100%', height: 'auto', border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: '#fff' }}
+              style={{ maxWidth: 360, width: '100%', height: 'auto', border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: 'var(--hz-c-surface)' }}
             />
           </div>
         </section>
@@ -3712,7 +3712,7 @@ const ScannedImageCard = ({
       </header>
       <div className={styles.cardBody}>
         {error ? (
-          <div style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 13 }}>
+          <div style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 13 }}>
             Couldn&apos;t load the scanned image. {error}
           </div>
         ) : src ? (
@@ -3720,7 +3720,7 @@ const ScannedImageCard = ({
             <img
               src={src}
               alt={alt}
-              style={{ maxWidth: 360, width: '100%', height: 'auto', border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: '#fff', cursor: 'zoom-in' }}
+              style={{ maxWidth: 360, width: '100%', height: 'auto', border: '1px solid var(--c-line, #E5E1DC)', borderRadius: 8, background: 'var(--hz-c-surface)', cursor: 'zoom-in' }}
             />
           </a>
         ) : (
@@ -3839,7 +3839,7 @@ const OverridePriceModal = ({
               <span className={styles.fieldLabel}>Δ vs current</span>
               <span className={styles.fieldInput} style={{
                 display: 'inline-flex', alignItems: 'center', height: 32,
-                color: delta < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-burnt)',
+                color: delta < 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-burnt)',
               }}>
                 {delta >= 0 ? '+' : ''}{fmtRm(delta, currency)} ({deltaPct.toFixed(1)}%)
               </span>
@@ -3958,7 +3958,7 @@ const SupplierConfirmForm = ({
   return (
     <div style={{
       marginTop: 'var(--space-2)', padding: 'var(--space-3)',
-      background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)',
+      background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)',
     }}>
       <div className={styles.formGrid4}>
         <label className={styles.field} style={{ gridColumn: 'span 2' }}>
@@ -4011,7 +4011,7 @@ const changeTypeLabel = (t: string): string =>
 const strikeIf = (changed: boolean): CSSProperties | undefined =>
   changed ? { textDecoration: 'line-through', opacity: 0.7 } : undefined;
 const emphasiseIf = (changed: boolean): CSSProperties | undefined =>
-  changed ? { fontWeight: 700, color: '#0c3f39' } : undefined;
+  changed ? { fontWeight: 700, color: 'var(--hz-c-primary-ink)' } : undefined;
 
 /* The responsible department(s) for a row's changed atoms — de-duplicated, for
    the amendment diff modal's Dept column (accountability routing). */

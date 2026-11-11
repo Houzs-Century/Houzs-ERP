@@ -62,6 +62,19 @@ export const RETIRED_MIGRATIONS = Object.freeze([
      the file is retired, and the redo carries the work. Checksum verified
      against staging's own DRIFT line (run 33651666423). */
   { filename: "0344_acc_autocount_code_migration.sql", archivedChecksum: "sha256:e33104acb31e4e7eba46a11d4c81bc6aa6aaa4f3f84bd815579350940c76d5a0", gitBlob: "67455c29ad4fe1ccd6e87b2c9da6b436f0a38c95" },
+  /* Added 2026-11-11. Three superseded cuts of the service-case migrations,
+     applied on STAGING only by preview deploys (staging-preview/* branches,
+     2026-11-09) and then renamed on PR #5448 to 20261110T1300 / T1400. Their
+     names can never come back (a renumber only moves forward), so they are
+     history, not pending work. Deleting the rows did not hold: the clear on
+     2026-11-09 (run 42572320471) was undone by the next preview deploy.
+     Checksums are staging's own warning lines (run 42861413878). Production
+     never tracked them. The two T1300 / T1400 rows are NOT retired here: #5448
+     still carries those exact names, and a retired name in the tree is a hard
+     failure. */
+  { filename: "20261109T1200_assr_supplier_return_eta.sql", archivedChecksum: "sha256:2463fe0f8200c0404d0626ba420d178cf79c1b6795fd9a560dca12415b10bf35", gitBlob: "4daa7af0d63ce0fb328cd9cbb3ac7abb4c2bdb8c" },
+  { filename: "20261109T1300_assr_return_dos_qc.sql", archivedChecksum: "sha256:8cd225842a7df2c6449c765cb3fd1142279d38ce03f410479061dc131a072267", gitBlob: "22f519201b1a7f512aaff405239a636764a8cc5a" },
+  { filename: "20261109T1700_assr_return_dos_and_qc_notes.sql", archivedChecksum: "sha256:f90999aa84b631b718bc42132f577000e6b27f61de1d2d3cc0a053bab2ae6188", gitBlob: "c5352d847fa1fde5dde7e64703e15c5cdb21c661" },
 ]);
 
 export const RETIRED_MIGRATION_FILENAMES = Object.freeze(

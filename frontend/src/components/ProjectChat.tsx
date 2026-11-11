@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../hooks/useNotifications";
 import type { useToast } from "../hooks/useToast";
 import { cn, relativeTime } from "../lib/utils";
+import { salesReportFormatIssues } from "../lib/salesReportFormatIssues";
 import { Avatar } from "./Avatar";
 import { useChatSalesReport } from "./projectChatSalesReport";
 
@@ -426,6 +427,37 @@ function ChatSystemRow({ a }: { a: ActivityRow }) {
   );
 }
 
+/** Chat format hints — the inline sentence that appears under a sales-report
+ *  message when something about the paste can't be tallied (summary-only,
+ *  bill lines with no name, total that doesn't add up, or a run of lines the
+ *  parser didn't understand). Hidden for regular chat. */
+function FormatHints({ note, align }: { note: string | null; align: "start" | "end" }) {
+  const issues = useMemo(() => salesReportFormatIssues(note), [note]);
+  if (issues.length === 0) return null;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex flex-col gap-0.5",
+        align === "end" ? "items-end" : "items-start",
+      )}
+    >
+      {issues.map((it, i) => (
+        <div
+          key={i}
+          className={cn(
+            "max-w-[90%] rounded-md px-2 py-1 text-[11px] leading-snug ring-1",
+            it.tone === "warn"
+              ? "bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 ring-amber-200"
+              : "bg-slate-50 dark:bg-white/5 text-slate-700 dark:text-slate-200 ring-slate-200",
+          )}
+        >
+          {it.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ChatBubble({
   a,
   isMine,
@@ -481,6 +513,13 @@ function ChatBubble({
         >
           {a.note}
         </div>
+        {/* Format hints under the bubble — owner 2026-11-10: "bagi warning
+            kalau sales person kurang satu format or salah format … option A
+            (keluar dekat bawah mesej)". Only fires when the message LOOKS LIKE
+            a sales report (bills, days or total); a regular chat note gets
+            nothing. The same helper runs on the mobile chat so both surfaces
+            read the paste the same way. */}
+        <FormatHints note={a.note} align={isMine ? "end" : "start"} />
         {footer}
         <span
           className="mt-0.5 px-0.5 font-mono text-[9.5px] text-ink-muted"

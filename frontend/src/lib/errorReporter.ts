@@ -39,10 +39,26 @@
 // tokens. Identity is NOT sent -- the server stamps user/company from the
 // session and ignores anything else.
 //
-// TRANSPORT: batch + debounce. Events queue and flush after 10s or at 10
-// queued, POSTed with the same bearer + company header the app's fetch layer
-// uses, keepalive:true so a tab close doesn't lose the batch. A flush failure
-// drops the batch silently -- this is telemetry, not business data.
+// TRANSPORT: batch + debounce. Events queue and flush after 60s or at 10
+// queued (and whenever the tab is hidden or closed), POSTed with the same
+// bearer + company header the app's fetch layer uses, keepalive:true so a tab
+// close doesn't lose the batch. A repeat of an event already queued rides on it
+// as `count` instead of a second event. A flush failure drops the batch
+// silently -- this is telemetry, not business data.
+//
+// WHY 60s (2026-11-10, was 10s): the reports are mostly "slow request" notes,
+// and a slow server made every open tab post one every 10 s — 23,309 POSTs in
+// a week at p50 675 ms, load added exactly when the server was struggling.
+//
+// SLOW NOTES ARE A SUMMARY, NOT EVENTS. Production, 7 days: 57,484 of 60,644
+// reported occurrences (95%) were "[slow ...]" notes, and the server already
+// measures every request's latency itself (requestLog.ts -> Analytics
+// Engine). So a slow request only bumps a local counter; the counters leave
+// as ONE batch per 10 minutes (top 10 signatures, each with its `count`), or
+// ride along free on a batch that is going anyway. A tab with nothing but
+// slow requests now posts at most 6 times an hour instead of 60. Timeouts,
+// 5xx, 403s and thrown errors are unchanged: they are rare and they are the
+// signal.
 //
 // STORM CONTROL (client side; the server dedups again on top):
 //   - per-signature cap: the same message+route reports at most 10 times per
@@ -62,12 +78,16 @@ import { correlatedFetch } from "./requestCorrelation";
 import { BUILD_ID } from "./buildId";
 
 
-const FLUSH_MS = 10_000;
+const FLUSH_MS = 60_000;
 const FLUSH_AT = 10; // queue length that triggers an immediate flush
 const MAX_STACK = 4000; // server re-caps at 4096
 const MAX_MESSAGE = 500;
 const PER_SIGNATURE_CAP = 10;
 const SESSION_CAP = 100;
+const SLOW_FLUSH_MS = 10 * 60_000;
+const SLOW_SUMMARY_CAP = 10; // signatures per summary batch (server takes 20 events)
+const SLOW_DISTINCT_CAP = 50; // distinct signatures tracked between summaries
+const SERVER_COUNT_MAX = 1000; // eventSchema.count max in clientErrors.ts
 
 interface ErrorEventPayload {
   message: string;
@@ -76,12 +96,16 @@ interface ErrorEventPayload {
   buildId: string;
   userAgent: string;
   occurredAt: string;
+  /** Times seen since it was queued; absent means once. */
+  count?: number;
 }
 
 const queue: ErrorEventPayload[] = [];
 const signatureCounts = new Map<string, number>();
 let sessionCount = 0;
 let flushTimer: number | null = null;
+const slowCounts = new Map<string, number>();
+let slowTimer: number | null = null;
 let installed = false;
 // Latch: true while reporter code is on the stack, so an error the reporter
 // itself raises can never re-enter capture (the no-loop guarantee).
@@ -130,6 +154,15 @@ function enqueue(message: string, stack: string | undefined): void {
   signatureCounts.set(sig, n + 1);
   sessionCount++;
 
+  /* Already waiting in this batch: count it there. Same message and route is
+     the same signature the cap uses, and the server's dedup hash covers the
+     same two (plus the build, which cannot differ within one page load). */
+  const queued = queue.find((q) => q.message === msg && q.route === route);
+  if (queued) {
+    queued.count = (queued.count ?? 1) + 1;
+    return;
+  }
+
   queue.push({
     message: msg,
     stack,
@@ -149,8 +182,35 @@ function enqueue(message: string, stack: string | undefined): void {
   }
 }
 
-function flush(): void {
-  if (queue.length === 0) return;
+/** The slow counters as events, most frequent first, and reset them. */
+function takeSlowSummary(): ErrorEventPayload[] {
+  if (slowTimer !== null) {
+    window.clearTimeout(slowTimer);
+    slowTimer = null;
+  }
+  if (slowCounts.size === 0) return [];
+  const now = new Date().toISOString();
+  const events = [...slowCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, SLOW_SUMMARY_CAP)
+    .map(([message, n]) => ({
+      message,
+      // No page: an API's slowness does not depend on which screen asked, and
+      // a page in the signature would split one endpoint into many rows.
+      route: "",
+      buildId: BUILD_ID,
+      userAgent: navigator.userAgent.slice(0, 400),
+      occurredAt: now,
+      count: Math.min(n, SERVER_COUNT_MAX),
+    }));
+  slowCounts.clear();
+  return events;
+}
+
+/** `withSlow`: send the slow summary even when no real event is waiting (its
+ *  own 10-minute timer). Otherwise it only rides on a batch that is going. */
+function flush(withSlow = false): void {
+  if (queue.length === 0 && !(withSlow && slowCounts.size > 0)) return;
   if (flushTimer !== null) {
     window.clearTimeout(flushTimer);
     flushTimer = null;
@@ -160,9 +220,10 @@ function flush(): void {
     // No session -> the endpoint would 401. Drop rather than hold: a login
     // screen's errors are not worth a growing in-memory queue.
     queue.length = 0;
+    takeSlowSummary();
     return;
   }
-  const events = queue.splice(0, queue.length);
+  const events = [...queue.splice(0, queue.length), ...takeSlowSummary()];
   try {
     // Raw fetch on purpose, NOT api.post(): the app client retries, fires 401
     // logout + 403 toast listeners, and invalidates SWR caches -- all behaviour
@@ -258,7 +319,23 @@ function reportRequest(label: string, method: string, path: string): void {
 /** A request that completed, but slowly. This is what "卡" actually is here —
  *  main-thread blocking measured 0ms on every route, so the wait is the API. */
 export function reportSlowRequest(method: string, path: string, ms: number): void {
-  reportRequest(`slow ${slowBucket(ms)}`, method, path);
+  if (!installed || inReporter) return;
+  inReporter = true;
+  try {
+    const msg = `[slow ${slowBucket(ms)}] ${method} ${normalizeApiPath(path)}`.slice(0, MAX_MESSAGE);
+    if (!slowCounts.has(msg) && slowCounts.size >= SLOW_DISTINCT_CAP) return;
+    slowCounts.set(msg, (slowCounts.get(msg) ?? 0) + 1);
+    if (slowTimer === null) {
+      slowTimer = window.setTimeout(() => {
+        slowTimer = null;
+        flush(true);
+      }, SLOW_FLUSH_MS);
+    }
+  } catch {
+    // A reporter bug is dropped, never surfaced.
+  } finally {
+    inReporter = false;
+  }
 }
 
 /** A request the browser gave up on. It never resolves, so reportSlowRequest
@@ -333,6 +410,7 @@ export function installGlobalErrorReporting(): void {
 
   // Last-chance flush when the page is going away (covers the user smashing
   // reload on a white screen -- exactly the moment we most need the report).
+  // Slow counters only ride along here; on their own they wait for their timer.
   window.addEventListener("pagehide", () => {
     try {
       flush();

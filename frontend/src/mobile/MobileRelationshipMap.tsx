@@ -53,11 +53,11 @@ const cardStatus = (c: MobileMapCard): string => {
 
 /* Chip dress — lockstep with ./source-chips.tsx. */
 const chipBase: React.CSSProperties = {
-  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39",
-  background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
+  fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
+  background: "var(--hz-dk-surface-2, #eef3f1)", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 const mutedChip: React.CSSProperties = {
-  ...chipBase, color: "#5c6357", background: "#f4f6f3", border: "1px solid #d9ded4",
+  ...chipBase, color: "#5c6357", background: "var(--hz-c-surface-2)", border: "1px solid #d9ded4",
 };
 const floatingChip: React.CSSProperties = {
   ...mutedChip, background: "transparent", border: "1px dashed #b6c6c0",
@@ -65,7 +65,7 @@ const floatingChip: React.CSSProperties = {
 
 const eyebrowStyle: React.CSSProperties = {
   fontSize: 10, fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase",
-  color: "#a16a2e", margin: "2px 2px 8px",
+  color: "var(--hz-c-accent)", margin: "2px 2px 8px",
 };
 
 /* One document card. Tappable only when a mobile screen exists AND the shell
@@ -80,15 +80,15 @@ function MapCard({ card, nav, onClose }: { card: MobileMapCard; nav?: FlowNav; o
       role={open ? "button" : undefined}
       title={card.floating ? FLOATING_TITLE : open ? "Open document" : undefined}
       style={{
-        background: card.isAnchor ? "#fff7d6" : "#fff",
-        border: card.isAnchor ? "2px solid #d4a017" : card.floating ? "1.5px dashed #b6c6c0" : "1px solid #e3e6e0",
+        background: card.isAnchor ? "var(--hz-dk-warning-bg, #fff7d6)" : "var(--hz-c-surface)",
+        border: card.isAnchor ? "2px solid #d4a017" : card.floating ? "1.5px dashed #b6c6c0" : "1px solid var(--hz-c-border-subtle)",
         borderRadius: 12, padding: "9px 12px",
         opacity: card.cancelled ? 0.55 : 1,
         cursor: open ? "pointer" : "default",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>
+        <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>
           {card.title}{card.isAnchor ? " · this document" : ""}
         </span>
         {card.status && (
@@ -98,15 +98,15 @@ function MapCard({ card, nav, onClose }: { card: MobileMapCard; nav?: FlowNav; o
       <div
         className="money"
         style={{
-          fontSize: 13, fontWeight: 800, color: "#11140f", marginTop: 2,
+          fontSize: 13, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2,
           textDecoration: card.cancelled ? "line-through" : "none", wordBreak: "break-all",
         }}
       >
         {card.label}{card.floating ? " ~" : ""}
-        {open && <span style={{ color: "#16695f", fontWeight: 600, marginLeft: 6 }}>{"›"}</span>}
+        {open && <span style={{ color: "var(--hz-c-primary)", fontWeight: 600, marginLeft: 6 }}>{"›"}</span>}
       </div>
       {card.fromLabels.length > 0 && (
-        <div className="money" style={{ fontSize: 10, color: "#9aa093", marginTop: 2 }}>
+        <div className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: 2 }}>
           From {card.fromLabels.join(", ")}{card.partial ? " · partial" : ""}
         </div>
       )}
@@ -179,16 +179,16 @@ export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         {flowQ.isLoading && (
-          <div style={{ fontSize: 11.5, color: "#9aa093", textAlign: "center", padding: "26px 0" }}>Loading map{"…"}</div>
+          <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-soft)", textAlign: "center", padding: "26px 0" }}>Loading map{"…"}</div>
         )}
         {!!flowQ.isError && !flowQ.isLoading && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "var(--red-bg, #f8eaea)", border: "1px solid #e6cccc", borderRadius: 12, padding: "11px 13px" }}>
-            <span style={{ fontSize: 12, color: "var(--red, #b23a3a)", fontWeight: 600 }}>Couldn't load the relationship map</span>
-            <button onClick={() => flowQ.refetch()} style={{ border: "none", background: "transparent", color: "var(--red, #b23a3a)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "var(--red-bg, var(--hz-c-err-bg))", border: "1px solid #e6cccc", borderRadius: 12, padding: "11px 13px" }}>
+            <span style={{ fontSize: 12, color: "var(--red, var(--hz-c-err))", fontWeight: 600 }}>Couldn't load the relationship map</span>
+            <button onClick={() => flowQ.refetch()} style={{ border: "none", background: "transparent", color: "var(--red, var(--hz-c-err))", fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
           </div>
         )}
         {!flowQ.isLoading && !flowQ.isError && !model.hasContent && (
-          <div style={{ fontSize: 11.5, color: "#9aa093", textAlign: "center", padding: "26px 0" }}>No linked documents.</div>
+          <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-soft)", textAlign: "center", padding: "26px 0" }}>No linked documents.</div>
         )}
 
         {!flowQ.isLoading && !flowQ.isError && model.hasContent && (
@@ -198,7 +198,7 @@ export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
             {model.pairings.length > 0 && (
               <div style={{ marginBottom: 16 }}>
                 <div style={eyebrowStyle}>Sales ▸ Procurement pairing</div>
-                <div style={{ background: "#fff", border: "1px solid #e3e6e0", borderRadius: 12, padding: "4px 12px" }}>
+                <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 12, padding: "4px 12px" }}>
                   {model.pairings.map((p) => {
                     const floating = p.identity === "floating";
                     const title = floating ? FLOATING_TITLE : PROVENANCE_TITLE;
@@ -221,7 +221,7 @@ export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
                         </div>
                         {/* No hover on a phone — the identity wording the desktop
                             carries as a tooltip renders as a visible caption. */}
-                        <div style={{ fontSize: 10, color: "#9aa093", marginTop: 3, lineHeight: 1.4 }}>{title}</div>
+                        <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: 3, lineHeight: 1.4 }}>{title}</div>
                       </div>
                     );
                   })}

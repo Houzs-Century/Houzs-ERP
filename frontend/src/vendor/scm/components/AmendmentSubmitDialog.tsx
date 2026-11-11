@@ -237,12 +237,12 @@ export function RequestProcessingDateRemoval({ docNo, show, hint = false, surfac
   const small = surface === 'desktop' ? 'var(--fs-11)' : 11;
   const link: CSSProperties = {
     alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-    color: surface === 'desktop' ? 'var(--c-burnt)' : '#B8331F', fontWeight: 600, fontSize: small, textDecoration: 'underline',
+    color: surface === 'desktop' ? 'var(--c-burnt)' : 'var(--hz-dk-festive-b, #B8331F)', fontWeight: 600, fontSize: small, textDecoration: 'underline',
   };
   return (
     <>
       {hint && (
-        <span style={{ fontSize: small, color: surface === 'desktop' ? 'var(--fg-muted)' : '#9aa093', marginTop: 2 }}>
+        <span style={{ fontSize: small, color: surface === 'desktop' ? 'var(--fg-muted)' : 'var(--hz-c-ink-soft)', marginTop: 2 }}>
           Only a Super Admin can remove this date directly.
         </span>
       )}

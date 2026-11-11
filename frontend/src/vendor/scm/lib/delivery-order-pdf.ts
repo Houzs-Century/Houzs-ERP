@@ -65,6 +65,7 @@ import {
 } from './pdf-item-photos';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
 import { PDF_COMPRESS } from './pdf-options';
+import { shortRackLabels } from './rack-label';
 
 type DoHeader = {
   /* Row id — the photo proxy route is keyed by it. Optional so the
@@ -723,7 +724,7 @@ export async function renderDeliveryOrderInto(
     // rail rather than jittering at the tenth row.
     const seq = String(idx + 1).padStart(2, '0');
     return showPicking
-      ? [seq, it.item_code, descOf(it), pickingCell(it.source_pos, it.source_state), pickingCell(it.racks, it.source_state), String(it.qty), m3Of(it)]
+      ? [seq, it.item_code, descOf(it), pickingCell(it.source_pos, it.source_state), pickingCell(shortRackLabels(it.racks), it.source_state), String(it.qty), m3Of(it)]
       : [seq, it.item_code, descOf(it), String(it.qty), m3Of(it)];
   });
 
@@ -748,8 +749,8 @@ export async function renderDeliveryOrderInto(
         0: { cellWidth: pct(6), fontStyle: 'bold' as const },
         1: { cellWidth: pct(19), ...idCol },
         2: { cellWidth: 'auto' as const, fontStyle: 'bold' as const },
-        3: { cellWidth: pct(22), ...idCol },
-        4: { cellWidth: pct(7) },
+        3: { cellWidth: pct(20), ...idCol },
+        4: { cellWidth: pct(9) },
         5: { cellWidth: pct(6), halign: 'right' as const, fontStyle: 'bold' as const },
         6: { cellWidth: pct(11), halign: 'right' as const },
       }

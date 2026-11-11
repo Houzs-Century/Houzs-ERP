@@ -30,6 +30,7 @@ import { liveJournal, useDocJournals } from './moneyInDocQueries';
 import { generateSundryReceiptPdf } from '../../../vendor/scm/lib/sundry-receipt-pdf';
 import { sundryReceiptTag } from './moneyInStatus';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
+import { useIdempotencyKeyFor } from '../../../lib/idempotency';
 import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
@@ -49,6 +50,8 @@ export const SundryReceiptDoc = () => {
   const journals = useDocJournals('RCT', r?.receipt_number);
   const accountsQ = useAccounts();
   const create = useCreateReceipt();
+  /* One key per Copy opened on this receipt; this screen stays mounted when the copy opens, so a later copy gets its own. */
+  const copyKey = useIdempotencyKeyFor(`${form ?? ''}:${id}`);
   const update = useUpdateReceipt();
   const voidIt = useVoidReceipt();
   const { can } = useHouzsAuth();
@@ -89,7 +92,7 @@ export const SundryReceiptDoc = () => {
       });
       return;
     }
-    create.mutate(values, {
+    create.mutate({ ...values, idempotencyKey: copyKey }, {
       onSuccess: (res) => {
         toast?.success(`${res.receipt.receiptNumber} posted · ${fmtSen(res.receipt.totalSen)}`);
         navigate(res.receipt.id ? moneyInDocHref('sundry', res.receipt.id) : moneyInListOf('sundry').href);

@@ -13,25 +13,8 @@ import { createPortal } from "react-dom";
 import { TableLoadError } from "./TableLoadError";
 import { scrollPanelNearRow } from "./dataTableScrollToRow";
 import {
-  Download,
-  Upload,
-  Search,
-  ArrowUp,
-  ArrowDown,
-  ArrowDownAZ,
-  ArrowUpAZ,
-  ChevronsUpDown,
-  ChevronRight,
-  LayoutList,
-  Table as TableIcon,
-  Pin,
-  PinOff,
-  EyeOff,
-  Eye,
-  MoveHorizontal,
-  Filter,
-  Rows3,
-  WrapText,
+  Download, Upload, Search, ArrowUp, ArrowDown, ArrowDownAZ, ArrowUpAZ, ChevronsUpDown, ChevronRight, LayoutList,
+  Table as TableIcon, Pin, PinOff, EyeOff, Eye, MoveHorizontal, Filter, Rows3, WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
@@ -44,6 +27,7 @@ import { DataTableExportItems, HEADER_MENU_ITEM_CLASS, sheetExportLabel } from "
 import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
 import { useInRouterContext } from "react-router-dom";
 import { ResetFiltersButton } from "./ResetFiltersButton";
+import { ActiveFiltersChip, FilteredEmptyNotice, activeFilterSummary } from "./DataTableFilterNotice";
 import { TableSkeleton } from "./Skeleton";
 import {
   CUSTOM_FIELDS_GROUP,
@@ -179,7 +163,7 @@ function DataTableInner<T, L>({
   exportLabel = "Export",
   onExport,
   exportLines,
-  exportXlsx,
+  exportXlsx, exportSheet,
   onExportPdf, onShownColumnsChange,
   toolbarExtra,
   onColFiltersChange,
@@ -1644,7 +1628,8 @@ function DataTableInner<T, L>({
     if (exportXlsx) {
       // No lines: one sheet row per list row, keeping each column's exportFormat.
       const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
-      void writeLineExportFile(matrix, "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`);
+      const sheet = exportSheet?.(outRows);
+      void writeLineExportFile(matrix, sheet?.name ?? "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`, sheet?.heading);
       return;
     }
     downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(outRows, csvCols));
@@ -1822,6 +1807,14 @@ function DataTableInner<T, L>({
     const searched = searchBlobs && q ? rows.filter((r) => (searchBlobs.get(r) ?? "").includes(q)) : rows;
     return applyColumnFilters(searched, colFilters, allColumns);
   }, [rows, colFilters, allColumns, searchBlobs, clientQuery]);
+  /* Rows exist but the funnels / search hide every one: say so and name them,
+     never the page's "nothing here" label (DP Overdue, owner 2026-11-10). */
+  const activeFilters = useMemo(() => activeFilterSummary(colFilters, allColumns), [colFilters, allColumns]);
+  const clearFunnelsAndSearch = () => { setColFilters({}); if (clientQueryActive) setClientQuery(""); };
+  const hiddenByFilters = (rows?.length ?? 0) > 0 && filteredRows?.length === 0 && (activeFilters.length > 0 || clientQueryActive);
+  const emptyContent = hiddenByFilters
+    ? <FilteredEmptyNotice hiddenCount={rows?.length ?? 0} filters={activeFilters} query={clientQueryActive ? clientQuery.trim() : null} onClear={clearFunnelsAndSearch} />
+    : emptyLabel;
 
   const sortedRows = useMemo(
     () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort), defaultSort ?? null) : filteredRows),
@@ -1845,8 +1838,7 @@ function DataTableInner<T, L>({
     [sortedRows, selection?.selectedIds]);
   const footerTotals = actionRows?.rows.length && displayColumns.some((c) => c.total) ? actionRows : null;
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
-
-  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort; a drop reports the whole new order, persisted by the caller via `defaultSort`. */
+  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort (the toolbar offers to clear one); a drop reports the new order of the shown rows, persisted by the caller via `defaultSort`. */
   const rowReorderable = !!onRowReorder && sort == null;
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
@@ -2205,6 +2197,7 @@ function DataTableInner<T, L>({
             onReset={handleResetFilters}
             label={resetFilters?.label}
           />
+          <ActiveFiltersChip filters={activeFilters} onClear={() => setColFilters({})} />
           <div className="flex items-center gap-2 text-[11px] font-medium text-ink-secondary">
             {caption && (
               <>
@@ -2224,6 +2217,7 @@ function DataTableInner<T, L>({
                 <span className="font-mono text-ink">{visibleColumns.length}</span>
                 <span className="ml-1 text-ink-muted">of {allColumns.length} cols</span>
                 {copiedNote && <span role="status" className="ml-2 text-primary">{copiedNote}</span>}
+                {onRowReorder && sort && <button type="button" className="ml-2 text-primary underline" onClick={() => { setSort(null); reportServerSort(null); }}>Clear sort to drag rows</button>}
               </span>
             ) : (
               <span className="text-ink-muted">Loading…</span>
@@ -2688,7 +2682,7 @@ function DataTableInner<T, L>({
                     colSpan={totalColSpan}
                     className="px-3 py-20 text-center text-sm text-ink-muted"
                   >
-                    {emptyLabel}
+                    {emptyContent}
                   </td>
                 </tr>
               )}
@@ -2746,7 +2740,7 @@ function DataTableInner<T, L>({
                   // Odd-row value = `surface-dim` (#ecebe2) at 35% over the
                   // white surface, pre-blended so there's no visible seam.
                   const stickyBg =
-                    rowIdx % 2 === 0 ? "#ffffff" : "#f8f8f5";
+                    rowIdx % 2 === 0 ? "var(--hz-c-surface)" : "var(--hz-dk-row-alt, #f8f8f5)";
                   // A falsy key means this row has nothing to drill into: no chevron.
                   const expId = expandable ? expansionId(row) || null : null;
                   const isExpanded = expId != null && expandedRowsEffective.has(expId);
@@ -3018,7 +3012,7 @@ function DataTableInner<T, L>({
         )}
         {!effectiveLoading && !error && sortedRows && sortedRows.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-12 text-center text-sm text-ink-muted">
-            {emptyLabel}
+            {emptyContent}
           </div>
         )}
         {!effectiveLoading && !error && sortedRows && sortedRows.length > 0 && (

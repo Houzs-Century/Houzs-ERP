@@ -199,7 +199,7 @@
   cursor: pointer;
   padding: 4px;
   border-radius: var(--radius-sm);
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -255,7 +255,7 @@
   padding: 0 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--c-secondary-a, #2F5D4F);
-  background: var(--c-secondary-a, #2F5D4F);
+  background: var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F));
   color: #fff;
   font-family: var(--font-sans);
   font-size: var(--fs-11);
@@ -327,13 +327,13 @@
 
 .balanceClear {
   composes: summaryValue;
-  color: var(--c-secondary-a, #2F5D4F);
+  color: var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F));
   font-weight: 700;
 }
 
 .balanceOutstanding {
   composes: summaryValue;
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   font-weight: 700;
 }
 
@@ -345,7 +345,7 @@
    every other negative figure in the app (Accounting.tsx, DailyBank.tsx). */
 .balanceCredit {
   composes: summaryValue;
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   font-weight: 700;
 }
 
@@ -450,5 +450,5 @@
   font-family: var(--font-sans);
   font-size: var(--fs-11);
   line-height: 1.3;
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
 }

@@ -26,4 +26,4 @@
 }
 .input::placeholder { color: var(--fg-muted); }
 .input:hover { border-color: var(--line-strong); }
-.input:focus { border-color: var(--c-orange); background: #fff; }
+.input:focus { border-color: var(--c-orange); background: var(--hz-c-surface); }

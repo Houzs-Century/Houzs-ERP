@@ -36,7 +36,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 - AutoCount pull backlog: `?since=YYYY-MM-DD` windows; `?mode=all` dies with HTTP 503.
 
 ## Money, stock and data safety — enforced, do not weaken
-- Migrations: only `backend/src/db/migrations-pg/` reaches production, applied on every push to main. Pick the number at MERGE time by re-listing the tree. Never edit an applied migration's body. Each carries `-- REVERSAL:` or `IRREVERSIBLE — <why>`; a `DROP VIEW` names the grants to restore. No demo data in migrations; large data separate from schema.
+- Migrations: only `backend/src/db/migrations-pg/` reaches production, applied on every push to main. Pick the number at MERGE time by re-listing the tree. Before merging, dispatch `Staging Migrations` on the branch and cite the green run in the PR. Never edit an applied migration's body. Each carries `-- REVERSAL:` or `IRREVERSIBLE — <why>`; a `DROP VIEW` names the grants to restore. No demo data in migrations; large data separate from schema.
 - A `backend/scripts` script that writes to the DB has: plan-by-default `MODE`/`APPLY`, a `CONFIRM` phrase, a re-read on a fresh connection that checks shape (not count), and a `RE-RUN:` header. Copy `backend/scripts/repair-array-shaped-variants.mjs`. Gate: `audit:release-discipline`.
 - Company scope: the service-role client bypasses RLS, so the `company_id` predicate is the only boundary, on writes as well as reads. Use `backend/src/scm/lib/companyScope.ts`; `maybeSingle` for by-id. A parent predicate (`so_doc_no`) is not company scope.
 - Never `gh pr merge --auto` a PR that carries a migration or an integration batch.

@@ -14,7 +14,15 @@ const TTL_MS = 15_000;
 // Never cache: auth probes (login state must always be live), the project
 // chat/activity feed (polled every 3s — staleness would delay messages),
 // and presence (who-is-online must stay live).
-const NEVER_CACHE = [/^\/api\/auth\//, /\/activity(\?|$)/, /^\/api\/presence/, /^\/api\/admin\/health/];
+// The sidebar's combined counts too: no mutation family covers that path, so a
+// cached copy could outlive the write it should reflect.
+const NEVER_CACHE = [
+  /^\/api\/auth\//,
+  /\/activity(\?|$)/,
+  /^\/api\/presence/,
+  /^\/api\/admin\/health/,
+  /^\/api\/badge-counts/,
+];
 
 type Entry = { at: number; data: unknown };
 const store = new Map<string, Entry>();

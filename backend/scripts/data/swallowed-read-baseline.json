@@ -238,11 +238,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 44,
+      "reads": 39,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
-      "reads": 32,
+      "reads": 26,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-rate-cards.ts": {
@@ -250,7 +250,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 18,
+      "reads": 10,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -278,7 +278,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 43,
+      "reads": 36,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -286,15 +286,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/inventory-adjustments.ts": {
-      "reads": 2,
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/routes/inventory.ts": {
       "reads": 9,
-      "catches": 0
-    },
-    "backend/src/scm/routes/lorry-capacity.ts": {
-      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/routes/lorry-service-records.ts": {
@@ -310,11 +306,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 44,
+      "reads": 41,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 73,
+      "reads": 72,
       "catches": 2
     },
     "backend/src/scm/routes/mfg-sales-orders/cross-category.ts": {
@@ -366,7 +362,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
-      "reads": 25,
+      "reads": 17,
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {
@@ -410,7 +406,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/stock-transfers.ts": {
-      "reads": 4,
+      "reads": 3,
       "catches": 0
     },
     "backend/src/scm/routes/suppliers.ts": {

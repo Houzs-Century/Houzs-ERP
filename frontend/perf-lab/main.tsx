@@ -8,6 +8,7 @@ import { AutoCountSync } from "../src/pages/AutoCountSync";
 import { MobileAutoCountSync } from "../src/mobile/MobileAutoCountSync";
 import type { AcOutboxResponse, AcOutboxRow } from "../src/lib/autocountOutbox";
 import { DataGridCompat, type GridColumn } from "../src/components/DataGridCompat";
+import { DpBoardLab } from "./dpBoardLab";
 import "../src/vendor/design-system/tokens.css";
 import "../src/index.css";
 import "./perf-lab.css";
@@ -474,6 +475,7 @@ function App() {
   if (scenario === "data-grid") return <DataGridLab />;
   if (scenario === "mobile-virtual-list") return <MobileVirtualListLab />;
   if (scenario === "search") return <SearchLab />;
+  if (scenario === "dp-board") return <DpBoardLab />;
   if (scenario === "autocount-sync") {
     return <AutoCountSyncLab mobile={new URLSearchParams(window.location.search).get("surface") === "mobile"} />;
   }

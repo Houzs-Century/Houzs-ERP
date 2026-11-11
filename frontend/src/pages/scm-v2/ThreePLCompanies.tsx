@@ -149,7 +149,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         {companies.isLoading ? (
           <p className="text-[13px] text-ink-muted">Loading…</p>
         ) : companies.isError ? (
-          <p className="text-[13px] text-[#8a2c2c]">The 3PL companies did not load.</p>
+          <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The 3PL companies did not load.</p>
         ) : rows.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-ink-muted">
             No 3PL companies yet. Register one above, then open it to add its lorries and crew.
@@ -303,7 +303,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
             onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
               onError: writeFailedAs('The company was not updated'),
             })} />
-          <span className={cn('rounded-full px-2 py-0.5 text-[11.5px] font-semibold', row.isActive ? 'bg-[#dcebe3] text-[#1f5c43]' : 'bg-surface-2 text-ink-muted')}>{row.isActive ? 'Active' : 'Inactive'}</span>
+          <span className={cn('rounded-full px-2 py-0.5 text-[11.5px] font-semibold', row.isActive ? 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]' : 'bg-surface-2 text-ink-muted')}>{row.isActive ? 'Active' : 'Inactive'}</span>
         </label>
 
         <div className="inline-flex flex-none gap-1">
@@ -390,7 +390,7 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
       <span className="text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted">
         {companyName} — fleet
       </span>
-      {fleet.isError && <p className="text-[13px] text-[#8a2c2c]">This carrier&rsquo;s fleet did not load.</p>}
+      {fleet.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">This carrier&rsquo;s fleet did not load.</p>}
 
       <FleetBlock title="Lorries" empty="No lorries registered for this carrier."
         rows={(d?.lorries ?? []).map((l) => ({
@@ -518,8 +518,8 @@ const Inp = ({ value, onChange, placeholder, width }: {
     style={{ ...selStyle, width: width ?? 150 }} />
 );
 const selStyle: CSSProperties = {
-  minHeight: 38, padding: '0 10px', borderRadius: 8, border: '1px solid #d6d9d2',
-  background: '#fff', color: '#11140f', fontSize: 13,
+  minHeight: 38, padding: '0 10px', borderRadius: 8, border: '1px solid var(--hz-c-border)',
+  background: 'var(--hz-c-surface)', color: 'var(--hz-c-ink)', fontSize: 13,
 };
 
 export default ThreePLCompanies;

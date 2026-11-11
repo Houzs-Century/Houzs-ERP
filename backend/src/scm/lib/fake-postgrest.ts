@@ -358,40 +358,7 @@ export function fakeSb(
          OUTSIDE a quoted value, an `in.(…)` list or an `ov.{…}` array, as
          PostgREST does. */
       or(expr: string) {
-        const parts: string[] = [];
-        let cur = '', depth = 0, quoted = false;
-        for (let i = 0; i < String(expr).length; i += 1) {
-          const ch = String(expr)[i]!;
-          if (quoted && ch === '\\') { cur += ch + (String(expr)[i + 1] ?? ''); i += 1; continue; }
-          if (ch === '"') quoted = !quoted;
-          else if (!quoted && (ch === '(' || ch === '{')) depth += 1;
-          else if (!quoted && (ch === ')' || ch === '}')) depth -= 1;
-          else if (!quoted && depth === 0 && ch === ',') { parts.push(cur); cur = ''; continue; }
-          cur += ch;
-        }
-        parts.push(cur);
-        const terms = parts.map((t) => {
-          const [col, op, ...rest] = t.split('.');
-          const val = rest.join('.');
-          if (op === 'in') {
-            const vals = parsePgrestInList(val);
-            return (r: Row) => r[col!] != null && vals.includes(String(r[col!]));
-          }
-          if (op === 'ov') {
-            const vals = val.replace(/^\{|\}$/g, '').split(',');
-            return (r: Row) => Array.isArray(r[col!]) && (r[col!] as unknown[]).some((x) => vals.includes(String(x)));
-          }
-          if (op === 'ilike') {
-            const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
-            return (r: Row) => rx.test(String(r[col!] ?? ''));
-          }
-          if (op === 'eq') return (r: Row) => String(r[col!]) === val;
-          // NULL is unequal to nothing in SQL; a reader asks for it with `is.null`.
-          if (op === 'neq') return (r: Row) => r[col!] != null && String(r[col!]) !== val;
-          if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
-          if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
-          throw new Error(`fake-postgrest: or(${t}) is not implemented`);
-        });
+        const terms = orTerms(expr);
         filters.push((r) => terms.some((f) => f(r)));
         return builder;
       },
@@ -478,4 +445,52 @@ export function fakeSb(
     },
   };
   return api as never as typeof api;
+}
+
+/* The terms of a PostgREST `or=(...)`, each a row predicate. An `and(...)` term
+   passes when every inner term does (the delivery board's date bands). */
+function orTerms(expr: string): Array<(r: Row) => boolean> {
+  const parts: string[] = [];
+  let cur = '', depth = 0, quoted = false;
+  for (let i = 0; i < String(expr).length; i += 1) {
+    const ch = String(expr)[i]!;
+    if (quoted && ch === '\\') { cur += ch + (String(expr)[i + 1] ?? ''); i += 1; continue; }
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && (ch === '(' || ch === '{')) depth += 1;
+    else if (!quoted && (ch === ')' || ch === '}')) depth -= 1;
+    else if (!quoted && depth === 0 && ch === ',') { parts.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts.map((t): ((r: Row) => boolean) => {
+    if (t.startsWith('and(') && t.endsWith(')')) {
+      const all = orTerms(t.slice(4, -1));
+      return (r: Row) => all.every((f) => f(r));
+    }
+    const [col, op, ...rest] = t.split('.');
+    const val = rest.join('.');
+    if (op === 'in') {
+      const vals = parsePgrestInList(val);
+      return (r: Row) => r[col!] != null && vals.includes(String(r[col!]));
+    }
+    if (op === 'ov') {
+      const vals = val.replace(/^\{|\}$/g, '').split(',');
+      return (r: Row) => Array.isArray(r[col!]) && (r[col!] as unknown[]).some((x) => vals.includes(String(x)));
+    }
+    if (op === 'ilike') {
+      const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+      return (r: Row) => rx.test(String(r[col!] ?? ''));
+    }
+    if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+    // NULL is unequal to nothing in SQL; a reader asks for it with `is.null`.
+    if (op === 'neq') return (r: Row) => r[col!] != null && String(r[col!]) !== val;
+    // Date / text comparisons, lexical as gte/lte on the builder; NULL matches none.
+    if (op === 'gte') return (r: Row) => r[col!] != null && String(r[col!]) >= val;
+    if (op === 'lte') return (r: Row) => r[col!] != null && String(r[col!]) <= val;
+    if (op === 'gt') return (r: Row) => r[col!] != null && String(r[col!]) > val;
+    if (op === 'lt') return (r: Row) => r[col!] != null && String(r[col!]) < val;
+    if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
+    if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
+    throw new Error(`fake-postgrest: or(${t}) is not implemented`);
+  });
 }

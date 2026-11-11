@@ -40,6 +40,7 @@ import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
+import badgeCounts, { setBadgeDispatch } from "./routes/badgeCounts";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
@@ -60,6 +61,7 @@ import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import projectsCalendarSearch from "./routes/projectsCalendarSearch";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
 import assrQuality from "./routes/assrQuality";
@@ -183,6 +185,10 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { retryOpenDoStamps } from "./scm/lib/do-shipped-from-retry";
+import { INTEGRITY_JOB, runNightlyIntegrity } from "./services/nightlyIntegrityRun";
+import { JOB_ALERTS_JOB, runJobFailureAlerts } from "./services/jobFailureAlerts";
+import { withAfterResponse } from "./lib/after-response";
 import { computeDayRoutes } from "./scm/lib/lorry-day-runs";
 import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
@@ -221,6 +227,13 @@ const inboxBustAfterWrite: MiddlewareHandler<{ Bindings: Env }> = async (c, next
 
 // Outermost: one structured access-log line + X-Request-Id per request.
 app.use("*", requestLog);
+// Best-effort work deep in a helper (afterResponse in lib/after-response.ts) runs
+// on the request's waitUntil instead of delaying the response.
+app.use("*", async (c, next) => {
+  let waitUntil: ((p: Promise<unknown>) => void) | null = null;
+  try { waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx); } catch { /* no execution context (tests) */ }
+  return waitUntil ? withAfterResponse(waitUntil, () => next()) : next();
+});
 
 // Allow-listed CORS origins (audit M3). The SPA calls the API SAME-ORIGIN, so it
 // needs no CORS at all; the only legitimate CROSS-origin BROWSER callers are the
@@ -515,6 +528,19 @@ app.route("/api/companies", companies);
 // row; the /default writes gate on settings.manage inside the router.
 app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
+// Every sidebar count in one request: each source is re-dispatched through THIS
+// app with the caller's headers, so it passes the same gates as a direct call.
+setBadgeDispatch((c, req) => {
+  let ctx: Parameters<typeof app.fetch>[2];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  return Promise.resolve(app.fetch(req, c.env, ctx));
+});
+app.route("/api/badge-counts", badgeCounts);
+
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
 // IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
@@ -523,6 +549,8 @@ app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
+// All-dates calendar search (Previous / Next match). Same exact-path-first reason.
+app.route("/api/projects/calendar/search", projectsCalendarSearch);
 // Finished events with incomplete books (Project Overview, Overview). Same exact-
 // path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
@@ -1132,6 +1160,16 @@ export default {
           })
           .catch((e) => console.error("[cron slip-reaper]", e))
       );
+      // Background-job failure alerts (owner-approved 2026-11-10): hourly, on the
+      // :00 pass of this slot. Classifies every job as System Health does and
+      // tells the IT-page holders once per incident (services/jobFailureAlerts.ts).
+      if (new Date(event.scheduledTime).getUTCMinutes() < 30) {
+        ctx.waitUntil(
+          track("job-alerts", () => runJobFailureAlerts(env, event.scheduledTime))
+            .then((r) => { if (r.critical || r.alerted.length) console.log(`[cron ${JOB_ALERTS_JOB}] critical=${r.critical} alerted=${r.alerted.join(",") || "none"}`); })
+            .catch((e) => console.error(`[cron ${JOB_ALERTS_JOB}]`, e)),
+        );
+      }
     } else if (event.cron === "0 2 * * *") {
       // Daily 02:00 UTC slot: SLA escalation + ASSR digest + project reminders.
       ctx.waitUntil(
@@ -1355,6 +1393,30 @@ export default {
             );
           }
         }).catch((e) => console.error("[cron lorry-day-routes]", e)),
+      );
+      // DO lines left open by the lock gate (owner 2026-11-10: a line whose rack or
+      // PO is not known for its full qty is not locked; it is retried at the ship
+      // and every night until its GRN gets a rack). Per company, bounded, write-once.
+      ctx.waitUntil(
+        track("do-stamp-retry", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data as Array<{ id: number }> | null) ?? []).map((r) => Number(r.id));
+          const runs = await retryOpenDoStamps(sb, ids, new Date(event.scheduledTime));
+          console.log(`[cron do-stamp-retry] ${runs.map((r) => `${r.companyId}: ${r.error ?? `${r.written} written, ${r.tried} of ${r.open_dos} DO(s) tried`}`).join("; ")}`);
+          const failed = runs.filter((r) => r.error);
+          if (failed.length) throw new Error(failed.map((r) => `${r.companyId}: ${r.error}`).join("; "));
+        }).catch((e) => console.error("[cron do-stamp-retry]", e)),
+      );
+      // Nightly integrity check (owner-approved 2026-11-10): documents from the
+      // last two days whose stock, PO or bank did not follow, per company. Reads
+      // only; new findings become one notice per company to the IT-page holders
+      // (services/nightlyIntegrityRun.ts). Logs counts only, never money.
+      ctx.waitUntil(
+        track("integrity-nightly", () => runNightlyIntegrity(env, event.scheduledTime))
+          .then((r) => console.log(`[cron ${INTEGRITY_JOB}] ${r.companies} compan${r.companies === 1 ? "y" : "ies"}, ${r.findings} new finding(s)`))
+          .catch((e) => console.error(`[cron ${INTEGRITY_JOB}]`, e)),
       );
       // Books › Self-check summed for To do (batch 6 c3): the control check is
       // too heavy for every To do read, so each night leaves one row per

@@ -79,6 +79,7 @@ import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetir
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 import { withSoRefDocNos } from '../lib/so-ref-search';
+import { noWriteUntilMarked, writesFromHere } from '../lib/no-write-refusal';
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
    (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
@@ -1578,6 +1579,8 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
 
+  /* The refusals above only read, so they released the Idempotency-Key (noWriteUntilMarked). */
+  writesFromHere(c);
   const { data, error } = await insertSiPaymentRow(sb, {
     salesInvoiceId: id, companyId: activeCompanyId(c), paidAt: p.paidAt,
     method: p.method, merchantProvider: p.merchantProvider, installmentMonths: p.installmentMonths,
@@ -1618,7 +1621,7 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
 
   return c.json({ payment: data }, 201);
 };
-salesInvoices.post('/:id/payments', postSalesInvoicePaymentHandler);
+salesInvoices.post('/:id/payments', noWriteUntilMarked, postSalesInvoicePaymentHandler);
 
 salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');

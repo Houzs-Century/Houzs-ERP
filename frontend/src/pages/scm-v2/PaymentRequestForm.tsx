@@ -39,8 +39,8 @@ function FormSection({ n, title, required = false, first = false, children }: { 
   return (
     <section aria-label={title} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-4, 16px) 0', borderTop: first ? 'none' : '1px solid var(--line, #ece9e2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 'var(--fs-14, 14px)' }}>
-        <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--c-secondary-a, #2F5D4F)', color: '#fff', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>
-        <span>{title}{required && <span style={{ color: 'var(--c-festive-b, #B8331F)' }}> *</span>}</span>
+        <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))', color: '#fff', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>
+        <span>{title}{required && <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}> *</span>}</span>
       </div>
       {children}
     </section>
@@ -187,7 +187,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {initial?.status === 'REJECTED' && initial.finance_note && (
-        <div style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>Finance returned it: {initial.finance_note}</div>
+        <div style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>Finance returned it: {initial.finance_note}</div>
       )}
       {!initial && (
         <FormSection n={stepNo('bill')} title="单据 · The bill" required first>
@@ -263,7 +263,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
             <span className={styles.fieldLabel}>Pay by</span>
             {/* Dressed like the fields beside it — the date field's own pill stood out in the row. */}
             <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by"
-              style={{ background: '#fff', border: '1px solid #d6d9d2', borderRadius: 8 }} />
+              style={{ background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border)', borderRadius: 8 }} />
           </label>
         </div>
       </FormSection>
@@ -277,7 +277,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         {fromRow ? (
           <div className={styles.field}>
             <span className={styles.fieldLabel}>Event — the PMS row's own</span>
-            <div className={styles.fieldInput} role="note" aria-label="Event" style={{ background: 'var(--c-paper, #f4f6f3)' }}>{rowEventLabel}</div>
+            <div className={styles.fieldInput} role="note" aria-label="Event" style={{ background: 'var(--c-paper, var(--hz-c-surface-2))' }}>{rowEventLabel}</div>
           </div>
         ) : hasEvents && (
           <label className={styles.field}>

@@ -38,6 +38,7 @@ import {
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import { ReconcilePickProvider, byDateThenLine } from './bank-reconcile-pick';
+import { useReturnScroll } from '../../lib/returnScroll';
 import {
   BankCards, DifferenceWalk, MissingBanner, MonthFigures, MonthStrip, MonthTracker, bankCards, defaultMonth, lockLabel, lockReasons, monthTitle,
   type MonthFacts,
@@ -149,6 +150,8 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   picked: Picked; bank: string; missingSince: string | null; onUpload: () => void;
 }) => {
   const q = useBankMonth(picked.accountCode, picked.month);
+  /* Back from an order opened here lands on the same spot (bank-entry-doc). */
+  useReturnScroll(q.data != null);
   const setup = useBankSetup();
   const account = setup.data?.accounts.find((x) => x.account_code === picked.accountCode) ?? null;
   const [params, setParams] = useSearchParams();

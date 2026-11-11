@@ -454,7 +454,7 @@ export function HeroImageEditor({
         {/* Not-configured overlay */}
         {showOverlay && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-surface/70 to-surface/95 px-6 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
               <ImageUp size={18} />
             </div>
             <div className="mt-2 text-[13.5px] font-bold text-ink">

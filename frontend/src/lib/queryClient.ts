@@ -8,8 +8,8 @@
 // each time you came back to them. A modest 30s staleTime lets a revisited page
 // serve its cached snapshot instantly and only revalidate once the data is
 // older than that. This is SAFE because reads-after-writes stay fresh: every
-// mutation calls invalidateQueries (same tab) and broadcastDataChanged →
-// invalidateQueries (other tabs), and invalidation ignores staleTime and forces
+// mutation calls invalidateQueries (same tab) and the keys it invalidated are
+// broadcast → invalidateQueries on those keys (other tabs), and invalidation ignores staleTime and forces
 // an active refetch. Queries that must always be live (role/permission lists,
 // see pages/Team.tsx) already override with staleTime:0 + refetchOnMount:"always",
 // and /api/auth/* is never cached (see api/cache.ts NEVER_CACHE).
@@ -26,7 +26,7 @@
 // Focus stays off. Callsites with their own staleTime (SCM + mobile) are
 // unaffected — an explicit option always wins over these defaults.
 import { QueryClient, MutationCache } from "@tanstack/react-query";
-import { installCrossTabSync, broadcastDataChanged } from "./cross-tab-sync";
+import { installCrossTabSync, mutationSucceeded, mutationSettled } from "./cross-tab-sync";
 import { installQueryPersist } from "./query-persist";
 
 /* Retry policy — one retry, EXCEPT for a 4xx (2026-07-19, fix/so-maintenance-403).
@@ -54,11 +54,15 @@ export function retryUnlessClientError(failureCount: number, error: unknown): bo
 }
 
 export const queryClient = new QueryClient({
-  // Cross-tab sync: every successful write tells other open tabs to refetch.
-  // One central hook in the MutationCache, so no per-mutation wiring is needed.
+  // Cross-tab sync: every successful write tells other open tabs which query
+  // keys it invalidated. One central hook in the MutationCache, so no
+  // per-mutation wiring is needed.
   mutationCache: new MutationCache({
-    onSuccess: () => {
-      broadcastDataChanged();
+    onSuccess: (_data, _vars, _ctx, mutation) => {
+      mutationSucceeded(mutation);
+    },
+    onSettled: (_data, _error, _vars, _ctx, mutation) => {
+      mutationSettled(mutation);
     },
   }),
   defaultOptions: {

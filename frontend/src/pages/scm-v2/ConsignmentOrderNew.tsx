@@ -819,7 +819,7 @@ export const ConsignmentOrderNew = () => {
               style={{
                 background: 'rgba(184, 51, 31, 0.08)',
                 border: '1px solid var(--c-festive-b, #B8331F)',
-                color: 'var(--c-festive-b, #B8331F)',
+                color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                 padding: '4px var(--space-2)',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: 'var(--fs-11)',
@@ -1027,6 +1027,7 @@ export const ConsignmentOrderNew = () => {
                  server would have accepted. Same conditional rule as
                  SalesOrderNew; the CO is an ORDER, not a downstream document. */
               variantsRequired={!!processingDate}
+              specLockedReason={null}
               lineDateLocked={false}
               seedSofaLegDefault={true}
               attachOptions={null}

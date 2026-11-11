@@ -157,10 +157,10 @@ describe('the debtors', () => {
     expect(within(ahmad).getAllByRole('cell').map((c) => c.textContent)).toContain('2');
     expect(within(ahmad).getByText('RM 450.00')).toBeTruthy();
     expect(within(ahmad).getByText('Active')).toBeTruthy();
-    expect(ahmad.getAttribute('style') ?? '').toContain('252, 247, 236');
+    expect(ahmad.getAttribute('style') ?? '').toMatch(/#fcf7ec|252, 247, 236/);
     const old = row('OLD DEBTOR');
     expect(within(old).getByText('Inactive')).toBeTruthy();
-    expect(old.getAttribute('style') ?? '').not.toContain('252, 247, 236');
+    expect(old.getAttribute('style') ?? '').not.toMatch(/#fcf7ec|252, 247, 236/);
     /* No code, no registration, no phone: a dash each. */
     expect(within(old).getAllByText('—')).toHaveLength(3);
   });
@@ -398,7 +398,7 @@ describe('the receipts — the four layers from the row', () => {
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Save & prepare' }));
     const sent = createDebtorReceipt.mock.calls[0]![0] as Record<string, unknown>;
-    expect(sent).toEqual({ debtorId: 'd1', receiptDate: TODAY, bankAccountCode: '310-0010', allocations: [{ billId: 'b2', amountSen: 15_000 }] });
+    expect(sent).toEqual({ debtorId: 'd1', receiptDate: TODAY, bankAccountCode: '310-0010', allocations: [{ billId: 'b2', amountSen: 15_000 }], idempotencyKey: expect.any(String) });
     await answer(createDebtorReceipt, 0, 'onSuccess', { ok: true, receipt: { id: 'dr9', receiptNumber: 'HC-ODR-2611-009' } });
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'dr9', action: 'submit' });
     await answer(stepMutate, 0, 'onSuccess', { ok: true });

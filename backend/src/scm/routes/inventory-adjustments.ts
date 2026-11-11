@@ -41,6 +41,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, requireActiveCompanyId, companyDocPrefix, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { resolveIncreaseKeys } from '../lib/stock-bucket-key';
 import { assertWarehouseInCompany } from '../lib/ref-in-company';
 import { recordEntityAudit, compactChanges, fieldChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { resolveCallerStaffId } from '../lib/salesScope';
@@ -48,6 +49,7 @@ import { scmDb, companyScope, CENTRALISED, type ScopedDb } from '../lib/scopedDb
 import { mintMonthlyDocNo, insertWithDocNoRetry, docMonthTag } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mytDayWindow } from '../lib/my-time';
+import { linesUnreadableBody } from '../lib/failed-read-refusal';
 import {
   linesFromBody,
   parseAdjustmentLines,
@@ -109,14 +111,16 @@ async function shortages(db: ScopedDb, c: Ctx, warehouseId: string, deltas: read
 /** The cost found stock enters at. Never 0 (audit R3): the operator's figure,
     else what this document wrote the same bucket off at, else the bucket's
     known lot cost. null = nothing to go on, so the caller refuses. */
-async function increaseCostSen(
+export async function increaseCostSen(
   db: ScopedDb, c: Ctx, warehouseId: string, b: Bucket, preferredSen: number,
-): Promise<number | null> {
-  const { data: lots } = await db.from('inventory_lots', companyScope(c))
+): Promise<number | null | Error> {
+  const { data: lots, error } = await db.from('inventory_lots', companyScope(c))
     .select('unit_cost_sen, qty_remaining, source_doc_type, received_at')
     .eq('warehouse_id', warehouseId)
     .eq('item_code', b.item_code)
     .eq('variant_key', b.variant_key);
+  // Unread lots are not "no cost history": the caller refuses instead of pricing the stock.
+  if (error) return new Error(error.message);
   const forced = resolveForcedUnitCostSen({ operatorCostSen: preferredSen, lots: (lots ?? []) as LotCostRow[] });
   return forced.ok ? forced.unitCostSen : null;
 }
@@ -224,6 +228,10 @@ inventoryAdjustments.post('/', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const whCheck = await assertWarehouseInCompany(c.get('supabase'), warehouseId, co.companyId);
   if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
+  /* Found stock joins the canonically equal bucket already on the shelf, keyed by
+     the SKU's category (lib/stock-bucket-key.ts). Create only: an edit sends the
+     keys its lines were stored under, and the ledger diff compares those. */
+  await resolveIncreaseKeys(c.get('supabase'), co.companyId, warehouseId, lines);
 
   const deltas = bucketDeltas([], lines);
   try {
@@ -238,6 +246,7 @@ inventoryAdjustments.post('/', async (c) => {
     if (l.qty < 0) continue;
     // eslint-disable-next-line no-await-in-loop -- one read per found-stock line
     const sen = await increaseCostSen(db, c, warehouseId, l, l.unit_cost_sen ?? 0);
+    if (sen instanceof Error) return c.json(linesUnreadableBody('the stock cost history', 'adjusted', sen), 503);
     if (sen == null) return c.json(costRequired(l), 422);
     costs.set(l.line_no, sen);
   }
@@ -410,6 +419,7 @@ inventoryAdjustments.patch('/:id', async (c) => {
       const preferred = typed || writtenOffUnitCostSen(moved, k);
       // eslint-disable-next-line no-await-in-loop -- one read per bucket that gains stock
       const sen = await increaseCostSen(db, c, header.warehouse_id, d.bucket, preferred);
+      if (sen instanceof Error) return c.json(linesUnreadableBody('the stock cost history', 'adjusted', sen), 503);
       if (sen == null) return c.json(costRequired(d.bucket), 422);
       costs.set(k, sen);
     }

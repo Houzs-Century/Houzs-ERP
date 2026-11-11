@@ -671,10 +671,10 @@ export const ProductModelDetail = ({
                 fontFamily: 'var(--font-mono)',
                 fontSize: 'var(--fs-14)',
                 padding: 'var(--space-2) var(--space-3)',
-                border: '1px solid #d6d9d2',
+                border: '1px solid var(--hz-c-border)',
                 borderRadius: 'var(--radius-sm)',
-                background: '#fff',
-                color: '#11140f',
+                background: 'var(--hz-c-surface)',
+                color: 'var(--hz-c-ink)',
                 width: '160px',
               }}
             />
@@ -776,7 +776,7 @@ export const ProductModelDetail = ({
                   <button
                     type="button"
                     className={`${styles.statusPill} ${sku.status === 'ACTIVE' ? styles.active : styles.inactive}`}
-                    style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
+                    style={{ cursor: 'pointer', border: '1px solid var(--hz-c-border)' }}
                     disabled={statusMut.isPending}
                     onClick={() => statusMut.mutate({ id: sku.id, status: sku.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' })}
                     title={sku.status === 'ACTIVE'
@@ -797,7 +797,7 @@ export const ProductModelDetail = ({
                     <button
                       type="button"
                       className={`${styles.statusPill} ${styles.inactive}`}
-                      style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
+                      style={{ cursor: 'pointer', border: '1px solid var(--hz-c-border)' }}
                       disabled={activateOneShotMut.isPending}
                       onClick={() => activateOneShotMut.mutate({ id: sku.id })}
                       title="Activate this one-shot SKU in POS"

@@ -491,7 +491,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">
+      <div className="flex min-h-screen items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         Loading schedule…
       </div>
     );
@@ -500,8 +500,8 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     return (
       <div className="flex min-h-screen items-center justify-center px-6">
         <div className="max-w-sm text-center">
-          <div className="text-lg font-semibold text-gray-800">Houzs Event Schedule</div>
-          <p className="mt-2 text-sm text-gray-500">{error}</p>
+          <div className="text-lg font-semibold text-gray-800 dark:text-gray-200">Houzs Event Schedule</div>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{error}</p>
         </div>
       </div>
     );
@@ -509,19 +509,19 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
 
   const party = data ? (data.contractor ?? data.brand ?? "") : "";
   const eventCount = data ? data.events.length : 0;
-  const navBtn = "h-9 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-[#0F766E]";
+  const navBtn = "h-9 rounded-md border border-gray-200 dark:border-white/10 bg-surface text-gray-600 dark:text-gray-400 hover:border-[#0F766E]";
   // Owner 2026-09-09: "export button color change to white" — same family as
   // the navigation buttons, not the teal of the event bars.
-  const exportBtn = "h-9 rounded-md border border-gray-300 bg-white px-3 text-[12px] font-semibold text-gray-800 hover:border-[#0F766E] disabled:opacity-60";
-  const menuItem = "block w-full px-3 py-2 text-[12px] hover:bg-gray-50";
+  const exportBtn = "h-9 rounded-md border border-gray-300 dark:border-white/10 bg-surface px-3 text-[12px] font-semibold text-gray-800 dark:text-gray-200 hover:border-[#0F766E] disabled:opacity-60";
+  const menuItem = "block w-full px-3 py-2 text-[12px] hover:bg-gray-50 dark:hover:bg-white/5";
 
   return (
-    <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
+    <div className="min-h-screen bg-[#0F766E]/5 text-gray-900 dark:text-gray-200">
       <div className="mx-auto max-w-5xl px-3 py-4 sm:px-5 sm:py-6">
         <div className="mb-4 min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-[#0F766E]">Houzs Event Schedule</div>
-          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">{party}</h1>
-          <p className="mt-0.5 text-[12px] text-gray-500">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-200 sm:text-2xl">{party}</h1>
+          <p className="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
             {mode === "brand" ? "Confirmed events for your brand" : "Confirmed events you are in charge of"} · {eventCount} total · view-only
           </p>
         </div>
@@ -532,7 +532,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
           <button type="button" onClick={prev} className={`${navBtn} w-9`} aria-label="Previous month">‹</button>
           <button type="button" onClick={next} className={`${navBtn} w-9`} aria-label="Next month">›</button>
           <button type="button" onClick={goToday} className={`${navBtn} px-3 text-[12px] font-semibold`}>Today</button>
-          <div className="ml-1 text-[15px] font-bold text-gray-900">{monthLabel}</div>
+          <div className="ml-1 text-[15px] font-bold text-gray-900 dark:text-gray-200">{monthLabel}</div>
           <div className="ml-auto text-right">
             {mode === "brand" ? (
               // Owner 2026-09-09: brand links choose the FILE — Event List is
@@ -548,19 +548,19 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
                   className={`${exportBtn} inline-flex items-center gap-1.5`}
                 >
                   {exporting ? "Preparing…" : "Export"}
-                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" className="text-gray-500">
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" className="text-gray-500 dark:text-gray-400">
                     <path d="M1 3l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
                 {menuOpen ? (
-                  <div role="menu" className="absolute right-0 z-10 mt-1 w-60 overflow-hidden rounded-md border border-gray-200 bg-white text-left shadow-lg">
+                  <div role="menu" className="absolute right-0 z-10 mt-1 w-60 overflow-hidden rounded-md border border-gray-200 dark:border-white/10 bg-surface text-left shadow-lg">
                     <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void exportExcel(); }} className={menuItem}>
-                      <span className="block font-semibold text-gray-900">Event List</span>
-                      <span className="block text-[11px] text-gray-500">Excel (.xlsx)</span>
+                      <span className="block font-semibold text-gray-900 dark:text-gray-200">Event List</span>
+                      <span className="block text-[11px] text-gray-500 dark:text-gray-400">Excel (.xlsx)</span>
                     </button>
-                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void exportFloorplanPdf(); }} className={`${menuItem} border-t border-gray-100`}>
-                      <span className="block font-semibold text-gray-900">Display Floorplan</span>
-                      <span className="block text-[11px] text-gray-500">PDF, one page per floorplan</span>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void exportFloorplanPdf(); }} className={`${menuItem} border-t border-gray-100 dark:border-white/10`}>
+                      <span className="block font-semibold text-gray-900 dark:text-gray-200">Display Floorplan</span>
+                      <span className="block text-[11px] text-gray-500 dark:text-gray-400">PDF, one page per floorplan</span>
                     </button>
                   </div>
                 ) : null}
@@ -570,11 +570,11 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
                 {exporting ? "Preparing…" : "Export to Excel"}
               </button>
             )}
-            {exportError ? <p className="mt-1 text-[12px] text-red-700">{exportError}</p> : null}
+            {exportError ? <p className="mt-1 text-[12px] text-red-700 dark:text-red-300">{exportError}</p> : null}
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-md ring-1 ring-slate-900/5">
+        <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-surface shadow-md ring-1 ring-slate-900/5">
           <div className="grid grid-cols-7 border-b-2 border-slate-600 bg-slate-800">
             {weekdayNames.map((w) => (
               <div key={w} className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -592,8 +592,8 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
                     const inMonth = cell.getMonth() === cursor.m;
                     const isToday = dayNum(cell) === todayKey;
                     return (
-                      <div key={ci} className={`border-b border-r border-slate-200 p-1 ${inMonth ? "bg-white" : "bg-slate-50"}`}>
-                        <div className={`text-right text-[11px] ${isToday ? "font-bold text-[#0F766E]" : inMonth ? "text-gray-500" : "text-gray-300"}`}>
+                      <div key={ci} className={`border-b border-r border-slate-200 dark:border-white/10 p-1 ${inMonth ? "bg-surface" : "bg-slate-50 dark:bg-white/5"}`}>
+                        <div className={`text-right text-[11px] ${isToday ? "font-bold text-[#0F766E]" : inMonth ? "text-gray-500 dark:text-gray-400" : "text-gray-300 dark:text-gray-500"}`}>
                           {cell.getDate()}
                         </div>
                       </div>
@@ -627,7 +627,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
           </div>
         </div>
 
-        <p className="mt-3 text-center text-[11px] text-gray-400">
+        <p className="mt-3 text-center text-[11px] text-gray-400 dark:text-gray-500">
           Live schedule from Houzs · updates automatically · tap an event for details · this link is private to you
         </p>
       </div>
@@ -673,52 +673,52 @@ function EventPanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby="share-event-title"
-        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:rounded-2xl"
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-surface shadow-xl sm:rounded-2xl"
         onClick={(ev) => ev.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 dark:border-white/10 px-4 py-3">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-accent">{PLAN_LABEL[mode]}</div>
-            <h2 id="share-event-title" className="truncate text-[15px] font-bold text-gray-900">
+            <h2 id="share-event-title" className="truncate text-[15px] font-bold text-gray-900 dark:text-gray-200">
               {event.brand ? `[${event.brand}] ` : ""}
               {event.venue ?? event.name ?? "Event"}
             </h2>
-            <div className="mt-0.5 text-[12px] text-gray-500">
+            <div className="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
               {booth ? `Booth ${booth} · ` : ""}
               {fmtSpan(event.startDate, event.endDate)}
               {event.organizer ? ` · ${event.organizer}` : ""}
             </div>
           </div>
-          <button type="button" onClick={onClose} className="h-8 w-8 shrink-0 rounded-md border border-gray-200 text-gray-600 hover:border-accent" aria-label="Close">×</button>
+          <button type="button" onClick={onClose} className="h-8 w-8 shrink-0 rounded-md border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400 hover:border-accent" aria-label="Close">×</button>
         </div>
 
         {/* Size and Booth for both parties (owner 2026-09-09: "size, booth
             number and floorplan"); money for the brand only, and the
             contractor's route never sends it. */}
-        <dl className="flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-200 px-4 py-3 text-[13px]">
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-200 dark:border-white/10 px-4 py-3 text-[13px]">
           <div>
-            <dt className="text-[11px] uppercase tracking-wide text-gray-500">Size</dt>
-            <dd className="font-semibold text-gray-900">{figures?.sizeSqm != null ? `${figures.sizeSqm} sqm` : "—"}</dd>
+            <dt className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Size</dt>
+            <dd className="font-semibold text-gray-900 dark:text-gray-200">{figures?.sizeSqm != null ? `${figures.sizeSqm} sqm` : "—"}</dd>
           </div>
           <div>
-            <dt className="text-[11px] uppercase tracking-wide text-gray-500">Booth</dt>
-            <dd className="font-semibold text-gray-900">{booth || "—"}</dd>
+            <dt className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Booth</dt>
+            <dd className="font-semibold text-gray-900 dark:text-gray-200">{booth || "—"}</dd>
           </div>
           {mode === "brand" ? (
             <div>
-              <dt className="text-[11px] uppercase tracking-wide text-gray-500">Total sales</dt>
-              <dd className="font-semibold text-gray-900">{figures?.totalSales != null ? formatCurrency(figures.totalSales) : "—"}</dd>
+              <dt className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total sales</dt>
+              <dd className="font-semibold text-gray-900 dark:text-gray-200">{figures?.totalSales != null ? formatCurrency(figures.totalSales) : "—"}</dd>
             </div>
           ) : null}
         </dl>
 
         <div className="px-4 py-3">
           {error ? (
-            <p className="text-[13px] text-red-700">{error}</p>
+            <p className="text-[13px] text-red-700 dark:text-red-300">{error}</p>
           ) : files === null ? (
-            <p className="text-[13px] text-gray-500">Loading floorplan…</p>
+            <p className="text-[13px] text-gray-500 dark:text-gray-400">Loading floorplan…</p>
           ) : files.length === 0 ? (
-            <p className="text-[13px] text-gray-500">
+            <p className="text-[13px] text-gray-500 dark:text-gray-400">
               No {PLAN_LABEL[mode].toLowerCase()} has been uploaded for this event yet. Please check back later or ask Houzs.
             </p>
           ) : (
@@ -727,21 +727,21 @@ function EventPanel({
                 const url = fileUrl(f);
                 const kind = fileKind(f);
                 return (
-                  <li key={f.fileId} className="rounded-lg border border-slate-200 p-3">
+                  <li key={f.fileId} className="rounded-lg border border-slate-200 dark:border-white/10 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-[13px] font-semibold text-gray-900" title={f.fileName}>{f.fileName}</div>
-                        <div className="text-[11px] text-gray-500">{fmtSize(f.sizeBytes)}</div>
+                        <div className="truncate text-[13px] font-semibold text-gray-900 dark:text-gray-200" title={f.fileName}>{f.fileName}</div>
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400">{fmtSize(f.sizeBytes)}</div>
                       </div>
                       <div className="flex gap-2">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-700 hover:border-accent">View</a>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="rounded-md border border-gray-200 dark:border-white/10 bg-surface px-3 py-1.5 text-[12px] font-semibold text-gray-700 dark:text-gray-200 hover:border-accent">View</a>
                         <a href={`${url}?download=1`} className="rounded-md bg-[#0F766E] px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[#0c5f59]">Download</a>
                       </div>
                     </div>
                     {kind === "image" ? (
                       <img src={url} alt={f.fileName} className="mt-3 max-h-[60vh] w-full rounded-md object-contain" />
                     ) : kind === "pdf" ? (
-                      <iframe src={url} title={f.fileName} className="mt-3 h-[60vh] w-full rounded-md border border-slate-200" />
+                      <iframe src={url} title={f.fileName} className="mt-3 h-[60vh] w-full rounded-md border border-slate-200 dark:border-white/10" />
                     ) : null}
                   </li>
                 );

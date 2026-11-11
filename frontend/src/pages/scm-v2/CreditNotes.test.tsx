@@ -238,6 +238,8 @@ describe('the Credit & Debit Notes page', () => {
       lines: [{ description: 'Goodwill', accountCode: null, amountSen: 15000 }],
       /* A customer's credit note always says its ticks too (2026-11-03) — none ticked is a plan. */
       allocations: [],
+      /* One key per opened form: a second press answers the first note (fix/failed-save-looks-ok). */
+      idempotencyKey: expect.any(String),
     });
   });
 
@@ -443,6 +445,7 @@ describe("an other debtor's credit note", () => {
       kind: 'OCN', noteDate: expect.any(String), reason: null, sourceDocNo: 'CN-2609-025', debtorId: 'deb-e',
       allocations: [{ kind: 'ODB', id: 'odb-5', amountSen: 200_000 }],
       lines: [{ description: 'Discount for exhibition rental', accountCode: '520-0000', amountSen: 200_000 }],
+      idempotencyKey: expect.any(String),
     });
   });
 

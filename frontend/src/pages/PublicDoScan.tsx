@@ -323,7 +323,7 @@ export function PublicDoScan() {
       )}
 
       {error && (
-        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-900 dark:text-red-300">
           {error}
         </div>
       )}
@@ -375,7 +375,7 @@ function RunList({
           <span className="mt-0.5 shrink-0 font-mono text-xs text-ink-secondary">#{r.stopNo}</span>
           <div className="min-w-0">
             <div className="font-mono font-semibold">{r.doNumber ?? "Not on this run's account"}</div>
-            <div className={r.tone === "ok" ? "text-ink-secondary" : "text-amber-800"}>{r.text}</div>
+            <div className={r.tone === "ok" ? "text-ink-secondary" : "text-amber-800 dark:text-amber-300"}>{r.text}</div>
           </div>
         </li>
       ))}
@@ -411,8 +411,8 @@ function Notice({
     <div
       className={`flex items-start gap-3 rounded-md border px-4 py-4 text-sm ${
         tone === "ok"
-          ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-          : "border-amber-300 bg-amber-50 text-amber-900"
+          ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300"
+          : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300"
       }`}
     >
       {tone === "ok" ? (

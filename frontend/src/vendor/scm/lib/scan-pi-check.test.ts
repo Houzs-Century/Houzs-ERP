@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lineTierNote, piAmounts, piAmountsDiffer, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
+import { isFreeRow, lineTierNote, poRefs, piAmounts, piAmountsDiffer, piQtyTotals, type BillLine, type PiReview, type PiReviewLine } from './scan-pi-check';
 
 const bill = (grnItemId: string, unitPriceSen: number): BillLine => ({ supplierSku: null, grnItemId, grnNumber: 'GRN-1', supplierId: 's', poNumber: 'PO-1', itemCode: 'X', description: null, remaining: 9, unitPriceSen });
 const row = (key: string, grnItemId: string | null, qty: number, read: PiReviewLine['read']): PiReviewLine => ({ key, grnItemId, grnNumber: null, qty, suggested: false, read });
@@ -61,5 +61,34 @@ describe('lineTierNote', () => {
   it('says nothing when the invoice printed no PO, or the copy predates the tier', () => {
     expect(lineTierNote({ lineTier: null, poNo: null })).toBeNull();
     expect(lineTierNote({ poNo: 'HC-PO-1' })).toBeNull();
+  });
+  it('HOOKKA INV-2610-097: names the orders an EX- (exchange) PO replaces, and says what the mark means', () => {
+    const note = lineTierNote({ lineTier: 'whole_receipt', poNo: 'EX-PO-009744, EX-HC-PO-2609-151, EX-HC-PO-2609-226' });
+    expect(note).toMatch(/^No line of PO-009744, HC-PO-2609-151, HC-PO-2609-226 printed on the invoice matched/);
+    expect(note).toMatch(/The invoice marks PO-009744, HC-PO-2609-151, HC-PO-2609-226 as exchange \(EX\): replacement goods for those orders\.$/);
+    expect(poRefs('EX HC-PO-1; EXCH-HC-PO-2; HC-PO-3')).toEqual({ refs: ['HC-PO-1', 'HC-PO-2', 'HC-PO-3'], exchange: ['HC-PO-1', 'HC-PO-2'] });
+  });
+});
+
+describe('a row printed at RM 0 (HOOKKA INV-2610-097)', () => {
+  const free = (key: string, grnItemId: string | null) => row(key, grnItemId, 1, read(0, 0));
+  const inv = new Map([['jager', bill('jager', 440_00)], ['sofa', bill('sofa', 550_00)]]);
+  it('counts on neither side: PO Amount is the sofa row only, and nothing shows red', () => {
+    const r = review([free('1', null), free('2', null), free('3', null), row('4', 'sofa', 1, read(550, 550))]);
+    const a = piAmounts(r, inv);
+    expect(a).toEqual({ invoiceSen: 550_00, oursSen: 550_00, matchedInvoiceSen: 550_00, unmatched: 0 });
+    expect(piAmountsDiffer(a)).toBe(false);
+  });
+  it('a free row a person tied to a priced line still does not count', () => {
+    const a = piAmounts(review([free('1', 'jager'), row('4', 'sofa', 1, read(550, 550))]), inv);
+    expect(a.oursSen).toBe(550_00);
+    expect(piAmountsDiffer(a)).toBe(false);
+  });
+  it('is free at a printed 0, not when no price was read', () => {
+    expect(isFreeRow(read(0, 0))).toBe(true);
+    expect(isFreeRow(read(null, 0))).toBe(true);
+    expect(isFreeRow(read(null, null))).toBe(false);
+    expect(isFreeRow(read(550, 550))).toBe(false);
+    expect(isFreeRow(null)).toBe(false);
   });
 });

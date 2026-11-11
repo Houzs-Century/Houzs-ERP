@@ -274,7 +274,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
                     <span style={{ display: 'block', fontWeight: 600 }}>{supplierId ? 'Our code ' : ''}{entry.name && entry.name !== m ? `${m} · ${entry.name}` : m}</span>
                     <span style={soft}>{supplierId ? `${entry.supplierCode ? `Supplier code ${entry.supplierCode}` : 'No supplier code'} · ${count}` : count}</span>
                   </span>
-                  {empty > 0 && <span title={`${empty} with no price`} style={{ minWidth: 22, padding: '2px 6px', borderRadius: 999, textAlign: 'center', fontSize: 'var(--fs-11)', fontWeight: 600, background: 'var(--c-festive-b-bg, #f7e9e9)', color: 'var(--c-festive-b, #8f2c1a)' }}>{empty}</span>}
+                  {empty > 0 && <span title={`${empty} with no price`} style={{ minWidth: 22, padding: '2px 6px', borderRadius: 999, textAlign: 'center', fontSize: 'var(--fs-11)', fontWeight: 600, background: 'var(--c-festive-b-bg, var(--hz-dk-err-bg, #f7e9e9))', color: 'var(--c-festive-b, #8f2c1a)' }}>{empty}</span>}
                 </button>
               );
             })}
@@ -373,7 +373,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
                               placeholder={sen === null && old != null ? plain(old) : 'Add'}
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) => setEdits({ ...edits, [key]: e.target.value })}
-                              style={{ ...fieldStyle, minHeight: 38, textAlign: 'right', background: edits[key] === undefined ? 'var(--c-cream)' : 'var(--c-warning-bg, #f6efd9)' }}
+                              style={{ ...fieldStyle, minHeight: 38, textAlign: 'right', background: edits[key] === undefined ? 'var(--c-cream)' : 'var(--c-warning-bg, var(--hz-c-warning-bg))' }}
                             />
                           </td>
                         );
@@ -392,7 +392,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
           </div>
 
           {editCount > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'var(--c-warning-bg, #f6efd9)', color: 'var(--c-warning, #6e4d12)' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'var(--c-warning-bg, var(--hz-c-warning-bg))', color: 'var(--c-warning, var(--hz-c-warning-text))' }}>
               <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{editCount} {editCount === 1 ? 'price' : 'prices'} changed</strong>
               {emptying && <span style={{ fontSize: 'var(--fs-12)' }}>An emptied cell loses its price today, whatever the date.</span>}
               {editingAuto && <span style={{ fontSize: 'var(--fs-12)' }}>Auto cost: the next supplier price save replaces this.</span>}

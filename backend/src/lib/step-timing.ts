@@ -84,7 +84,25 @@ export function loggedStepClock(tag: string, dbStep: string): (name: string) => 
   };
 }
 
-export const STEP_LIMIT = 12;
+export const STEP_LIMIT = 16;
+
+/** The steps that are one database round trip each (supabase.ts, d1-compat.ts,
+ *  pg-supabase-transaction.ts). Markers such as db-agg-skip are not round trips. */
+export const DB_ROUND_TRIP_STEPS: ReadonlySet<string> = new Set(["db-rest", "db-sql", "db-pg"]);
+
+/**
+ * The request's database round trips: how many, and their summed time. The sum
+ * can exceed the request's wall time when reads run in parallel; read it as
+ * "how much database work", not "how long the user waited on the database".
+ */
+export function dbTotals(marks: readonly StepMark[]): { ms: number; n: number } {
+  let ms = 0;
+  let n = 0;
+  for (const m of marks) {
+    if (DB_ROUND_TRIP_STEPS.has(m.name)) { ms += m.ms; n += 1; }
+  }
+  return { ms, n };
+}
 
 /**
  * The request's steps as Server-Timing entries: one per step name (its time

@@ -31,6 +31,7 @@ import {
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { isGrnLineOverInvoiced, piGrnSourceRefusal } from '../lib/pi-grn-source-guard';
 import { readStatusCounts } from '../lib/status-counts';
+import { listStatusCountsSql } from '../lib/list-status-counts-sql';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -362,7 +363,7 @@ purchaseInvoices.get('/', async (c) => {
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+    const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>, null);
     return c.json({ purchaseInvoices });
   }
 
@@ -377,25 +378,32 @@ purchaseInvoices.get('/', async (c) => {
   const filters = readPiListFilters((k) => c.req.query(k));
   let q = orderPiList(filterPiList(sb.from('purchase_invoices').select(piListSelect(filters), { count: 'exact' }), filters, c), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-  const { data, error, count } = await q;
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const total = count ?? (data?.length ?? 0);
 
   /* Status counts mirror the FE filter-pill buckets (draft / posted / partial /
      paid / cancelled) over the SAME company filter but WITHOUT status / search /
-     pagination. */
+     pagination. One grouped SQL statement (lib/list-status-counts-sql.ts); null
+     = the seven head counts. Run BESIDE the page read, not after it. */
   const countBase = () => scopeToCompany(sb.from('purchase_invoices').select('*', { count: 'exact', head: true }), c);
-  const [allC, draftC, postedC, partialC, paidC, cancelledC, onHoldC] = await Promise.all([
-    countBase(),
-    countBase().in('status', PI_STATUS_BUCKETS.draft),
-    countBase().in('status', PI_STATUS_BUCKETS.posted),
-    countBase().in('status', PI_STATUS_BUCKETS.partial),
-    countBase().in('status', PI_STATUS_BUCKETS.paid),
-    countBase().in('status', PI_STATUS_BUCKETS.cancelled),
-    countBase().or(HELD_OR_TERM),
-  ]);
-  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
+  const countsProm = listStatusCountsSql(c.env, 'pi-counts', 'purchase_invoices', (cq) => scopeToCompany(cq, c), [
+    ['all', 'all'], ['draft', PI_STATUS_BUCKETS.draft], ['posted', PI_STATUS_BUCKETS.posted], ['partial', PI_STATUS_BUCKETS.partial],
+    ['paid', PI_STATUS_BUCKETS.paid], ['cancelled', PI_STATUS_BUCKETS.cancelled], ['on_hold', 'held'],
+  ] as const).then(async (viaSql) => {
+    if (viaSql) return viaSql;
+    const [allC, draftC, postedC, partialC, paidC, cancelledC, onHoldC] = await Promise.all([
+      countBase(),
+      countBase().in('status', PI_STATUS_BUCKETS.draft),
+      countBase().in('status', PI_STATUS_BUCKETS.posted),
+      countBase().in('status', PI_STATUS_BUCKETS.partial),
+      countBase().in('status', PI_STATUS_BUCKETS.paid),
+      countBase().in('status', PI_STATUS_BUCKETS.cancelled),
+      countBase().or(HELD_OR_TERM),
+    ]);
+    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+    return readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
+  });
+  const [{ data, error, count }, counted] = await Promise.all([q, countsProm]);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const total = count ?? (data?.length ?? 0);
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 

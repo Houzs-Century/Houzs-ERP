@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 
@@ -134,8 +135,11 @@ export const useCreateApInvoice = () => {
   return useMutation({
     /* paymentRequestId: the 申请付款 this bill answers (owner 2026-09-30, 6.1) —
        the server claims it and copies its files on (requestFilesCopied). */
-    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string; docKind?: ApDocKind }) =>
-      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
+    /* `idempotencyKey`: one per opened form, so a double press (or a retry after
+       the upload or post half failed) answers the SAME bill instead of a second
+       one. The route releases the key on every refusal (noWriteUntilMarked). */
+    mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey: string | null; supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string; docKind?: ApDocKind }) =>
+      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => invalidate(qc),
   });
 };

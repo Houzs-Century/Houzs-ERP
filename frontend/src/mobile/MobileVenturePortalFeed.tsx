@@ -78,7 +78,7 @@ function Note({ tone, text }: { tone: VpTone; text: string }) {
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="ey" style={{ color: "#767b6e", marginBottom: 4 }}>
+    <div className="ey" style={{ color: "var(--hz-c-ink-muted)", marginBottom: 4 }}>
       {children}
     </div>
   );
@@ -86,7 +86,7 @@ function Label({ children }: { children: React.ReactNode }) {
 
 function Hint({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 11, lineHeight: 1.45, color: "#767b6e", marginTop: 4 }}>{children}</div>
+    <div style={{ fontSize: 11, lineHeight: 1.45, color: "var(--hz-c-ink-muted)", marginTop: 4 }}>{children}</div>
   );
 }
 
@@ -109,21 +109,21 @@ function QueueCard({
     <div className="card" style={{ padding: 12, marginBottom: 9 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12.5, fontWeight: 700 }}>{row.doc_no}</span>
-        <span style={{ fontSize: 11, color: "#767b6e" }}>{VP_ROW_STATUS_LABEL[row.status]}</span>
+        <span style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>{VP_ROW_STATUS_LABEL[row.status]}</span>
         {row.attempts > 1 ? (
-          <span className="tnum" style={{ fontSize: 11, color: "#9aa093" }}>
+          <span className="tnum" style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>
             tried {row.attempts}x
           </span>
         ) : null}
       </div>
-      {outcome ? <div style={{ fontSize: 11.5, color: "#767b6e", marginTop: 3 }}>{outcome}</div> : null}
+      {outcome ? <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 3 }}>{outcome}</div> : null}
       {todo ? <div style={{ fontSize: 12, marginTop: 7, lineHeight: 1.45 }}>{todo}</div> : null}
       {row.last_error ? (
         <div
           style={{
             fontFamily: "ui-monospace, monospace",
             fontSize: 11,
-            color: "#767b6e",
+            color: "var(--hz-c-ink-muted)",
             marginTop: 6,
             wordBreak: "break-word",
           }}
@@ -228,7 +228,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
         <div style={{ marginBottom: 12 }}>
           <Note tone={verdict.tone} text={verdict.headline} />
           {verdict.detail ? (
-            <div style={{ fontSize: 11.5, color: "#767b6e", marginTop: 6, lineHeight: 1.45 }}>{verdict.detail}</div>
+            <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 6, lineHeight: 1.45 }}>{verdict.detail}</div>
           ) : null}
         </div>
 
@@ -246,7 +246,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 Off means no sales order leaves this system. Nothing piles up waiting while it is off.
               </Hint>
 
-              <div style={{ fontSize: 12.5, marginTop: 9, color: "#11140f" }}>
+              <div style={{ fontSize: 12.5, marginTop: 9, color: "var(--hz-c-ink)" }}>
                 Now: <strong>{s.feed.enabled ? "On" : "Off"}</strong> &middot; {vpScopeLabel(s)}
               </div>
 
@@ -287,7 +287,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                   {s.feed.enabled ? (
                     <button
                       className="btn"
-                      style={{ marginTop: 8, background: "#fff", color: "#8f2222", border: "1px solid rgba(176,42,42,.35)" }}
+                      style={{ marginTop: 8, background: "var(--hz-c-surface)", color: "#8f2222", border: "1px solid rgba(176,42,42,.35)" }}
                       disabled={actions.busy === "scope"}
                       onClick={() => void actions.saveScope(false, [])}
                     >
@@ -331,7 +331,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
               {canManage ? (
                 <button
                   className="btn"
-                  style={{ marginTop: 12, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                  style={{ marginTop: 12, background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1px solid var(--hz-c-border)" }}
                   disabled={actions.busy === "connection" || !url}
                   onClick={() => void actions.saveConnection(url, since)}
                 >
@@ -347,8 +347,8 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                   style={{
                     fontFamily: "ui-monospace, monospace",
                     fontSize: 13,
-                    color: "#767b6e",
-                    border: "1px solid #d6d9d2",
+                    color: "var(--hz-c-ink-muted)",
+                    border: "1px solid var(--hz-c-border)",
                     borderRadius: 9,
                     padding: "9px 11px",
                   }}
@@ -374,8 +374,8 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                   <div
                     style={{
                       marginTop: 8,
-                      background: "#fff",
-                      border: "1px solid #d6d9d2",
+                      background: "var(--hz-c-surface)",
+                      border: "1px solid var(--hz-c-border)",
                       borderRadius: 9,
                       padding: "9px 10px",
                       fontFamily: "ui-monospace, monospace",
@@ -391,12 +391,12 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                   </button>
                   <button
                     className="btn"
-                    style={{ marginTop: 8, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                    style={{ marginTop: 8, background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1px solid var(--hz-c-border)" }}
                     onClick={actions.dismissKey}
                   >
                     Done
                   </button>
-                  <div style={{ fontSize: 11.5, marginTop: 9, lineHeight: 1.45, color: "#11140f" }}>
+                  <div style={{ fontSize: 11.5, marginTop: 9, lineHeight: 1.45, color: "var(--hz-c-ink)" }}>
                     {VP_KEY_PASTE_LINE}
                   </div>
                 </div>
@@ -418,7 +418,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                   </button>
                   <button
                     className="btn"
-                    style={{ marginTop: 8, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                    style={{ marginTop: 8, background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1px solid var(--hz-c-border)" }}
                     disabled={actions.busy === "probe"}
                     onClick={() => void actions.probe()}
                   >
@@ -437,7 +437,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 </Hint>
                 <button
                   className="btn"
-                  style={{ marginTop: 11, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                  style={{ marginTop: 11, background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1px solid var(--hz-c-border)" }}
                   disabled={actions.busy === "queue"}
                   onClick={() => void actions.queueUndelivered(false)}
                 >
@@ -445,7 +445,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 </button>
                 <button
                   className="btn"
-                  style={{ marginTop: 8, background: "#fff", color: "#16695f", border: "1px solid #d6d9d2" }}
+                  style={{ marginTop: 8, background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1px solid var(--hz-c-border)" }}
                   disabled={actions.busy === "drain"}
                   onClick={() => void actions.sendNow(s.queue.batch)}
                 >
@@ -455,7 +455,7 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
             ) : null}
 
             {(rows.data?.rows.length ?? 0) === 0 ? (
-              <div style={{ textAlign: "center", padding: "28px 0", fontSize: 12.5, color: "#767b6e" }}>
+              <div style={{ textAlign: "center", padding: "28px 0", fontSize: 12.5, color: "var(--hz-c-ink-muted)" }}>
                 {tab === "failed"
                   ? "Nothing has failed to deliver."
                   : tab === "pending"

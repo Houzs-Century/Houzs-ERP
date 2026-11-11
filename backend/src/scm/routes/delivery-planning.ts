@@ -29,10 +29,10 @@
 //   - PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady — every
 //                        MAIN line READY, and the SO actually HAS lines) but not
 //                        yet fully delivered.
-//   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days
-//                        (owner rule: "3 days before delivery and goods still
-//                        not ready").
-//   - PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
+//   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date (owner
+//                        rule 2026-11-10: the delivery day has arrived or passed
+//                        and the goods are still not ready).
+//   - PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
 // A manual override stored on the SO header (delivery_state) wins when present.
 //
 // DELIVERY-DATE INTEGRITY (owner rule): the customer's ORIGINAL
@@ -67,26 +67,24 @@ import { yymmFor } from '../../services/documentRefs';
 import { dpBoardState } from '../lib/dp-board-state';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
-import { attachLineCategories } from '../lib/so-readiness-category';
-import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
-import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
-import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { docsEnteringPendingSchedule, stampPendingScheduleAfterResponse } from '../lib/pending-schedule-stays';
+import { boardSlice, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { parseBand, planBoardSoRows, bandFilter, bandRows, countsByRegion } from '../lib/delivery-board-window';
 import { boardChangesHandler } from './delivery-planning-changes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
-import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { summariseReadiness, normCategory } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
-import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_SKIPPED } from '../lib/delivery-planning-board-reads';
+import { NO_STOCK_ROW } from '../lib/so-readiness-row';
+import { kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_SKIPPED } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
-import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
+import { soPoLocked } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap, allowedCompanyIds } from '../lib/companyScope';
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
@@ -112,147 +110,18 @@ import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/g
 import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
-import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
+import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch, soCompanyWithinGrants } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
-import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock } from '../../lib/step-timing';
+import { stepClock } from '../../lib/step-timing';
+import { loadRegionConfig, stateToRegionsFromConfig, FALLBACK_DEFAULT_REGION, type Region, type RegionConfig } from '../lib/delivery-board-regions';
+import { assembleSoOrders } from '../lib/delivery-board-so-rows';
+import { boardSourceOf, loadBoardHead, kickOffRestBoardReads, loadBoardMaps, scheduleBoardShadow } from '../lib/delivery-board-source';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
 
-/* ── Region model ─────────────────────────────────────────────────────────
-   CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
-   master (delivery_planning_regions) and the per-state → region(s) classification
-   is an owner-maintained MULTI mapping (state_delivery_regions) — a state can map
-   to SEVERAL regions. Both are loaded once per request (loadRegionConfig). A
-   Region is therefore an open string code (any code the owner adds), NOT a fixed
-   union.
-
-   stateToRegionsFromConfig() classifies an order's customer_state via the loaded
-   mapping (default fallback KL when unmapped). */
-export type Region = string;
-
-/* The codes the fallback reproduces — used ONLY when the config tables are
-   empty/unapplied so behaviour never regresses below today. Kept in sync with the
-   live Delivery Regions buckets (KL/SEL / Northern / Southern / East Coast /
-   East Malaysia; Singapore folds into Southern). NOTE: migration 0053's seed is
-   the older SELANGOR/KL/NORTHERN/SOUTHERN/EAST_COAST/EAST_MY set, so a fresh env
-   seeded from 0053 differs from prod until reconciled. */
-const FALLBACK_DEFAULT_REGION = 'KL';
-const FALLBACK_REGIONS: Array<{ key: Region; label: string }> = [
-  { key: 'KL', label: 'KL/SEL' }, { key: 'NORTHERN', label: 'Northern' },
-  { key: 'SOUTHERN', label: 'Southern' }, { key: 'EAST_COAST', label: 'East Coast' },
-  { key: 'EM', label: 'East Malaysia' },
-];
-
-/* Normalize free-text for tolerant matching: upper, strip punctuation/accents,
-   collapse whitespace. "Pulau  Pinang" / "P.Pinang" / "pulau-pinang" all align. */
-function normState(s: string | null | undefined): string {
-  return (s ?? '')
-    .normalize('NFKD').replace(/[̀-ͯ]/g, '')   // drop accents
-    .toUpperCase()
-    .replace(/[._\-,/]/g, ' ')                            // punctuation → space
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/* The region config loaded once per request from the two 0053 tables. */
-type RegionConfig = {
-  // Ordered, active region masters → the tab row (config-driven regionList()).
-  regions: Array<{ key: Region; label: string }>;
-  // The set of VALID region codes (active) for filtering/membership checks.
-  validCodes: Set<Region>;
-  // Normalised state NAME → region codes[]. Key = normState(state_key).
-  byState: Map<string, Region[]>;
-};
-
-/* Load delivery_planning_regions (active, sorted) + state_delivery_regions into a
-   RegionConfig. Best-effort: on any error / empty config, falls back to the
-   seeded defaults so the board still works. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadRegionConfig(sb: any): Promise<RegionConfig> {
-  // 1. Region master (id → code, ordered active list).
-  const codeById = new Map<string, Region>();
-  let regions: Array<{ key: Region; label: string }> = [];
-  const validCodes = new Set<Region>();
-  try {
-    const { data: regRows } = await paginateAll<{
-      id: string; code: string | null; name: string | null;
-      sort_order?: number | null; sortOrder?: number | null; active?: boolean | null;
-    }>((from, to) =>
-      sb.from('delivery_planning_regions')
-        .select('id, code, name, sort_order, active')
-        .order('sort_order', { ascending: true })
-        .order('code', { ascending: true })
-        .range(from, to),
-    );
-    for (const r of (regRows ?? [])) {
-      const code = (r.code ?? '').toUpperCase();
-      if (!code) continue;
-      codeById.set(r.id, code);
-      if ((r.active ?? true) !== false) {
-        /* DEDUPE by code: the board is a CROSS-COMPANY view, so this read spans
-           both companies' region masters — post-mig-0176 each company carries
-           its own copy of every bucket, so without this each chip rendered
-           TWICE (owner screenshot 2026-07-24). codeById keeps EVERY row (both
-           companies' ids) so state mappings from either company still resolve. */
-        if (!validCodes.has(code)) {
-          regions.push({ key: code, label: r.name ?? code });
-          validCodes.add(code);
-        }
-      }
-    }
-  } catch { /* fall through to fallback below */ }
-
-  // 2. Per-state mapping → normalised state NAME → region codes[].
-  const byState = new Map<string, Region[]>();
-  if (codeById.size > 0) {
-    try {
-      const { data: mapRows } = await paginateAll<{
-        state_key?: string | null; stateKey?: string | null; region_id?: string | null; regionId?: string | null;
-      }>((from, to) =>
-        sb.from('state_delivery_regions').select('state_key, country, region_id').range(from, to),
-      );
-      for (const row of (mapRows ?? [])) {
-        const stateKey = row.stateKey ?? row.state_key ?? '';
-        const code = codeById.get(row.regionId ?? row.region_id ?? '');
-        if (!stateKey || !code) continue;
-        const k = normState(stateKey);
-        const arr = byState.get(k) ?? [];
-        if (!arr.includes(code)) arr.push(code);
-        byState.set(k, arr);
-      }
-    } catch { /* mapping stays empty → fallback default applies per-order */ }
-  }
-
-  // 3. Fallback when the config tables are empty / unapplied — keep today's tabs.
-  if (regions.length === 0) {
-    regions = [...FALLBACK_REGIONS];
-    for (const r of FALLBACK_REGIONS) validCodes.add(r.key);
-  }
-  return { regions, validCodes, byState };
-}
-
-/* customer_state (+ customer_country fallback) → region code(s) via the loaded
-   config. Returns an ARRAY (a state can map to several regions). When the state
-   isn't mapped, falls back to the default bucket (KL) so an unmapped/new state
-   still lands somewhere. */
-function stateToRegionsFromConfig(
-  cfg: RegionConfig,
-  state: string | null | undefined,
-  country?: string | null | undefined,
-): Region[] {
-  // Try the state name first, then the country (covers a blank-state SG order
-  // whose country is 'Singapore').
-  const sKey = normState(state);
-  const cKey = normState(country);
-  const hit = (sKey && cfg.byState.get(sKey)) || (cKey && cfg.byState.get(cKey)) || null;
-  if (hit && hit.length > 0) return hit;
-  // Unmapped → default bucket (prefer a configured KL; else first region).
-  const fallback = cfg.validCodes.has(FALLBACK_DEFAULT_REGION)
-    ? FALLBACK_DEFAULT_REGION
-    : (cfg.regions[0]?.key ?? FALLBACK_DEFAULT_REGION);
-  return [fallback];
-}
+/* Region model (config-driven, migration 0053): lib/delivery-board-regions.ts, shared with the SQL board path. */
+export type { Region } from '../lib/delivery-board-regions';
 
 export type DeliveryState = 'PENDING_DELIVERY' | 'PENDING_SCHEDULE' | 'OVERDUE' | 'DELIVERED';
 const DELIVERY_STATES: DeliveryState[] = ['PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED'];
@@ -277,8 +146,8 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
                           == 0 once any qty has shipped.
      · PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady) but not
                           yet fully delivered.
-     · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days.
-     · PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
+     · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date.
+     · PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
 
    `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
    isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
@@ -304,10 +173,10 @@ export function derivePlanningState(input: {
      parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
-  // NOT ready. OVERDUE once we're within 3 days of (or past) the EFFECTIVE
-  // delivery date (amended ?? original) and the goods still aren't ready.
+  // NOT ready. OVERDUE once the EFFECTIVE delivery date (amended ?? original) is today
+  // or past (owner 2026-11-10). The SQL board path must mirror `daysLeft <= 0`.
   const daysLeft = daysBetween(today, effectiveDD ?? null);
-  return daysLeft != null && daysLeft <= 3 ? 'OVERDUE' : 'PENDING_DELIVERY';
+  return daysLeft != null && daysLeft <= 0 ? 'OVERDUE' : 'PENDING_DELIVERY';
 }
 
 /* Filter assembled board rows down to a self-scoped caller's OWN jobs. A no-op
@@ -388,6 +257,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const today = todayMyt(); const lap = stepClock(); // HC-0002: board time as Server-Timing steps
+  const source = boardSourceOf(c); const t0 = Date.now(); // rest | shadow | sql: lib/delivery-board-source.ts
 
   /* Per-assignee ROW SCOPE (owner rule): a Driver/Helper sees ONLY the jobs
      assigned to their own name; every dispatcher / ops / management caller keeps
@@ -398,647 +268,66 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
-  // ?docs=A,B: rebuild ONLY these SO rows (the board's after-edit row refresh), see lib/delivery-board-slice.ts.
-  const onlyDocs = parseOnlyDocs(c.req.query('docs'));
+  const onlyDocs = parseOnlyDocs(c.req.query('docs')); // ?docs=A,B: rebuild ONLY these SO rows (after-edit row refresh), lib/delivery-board-slice.ts
   if (onlyDocs?.length === 0) return c.json({ orders: [], counts: emptyCounts(), regions: [] });
+  const band = parseBand(c.req.query('band'), c.req.query('page')); // one date band / counts only: lib/delivery-board-window.ts
+  if (band === 'invalid') return c.json({ error: 'bad_request', reason: 'band must be 1-5, with a page number.' }, 400);
+  const countsOnly = c.req.query('counts_only') === '1' && scope.mode === 'all' && !onlyDocs && !band;
 
-  /* 0. CONFIG-DRIVEN region model (migration 0053) — load the owner-maintained
-        region master + per-state MULTI mapping once per request. regionList()
-        (the tabs) + each order's region(s) derive from this. */
-  const regionCfg = await loadRegionConfig(sb); lap('dp-region');
-
-  /* 1. Warehouse master → code + name maps (read-only label lookup for the
-        Warehouse column). */
-  const { data: whRows, error: whErr } = await sb
-    .from('warehouses')
-    .select('id, code, name'); lap('dp-warehouses');
-  if (whErr) return c.json(readFailure('warehouses', whErr), 500);
+  /* 0-2. Region config + warehouses + live SO headers needing delivery (NOT DRAFT /
+        CANCELLED, the caller's granted companies, ?docs / band): one SQL statement on
+        the sql path, else the original reads (lib/delivery-board-source.ts). */
+  const head = await loadBoardHead(c, sb, source, { onlyDocs, band, today, lap });
+  if ('err' in head) return c.json(readFailure(head.stage, head.err), 500);
+  const { regionCfg, whRows, soRowsRaw } = head.ok;
   const whCode = new Map<string, string>();
   const whName = new Map<string, string>();
-  for (const w of (whRows ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
+  for (const w of whRows) {
     const code = (w.code ?? '').trim();
     whCode.set(w.id, code);
     whName.set(w.id, w.name ?? code);
   }
-
-  /* 2. Live SO headers needing delivery — NOT DRAFT / CANCELLED, and carrying a
-        delivery date signal (customer_delivery_date or processing_date).
-        Paginated so the 1000-row PostgREST cap never silently truncates. */
-  type SoHeaderRow = {
-    doc_no: string | null; debtor_code: string | null; debtor_name: string | null;
-    // multi-company: which company this SO belongs to (shared queue tags rows).
-    company_id: number | null;
-    phone: string | null; branding: string | null; status: string | null; delivery_state: string | null;
-    agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
-    customer_state: string | null; customer_country: string | null;
-    customer_delivery_date: string | null; sales_exemption_expiry: string | null; salesExemptionExpiry?: string | null; processing_date: string | null;
-    so_date: string | null; address1: string | null; address2: string | null;
-    postcode: string | null; building_type: string | null;
-    local_total_sen: number | null; balance_sen: number | null;
-    // Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
-    // amended_delivery_date drives the effective countdown. dual-read camelCase.
-    amend_date_from_customer: string | null; amended_delivery_date: string | null;
-    amendDateFromCustomer?: string | null; amendedDeliveryDate?: string | null;
-    // HC "Amend Client Date Reason" — amend_reason is OUR postpone reason (staff
-    // preset); amend_reason_from_customer is the customer's WhatsApp amend tap.
-    amend_reason: string | null; amendReason?: string | null; amend_reason_from_customer: string | null; amendReasonFromCustomer?: string | null;
-    // HC SO-context raw-data fields. dual-read camelCase below.
-    possession_date: string | null; house_type: string | null;
-    replacement_disposal: string | null; referral: string | null; ref: string | null; customer_so_no: string | null;
-    possessionDate?: string | null; houseType?: string | null; replacementDisposal?: string | null;
-    // HC delivery MESSAGE status (the follow-up workflow status, owner 2026-09-22).
-    delivery_message_status: string | null; deliveryMessageStatus?: string | null;
-    // Delivery-planning admin free-text fields (owner 2026-09-22). dual-read.
-    disposal_request: string | null; disposalRequest?: string | null;
-    dp_remark: string | null; dpRemark?: string | null;
-  };
-  /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
-  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => onlyDocsFilter(
-    scopeToAllowedCompanies(
-      sb.from('mfg_sales_orders')
-        /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
-           has no `id` column: selecting it makes PostgREST reject the whole query and
-           the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
-        .neq('status', 'DRAFT')
-        .neq('status', 'CANCELLED')
-        .order('customer_delivery_date', { ascending: true, nullsFirst: false })
-        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
-      c,
-    ).range(from, to), onlyDocs),
-  ); lap('dp-so-headers');
-  if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
-  const datedRows = (soRowsRaw ?? []).filter(
+  const datedRows = soRowsRaw.filter(
     (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
-  // state=OPEN (office view): a status-DELIVERED order is Delivered whatever else
-  // holds, so it is counted here and skips every per-order read (lib/delivery-board-slice.ts).
-  const { kept: soRows, skipped: skippedDelivered } = splitDeliveredForOpen(datedRows, stateParam === 'OPEN' && scope.mode === 'all');
+  // Which orders get the per-order reads: a band's page, OPEN / counts count delivered ones, a driver builds only their own (lib/delivery-board-window.ts).
+  const plan = await planBoardSoRows(sb, c, { rows: datedRows, stateParam, scope, band, countsOnly }); lap('dp-plan');
+  if ('err' in plan) return c.json(readFailure(plan.stage, plan.err), 500);
+  const { kept: soRows, skipped: skippedDelivered } = plan;
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
+  if (docNos.length === 0 && scope.mode === 'all' && skippedDelivered.length === 0 && !band) return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
 
-  if (docNos.length === 0) {
-    return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
-  }
-
-  /* OPEN-TIME (owner 2026-10-20 "开得慢"): kick off the four independent per-SO
-     reads (live balance, line readiness, deliverable sums, DOs) together so they
-     run concurrently instead of serially; each is still awaited and processed at
-     its own site below. Extracted to keep this file from growing (see
-     kickOffBoardReads for the why and the deliverable-wrap detail). */
-  const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos);
-  /* The "PO No." column walks POs per company from soRows. It was the LAST serial
-     read before the response; start it here too so it overlaps every read above
-     (wrapped, since it is awaited far below — a throw must not float unhandled). */
-  const poNosByDocP = planningPoNosByDoc(sb, soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
+  /* OPEN-TIME (owner 2026-10-20 "开得慢"): the per-SO reads (balance, lines, deliverable
+     sums, DOs, PO numbers) start together and overlap the sub-board reads below; on the
+     sql path they are one statement instead (loadBoardMaps). */
+  const restReads = kickOffRestBoardReads(sb, source, docNos, soRows, !countsOnly);
   /* The three non-SO sub-boards (ASSR / DP / project) are independent of the SO
      reads and of each other; start them here too so they overlap everything above
      instead of tailing the whole SO assembly (see kickOffSubBoardReads). */
-  // A CLOSED service case whose leg date is within the last 90 days surfaces on
-  // the Delivered tab; older done work stays off the board (owner 2026-10-21).
-  // today is YYYY-MM-DD, so the cutoff is too.
-  // Done legs stay on the Delivered tab this many days, then drop off; open cases
-  // are never time-bound (owner 2026-11-06: shortened 90 -> 30, old ones cluttered).
+  // A closed service case's done legs stay on the Delivered tab 30 days, then drop off; open
+  // cases are never time-bound (owner 2026-11-06: 90 -> 30). Separate from the SO 90-day rule.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 30 * 86400000).toISOString().slice(0, 10);
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
+  // Sub-board rows ride page 0 of a band only (bandRows), so a later page does not read them.
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null || (band !== null && band.page > 0));
 
-  /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
-        (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
-        Σpayments). Looked up by doc_no; the base-table balance_sen above stays
-        as the fallback when the view row is absent. */
-  /* VIEW-TRAP (see backend/docs/scm-view-trap-coe.md): this select hits the
-     VIEW. STRUCTURALLY SAFE today — only 2 cols, both view-native (doc_no +
-     view-computed balance_sen_live), not a shared HEADER. KEEP IT THIS WAY:
-     do NOT extend this select with base-table cols added after the view was
-     last recreated (delivery_state, possession_date, house_type,
-     replacement_disposal, referral, amend_date_from_customer, amended_
-     delivery_date, amend_reason — all read off the BASE table mfg_sales_orders
-     in the .from('mfg_sales_orders') select 50 lines above, never through the
-     view). Adding any of those here will 500 the Delivery Planning board. */
-  const liveBalanceByDoc = new Map<string, number>();
-  {
-    const { data: balRows, error: balErr } = await liveBalanceReadP; lap('dp-balances');
-    noteDegradedRead('live_balance', balErr);
-    for (const b of (balRows ?? [])) {
-      if (b.doc_no != null && b.balance_sen_live != null) {
-        liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
-      }
-    }
-  }
-
-  /* 3. Per-line readiness + per-line warehouse. One batched, paginated read of
-        the non-cancelled lines for every candidate SO. stock_status drives
-        summariseReadiness (isMainReady = every MAIN line READY); warehouse_id
-        (per SO line) drives the region grouping.
-        Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
-        item fetch so the FIRST line we see per doc_no is its earliest-created
-        one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw, error: itemErr } = await itemRowsReadP; lap('dp-items');
-  noteDegradedRead('so_lines', itemErr);
-  const linesByDoc = new Map<string, ReadinessLine[]>();
-  const warehousesByDoc = new Map<string, Set<string>>();
-  /* Branding auto-derive — REPLICATES the SO list grid exactly. The Branding
-     column follows the SO's FIRST line item, catalog-resolved + mains-first. */
-  const firstCat = new Map<string, string>();
-  const firstBranding = new Map<string, string | null>();
-  const firstItemCode = new Map<string, string | null>();
-  const allCodes = new Set<string>();
-  for (const it of itemRowsRaw) {
-    const dn = it.doc_no;
-    if (!dn) continue;
-    const arr = linesByDoc.get(dn) ?? [];
-    arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: (it.stock_status ?? 'PENDING') as ReadinessLine['stock_status'], cancelled: it.cancelled });
-    linesByDoc.set(dn, arr);
-    if (it.warehouse_id) {
-      const ws = warehousesByDoc.get(dn) ?? new Set<string>();
-      ws.add(it.warehouse_id);
-      warehousesByDoc.set(dn, ws);
-    }
-    if (it.item_code) allCodes.add(it.item_code);
-    /* Rows arrive ordered by (doc_no, line_no, created_at ASC) so the first time
-       we see a doc_no IS its earliest line — record it once. */
-    if (!firstCat.has(dn)) {
-      firstCat.set(dn, normCategory(it.item_group ?? ''));
-      firstBranding.set(dn, it.branding ?? null);
-      firstItemCode.set(dn, it.item_code ?? null);
-    }
-  }
-
-  /* Catalog category + branding by item_code — the SAME product-branding fetch
-     the SO list runs (mfg_products.category + mfg_products.branding), chunked by
-     the codes in view (bounded .in, never the whole table). */
-  const productCategory = new Map<string, string>();
-  const productBranding = new Map<string, string>();
-  {
-    const codeList = [...allCodes];
-    for (let i = 0; i < codeList.length; i += 300) {
-      const chunk = codeList.slice(i, i + 300);
-      if (chunk.length === 0) continue;
-      const { data: prodRows } = await paginateAll<{ code: string; category: string | null; branding: string | null }>((from, to) =>
-        scopeToCompany(
-          pgrestIn(sb.from('mfg_products')
-            .select('code, category, branding'), 'code', chunk),
-          c,
-        ).range(from, to),
-      ); lap('dp-products');
-      for (const p of (prodRows ?? [])) {
-        if (p.category) productCategory.set(p.code, normCategory(p.category));
-        if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
-      }
-    }
-  }
-  const resolveLineCat = (code: string | null, group: string): string =>
-    (code ? productCategory.get(code) : undefined) ?? normCategory(group);
-  /* isServiceLine's strongest signal onto the step-3 lines — no extra read. See lib/so-readiness-category.ts. */
-  attachLineCategories(linesByDoc.values(), productCategory);
-  const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-  /* First MAIN line per doc (catalog-resolved), re-iterating the already
-     (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
-     line captured above when an SO has no sofa/bedframe/mattress line. */
-  const repCat = new Map<string, string>();
-  const repBranding = new Map<string, string | null>();
-  const repCode = new Map<string, string | null>();
-  for (const it of itemRowsRaw) {
-    const dn = it.doc_no;
-    if (!dn || repCat.has(dn)) continue;
-    const cat = resolveLineCat(it.item_code, it.item_group ?? '');
-    if (MAIN_CATS.has(cat)) {
-      repCat.set(dn, cat);
-      repBranding.set(dn, it.branding ?? null);
-      repCode.set(dn, it.item_code ?? null);
-    }
-  }
-
-  /* Loud is right; anonymous is not — this reached the client as a bare 500. readFailure names the stage. */
-  let deliveredByDoc: Map<string, number>;
-  let remainingByDoc: Map<string, number>;
-  {
-    const dRes = await deliverableReadP; lap('dp-deliverable');
-    if ('err' in dRes) return c.json(readFailure('delivered_sum', dRes.err), 500);
-    ({ deliveredByDoc, remainingByDoc } = dRes.ok);
-  }
-
-  /* 5. DOs for these SOs — the cut DO doc_no + status + per-DO crew (driver /
-        helper / lorry from delivery_order_crew). Non-DRAFT/CANCELLED. */
-  /* HC DO-execution raw-data fields surface alongside the DO (DoExecOut lives in
-     ./delivery-planning-fields for the file-size ceiling). dual-read camelCase
-     (the pg driver camelCases result columns). */
-  const { data: doRowsRaw, error: doErr } = await doRowsReadP; lap('dp-dos');
-  noteDegradedRead('do_headers', doErr);
-  const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
-  /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
-     the other half). Only consulted when the caller is self-scoped. */
-  const doDriverById = new Map<string, string | null>();
-  /* Latest non-DRAFT/CANCELLED DO's HC exec fields, keyed by SO doc_no — the
-     same DO whose crew is shown (the last in doByDoc). null when no DO. */
-  const doExecByDoc = new Map<string, DoExecOut>();
-  const doIds: string[] = [];
-  for (const d of doRowsRaw) {
-    const st = (d.status ?? '').toUpperCase();
-    if (st === 'DRAFT' || st === 'CANCELLED') continue;  // exclude uncommitted / voided
-    const dn = d.so_doc_no ?? '';
-    if (!dn) continue;
-    const arr = doByDoc.get(dn) ?? [];
-    arr.push({ id: d.id, doNumber: d.do_number ?? '—', status: st });
-    doByDoc.set(dn, arr);
-    doIds.push(d.id);
-    doDriverById.set(d.id, d.driverId ?? d.driver_id ?? null);
-    // overwrite so the LAST DO wins (matches the crew = latest-DO convention)
-    doExecByDoc.set(dn, {
-      time_range: d.timeRange ?? d.time_range ?? null,
-      time_confirmed: d.timeConfirmed ?? d.time_confirmed ?? null,
-      arrival_at: d.arrivalAt ?? d.arrival_at ?? null,
-      departure_at: d.departureAt ?? d.departure_at ?? null,
-      shipout_date: d.shipoutDate ?? d.shipout_date ?? null,
-      customer_delivered_date: d.customerDeliveredDate ?? d.customer_delivered_date ?? null,
-      eta_arriving_port: d.etaArrivingPort ?? d.eta_arriving_port ?? null,
-      delivery_substatus: d.deliverySubstatus ?? d.delivery_substatus ?? null,
-      arrives_em_warehouse_date: d.arrivesEmWarehouseDate ?? d.arrives_em_warehouse_date ?? null,
-      em_delivery_status: d.emDeliveryStatus ?? d.em_delivery_status ?? null,
-      consignment_no: d.consignmentNo ?? d.consignment_no ?? null,
-      vessel_voyage: d.vesselVoyage ?? d.vessel_voyage ?? null,
-      etd_port_klang: d.etdPortKlang ?? d.etd_port_klang ?? null,
-      bs_delivery_date: d.bsDeliveryDate ?? d.bs_delivery_date ?? null,
-      esb_remarks: d.esbRemarks ?? d.esb_remarks ?? null,
-      bs_remarks: d.bsRemarks ?? d.bs_remarks ?? null,
-      ctn: d.ctn ?? null,
-      em_delivered_date: d.emDeliveredDate ?? d.em_delivered_date ?? null,
-      do_date: d.doDate ?? d.do_date ?? null,
-      delivered_at: d.deliveredAt ?? d.delivered_at ?? null,
-      pod_r2_key: d.podR2Key ?? d.pod_r2_key ?? null,
-      pod_lat: d.podLat ?? d.pod_lat ?? null,
-      // Real POD leaves a photo or a GPS fix; an evidence-free "mark delivered"
-      // (office advance / QR scan) leaves neither.
-      has_pod: (d.podR2Key ?? d.pod_r2_key) != null || (d.podLat ?? d.pod_lat) != null,
-    });
-  }
-
-  /* DP NUMBER per SO row. The number is minted onto the trip_stop at schedule
-     time (lib/dp-no-mint.ts), so it is read back from there — a stop reaches its
-     SO either directly (so_id, an SO scheduled with no DO) or via its DO (do_id).
-     Both are resolved here so a job shows its number regardless of which shape it
-     took. Best-effort: a failed read leaves dp_no null, which renders as "—" and
-     is honest about not knowing, rather than inventing a number. */
-  const dpNoByDoc = new Map<string, string>();
-  /* Live trip per SO — the ARRANGEMENT-pipeline signal. An SO is "Time arranged"
-     when a DELIVERY stop keyed on one of its DOs sits on a non-CANCELLED trip
-     (the same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps).
-     Best-effort like the dp_no read: a failed read leaves the map empty, so the
-     stage degrades to PENDING_TIME/PENDING_DATE — never a guess. */
-  const tripByDoc = new Map<string, { id: string; trip_no: string | null; trip_date: string | null; stop_no: number | null; eta_offset_s: number | null }>();
-  {
-    /* SO rows resolve their number through their DO. There is deliberately NO
-       so_id lookup: scm.mfg_sales_orders has no `id`, so an SO can never be the
-       target of trip_stops.so_id (that UUID column is only ever populated for a
-       source that actually has a UUID id). A board-scheduled SO reaches a trip
-       via its DO, and the stop carries do_id — which docByDoId resolves. */
-    const docByDoId = new Map<string, string>();
-    for (const [dn, arr] of doByDoc) for (const d of arr) docByDoId.set(d.id, dn);
-
-    type StopRow = { dp_no?: string | null; do_id?: string | null; trip_id?: string | null; tripId?: string | null; stop_no?: number | null; stopNo?: number | null; eta_offset_s?: number | null; etaOffsetS?: number | null };
-    const take = (rows: StopRow[] | null | undefined) => {
-      for (const s of rows ?? []) {
-        const no = s.dp_no;
-        if (!no) continue;
-        const dn = (s.do_id && docByDoId.get(s.do_id)) || null;
-        // Last write wins = the most recent schedule, matching the crew = latest-DO
-        // convention this board already uses.
-        if (dn) dpNoByDoc.set(dn, no);
-      }
-    };
-    try {
-      if (doIds.length) {
-        /* ONE widened read serves both maps. The dp_no rule is unchanged — the
-           filter that used to live in the query (`dp_no IS NOT NULL`) now lives
-           in take(), same rows either way. */
-        const { data: stopRows } = await chunkIn<StopRow>(doIds, (batch, from, to) => sb.from('trip_stops')
-          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
-          .order('do_id').range(from, to)); lap('dp-trip-stops');
-        take(stopRows.filter((s) => s.dp_no != null));
-
-        /* Resolve the stops' trips (bounded .in) and keep only live ones —
-           a CANCELLED trip is no arrangement (the reverse reconcile already
-           returns such orders to the queue). Last write wins, matching the
-           latest-schedule convention above. */
-        const tripIds = [...new Set(stopRows
-          .map((s) => (s.tripId ?? s.trip_id) as string | null)
-          .filter((x): x is string => !!x))];
-        if (tripIds.length) {
-          const { data: tripRowsRaw } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
-            .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to)); lap('dp-trips');
-          const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
-          for (const t of tripRowsRaw as Array<{
-            id: string; trip_no?: string | null; tripNo?: string | null;
-            trip_date?: string | null; tripDate?: string | null; status?: string | null;
-          }>) {
-            if (String(t.status ?? '').toUpperCase() === 'CANCELLED') continue;
-            liveTripById.set(String(t.id), {
-              id: String(t.id),
-              trip_no: (t.tripNo ?? t.trip_no ?? null) as string | null,
-              trip_date: (t.tripDate ?? t.trip_date ?? null) as string | null,
-            });
-          }
-          for (const s of stopRows) {
-            const tripId = (s.tripId ?? s.trip_id) as string | null;
-            const trip = tripId ? liveTripById.get(tripId) : undefined;
-            const dn = (s.do_id && docByDoId.get(s.do_id)) || null;
-            if (dn && trip) tripByDoc.set(dn, {
-              ...trip,
-              stop_no: (s.stopNo ?? s.stop_no ?? null) as number | null,
-              eta_offset_s: (s.etaOffsetS ?? s.eta_offset_s ?? null) as number | null,
-            });
-          }
-        }
-      }
-    } catch { /* leave the maps empty — rows render dp_no / trip null */ }
-  }
-
-  /* Crew snapshot per DO. Best-effort — read the assign-time snapshot so the
-     board shows the driver/helper/lorry without joining the masters. */
-  type CrewOut = {
-    // legacy collapsed strings (kept for back-compat search / fallback)
-    driver: string | null; helper: string | null; lorry: string | null;
-    // expanded per-person fields (HC delivery-sheet columns, snapshot)
-    driver_1_name: string | null; driver_1_ic: string | null; driver_1_contact: string | null;
-    driver_2_name: string | null;
-    helper_1_name: string | null; helper_2_name: string | null;
-    lorry_plate: string | null;
-  };
-  const crewByDo = new Map<string, CrewOut>();
-  /* Crew driver/helper IDS by DO id — the row-scope assignment (the CrewOut
-     above carries only NAMES, for display). Only consulted when self-scoped. */
-  const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[] }>();
-  if (doIds.length > 0) {
-    const { data: crewRows } = await chunkIn<{
-      do_id: string;
-      driver_1_id: string | null; driver_2_id: string | null;
-      helper_1_id: string | null; helper_2_id: string | null;
-      driver_1_name: string | null; driver_1_ic: string | null; driver_1_contact: string | null;
-      driver_2_name: string | null;
-      helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null;
-      driver1Id?: string | null; driver2Id?: string | null; helper1Id?: string | null; helper2Id?: string | null;
-    }>(doIds, (batch, from, to) =>
-      sb.from('delivery_order_crew')
-        .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
-        .in('do_id', batch).order('do_id').range(from, to),
-    ); lap('dp-crew');
-    for (const cr of crewRows) {
-      crewIdsByDo.set(cr.do_id, {
-        driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
-        helperIds: [cr.helper1Id ?? cr.helper_1_id, cr.helper2Id ?? cr.helper_2_id].filter((x): x is string => !!x),
-      });
-      crewByDo.set(cr.do_id, {
-        driver: [cr.driver_1_name, cr.driver_2_name].filter(Boolean).join(' / ') || null,
-        helper: [cr.helper_1_name, cr.helper_2_name].filter(Boolean).join(' / ') || null,
-        lorry: cr.lorry_plate ?? null,
-        driver_1_name: cr.driver_1_name ?? null,
-        driver_1_ic: cr.driver_1_ic ?? null,
-        driver_1_contact: cr.driver_1_contact ?? null,
-        driver_2_name: cr.driver_2_name ?? null,
-        helper_1_name: cr.helper_1_name ?? null,
-        helper_2_name: cr.helper_2_name ?? null,
-        lorry_plate: cr.lorry_plate ?? null,
-      });
-    }
-  }
-
-  /* 6. (removed) delivery_legs read — the multi-hop / dual-trip "leg" feature was
-        removed (China-PO transit flow, not in use yet; re-add later). The
-        scm.delivery_legs table stays in place but is no longer read here. */
+  /* 3-5. Per-order facts as maps (lib/delivery-board-maps.ts): lines + catalog -> readiness
+        and Branding, deliverable sums, DOs + crew + trips, live balances, PO lock, PO
+        numbers, the AutoCount exemption expiry. A delivered_sum failure fails the board. */
+  const mapsRes = await loadBoardMaps(c, sb, source, { docNos, soRows, display: !countsOnly, rest: restReads, lap });
+  if ('err' in mapsRes) return c.json(readFailure(mapsRes.stage, mapsRes.err), 500);
+  const maps = mapsRes.ok;
 
   /* 7. Assemble one board row per SO with its derived state + region. An SO's
         "home" bucket = stateToRegionsFromConfig(customer_state, customer_country). */
   /* multi-company: id → code map (HOUZS / 2990 / …) so each shared-queue row can
      carry a readable company_code label. Built once. */
   const codeMap = companyCodeMap(c);
-  /* PO lock per row (owner 2026-08-12; every company since 2026-11-09) — the drawer decides
-     client-side whether a replacement_disposal change saves directly or routes
-     into an amendment, and it decides from the row. Without this fact on the row
-     the drawer would attempt the direct write, collect the guard's 409, and
-     strand the operator with a change they were told to request and no way to
-     request it. ONE batched chain for the whole board (see soPoLockedMany), not
-     a per-row query; Houzs doc numbers are filtered out inside it, so a
-     Houzs-only board costs nothing. */
-  const poLockedDocs = await soPoLockedMany(sb, docNos); lap('dp-po-locked');
-  const orders = soRows.map((r) => {
-    const docNo = String(r.doc_no ?? '');
-    /* Branding — derived 1:1 with the SO list (never the empty header field).
-       Pick the catalog-resolved first-MAIN line as the SO's representative
-       (repCat), falling back to the earliest-created line (firstCat); a MATTRESS
-       rep with a blank own-branding falls back to mfg_products.branding. Then map
-       through the ported deriveBranding. */
-    const hasRep = repCat.has(docNo);
-    const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
-    let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-    if (fCat === 'MATTRESS' && (!fBranding || !fBranding.trim())) {
-      const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-      fBranding = (code && productBranding.get(code)) || fBranding;
-    }
-    /* Company comes PER ROW, not from the caller: this board is a SHARED queue,
-       so labelling a Houzs order "2990 Sofa" because a 2990 user opened it is a
-       WRONG label, not a missing one. The old `|| null` is gone — the rule
-       cannot return blank now (owner 2026-08-17), so it could only restore the
-       empty state. See scm/shared/so-branding-label.ts. */
-    const branding = deriveBranding(fCat, fBranding, codeMap.get(Number(r.company_id)) ?? null);
-    const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
-    const delivered = deliveredByDoc.get(docNo) ?? 0;
-    const remaining = remainingByDoc.get(docNo) ?? 0;
-    const status = String(r.status ?? '').toUpperCase();
-    const customerDD = r.customer_delivery_date ?? null;
-    const procDate = r.processing_date ?? null;
-    /* Amendment dates. The ORIGINAL is never overwritten; the amended date (when
-       set) is what we now commit to. effectiveSoDelivery is the ONE reader of that
-       rule (shared/effective-delivery.ts) — this board's chain was right all along;
-       MRP and the allocator stopped disagreeing with it on 2026-08-18. */
-    const amendDateFromCustomer = r.amendDateFromCustomer ?? r.amend_date_from_customer ?? null;
-    const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
-    const effectiveDD = effectiveSoDelivery(r);
-
-    /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
-    const readyToShip = readiness.isShipReady;
-
-    /* delivery_state derivation (the core rule) — shared with the SO list via
-       derivePlanningState(). A manual override stored on the SO header wins; else
-       compute live. */
-    const stored = r.delivery_state ?? null;
-    const state: DeliveryState = derivePlanningState({
-      storedOverride: stored, status, readiness, delivered, remaining, effectiveDD, today,
-    });
-
-    /* Region(s) for this SO = its customer-STATE bucket(s) from the config
-       mapping (a state can map to MANY). primaryRegion = the first mapped bucket. */
-    const stateRegions = stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country);
-    const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;
-    const regionSet = new Set<Region>(stateRegions);
-
-    const dos = doByDoc.get(docNo) ?? [];
-    const crew = dos.length > 0 ? (crewByDo.get(dos[dos.length - 1]!.id) ?? null) : null;
-    const warehouseIds = [...(warehousesByDoc.get(docNo) ?? new Set<string>())];
-    const primaryWh = warehouseIds[0] ?? null;
-
-    return {
-      // Row discriminator + ASSR-parity fields. SO rows are always 'so' with no
-      // Service-Case ref / job_kind. ADDITIVE — every existing SO field below is
-      // untouched (see the ASSR union after this map for the 'assr' rows).
-      row_type: 'so' as 'so' | 'assr' | 'dp' | 'project',
-      ref: null as string | null,
-      so_ref: ((r.ref as string | null) || (r.customer_so_no as string | null)) ?? null, // the order's reference, customer-ref.ts rule (AutoCount Ref, e.g. pg0791) - the board's "Reference" column
-      job_kind: null as 'customer_pickup' | 'delivery' | 'inspection' | null,
-      // DP-Order job type (DELIVERY/PICKUP/SERVICE/SETUP/DISMANTLE/SUPPLIER_PICKUP)
-      // — only 'dp' rows carry it; SO/ASSR rows are null (union parity).
-      dp_job_type: null as string | null,
-      /* SO rows DO carry a DP number now — it is minted onto their trip_stop at
-         schedule time, same rule and same number space as a manual DP order.
-         null = not scheduled yet (or the lorry was not known), never a guess. */
-      dp_no: dpNoByDoc.get(docNo) ?? null,
-      assr_id: null as number | null,
-      so_doc_no: docNo,
-      debtor_code: r.debtor_code ?? null,
-      debtor_name: r.debtor_name ?? null,
-      phone: r.phone ?? null,
-      agent: r.agent ?? null, salesperson_id: r.salespersonId ?? r.salesperson_id ?? null, venue: r.venue ?? null,
-      /* SO rows always carry a real label now; `| null` is union parity for the
-         three non-SO BoardRow kinds (ASSR / DP / project) that pass null. */
-      branding: branding as string | null,
-      status,
-      delivery_state: state,
-      delivery_state_override: stored && (DELIVERY_STATES as string[]).includes(stored) ? stored : null,
-      // money — balance / outstanding (centi). Live balance (= local_total −
-      // Σpayments, from mfg_sales_orders_with_payment_totals view) is the SO list
-      // source-of-truth; base-table balance_sen is the fallback.
-      balance_sen: Number(r.balance_sen ?? 0),
-      balance_sen_live: liveBalanceByDoc.has(docNo) ? liveBalanceByDoc.get(docNo)! : null,
-      local_total_sen: Number(r.local_total_sen ?? 0),
-      /* AR-005 delivery-release gate (docs/agents/operating-spec.md §7.10 —
-         "provides payment gate to Fulfilment and Delivery"). ADVISORY + read-only:
-         it reports RELEASE / RELEASE_WITH_COLLECTION (what POD must collect) / HOLD
-         from the balance already computed above; it does NOT block the board or the
-         DO path (that stays owner-gated). Default policy has a zero pre-dispatch
-         floor, so a normal outstanding balance surfaces as a collection amount, not
-         a hold. Live balance = GREEN; only the base-table fallback = AMBER. */
-      release_gate: (() => {
-        const total = Number(r.local_total_sen ?? 0);
-        const live = liveBalanceByDoc.has(docNo) ? liveBalanceByDoc.get(docNo)! : null;
-        const bal = live != null ? live : Number(r.balance_sen ?? 0);
-        const g = computeReleaseGate({
-          totalSen: total,
-          paidSen: Math.max(0, total - bal),
-          dataQuality: live != null ? 'GREEN' : 'AMBER',
-        });
-        return {
-          decision: g.decision,
-          remaining_sen: g.remainingSen,
-          collect_on_delivery_sen: g.collectOnDeliverySen,
-          reason: g.reason,
-        };
-      })(),
-      // dates
-      so_date: r.so_date ?? null,
-      // ORIGINAL date (never overwritten); sales_exemption_expiry = frozen original, shown in the SXE column via soExemptionExpiryOf (owner 2026-10-22).
-      customer_delivery_date: customerDD, sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
-      // Amendment dates: the customer's requested new date and the date WE
-      // confirmed. The Original column above is unchanged.
-      amend_date_from_customer: amendDateFromCustomer,
-      amended_delivery_date: amendedDD,
-      // HC "Amend Client Date Reason" — OUR postpone reason (dual-read), then the
-      // customer's own WhatsApp amend tap reason, kept apart.
-      amend_reason: r.amendReason ?? r.amend_reason ?? null, amend_reason_from_customer: r.amendReasonFromCustomer ?? r.amend_reason_from_customer ?? null,
-      // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
-      effective_delivery_date: effectiveDD,
-      processing_date: procDate,
-      /* Feeds procLockActive in the drawer alongside processing_date. */
-      po_locked: poLockedDocs.has(docNo),
-      days_left: daysBetween(today, effectiveDD),
-      // address (HC delivery-sheet columns)
-      address: [r.address1, r.address2].filter(Boolean).join(', ') || null,
-      postcode: r.postcode ?? null,
-      building_type: r.building_type ?? null,
-      // HC SO-context raw-data fields — dual-read camelCase.
-      possession_date: r.possessionDate ?? r.possession_date ?? null,
-      house_type: r.houseType ?? r.house_type ?? null,
-      replacement_disposal: r.replacementDisposal ?? r.replacement_disposal ?? null,
-      referral: r.referral ?? null,
-      // HC delivery MESSAGE status (the follow-up workflow status, owner
-      // 2026-09-22) — one of the 23 values or null. dual-read camelCase.
-      delivery_message_status: r.deliveryMessageStatus ?? r.delivery_message_status ?? null,
-      disposal_request: r.disposalRequest ?? r.disposal_request ?? null,
-      dp_remark: r.dpRemark ?? r.dp_remark ?? null,
-      remark_locked: false,
-      // HC DO-execution raw-data fields — from the latest DO, null when this SO
-      // has no (non-DRAFT/CANCELLED) DO yet.
-      time_range: doExecByDoc.get(docNo)?.time_range ?? null,
-      time_confirmed: doExecByDoc.get(docNo)?.time_confirmed ?? null,
-      arrival_at: doExecByDoc.get(docNo)?.arrival_at ?? null,
-      departure_at: doExecByDoc.get(docNo)?.departure_at ?? null,
-      shipout_date: doExecByDoc.get(docNo)?.shipout_date ?? null,
-      customer_delivered_date: doExecByDoc.get(docNo)?.customer_delivered_date ?? null,
-      eta_arriving_port: doExecByDoc.get(docNo)?.eta_arriving_port ?? null,
-      delivery_substatus: doExecByDoc.get(docNo)?.delivery_substatus ?? null,
-      // EM-region transit arrival date, from the latest DO.
-      arrives_em_warehouse_date: doExecByDoc.get(docNo)?.arrives_em_warehouse_date ?? null,
-      // EM cross-border transport status (owner 2026-09-23), from the latest DO.
-      em_delivery_status: doExecByDoc.get(docNo)?.em_delivery_status ?? null,
-      consignment_no: doExecByDoc.get(docNo)?.consignment_no ?? null,
-      vessel_voyage: doExecByDoc.get(docNo)?.vessel_voyage ?? null,
-      etd_port_klang: doExecByDoc.get(docNo)?.etd_port_klang ?? null,
-      bs_delivery_date: doExecByDoc.get(docNo)?.bs_delivery_date ?? null,
-      esb_remarks: doExecByDoc.get(docNo)?.esb_remarks ?? null,
-      bs_remarks: doExecByDoc.get(docNo)?.bs_remarks ?? null,
-      ctn: doExecByDoc.get(docNo)?.ctn ?? null,
-      em_delivered_date: doExecByDoc.get(docNo)?.em_delivered_date ?? null,
-      // The latest DO's OWN document date (delivery_orders.do_date), null when
-      // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
-      do_date: doExecByDoc.get(docNo)?.do_date ?? null,
-      // POD: real delivered instant + evidence presence (the signature/photo
-      // preview is fetched on demand). has_pod separates a real driver POD from
-      // an evidence-free "mark delivered".
-      delivered_at: doExecByDoc.get(docNo)?.delivered_at ?? null,
-      pod_r2_key: doExecByDoc.get(docNo)?.pod_r2_key ?? null,
-      pod_lat: doExecByDoc.get(docNo)?.pod_lat ?? null,
-      has_pod: doExecByDoc.get(docNo)?.has_pod ?? false,
-      // stock — the four fields and why they differ: lib/so-readiness-row.ts
-      ...readinessRowFields(readiness),
-      // multi-company: readable company code for the shared-queue Company column
-      // (HOUZS / 2990). null when unresolved (pre-migration / cold-start).
-      company_code: codeMap.get(Number(r.company_id)) ?? null,
-      // region(s): the customer-state bucket(s); plus the warehouse label (kept
-      // for the Warehouse column, not the region).
-      region: primaryRegion,
-      regions: [...regionSet],
-      warehouse_id: primaryWh as string | null,
-      warehouse_code: primaryWh ? (whCode.get(primaryWh) ?? null) : null,
-      warehouse_name: primaryWh ? (whName.get(primaryWh) ?? null) : null,
-      customer_state: r.customer_state ?? null, customer_country: r.customer_country ?? null, // country: Last Mile keeps SG off; DP board ignores it
-      // delivery progress
-      delivered_qty: delivered,
-      remaining_qty: remaining,
-      // crew (from the latest DO) + the DOs themselves
-      crew,
-      delivery_orders: dos.map((d) => ({ id: d.id, do_number: d.doNumber, status: d.status })),
-      /* ── Arrangement pipeline (derived, lib/arrangement-stage.ts) ─────────
-         The live trip this order sits on (via its DO's DELIVERY stop, CANCELLED
-         trips excluded) and the derived stage:
-           PENDING_DATE  — in Pending Schedule, amended_delivery_date not set
-           PENDING_TIME  — date confirmed (amended_delivery_date), no live stop
-           TIME_ARRANGED — on a live trip
-         null outside Pending Schedule (nothing to arrange / already delivered). */
-      trip_id: tripByDoc.get(docNo)?.id ?? null,
-      trip_no: tripByDoc.get(docNo)?.trip_no ?? null,
-      trip_date: tripByDoc.get(docNo)?.trip_date ?? null,
-      /* Time-of-run keys (owner 2026-08-08: within the same date/state/postcode
-         group the Time queues also order by TIME) — the stop's sequence and
-         ETA offset on its live trip; null off-trip. */
-      trip_stop_no: tripByDoc.get(docNo)?.stop_no ?? null,
-      trip_eta_offset_s: tripByDoc.get(docNo)?.eta_offset_s ?? null,
-      arrangement_stage: deriveArrangementStage({
-        deliveryState: state,
-        dateConfirmed: amendedDD != null,
-        onActiveTrip: tripByDoc.has(docNo),
-      }),
-    };
-  });
+  /* One row per SO (lib/delivery-board-so-rows.ts); the planning-state rule stays here. */
+  const rowCtx = { today, codeMap, deliveryStates: DELIVERY_STATES, deriveState: derivePlanningState, daysLeft: daysBetween };
+  const orders = assembleSoOrders(soRows, maps, { ...rowCtx, regionCfg, whCode, whName });
 
   /* 7b. ADDITIVELY union in Service-Case (ASSR) rows. A Service Case appears on
         the board ONLY when it carries a relevant date — customer_pickup_at (we go
@@ -1079,7 +368,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const caseClosed = assrCaseClosed(a);
 
       // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
-      for (const leg of assrBoardLegs(a, caseClosed)) {
+      for (const leg of assrBoardLegs(a, caseClosed, today)) {
         const legDate = leg.confirmed ?? leg.requested;
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
@@ -1197,8 +486,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   /* An ASSR leg on a trip shows that run's crew — driver, lorry and helpers
      (owner 2026-10-29) — resolved from the leg's trip_stop. Best-effort. */
-  await echoAssrCrew(sb, assrOrders).catch((e: Error) => console.warn(`[delivery-planning] ASSR crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-assr-crew');
-  await overlayAssrChatState(sb, assrOrders); // HC-0171: the customer's WhatsApp answer on ASSR rows
+  /* Only the legs this band shows get the echo reads (bandRows below keeps exactly these;
+     neither echo moves a row's date). On the sql path the ASSR echo overlaps the DP union. */
+  const assrShown = bandRows(assrOrders, band, today);
+  const assrEchoP = (async () => {
+    await echoAssrCrew(sb, assrShown).catch((e: Error) => console.warn(`[delivery-planning] ASSR crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-assr-crew');
+    await overlayAssrChatState(sb, assrShown); // HC-0171: the customer's WhatsApp answer on ASSR rows
+  })();
+  if (source !== 'sql') await assrEchoP;
 
   /* ── DP Order union (mig 0129) ────────────────────────────────────────────────
      The MANUAL DP orders — SETUP / DISMANTLE / SUPPLIER_PICKUP and any DP order
@@ -1319,7 +614,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   } catch (e) {
     if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
-  await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
+  await Promise.all([echoTripCrew(sb, bandRows(dpBoardRows, band, today)).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)), assrEchoP]); lap('dp-crew-echo');
 
   /* ── PMS project SETUP / DISMANTLE union (mirror; only the Remarks is written here)
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -1465,11 +760,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
-  if ('err' in poNosRes) throw poNosRes.err; lap('dp-po-nos');
-  const poNosByDoc = poNosRes.ok;
-  await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
-  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders]; lap('dp-ac-exemption');
+  /* The AutoCount exemption expiry (BUG-51) and "PO No." (lib/planning-po-nos.ts) ride on the maps. */
+  const soServed = orders.map((o) => ({ ...o, ac_sales_exemption_expiry: maps.acExpiryByDoc.get(o.so_doc_no) ?? null, po_nos: maps.poNosByDoc.get(o.so_doc_no) ?? [] }));
+  const allOrders = bandRows([...soServed, ...assrOrders, ...dpBoardRows, ...projectOrders], band, today); lap('dp-union');
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop
@@ -1480,7 +773,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           · ASSR leg → its stop's trip crew; project leg → the project's crew users
             (ownServiceAndProjectRowKeys). DO-less SO → never matches a self scope. */
   const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
-    doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
+    doByDoc: maps.doByDoc, doDriverById: maps.doDriverById, crewIdsByDo: maps.crewIdsByDo, dpTripIdByKey,
   })); lap('dp-row-scope');
   const ownExtra = scope.mode === 'all' ? null
     : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), c.get('houzsUser')?.name ?? null, allOrders);
@@ -1491,19 +784,26 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
   if (scope.mode === 'all') {
+    /* The rows show the stamp either way; only a request without a band WRITES it, after
+       the response, so the parallel band reads of one board open never write
+       (lib/pending-schedule-stays.ts). counts_only, fired with band 1, covers every band. */
     const entering = docsEnteringPendingSchedule(allOrders);
-    await stampPendingSchedule(sb, c, entering);
+    if (!band) await stampPendingScheduleAfterResponse(c, sb, entering);
     const stamped = new Set(entering);
     for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
   }
+  /* Shadow: after the response, rebuild exactly these SO rows through SQL and record the differences. */
+  if (source === 'shadow') scheduleBoardShadow(c, { query: new URL(c.req.url).search, served: structuredClone(soServed), docNos, display: !countsOnly, onlyDocs, band, restMs: Date.now() - t0, ctx: rowCtx });
   const regionFiltered = scopedOrders.filter((o) => matchesRegion(o, regionParam, regionCfg.validCodes));
   const counts = emptyCounts();
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
   counts.ALL = regionFiltered.length;
 
   const slice = boardSlice(regionFiltered, stateParam);
-  addSkippedDelivered(skippedDelivered, (r) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country), regionParam, counts, slice.deliveredByRegion);
-  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
+  const regionsOfRow = (r: { customer_state: string | null; customer_country: string | null }) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country);
+  addSkippedDelivered(skippedDelivered, regionsOfRow, regionParam, counts, slice.deliveredByRegion);
+  if (countsOnly) return c.json({ counts_by_region: countsByRegion(scopedOrders, skippedDelivered, regionCfg.regions.map((r) => r.key), (o, k) => matchesRegion(o, k, regionCfg.validCodes), regionsOfRow, emptyCounts), regions: regionCfg.regions });
+  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}), ...(band ? { band: { band: band.band, page: band.page, page_count: plan.pageCount } } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
 deliveryPlanning.get('/changes', boardChangesHandler);
@@ -2270,7 +1570,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     }
 
     // Date / crew / trip need the job still OPEN — no trip + trip_stop + DP number for a done leg.
-    if (!assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
+    if (!assrLegOpen(legCase, jobKind, todayMyt())) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
@@ -2325,7 +1625,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
-  const coId = activeCompanyId(c) ?? null;
+  const coId = type === 'so' && hasSeatPatch(p) ? await soCompanyWithinGrants(c, id) : (activeCompanyId(c) ?? null);
   const crew = type === 'so' && !wantsTrip && hasSeatPatch(p) && coId != null
     ? await assignSoCrew(c.get('supabase'), coId, id, p, (c.get('user') as { id?: string } | null)?.id ?? null).catch((e: Error) => ({ error: e.message })) : undefined;
   if (crew === null) return c.json({ error: 'no_delivery_order', reason: 'Create a delivery order first, then assign the crew.' }, 409);
@@ -2550,7 +1850,7 @@ async function scheduleOntoTrip(
       if (soRow) {
         const r = soRow as Record<string, unknown>;
         soId = null;
-        doId = await latestLiveDoIdForSo(sb, activeCompanyId(c) ?? null, id);
+        doId = await latestLiveDoIdForSo(sb, (await soCompanyWithinGrants(c, id)) ?? activeCompanyId(c) ?? null, id);
         orderDate = dateOrNull((r.amended_delivery_date ?? r.customer_delivery_date ?? null) as string | null);
         revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;

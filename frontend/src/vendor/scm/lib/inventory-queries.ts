@@ -16,6 +16,7 @@
 // slice. Everything below is copied verbatim.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LOOKUP_CACHE } from './lookup-cache';
 import { authedFetch } from './authed-fetch';
 import { writeFailed } from './mutation-error';
 // Host retry policy — the vendor auth/transport boundary already reaches into
@@ -252,7 +253,7 @@ export function useWarehouses(opts?: { includeInactive?: boolean }) {
       const qs = opts?.includeInactive ? '?includeInactive=true' : '';
       return authedFetch<{ warehouses: Warehouse[] }>(`/inventory/warehouses${qs}`, { signal }).then((r) => r.warehouses);
     },
-    staleTime: 5 * 60_000,
+    ...LOOKUP_CACHE,
     /* HOUZS VENDOR — was a bare `retry: 1`, which re-sent a 403 that could only
        403 again (the owner saw this endpoint refused twice per page load). The
        host predicate keeps the single retry for network / 5xx and drops it for

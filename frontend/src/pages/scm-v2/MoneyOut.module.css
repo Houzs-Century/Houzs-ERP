@@ -1,105 +1,105 @@
 /* Money out — the owner's Claude Design redesign (batch 4). Colours are the
    design's own, on the ERP's Theme C, in the batch-3 pattern. */
 
-.top { --ink: #11140f; --text: #414539; --muted: #767b6e; --line: #d6d9d2; --petrol: #16695f;
+.top { --ink: var(--hz-c-ink); --text: var(--hz-c-ink-secondary); --muted: var(--hz-c-ink-muted); --line: var(--hz-c-border); --petrol: var(--hz-c-primary);
   display: flex; flex-direction: column; gap: 10px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .grow { flex: 1; }
 .hint { font-size: 12.5px; color: var(--muted); }
 .search {
-  display: flex; align-items: center; gap: 6px; flex: 1; max-width: 460px; height: 34px; padding: 0 10px; border: 1px solid #d6d9d2;
-  border-radius: 8px; background: #ffffff; color: #767b6e;
+  display: flex; align-items: center; gap: 6px; flex: 1; max-width: 460px; height: 34px; padding: 0 10px; border: 1px solid var(--hz-c-border);
+  border-radius: 8px; background: var(--hz-c-surface); color: var(--hz-c-ink-muted);
 }
-.search:focus-within { border-color: #16695f; }
-.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; }
-.clear { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: #767b6e; cursor: pointer; }
-.clear:hover { background: #f4f6f3; }
+.search:focus-within { border-color: var(--hz-c-primary); }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink); }
+.clear { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: var(--hz-c-ink-muted); cursor: pointer; }
+.clear:hover { background: var(--hz-c-surface-2); }
 
 /* Month chips: ink-filled when on (the design). */
 .month {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
-  background: #ffffff; color: var(--ink); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+  background: var(--hz-c-surface); color: var(--ink); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
 }
-.month:hover { background: #f4f6f3; }
+.month:hover { background: var(--hz-c-surface-2); }
 .monthOn, .monthOn:hover { background: #11140f; border-color: #11140f; color: #ffffff; }
-.monthCount { font-weight: 500; color: #767b6e; }
+.monthCount { font-weight: 500; color: var(--hz-c-ink-muted); }
 .monthOn .monthCount { color: #c2c6bd; }
 
 /* Status tags: 20px, 4px radius, 11/600. */
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
-.toneCalm { background: #f0f2ee; color: #5b6055; }
-.toneWarn { background: #f7f1e3; color: #7a5a1e; }
-.toneInfo { background: #eaf3f1; color: #1d5c54; }
-.toneLate { background: #fbeeee; color: #a83434; }
-.toneAdvance { background: #e8eefc; color: #1d4ed8; }
+.toneCalm { background: var(--hz-dk-surface-2, #f0f2ee); color: var(--hz-dk-ink-secondary, #5b6055); }
+.toneWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
+.toneInfo { background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); }
+.toneLate { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-err, #a83434); }
+.toneAdvance { background: var(--hz-dk-surface-2, #e8eefc); color: #1d4ed8; }
 .tags { display: inline-flex; align-items: center; gap: 6px; }
 
 /* A clickable document number: 13/600, dotted underline. */
 .docLink {
   padding: 0; border: 0; background: none; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; cursor: pointer;
-  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3; font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hz-dk-ink-soft, #a9ada3); font-variant-numeric: tabular-nums;
 }
-.docLink:hover { color: #16695f; text-decoration-color: #16695f; }
+.docLink:hover { color: var(--hz-c-primary); text-decoration-color: var(--hz-c-primary); }
 .money { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Row buttons: right-aligned, ⋯ last. */
 .acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; }
 .act {
-  height: 26px; padding: 0 10px; border: 1px solid #b9d6d1; border-radius: 6px; background: #e1efed; color: #0c3f39;
+  height: 26px; padding: 0 10px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 6px; background: var(--hz-c-primary-soft); color: var(--hz-c-primary-ink);
   font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.act:hover:not(:disabled) { background: #d3e7e3; }
+.act:hover:not(:disabled) { background: var(--hz-dk-primary-soft, #d3e7e3); }
 .act:disabled { opacity: 0.55; cursor: default; }
-.actLink { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: #16695f; cursor: pointer; }
+.actLink { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-primary); cursor: pointer; }
 .actLink:hover { text-decoration: underline; }
 .more {
-  width: 26px; height: 26px; display: inline-grid; place-items: center; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
-  color: #414539; cursor: pointer;
+  width: 26px; height: 26px; display: inline-grid; place-items: center; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface);
+  color: var(--hz-c-ink-secondary); cursor: pointer;
 }
-.more:hover { background: #f4f6f3; }
+.more:hover { background: var(--hz-c-surface-2); }
 .menu {
-  position: fixed; z-index: 80; min-width: 180px; padding: 4px; border: 1px solid #d6d9d2; border-radius: 8px; background: #ffffff;
+  position: fixed; z-index: 80; min-width: 180px; padding: 4px; border: 1px solid var(--hz-c-border); border-radius: 8px; background: var(--hz-c-surface);
   box-shadow: 0 12px 32px -12px rgba(17, 24, 16, 0.3);
 }
 .menuItem {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent;
-  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; cursor: pointer;
+  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink); cursor: pointer;
 }
-.menuItem:hover { background: #f4f6f3; }
-.menuDanger { color: #a83434; }
-.menuRule { height: 1px; margin: 4px 2px; background: #e3e6e0; }
+.menuItem:hover { background: var(--hz-c-surface-2); }
+.menuDanger { color: var(--hz-dk-err, #a83434); }
+.menuRule { height: 1px; margin: 4px 2px; background: var(--hz-c-surface-dim); }
 
 /* The batch bar under the chips, once something is ticked. */
 .batch {
-  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid #b9d6d1; border-radius: 8px; background: #f6faf9; font-size: 13px;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 8px; background: var(--hz-dk-primary-soft, #f6faf9); font-size: 13px;
 }
-.batchNotes { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #5f6459; }
+.batchNotes { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--hz-dk-ink-secondary, #5f6459); }
 
 /* The voucher page: the books line and the trail (the design). */
-.booksLine { padding: 8px 12px; border: 1px solid #e3e6e0; border-radius: 8px; background: #f9faf8; font-size: 12.5px; color: #414539; font-variant-numeric: tabular-nums; }
-.booksLine b { color: #11140f; }
+.booksLine { padding: 8px 12px; border: 1px solid var(--hz-c-border-subtle); border-radius: 8px; background: var(--hz-c-row-hover); font-size: 12.5px; color: var(--hz-c-ink-secondary); font-variant-numeric: tabular-nums; }
+.booksLine b { color: var(--hz-c-ink); }
 .trail { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 13px; }
-.trailWho { color: #767b6e; }
-.trailNote { margin-top: 2px; color: #5f6459; font-size: 12.5px; }
+.trailWho { color: var(--hz-c-ink-muted); }
+.trailNote { margin-top: 2px; color: var(--hz-dk-ink-secondary, #5f6459); font-size: 12.5px; }
 
 /* Supplier bills (step 5): the kind tabs as one segmented strip, the supplier
    pick, a late due date, and the ticked bar. */
-.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #d6d9d2; border-radius: 8px; background: #f4f6f3; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hz-c-border); border-radius: 8px; background: var(--hz-c-surface-2); }
 .segBtn {
   display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent;
-  color: #414539; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+  color: var(--hz-c-ink-secondary); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
 }
-.segBtn:hover { color: #11140f; }
-.segOn, .segOn:hover { background: #ffffff; color: #11140f; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.12); }
-.segCount { font-weight: 500; color: #767b6e; }
+.segBtn:hover { color: var(--hz-c-ink); }
+.segOn, .segOn:hover { background: var(--hz-c-surface); color: var(--hz-c-ink); box-shadow: 0 1px 2px rgba(17, 24, 16, 0.12); }
+.segCount { font-weight: 500; color: var(--hz-c-ink-muted); }
 .supplierPick { width: 280px; max-width: 100%; }
 .pickInput {
-  width: 100%; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
-  font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f;
+  width: 100%; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface);
+  font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink);
 }
-.pickInput:focus { outline: none; border-color: #16695f; }
-.dueLate { color: #a83434; font-weight: 600; }
+.pickInput:focus { outline: none; border-color: var(--hz-c-primary); }
+.dueLate { color: var(--hz-dk-err, #a83434); font-weight: 600; }
 .tickBar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #e3e6e0; border-radius: 8px; background: #f4f6f3;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--hz-c-border-subtle); border-radius: 8px; background: var(--hz-c-surface-2);
   font-size: 13px;
 }

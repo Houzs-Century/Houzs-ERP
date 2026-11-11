@@ -43,7 +43,7 @@ export function SupplierFinanceReminder({ supplierId }: { supplierId: string | n
   if (!s || !missing || missing.length === 0) return null;
   return (
     <div role="status" aria-label="Supplier finance details missing"
-      style={{ fontSize: 'var(--fs-12)', color: '#8a5a12', background: '#fdf2df', borderRadius: 8, padding: '6px 10px' }}>
+      style={{ fontSize: 'var(--fs-12)', color: '#8a5a12', background: 'var(--hz-dk-warning-bg, #fdf2df)', borderRadius: 8, padding: '6px 10px' }}>
       {s.name} has no {missing.join(' or ')} in its Finance details — the payment can still go ahead; fill {missing.length > 1 ? 'them' : 'it'} in on
       {' '}<Link to={supplierMaintenanceHref(s.id)} style={{ color: 'inherit', textDecoration: 'underline' }}>Supplier Maintenance</Link> (the e-invoice will need {missing.length > 1 ? 'them' : 'it'}).
     </div>

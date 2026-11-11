@@ -9,7 +9,9 @@
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
 import { LorryCapacity } from "./LorryCapacity";
 import { LogisticOnTimeSection } from "./LogisticOnTimeSection";
-import { useOnTime } from "../../vendor/scm/lib/on-time-queries";
+import { useOnTime, onTimeKey, onTimeUrl, type OnTimeData } from "../../vendor/scm/lib/on-time-queries";
+import { CacheStamp } from "../../components/CacheStamp";
+import { useCacheRefresh, withFresh, oldestCachedAt } from "../../lib/cacheStamp";
 import { jobDone } from "./logisticDone";
 import { useJobProgressMap } from "../../vendor/scm/lib/job-progress-queries";
 import { useMemo, useState } from "react";
@@ -18,7 +20,10 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { api } from "../../api/client";
-import { useDeliveryPlanning, DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
+import { useBandedBoard } from "../../vendor/scm/lib/delivery-board-bands";
+import { useBoardRefresh } from "../../vendor/scm/lib/board-change-poll";
+import { BoardLoadStatus } from "../../vendor/scm/components/BoardLoadStatus";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
@@ -43,6 +48,8 @@ const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
+  /** When the server computed these figures (its kept copy can be up to 2 h old). */
+  cachedAt?: string;
   today: string; thisMonday: string; weeks: Week[]; deliveredMonths: Array<{ month: string; doCount: number; doAmountSen: number }>;
   months: Array<{ month: string; doCount: number; doAmountSen: number }>;
   deliveredOwing: { count: number; balanceSen: number; oldestDays: number };
@@ -83,27 +90,39 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     if (w) next.set("warehouse", w); else next.delete("warehouse");
     return next;
   }, { replace: true });
-  const board = useDeliveryPlanning({ region: "ALL", state: "ALL" });
+  // The board in date bands, within 15 days first, the rest after (delivery-board-bands.ts).
+  const board = useBandedBoard({ state: "ALL", first: 1 });
+  const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
+  const boardRows = board.orders;
   /* Delivery Planning is the shared queue of every company the caller may see;
      this page reports the active company, like its DO figures, so board rows
      of another company are left out. A row with no company tag stays. */
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => api.get<{ activeCompanyCode: string | null }>("/api/companies"), staleTime: 300_000 });
   const activeCode = companies.data?.activeCompanyCode ?? null;
+  const histUrl = `/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`;
+  const histKey = ["logistic-overview", period.from, period.to, warehouse];
   const hist = useQuery({
-    queryKey: ["logistic-overview", period.from, period.to, warehouse],
-    queryFn: () => authedFetch<History>(`/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`),
+    queryKey: histKey,
+    queryFn: () => authedFetch<History>(histUrl),
     staleTime: 60_000,
   });
   const onTime = useOnTime(period.from, period.to, warehouse || null);
+  /* The period figures and on-time come from a copy up to 2 h old (the board below is live). */
+  const { refresh, refreshing } = useCacheRefresh();
+  const onRefresh = () => void refresh([
+    { queryKey: histKey, load: () => authedFetch<History>(withFresh(histUrl)) },
+    { queryKey: onTimeKey(period.from, period.to, warehouse || null), load: () => authedFetch<OnTimeData>(withFresh(onTimeUrl(period.from, period.to, warehouse || null))) },
+  ]);
+  const stamp = hist.data && <CacheStamp cachedAt={oldestCachedAt([hist.data.cachedAt, onTime.data?.cachedAt])} onRefresh={onRefresh} refreshing={refreshing} />;
 
   const warehouses = useMemo(() => {
     const map = new Map<string, string>();
-    for (const o of board.data?.orders ?? []) if (o.warehouse_id && (!activeCode || !o.company_code || o.company_code === activeCode)) map.set(o.warehouse_id, [o.warehouse_name, o.warehouse_code].filter(Boolean).join(" · ") || o.warehouse_id);
+    for (const o of boardRows) if (o.warehouse_id && (!activeCode || !o.company_code || o.company_code === activeCode)) map.set(o.warehouse_id, [o.warehouse_name, o.warehouse_code].filter(Boolean).join(" · ") || o.warehouse_id);
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [board.data, activeCode]);
-  const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? [])
+  }, [boardRows, activeCode]);
+  const allRows: PlanningOrder[] = useMemo(() => boardRows
     .filter((o) => !activeCode || !o.company_code || o.company_code === activeCode)
-    .filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse, activeCode]);
+    .filter((o) => !warehouse || o.warehouse_id === warehouse), [boardRows, warehouse, activeCode]);
   /* A region clicked on By region: every figure in this page's first and third
      parts follows it. It lives in the URL, so a refresh or a shared link keeps it. */
   const region = params.get("region");
@@ -169,7 +188,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     });
   }, [regionRows, reportSize, period, today]);
   const months = (h?.months ?? []).map((m) => ({ ...m, confirmed: h?.deliveredMonths.find((x) => x.month === m.month)?.doCount ?? 0 }));
-  const loading = board.isLoading || hist.isLoading;
+  const loading = board.firstLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
   const [weekBy, setWeekBy] = useState<"amount" | "orders">("amount");
@@ -259,6 +278,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           {viewSwitch}
           <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
           {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+          {stamp}
         </div>
         {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
         <LorryCapacity period={{ from: period.from, to: period.to }} overviewLorries={h?.period.byLorry ?? []} />
@@ -277,8 +297,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           {warehouses.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
         {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+        {stamp}
       </div>
-      {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
+      <BoardLoadStatus updatedAt={board.updatedAt} bands={board} onRefresh={boardRefresh.refreshNow} />
+      {hist.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(hist.error as Error).message}</div>}
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={regionRows} period={period} progress={progressMap} totals={focus}

@@ -30,11 +30,11 @@ const FILTERS: ReadonlyArray<{ value: TimelineFilter; label: string }> = [
 ];
 
 const TONE_CLASSES: Record<TimelineTone, string> = {
-  blue: "bg-sky-100 text-sky-800",
-  purple: "bg-violet-100 text-violet-800",
-  green: "bg-emerald-100 text-emerald-800",
-  amber: "bg-amber-100 text-amber-800",
-  red: "bg-red-100 text-red-700",
+  blue: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  purple: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
   grey: "border border-border bg-bg text-ink-secondary",
 };
 

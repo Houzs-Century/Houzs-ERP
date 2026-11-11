@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   normalizeDocRef,
-  docRefsOf, docRefMatches,
+  docRefsOf, docRefMatches, exchangeRefsOf, poRefsNote,
   normalizeCode,
   matchInvoiceLinesToGrnLines,
   type PiMatchGrnLine,
@@ -36,6 +36,17 @@ describe('docRefMatches — anchors a scanned ref to our doc number', () => {
     expect(docRefsOf('DO-2610-01, DO-2610-02 & DO-2610-03')).toEqual(['DO-2610-01', 'DO-2610-02', 'DO-2610-03']);
     expect(docRefsOf('DGSN26001880')).toEqual(['DGSN26001880']);
     expect(docRefsOf(null)).toEqual([]);
+  });
+  test('an exchange PO (HOOKKA INV-2610-097, "EX-") anchors to the order it replaces', () => {
+    const printed = 'EX-PO-009744, EX-HC-PO-2609-151, EX-HC-PO-2609-226';
+    expect(docRefsOf(printed)).toEqual(['PO-009744', 'HC-PO-2609-151', 'HC-PO-2609-226']);
+    expect(docRefsOf('EX HC-PO-2609-151; EXCH-HC-PO-2609-226')).toEqual(['HC-PO-2609-151', 'HC-PO-2609-226']);
+    expect(docRefMatches(docRefsOf(printed)[1], 'HC-PO-2609-151')).toBe(true);
+    // A number that only starts with the letters is not marked.
+    expect(docRefsOf('EXPO-1234567')).toEqual(['EXPO-1234567']);
+    expect(exchangeRefsOf(printed)).toEqual(['PO-009744', 'HC-PO-2609-151', 'HC-PO-2609-226']);
+    expect(exchangeRefsOf('HC-PO-2609-151')).toEqual([]);
+    expect(poRefsNote(printed)).toEqual({ refs: 'PO-009744, HC-PO-2609-151, HC-PO-2609-226', exchange: 'The invoice marks PO-009744, HC-PO-2609-151, HC-PO-2609-226 as exchange (EX): replacement goods for those orders.' });
   });
   test('DO No matches delivery_note_ref exactly after normalization', () => {
     expect(docRefMatches('DGSN26001880', 'DGSN26001880')).toBe(true);

@@ -36,6 +36,7 @@ import { docPrefixForCode } from '../scm/lib/companyScope';
 import { fmtSen } from '../scm/shared/format';
 import { resolveRoles } from './rules';
 import { moveReceipts, transferMoveFor } from './receipt-rebank';
+import type { RebankTx } from './rebank-transaction';
 
 export const CASH_SERIES_LETTER = 'C';
 /** A receipt kept on file but no longer the payment's — see the header. Every
@@ -210,6 +211,7 @@ export async function createReceiptForPayment(
         const f = await formaliseReceipt(sb, {
           companyId: p.companyId, companyCode: p.companyCode, receiptId: id,
           accountCode: roles.CASH, actor: p.createdBy ?? null,
+          rebankTx: null, // cash: never a transfer, never moves
         });
         if (f.ok) return { ok: true, id, orNumber: f.orNumber, status: 'FORMAL' };
         /* The cash formalisation failing must not lose the receipt — it stays
@@ -241,7 +243,9 @@ export async function createReceiptForPayment(
  */
 export async function formaliseReceipt(
   sb: any,
-  input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null },
+  /* `rebankTx`: the transaction a transfer's bank move runs in (acc/rebank-transaction.ts);
+     null = the old two-step move. Only a transfer confirmed into another bank moves. */
+  input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null; rebankTx: RebankTx | null },
 ): Promise<{ ok: true; orNumber: string; already?: boolean } | { ok: false; status: string; reason: string }> {
   const { data: rRaw, error: rErr } = await sb.from('acc_official_receipts')
     .select('id, or_number, status, company_id, paid_at, method, payment_source, payment_id')
@@ -282,7 +286,7 @@ export async function formaliseReceipt(
       };
     }
     if (plan.move) {
-      const moved = await moveReceipts(sb, input.companyId, [item], input.accountCode);
+      const moved = await moveReceipts(sb, input.companyId, [item], input.accountCode, input.rebankTx);
       if (!moved.ok) return { ok: false, status: 'load_failed', reason: moved.reason };
       const out = moved.results.at(0);
       if (!out || out.status !== 'moved') {
@@ -489,6 +493,7 @@ export async function followPaymentEdit(
   if (made.status !== 'FORMAL' && (r.method ?? '') === (p.next.method ?? '') && r.channel_account_code) {
     const f = await formaliseReceipt(sb, {
       companyId: p.companyId, companyCode, receiptId: made.id, accountCode: r.channel_account_code, actor: p.actor,
+      rebankTx: null, // no env on the payment-edit path yet: a move here is still two-step (tasks/TODO.md)
     });
     if (f.ok) to = f.orNumber;
     // eslint-disable-next-line no-console
@@ -597,7 +602,7 @@ export async function formaliseReceiptsForSettlement(
     const r = data as { id: number; status: string } | null;
     if (!r) { out.push({ paymentId: p.id, outcome: 'no_receipt' }); continue; }
     if (r.status === 'FORMAL') { out.push({ paymentId: p.id, outcome: 'already_formal' }); continue; }
-    const f = await formaliseReceipt(sb, { companyId, companyCode, receiptId: r.id, accountCode: bankAccountCode, actor });
+    const f = await formaliseReceipt(sb, { companyId, companyCode, receiptId: r.id, accountCode: bankAccountCode, actor, rebankTx: null }); // card money: never a transfer, never moves
     out.push({ paymentId: p.id, outcome: f.ok ? 'formalised' : f.status });
   }
   return out;

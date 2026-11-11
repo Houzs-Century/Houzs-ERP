@@ -9,7 +9,7 @@
    the two drifted and the phone (scoped by the trip for DP / Service Case legs,
    by the DO crew for orders) showed different people the same stop. */
 import { normalizePhone } from '../shared/phone';
-import { scopeToCompanyId, scopeToCompanyIdOrOpen } from './companyScope';
+import { scopeToAllowedCompanies, scopeToCompanyId, scopeToCompanyIdOrOpen, type CompanyScopeCtx } from './companyScope';
 import { resolveCrewSeats } from './crew-seats';
 import { ASSR_LEG_BY_STOP } from './assr-board-scope';
 
@@ -30,6 +30,21 @@ export async function latestLiveDoIdForSo(sb: Sb, companyId: number | null, soDo
   const { data, error } = await scopeToCompanyIdOrOpen(q, companyId);
   if (error) throw new Error(error.message);
   return ((data ?? []) as Array<{ id: string }>)[0]?.id ?? null;
+}
+
+/** A sales order's OWN company, looked up within the caller's granted companies
+ *  (never wider), or null when it is not one of them. Delivery Planning lists every
+ *  granted company's orders, so a crew write keyed on the ACTIVE company missed a
+ *  2990 order's DO while the caller was switched to Houzs and answered "Create a
+ *  delivery order first" for an order that has one (2026-11-10). */
+export async function soCompanyWithinGrants(c: CompanyScopeCtx, soDocNo: string): Promise<number | null> {
+  const sb = c.get('supabase') as Sb;
+  const { data, error } = await scopeToAllowedCompanies(
+    sb.from('mfg_sales_orders').select('company_id').eq('doc_no', soDocNo), c,
+  ).maybeSingle();
+  if (error) throw new Error(error.message);
+  const id = Number((data as { company_id?: number | null } | null)?.company_id);
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 /** The trip a DO's newest stop rides, or null. */

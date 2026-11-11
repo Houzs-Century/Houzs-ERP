@@ -225,6 +225,42 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
  * can say WHICH document's file it was — the bundle prints a voucher's own
  * files unlabelled and the bills it pays under their invoice number.
  */
+export type DocAttachmentRef = { key: string; fileName: string; mime: string };
+
+/** The index half of loadDocAttachments: which files, in sort order, named
+ *  under `label` — no bytes yet, so a caller can fetch many docs' bytes in one
+ *  bounded wave (pv-files.ts print bundle). */
+export async function listDocAttachmentRefs(
+  c: any,
+  spec: Pick<DocFilesSpec, 'table' | 'fkColumn'>,
+  docId: string,
+  label: string,
+): Promise<{ refs: DocAttachmentRef[] } | { error: string }> {
+  const sb = c.get('supabase');
+  const { data: fileRows, error: listErr } = await scopeToCompany(
+    sb.from(spec.table).select('file_key, file_name, mime, sort_no').eq(spec.fkColumn, docId), c,
+  ).order('sort_no');
+  if (listErr) return { error: listErr.message };
+  return {
+    refs: ((fileRows ?? []) as Row[]).map((row) => ({
+      key: String(row.file_key),
+      fileName: label ? `${label} · ${String(row.file_name)}` : String(row.file_name),
+      mime: String(row.mime),
+    })),
+  };
+}
+
+/** The bytes half: one R2 read. A gone object becomes a notice entry — the
+ *  index said it existed, so paper must say it did not print. */
+export async function fetchDocAttachment(bucket: Pick<Bucket, 'get'>, ref: DocAttachmentRef): Promise<PdfAttachment> {
+  const obj = await bucket.get(ref.key);
+  if (!obj) return { fileName: `${ref.fileName} (stored file missing)`, mime: 'application/x-missing', bytes: new ArrayBuffer(0) };
+  const bytes: ArrayBuffer = typeof obj.arrayBuffer === 'function'
+    ? await obj.arrayBuffer()
+    : await new Response(obj.body).arrayBuffer();
+  return { fileName: ref.fileName, mime: ref.mime, bytes };
+}
+
 export async function loadDocAttachments(
   c: any,
   bucket: Pick<Bucket, 'get'>,
@@ -232,23 +268,9 @@ export async function loadDocAttachments(
   docId: string,
   label = '',
 ): Promise<{ files: PdfAttachment[] } | { error: string }> {
-  const sb = c.get('supabase');
-  const { data: fileRows, error: listErr } = await scopeToCompany(
-    sb.from(spec.table).select('file_key, file_name, mime, sort_no').eq(spec.fkColumn, docId), c,
-  ).order('sort_no');
-  if (listErr) return { error: listErr.message };
+  const listed = await listDocAttachmentRefs(c, spec, docId, label);
+  if ('error' in listed) return listed;
   const files: PdfAttachment[] = [];
-  for (const row of (fileRows ?? []) as Row[]) {
-    const name = label ? `${label} · ${String(row.file_name)}` : String(row.file_name);
-    const obj = await bucket.get(String(row.file_key));
-    if (!obj) {
-      files.push({ fileName: `${name} (stored file missing)`, mime: 'application/x-missing', bytes: new ArrayBuffer(0) });
-      continue;
-    }
-    const bytes: ArrayBuffer = typeof obj.arrayBuffer === 'function'
-      ? await obj.arrayBuffer()
-      : await new Response(obj.body).arrayBuffer();
-    files.push({ fileName: name, mime: String(row.mime), bytes });
-  }
+  for (const ref of listed.refs) files.push(await fetchDocAttachment(bucket, ref));
   return { files };
 }

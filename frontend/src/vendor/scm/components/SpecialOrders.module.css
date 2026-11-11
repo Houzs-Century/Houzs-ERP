@@ -191,7 +191,7 @@
   padding: 0 10px;
   font-family: var(--font-sans);
   font-size: var(--fs-11);
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   background: transparent;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);

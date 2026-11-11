@@ -19,6 +19,7 @@ import {
 import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
 import { hydrateTableLayouts } from "../lib/tableLayouts";
+import { headStartFailed } from "../lib/lazyPage";
 import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
 
 /** Stage 2: store the signed staff pass beside the token when a login response
@@ -111,6 +112,27 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/* /api/auth/me started by main.tsx before React mounts, so the session check
+   overlaps the render instead of waiting for AuthProvider's first effect. Taken
+   at most once, and only while the token it was sent with is still the stored
+   one, so it can never answer for a different session. */
+let primedMe: { token: string; request: Promise<{ user: AuthUser }> } | null = null;
+
+export function primeAuthMe(): void {
+  const token = tokenStore.get();
+  if (!token || primedMe) return;
+  const request = api.get<{ user: AuthUser }>("/api/auth/me");
+  // fetchMe owns the outcome; this only stops an unconsumed rejection surfacing.
+  request.catch(headStartFailed);
+  primedMe = { token, request };
+}
+
+function takePrimedMe(): Promise<{ user: AuthUser }> | null {
+  const primed = primedMe;
+  primedMe = null;
+  return primed && primed.token === tokenStore.get() ? primed.request : null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -126,7 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // it still fails, keep the token so a later reload re-validates in place.
     for (let attempt = 0; ; attempt++) {
       try {
-        const res = await api.get<{ user: AuthUser }>("/api/auth/me");
+        const res = await ((attempt === 0 ? takePrimedMe() : null) ?? api.get<{ user: AuthUser }>("/api/auth/me"));
         bindBrowserStorageIdentity(res.user.id);
         setState((prev) => ({ ...prev, user: res.user, loading: false }));
         return;

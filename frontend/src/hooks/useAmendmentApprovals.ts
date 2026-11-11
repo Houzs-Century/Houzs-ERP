@@ -17,10 +17,10 @@
 // never renders. A client-side count would need the whole list plus a copy of
 // the lane→permission table, and that copy is exactly the thing that drifts.
 //
-// FRESHNESS. 60s poll, a refetch when the tab regains focus, and explicit
-// invalidation from the approve / reject paths (both amendment query modules
-// call it) so the number drops the moment you sign rather than up to a minute
-// later — the "审批后就根据目前需要的单号改变" half of the ask.
+// FRESHNESS. One combined read every 60s while the tab is visible (and once on
+// return to it), plus explicit invalidation from the approve / reject paths
+// (both amendment query modules call it), so the number drops the moment you
+// sign rather than up to a minute later.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { useCallback } from "react";
@@ -28,6 +28,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useItSupportConnected } from "./useItSupportConnected";
+import { useVisiblePoll } from "../lib/visiblePoll";
 
 /** Shared keys so every reader hits one fetch, and any writer can invalidate. */
 export const AMENDMENT_APPROVALS_KEY = ["scm", "amendment-approvals"] as const;
@@ -79,29 +80,60 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "finance-todo": "waiting on you",
 };
 
+/** How often the sidebar counts are re-read while the tab is visible. */
+export const BADGE_POLL_MS = 60_000;
+/** The combined read — GET /api/badge-counts (backend routes/badgeCounts.ts). */
+export const BADGE_COUNTS_KEY = ["badge-counts"] as const;
+
+/** Each source's own key and endpoint. The key is what writers invalidate. */
+const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: string }> = {
+  "amendment-approvals": { key: AMENDMENT_APPROVALS_KEY, path: "/api/scm/so-amendments/pending-count" },
+  "po-amendment-approvals": { key: PO_AMENDMENT_APPROVALS_KEY, path: "/api/scm/po-amendments/pending-count" },
+  "payment-backdate-approvals": {
+    key: PAYMENT_BACKDATE_APPROVALS_KEY,
+    path: "/api/scm/payment-backdate-requests/pending-count",
+  },
+  "payment-requests-waiting": { key: PAYMENT_REQUESTS_WAITING_KEY, path: PAYMENT_REQUESTS_WAITING_PATH },
+  "it-support-replies": { key: IT_SUPPORT_UNREAD_KEY, path: IT_SUPPORT_UNREAD_PATH },
+  "fair-links-to-settle": { key: FAIR_LINKS_TO_SETTLE_KEY, path: FAIR_LINKS_TO_SETTLE_PATH },
+  "product-request-approvals": { key: PRODUCT_REQUEST_APPROVALS_KEY, path: "/api/scm/product-requests/pending-count" },
+  "finance-todo": { key: FINANCE_TODO_COUNT_KEY, path: FINANCE_TODO_COUNT_PATH },
+};
+
+/** Sidebar order; also the order of the combined request's `sources`. */
+const SOURCE_ORDER = Object.keys(SOURCES) as ApprovalBadgeSource[];
+
+interface BadgeCountsResponse {
+  counts?: Partial<Record<ApprovalBadgeSource, number | null>>;
+}
+
 /**
- * One poll per source. Returns 0 while loading and 0 on any failure — a
- * decoration on the chrome must never become an error state, and a badge
+ * One count, under its own key. Returns 0 while loading and 0 on any failure —
+ * a decoration on the chrome must never become an error state, and a badge
  * showing a stale-but-plausible number is worse than no badge.
+ *
+ * `pollMs`: this key's own visible-only poll, or `false` when the sidebar's
+ * combined read keeps it fresh. Either way the key stays a live query, so a
+ * writer that invalidates it re-reads just this count at once.
  */
 function usePendingCount(
-  queryKey: readonly string[],
-  path: string,
+  source: ApprovalBadgeSource,
   enabled: boolean,
+  pollMs: number | false,
   /** A page that reminds about the count reads it fresh on arrival (0 = on every mount). */
-  staleTime = 60_000,
+  staleTime: number = 2 * BADGE_POLL_MS,
 ): number {
+  const { key, path } = SOURCES[source];
   const { data } = useQuery({
-    queryKey,
+    queryKey: key,
     queryFn: () => api.get<PendingCountResponse>(path),
     enabled,
     staleTime,
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: true,
     // Silent by design: a failed poll leaves `data` undefined, which reads as
     // "no badge", not "0 waiting". The sidebar says nothing rather than lying.
     retry: false,
   });
+  useVisiblePoll(key, pollMs, enabled);
   const n = Number(data?.count);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
@@ -111,50 +143,101 @@ function usePendingCount(
  * name it declares. Returned as a map rather than two numbers because the
  * sidebar renders from a static tree: the entry says WHICH count it wants, and
  * the renderer does not need to know how many sources exist.
+ *
+ * ONE REQUEST A MINUTE (2026-11-10). Every count used to poll its own endpoint
+ * every minute from every open page. Now one combined read
+ * (GET /api/badge-counts) answers them all, while the tab is visible, and
+ * writes each answer into that count's own key. The per-count queries wait
+ * for that first answer, so a page load costs one request, not eight.
+ *
+ * Correctness is unchanged: the server runs each count through its own
+ * endpoint and gates, and a writer invalidating a count's key still re-reads
+ * that count alone the moment it changes. If the combined read fails (a
+ * backend that does not have it yet), each count falls back to its own minute
+ * poll — the old behaviour.
  */
 export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
   const { user, can } = useAuth();
+  const qc = useQueryClient();
   const enabled = !!user?.id;
   const itConnected = useItSupportConnected();
-  return {
-    "amendment-approvals": usePendingCount(
-      AMENDMENT_APPROVALS_KEY,
-      "/api/scm/so-amendments/pending-count",
-      enabled,
-    ),
-    "po-amendment-approvals": usePendingCount(
-      PO_AMENDMENT_APPROVALS_KEY,
-      "/api/scm/po-amendments/pending-count",
-      enabled,
-    ),
+
+  /* Who is polled for what. Each gate is the one the count had on its own. */
+  const wanted: Record<ApprovalBadgeSource, boolean> = {
+    "amendment-approvals": enabled,
+    "po-amendment-approvals": enabled,
     /* Only an admin can have a non-zero count, so nobody else is polled. */
-    "payment-backdate-approvals": usePendingCount(
-      PAYMENT_BACKDATE_APPROVALS_KEY,
-      "/api/scm/payment-backdate-requests/pending-count",
+    "payment-backdate-approvals":
       enabled && (can("scm.payment.backdate") || can("scm.payment.backdate.approve")),
-    ),
     /* Finance answers requests; nobody else is polled (the server says 0 to them anyway). */
-    "payment-requests-waiting": usePendingCount(
-      PAYMENT_REQUESTS_WAITING_KEY,
-      PAYMENT_REQUESTS_WAITING_PATH,
-      enabled && can("scm.payment_voucher.create"),
-    ),
+    "payment-requests-waiting": enabled && can("scm.payment_voucher.create"),
     /* Everyone reports to IT; nobody is polled where the hub is not connected. */
-    "it-support-replies": usePendingCount(IT_SUPPORT_UNREAD_KEY, IT_SUPPORT_UNREAD_PATH, enabled && itConnected),
+    "it-support-replies": enabled && itConnected,
     /* SCM staff only — the same permission the entry asks for. The count is the
        page's own list, company-scoped by the server. */
-    "fair-links-to-settle": usePendingCount(FAIR_LINKS_TO_SETTLE_KEY, FAIR_LINKS_TO_SETTLE_PATH, enabled && can("scm.access")),
-    "product-request-approvals": usePendingCount(
-      PRODUCT_REQUEST_APPROVALS_KEY,
-      "/api/scm/product-requests/pending-count",
-      enabled && can("scm.product_request.approve"),
-    ),
+    "fair-links-to-settle": enabled && can("scm.access"),
+    "product-request-approvals": enabled && can("scm.product_request.approve"),
     /* Finance only — the people who work its To do. */
-    "finance-todo": usePendingCount(
-      FINANCE_TODO_COUNT_KEY,
-      FINANCE_TODO_COUNT_PATH,
-      enabled && (can("scm.payment_voucher.create") || can("scm.payment_voucher.post")),
+    "finance-todo": enabled && (can("scm.payment_voucher.create") || can("scm.payment_voucher.post")),
+  };
+  const sources = SOURCE_ORDER.filter((s) => wanted[s]);
+  const sourcesParam = sources.join(",");
+  const batchKey = [...BADGE_COUNTS_KEY, sourcesParam];
+
+  const batch = useQuery({
+    queryKey: batchKey,
+    queryFn: async () => {
+      const startedAt = Date.now();
+      const res = await api.get<BadgeCountsResponse>(`/api/badge-counts?sources=${sourcesParam}`);
+      for (const s of sources) {
+        const n = res.counts?.[s];
+        if (typeof n !== "number") continue; // that count failed: keep what is shown
+        /* A count re-read on its own after this request left (a writer's
+           invalidation) is newer than this answer; do not put the old number back. */
+        const own = qc.getQueryState(SOURCES[s].key);
+        if (own && own.dataUpdatedAt > startedAt) continue;
+        qc.setQueryData(SOURCES[s].key, { count: n });
+      }
+      return res;
+    },
+    enabled: sources.length > 0,
+    staleTime: BADGE_POLL_MS,
+    retry: false,
+  });
+  useVisiblePoll(batchKey, BADGE_POLL_MS, sources.length > 0);
+
+  const batchSettled = batch.data !== undefined || batch.isError;
+  const ownPoll = batch.isError ? BADGE_POLL_MS : false;
+
+  return {
+    "amendment-approvals": usePendingCount("amendment-approvals", wanted["amendment-approvals"] && batchSettled, ownPoll),
+    "po-amendment-approvals": usePendingCount(
+      "po-amendment-approvals",
+      wanted["po-amendment-approvals"] && batchSettled,
+      ownPoll,
     ),
+    "payment-backdate-approvals": usePendingCount(
+      "payment-backdate-approvals",
+      wanted["payment-backdate-approvals"] && batchSettled,
+      ownPoll,
+    ),
+    "payment-requests-waiting": usePendingCount(
+      "payment-requests-waiting",
+      wanted["payment-requests-waiting"] && batchSettled,
+      ownPoll,
+    ),
+    "it-support-replies": usePendingCount("it-support-replies", wanted["it-support-replies"] && batchSettled, ownPoll),
+    "fair-links-to-settle": usePendingCount(
+      "fair-links-to-settle",
+      wanted["fair-links-to-settle"] && batchSettled,
+      ownPoll,
+    ),
+    "product-request-approvals": usePendingCount(
+      "product-request-approvals",
+      wanted["product-request-approvals"] && batchSettled,
+      ownPoll,
+    ),
+    "finance-todo": usePendingCount("finance-todo", wanted["finance-todo"] && batchSettled, ownPoll),
   };
 }
 
@@ -162,7 +245,7 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
 export function useItSupportUnread(): number {
   const { user } = useAuth();
   const connected = useItSupportConnected();
-  return usePendingCount(IT_SUPPORT_UNREAD_KEY, IT_SUPPORT_UNREAD_PATH, !!user?.id && connected);
+  return usePendingCount("it-support-replies", !!user?.id && connected, BADGE_POLL_MS);
 }
 
 /** Re-read the IT Support count now: a request was just opened, which marks it seen on the hub. */
@@ -176,7 +259,8 @@ export function useRefreshItSupportUnread(): () => void {
     here moves the badge too. 0 for anyone but Finance. */
 export function usePaymentRequestsWaiting(): number {
   const { user, can } = useAuth();
-  return usePendingCount(PAYMENT_REQUESTS_WAITING_KEY, PAYMENT_REQUESTS_WAITING_PATH, !!user?.id && can("scm.payment_voucher.create"), 0);
+  /* No poll of its own: the sidebar beside this page keeps the key fresh. */
+  return usePendingCount("payment-requests-waiting", !!user?.id && can("scm.payment_voucher.create"), false, 0);
 }
 
 /**

@@ -1293,14 +1293,19 @@ suppliers.get('/:id/bindings/:bindingId/price-changes', listBindingPriceChangesH
 export const listSupplierPriceHistoryHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data, error } = await c.get('supabase')
+  /* PAGED: `.limit(5000)` was still cut at PostgREST's 1,000 rows, so a
+     supplier with many products x dated prices lost rows and a PO line could be
+     priced from an older (or no) cost row. */
+  const { data, error, truncated } = await paginateAll((from: number, to: number) => c.get('supabase')
     .from('supplier_binding_price_history')
     .select('item_code, effective_from, unit_price_sen, price_matrix, created_at')
     .eq('company_id', co.companyId)
     .eq('supplier_id', c.req.param('id'))
     .eq('material_kind', 'mfg_product')
-    .limit(5000);
+    .order('id')
+    .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (truncated) return c.json({ error: 'load_failed', reason: 'Too many price rows for this supplier to read in full.' }, 500);
   return c.json({ history: data ?? [] });
 };
 suppliers.get('/:id/price-history', listSupplierPriceHistoryHandler);

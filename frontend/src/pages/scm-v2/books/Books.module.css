@@ -69,7 +69,7 @@
 .toolNote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 12px; color: var(--fin-muted); }
 
 /* ── Banners and states ─────────────────────────────────────────────── */
-.problem { padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: var(--fin-late-bg); font-size: 12.5px; color: #7a2222; }
+.problem { padding: 10px 14px; border: 1px solid var(--hz-dk-err-line, #e7c9c9); border-radius: 8px; background: var(--fin-late-bg); font-size: 12.5px; color: var(--hz-dk-expired-text, #7a2222); }
 .empty { padding: 28px 14px; text-align: center; font-size: 13px; color: var(--fin-muted); }
 .skeleton { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
 .skeletonBar { height: 14px; border-radius: 4px; background: linear-gradient(90deg, var(--fin-rule-soft), var(--fin-paper), var(--fin-rule-soft)); }
@@ -198,7 +198,7 @@
 .chipX:hover { background: var(--fin-petrol-hover); }
 .switch { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: none; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap; }
 .switchTrack { position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--fin-input); transition: background 0.15s; }
-.switchKnob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 999px; background: #ffffff; transition: left 0.15s; }
+.switchKnob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 999px; background: var(--hz-c-surface); transition: left 0.15s; }
 .switchOn .switchTrack { background: var(--fin-petrol); }
 .switchOn .switchKnob { left: 14px; }
 
@@ -223,13 +223,13 @@
 .factValue { margin-top: 2px; font-size: 13px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .docLink {
   padding: 0; border: 0; background: none; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; cursor: pointer;
-  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hz-dk-ink-soft, #a9ada3);
 }
 .docLink:hover { color: var(--fin-petrol); text-decoration-color: var(--fin-petrol); }
 .note { display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; }
 .note > svg { flex: none; margin-top: 1px; }
 .noteInfo { background: var(--fin-info-bg); color: var(--fin-info-fg); }
-.noteWarn { background: var(--fin-warn-bg); color: #5a3a14; }
+.noteWarn { background: var(--fin-warn-bg); color: var(--hz-c-accent-ink); }
 .noteWarn > svg { color: var(--fin-warn-fg); }
 .hint { font-size: 12px; color: var(--fin-muted); }
 

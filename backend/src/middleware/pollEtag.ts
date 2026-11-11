@@ -4,14 +4,15 @@ import type { MiddlewareHandler } from "hono";
    pattern mounted with `app.use` in index.ts, BEFORE the routers that serve it,
    so the middleware wraps the handler. Who polls what, and how often:
      projects/:id/activity       ProjectChat 3s, MobileProjectChat 30s
-     announcements/banner        mobile popup 30s, bell + banner 180s
+     announcements/banner        pop-up, bell and phone, 180s while visible
      it-support/tickets(/:code)  ItSupport desktop + mobile, 30s / 60s
      scm/trips*                  dispatch map, 15s (DISPATCH_POLL_MS)
      scm/lorries/*               60s / 5 min
      scm/delivery-planning/changes, scm/delivery-jobs/progress   30s
      scm/delivery-jobs/stop-photos, scm/delivery-jobs/:type/:id/:leg,
      scm/delivery-planning/do/:ref/pod   crew stop screen open, 15s
-     scm/accounting/todo         finance to-do, 60s */
+     scm/accounting/todo         finance to-do, 60s
+     branding                    every page load (the chrome's company identity) */
 export const POLLED_LIST_PATHS = [
   "/api/projects/:id/activity",
   "/api/announcements/banner",
@@ -28,6 +29,7 @@ export const POLLED_LIST_PATHS = [
   "/api/scm/delivery-jobs/:sourceType/:sourceId/:leg",
   "/api/scm/delivery-planning/do/:doRef/pod",
   "/api/scm/accounting/todo",
+  "/api/branding",
 ] as const;
 
 /* `private` keeps every shared cache (Cloudflare's edge included) from storing

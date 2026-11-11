@@ -397,7 +397,7 @@ export const ConsignmentNoteDetail = () => {
             </Button>
           ) : !isEditing ? (
             <Button variant="ghost" size="md" onClick={handleCancel} disabled={updateStatus.isPending}
-              style={{ color: 'var(--c-festive-b, #B8331F)' }}>
+              style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
               <Ban {...ICON} /><span>Cancel Note</span>
             </Button>
           ) : null}
@@ -473,6 +473,7 @@ export const ConsignmentNoteDetail = () => {
                               client-side invention - a red ring and a ` *` for a field the
                               backend never asked for. */
                               variantsRequired={false}
+                              specLockedReason={null}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
                               attachOptions={null}
@@ -487,6 +488,7 @@ export const ConsignmentNoteDetail = () => {
                               onRemove={cancelAddLine}
                               canRemove={true}
                               variantsRequired={false}
+                              specLockedReason={null}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
                               attachOptions={null}

@@ -167,7 +167,7 @@ describe('the packing list sheet', () => {
       expect(draws.some((d) => d.text === head), head).toBe(true);
     }
     expect(draws.some((d) => d.text === 'HC-DO-2608-003')).toBe(true);
-    expect(draws.some((d) => d.text === 'Rack 3')).toBe(true);
+    expect(draws.some((d) => d.text === '3')).toBe(true);
   });
 
   test('says so when a stop names a delivery order this caller cannot read, instead of showing it empty', async () => {

@@ -159,6 +159,7 @@ import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
+import { isTripLocationPing } from "./lib/tripLocation";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { venturePortalKick } from "./lib/venture-portal-kick";
 import { forgetLiveMrpOnWrite } from "./lib/live-mrp-memo";
@@ -955,7 +956,15 @@ scm.route("/threepl-do-charges", threeplDoCharges);
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
 scm.use("/driver-leave/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/driver-leave", driverLeave);
-scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
+// writeBypass: a driver's GPS ping (POST /trips/:id/location) only. A Driver /
+// Helper holds view, not edit, so every ping was refused; the handler admits a
+// bypassed caller only for a trip they are crewed on (lib/tripLocation.ts).
+scm.use(
+  "/trips/*",
+  scmAreaGuard("scm.transportation.drivers", {
+    writeBypass: (c) => isTripLocationPing(c.req.method, c.req.path),
+  }),
+);
 /* Two routers on one prefix, like /delivery-orders-mfg above. The packing
    list's public scan-token mint is a NEW FILE so the large trips router does
    not grow; '/:id/scan-token' is two segments and cannot shadow '/packing'. */

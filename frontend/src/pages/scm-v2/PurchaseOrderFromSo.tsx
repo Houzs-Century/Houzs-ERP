@@ -335,7 +335,7 @@ export const PurchaseOrderFromSo = () => {
       accessor: (r) =>
         r.mainSupplierCode
           ? <span>{r.mainSupplierCode}{r.mainSupplierName ? ` · ${r.mainSupplierName}` : ''}</span>
-          : <span className={styles.muted} style={{ color: 'var(--c-festive-b, #B8331F)' }}>— none —</span>,
+          : <span className={styles.muted} style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>— none —</span>,
       searchValue: (r) => `${r.mainSupplierCode ?? ''} ${r.mainSupplierName ?? ''}`.trim(),
       groupValue: (r) => r.mainSupplierName ?? r.mainSupplierCode ?? '(none)',
     },

@@ -110,7 +110,8 @@ describe('the status words and tones', () => {
     expect(noteTag('DRAFT')).toEqual({ text: 'Draft', tone: 'warn' });
     expect(noteTag('POSTED')).toEqual({ text: 'Posted', tone: 'calm' });
     expect(debtorTag(false)).toEqual({ text: 'Inactive', tone: 'late' });
-    expect(openRowStyle(true)).toEqual({ background: '#fcf7ec' });
+    // The sand hex in light mode; a dark-only variable carries the dark tint.
+    expect(openRowStyle(true)).toEqual({ background: 'var(--hz-dk-warning-bg, #fcf7ec)' });
     expect(openRowStyle(false)).toBeUndefined();
   });
 });

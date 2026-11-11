@@ -38,7 +38,7 @@ vi.mock("../../vendor/scm/lib/suppliers-queries", async (importOriginal) => ({
     isPlaceholderData: false,
     error: null,
   }),
-  useEnrichedPoListRows: (rows: unknown[]) => rows,
+  useEnrichedPoListRows: (rows: unknown[]) => ({ rows, mrp: { meta: null, refresh: () => {}, refreshing: false } }),
   usePurchaseOrderDetail: () => ({ data: undefined, isLoading: false, error: null }),
   fetchPurchaseOrderDetail: async (id: string) => ({
     purchaseOrder: h.rows.find((r) => r.id === id),

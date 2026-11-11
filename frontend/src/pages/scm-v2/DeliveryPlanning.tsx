@@ -39,7 +39,7 @@ import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFields
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
-import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
+import { useBoardRefresh } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal, SKIP_LABEL, failedNote, sendInChunks, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import { phoneKey } from '../../vendor/scm/lib/driver-info-send';
@@ -56,13 +56,14 @@ import {
 import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
-import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
+import { useBandedBoard, useBoardCounts, sumDelivered } from '../../vendor/scm/lib/delivery-board-bands';
+import { BoardLoadStatus, stillLoadingMessage } from '../../vendor/scm/components/BoardLoadStatus';
+import { useDeliveryRowOrder, useSetRowOrder, orderComparator, mergeShownOrder } from '../../vendor/scm/lib/delivery-row-order';
 import { compareByDeliverySlot } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
 import {
-  useDeliveryPlanning,
   useConvertSosToDo,
   useCancelDpOrder,
   useScheduleDelivery,
@@ -268,17 +269,20 @@ export const DeliveryPlanning = () => {
      click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
      locally it is instant and the region chip no longer triggers a load. */
   /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
-     every edit - 2026-10-26); All and Delivered still read every row. */
-  // Others' changes show within 30 s, only the changed orders re-read (board-change-poll.ts).
-  useBoardChangePoll();
+     every edit - 2026-10-26). Rows arrive in date bands, within 15 days of today
+     first, the rest in the background; counts come first (delivery-board-bands.ts). */
   const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
-  const { data, isLoading: firstLoad, isPlaceholderData, error } = useDeliveryPlanning({ region: 'ALL', state: needsDelivered ? 'ALL' : 'OPEN' });
-  const isLoading = firstLoad || (needsDelivered && isPlaceholderData);
+  // Others' changes within 30 s; every band re-read every 5 min and on the triggers in board-change-poll.ts.
+  const boardRefresh = useBoardRefresh({ changeFeed: true, countsState: needsDelivered ? 'ALL' : 'OPEN' });
+  const bands = useBandedBoard({ state: needsDelivered ? 'ALL' : 'OPEN', first: 1 });
+  const serverCounts = useBoardCounts(true).data?.counts_by_region;
+  const isLoading = bands.firstLoading;
+  const error = bands.parts.length === 0 && bands.failed ? bands.failed.error : null;
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
      returned the list yet. */
-  const regionTabs = useMemo(() => regionTabsFrom(data?.regions), [data?.regions]);
+  const regionTabs = useMemo(() => regionTabsFrom(bands.regions), [bands.regions]);
   const activeRegionLabel = regionTabs.find((r) => r.key === activeRegion)?.label ?? 'All';
 
   const setState = (s: string) => {
@@ -303,7 +307,7 @@ export const DeliveryPlanning = () => {
   /* Every fetched order (all regions). The active region chip filters this
      locally; valid region keys come from the chip list (an unknown/stale key is
      a defensive no-op, never an empty board). */
-  const fetchedOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
+  const fetchedOrders = bands.orders;
   const regionKeys = useMemo(() => new Set(regionTabs.map((r) => r.key)), [regionTabs]);
   const allOrders = useMemo<PlanningOrder[]>(
     () => filterOrdersByRegion(fetchedOrders, activeRegion, regionKeys),
@@ -312,12 +316,16 @@ export const DeliveryPlanning = () => {
   /* State-tab badges over the region-filtered set, so they reflect the active
      region exactly as the server's region-scoped counts did. */
   const counts = useMemo<PlanningCounts>(() => {
+    // Until every band is in, the server's counts (every order, counted before the rows).
+    const server = serverCounts?.[regionKeys.has(activeRegion) ? activeRegion : 'ALL'];
+    if (!bands.complete && server) return server;
     const c = planningCountsFrom(allOrders);
-    if (!data?.delivered_by_region) return c;
-    // OPEN fetch: Delivered rows were left out, their per-region count came along.
-    const delivered = activeRegion === 'ALL' ? data.counts.DELIVERED : (data.delivered_by_region[activeRegion] ?? 0);
+    if (needsDelivered) return c;
+    // OPEN bands: Delivered rows were left out, each band counted its own.
+    const d = sumDelivered(bands.parts);
+    const delivered = activeRegion === 'ALL' ? d.total : (d.byRegion[activeRegion] ?? 0);
     return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
-  }, [allOrders, data, activeRegion]);
+  }, [allOrders, serverCounts, bands.complete, bands.parts, activeRegion, regionKeys, needsDelivered]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all
@@ -466,7 +474,7 @@ export const DeliveryPlanning = () => {
                          the viewport and scroll, so the bottom entries (Postage / Delivery
                          Completed) can't fall off-screen (owner 2026-10-23). */
                       maxHeight: '70vh', overflowY: 'auto',
-                      background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                      background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                       boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                     }}
                   >
@@ -498,7 +506,7 @@ export const DeliveryPlanning = () => {
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                             <MessageSquare size={14} strokeWidth={1.75} /> {label}
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
                         </button>
                       );
                       return (
@@ -522,7 +530,7 @@ export const DeliveryPlanning = () => {
                             <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                               <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
                             </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Fill the customer's Connect details from the order — no message sent</span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Fill the customer's Connect details from the order — no message sent</span>
                           </button>
                           {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
                               fold under one entry, opened on demand. */}
@@ -539,7 +547,7 @@ export const DeliveryPlanning = () => {
                               <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
                               <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
                             </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
                           </button>
                           {oneTimeOpen && ([
                             ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
@@ -573,18 +581,19 @@ export const DeliveryPlanning = () => {
         }
       />
 
+      <BoardLoadStatus updatedAt={bands.updatedAt} bands={bands} onRefresh={boardRefresh.refreshNow} />
       <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={allOrders}
+        emptyMessage={stillLoadingMessage(bands, 'No orders need delivering in this view.')}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         onApplyLayoutPreset={(id) => {
           const region = LAYOUT_PRESET_REGION[id];
           if (region && regionKeys.has(region)) setRegion(region);
         }}
-        initialRowLimit={200}
         defaultSort={orderSort}
-        onRowReorder={(keys) => setRowOrder.mutate(keys)}
+        onRowReorder={(keys) => setRowOrder.mutate(mergeShownOrder(rowOrder ?? [], keys, new Set(fetchedOrders.map(rowIdOf))))}
         counts={counts}
         regionTabs={regionTabs}
         activeRegion={activeRegion}
@@ -638,7 +647,7 @@ export const DeliveryPlanning = () => {
                     /* Short today, but cap + scroll so it can't fall off-screen either
                        if more bulk actions are added (twin of the Send Message menu). */
                     maxHeight: '70vh', overflowY: 'auto',
-                    background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                    background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                     boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                   }}
                 >

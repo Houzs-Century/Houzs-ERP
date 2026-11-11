@@ -612,7 +612,7 @@ export const ChartOfAccounts = () => {
      shadow instead of a border — a border on the <tr> does not travel with
      sticky cells, the shadow does. */
   const stickyTh = {
-    position: 'sticky' as const, top: 0, zIndex: 5, background: '#f4f6f3', boxShadow: 'inset 0 -1px #e3e6e0',
+    position: 'sticky' as const, top: 0, zIndex: 5, background: 'var(--hz-c-surface-2)', boxShadow: 'inset 0 -1px #e3e6e0',
   };
 
   return (

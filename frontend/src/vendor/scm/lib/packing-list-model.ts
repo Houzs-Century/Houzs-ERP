@@ -28,6 +28,7 @@
    ---------------------------------------------------------------------------- */
 
 import type { PackingStop } from './packing-list-queries';
+import { shortRackLabel } from './rack-label';
 
 /* ── 1. Loading order ─────────────────────────────────────────────────────── */
 
@@ -136,8 +137,9 @@ export function compareRackLabels(a: string, b: string): number {
 }
 
 /**
- * "Rack 3, 4" — dedupe, numeric sort, print the word once. Empty string when
- * nothing resolved, so the caller prints a dash instead of "Rack".
+ * "3, 4" — dedupe, numeric sort, the label without the word "Rack" (the column
+ * header says it; owner 2026-11-10). Empty string when nothing resolved, so the
+ * caller prints a dash.
  *
  * ONE RACK PER DELIVERY-ORDER LINE is all Houzs stores (`rack_id`, mig 0118).
  * Hookka can print per PIECE ("HB: Rack 19 / Divan: Rack 19, 20") because its
@@ -152,8 +154,7 @@ export function formatRacksCompact(labels: readonly (string | null | undefined)[
   }
   if (seen.size === 0) return '';
   const sorted = [...seen].sort(compareRackLabels);
-  const stripped = sorted.map((s) => s.replace(/^rack\s*/i, '').trim() || s);
-  return `Rack ${stripped.join(', ')}`;
+  return sorted.map(shortRackLabel).join(', ');
 }
 
 /* ── 4. Volume ────────────────────────────────────────────────────────────── */
