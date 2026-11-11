@@ -89,6 +89,15 @@ describe("MobileMyCaseDetail", () => {
     expect(screen.getByText(/Read-only/)).toBeTruthy();
   });
 
+  it("keeps the note box and Post button clear of the floating tab bar", async () => {
+    renderScreen();
+    const postButton = await screen.findByRole("button", { name: "Post" });
+    const scrollArea = postButton.closest<HTMLElement>(".scroll");
+    const screenRoot = postButton.closest<HTMLElement>(".hz-m");
+    expect(screenRoot?.style.position).not.toBe("fixed");
+    expect(parseInt(scrollArea?.style.paddingBottom ?? "0", 10)).toBeGreaterThanOrEqual(120);
+  });
+
   it("prints the CANONICAL stage word, not a short form of its own", async () => {
     renderScreen();
     // ASSR_STAGE_LABEL.pending_solution — the desktop detail table used to say
