@@ -198,18 +198,18 @@ describe('soConfirmProblemsForDoc', () => {
   ];
 
   it('a code held only by the OTHER company is not-catalog for this order', async () => {
-    const problems = await soConfirmProblemsForDoc(makeSb(fixtures), 'HC-SO-2607-013');
+    const problems = await soConfirmProblemsForDoc(makeSb(fixtures), 'HC-SO-2607-013', 'HOUZS');
     expect(codes(problems)).toEqual(['so_line_not_catalog']);
   });
 
   it('cancelled lines are ignored (the incomplete bedframe above never reports)', async () => {
-    const problems = await soConfirmProblemsForDoc(makeSb(fixtures), 'HC-SO-2607-013');
+    const problems = await soConfirmProblemsForDoc(makeSb(fixtures), 'HC-SO-2607-013', 'HOUZS');
     expect(problems.some((p) => p.line === 'CANCELLED-1')).toBe(false);
   });
 
   it('a same-company code passes', async () => {
     const withOwn = [...fixtures, { _table: 'mfg_products', code: 'FOREIGN-1', company_id: 1 } as Row];
-    expect(await soConfirmProblemsForDoc(makeSb(withOwn), 'HC-SO-2607-013')).toEqual([]);
+    expect(await soConfirmProblemsForDoc(makeSb(withOwn), 'HC-SO-2607-013', 'HOUZS')).toEqual([]);
   });
 
   /* ── A GATE THAT COULD NOT LOOK DOES NOT SAY "ALL CLEAR" ─────────────────
@@ -235,29 +235,29 @@ describe('soConfirmProblemsForDoc', () => {
   ];
 
   it('the clean order confirms — so the refusals below are the read, not the order', async () => {
-    expect(await soConfirmProblemsForDoc(makeSb(clean), 'HC-SO-2607-013')).toEqual([]);
+    expect(await soConfirmProblemsForDoc(makeSb(clean), 'HC-SO-2607-013', 'HOUZS')).toEqual([]);
   });
 
   it('a Sabah draft with no priced transport line is refused (owner 2026-11-11)', async () => {
     const sabah = clean.map((r) => (r._table === 'mfg_sales_orders' ? { ...r, customer_state: 'Sabah', customer_country: 'Malaysia' } : r));
-    expect(codes(await soConfirmProblemsForDoc(makeSb(sabah), 'HC-SO-2607-013'))).toEqual(['transport_fee_required']);
+    expect(codes(await soConfirmProblemsForDoc(makeSb(sabah), 'HC-SO-2607-013', 'HOUZS'))).toEqual(['transport_fee_required']);
     const zeroFee = [...sabah, {
       _table: 'mfg_sales_order_items', doc_no: 'HC-SO-2607-013', item_code: 'TRANSPORTATION CHARGES',
       item_group: 'service', description: 'TRANSPORTATION CHARGES', line_no: 2, cancelled: false, total_sen: 0,
     } as Row, { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 1 } as Row];
-    expect(codes(await soConfirmProblemsForDoc(makeSb(zeroFee), 'HC-SO-2607-013'))).toEqual(['transport_fee_required']);
+    expect(codes(await soConfirmProblemsForDoc(makeSb(zeroFee), 'HC-SO-2607-013', 'HOUZS'))).toEqual(['transport_fee_required']);
     const priced = zeroFee.map((r) => (r.item_code === 'TRANSPORTATION CHARGES' && r._table === 'mfg_sales_order_items' ? { ...r, total_sen: 30000 } : r));
-    expect(await soConfirmProblemsForDoc(makeSb(priced), 'HC-SO-2607-013')).toEqual([]);
+    expect(await soConfirmProblemsForDoc(makeSb(priced), 'HC-SO-2607-013', 'HOUZS')).toEqual([]);
   });
 
   it('an unreadable LINES read refuses instead of confirming a lineless order', async () => {
-    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_order_items']), 'HC-SO-2607-013');
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_order_items']), 'HC-SO-2607-013', 'HOUZS');
     expect(codes(problems)).toEqual(['so_confirm_check_failed']);
     expect(problems[0]!.message).toContain('connection reset');
   });
 
   it('an unreadable HEADER read refuses, and says so rather than blaming the salesperson', async () => {
-    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_orders']), 'HC-SO-2607-013');
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_orders']), 'HC-SO-2607-013', 'HOUZS');
     // It always refused (an empty header reads as "no salesperson"); what
     // changed is that it now names what actually happened.
     expect(codes(problems)).toEqual(['so_confirm_check_failed']);
@@ -265,7 +265,7 @@ describe('soConfirmProblemsForDoc', () => {
   });
 
   it('an unreadable CATALOG read refuses, and does not call every code non-catalog', async () => {
-    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_products']), 'HC-SO-2607-013');
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_products']), 'HC-SO-2607-013', 'HOUZS');
     expect(codes(problems)).toEqual(['so_confirm_check_failed']);
     expect(codes(problems)).not.toContain('so_line_not_catalog');
   });

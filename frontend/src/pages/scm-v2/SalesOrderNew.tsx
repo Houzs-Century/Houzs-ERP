@@ -104,7 +104,7 @@ import {
   cityPlaceholder, postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
-import { isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from '../../vendor/shared/so-transport-fee';
+import { companyNeedsTransportFee, isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from '../../vendor/shared/so-transport-fee';
 import {
   useSoDropdownOptions, optionsOrFallback, preferredCustomerTypeValue,
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
@@ -874,7 +874,7 @@ export const SalesOrderNew = () => {
   /* Owner 2026-11-11: a slip writes the transport fee into its total, so the scan
      never reads it as a line. Typed in the Transport fee box, it becomes the
      TRANSPORTATION CHARGES line; RM 0 cannot be confirmed for these places. */
-  const feeRegion = transportFeeRegion(state || null, country);
+  const feeRegion = companyNeedsTransportFee(branding.companyCode ?? null) ? transportFeeRegion(state || null, country) : null;
   const transportFeeLine = lines.find((l) => l.itemCode.trim() && isTransportFeeLine({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup }));
   const [transportFeeText, setTransportFeeText] = useState('');
   const setTransportFee = (text: string) => {

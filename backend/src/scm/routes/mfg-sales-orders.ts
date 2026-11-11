@@ -287,7 +287,8 @@ import {
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
-import { transportFeeProblem } from '../shared/so-transport-fee';
+import { companyNeedsTransportFee, transportFeeProblem, transportFeeRegion } from '../shared/so-transport-fee';
+import { soTransportFeeEditProblem, type SoTransportFeeChange } from '../lib/so-transport-fee-edit';
 import { companyRequiresStockLocation, soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
 import { collectSoSubmitProblems, soPaymentSubFieldGap } from '../shared/so-submit-problems';
 import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
@@ -2649,7 +2650,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const createState = (body.customerState as string | null | undefined) ?? null;
       const createCountry = typeof body.customerCountry === 'string' && body.customerCountry.trim()
         ? body.customerCountry : await deriveCountryFromState(sb, createState);
-      const feeProblem = transportFeeProblem(createState, createCountry, items.map((it) => ({
+      const feeProblem = transportFeeProblem(c.get('companyCode') ?? null, createState, createCountry, items.map((it) => ({
         itemCode: (it.itemCode as string | null | undefined) ?? null,
         description: (it.description as string | null | undefined) ?? null,
         itemGroup: (it.itemGroup as string | null | undefined) ?? null,
@@ -4949,12 +4950,16 @@ mfgSalesOrders.post('/validate', async (c) => {
       && !mixesSofaWithOtherMain(((body.origItemGroups as unknown[] | undefined) ?? []).map((g) => (typeof g === 'string' ? g : null))),
     paymentGaps,
   });
-  /* Transport fee for the far states and Singapore (owner 2026-11-11). On a
-     create, and on a scanned draft being turned into an order (confirmingDraft);
-     not on an edit of a live order, whose surfaces don't send the line prices.
-     A line posted without unitPriceSen is not judged on its amount. */
-  if (!asDraft && (!isEdit || body.confirmingDraft === true)) {
-    const feeProblem = transportFeeProblem(str(body.customerState) || null, str(body.customerCountry) || null, items.map((it) => ({
+  /* Transport fee for the far states and Singapore (owner 2026-11-11, Houzs
+     only). On a create, on a scanned draft being turned into an order
+     (confirmingDraft), and on an edit that moves the order's State (the edit
+     surfaces send origCustomerState). Taking the fee off a line is refused by
+     the line routes themselves. A line posted without unitPriceSen is not
+     judged on its amount. */
+  const stateMoved = isEdit && typeof body.origCustomerState === 'string'
+    && transportFeeRegion(body.origCustomerState || null, null) !== transportFeeRegion(str(body.customerState) || null, str(body.customerCountry) || null);
+  if (!asDraft && (!isEdit || body.confirmingDraft === true || stateMoved)) {
+    const feeProblem = transportFeeProblem(typeof companyCode === 'string' ? companyCode : null, str(body.customerState) || null, str(body.customerCountry) || null, items.map((it) => ({
       itemCode: str(it.itemCode) || null,
       description: str(it.description) || null,
       itemGroup: str(it.itemGroup) || null,
@@ -5192,7 +5197,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      (or predates) the gate, and re-gating those would strand legacy orders. */
   const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
   if (isConfirm) {
-    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo, c.get('companyCode') ?? null);
     /* ...and the fair (owner 2026-10-19): a fair or No fair — fair-binding.ts
        (Sales Attending no longer stops it, owner 2026-10-22). */
     confirmProblems.push(...await fairConfirmProblems({
@@ -5992,6 +5997,17 @@ export async function rederiveDeliveryFee(sb: any, docNo: string, c: any): Promi
   if (res === null) await recomputeTotals(sb, docNo, c);
 }
 
+/** The transport-fee rule on an edit of a live Houzs order (owner 2026-11-11):
+ *  a 422 when THIS change moves the order to a fee place without a fee, or
+ *  takes the fee off. null = the edit may proceed. */
+async function transportFeeEditRefusal(c: any, sb: any, docNo: string, change: SoTransportFeeChange): Promise<Response | null> {
+  const companyCode = (c.get('companyCode') as string | null | undefined) ?? null;
+  if (!companyNeedsTransportFee(companyCode)) return null;
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+  const problem = await soTransportFeeEditProblem(sb, { docNo, companyId: co.companyId, companyCode, change });
+  return problem ? c.json(validationFailedBody([problem]), 422) : null;
+}
+
 export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let body: Record<string, unknown>;
@@ -6326,6 +6342,13 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       sb,
       body['customerState'] as string | null,
     );
+    /* A State moved to Sabah & co. needs a fee. Both edit screens write their
+       line changes before this header save, so a fee line added in the same
+       save is already on the order here. */
+    const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+      kind: 'header', state: (body['customerState'] as string | null) ?? null, country: (updates['customer_country'] as string | null) ?? null,
+    });
+    if (feeRefusal) return feeRefusal;
     /* Commander 2026-05-29 — Location follows the address. When the State
        changes and the caller didn't also send an explicit salesLocation,
        re-derive the warehouse so Location tracks the new State. An explicit
@@ -8334,6 +8357,17 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     updates['warehouse_id'] = it.warehouseId as string | null;
   }
 
+  /* Re-pricing the transport fee to RM 0, or re-coding it, takes the fee off. */
+  const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+    kind: 'line', itemId, after: {
+      itemCode: itemCodeAfter ?? null,
+      description: it.description !== undefined ? String(it.description ?? '') : prev.description,
+      itemGroup: it.itemGroup !== undefined ? String(it.itemGroup ?? '') : prev.item_group,
+      amountSen: qty * unit - discount,
+    },
+  });
+  if (feeRefusal) return feeRefusal;
+
   lap('line-checks');
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').update(updates),
@@ -8449,6 +8483,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
      afterwards the row is gone and its DtlKey with it, and an edit that does not
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'mfg_sales_order_items', itemId);
+
+  /* Deleting the only transport fee line of a Sabah & co. order takes the fee off. */
+  const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, { kind: 'line', itemId, after: null });
+  if (feeRefusal) return feeRefusal;
 
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').delete(),
@@ -11593,6 +11631,29 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
         reason: 'The Processing Date cannot be later than the Delivery Date.',
       }, 400);
     }
+  }
+
+  /* Transport fee (owner 2026-11-11, Houzs): an amendment may not move the order
+     to Sabah & co. without a fee, nor take the fee off. */
+  {
+    const stateMove = 'customerState' in headerChanges
+      ? { state: headerChanges['customerState'] ?? null, country: await deriveCountryFromState(sb, headerChanges['customerState'] ?? null) }
+      : null;
+    const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+      kind: 'amendment',
+      state: stateMove,
+      lines: (Array.isArray(body.lines) ? body.lines : []).map((l) => {
+        const t = String(l.changeType ?? '').toUpperCase();
+        return {
+          op: t === 'ADD' ? 'ADD' as const : t === 'REMOVE' ? 'REMOVE' as const : 'CHANGE' as const,
+          itemId: typeof l.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+          itemCode: typeof l.newItemCode === 'string' && l.newItemCode.trim() ? l.newItemCode.trim() : null,
+          qty: l.newQty == null ? null : Number(l.newQty),
+          unitPriceSen: l.newUnitPriceSen == null ? null : Number(l.newUnitPriceSen),
+        };
+      }),
+    });
+    if (feeRefusal) return feeRefusal;
   }
 
   /* ── Two-lane split (owner rework 2026-07-27) ─────────────────────────────

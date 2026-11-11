@@ -166,7 +166,7 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
  *  catalog read is scoped to the SO's OWN company (mfg_products.code is only
  *  unique per company); a company-less legacy header degrades to an unscoped
  *  read, matching validateItemCodes. */
-export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<SaveProblem[]> {
+export async function soConfirmProblemsForDoc(sb: any, docNo: string, companyCode: string | null): Promise<SaveProblem[]> {
   const { data: head, error: headErr } = await sb
     .from('mfg_sales_orders')
     .select('salesperson_id, agent, venue, venue_id, company_id, customer_state, customer_country')
@@ -221,7 +221,7 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
     })),
     nonCatalogCodes,
   });
-  const feeProblem = transportFeeProblem(h.customer_state ?? null, h.customer_country ?? null, lines.map((i) => ({
+  const feeProblem = transportFeeProblem(companyCode, h.customer_state ?? null, h.customer_country ?? null, lines.map((i) => ({
     itemCode: i.item_code, description: i.description, itemGroup: i.item_group, amountSen: Number(i.total_sen ?? 0),
   })));
   if (feeProblem) problems.push(feeProblem);

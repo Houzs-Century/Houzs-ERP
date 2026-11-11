@@ -65,7 +65,7 @@ import {
   postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
-import { isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from "../vendor/shared/so-transport-fee";
+import { companyNeedsTransportFee, isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from "../vendor/shared/so-transport-fee";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
@@ -1233,7 +1233,7 @@ export function MobileNewSO({
     () => (state ? countryForState(locRows, state) : null) ?? "Malaysia",
     [locRows, state],
   );
-  const feeRegion = transportFeeRegion(state || null, country);
+  const feeRegion = companyNeedsTransportFee(branding.companyCode ?? null) ? transportFeeRegion(state || null, country) : null;
   const transportFeeLine = lines.find((l) => l.itemCode.trim() && isTransportFeeLine({ itemCode: l.itemCode, description: l.name, itemGroup: l.itemGroup }));
   const setTransportFee = (price: string) => setLines((prev) => {
     const at = prev.findIndex((l) => l.key === transportFeeLine?.key);
@@ -1419,6 +1419,7 @@ export function MobileNewSO({
     customerState: state,
     customerCountry: country,
     confirmingDraft: mode === "edit-draft",
+    ...(mode === "edit" ? { origCustomerState: origState } : {}),
     processingDate: asDraftFlag ? "" : procDate,
     customerDeliveryDate: asDraftFlag ? "" : delivDate,
     fillAddressLater: false,
@@ -1436,7 +1437,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, country, mode, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, country, mode, origState, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */

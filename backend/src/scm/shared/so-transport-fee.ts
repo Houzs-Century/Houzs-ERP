@@ -49,8 +49,16 @@ export function isTransportFeeLine(l: Pick<TransportFeeLine, 'itemCode' | 'descr
   return s.includes('TRANSPORT') || s.includes('SHIPPING') || isDeliveryFeeServiceCode(l.itemCode);
 }
 
+/** Houzs only (owner 2026-11-11: 「只是 houzs 的 2990s 不需要」). `companies.code`. */
+export const TRANSPORT_FEE_COMPANY_CODES: readonly string[] = ['HOUZS'];
+
+export function companyNeedsTransportFee(companyCode: string | null): boolean {
+  return companyCode != null && TRANSPORT_FEE_COMPANY_CODES.includes(companyCode.trim().toUpperCase());
+}
+
 /** The refusal for an order to these places with no priced transport line, else null. */
-export function transportFeeProblem(state: string | null, country: string | null, lines: readonly TransportFeeLine[]): TransportFeeProblem | null {
+export function transportFeeProblem(companyCode: string | null, state: string | null, country: string | null, lines: readonly TransportFeeLine[]): TransportFeeProblem | null {
+  if (!companyNeedsTransportFee(companyCode)) return null;
   const region = transportFeeRegion(state, country);
   if (!region) return null;
   const fees = lines.filter(isTransportFeeLine);
@@ -62,4 +70,19 @@ export function transportFeeProblem(state: string | null, country: string | null
       : `Delivery to ${region} needs a transport fee above RM 0: put the amount on the transport line.`,
     field: 'Transport fee',
   };
+}
+
+export type TransportFeeFacts = { state: string | null; country: string | null; lines: readonly TransportFeeLine[] };
+
+/** An edit is refused only for what the edit itself breaks (owner 2026-11-11):
+ *  it moves the order to one of these places without a priced fee, or it takes
+ *  the fee off (deleted, RM 0, re-coded) an order that had one. An older order
+ *  there that never had a fee still saves its other changes. */
+export function transportFeeEditProblem(companyCode: string | null, before: TransportFeeFacts, after: TransportFeeFacts): TransportFeeProblem | null {
+  const problem = transportFeeProblem(companyCode, after.state, after.country, after.lines);
+  if (!problem) return null;
+  const regionBefore = transportFeeRegion(before.state, before.country);
+  const moved = regionBefore !== transportFeeRegion(after.state, after.country);
+  const hadFee = regionBefore != null && transportFeeProblem(companyCode, before.state, before.country, before.lines) === null;
+  return moved || hadFee ? problem : null;
 }
