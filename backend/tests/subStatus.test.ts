@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, beforeEach } from "vitest";
-import { transitionStage, patchAssrCase } from "../src/services/assr";
+import { transitionStage, patchAssrCase, customerPickupOwnTeamDefault } from "../src/services/assr";
 
 // Switchable sub-status (小类, Nick 2026-07-15): entering Verification /
 // Supplier seeds the first sub-state, other stages clear it, and a
@@ -99,5 +99,72 @@ describe("direct sub_status switch via PATCH", () => {
       `SELECT COUNT(*) AS n FROM assr_activity WHERE assr_id = 1 AND action = 'sub_status_change'`
     ).first<{ n: number }>();
     expect(Number(n?.n ?? 0)).toBe(0);
+  });
+});
+
+// The customer-pickup leg (collect FROM the customer) is own-team work: unless
+// ops has said a supplier collects, it must default to pickup_by='customer' so
+// it surfaces on Delivery Planning as a driver job (service-case.md). Without
+// this, a case sat on "Pending Customer Pickup" but invisible on the board.
+
+async function pickupBy(id: number): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT pickup_by FROM assr_cases WHERE id = ?`
+  ).bind(id).first<{ pickup_by: string | null }>();
+  return row?.pickup_by ?? null;
+}
+
+describe("customerPickupOwnTeamDefault (pure)", () => {
+  test("defaults to own team only on the customer-pickup leg with no owner yet", () => {
+    expect(customerPickupOwnTeamDefault("pending_customer_pickup", null)).toBe("customer");
+    expect(customerPickupOwnTeamDefault("pending_customer_pickup", "")).toBe("customer");
+    expect(customerPickupOwnTeamDefault("pending_customer_pickup", "supplier")).toBeNull();
+    expect(customerPickupOwnTeamDefault("pending_customer_pickup", "customer")).toBeNull();
+    expect(customerPickupOwnTeamDefault("pending_supplier_pickup", null)).toBeNull();
+    expect(customerPickupOwnTeamDefault(null, null)).toBeNull();
+  });
+});
+
+describe("customer-pickup leg defaults pickup_by to own team", () => {
+  test("entering Pickup / Return with no pickup owner sets pickup_by=customer", async () => {
+    await seedCase(1, "pending_solution");
+    await transitionStage(env, 1, "pending_supplier_pickup" as any, USER_ID);
+    expect(await pickupBy(1)).toBe("customer");
+  });
+
+  test("entering Pickup / Return never overrides an explicit supplier leg", async () => {
+    await seedCase(1, "pending_solution");
+    await env.DB.prepare(
+      `UPDATE assr_cases SET pickup_by = 'supplier' WHERE id = 1`
+    ).run();
+    await transitionStage(env, 1, "pending_supplier_pickup" as any, USER_ID);
+    expect(await pickupBy(1)).toBe("supplier");
+  });
+
+  test("switching the sub-status to customer pickup sets pickup_by=customer", async () => {
+    await seedCase(1, "pending_supplier_pickup");
+    await env.DB.prepare(
+      `UPDATE assr_cases SET sub_status = 'pending_supplier_pickup', pickup_by = NULL WHERE id = 1`
+    ).run();
+    await patchAssrCase(env, 1, { sub_status: "pending_customer_pickup" }, USER_ID);
+    expect(await pickupBy(1)).toBe("customer");
+  });
+
+  test("switching to customer pickup never overrides an explicit supplier leg", async () => {
+    await seedCase(1, "pending_supplier_pickup");
+    await env.DB.prepare(
+      `UPDATE assr_cases SET sub_status = 'pending_supplier_pickup', pickup_by = 'supplier' WHERE id = 1`
+    ).run();
+    await patchAssrCase(env, 1, { sub_status: "pending_customer_pickup" }, USER_ID);
+    expect(await pickupBy(1)).toBe("supplier");
+  });
+
+  test("an explicit pickup_by in the same request wins over the default", async () => {
+    await seedCase(1, "pending_supplier_pickup");
+    await env.DB.prepare(
+      `UPDATE assr_cases SET sub_status = 'pending_supplier_pickup', pickup_by = NULL WHERE id = 1`
+    ).run();
+    await patchAssrCase(env, 1, { sub_status: "pending_customer_pickup", pickup_by: "supplier" }, USER_ID);
+    expect(await pickupBy(1)).toBe("supplier");
   });
 });

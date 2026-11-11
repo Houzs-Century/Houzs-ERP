@@ -903,6 +903,21 @@ export async function getAssrDetail(env: Env, id: number) {
 
 // ── Stage transition ──────────────────────────────────────────
 
+/** The Pickup / Return stage begins on the customer-pickup leg (collect the item
+ *  FROM the customer). That leg reaches Delivery Planning and the HC Delivery sheet
+ *  only when its own-team marker `pickup_by='customer'` is set (service-case.md).
+ *  So when a case lands on that leg and nobody has yet named WHO collects, default
+ *  it to our own team, so the pickup surfaces as a driver job instead of sitting
+ *  invisible on the board. An explicit supplier / 3PL choice is never overridden. */
+export function customerPickupOwnTeamDefault(
+  newSubStatus: string | null | undefined,
+  currentPickupBy: string | null | undefined,
+): "customer" | null {
+  return newSubStatus === "pending_customer_pickup" && !String(currentPickupBy ?? "").trim()
+    ? "customer"
+    : null;
+}
+
 export async function transitionStage(
   env: Env,
   id: number,
@@ -912,10 +927,10 @@ export async function transitionStage(
   sourceChannel: string = "app",
 ): Promise<boolean> {
   const row = await env.DB.prepare(
-    `SELECT stage, stage_entered_at, stage_target_days, priority FROM assr_cases WHERE id = ?`
+    `SELECT stage, stage_entered_at, stage_target_days, priority, pickup_by FROM assr_cases WHERE id = ?`
   )
     .bind(id)
-    .first<{ stage: Stage; stage_entered_at: string | null; stage_target_days: number | null; priority: string | null }>();
+    .first<{ stage: Stage; stage_entered_at: string | null; stage_target_days: number | null; priority: string | null; pickup_by: string | null }>();
   if (!row) return false;
 
   if (!ALL_STAGES.includes(newStage)) {
@@ -953,6 +968,14 @@ export async function transitionStage(
   const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
+
+  // Landing on the customer-pickup leg with no pickup owner yet -> our own team,
+  // so the collection surfaces on Delivery Planning as a driver job. Supplier /
+  // 3PL legs already chosen are left untouched (customerPickupOwnTeamDefault).
+  if (customerPickupOwnTeamDefault(subDefault, row.pickup_by)) {
+    sets.push("pickup_by = ?");
+    binds.push("customer");
+  }
 
   // Both terminal stages stop the SLA clock (closed_at). Only a genuine
   // 'completed' stamps completion_date + feeds the satisfaction survey;
@@ -1245,6 +1268,19 @@ export async function patchAssrCase(
   if (docCompanyId != null) {
     sets.push("company_id = ?");
     binds.push(docCompanyId);
+  }
+
+  // Switching the case onto the customer-pickup leg without naming who collects
+  // defaults it to our own team, so the pickup shows up on Delivery Planning
+  // (service-case.md). Skipped when the caller set pickup_by in the same request,
+  // or a supplier / 3PL leg was already chosen (customerPickupOwnTeamDefault).
+  if (
+    "sub_status" in body &&
+    !("pickup_by" in body) &&
+    customerPickupOwnTeamDefault(body.sub_status, beforeSnapshot?.pickup_by)
+  ) {
+    sets.push("pickup_by = ?");
+    binds.push("customer");
   }
 
   // Mig 081 — when QA sets the verification outcome, server-stamp
