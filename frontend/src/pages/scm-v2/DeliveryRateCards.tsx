@@ -23,7 +23,7 @@ import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
   useReconcile, type ReconcileRow,
-  type RateArea, type RateCard, type RateRule, type RateAggregation,
+  type RateArea, type RateCard, type RateCardMeta, type RateRule, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
@@ -113,7 +113,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
         {(['cards', 'invoices', 'reconcile'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t}
             className={cn('min-h-[44px] whitespace-nowrap border-b-2 px-4 text-[14px]',
-              tab === t ? 'border-primary font-bold text-primary' : 'border-transparent font-medium text-ink-muted hover:text-ink')}>
+              tab === t ? 'border-primary font-semibold text-primary' : 'border-transparent font-medium text-ink-muted hover:text-ink')}>
             {TAB_LABEL[t]}
           </button>
         ))}
@@ -174,7 +174,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
 const NoCardYet = ({ name, onCreate }: { name: string; onCreate: () => void }) => (
   <section aria-label="No rate card yet" className={cn(CARD, 'flex flex-col items-center gap-3 px-6 py-12 text-center')}>
     <Pill tone="amber">No rate card yet</Pill>
-    <h2 className="text-[20px] font-bold text-ink">{name}</h2>
+    <h2 className="text-[18px] font-semibold text-ink">{name}</h2>
     <p className={cn(HINT, 'max-w-[460px] text-[13px]')}>
       Nothing says what this carrier should charge, so its bills on the 3PL invoices tab cannot be checked. Create its card, then add its prices per category.
     </p>
@@ -190,7 +190,7 @@ const NoCardYet = ({ name, onCreate }: { name: string; onCreate: () => void }) =
 const SEARCH_FROM = 8;
 const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCreateCompany }: {
   cards: RateCard[];
-  companies: Array<{ id: string; name: string }>;
+  companies: RateCardMeta['companies'];
   isLoading: boolean;
   loadFailed: boolean;
   sel: Selection;
@@ -208,35 +208,40 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
   const others = cards.filter((c) => cardKind(c, listed) === 'removed' || cardKind(c, listed) === 'inactive');
   const match = (name: string) => !q.trim() || name.toLowerCase().includes(q.trim().toLowerCase());
   /* Owner 2026-11-11 「这个sidebar 也要整理」: carriers with a card first, the rest
-     below; full names (two BRIGHTSUNs read alike once cut short); a plain count
-     instead of "SET · per unit · 45 rules"; a pill only when something is off. */
+     below; full names (two BRIGHTSUNs read alike once cut short); a pill only
+     when something is off. Then 「那个 price remove 吧」 and 「3pl supplier 其实是要
+     link with 我的 other supplier」: under each carrier, the supplier it bills
+     as, not a count of prices. */
   const priced = companies.filter((co) => byCompany.has(co.id));
   const unpriced = companies.filter((co) => !byCompany.has(co.id));
   const shownPriced = priced.filter((co) => match(co.name));
   const shownUnpriced = unpriced.filter((co) => match(co.name));
 
-  const summary = (c: RateCard) => {
-    const n = c.ruleCount ?? 0;
-    return n === 0 ? 'No prices yet' : `${n} ${n === 1 ? 'price' : 'prices'}`;
-  };
+  const supplierLine = (co: RateCardMeta['companies'][number]) => (co.supplier
+    ? [co.supplier.code, co.supplier.name].filter(Boolean).join(' · ')
+    : 'No supplier linked');
+  const supplierTone = (co: RateCardMeta['companies'][number]) => (co.supplier ? 'text-ink-muted' : 'text-[#80501c]');
   const inactive = (c: RateCard) => (c.isActive ? null : <Pill tone="grey">Inactive</Pill>);
   const row = (key: string, on: boolean, name: string, sub: string | null, subTone: string, badge: ReactNode, onClick: () => void) => (
     <button key={key} type="button" onClick={onClick} aria-current={on ? 'true' : undefined}
       className={cn('flex w-full items-start gap-3 border-l-[3px] px-[15px] py-[9px] text-left',
         on ? 'border-primary bg-[color:var(--hz-dk-surface-2,#eef6f3)]' : 'border-transparent hover:bg-surface-2')}>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className={cn('break-words text-[13.5px] leading-snug', sub == null ? 'font-medium text-ink-secondary' : 'font-bold text-ink')}>{name}</span>
-        {sub != null && <span className={cn('text-[12.5px]', subTone)}>{sub}</span>}
+        <span className="break-words text-[13px] font-semibold leading-snug text-ink">{name}</span>
+        {sub != null && <span className={cn('truncate text-[12px]', subTone)} title={sub}>{sub}</span>}
       </span>
       {badge}
     </button>
   );
-  const group = (label: string) => <div className={cn(EYEBROW, 'px-[18px] pb-1.5 pt-3.5')}>{label}</div>;
+  /* A shaded band per group, as a finance table shades its head. */
+  const group = (label: string) => (
+    <div className="border-y border-border bg-surface-dim px-[18px] py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink-secondary first:border-t-0">{label}</div>
+  );
 
   return (
     <aside aria-label="Carriers" className={cn(CARD, 'w-full overflow-hidden md:w-auto md:min-w-[260px] md:flex-[0_1_320px] lg:sticky lg:top-4')}>
-      <div className="border-b border-border px-[18px] pb-3 pt-4">
-        <div className="text-[15px] font-bold text-ink">Carriers</div>
+      <div className="border-b border-border bg-surface-dim/60 px-[18px] pb-3 pt-4">
+        <div className="text-[15px] font-semibold text-ink">Carriers</div>
         <div className={cn(HINT, 'mt-0.5')}>
           {companies.length} {companies.length === 1 ? 'carrier' : 'carriers'} · {priced.length} with a card
         </div>
@@ -245,7 +250,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
             value={q} onChange={(e) => setQ(e.target.value)} />
         )}
       </div>
-      <div className="py-1.5 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
+      <div className="pb-1.5 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
         {isLoading && <p className="px-[18px] py-3 text-[13px] text-ink-muted">Loading…</p>}
         {loadFailed && <p className="px-[18px] py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The carriers did not load.</p>}
         {!isLoading && !loadFailed && companies.length === 0 && (
@@ -258,24 +263,24 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
         {shownPriced.map((co) => {
           const card = byCompany.get(co.id);
           if (!card) return null;
-          return row(co.id, sel?.kind === 'card' && sel.id === card.id, co.name, summary(card), 'text-ink-muted', inactive(card),
+          return row(co.id, sel?.kind === 'card' && sel.id === card.id, co.name, supplierLine(co), supplierTone(co), inactive(card),
             () => onSelect({ kind: 'card', id: card.id }));
         })}
         {shownUnpriced.length > 0 && group('No rate card yet')}
-        {shownUnpriced.map((co) => row(co.id, sel?.kind === 'company' && sel.id === co.id, co.name, null, '', null,
+        {shownUnpriced.map((co) => row(co.id, sel?.kind === 'company' && sel.id === co.id, co.name, supplierLine(co), supplierTone(co), null,
           () => onSelect({ kind: 'company', id: co.id })))}
         {companies.length > 0 && shownPriced.length + shownUnpriced.length === 0 && <p className="px-[18px] py-3 text-[13px] text-ink-muted">No carrier matches &ldquo;{q.trim()}&rdquo;.</p>}
         {ownFleet.length > 0 && (
           <>
             {group('Own fleet')}
-            {ownFleet.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name, summary(c), 'text-ink-muted', inactive(c), () => onSelect({ kind: 'card', id: c.id })))}
+            {ownFleet.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name, null, '', inactive(c), () => onSelect({ kind: 'card', id: c.id })))}
           </>
         )}
         {others.length > 0 && (
           <>
             {group('Needs a carrier')}
             {others.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name,
-              `${cardKind(c, listed) === 'removed' ? 'Carrier removed' : 'Carrier inactive'} · ${summary(c)}`,
+              cardKind(c, listed) === 'removed' ? 'Carrier removed' : 'Carrier inactive',
               'font-semibold text-[#80501c]', <Pill tone="amber">Fix</Pill>, () => onSelect({ kind: 'card', id: c.id })))}
           </>
         )}
@@ -331,12 +336,14 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
     <>
       {/* The card's header, sticky: which card this is, what it charges by and
           its tabs stay in view while a long tab scrolls past. */}
-      <div className={cn(CARD, 'z-10 flex flex-col gap-3 px-5 pt-4 shadow-sm md:sticky md:top-0')}>
+      <div className={cn(CARD, 'z-10 flex flex-col overflow-hidden shadow-sm md:sticky md:top-0')}>
+        {/* The title band, shaded (owner 2026-11-11: 「加一下 background colour，特别是 title」). */}
+        <div className="flex flex-col gap-3 bg-surface-dim/60 px-5 pb-3.5 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-1">
             <span className={EYEBROW}>{kind === 'own' ? 'Own fleet rate card' : 'Rate card'}</span>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="min-w-0 break-words text-[19px] font-bold leading-tight text-ink">{title}</h2>
+              <h2 className="min-w-0 break-words text-[18px] font-semibold leading-tight text-ink">{title}</h2>
               {card.isActive ? <Pill tone="green">Active</Pill> : <Pill tone="grey">Inactive</Pill>}
             </div>
             <p className="text-[13px] text-ink-muted">{settingsSentence(card)}</p>
@@ -369,7 +376,8 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
             )}
           </div>
         )}
-        <SectionTabs sections={sections} areaCount={areas.length} value={section} onChange={onSection} />
+        </div>
+        <div className="px-5"><SectionTabs sections={sections} areaCount={areas.length} value={section} onChange={onSection} /></div>
       </div>
 
       <RateCardSection card={card} rules={rules} areas={areas} areaRules={areaRules} unit={unit} sections={sections} zones={meta.data?.zones ?? []} section={section}
@@ -409,7 +417,7 @@ const RECON_COLUMNS: Column<ReconcileRow>[] = [
     render: (r) => (
       <span className="inline-flex flex-wrap items-center gap-1.5">
         {!r.matched ? <Pill tone="grey">unmatched</Pill> : r.flagged ? <Pill tone="red">mismatch</Pill> : <Pill tone="green">match</Pill>}
-        {r.matched && !r.factsComplete && <span className="text-[11px] text-ink-muted">facts partial</span>}
+        {r.matched && !r.factsComplete && <span className="text-[11.5px] text-ink-muted">facts partial</span>}
       </span>
     ),
     getValue: reconStatus,

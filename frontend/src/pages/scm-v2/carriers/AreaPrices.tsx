@@ -1,13 +1,15 @@
 // Areas, at the top of the Outstation tab (owner 2026-11-11 on the 3PL
 // quotations: 加「地区价」). An area is a name and its towns, with prices of its
-// own. They read as ONE ruled table (owner, the same day: 「做成一个table」,
-// 「别"，"」, 「放线条」, prices 「放在上面别centre」): the card's own prices first,
-// then a row per town A to Z, each area's name, prices and pencil merged down
-// across its towns. A click on a price changes or removes it; a dash, where the
-// card's own price applies, adds one. A delivery to one of the area's towns is
-// priced with these in place of the card's own; a town price on the same town
-// still adds on top.
+// own. They read as ONE finance table (owner, the same day: 「做成一个table」,
+// 「别"，"」, prices 「放在上面别centre」; then 「table 可以用 finance table」): the
+// card's own prices first, then a shaded band per area over a row per town A to
+// Z, the area's prices and pencil on its first town. A click on a price changes
+// or removes it; a dash, where the card's own price applies, adds one. A delivery
+// to one of the area's towns is priced with these in place of the card's own; a
+// town price on the same town still adds on top.
 import { useMemo, useState } from 'react';
+import { DataTable, type Column } from '../../../components/DataTable';
+import { useSmallViewport } from '../../../hooks/useSmallViewport';
 import { Pencil, Plus } from 'lucide-react';
 import {
   useAddAreaWithPrices, useDeleteRateArea, useUpdateRateArea,
@@ -19,10 +21,9 @@ import { cn } from '../../../lib/utils';
 import { centiToRM, rmToSen } from './cardSettings';
 import { areaColumns, columnHead, parseTowns, ruleAt, sortTowns, townLabel, type PriceBox } from './rateCardAreas';
 import { AMOUNT_ERROR, AddPriceCell, PriceButton } from './ruleEditors';
-import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL, T_CELL, T_HEAD } from './ui';
+import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL } from './ui';
 
-const ERR = 'text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
-const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
+const ERR = 'text-[12px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
 
 /** Name and towns, typed: used to add an area and to change one. */
 const AreaFields = ({ idPrefix, name, towns, onName, onTowns }: {
@@ -73,62 +74,20 @@ const AreaEditor = ({ cardId, area, onDone }: { cardId: string; area: RateArea; 
   );
 };
 
-/** One area's price for one column, merged down across its towns: the amount
- *  (a click changes or removes it), or a dash where the card's own price
- *  applies (a click adds one for the area). */
-const AreaPriceCell = ({ cardId, area, col, rule, rowSpan }: {
-  cardId: string; area: RateArea; col: PriceBox; rule: RateRule | null; rowSpan: number;
-}) => (
-  <td rowSpan={rowSpan} className={cn(T_CELL, 'text-right')}>
-    {rule == null
-      ? <AddPriceCell cardId={cardId} rule={{ ...col.rule, areaId: area.id }} label={col.label} scope={area.name} />
-      : <PriceButton cardId={cardId} rule={rule} name={`${col.label} for ${area.name}`} />}
-  </td>
-);
+/** One line of the Areas table: the card's own prices ("Everywhere else"), or
+ *  one town of an area. An area's prices and pencil sit on its first town. */
+interface AreaLine { key: string; group: string; area: RateArea | null; town: string; first: boolean }
 
-/** One area: a row per town, its name, prices and pencil merged down across them. */
-const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
-  cardId: string; area: RateArea; rules: readonly RateRule[]; columns: readonly PriceBox[]; editing: boolean; onEditing: (on: boolean) => void;
-}) => {
-  const towns = sortTowns(area.towns);
-  const rows = towns.length > 0 ? towns : [''];
-  const span = rows.length;
-  return (
-    <tbody aria-label={area.name}>
-      {rows.map((town, i) => (
-        <tr key={town || '-'}>
-          {i === 0 && (
-            <th scope="rowgroup" rowSpan={span} className={cn(T_CELL, 'text-left font-normal')}>
-              <span className="block text-[13px] font-bold text-ink">{area.name}</span>
-              <span className={HINT}>{townsWord(towns.length)}</span>
-            </th>
-          )}
-          <td className={cn(T_CELL, 'text-ink-secondary')}>{townLabel(town)}</td>
-          {i === 0 && columns.map((c) => (
-            <AreaPriceCell key={c.key} cardId={cardId} area={area} col={c} rule={ruleAt(rules, area.id, c.key)} rowSpan={span} />
-          ))}
-          {i === 0 && (
-            <td rowSpan={span} className={cn(T_CELL, 'w-[44px] text-center')}>
-              {!editing && (
-                <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-primary"
-                  onClick={() => onEditing(true)} aria-label={`Change ${area.name}`}>
-                  <Pencil size={14} strokeWidth={1.75} />
-                </button>
-              )}
-            </td>
-          )}
-        </tr>
-      ))}
-      {editing && (
-        <tr>
-          <td colSpan={columns.length + 3} className={cn(T_CELL, 'bg-surface-2/50 py-3')}>
-            <AreaEditor cardId={cardId} area={area} onDone={() => onEditing(false)} />
-          </td>
-        </tr>
-      )}
-    </tbody>
-  );
-};
+/** The group of the card's own prices; an area's group is its id. */
+const OWN = 'own';
+
+const areaLines = (areas: readonly RateArea[]): AreaLine[] => [
+  { key: OWN, group: OWN, area: null, town: '', first: true },
+  ...areas.flatMap((a) => {
+    const towns = sortTowns(a.towns);
+    return (towns.length > 0 ? towns : ['']).map((t, i) => ({ key: `${a.id}:${t || '-'}`, group: a.id, area: a, town: t, first: i === 0 }));
+  }),
+];
 
 /** A new area: name, towns, and a box for each price of the card's own ladder. */
 const AddArea = ({ cardId, template, onDone }: { cardId: string; template: readonly PriceBox[]; onDone: () => void }) => {
@@ -174,52 +133,83 @@ const AddArea = ({ cardId, template, onDone }: { cardId: string; template: reado
   );
 };
 
-/** The card's areas as one ruled table — the card's own prices first, then a
- *  row per town, each area's name and prices merged down across its towns —
- *  and the form for a new area when it is open. */
+/** The card's areas as one finance table — the card's own prices first, then a
+ *  band per area over a row per town, the area's prices on its first town — with
+ *  the form for an area being changed or added under it. The towns stay in
+ *  their order (a sort or funnel would pull an area's prices off its top); the
+ *  sheet export repeats an area's prices on each of its towns. */
 export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, adding, onAdding }: {
   cardId: string; areas: readonly RateArea[]; rules: readonly RateRule[]; ownRules: readonly RateRule[];
   template: readonly PriceBox[]; unit: string; adding: boolean; onAdding: (open: boolean) => void;
 }) => {
   const [editing, setEditing] = useState<string | null>(null);
-  const columns = useMemo(() => areaColumns(template, rules, unit), [template, rules, unit]);
+  /* A phone keeps the grid (scrolling sideways), not cards: a card per town
+     would lose the area band its prices hang from. */
+  const small = useSmallViewport();
+  const boxes = useMemo(() => areaColumns(template, rules, unit), [template, rules, unit]);
+  const lines = useMemo(() => areaLines(areas), [areas]);
+  const names = useMemo(() => new Map(areas.map((a) => [a.id, a.name])), [areas]);
+  const columns = useMemo<Column<AreaLine>[]>(() => {
+    const priceOf = (r: AreaLine, key: string) => (r.area ? ruleAt(rules, r.area.id, key) : ruleAt(ownRules, null, key));
+    return [
+      {
+        key: 'area', label: 'Area', defaultHidden: true, disableSort: true, disableFilter: true,
+        getValue: (r) => r.group, exportValue: (r) => r.area?.name ?? 'Everywhere else',
+        render: (r) => r.area?.name ?? 'Everywhere else',
+      },
+      {
+        key: 'town', label: 'Town', width: '220px', disableSort: true, disableFilter: true, getValue: (r) => r.town,
+        exportValue: (r) => (r.area ? townLabel(r.town) : 'Towns not in an area'),
+        render: (r) => (r.area ? townLabel(r.town) : <span className="text-ink-muted">Towns not in an area below</span>),
+      },
+      ...boxes.map((c): Column<AreaLine> => ({
+        key: `price:${c.key}`, label: columnHead(c), align: 'right', width: '116px',
+        exportValue: (r) => { const p = priceOf(r, c.key); return p ? p.amountSen / 100 : ''; },
+        render: (r) => {
+          if (!r.area) {
+            const own = priceOf(r, c.key);
+            return <span className="tabular-nums text-ink-secondary">{own ? centiToRM(own.amountSen) : '—'}</span>;
+          }
+          if (!r.first) return null;
+          const rule = priceOf(r, c.key);
+          return rule == null
+            ? <AddPriceCell cardId={cardId} rule={{ ...c.rule, areaId: r.area.id }} label={c.label} scope={r.area.name} />
+            : <PriceButton cardId={cardId} rule={rule} name={`${c.label} for ${r.area.name}`} />;
+        },
+      })),
+      {
+        key: 'change', label: 'Change', width: '64px', align: 'center',
+        renderHeader: () => <span className="sr-only">Change the area</span>,
+        render: (r) => {
+          const area = r.area;
+          if (!area || !r.first) return null;
+          return (
+            <button type="button" className="-my-1 inline-grid h-7 w-7 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-primary"
+              onClick={() => setEditing(area.id)} aria-label={`Change ${area.name}`} aria-pressed={editing === area.id}>
+              <Pencil size={14} strokeWidth={1.75} />
+            </button>
+          );
+        },
+      },
+    ];
+  }, [boxes, rules, ownRules, cardId, editing]);
+  const open = areas.find((a) => a.id === editing) ?? null;
   return (
     <div className="flex flex-col gap-2.5">
       {areas.length > 0 && (
-        <>
-          <span className="text-[12.5px] font-semibold text-ink-secondary">Areas, each with its own prices (RM)</span>
-          {/* On a phone the table keeps its columns and scrolls sideways inside this box. */}
-          <div className="relative overflow-x-auto">
-            <table className="w-full min-w-[560px] border-collapse text-[13px] tabular-nums">
-              <thead>
-                <tr>
-                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Area</th>
-                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Town</th>
-                  {columns.map((c) => <th key={c.key} scope="col" className={cn(T_HEAD, 'text-right')}>{columnHead(c)}</th>)}
-                  <th scope="col" className={T_HEAD}><span className="sr-only">Change the area</span></th>
-                </tr>
-              </thead>
-              <tbody aria-label="Everywhere else">
-                <tr className="bg-surface-2/60">
-                  <th scope="row" className={cn(T_CELL, 'text-left font-normal')}>
-                    <span className="block text-[13px] font-semibold text-ink-secondary">Everywhere else</span>
-                    <span className={HINT}>the card’s own prices</span>
-                  </th>
-                  <td className={cn(T_CELL, 'text-ink-muted')}>Towns not in an area below</td>
-                  {columns.map((c) => {
-                    const own = ruleAt(ownRules, null, c.key);
-                    return <td key={c.key} className={cn(T_CELL, 'text-right text-ink-secondary')}>{own ? centiToRM(own.amountSen) : '—'}</td>;
-                  })}
-                  <td className={T_CELL} />
-                </tr>
-              </tbody>
-              {areas.map((a) => (
-                <AreaRows key={a.id} cardId={cardId} area={a} rules={rules} columns={columns}
-                  editing={editing === a.id} onEditing={(on) => setEditing(on ? a.id : null)} />
-              ))}
-            </table>
-          </div>
-        </>
+        <DataTable<AreaLine>
+          tableId="rate-card-areas" exportName="rate-card-areas" exportXlsx embedded={small}
+          columns={columns} rows={lines} getRowKey={(r) => r.key}
+          groupBy={{ key: 'area', label: (id) => (id === OWN ? 'Everywhere else · the card’s own prices' : names.get(id) ?? id) }}
+          getRowClassName={() => 'bg-surface'}
+          freezeHeight="off"
+        />
+      )}
+      {open && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-dim/40 px-4 py-3.5">
+          <span className="text-[13px] font-semibold text-ink">Change {open.name}</span>
+          <AreaEditor key={open.id} cardId={cardId} area={open} onDone={() => setEditing(null)} />
+        </div>
       )}
       {adding && <AddArea cardId={cardId} template={template} onDone={() => onAdding(false)} />}
     </div>

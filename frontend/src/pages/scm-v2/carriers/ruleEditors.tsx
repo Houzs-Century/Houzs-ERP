@@ -25,9 +25,9 @@ const ERR_TEXT = 'text-[11.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2
 const SMALL_BTN = 'grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-2 disabled:opacity-50';
 /* Its own class list rather than INPUT + overrides: cn() only joins, so INPUT's
    w-full would win over a width added after it. */
-const AMOUNT_INPUT = 'min-h-[34px] w-full min-w-[110px] max-w-[150px] rounded-lg border border-border bg-surface px-2 text-right text-[14px] tabular-nums text-ink';
+const AMOUNT_INPUT = 'min-h-[34px] w-full min-w-[110px] max-w-[150px] rounded-lg border border-border bg-surface px-2 text-right text-[13px] tabular-nums text-ink';
 /* In a table cell the box keeps one width, so the column widens once, evenly. */
-const CELL_INPUT = 'min-h-[34px] w-[120px] rounded-lg border border-border bg-surface px-2 text-right text-[14px] tabular-nums text-ink';
+const CELL_INPUT = 'min-h-[34px] w-[120px] rounded-lg border border-border bg-surface px-2 text-right text-[13px] tabular-nums text-ink';
 
 /** One tab's content: title, a quiet note, a hint, actions on the right. */
 export const Panel = ({ section, title, note, hint, actions, children }: {
@@ -36,7 +36,7 @@ export const Panel = ({ section, title, note, hint, actions, children }: {
   <section role="tabpanel" id={panelId(section)} aria-label={title} className={cn(CARD, 'flex flex-col gap-4 px-5 py-[18px]')}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <h3 className="text-[16px] font-bold text-ink">
+        <h3 className="text-[15px] font-semibold text-ink">
           {title}{note != null && <span className="ml-1.5 font-medium text-ink-muted">{note}</span>}
         </h3>
         <p className={HINT}>{hint}</p>
@@ -110,7 +110,7 @@ export const AddPriceCell = ({ cardId, rule, label, scope }: {
     return (
       <button type="button" onClick={() => setDraft('')} aria-label={`Add ${what}`}
         title={scope ? 'The card’s own price applies. Click to give this area its own.' : 'Not priced yet. Click to add a price.'}
-        className="-my-1 inline-flex min-h-[28px] w-full items-center justify-end gap-1 rounded-md px-1 text-[12.5px] text-ink-muted hover:bg-surface-2 hover:text-primary">
+        className="-my-1 inline-flex min-h-[28px] w-full items-center justify-end gap-1 rounded-md px-1 text-[12px] text-ink-muted hover:bg-surface-2 hover:text-primary">
         {scope ? '—' : <><Plus size={13} strokeWidth={2} />Add</>}
       </button>
     );

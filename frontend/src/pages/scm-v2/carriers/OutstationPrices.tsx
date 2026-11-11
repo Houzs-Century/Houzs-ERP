@@ -35,7 +35,7 @@ const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kin
   }
   return (
     <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(town.rule.amountSen)}`}
-      className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border px-3 text-[12.5px] font-semibold text-ink hover:border-primary hover:text-primary">
+      className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-semibold text-ink hover:border-primary hover:text-primary">
       {townLabel(town.zone)}{town.twice && <Pill tone="amber">Twice</Pill>}
     </button>
   );
@@ -43,11 +43,11 @@ const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kin
 
 const Bands = ({ cardId, title, bands, kind }: { cardId: string; title: string; bands: PriceBand[]; kind: Kind }) => (
   <div className="flex flex-col">
-    <span className="pb-1.5 text-[12.5px] font-semibold text-ink-secondary">{title}</span>
+    <span className="pb-1.5 text-[12px] font-semibold text-ink-secondary">{title}</span>
     {bands.map((b) => (
       <div key={b.amountSen} className="grid gap-3 border-t border-border py-2.5 [grid-template-columns:104px_minmax(0,1fr)]">
         <div className="flex flex-col">
-          <span className="text-[14px] font-bold tabular-nums text-ink">{fmtSen(b.amountSen)}</span>
+          <span className="text-[13px] font-semibold tabular-nums text-ink">{fmtSen(b.amountSen)}</span>
           <span className={HINT}>{townsWord(b.towns.length)}</span>
         </div>
         <div className="flex flex-wrap items-start gap-1.5">
@@ -69,7 +69,7 @@ const SecondPrice = ({ cardId, rule }: { cardId: string; rule: RateRule }) => {
         ? <PriceEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} />
         : (
           <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}`}
-            className="min-h-[32px] rounded-md px-1.5 font-bold tabular-nums hover:bg-surface-2">{fmtSen(rule.amountSen)}</button>
+            className="min-h-[32px] rounded-md px-1.5 font-semibold tabular-nums hover:bg-surface-2">{fmtSen(rule.amountSen)}</button>
         )}
     </div>
   );
@@ -132,11 +132,11 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
       )}
       <AreaPrices cardId={cardId} areas={shownAreas} rules={areaRules} ownRules={rules} template={template} unit={unit} adding={addingArea} onAdding={setAddingArea} />
       {twice.length > 0 && (
-        <p className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12.5px] text-accent-ink">
+        <p className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12px] text-accent-ink">
           {twice.map((t) => `${townLabel(t.town)} is in ${t.areas.join(' and ')}`).join('; ')}. A delivery there is priced in the dearer area; keep each town in one area.
         </p>
       )}
-      {areas.length > 0 && rows.length > 0 && <span className="pt-1 text-[12.5px] font-semibold text-ink-secondary">Town prices, added to the delivery’s price</span>}
+      {areas.length > 0 && rows.length > 0 && <span className="pt-1 text-[12px] font-semibold text-ink-secondary">Town prices, added to the delivery’s price</span>}
       {onTop.length > 0 && (
         <p className={HINT}>
           {onTop.map((t) => `${townLabel(t.town)} (${t.areas.join(', ')})`).join(', ')}: {onTop.length === 1 ? 'its town price adds' : 'their town prices add'} on top of the area’s price — right for a fee such as customs, a double charge otherwise.
@@ -157,7 +157,7 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
         <p className="text-[13px] text-ink-muted">No area or town matches “{q.trim()}”.</p>
       )}
       {hidden.length > 0 && (
-        <div className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12.5px] text-accent-ink">
+        <div className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12px] text-accent-ink">
           <p className="mb-1.5 font-semibold">A town priced twice: the card uses one of these, so remove the one that is wrong.</p>
           {hidden.map((r) => <SecondPrice key={r.id} cardId={cardId} rule={r} />)}
         </div>

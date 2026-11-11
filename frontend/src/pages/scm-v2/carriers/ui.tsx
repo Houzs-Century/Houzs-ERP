@@ -5,12 +5,12 @@ import { fmtSen } from '@2990s/shared';
 import { cn } from '../../../lib/utils';
 
 export const CARD = 'rounded-2xl border border-border bg-surface';
-export const LABEL = 'text-[12.5px] font-semibold text-ink-secondary';
+export const LABEL = 'text-[12px] font-semibold text-ink-secondary';
 export const HINT = 'text-[12px] leading-snug text-ink-muted';
-export const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[14px] text-ink';
-export const EYEBROW = 'text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted';
-export const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13.5px] font-semibold text-white disabled:opacity-60';
-export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13.5px] font-semibold text-ink disabled:opacity-60';
+export const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[13px] text-ink';
+export const EYEBROW = 'text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink-muted';
+export const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-white disabled:opacity-60';
+export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13px] font-semibold text-ink disabled:opacity-60';
 export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50';
 
 const TONE = {
@@ -54,7 +54,7 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
   <section aria-label={label ?? undefined} className={cn(CARD, 'overflow-hidden')}>
     <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-3 pt-4">
       <div className="flex min-w-0 flex-col gap-1">
-        <h3 className="text-[16px] font-bold text-ink">
+        <h3 className="text-[15px] font-semibold text-ink">
           {title}{count != null && <span className="ml-1.5 font-medium text-ink-muted">{count}</span>}
         </h3>
         {hint && <p className={cn(HINT, 'max-w-[820px]')}>{hint}</p>}
@@ -64,12 +64,6 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
     <div className="min-w-0 border-t border-border px-3 pb-3 pt-2">{children}</div>
   </section>
 );
-
-/* The rate card's ruled tables (owner 2026-11-11: 「放线条」): lines around
-   the cells as in a spreadsheet, a shaded head, a shaded row per section. */
-export const T_CELL = 'border border-border-strong px-2.5 py-1.5 align-top';
-export const T_HEAD = 'border border-border-strong bg-surface-2 px-2.5 py-2 align-bottom text-[12px] font-semibold text-ink-secondary';
-export const T_SECTION = 'border border-border-strong bg-surface-2/60 px-2.5 py-1.5 text-left text-[12.5px] font-semibold text-ink';
 
 /** A labelled box: label over the control, an optional hint under it. */
 export const Field = ({ label, hint, className, children }: { label: string; hint?: string; className?: string; children: ReactNode }) => (

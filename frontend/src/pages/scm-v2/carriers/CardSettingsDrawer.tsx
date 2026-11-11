@@ -67,7 +67,7 @@ export const CardSettingsDrawer = ({ card, kind, title, onClose }: { card: RateC
             <option value="NEAREST_RM">Nearest RM</option>
           </select>
         </Field>
-        <label className="flex cursor-pointer items-center gap-2.5 text-[14px] font-semibold text-ink">
+        <label className="flex cursor-pointer items-center gap-2.5 text-[13px] font-semibold text-ink">
           <input type="checkbox" className="h-[18px] w-[18px] accent-[#16695f]" checked={card.isActive} disabled={update.isPending}
             onChange={(e) => patch({ isActive: e.target.checked })} />
           Active
@@ -78,7 +78,7 @@ export const CardSettingsDrawer = ({ card, kind, title, onClose }: { card: RateC
             heading. Own fleet IS "no carrier", derived server-side (mig 0246). */}
         <div className="flex flex-col gap-1 border-t border-border pt-4">
           <span className={LABEL}>Carrier</span>
-          <span className="text-[14px] font-semibold text-ink">
+          <span className="text-[13px] font-semibold text-ink">
             {kind === 'own' ? 'Own fleet' : kind === 'removed' ? 'Carrier removed' : title}
           </span>
           <span className={HINT}>
