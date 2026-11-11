@@ -3,16 +3,17 @@
 // the full add form for the rules that need a position, a bracket or a town.
 import { useState, type ReactNode } from 'react';
 import { Check, Plus, Trash2, X } from 'lucide-react';
+import { fmtSen } from '@2990s/shared';
 import {
   useCreateRateRule, useDeleteRateRule, useUpdateRateRule,
-  type RateRule, type RateRuleType,
+  type NewRateRule, type RateRule, type RateRuleType,
 } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';
 import { cn } from '../../../lib/utils';
 import { RULE_LABEL, rulesByCategory, type RateRuleCategory } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { centiToRM, rmToSen } from './cardSettings';
-import type { FlatRuleType } from './rateCardLayout';
-import { BTN_PRI, BTN_QUIET, CARD, HINT, INPUT, LABEL } from './ui';
+import type { FlatRuleType, PriceCell } from './rateCardLayout';
+import { BTN_PRI, BTN_QUIET, CARD, HINT, INPUT, LABEL, Pill } from './ui';
 
 /** The card's five tabs: its four categories, then Price check. */
 export type RateSection = RateRuleCategory | 'PRICE_CHECK';
@@ -76,20 +77,60 @@ export const PriceEditor = ({ cardId, rule, name, onDone }: { cardId: string; ru
   );
 };
 
+/** A price, read at a glance; a click opens it to change or remove. */
+export const PriceTile = ({ cardId, cell, scope }: { cardId: string; cell: PriceCell; scope?: string }) => {
+  const [editing, setEditing] = useState(false);
+  const name = scope ? `${cell.label} for ${scope}` : cell.label;
+  const label = (
+    <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-muted">
+      {cell.label}{cell.duplicate && <Pill tone="amber">Twice</Pill>}
+    </span>
+  );
+  if (editing) {
+    return (
+      <div className="flex min-h-[64px] flex-col gap-1.5 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-primary">
+        {label}
+        <PriceEditor cardId={cardId} rule={cell.rule} name={name} onDone={() => setEditing(false)} />
+      </div>
+    );
+  }
+  return (
+    <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(cell.rule.amountSen)}`}
+      className="flex min-h-[64px] flex-col items-start gap-1 rounded-xl bg-surface-2 px-3 py-2.5 text-left hover:ring-1 hover:ring-primary">
+      {label}
+      <span className="text-[18px] font-bold tabular-nums leading-tight text-ink">{fmtSen(cell.rule.amountSen)}</span>
+    </button>
+  );
+};
+
+/** A titled row of tiles. */
+export const TileGrid = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div className="flex flex-col gap-2">
+    <span className="text-[12.5px] font-semibold text-ink-secondary">{title}</span>
+    <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">{children}</div>
+  </div>
+);
+
 const TILE = 'flex min-h-[64px] flex-col items-start gap-1 rounded-xl px-3 py-2.5 text-left';
 
 /** A price this category could carry and the card does not: a dashed tile
- *  that takes its amount in place. */
-export const AddPriceTile = ({ cardId, ruleType }: { cardId: string; ruleType: FlatRuleType }) => {
+ *  that takes its amount in place. Given a template (an area's missing price),
+ *  it adds that price instead — its position or sofa band, for its area. */
+export const AddPriceTile = ({ cardId, ruleType, template, label, scope }: {
+  cardId: string; ruleType: FlatRuleType | null; template?: Omit<NewRateRule, 'amountSen'>; label?: string; scope?: string;
+}) => {
   const create = useCreateRateRule(cardId);
   const [draft, setDraft] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const name = RULE_LABEL[ruleType];
+  const shown = label ?? (ruleType ? RULE_LABEL[ruleType] : 'Price');
+  const name = scope ? `${shown} for ${scope}` : shown;
+  /* "Add 3rd set and after price for Kuching zone 3"; "Add Dispose price". */
+  const what = `${shown} price${scope ? ` for ${scope}` : ''}`;
   if (draft === null) {
     return (
-      <button type="button" onClick={() => setDraft('')} aria-label={`Add ${name} price`}
+      <button type="button" onClick={() => setDraft('')} aria-label={`Add ${what}`}
         className={cn(TILE, 'border border-dashed border-border-strong text-ink-muted hover:border-primary hover:text-primary')}>
-        <span className="text-[12px] font-semibold">{name}</span>
+        <span className="text-[12px] font-semibold">{shown}</span>
         <span className="inline-flex items-center gap-1 text-[13px] font-semibold"><Plus size={14} strokeWidth={2} />Add price</span>
       </button>
     );
@@ -97,19 +138,20 @@ export const AddPriceTile = ({ cardId, ruleType }: { cardId: string; ruleType: F
   const save = () => {
     const amountSen = rmToSen(draft);
     if (draft.trim() === '' || amountSen == null) { setErr(AMOUNT_ERROR); return; }
-    create.mutate({ ruleType, amountSen }, { onSuccess: () => setDraft(null), onError: writeFailedAs('The price was not added') });
+    const body: NewRateRule = template ? { ...template, amountSen } : { ruleType: ruleType ?? 'DISPOSE', amountSen };
+    create.mutate(body, { onSuccess: () => setDraft(null), onError: writeFailedAs('The price was not added') });
   };
   return (
     <div className={cn(TILE, 'bg-surface ring-1 ring-primary')}>
-      <span className="text-[12px] font-semibold text-ink-muted">{name}</span>
+      <span className="text-[12px] font-semibold text-ink-muted">{shown}</span>
       <input autoFocus className={AMOUNT_INPUT} inputMode="decimal" placeholder="0.00" aria-label={`Amount for ${name}`}
         value={draft} onChange={(e) => { setErr(null); setDraft(e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setDraft(null); }} />
       <span className="flex items-center gap-1">
-        <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={create.isPending} aria-label={`Save ${name} price`}>
+        <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={create.isPending} aria-label={`Save ${what}`}>
           <Check size={15} strokeWidth={2} />
         </button>
-        <button type="button" className={SMALL_BTN} onClick={() => setDraft(null)} aria-label={`Cancel ${name} price`}><X size={15} strokeWidth={2} /></button>
+        <button type="button" className={SMALL_BTN} onClick={() => setDraft(null)} aria-label={`Cancel ${what}`}><X size={15} strokeWidth={2} /></button>
       </span>
       {err && <span role="alert" className={ERR_TEXT}>{err}</span>}
     </div>

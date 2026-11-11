@@ -23,7 +23,7 @@ import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
   useReconcile, type ReconcileRow,
-  type RateCard, type RateRule, type RateAggregation,
+  type RateArea, type RateCard, type RateRule, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
@@ -284,6 +284,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
 
 // ── Card editor: header (settings in one line + the tabs), then the open tab ──
 const NO_RULES: RateRule[] = [];
+const NO_AREAS: RateArea[] = [];
 const CardEditor = ({ cardId, section, onSection, onDeleted }: {
   cardId: string; section: RateSection; onSection: (s: RateSection) => void; onDeleted: () => void;
 }) => {
@@ -302,6 +303,9 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
   /* The tabs show the card's own prices; a price that belongs to one area of
      the card (areaId set) is the area's, and must not read as a second tier. */
   const rules = useMemo(() => allRules.filter((r) => r.areaId == null), [allRules]);
+  /* The areas' own prices, shown with their area in the Outstation tab. */
+  const areaRules = useMemo(() => allRules.filter((r) => r.areaId != null), [allRules]);
+  const areas = detail.data?.areas ?? NO_AREAS;
   const companies = meta.data?.companies ?? [];
   const unit = card ? chargingUnit(card) : 'set';
   const sections = useMemo(() => layoutRateCard(rules, unit), [rules, unit]);
@@ -363,10 +367,10 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
             )}
           </div>
         )}
-        <SectionTabs sections={sections} value={section} onChange={onSection} />
+        <SectionTabs sections={sections} areaCount={areas.length} value={section} onChange={onSection} />
       </div>
 
-      <RateCardSection card={card} rules={rules} sections={sections} zones={meta.data?.zones ?? []} section={section}
+      <RateCardSection card={card} rules={rules} areas={areas} areaRules={areaRules} unit={unit} sections={sections} zones={meta.data?.zones ?? []} section={section}
         checkForm={checkForm} onCheckForm={setCheckForm} />
 
       {editing && <CardSettingsDrawer card={card} kind={kind} title={title} onClose={() => setEditing(false)} />}

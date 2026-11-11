@@ -8,13 +8,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { fmtSen } from '@2990s/shared';
 import {
-  useComputeCost, type CostBreakdown, type DeliveryFacts, type RateCard, type RateRule,
+  useComputeCost, type CostBreakdown, type DeliveryFacts, type RateArea, type RateCard, type RateRule,
 } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
 import { RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { chargingUnit } from './cardSettings';
 import { FLAT_ORDER, type FlatRuleType } from './rateCardLayout';
-import { groupBreakdown, outstationTowns, pricedTypes, readFacts, type CheckErrors, type PriceCheckForm } from './priceCheckFacts';
+import { destinationGroups, groupBreakdown, pricedTypes, readFacts, type CheckErrors, type PriceCheckForm } from './priceCheckFacts';
 import { Panel } from './ruleEditors';
 import { EYEBROW, Field, INPUT, LABEL } from './ui';
 
@@ -43,17 +43,19 @@ const UNIT_NOTE: Partial<Record<string, string>> = {
   customer: 'This card counts customers, which Price check does not ask for yet, so its per-customer prices are left out.',
 };
 
-export const PriceCheck = ({ card, rules, form, onForm }: {
-  card: RateCard; rules: readonly RateRule[]; form: PriceCheckForm; onForm: (f: PriceCheckForm) => void;
+export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
+  card: RateCard; rules: readonly RateRule[]; areas: readonly RateArea[]; areaRules: readonly RateRule[];
+  form: PriceCheckForm; onForm: (f: PriceCheckForm) => void;
 }) => {
   const { mutate } = useComputeCost(card.id);
   const [result, setResult] = useState<CostBreakdown | null>(null);
   const seq = useRef(0);
-  const priced = useMemo(() => pricedTypes(rules), [rules]);
-  const towns = useMemo(() => outstationTowns(rules), [rules]);
+  /* A box shows when the card or one of its areas prices it. */
+  const priced = useMemo(() => pricedTypes([...rules, ...areaRules]), [rules, areaRules]);
+  const destinations = useMemo(() => destinationGroups(areas, rules), [areas, rules]);
   const counts = FLAT_ORDER.filter((t) => priced.has(t));
   const unit = chargingUnit(card);
-  const read = readFacts(form, card, priced);
+  const read = readFacts(form, card, priced, areas);
   const errors: CheckErrors = read.ok ? {} : read.errors;
 
   /* What the answer depends on: the boxes, and the card's prices and settings
@@ -62,6 +64,8 @@ export const PriceCheck = ({ card, rules, form, onForm }: {
   const cardKey = JSON.stringify([
     card.basis, card.aggregation, card.minChargeSen, card.capSen, card.rounding,
     rules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.zone]),
+    areaRules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.areaId]),
+    areas.map((a) => [a.id, a.towns]),
   ]);
   useEffect(() => {
     if (factsKey === null) return undefined;
@@ -92,11 +96,17 @@ export const PriceCheck = ({ card, rules, form, onForm }: {
           <Box key={t} label={RULE_LABEL[t]} value={form.counts[t] ?? ''} placeholder="0" error={errors[t]} inputMode="numeric"
             onChange={(v) => setCount(t, v)} />
         ))}
-        {towns.length > 0 && (
+        {destinations.length > 0 && (
           <Field label="Destination">
             <select className={INPUT} value={form.town} onChange={(e) => onForm({ ...form, town: e.target.value })}>
               <option value="">In town</option>
-              {towns.map((z) => <option key={z} value={z}>{z}</option>)}
+              {destinations.map((g) => (g.label == null
+                ? g.towns.map((z) => <option key={z} value={z}>{z}</option>)
+                : (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.towns.map((z) => <option key={`${g.label}-${z}`} value={z}>{z}</option>)}
+                  </optgroup>
+                )))}
             </select>
           </Field>
         )}
@@ -122,6 +132,7 @@ export const PriceCheck = ({ card, rules, form, onForm }: {
                 ))}
               </div>
             ))}
+            {result.area && <p className="text-[12.5px] text-ink-muted">Priced in the area {result.area.name}.</p>}
             <div className="flex justify-between gap-3 border-t border-border pt-2.5 text-[16px] font-bold text-ink" aria-live="polite">
               <span>This delivery should cost</span>
               <span className="tabular-nums">{fmtSen(result.totalSen)}</span>

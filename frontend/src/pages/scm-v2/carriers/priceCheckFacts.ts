@@ -3,12 +3,13 @@
 // named Price check) and 「做多一个categories按钮」 (its own tab beside the four
 // categories). The boxes a card prices, read into the /compute facts, and the
 // answer grouped the way the tabs are. Pure.
-import type { CostBreakdown, CostLine, DeliveryFacts, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
+import type { CostBreakdown, CostLine, DeliveryFacts, RateArea, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import {
   CATEGORY_LABEL, RULE_CATEGORY, RULE_LABEL, type RateRuleCategory,
 } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import type { ChargingUnit } from './cardSettings';
 import { CATEGORY_ORDER, FLAT_ORDER, ordinal, type FlatRuleType } from './rateCardLayout';
+import { areaOfTown } from './rateCardAreas';
 
 type CountFact =
   | 'disposeCount' | 'setupCount' | 'dismantleCount' | 'serviceCount'
@@ -24,7 +25,8 @@ export interface PriceCheckForm {
   count: string;
   /** Compartments of each sofa, comma-separated: "3, 6". */
   sofas: string;
-  /** An outstation town or zone of this card; '' is in town. */
+  /** An outstation town or zone of this card, or a town of one of its areas;
+   *  '' is in town. */
   town: string;
   counts: Partial<Record<FlatRuleType, string>>;
 }
@@ -47,8 +49,11 @@ export function pricedTypes(rules: readonly RateRule[]): ReadonlySet<string> {
 }
 
 /** The form read into /compute facts, or what is wrong with it. Only the boxes
- *  this card prices are read; the rest stay out of the facts. */
-export function readFacts(form: PriceCheckForm, card: Pick<RateCard, 'basis' | 'aggregation'>, priced: ReadonlySet<string>): FactsRead {
+ *  this card prices are read; the rest stay out of the facts. A town of one of
+ *  the card's areas names that area, so the delivery is priced in it. */
+export function readFacts(
+  form: PriceCheckForm, card: Pick<RateCard, 'basis' | 'aggregation'>, priced: ReadonlySet<string>, areas: readonly RateArea[] = [],
+): FactsRead {
   const errors: CheckErrors = {};
   const whole = (key: 'count' | FlatRuleType, raw: string): number => {
     const t = raw.trim();
@@ -70,6 +75,8 @@ export function readFacts(form: PriceCheckForm, card: Pick<RateCard, 'basis' | '
     if (priced.has(t)) facts[countFact(t)] = whole(t, form.counts[t] ?? '');
   }
   facts.destinationZone = form.town.trim() || null;
+  const area = areaOfTown(areas, form.town);
+  if (area) facts.areaId = area.id;
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, facts };
 }
 
@@ -82,6 +89,21 @@ export function outstationTowns(rules: readonly RateRule[]): string[] {
     if (!towns.has(z.toUpperCase())) towns.set(z.toUpperCase(), z);
   }
   return [...towns.values()].sort((a, b) => a.localeCompare(b));
+}
+
+export interface DestinationGroup { label: string | null; towns: string[] }
+
+/** Price check's Destination list: each area's towns under the area's name,
+ *  then the card's town-price towns that are in no area. A card with no area
+ *  lists its towns alone, as before. Empty groups are left out. */
+export function destinationGroups(areas: readonly RateArea[], rules: readonly RateRule[]): DestinationGroup[] {
+  const inArea = new Set(areas.flatMap((a) => a.towns));
+  const other = outstationTowns(rules).filter((t) => !inArea.has(t.toUpperCase()));
+  if (areas.length === 0) return other.length > 0 ? [{ label: null, towns: other }] : [];
+  return [
+    ...areas.map((a) => ({ label: a.name, towns: [...a.towns].sort((x, y) => x.localeCompare(y)) })),
+    { label: 'Other towns', towns: other },
+  ].filter((g) => g.towns.length > 0);
 }
 
 export interface CheckLine { key: string; label: string; amountSen: number }
@@ -125,14 +147,17 @@ export function lineLabel(line: CostLine, unit: ChargingUnit): string {
 }
 
 /** The breakdown grouped by the card's categories, then the minimum / cap /
- *  rounding adjustments; empty groups are left out. */
+ *  rounding adjustments; empty groups are left out. A line the engine priced in
+ *  an area keeps the area's name: "1st set · Kuching zone 3". */
 export function groupBreakdown(b: CostBreakdown, unit: ChargingUnit): CheckGroup[] {
+  const inArea = b.area ? ` · ${b.area.name}` : null;
   const groups = new Map<RateRuleCategory | 'ENVELOPE', CheckGroup>();
   for (const c of CATEGORY_ORDER) groups.set(c, { id: c, title: CATEGORY_LABEL[c], lines: [] });
   const envelope: CheckGroup = { id: 'ENVELOPE', title: 'Minimum, cap and rounding', lines: [] };
   groups.set('ENVELOPE', envelope);
   b.lines.forEach((l, i) => {
-    const line = { key: `${l.ruleType}-${i}`, label: lineLabel(l, unit), amountSen: l.amountSen };
+    const suffix = inArea && l.label.endsWith(inArea) ? inArea : '';
+    const line = { key: `${l.ruleType}-${i}`, label: `${lineLabel(l, unit)}${suffix}`, amountSen: l.amountSen };
     const cat = ENVELOPE.has(l.ruleType)
       ? 'ENVELOPE'
       : (RULE_CATEGORY as Partial<Record<string, RateRuleCategory>>)[l.ruleType] ?? 'DELIVERY';
