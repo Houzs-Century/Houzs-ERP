@@ -1,7 +1,9 @@
-// Carriers & Rates (restyle + audit 2026-11-07): every carrier is listed, a card
-// whose 3PL company was deleted is not passed off as own fleet, a rule amount is
-// edited in place, the card has a minimum charge, the calculator prices a
-// supplier pickup, and Reconciliation reads the bills the 3PL invoices tab keeps.
+// Carriers & Rates (restyle + audit 2026-11-07; card redesign 2026-11-11): every
+// carrier is listed, a card whose 3PL company was deleted is not passed off as
+// own fleet, the card's settings read as one line and are edited in a drawer, a
+// price is changed from its tile, the categories are tabs with outstation towns
+// grouped by price, Price check prices a supplier pickup as you type, and
+// Reconciliation reads the bills the 3PL invoices tab keeps.
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +32,16 @@ const CHARGE = {
   carrierName: 'MSJ TRANSPORT', cardName: 'MSJ', invoiceNo: 'INV9', invoiceDate: '2026-11-02', billedSen: 12000, expectedSen: 10000, varianceSen: 2000, note: null,
 };
 
+const BREAKDOWN = {
+  subtotalSen: 18000, totalSen: 18000,
+  lines: [
+    { ruleType: 'POSITIONAL_TIER', label: '1st set', amountSen: 8000, detail: { position: 1, tierPosition: 1 } },
+    { ruleType: 'SUPPLIER_PICKUP', label: 'Supplier pickup x2', amountSen: 10000, detail: { count: 2, eachSen: 5000 } },
+  ],
+};
+
 function api(path: string, init?: RequestInit) {
+  if (path.endsWith('/compute')) return Promise.resolve({ card: CARDS[0], facts: {}, breakdown: BREAKDOWN });
   if (init?.method && init.method !== 'GET') return Promise.resolve({ rule: RULE, card: CARDS[0] });
   if (path === '/delivery-rate-cards') return Promise.resolve({ cards: CARDS });
   if (path === '/delivery-rate-cards/meta') {
@@ -63,29 +74,54 @@ describe('Carriers & Rates', () => {
     expect(screen.getByText('Own fleet cost')).toBeTruthy();
   });
 
-  it('shows the carrier\'s current name, a minimum charge, edits a rule amount in place, and prices a supplier pickup', async () => {
-    fetchMock.mockImplementation(api);
+  it('says the settings in one line and edits them in a drawer, changes a price from its tile, and price-checks a supplier pickup as you type', async () => {
+    const rules = [RULE, { ...RULE, id: 'r9', ruleType: 'SUPPLIER_PICKUP', tierPosition: null, amountSen: 5000 }];
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
+      ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
     fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
     expect(await screen.findByRole('heading', { name: 'MSJ TRANSPORT' })).toBeTruthy();
-    expect((screen.getByLabelText(/Minimum charge \(RM\)/) as HTMLInputElement).value).toBe('50.00');
+    expect(screen.getByText('Charged per set (frame + mattress) · Minimum RM 50.00 · No cap · No rounding')).toBeTruthy();
+    expect(screen.queryByLabelText(/Minimum charge \(RM\)/)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit amount for Positional tier Each set' }));
-    const amount = screen.getByLabelText('Amount for Positional tier Each set');
-    fireEvent.change(amount, { target: { value: '95' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save amount' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit settings' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Card settings' });
+    const min = within(drawer).getByLabelText(/Minimum charge \(RM\)/) as HTMLInputElement;
+    expect(min.value).toBe('50.00');
+    fireEvent.change(min, { target: { value: '60' } });
+    fireEvent.blur(min);
     await waitFor(() => {
-      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH');
+      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH' && c[0] === '/delivery-rate-cards/card-msj');
+      expect(JSON.parse(String(patch?.[1].body))).toEqual({ minChargeSen: 6000 });
+    });
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Card settings' })).toBeNull());
+
+    const delivery = screen.getByRole('tabpanel', { name: 'Delivery' });
+    fireEvent.click(within(delivery).getByRole('button', { name: 'Edit Each set, RM 80.00' }));
+    fireEvent.change(within(delivery).getByLabelText('Amount for Each set'), { target: { value: '95' } });
+    fireEvent.click(within(delivery).getByRole('button', { name: 'Save Each set' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH' && String(c[0]).includes('/rules/'));
       expect(patch?.[0]).toBe('/delivery-rate-cards/card-msj/rules/r1');
       expect(JSON.parse(String(patch?.[1].body))).toEqual({ amountSen: 9500 });
     });
 
-    fireEvent.change(screen.getByLabelText('Supplier pickup'), { target: { value: '2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Compute cost' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Price check/ }));
+    const check = screen.getByRole('tabpanel', { name: 'Price check' });
+    expect(within(check).queryByLabelText('Dispose')).toBeNull();
+    expect(within(check).queryByRole('button', { name: /Compute/ })).toBeNull();
+    fireEvent.change(within(check).getByLabelText('Supplier pickup'), { target: { value: '2' } });
     await waitFor(() => {
-      const run = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/compute'));
-      expect(JSON.parse(String(run?.[1].body)).supplierPickupCount).toBe(2);
+      const runs = fetchMock.mock.calls.filter((c) => String(c[0]).endsWith('/compute')).map((c) => JSON.parse(String(c[1].body)));
+      expect(runs.some((f) => f.supplierPickupCount === 2 && f.setCount === 1)).toBe(true);
     });
+    expect(await within(check).findByText('This delivery should cost')).toBeTruthy();
+    expect(within(check).getByText('Supplier pickup × 2')).toBeTruthy();
+    expect(within(check).getByText('RM 180.00')).toBeTruthy();
+
+    fireEvent.change(within(check).getByLabelText('Sets'), { target: { value: '1.5' } });
+    expect(within(check).getByRole('alert').textContent).toContain('whole number');
   });
 
   it('a carrier with no card asks to create one, and opens the new card for it', async () => {
@@ -98,36 +134,73 @@ describe('Carriers & Rates', () => {
     expect(within(group).getByRole('button', { name: 'EU LOGISTICS' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('lays the rules out per category, with outstation as a zone table whose empty cell adds a price', async () => {
+  it('shows one category at a time: delivery tiles, outstation towns by price with a per-trip price added, and service calls as dashed tiles', async () => {
     const rules = [
       RULE,
       { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
       { ...RULE, id: 'r3', ruleType: 'OUTSTATION', tierPosition: null, zone: 'KUCHING', amountSen: 30000 },
+      { ...RULE, id: 'r4', ruleType: 'OUTSTATION', tierPosition: null, zone: 'BAU', amountSen: 30000 },
+      /* An area's own 1st-set price: the area's, never a second 1st set here. */
+      { ...RULE, id: 'r5', tierPosition: 1, amountSen: 9900, areaId: 'area-kuching' },
     ];
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
       ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
     fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
-    const delivery = await screen.findByRole('region', { name: 'Delivery' });
-    expect(within(delivery).getByText('1st')).toBeTruthy();
-    expect(within(delivery).getByText('3rd+')).toBeTruthy();
-    const out = screen.getByRole('region', { name: 'Outstation' });
-    expect(within(out).getByRole('rowheader', { name: 'KUCHING' })).toBeTruthy();
-    expect(within(out).getByText('300.00')).toBeTruthy();
+    const delivery = await screen.findByRole('tabpanel', { name: 'Delivery' });
+    expect(within(delivery).getByText('1st set')).toBeTruthy();
+    expect(within(delivery).getByText('3rd set and after')).toBeTruthy();
+    expect(within(delivery).getByRole('button', { name: 'Add Dispose price' })).toBeTruthy();
+    expect(within(delivery).queryByText('RM 99.00')).toBeNull();
+    expect(within(delivery).queryByText('Twice')).toBeNull();
+    expect(screen.queryByRole('tabpanel', { name: 'Outstation' })).toBeNull();
+    expect(screen.getByRole('tab', { name: /^Setup & dismantle/ }).textContent).toContain('—');
 
-    fireEvent.click(within(out).getByRole('button', { name: 'Add KUCHING per trip' }));
-    fireEvent.change(within(out).getByLabelText('Amount for KUCHING per trip'), { target: { value: '120' } });
-    fireEvent.click(within(out).getByRole('button', { name: 'Save KUCHING per trip' }));
+    fireEvent.keyDown(screen.getByRole('tab', { name: /^Delivery/ }), { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: /^Outstation/ }).getAttribute('aria-selected')).toBe('true');
+    const out = screen.getByRole('tabpanel', { name: 'Outstation' });
+    expect(within(out).getByText('RM 300.00')).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit BAU per order, RM 300.00' })).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit KUCHING per order, RM 300.00' })).toBeTruthy();
+
+    fireEvent.click(within(out).getByRole('button', { name: 'Add a per-trip price' }));
+    expect((within(out).getByLabelText('Rule type') as HTMLSelectElement).value).toBe('OUTSTATION_TRIP');
+    fireEvent.change(within(out).getByLabelText('Town or area zone'), { target: { value: 'KUCHING' } });
+    fireEvent.change(within(out).getByLabelText('Amount (RM)'), { target: { value: '120' } });
+    fireEvent.click(within(out).getByRole('button', { name: 'Add rule' }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST');
       expect(post?.[0]).toBe('/delivery-rate-cards/card-msj/rules');
       expect(JSON.parse(String(post?.[1].body))).toMatchObject({ ruleType: 'OUTSTATION_TRIP', zone: 'KUCHING', amountSen: 12000 });
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add a Service calls rule' }));
-    const svc = screen.getByRole('region', { name: 'Service calls' });
-    const types = within(within(svc).getByLabelText('Rule type')).getAllByRole('option').map((o) => o.textContent);
-    expect(types).toEqual(['Service', 'Pickup', 'Inspection', 'Supplier pickup', 'Transfer']);
+    fireEvent.click(screen.getByRole('tab', { name: /^Service calls/ }));
+    const svc = screen.getByRole('tabpanel', { name: 'Service calls' });
+    expect(within(svc).getByText('This card has no service calls prices yet.')).toBeTruthy();
+    expect(within(svc).getAllByRole('button').map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Add Service price', 'Add Pickup price', 'Add Inspection price', 'Add Supplier pickup price', 'Add Transfer price']);
+    fireEvent.click(within(svc).getByRole('button', { name: 'Add Pickup price' }));
+    fireEvent.change(within(svc).getByLabelText('Amount for Pickup'), { target: { value: '25' } });
+    fireEvent.click(within(svc).getByRole('button', { name: 'Save Pickup price' }));
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter((c) => c[1]?.method === 'POST');
+      expect(JSON.parse(String(posts[posts.length - 1]?.[1].body))).toEqual({ ruleType: 'PICKUP', amountSen: 2500 });
+    });
+
+    /* The open tab stays while another carrier is opened. */
+    fireEvent.click(screen.getByText('Own fleet cost'));
+    expect((await screen.findByRole('tab', { name: /^Service calls/ })).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('an add form opened on one tab does not follow to the next', async () => {
+    fetchMock.mockImplementation(api);
+    mount();
+    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a Delivery rule' }));
+    expect(screen.getByLabelText('Rule type')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: /^Setup & dismantle/ }));
+    expect(screen.queryByLabelText('Rule type')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add Setup price' })).toBeTruthy();
   });
 
   it('a card whose carrier was deleted can be moved to a carrier without a card', async () => {

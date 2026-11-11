@@ -217,7 +217,7 @@
     },
     {
       "check": "D1",
-      "key": "CUSTOMER,DROP,TRIP,UNIT|backend/src/scm/lib/delivery-rate-card.ts backend/src/scm/routes/delivery-rate-cards.ts frontend/src/pages/scm-v2/DeliveryRateCards.tsx",
+      "key": "CUSTOMER,DROP,TRIP,UNIT|backend/src/scm/lib/delivery-rate-card.ts backend/src/scm/routes/delivery-rate-cards.ts frontend/src/pages/scm-v2/carriers/cardSettings.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: AGGREGATION_UNITS, AGGREGATION_HINT. Cost of divergence is a blank chip, not a wrong number."
     },
     {
