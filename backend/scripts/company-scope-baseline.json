@@ -14,21 +14,6 @@
     "factory-built handler) whose bodies the checker could not read before it followed the",
     "reference. Found by that change, not added by a new handler; it may only SHRINK too."
   ],
-  "unscoped": [
-    "backend/src/routes/assr.ts :: DELETE /lookups/:kind/:id",
-    "backend/src/routes/systemHealth.ts :: GET /autocount/reconcile",
-    "backend/src/scm/routes/driver-leave.ts :: POST /",
-    "backend/src/scm/routes/fleet-maintenance.ts :: GET /vehicles/:id",
-    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/breakdowns",
-    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/mileage",
-    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/plans",
-    "backend/src/scm/routes/hr.ts :: GET /commission",
-    "backend/src/scm/routes/lorry-service-records.ts :: GET /",
-    "backend/src/scm/routes/lorry-service-records.ts :: GET /:id/invoice",
-    "backend/src/scm/routes/product-models.ts :: GET /:id/photo/:key",
-    "backend/src/scm/routes/scan-so.ts :: GET /jobs/:id"
-  ],
-  "unscopedByReference": [
-    "backend/src/scm/routes/public-images.ts :: GET /product-models/:id/photo/:key"
-  ]
+  "unscoped": [],
+  "unscopedByReference": []
 }
