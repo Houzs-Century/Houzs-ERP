@@ -67,19 +67,19 @@ describe('Carriers & Rates', () => {
     fetchMock.mockImplementation(api);
     mount();
     expect(screen.getByRole('heading', { name: 'Carriers & Rates' })).toBeTruthy();
-    expect(await screen.findByText('SET · per unit · 1 rule')).toBeTruthy();
+    expect(await screen.findByText('1 price')).toBeTruthy();
     expect(screen.getByText('No rate card yet')).toBeTruthy();
     expect(screen.getByText('Needs a carrier')).toBeTruthy();
-    expect(screen.getByText(/Carrier removed · SET/)).toBeTruthy();
+    expect(screen.getByText(/Carrier removed · 2 prices/)).toBeTruthy();
     expect(screen.getByText('Own fleet cost')).toBeTruthy();
   });
 
-  it('says the settings in one line and edits them in a drawer, changes a price from its tile, and price-checks a supplier pickup as you type', async () => {
+  it('says the settings in one line and edits them in a drawer, changes a price in its table, and price-checks a supplier pickup as you type', async () => {
     const rules = [RULE, { ...RULE, id: 'r9', ruleType: 'SUPPLIER_PICKUP', tierPosition: null, amountSen: 5000 }];
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
       ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
-    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    fireEvent.click(await screen.findByText('1 price'));
     expect(await screen.findByRole('heading', { name: 'MSJ TRANSPORT' })).toBeTruthy();
     expect(screen.getByText('Charged per set (frame + mattress) · Minimum RM 50.00 · No cap · No rounding')).toBeTruthy();
     expect(screen.queryByLabelText(/Minimum charge \(RM\)/)).toBeNull();
@@ -134,7 +134,7 @@ describe('Carriers & Rates', () => {
     expect(within(group).getByRole('button', { name: 'EU LOGISTICS' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('shows one category at a time: delivery tiles, outstation towns by price with a per-trip price added, and service calls as dashed tiles', async () => {
+  it('shows one category at a time: delivery prices in a ruled table, outstation towns by price with a per-trip price added, and service calls with Add rows', async () => {
     const rules = [
       RULE,
       { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
@@ -146,12 +146,12 @@ describe('Carriers & Rates', () => {
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
       ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
-    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    fireEvent.click(await screen.findByText('1 price'));
     const delivery = await screen.findByRole('tabpanel', { name: 'Delivery' });
     expect(within(delivery).getByText('1st set')).toBeTruthy();
     expect(within(delivery).getByText('3rd set and after')).toBeTruthy();
     expect(within(delivery).getByRole('button', { name: 'Add Dispose price' })).toBeTruthy();
-    expect(within(delivery).queryByText('RM 99.00')).toBeNull();
+    expect(within(delivery).queryByText('99.00')).toBeNull();
     expect(within(delivery).queryByText('Twice')).toBeNull();
     expect(screen.queryByRole('tabpanel', { name: 'Outstation' })).toBeNull();
     expect(screen.getByRole('tab', { name: /^Setup & dismantle/ }).textContent).toContain('—');
@@ -160,8 +160,8 @@ describe('Carriers & Rates', () => {
     expect(screen.getByRole('tab', { name: /^Outstation/ }).getAttribute('aria-selected')).toBe('true');
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
     expect(within(out).getByText('RM 300.00')).toBeTruthy();
-    expect(within(out).getByRole('button', { name: 'Edit BAU per order, RM 300.00' })).toBeTruthy();
-    expect(within(out).getByRole('button', { name: 'Edit KUCHING per order, RM 300.00' })).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit Bau per order, RM 300.00' })).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit Kuching per order, RM 300.00' })).toBeTruthy();
 
     fireEvent.click(within(out).getByRole('button', { name: 'Add a per-trip price' }));
     expect((within(out).getByLabelText('Rule type') as HTMLSelectElement).value).toBe('OUTSTATION_TRIP');
@@ -209,14 +209,21 @@ describe('Carriers & Rates', () => {
       return api(path, init);
     });
     mount();
-    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    fireEvent.click(await screen.findByText('1 price'));
     const tab = await screen.findByRole('tab', { name: /^Outstation/ });
     expect(tab.textContent).toContain('2');
     fireEvent.click(tab);
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
-    const far = within(out).getByRole('region', { name: 'Far towns' });
-    expect(within(far).getByText('BINTULU · LABUAN')).toBeTruthy();
-    expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('LABUAN (Far towns)');
+    /* One ruled table: the card's own prices first, then a row per town with the area's prices merged down. */
+    expect(within(out).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Area', 'Town', '1st set', '3rd set and after', 'Change the area']);
+    const own = within(out).getByRole('rowgroup', { name: 'Everywhere else' });
+    expect(within(own).getByText('80.00')).toBeTruthy();
+    expect(within(own).getByText('40.00')).toBeTruthy();
+    const far = within(out).getByRole('rowgroup', { name: 'Far towns' });
+    expect(within(far).getAllByRole('row')).toHaveLength(2);
+    expect(within(far).getByText('Bintulu')).toBeTruthy();
+    expect(within(far).getByText('Labuan')).toBeTruthy();
+    expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
     fireEvent.click(within(far).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
     fireEvent.change(within(far).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
@@ -265,7 +272,7 @@ describe('Carriers & Rates', () => {
   it('an add form opened on one tab does not follow to the next', async () => {
     fetchMock.mockImplementation(api);
     mount();
-    fireEvent.click(await screen.findByText('SET · per unit · 1 rule'));
+    fireEvent.click(await screen.findByText('1 price'));
     fireEvent.click(await screen.findByRole('button', { name: 'Add a Delivery rule' }));
     expect(screen.getByLabelText('Rule type')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /^Setup & dismantle/ }));
@@ -276,7 +283,7 @@ describe('Carriers & Rates', () => {
   it('a card whose carrier was deleted can be moved to a carrier without a card', async () => {
     fetchMock.mockImplementation(api);
     mount();
-    fireEvent.click(await screen.findByText(/Carrier removed · SET/));
+    fireEvent.click(await screen.findByText(/Carrier removed · 2 prices/));
     const move = await screen.findByLabelText('Move to carrier');
     expect(within(move).queryByRole('option', { name: 'MSJ TRANSPORT' })).toBeNull();
     fireEvent.change(move, { target: { value: 'eu' } });

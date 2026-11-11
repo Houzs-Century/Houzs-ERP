@@ -12,7 +12,7 @@ import { cn } from '../../../lib/utils';
 import { hiddenZoneRules, priceBands, type PriceBand, type RuleBlock, type RuleSection, type TownPrice } from './rateCardLayout';
 import { AddRule, Panel, PriceEditor } from './ruleEditors';
 import { AreaPrices } from './AreaPrices';
-import { areaTemplate, surchargesInAreas, townsInTwoAreas } from './rateCardAreas';
+import { areaTemplate, surchargesInAreas, townLabel, townsInTwoAreas } from './rateCardAreas';
 import { BTN_QUIET, HINT, Pill } from './ui';
 
 type Kind = 'per order' | 'per trip';
@@ -23,11 +23,11 @@ const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
 
 const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kind: Kind }) => {
   const [editing, setEditing] = useState(false);
-  const name = `${town.zone} ${kind}`;
+  const name = `${townLabel(town.zone)} ${kind}`;
   if (editing) {
     return (
       <span className="flex flex-col gap-1 rounded-xl px-2.5 py-1.5 ring-1 ring-primary">
-        <span className="text-[12px] font-semibold text-ink-muted">{town.zone}</span>
+        <span className="text-[12px] font-semibold text-ink-muted">{townLabel(town.zone)}</span>
         <PriceEditor cardId={cardId} rule={town.rule} name={name} onDone={() => setEditing(false)} />
       </span>
     );
@@ -35,7 +35,7 @@ const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kin
   return (
     <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(town.rule.amountSen)}`}
       className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border px-3 text-[12.5px] font-semibold text-ink hover:border-primary hover:text-primary">
-      {town.zone}{town.twice && <Pill tone="amber">Twice</Pill>}
+      {townLabel(town.zone)}{town.twice && <Pill tone="amber">Twice</Pill>}
     </button>
   );
 };
@@ -60,10 +60,10 @@ const Bands = ({ cardId, title, bands, kind }: { cardId: string; title: string; 
 /** A second price for a town the bands already show: listed so none hides. */
 const SecondPrice = ({ cardId, rule }: { cardId: string; rule: RateRule }) => {
   const [editing, setEditing] = useState(false);
-  const name = `${rule.zone ?? ''} ${rule.ruleType === 'OUTSTATION' ? 'per order' : 'per trip'} (second)`;
+  const name = `${townLabel(rule.zone ?? '')} ${rule.ruleType === 'OUTSTATION' ? 'per order' : 'per trip'} (second)`;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 py-0.5">
-      <span>{rule.zone} · {rule.ruleType === 'OUTSTATION' ? 'per order' : 'per trip'}</span>
+      <span>{townLabel(rule.zone ?? '')} · {rule.ruleType === 'OUTSTATION' ? 'per order' : 'per trip'}</span>
       {editing
         ? <PriceEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} />
         : (
@@ -123,16 +123,16 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
       {rows.length === 0 && areas.length === 0 && !addingArea && (
         <p className="text-[13px] text-ink-muted">This card has no areas or outstation towns yet, so a delivery costs the same wherever it goes.</p>
       )}
-      <AreaPrices cardId={cardId} areas={shownAreas} rules={areaRules} template={template} unit={unit} adding={addingArea} onAdding={setAddingArea} />
+      <AreaPrices cardId={cardId} areas={shownAreas} rules={areaRules} ownRules={rules} template={template} unit={unit} adding={addingArea} onAdding={setAddingArea} />
       {twice.length > 0 && (
         <p className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12.5px] text-accent-ink">
-          {twice.map((t) => `${t.town} is in ${t.areas.join(' and ')}`).join('; ')}. A delivery there is priced in the dearer area; keep each town in one area.
+          {twice.map((t) => `${townLabel(t.town)} is in ${t.areas.join(' and ')}`).join('; ')}. A delivery there is priced in the dearer area; keep each town in one area.
         </p>
       )}
       {areas.length > 0 && rows.length > 0 && <span className="pt-1 text-[12.5px] font-semibold text-ink-secondary">Town prices, added to the delivery’s price</span>}
       {onTop.length > 0 && (
         <p className={HINT}>
-          {onTop.map((t) => `${t.town} (${t.areas.join(', ')})`).join(', ')}: {onTop.length === 1 ? 'its town price adds' : 'their town prices add'} on top of the area’s price — right for a fee such as customs, a double charge otherwise.
+          {onTop.map((t) => `${townLabel(t.town)} (${t.areas.join(', ')})`).join(', ')}: {onTop.length === 1 ? 'its town price adds' : 'their town prices add'} on top of the area’s price — right for a fee such as customs, a double charge otherwise.
         </p>
       )}
       {perOrder.length > 0 && <Bands cardId={cardId} title="Per order" bands={shownOrder} kind="per order" />}

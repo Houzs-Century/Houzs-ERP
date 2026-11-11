@@ -65,6 +65,12 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
   </section>
 );
 
+/* The rate card's ruled tables (owner 2026-11-11: 「放线条」): lines around
+   the cells as in a spreadsheet, a shaded head, a shaded row per section. */
+export const T_CELL = 'border border-border-strong px-2.5 py-1.5 align-top';
+export const T_HEAD = 'border border-border-strong bg-surface-2 px-2.5 py-2 align-bottom text-[12px] font-semibold text-ink-secondary';
+export const T_SECTION = 'border border-border-strong bg-surface-2/60 px-2.5 py-1.5 text-left text-[12.5px] font-semibold text-ink';
+
 /** A labelled box: label over the control, an optional hint under it. */
 export const Field = ({ label, hint, className, children }: { label: string; hint?: string; className?: string; children: ReactNode }) => (
   <label className={cn('flex min-w-0 flex-col gap-1.5', className)}>

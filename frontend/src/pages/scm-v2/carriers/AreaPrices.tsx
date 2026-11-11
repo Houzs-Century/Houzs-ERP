@@ -1,10 +1,13 @@
 // Areas, at the top of the Outstation tab (owner 2026-11-11 on the 3PL
 // quotations: 加「地区价」). An area is a name and its towns, with prices of its
-// own shown as tiles, the way the Delivery tab shows the card's: a click changes
-// or removes a price, a dashed tile adds one the card's own ladder has and the
-// area does not. A delivery to one of the area's towns is priced with these in
-// place of the card's own; a town price on the same town still adds on top.
-import { useState } from 'react';
+// own. They read as ONE ruled table (owner, the same day: 「做成一个table」,
+// 「别"，"」, 「放线条」, prices 「放在上面别centre」): the card's own prices first,
+// then a row per town A to Z, each area's name, prices and pencil merged down
+// across its towns. A click on a price changes or removes it; a dash, where the
+// card's own price applies, adds one. A delivery to one of the area's towns is
+// priced with these in place of the card's own; a town price on the same town
+// still adds on top.
+import { useMemo, useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
 import {
   useAddAreaWithPrices, useDeleteRateArea, useUpdateRateArea,
@@ -13,10 +16,10 @@ import {
 import { useConfirm } from '../../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';
 import { cn } from '../../../lib/utils';
-import { rmToSen } from './cardSettings';
-import { areaGrids, parseTowns, type PriceBox } from './rateCardAreas';
-import { AMOUNT_ERROR, AddPriceTile, PriceTile, TileGrid } from './ruleEditors';
-import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL } from './ui';
+import { centiToRM, rmToSen } from './cardSettings';
+import { areaColumns, columnHead, parseTowns, ruleAt, sortTowns, townLabel, type PriceBox } from './rateCardAreas';
+import { AMOUNT_ERROR, AddPriceCell, PriceButton } from './ruleEditors';
+import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL, T_CELL, T_HEAD } from './ui';
 
 const ERR = 'text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
 const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
@@ -70,39 +73,60 @@ const AreaEditor = ({ cardId, area, onDone }: { cardId: string; area: RateArea; 
   );
 };
 
-/** One area: its towns, then its prices as tiles. */
-const AreaCard = ({ cardId, area, rules, template, unit }: {
-  cardId: string; area: RateArea; rules: readonly RateRule[]; template: readonly PriceBox[]; unit: string;
+/** One area's price for one column, merged down across its towns: the amount
+ *  (a click changes or removes it), or a dash where the card's own price
+ *  applies (a click adds one for the area). */
+const AreaPriceCell = ({ cardId, area, col, rule, rowSpan }: {
+  cardId: string; area: RateArea; col: PriceBox; rule: RateRule | null; rowSpan: number;
+}) => (
+  <td rowSpan={rowSpan} className={cn(T_CELL, 'text-right')}>
+    {rule == null
+      ? <AddPriceCell cardId={cardId} rule={{ ...col.rule, areaId: area.id }} label={col.label} scope={area.name} />
+      : <PriceButton cardId={cardId} rule={rule} name={`${col.label} for ${area.name}`} />}
+  </td>
+);
+
+/** One area: a row per town, its name, prices and pencil merged down across them. */
+const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
+  cardId: string; area: RateArea; rules: readonly RateRule[]; columns: readonly PriceBox[]; editing: boolean; onEditing: (on: boolean) => void;
 }) => {
-  const [editing, setEditing] = useState(false);
-  const grids = areaGrids(rules, area.id, unit, template);
+  const towns = sortTowns(area.towns);
+  const rows = towns.length > 0 ? towns : [''];
+  const span = rows.length;
   return (
-    <section aria-label={area.name} className="flex flex-col gap-3 rounded-xl border border-border px-4 py-3.5">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between gap-2">
-          <h4 className="min-w-0 text-[14.5px] font-bold text-ink">{area.name}<span className="ml-1.5 font-medium text-ink-muted">{townsWord(area.towns.length)}</span></h4>
-          {!editing && (
-            <button type="button" className={cn(BTN_QUIET, 'min-h-[32px] flex-none px-2.5 text-[12.5px]')} onClick={() => setEditing(true)} aria-label={`Change ${area.name}`}>
-              <Pencil size={13} strokeWidth={1.75} />Change
-            </button>
+    <tbody aria-label={area.name}>
+      {rows.map((town, i) => (
+        <tr key={town || '-'}>
+          {i === 0 && (
+            <th scope="rowgroup" rowSpan={span} className={cn(T_CELL, 'text-left font-normal')}>
+              <span className="block text-[13px] font-bold text-ink">{area.name}</span>
+              <span className={HINT}>{townsWord(towns.length)}</span>
+            </th>
           )}
-        </div>
-        {/* The towns get the card's full width: a long list wraps under the name, not beside a button. */}
-        {!editing && <p className="text-[12.5px] leading-snug text-ink-secondary">{area.towns.join(' · ')}</p>}
-      </div>
-      {editing && <AreaEditor cardId={cardId} area={area} onDone={() => setEditing(false)} />}
-      {grids.length === 0 && (
-        <p className="text-[13px] text-ink-muted">No prices yet: its towns are priced at the card’s own prices.</p>
-      )}
-      {grids.map((g) => (
-        <TileGrid key={g.id} title={g.title}>
-          {g.cells.map((c) => <PriceTile key={c.rule.id} cardId={cardId} cell={c} scope={area.name} />)}
-          {g.missing.map((b) => (
-            <AddPriceTile key={b.key} cardId={cardId} ruleType={null} template={{ ...b.rule, areaId: area.id }} label={b.tile} scope={area.name} />
+          <td className={cn(T_CELL, 'text-ink-secondary')}>{townLabel(town)}</td>
+          {i === 0 && columns.map((c) => (
+            <AreaPriceCell key={c.key} cardId={cardId} area={area} col={c} rule={ruleAt(rules, area.id, c.key)} rowSpan={span} />
           ))}
-        </TileGrid>
+          {i === 0 && (
+            <td rowSpan={span} className={cn(T_CELL, 'w-[44px] text-center')}>
+              {!editing && (
+                <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-primary"
+                  onClick={() => onEditing(true)} aria-label={`Change ${area.name}`}>
+                  <Pencil size={14} strokeWidth={1.75} />
+                </button>
+              )}
+            </td>
+          )}
+        </tr>
       ))}
-    </section>
+      {editing && (
+        <tr>
+          <td colSpan={columns.length + 3} className={cn(T_CELL, 'bg-surface-2/50 py-3')}>
+            <AreaEditor cardId={cardId} area={area} onDone={() => onEditing(false)} />
+          </td>
+        </tr>
+      )}
+    </tbody>
   );
 };
 
@@ -150,14 +174,54 @@ const AddArea = ({ cardId, template, onDone }: { cardId: string; template: reado
   );
 };
 
-/** The card's areas, then the form for a new one when it is open. */
-export const AreaPrices = ({ cardId, areas, rules, template, unit, adding, onAdding }: {
-  cardId: string; areas: readonly RateArea[]; rules: readonly RateRule[]; template: readonly PriceBox[]; unit: string;
-  adding: boolean; onAdding: (open: boolean) => void;
-}) => (
-  <div className="flex flex-col gap-2.5">
-    {(areas.length > 0 || adding) && <span className="text-[12.5px] font-semibold text-ink-secondary">Areas, each with its own prices</span>}
-    {areas.map((a) => <AreaCard key={a.id} cardId={cardId} area={a} rules={rules} template={template} unit={unit} />)}
-    {adding && <AddArea cardId={cardId} template={template} onDone={() => onAdding(false)} />}
-  </div>
-);
+/** The card's areas as one ruled table — the card's own prices first, then a
+ *  row per town, each area's name and prices merged down across its towns —
+ *  and the form for a new area when it is open. */
+export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, adding, onAdding }: {
+  cardId: string; areas: readonly RateArea[]; rules: readonly RateRule[]; ownRules: readonly RateRule[];
+  template: readonly PriceBox[]; unit: string; adding: boolean; onAdding: (open: boolean) => void;
+}) => {
+  const [editing, setEditing] = useState<string | null>(null);
+  const columns = useMemo(() => areaColumns(template, rules, unit), [template, rules, unit]);
+  return (
+    <div className="flex flex-col gap-2.5">
+      {areas.length > 0 && (
+        <>
+          <span className="text-[12.5px] font-semibold text-ink-secondary">Areas, each with its own prices (RM)</span>
+          {/* On a phone the table keeps its columns and scrolls sideways inside this box. */}
+          <div className="relative overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse text-[13px] tabular-nums">
+              <thead>
+                <tr>
+                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Area</th>
+                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Town</th>
+                  {columns.map((c) => <th key={c.key} scope="col" className={cn(T_HEAD, 'text-right')}>{columnHead(c)}</th>)}
+                  <th scope="col" className={T_HEAD}><span className="sr-only">Change the area</span></th>
+                </tr>
+              </thead>
+              <tbody aria-label="Everywhere else">
+                <tr className="bg-surface-2/60">
+                  <th scope="row" className={cn(T_CELL, 'text-left font-normal')}>
+                    <span className="block text-[13px] font-semibold text-ink-secondary">Everywhere else</span>
+                    <span className={HINT}>the card’s own prices</span>
+                  </th>
+                  <td className={cn(T_CELL, 'text-ink-muted')}>Towns not in an area below</td>
+                  {columns.map((c) => {
+                    const own = ruleAt(ownRules, null, c.key);
+                    return <td key={c.key} className={cn(T_CELL, 'text-right text-ink-secondary')}>{own ? centiToRM(own.amountSen) : '—'}</td>;
+                  })}
+                  <td className={T_CELL} />
+                </tr>
+              </tbody>
+              {areas.map((a) => (
+                <AreaRows key={a.id} cardId={cardId} area={a} rules={rules} columns={columns}
+                  editing={editing === a.id} onEditing={(on) => setEditing(on ? a.id : null)} />
+              ))}
+            </table>
+          </div>
+        </>
+      )}
+      {adding && <AddArea cardId={cardId} template={template} onDone={() => onAdding(false)} />}
+    </div>
+  );
+};
